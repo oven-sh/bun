@@ -116,13 +116,32 @@ An entry only lives in the global store when it can be safely shared. Entries fa
 - the package is listed in **`trustedDependencies`** (or trusted via `bun add --trust`) — its lifecycle script may mutate the install directory, and a script running through the project symlink would mutate the shared copy;
 - the package is a direct or transitive **dependency of a trusted package** — the script can write through the trusted package's dependency symlinks;
 - the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see;
-- the package has a **peer dependency typed by an `@types/*` package of the project** (a library that peers on `react` in a project with `@types/react`) — TypeScript resolves a declaration file's imports from its real path, and from `<cache>/links/` it cannot reach the project's `@types`. A package that depends on the `@types/*` package itself is still shared.
+- the package has a **peer dependency typed by an `@types/*` package** that is not installed next to the peer (see [Peer dependencies](#peer-dependencies)).
 
 Ineligibility propagates: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it. When an entry loses eligibility between installs (newly patched, newly trusted), Bun detaches it from the global store and rebuilds it project-locally on the next install. The shared entry stays untouched.
 
 ## Peer dependencies
 
 Bun folds resolved peer dependencies (required and optional) into each global entry as dep symlinks. These peer dependencies contribute to the entry's hash. Bun synthesizes an implicit `"*"` optional peer for packages that list a name only in `peerDependenciesMeta` without a matching `peerDependencies` entry (matching pnpm and yarn). As a result, a package like `webpack` that declares `webpack-cli` only in `peerDependenciesMeta` still gets a `webpack-cli` symlink in its global entry when one is installed in the project.
+
+### Types of a peer
+
+TypeScript checks a declaration file at its real path and resolves its imports by walking up from there, falling back to `@types/*`. From `<cache>/links/` that walk never reaches the project. So when a package peers on `react`, and the package that provides `react` to it (usually the project) also has `@types/react`, the entry links that `@types/react` next to `react`:
+
+```txt
+~/.bun/install/cache/links/
+└── react-select@5.8.0+<peerhash>-<entryhash>/
+    └── node_modules/
+        ├── react-select/
+        ├── react -> ../../react@18.3.1-…/node_modules/react
+        └── @types/react -> ../../@types+react@18.3.1-…/node_modules/react
+```
+
+The `@types` package is the one installed next to the peer, not the nearest one: a dependency of the package that has an older `@types/react` does not change which one the entry links. The link is part of the entry's peer hash, so a project with another `@types/react` version gets another entry. The link is not a lockfile dependency: `bun.lock`, `bun why`, and `--frozen-lockfile` do not see it. A package that depends on the `@types/*` package itself links its own.
+
+When the package that provides the peer has no `@types/*` for it, the entry stays project-local, as before. A `packageExtensions` entry in `package.json` that adds the `@types/*` package as an optional peer of the package is the manual form of the same link.
+
+The link changes the peer hash of the entries it is in. After an upgrade, or after `globalStore` is turned on or off, `bun install` builds those entries under their new names, and the old `node_modules/.bun/<name>@<version>+<peerhash>/` directories stay until [`bun prune`](/pm/cli/prune).
 
 ## Tradeoffs
 

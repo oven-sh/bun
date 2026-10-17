@@ -89,16 +89,65 @@ struct QueuedEntry {
 }
 
 /// The DefinitelyTyped name: `react` -> `@types/react`, `@scope/pkg` -> `@types/scope__pkg`.
-fn types_package_name_hash(name: &[u8]) -> PackageNameHash {
-    let mut types_name = b"@types/".to_vec();
+fn types_package_name_hash(name: &[u8], scratch: &mut Vec<u8>) -> PackageNameHash {
+    scratch.clear();
+    scratch.extend_from_slice(b"@types/");
     for &c in name.strip_prefix(b"@").unwrap_or(name) {
         if c == b'/' {
-            types_name.extend_from_slice(b"__");
+            scratch.extend_from_slice(b"__");
         } else {
-            types_name.push(c);
+            scratch.push(c);
         }
     }
-    semver::semver_string::Builder::string_hash(&types_name)
+    semver::semver_string::Builder::string_hash(scratch)
+}
+
+/// Under `install.globalStore`: the `@types/<peer>` name of each peer name the lockfile has both of.
+fn peer_types(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+) -> Result<store::PeerTypes, AllocError> {
+    let mut peer_types = store::PeerTypes::default();
+    if !manager.options.enable.global_virtual_store() {
+        return Ok(peer_types);
+    }
+    let string_buf = &lockfile.buffers.string_bytes[..];
+    let pkgs = lockfile.packages.slice();
+
+    let mut types_packages: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::default();
+    for (name, &name_hash) in pkgs.items_name().iter().zip(pkgs.items_name_hash()) {
+        if name.slice(string_buf).starts_with(b"@types/") {
+            types_packages.put(name_hash, ())?;
+        }
+    }
+    if types_packages.count() == 0 {
+        return Ok(peer_types);
+    }
+
+    let mut seen: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::default();
+    let mut scratch: Vec<u8> = Vec::new();
+    for dep in &lockfile.buffers.dependencies {
+        if !dep.behavior.is_peer() || seen.get_or_put(dep.name_hash)?.found_existing {
+            continue;
+        }
+        let types_name_hash = types_package_name_hash(dep.name.slice(string_buf), &mut scratch);
+        if types_packages.contains(&types_name_hash) {
+            peer_types.put(dep.name_hash, types_name_hash)?;
+        }
+    }
+    Ok(peer_types)
+}
+
+/// A package the global store can hold: its directory is the same in every project.
+const fn from_immutable_cache(tag: ResolutionTag) -> bool {
+    matches!(
+        tag,
+        ResolutionTag::Npm
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -489,6 +538,83 @@ fn dependencies_named<'a>(
     }
 }
 
+/// The finished nodes of the first pass, seen from a dependent that resolves a peer.
+struct Ancestors<'a> {
+    first_named: &'a FirstNamed,
+    node_dependencies: &'a [Vec<store::node::DependencyIds>],
+    node_parent_ids: &'a [store::node::Id],
+    dependencies: &'a [install::Dependency],
+    contained: &'a DynamicBitSet,
+}
+
+impl Ancestors<'_> {
+    /// The dependency of `node_id` named `name_hash` that a descendant's peer binds to.
+    fn named(
+        &self,
+        node_id: store::node::Id,
+        name_hash: PackageNameHash,
+    ) -> Option<store::node::DependencyIds> {
+        dependencies_named(self.first_named, self.node_dependencies, node_id, name_hash)
+            .iter()
+            .copied()
+            .find(|ids| {
+                self.dependencies[ids.dep_id as usize].name_hash == name_hash
+                    && !self.contained.is_set(ids.dep_id as usize)
+            })
+    }
+
+    /// The `@types/<peer>` of the peer bound at `binder`: the binder's own dependency of that name,
+    /// so that a dependent never pairs one node's peer with another node's types.
+    fn companion_at(
+        &self,
+        binder: store::node::Id,
+        types_name_hash: PackageNameHash,
+    ) -> Option<store::node::DependencyIds> {
+        self.named(binder, types_name_hash)
+    }
+
+    /// The companion of a peer that a dependency named `peer_name_hash` binds at or above `from`.
+    fn companion_above(
+        &self,
+        mut from: store::node::Id,
+        peer_name_hash: PackageNameHash,
+        types_name_hash: PackageNameHash,
+    ) -> Option<store::node::DependencyIds> {
+        while from != store::node::Id::INVALID {
+            if self.named(from, peer_name_hash).is_some() {
+                return self.companion_at(from, types_name_hash);
+            }
+            from = self.node_parent_ids[from.get() as usize];
+        }
+        None
+    }
+}
+
+/// Marks `peer` into every ancestor from `from` up to its binder, the first one that has a
+/// dependency named `peer_name_hash`, and returns the binder.
+fn mark_peer_until_named(
+    node_peers: &mut [store::node::Peers],
+    node_pkg_ids: &[PackageID],
+    ancestors: &Ancestors<'_>,
+    from: store::node::Id,
+    peer: store::node::TransitivePeer,
+    peer_name_hash: PackageNameHash,
+    peer_ctx: &store::node::TransitivePeerOrderedArraySetCtx<'_>,
+) -> Result<Option<store::node::Id>, AllocError> {
+    let mut curr_id = from;
+    while curr_id != store::node::Id::INVALID {
+        if ancestors.named(curr_id, peer_name_hash).is_some() {
+            return Ok(Some(curr_id));
+        }
+        // A package is never its own peer.
+        if node_pkg_ids[curr_id.get() as usize] != peer.pkg_id {
+            node_peers[curr_id.get() as usize].insert(peer, peer_ctx)?;
+        }
+        curr_id = ancestors.node_parent_ids[curr_id.get() as usize];
+    }
+    Ok(None)
+}
+
 /// The store of an install that selects everything.
 pub(crate) fn build_whole_store(
     manager: &PackageManager,
@@ -535,6 +661,8 @@ fn build_store(
     let (contained, nested_folders) = contained_folders(lockfile)?;
     let is_contained_folder = |dep_id: DependencyID| contained.is_set(dep_id as usize);
     let mut linked = lockfile::reachable::Linked::default();
+
+    let peer_types = peer_types(manager, lockfile)?;
 
     let mut nodes: store::node::List = store::node::List::default();
 
@@ -717,6 +845,8 @@ fn build_store(
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
+    let mut companion_marks: Vec<bool> = Vec::new();
+
     // First pass: create full dependency tree with resolved peers
     'next_node: while let Some(entry) = node_queue.pop() {
         'check_cycle: {
@@ -804,60 +934,81 @@ fn build_store(
                     ..
                 } = nodes_slice.split_mut();
 
-                let ctx_hash: u64 =
-                    if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
-                        0
-                    } else {
-                        'ctx: {
-                            let leaks = leaking_peers.at(entry.pkg_id as usize);
-                            if leaks.count() == 0 {
-                                break 'ctx 0;
-                            }
+                let ancestors = Ancestors {
+                    first_named: &first_named,
+                    node_dependencies,
+                    node_parent_ids,
+                    dependencies,
+                    contained: &contained,
+                };
 
-                            let peer_names = peer_name_idx.keys();
-                            let mut hasher = Wyhash11::init(0);
-                            let mut it = leaks.iterator::<true, true>();
-                            while let Some(bit) = it.next() {
-                                let peer_name_hash = peer_names[bit];
-                                let resolved: PackageID = 'resolved: {
-                                    let mut curr_id = entry.parent_id;
-                                    while curr_id != store::node::Id::INVALID {
-                                        for ids in dependencies_named(
-                                            &first_named,
-                                            node_dependencies,
-                                            curr_id,
-                                            peer_name_hash,
-                                        ) {
-                                            if dependencies[ids.dep_id as usize].name_hash
-                                                == peer_name_hash
-                                                && !is_contained_folder(ids.dep_id)
-                                            {
-                                                break 'resolved ids.pkg_id;
-                                            }
-                                        }
-                                        for ids in &node_peers[curr_id.get() as usize].list {
-                                            if !ids.auto_installed
-                                                && dependencies[ids.dep_id as usize].name_hash
-                                                    == peer_name_hash
-                                            {
-                                                break 'resolved ids.pkg_id;
-                                            }
-                                        }
-                                        curr_id = node_parent_ids[curr_id.get() as usize];
-                                    }
-                                    break 'resolved invalid_package_id;
-                                };
-                                // `invalid_package_id` is part of the key: an
-                                // unresolved peer auto-installs the declarer's own
-                                // `resolutions[peer_dep_id]`, which is position-
-                                // independent, so two positions that both leave
-                                // the name unresolved expand identically.
-                                hasher.update(bun_core::bytes_of(&peer_name_hash));
-                                hasher.update(bun_core::bytes_of(&resolved));
-                            }
-                            break 'ctx hasher.final_();
+                let ctx_hash: u64 = if entry_dep.version.tag == VersionTag::Workspace
+                    || peer_name_count == 0
+                {
+                    0
+                } else {
+                    'ctx: {
+                        let leaks = leaking_peers.at(entry.pkg_id as usize);
+                        if leaks.count() == 0 {
+                            break 'ctx 0;
                         }
-                    };
+
+                        let peer_names = peer_name_idx.keys();
+                        let mut hasher = Wyhash11::init(0);
+                        let mut it = leaks.iterator::<true, true>();
+                        while let Some(bit) = it.next() {
+                            let peer_name_hash = peer_names[bit];
+                            let types_name_hash = peer_types.companion_of(peer_name_hash);
+                            // The companion is bound with the peer, so it is part of the key too.
+                            let (resolved, companion): (PackageID, Option<PackageID>) = 'resolved: {
+                                let mut curr_id = entry.parent_id;
+                                while curr_id != store::node::Id::INVALID {
+                                    if let Some(ids) = ancestors.named(curr_id, peer_name_hash) {
+                                        let companion = types_name_hash.map(|types_name_hash| {
+                                            ancestors
+                                                .companion_at(curr_id, types_name_hash)
+                                                .map_or(invalid_package_id, |ids| ids.pkg_id)
+                                        });
+                                        break 'resolved (ids.pkg_id, companion);
+                                    }
+                                    for ids in &node_peers[curr_id.get() as usize].list {
+                                        if !ids.auto_installed
+                                            && dependencies[ids.dep_id as usize].name_hash
+                                                == peer_name_hash
+                                        {
+                                            let companion =
+                                                types_name_hash.map(|types_name_hash| {
+                                                    ancestors
+                                                        .companion_above(
+                                                            node_parent_ids[curr_id.get() as usize],
+                                                            peer_name_hash,
+                                                            types_name_hash,
+                                                        )
+                                                        .map_or(invalid_package_id, |ids| {
+                                                            ids.pkg_id
+                                                        })
+                                                });
+                                            break 'resolved (ids.pkg_id, companion);
+                                        }
+                                    }
+                                    curr_id = node_parent_ids[curr_id.get() as usize];
+                                }
+                                break 'resolved (invalid_package_id, None);
+                            };
+                            // `invalid_package_id` is part of the key: an
+                            // unresolved peer auto-installs the declarer's own
+                            // `resolutions[peer_dep_id]`, which is position-
+                            // independent, so two positions that both leave
+                            // the name unresolved expand identically.
+                            hasher.update(bun_core::bytes_of(&peer_name_hash));
+                            hasher.update(bun_core::bytes_of(&resolved));
+                            if let Some(companion) = companion {
+                                hasher.update(bun_core::bytes_of(&companion));
+                            }
+                        }
+                        break 'ctx hasher.final_();
+                    }
+                };
 
                 let dedupe_entry = early_dedupe.get_or_put(EarlyDedupeKey {
                     pkg_id: entry.pkg_id,
@@ -898,28 +1049,68 @@ fn build_store(
                     // before mutating node_peers.
                     let dedupe_peers: Vec<_> =
                         node_peers[dedupe_node_id.get() as usize].list.clone();
-                    for peer in dedupe_peers {
-                        let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
-                        let mut curr_id = entry.parent_id;
-                        'walk: while curr_id != store::node::Id::INVALID {
-                            for ids in dependencies_named(
-                                &first_named,
-                                node_dependencies,
-                                curr_id,
+                    // A peer is marked into the ancestors below the first one that has a
+                    // dependency of its name: its binder. Its companion stops there too, not
+                    // at the first `@types` of its own name.
+                    companion_marks.clear();
+                    if !peer_types.is_empty() {
+                        companion_marks.resize(dedupe_peers.len(), false);
+                        for (i, peer) in dedupe_peers.iter().enumerate() {
+                            let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
+                            let Some(types_name_hash) = peer_types.companion_of(peer_name_hash)
+                            else {
+                                continue;
+                            };
+                            companion_marks[i] = true;
+                            let binder = mark_peer_until_named(
+                                node_peers,
+                                node_pkg_ids,
+                                &ancestors,
+                                entry.parent_id,
+                                *peer,
                                 peer_name_hash,
-                            ) {
-                                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash
-                                    && !is_contained_folder(ids.dep_id)
+                                &peer_ctx,
+                            )?;
+                            let Some(companion) = binder
+                                .and_then(|binder| ancestors.companion_at(binder, types_name_hash))
+                            else {
+                                continue;
+                            };
+                            let Some(j) = dedupe_peers.iter().position(|other| {
+                                other.pkg_id == companion.pkg_id
+                                    && dependencies[other.dep_id as usize].name_hash
+                                        == types_name_hash
+                            }) else {
+                                continue;
+                            };
+                            if !companion_marks[j] {
+                                companion_marks[j] = true;
+                                let mut curr_id = entry.parent_id;
+                                while curr_id != store::node::Id::INVALID && Some(curr_id) != binder
                                 {
-                                    break 'walk;
+                                    // A package is never its own peer.
+                                    if node_pkg_ids[curr_id.get() as usize] != companion.pkg_id {
+                                        node_peers[curr_id.get() as usize]
+                                            .insert(dedupe_peers[j], &peer_ctx)?;
+                                    }
+                                    curr_id = node_parent_ids[curr_id.get() as usize];
                                 }
                             }
-                            // A package is never its own peer.
-                            if node_pkg_ids[curr_id.get() as usize] != peer.pkg_id {
-                                node_peers[curr_id.get() as usize].insert(peer, &peer_ctx)?;
-                            }
-                            curr_id = node_parent_ids[curr_id.get() as usize];
                         }
+                    }
+                    for (i, peer) in dedupe_peers.iter().enumerate() {
+                        if companion_marks.get(i) == Some(&true) {
+                            continue;
+                        }
+                        mark_peer_until_named(
+                            node_peers,
+                            node_pkg_ids,
+                            &ancestors,
+                            entry.parent_id,
+                            *peer,
+                            dependencies[peer.dep_id as usize].name_hash,
+                            &peer_ctx,
+                        )?;
                     }
 
                     node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
@@ -1064,14 +1255,34 @@ fn build_store(
             }
         }
 
+        // Only a package the global store can hold gains from a companion, and one that declares
+        // the `@types` itself links its own.
+        let companion_of = |peer_dep: &install::Dependency| {
+            peer_types
+                .companion_of(peer_dep.name_hash)
+                .filter(|_| from_immutable_cache(pkg_resolutions[entry.pkg_id as usize].tag))
+                .filter(|&types_name_hash| {
+                    !(pkg_deps.begin()..pkg_deps.end())
+                        .any(|dep_id| dependencies[dep_id as usize].name_hash == types_name_hash)
+                })
+        };
+
         for &peer_dep_id in &peer_dep_ids {
-            let (resolved_pkg_id, auto_installed) = 'resolved_pkg_id: {
+            let (resolved_pkg_id, auto_installed, companion) = 'resolved_pkg_id: {
                 // Go through the peers parents looking for a package with the same name.
                 // If none is found, use current best version. Parents visited must have
                 // the package id for the chosen peer marked as a transitive peer. Nodes
                 // are deduplicated only if their package id and their transitive peer package
                 // ids are equal.
                 let peer_dep = &dependencies[peer_dep_id as usize];
+                let types_name_hash = companion_of(peer_dep);
+                let ancestors = Ancestors {
+                    first_named: &first_named,
+                    node_dependencies,
+                    node_parent_ids,
+                    dependencies,
+                    contained: &contained,
+                };
                 let best_version = resolutions[peer_dep_id as usize];
                 let best_version = if is_omitted_peer(peer_dep)
                     || nested_folders.is_set_allow_out_of_bound(best_version as usize, false)
@@ -1113,10 +1324,17 @@ fn build_store(
                                 != pkgs.items_name_hash()[best_version as usize]
                             && lockfile.is_overridden_dependency(peer_dep_id)
                         {
-                            break 'resolved_pkg_id (best_version, true);
+                            break 'resolved_pkg_id (best_version, true, None);
                         }
 
-                        break 'resolved_pkg_id (ids.pkg_id, false);
+                        let companion = if curr_id == node_id {
+                            None
+                        } else {
+                            types_name_hash.and_then(|types_name_hash| {
+                                ancestors.companion_at(curr_id, types_name_hash)
+                            })
+                        };
+                        break 'resolved_pkg_id (ids.pkg_id, false, companion);
                     }
 
                     let curr_peers = &node_peers[curr_id.get() as usize];
@@ -1131,9 +1349,16 @@ fn build_store(
                         // through this node
 
                         if !ids.auto_installed {
-                            // The resolution was found here or above. Choose the same
+                            // The resolution was found above. Choose the same
                             // peer resolution. No need to mark this node or above.
-                            break 'resolved_pkg_id (ids.pkg_id, false);
+                            let companion = types_name_hash.and_then(|types_name_hash| {
+                                ancestors.companion_above(
+                                    node_parent_ids[curr_id.get() as usize],
+                                    peer_dep.name_hash,
+                                    types_name_hash,
+                                )
+                            });
+                            break 'resolved_pkg_id (ids.pkg_id, false, companion);
                         }
 
                         // It didn't find a matching name and auto installed
@@ -1142,11 +1367,11 @@ fn build_store(
                         // different from this transitive peer.
 
                         if best_version == invalid_package_id {
-                            break 'resolved_pkg_id (invalid_package_id, true);
+                            break 'resolved_pkg_id (invalid_package_id, true, None);
                         }
 
                         if best_version == ids.pkg_id {
-                            break 'resolved_pkg_id (ids.pkg_id, true);
+                            break 'resolved_pkg_id (ids.pkg_id, true, None);
                         }
 
                         // add the remaining parent ids
@@ -1155,7 +1380,7 @@ fn build_store(
                             curr_id = node_parent_ids[curr_id.get() as usize];
                         }
 
-                        break 'resolved_pkg_id (best_version, true);
+                        break 'resolved_pkg_id (best_version, true, None);
                     }
 
                     // TODO: prevent marking workspace and symlink deps with transitive peers
@@ -1167,7 +1392,7 @@ fn build_store(
                 }
 
                 // choose the current best version
-                break 'resolved_pkg_id (best_version, true);
+                break 'resolved_pkg_id (best_version, true, None);
             };
 
             if resolved_pkg_id == invalid_package_id {
@@ -1211,12 +1436,45 @@ fn build_store(
                     pkg_id: resolved_pkg_id,
                 });
             }
+
+            // The companion travels with its peer: the same ancestors, and a link of its own.
+            let Some(companion) = companion else {
+                continue;
+            };
+            if visited_parent_node_ids.is_empty()
+                || lockfile::pruned_workspaces::skips_link_to_pruned_workspace(
+                    manager,
+                    lockfile,
+                    entry.pkg_id,
+                    &dependencies[companion.dep_id as usize],
+                    companion.pkg_id,
+                )
+            {
+                continue;
+            }
+            for &visited_parent_id in &visited_parent_node_ids {
+                if node_pkg_ids[visited_parent_id.get() as usize] == companion.pkg_id {
+                    continue;
+                }
+                let peer = store::node::TransitivePeer {
+                    dep_id: companion.dep_id,
+                    pkg_id: companion.pkg_id,
+                    auto_installed: false,
+                };
+                node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)?;
+            }
+            node_dependencies[node_id.get() as usize].push(companion);
+            node_queue.push(QueuedNode {
+                parent_id: node_id,
+                dep_id: companion.dep_id,
+                pkg_id: companion.pkg_id,
+            });
         }
 
         let list = &node_dependencies[node_id.get() as usize];
         for (i, ids) in list.iter().enumerate().filter(|_| list.len() > SHORT_LIST) {
             let name_hash = dependencies[ids.dep_id as usize].name_hash;
-            if peer_name_idx.contains(&name_hash) {
+            if peer_name_idx.contains(&name_hash) || peer_types.is_companion_name(name_hash) {
                 let first = first_named.get_or_put((node_id, name_hash))?;
                 if !first.found_existing {
                     *first.value_ptr = i;
@@ -1469,6 +1727,7 @@ fn build_store(
         entries: store_entries,
         nodes,
         hidden_hoist_keys,
+        peer_types,
     })
 }
 
@@ -1792,14 +2051,6 @@ pub(crate) fn install_isolated_packages(
 
             let mut trusted_entries: Vec<usize> = Vec::new();
 
-            let mut types_pkg_name_hashes: ArrayHashMap<PackageNameHash, ()> =
-                ArrayHashMap::default();
-            for (name, &name_hash) in pkg_names.iter().zip(pkgs.items_name_hash()) {
-                if name.slice(string_buf).starts_with(b"@types/") {
-                    types_pkg_name_hashes.put(name_hash, ())?;
-                }
-            }
-
             // 0 is "not eligible"; the SCC pass turns each 1 into the entry's hash, or into 0.
             for entry_idx in 0..store.entries.len() {
                 let node_id = entry_node_ids[entry_idx];
@@ -1822,11 +2073,7 @@ pub(crate) fn install_isolated_packages(
                 };
 
                 let eligible = match pkg_res.tag {
-                    ResolutionTag::Npm
-                    | ResolutionTag::Git
-                    | ResolutionTag::Github
-                    | ResolutionTag::LocalTarball
-                    | ResolutionTag::RemoteTarball => 'eligible: {
+                    tag if from_immutable_cache(tag) => 'eligible: {
                         // A patch or a lifecycle script changes the package's own directory.
                         if is_trusted {
                             trusted_entries.push(entry_idx);
@@ -1854,18 +2101,23 @@ pub(crate) fn install_isolated_packages(
                                 break 'eligible false;
                             }
                         }
-                        // From the cache TypeScript cannot reach the project's `@types`.
-                        if types_pkg_name_hashes.count() > 0 {
-                            let peers = &store.nodes.items_peers()[node_id.get() as usize];
-                            for peer in peers.slice() {
-                                let types_name_hash = types_package_name_hash(
-                                    dependencies[peer.dep_id as usize].name.slice(string_buf),
-                                );
-                                if types_pkg_name_hashes.contains(&types_name_hash)
-                                    && !entry_dependencies[entry_idx].slice().iter().any(|dep| {
-                                        dependencies[dep.dep_id as usize].name_hash
-                                            == types_name_hash
-                                    })
+                        // From the cache TypeScript cannot reach the project's `@types`: the
+                        // peer's companion is linked into the entry, or travels with the entry's
+                        // peers to the dependent that links it.
+                        if !store.peer_types.is_empty() {
+                            let peers = store.nodes.items_peers()[node_id.get() as usize].slice();
+                            let named = |name_hash: PackageNameHash| {
+                                entry_dependencies[entry_idx].slice().iter().any(|dep| {
+                                    dependencies[dep.dep_id as usize].name_hash == name_hash
+                                }) || peers.iter().any(|peer| {
+                                    dependencies[peer.dep_id as usize].name_hash == name_hash
+                                })
+                            };
+                            for peer in peers {
+                                if let Some(types_name_hash) = store
+                                    .peer_types
+                                    .companion_of(dependencies[peer.dep_id as usize].name_hash)
+                                    && !named(types_name_hash)
                                 {
                                     break 'eligible false;
                                 }

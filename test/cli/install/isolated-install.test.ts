@@ -7976,29 +7976,30 @@ describe.concurrent("global virtual store", () => {
   });
 
   // TypeScript checks a declaration file at its realpath and resolves its imports by walking up from
-  // there, falling back to `@types/*`. From `<cache>/links` that walk never reaches the project.
+  // there, falling back to `@types/*`. From `<cache>/links` that walk never reaches the project, so
+  // the node that binds a peer lends its `@types/<peer>` to the entry: the companion.
   test.concurrent.each([
     {
-      title: "stays project-local when the project has the @types package of its peer",
+      title: "links the @types package of its peer from the node that binds the peer",
       dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0", "@types/no-deps": "1.0.0" },
-      shared: false,
+      companion: true,
     },
     {
-      title: "stays project-local when the project has the @types package of its scoped peer",
+      title: "links the @types package of its scoped peer from the node that binds the peer",
       dependencies: { "scoped-peer-deps": "1.0.0", "@scoped/no-deps": "1.0.0", "@types/scoped__no-deps": "1.0.0" },
-      shared: false,
+      companion: true,
     },
     {
-      title: "is shared when the project has no @types package of its peer",
+      title: "links no @types package when the project has none for its peer",
       dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0", "@types/is-number": "1.0.0" },
-      shared: true,
+      companion: false,
     },
     {
-      title: "is shared when it depends on the @types package of its peer itself",
+      title: "links its own @types package when it depends on it itself",
       dependencies: { "peer-deps-with-own-types": "1.0.0", "no-deps": "1.0.0", "@types/no-deps": "1.0.0" },
-      shared: true,
+      companion: true,
     },
-  ])("a package with a peer $title", async ({ dependencies, shared }) => {
+  ])("a shared package with a peer $title", async ({ dependencies, companion }) => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: gvsBunfigOpts,
       files: { "package.json": JSON.stringify({ name: "test-pkg-global-store-peer-types", dependencies }) },
@@ -8011,11 +8012,155 @@ describe.concurrent("global virtual store", () => {
     const [entry] = (await readdirSorted(bunDir)).filter(entry => entry.startsWith(`${name}@1.0.0`));
     expect({
       entry: lstatSync(join(bunDir, entry)).isSymbolicLink(),
-      // Without peers, so shared either way.
       peer: lstatSync(join(bunDir, `${peer.replace("/", "+")}@1.0.0`)).isSymbolicLink(),
-    }).toEqual({ entry: shared, peer: true });
+      linked: await readdirSorted(join(bunDir, entry, "node_modules")),
+    }).toEqual({
+      entry: true,
+      peer: true,
+      linked: (companion ? ["@types", name, peer.split("/")[0]] : [name, peer]).sort(),
+    });
     expect(existsSync(join(bunDir, entry, "node_modules", peer, "package.json"))).toBe(true);
+    expect(existsSync(join(bunDir, entry, "node_modules", types, "package.json"))).toBe(companion);
     expect(existsSync(join(bunDir, "node_modules", types, "package.json"))).toBe(true);
+  });
+
+  // `typed-peer-lib` peers on `typed-peer`, whose types are `@types/typed-peer`: `value` is a
+  // `number` in 1.0.0 and a `string` in 2.0.0. `depends-on-old-typed-peer` depends on the library
+  // and on `@types/typed-peer@1.0.0`. The library's `@types` must be the one next to the `typed-peer`
+  // it binds to (the root's), not the nearest one (its dependent's).
+  test.concurrent("a shared package with a peer gets the @types package of the node that binds the peer", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: gvsBunfigOpts,
+      files: {
+        "package.json": JSON.stringify({
+          name: "test-pkg-global-store-peer-types-nested",
+          dependencies: {
+            "depends-on-old-typed-peer": "1.0.0",
+            "typed-peer": "2.0.0",
+            "@types/typed-peer": "2.0.0",
+          },
+        }),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            noEmit: true,
+            target: "esnext",
+            module: "esnext",
+            moduleResolution: "bundler",
+            lib: ["esnext"],
+            types: [],
+            skipLibCheck: true,
+          },
+        }),
+        "index.ts": `import { takes } from "depends-on-old-typed-peer";\nimport { value } from "typed-peer";\nexport const ok: boolean = takes(value);\n`,
+      },
+    });
+    const env = installEnv(packageDir);
+
+    await runBunInstall(env, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = (await readdirSorted(bunDir)).filter(entry => entry !== "node_modules");
+    const lib = entries.find(entry => entry.startsWith("typed-peer-lib@1.0.0"))!;
+    const dependent = entries.find(entry => entry.startsWith("depends-on-old-typed-peer@1.0.0"))!;
+    const typesVersion = async (entry: string) =>
+      (await file(join(bunDir, entry, "node_modules", "@types", "typed-peer", "package.json")).json()).version;
+    const layout = async () => ({
+      shared: Object.fromEntries(entries.map(entry => [entry, lstatSync(join(bunDir, entry)).isSymbolicLink()])),
+      libTypes: await typesVersion(lib),
+      dependentTypes: await typesVersion(dependent),
+    });
+    const expected = {
+      shared: {
+        "@types+typed-peer@1.0.0": true,
+        "@types+typed-peer@2.0.0": true,
+        [dependent]: true,
+        "typed-peer@2.0.0": true,
+        [lib]: true,
+      },
+      libTypes: "2.0.0",
+      dependentTypes: "1.0.0",
+    };
+    expect(await layout()).toEqual(expected);
+
+    await using check = spawn({
+      cmd: [bunExe(), "check"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([check.stdout.text(), check.stderr.text(), check.exited]);
+    expect({ output: stdout + stderr, exitCode }).toEqual({
+      output: expect.stringContaining("No type errors in 1 file"),
+      exitCode: 0,
+    });
+
+    // The same from bun.lock: the companion is not a lockfile row.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+    expect(await layout()).toEqual(expected);
+  });
+
+  // The peer travels with its dependent's entry, and so does the companion.
+  test.concurrent("the dependent of a shared package with a peer is shared too", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: gvsBunfigOpts,
+      files: {
+        "package.json": JSON.stringify({
+          name: "test-pkg-global-store-peer-types-dependent",
+          dependencies: {
+            "depends-on-typed-peer-lib": "1.0.0",
+            "typed-peer": "1.0.0",
+            "@types/typed-peer": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = (await readdirSorted(bunDir)).filter(entry => entry !== "node_modules");
+    const lib = entries.find(entry => entry.startsWith("typed-peer-lib@1.0.0"))!;
+    const dependent = entries.find(entry => entry.startsWith("depends-on-typed-peer-lib@1.0.0"))!;
+    expect({
+      shared: Object.fromEntries(entries.map(entry => [entry, lstatSync(join(bunDir, entry)).isSymbolicLink()])),
+      lib: await readdirSorted(join(bunDir, lib, "node_modules")),
+      dependent: await readdirSorted(join(bunDir, dependent, "node_modules")),
+    }).toEqual({
+      shared: {
+        "@types+typed-peer@1.0.0": true,
+        [dependent]: true,
+        "typed-peer@1.0.0": true,
+        [lib]: true,
+      },
+      lib: ["@types", "typed-peer", "typed-peer-lib"],
+      dependent: ["depends-on-typed-peer-lib", "typed-peer-lib"],
+    });
+  });
+
+  // A workspace is never shared, so it gets no companion link that `bun pm prune` would remove.
+  test.concurrent("a workspace with a peer links no @types package of it", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: gvsBunfigOpts,
+      files: {
+        "package.json": JSON.stringify({
+          name: "test-pkg-global-store-peer-types-workspace",
+          workspaces: ["packages/*"],
+          dependencies: { "typed-peer": "1.0.0", "@types/typed-peer": "1.0.0" },
+        }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          peerDependencies: { "typed-peer": "*" },
+        }),
+      },
+    });
+
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    expect(await readdirSorted(join(packageDir, "packages", "lib", "node_modules"))).toEqual(["typed-peer"]);
   });
 
   test("concurrent installs into a cold global store both succeed", async () => {

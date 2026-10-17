@@ -1,0 +1,31 @@
+{
+  "_id": "typed-peer",
+  "name": "typed-peer",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "typed-peer",
+      "version": "1.0.0",
+      "main": "index.js",
+      "_id": "typed-peer@1.0.0",
+      "dist": {
+        "integrity": "sha512-BWDETmnDz1YkBwtkg6vjD5bLU1EnPTKNr7nZnLPsutLW3c70Dg9xLxjreSpBSPSgDvKhdVZTVp0uOYqCWg6erA==",
+        "shasum": "a63ec9382396bc757e55a206b1a809d316891a12",
+        "tarball": "http://localhost:4873/typed-peer/-/typed-peer-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "typed-peer",
+      "version": "2.0.0",
+      "main": "index.js",
+      "_id": "typed-peer@2.0.0",
+      "dist": {
+        "integrity": "sha512-VGOndW9P9mAAAUIPwFUzLAdfh26YMcI5zAK4vlc8uugRVJCuDRUdBb3kVCS4z053PIII8L6qnWecsnhBSgs20A==",
+        "shasum": "ea72e0c560872649582319a068c9131a4a7bd683",
+        "tarball": "http://localhost:4873/typed-peer/-/typed-peer-2.0.0.tgz"
+      }
+    }
+  }
+}

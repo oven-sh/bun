@@ -10,7 +10,9 @@ use bun_semver::String as SemverString;
 use bun_wyhash::Wyhash;
 
 use crate::lockfile::{Lockfile, package};
-use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
+use crate::{
+    Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, PackageNameHash, Resolution,
+};
 
 pub use super::installer::Installer;
 
@@ -28,6 +30,46 @@ pub struct Store {
     pub(crate) nodes: node::List,
     /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
+    pub(crate) peer_types: PeerTypes,
+}
+
+/// The `@types/<peer>` package of each peer name, for the `@types` packages in the lockfile.
+///
+/// TypeScript checks a declaration file at its real path and resolves its imports by walking up
+/// from there, falling back to `@types/*`. From `<cache>/links` that walk never reaches the
+/// project, so under `install.globalStore` the node that binds a peer also lends its `@types/<peer>`
+/// to the dependent: the companion. Empty when the option is off.
+#[derive(Default)]
+pub struct PeerTypes {
+    by_peer: ArrayHashMap<PackageNameHash, PackageNameHash>,
+    names: ArrayHashMap<PackageNameHash, ()>,
+}
+
+impl PeerTypes {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.by_peer.count() == 0
+    }
+
+    pub(crate) fn put(
+        &mut self,
+        peer_name_hash: PackageNameHash,
+        types_name_hash: PackageNameHash,
+    ) -> Result<(), AllocError> {
+        self.by_peer.put(peer_name_hash, types_name_hash)?;
+        self.names.put(types_name_hash, ())
+    }
+
+    /// The name hash of `@types/<peer>`, if the lockfile has that package.
+    pub(crate) fn companion_of(&self, peer_name_hash: PackageNameHash) -> Option<PackageNameHash> {
+        if self.is_empty() {
+            return None;
+        }
+        self.by_peer.get(&peer_name_hash).copied()
+    }
+
+    pub(crate) fn is_companion_name(&self, name_hash: PackageNameHash) -> bool {
+        !self.is_empty() && self.names.contains(&name_hash)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

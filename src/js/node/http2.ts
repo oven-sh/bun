@@ -2255,8 +2255,8 @@ function endErroredStream(stream: Http2Stream) {
   const state = stream._writableState;
   // finalCalled also covers a file response, which has no _final and sends END_STREAM when the file is done.
   if (!state.ending || state.finalCalled) return;
-  // A chunk buffered behind the write in flight carries END_STREAM itself (isFinalWrite).
-  if (state.length !== state.writelen) return;
+  // A chunk buffered behind the write in flight carries END_STREAM itself (isFinalWrite). It can be empty.
+  if (state.bufferedRequestCount !== 0) return;
   const status = stream[bunHTTP2StreamStatus];
   // The native side drops a closed stream at the next read, and writeStream throws on an id it dropped.
   if ((status & (StreamState.EndStreamSent | StreamState.NativeErrored)) !== 0) return;
@@ -2353,8 +2353,7 @@ interface Http2StreamWritableState {
   destroyed: boolean;
   errorEmitted: boolean;
   finalCalled: boolean;
-  length: number;
-  writelen: number;
+  bufferedRequestCount: number;
 }
 type DuplexStream = import("node:stream").Duplex;
 interface DuplexStateAccessors {

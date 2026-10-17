@@ -6278,6 +6278,62 @@ describe.concurrent("write() after end()", () => {
   describe("last write in flight at end()", () => {
     const big = Buffer.alloc(128 * 1024, "a");
 
+    function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, payload]);
+    }
+
+    // Raw HTTP/2 client: one GET on stream 1. Resolves with [length, END_STREAM flag] of each DATA
+    // frame of the response, once the server has answered a PING that follows the first END_STREAM.
+    function rawGet(port) {
+      return new Promise((resolve, reject) => {
+        const socket = net.connect(port, "127.0.0.1");
+        const data = [];
+        let received = Buffer.alloc(0);
+        let pinged = false;
+        socket.on("error", reject);
+        socket.on("close", () => reject(new Error("closed before the PING was answered")));
+        socket.on("connect", () => {
+          socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+          socket.write(frame(4, 0, 0));
+          // :method GET, :scheme http, :path /, :authority x
+          socket.write(frame(1, 5, 1, Buffer.from([0x82, 0x86, 0x84, 0x41, 0x01, 0x78])));
+        });
+        socket.on("data", chunk => {
+          received = Buffer.concat([received, chunk]);
+          while (received.length >= 9) {
+            const length = received.readUIntBE(0, 3);
+            if (received.length < 9 + length) break;
+            const type = received[3];
+            const endStream = received[4] & 1;
+            received = received.subarray(9 + length);
+            if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
+            if (type === 6 && endStream) {
+              resolve(data);
+              socket.destroy();
+              return;
+            }
+            if (type !== 0) continue;
+            data.push([length, endStream]);
+            if (length > 0) {
+              const increment = Buffer.alloc(4);
+              increment.writeUInt32BE(length);
+              socket.write(frame(8, 0, 0, increment));
+              if (!endStream) socket.write(frame(8, 0, 1, increment));
+            }
+            if (endStream && !pinged) {
+              pinged = true;
+              socket.write(frame(6, 0, 0, Buffer.alloc(8)));
+            }
+          }
+        });
+      });
+    }
+
     it("server stream", async () => {
       const result = await serve((stream, late) => {
         stream.respond({ ":status": 200 });
@@ -6422,6 +6478,35 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, big.length + 4]);
     });
 
+    it("empty chunk buffered behind the blocked write", async () => {
+      // end("") leaves a chunk of length 0 behind the blocked write. It carries END_STREAM when that
+      // write completes. A second END_STREAM frame is a protocol error for the peer.
+      const server = http2.createServer();
+      try {
+        const serverClosed = Promise.withResolvers();
+        server.on("stream", stream => {
+          const late = record(stream, serverClosed);
+          stream.respond({ ":status": 200 });
+          stream.write(big);
+          stream.end("");
+          stream.write("late", late);
+        });
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        const data = await rawGet(port);
+        expect({
+          length: data.reduce((sum, [length]) => sum + length, 0),
+          // The END_STREAM flag of each DATA frame, without the frames that come before the first one.
+          endStream: data
+            .map(([, endStream]) => endStream)
+            .join("")
+            .replace(/^0+/, ""),
+          events: await serverClosed.promise,
+        }).toEqual({ length: big.length, endStream: "1", events: lateWriteEvents });
+      } finally {
+        server.close();
+      }
+    });
+
     // Guard, passes without the fix too: the END_STREAM must not make the callback of a write run
     // before its bytes are flushed.
     it("destroy() in the callback of the blocked write does not truncate the body", async () => {
@@ -6563,14 +6648,6 @@ describe.concurrent("write() after end()", () => {
     // the reset a tick later. With the writes and both reads in one turn, the first write
     // completes in between, when the native stream is already gone. That must not throw.
     it("peer reset that drops the native stream before the write completes", async () => {
-      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
-        const header = Buffer.alloc(9);
-        header.writeUIntBE(payload.length, 0, 3);
-        header[3] = type;
-        header[4] = flags;
-        header.writeUInt32BE(streamId, 5);
-        return Buffer.concat([header, payload]);
-      }
       // HEADERS (:status 200), RST_STREAM, then frames of an unknown type, which the receiver
       // ignores. They make the burst longer than the 64 KiB that one read of a TLS socket decrypts.
       const rstCode = Buffer.alloc(4);

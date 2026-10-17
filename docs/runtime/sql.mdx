@@ -912,7 +912,7 @@ You can configure the connection manually by passing options to the `SQL` constr
 | `transform`               |                           | [Column name transforms](#column-name-transforms), such as `SQL.camel`                                            |
 | `onconnect`, `onclose`    |                           | [Connection callbacks](#connection-callbacks)                                                                     |
 
-`sql.options` holds the resolved settings. Treat it as output: its timeouts are in milliseconds and `sslMode` is a number, so `new SQL(sql.options)` does not make an equal client. `console.log(sql.options)` prints `[REDACTED]` for the password and the TLS key.
+`sql.options` holds the resolved settings. Treat it as output: its timeouts are in milliseconds and `sslMode` is a number, so `new SQL(sql.options)` does not make an equal client. `console.log(sql.options)` prints `[REDACTED]` for the password and the TLS key. It has no prototype, so a setting that is not set reads as `undefined` whatever `Object.prototype` holds. Use `Object.hasOwn(sql.options, name)`, not `sql.options.hasOwnProperty(name)`.
 
 ### MySQL Options
 

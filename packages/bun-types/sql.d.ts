@@ -1183,6 +1183,10 @@ declare module "bun" {
      * long option names are set (`hostname`, not `host`), so
      * `new SQL(sql.options)` does not make an equal client. `console.log`
      * prints `[REDACTED]` for the password and the TLS key.
+     *
+     * The object has no prototype: a setting that is not set reads as
+     * `undefined` whatever `Object.prototype` holds, and methods such as
+     * `hasOwnProperty()` are not on it. Use `Object.hasOwn(sql.options, name)`.
      */
     options: Bun.__internal.DistributedMerge<SQL.Options>;
 

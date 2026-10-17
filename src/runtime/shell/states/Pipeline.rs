@@ -46,6 +46,62 @@ impl Default for PipelineState {
     }
 }
 
+/// What the pipe between a pipeline member and the next one is made of.
+#[derive(Clone, Copy)]
+enum PipeKind {
+    /// A `Cmd` writes into a `pipe(2)`, like in a POSIX shell. The reader's
+    /// stdin is a FIFO, and a subprocess that outlives its reader gets
+    /// SIGPIPE. (A socket cannot be opened through `/dev/stdin` on Linux, and
+    /// a Linux socketpair gives the writer ECONNRESET when the reader left
+    /// data unread.) Both ends are blocking, for a subprocess. A builtin makes
+    /// its end `O_NONBLOCK` before it writes (`IOWriter::claim_for_builtin`).
+    /// Every pipe on Windows is of this kind.
+    Pipe,
+    /// The other members keep the socketpair. A subshell or `if` shares its
+    /// write end between builtins and subprocesses, so that end cannot be
+    /// `O_NONBLOCK`: Bun writes to it with `send(MSG_DONTWAIT)` instead. On
+    /// macOS `socketpair_for_shell` skips SO_NOSIGPIPE so a subprocess that
+    /// writes still gets SIGPIPE.
+    #[cfg(unix)]
+    Socketpair,
+}
+
+impl PipeKind {
+    fn for_writer(writer: &ast::PipelineItem) -> PipeKind {
+        #[cfg(unix)]
+        if !matches!(writer, ast::PipelineItem::Cmd(_)) {
+            return PipeKind::Socketpair;
+        }
+        #[cfg(windows)]
+        let _ = writer;
+        PipeKind::Pipe
+    }
+
+    /// `[read end, write end]`.
+    fn open(self) -> bun_sys::Result<Pipe> {
+        #[cfg(unix)]
+        match self {
+            PipeKind::Pipe => bun_sys::pipe_cloexec(),
+            PipeKind::Socketpair => {
+                bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false)
+            }
+        }
+        #[cfg(windows)]
+        bun_sys::pipe()
+    }
+
+    fn writer_flags(self) -> io_writer::Flags {
+        io_writer::Flags {
+            pollable: true,
+            #[cfg(unix)]
+            is_socket: matches!(self, PipeKind::Socketpair),
+            #[cfg(unix)]
+            cmd_pipe: matches!(self, PipeKind::Pipe),
+            ..Default::default()
+        }
+    }
+}
+
 impl Pipeline {
     pub(crate) fn init(
         interp: &Interpreter,
@@ -149,19 +205,16 @@ impl Pipeline {
             return Some(Self::finish(interp, this, 0));
         }
 
+        // `kinds[i]` describes `pipes[i]`, the pipe the i-th runnable child writes to.
+        let kinds: Vec<PipeKind> = items
+            .iter()
+            .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
+            .take(cmd_count - 1)
+            .map(PipeKind::for_writer)
+            .collect();
         let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count - 1);
-        for _ in 0..cmd_count - 1 {
-            // On POSIX use a
-            // UNIX stream socketpair via `socketpairForShell` — on macOS
-            // that variant intentionally skips SO_NOSIGPIPE so the
-            // subprocess writing to a closed read end is killed by SIGPIPE
-            // (like a real shell) instead of seeing EPIPE and printing
-            // "Broken pipe" to stderr; on Windows use pipe().
-            #[cfg(windows)]
-            let r = bun_sys::pipe();
-            #[cfg(unix)]
-            let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
-            match r {
+        for kind in &kinds {
+            match kind.open() {
                 Ok(p) => pipes.push(p),
                 Err(e) => {
                     for p in &pipes {
@@ -199,17 +252,8 @@ impl Pipeline {
                 let stdout = if cmd_idx == cmd_count - 1 {
                     me.io.stdout.clone()
                 } else {
-                    // `is_socket` is set on POSIX — the POSIX
-                    // pipe is actually a socketpair end (see above).
-                    let w = IOWriter::init(
-                        pipes[cmd_idx][1],
-                        io_writer::Flags {
-                            pollable: true,
-                            is_socket: cfg!(unix),
-                            ..Default::default()
-                        },
-                        evtloop,
-                    );
+                    let w =
+                        IOWriter::init(pipes[cmd_idx][1], kinds[cmd_idx].writer_flags(), evtloop);
                     w.set_interp(interp_ptr);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,

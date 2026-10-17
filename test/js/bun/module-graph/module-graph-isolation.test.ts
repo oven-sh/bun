@@ -478,6 +478,7 @@ const dir = String(
     `,
     "disposed-while-building-pages.mjs": `
       import { heapStats } from "bun:jsc";
+      import { report } from ${JSON.stringify(join(import.meta.dir, "diag-kept.mjs"))};
       const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
       const servers = () => { Bun.gc(true); const counts = heapStats().objectTypeCounts; return (counts.HTTPServer ?? 0) + (counts.DebugHTTPServer ?? 0); };
       const use = async () => {
@@ -499,6 +500,7 @@ const dir = String(
       // (No more than before, not as many: the first one may have outlived that reading.)
       let turns = 0;
       await until(() => servers() <= none || ++turns === 2000);
+      if (servers() > none || process.env.DIAG_FORCE) report(["HTTPServer", "DebugHTTPServer"]);
       console.log(servers() <= none ? "collected" : "kept " + (servers() - none));
       process.exit(0);
     `,
@@ -3729,9 +3731,13 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
   });
   test("a server whose HTML routes were still being built is released with it", async () => {
-    expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
+    for (let i = 0; i < 30; i++)
+      expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
   });
   test("and the plugins those builds borrowed from it stay the server's", async () => {
+    for (let i = 0; i < 30; i++) await once();
+  });
+  async function once() {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(dir, "disposed-while-building-pages.mjs")],
       cwd: join(dir, "serve-plugin"),
@@ -3743,7 +3749,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "collected", exitCode: 0 });
-  });
+  }
   test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
     expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({
       stdout: `{"fileSinks":0,"childHeard":[],"tls":{"writes":[],"heard":[]}}`,

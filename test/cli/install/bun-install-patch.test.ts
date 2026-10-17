@@ -2288,6 +2288,61 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 
   // The main thread links a trusted package itself. The threads of the pool get the patch hash another way.
   test("hardlink backend, trusted npm package", () => namesPatchInOwnFile("npm", "hardlink", true));
+
+  /** A project whose no-deps@1.0.0 is patched, for the hoisted linker. Not installed yet. */
+  const patchedNoDeps = (prefix: string) =>
+    createProject(prefix, {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      patches: { "no-deps.patch": newFilePatch },
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "no-deps": "1.0.0" },
+        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps.patch" },
+      }),
+    });
+
+  // The marker does not say that a copy is patched, the file that names the patch does: `bun patch --commit` moves
+  // the marker out of the copy while git runs, and a commit that is killed there does not put it back.
+  test("a copy that names its patch and has no marker is not installed again", async () => {
+    await using project = patchedNoDeps("patch-own-file-no-marker");
+    const { dir, env } = project;
+    const copy = join(dir, "node_modules", "no-deps");
+    await bunOk(dir, env, "install");
+    const markers = (await readdir(copy)).filter(name => name.startsWith(".bun-tag-"));
+    expect(markers).toEqual([expect.stringMatching(/^\.bun-tag-[0-9a-f]{1,16}$/)]);
+    const named = await file(copy, "package.json").text();
+    expect(named).toStartWith(`{"_bunPatchHash":"${markers[0].slice(".bun-tag-".length)}",`);
+
+    await unlink(join(copy, markers[0]));
+    const files = (await readdir(copy)).sort();
+    expect(await bunOk(dir, env, "install")).toContain("(no changes)");
+    expect((await readdir(copy)).sort()).toEqual(files);
+    expect(await file(copy, "patched.txt").text()).toBe("hello world\n");
+  });
+
+  // With the symlink backend the file that names the patch is the only file of the copy itself. Every other one, the
+  // marker too, is a link into the cache folder, so a copy whose cache folder is gone has the name of its patch and
+  // nothing else.
+  test.skipIf(isWindows)("symlink backend: a copy whose cache folder is gone is installed again", async () => {
+    await using project = patchedNoDeps("patch-own-file-cache-gone");
+    const { dir, env } = project;
+    const copy = join(dir, "node_modules", "no-deps");
+    const install = () => bunOk(dir, env, "install", "--backend=symlink");
+    await install();
+    const named = await file(copy, "package.json").text();
+    expect(named).toStartWith(`{"_bunPatchHash":"`);
+    expect((await lstat(join(copy, "package.json"))).isSymbolicLink()).toBe(false);
+    expect((await lstat(join(copy, "patched.txt"))).isSymbolicLink()).toBe(true);
+    expect(await install()).toContain("(no changes)");
+
+    await rm(join(dir, ".bun-cache"), { recursive: true });
+    expect(await file(copy, "patched.txt").exists()).toBe(false);
+    expect(await file(copy, "package.json").text()).toBe(named);
+    expect(await install()).toContain("1 package installed");
+    expect(await file(copy, "patched.txt").text()).toBe("hello world\n");
+    expect(await file(copy, "package.json").text()).toBe(named);
+    expect(await install()).toContain("(no changes)");
+  });
 });
 
 // `patchedDependencies` is only read from the root package.json. The entries a

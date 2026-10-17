@@ -2247,6 +2247,7 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
+  session[bunHTTP2Native]?.setStreamClosing(this.id, code === NGHTTP2_CANCEL);
   setImmediate(rstNextTick.bind(session, this.id, code));
 }
 function uncorkNT(stream: Http2Stream) {
@@ -2591,8 +2592,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
+        session[bunHTTP2Native]?.setStreamClosing(this.#id, code === NGHTTP2_CANCEL);
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
+        // node's closeStream submits at once when user code had not ended the writable.
+        if (!ending) session[bunHTTP2Native]?.setStreamClosing(this.#id, false);
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
       // node destroys the stream once both halves have finished; without this a stream closed
@@ -2610,6 +2614,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
+    const closedBefore = (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
     // closed by definition — closing it is not an abort and nothing must be sent on the wire.
@@ -2684,6 +2689,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
+      // node: _destroy() skips closeStream() after close(), but flushes a held-back close(NGHTTP2_CANCEL).
+      if (!closedBefore || rstCode === NGHTTP2_CANCEL) session[bunHTTP2Native]?.setStreamClosing(this.#id, false);
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
 

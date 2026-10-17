@@ -1398,7 +1398,7 @@ impl Diff {
                     recorded: from.dependencies,
                 },
                 &survivors,
-                frozen,
+                keeps_missing_workspaces,
                 pm.options.log_level.is_silent(),
             );
         }

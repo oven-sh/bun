@@ -74,7 +74,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     to_lockfile: &Lockfile,
     root: &Survivor,
     survivors: &[Survivor],
-    frozen: bool,
+    keeps_missing_workspaces: bool,
     silent: bool,
 ) {
     let pkgs = from_lockfile.packages.slice();
@@ -94,8 +94,9 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
                 return Some(id);
             }
         }
-        // A frozen install must not ask the registry for a workspace's name; a plain one resolves.
-        if !frozen {
+        // A frozen install and `bun pm fetch` must not ask the registry for a workspace's name. A
+        // plain install resolves it.
+        if !keeps_missing_workspaces {
             return None;
         }
         let rows = recorded.begin() as usize..recorded.end() as usize;

@@ -173,6 +173,40 @@ it.each(["packages/*", "packages/web"])(
   },
 );
 
+it.each(["*", "^1.0.0", "workspace:*"])(
+  "should not ask the registry for a workspace that the root depends on as %s and that is not on disk yet",
+  async range => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeBunfig(textLockfile);
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { lib: range } }),
+    );
+    await mkdir(join(package_dir, "packages", "lib"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "lib", "package.json"),
+      JSON.stringify({ name: "lib", version: "1.0.0" }),
+    );
+    {
+      const { stderr, exitCode } = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+    for (const name of [".bun-cache", "node_modules", "packages"]) {
+      await rm(join(package_dir, name), { recursive: true, force: true });
+    }
+    urls.length = 0;
+
+    const { stderr, exitCode } = await fetchIntoCache(cacheDir());
+    expect(stderr).toContain(
+      'error: the root package depends on workspace "lib" (packages/lib), which is listed in bun.lock but not on disk',
+    );
+    expect(urls).toEqual([]);
+    expect(exitCode).toBe(1);
+  },
+);
+
 it("should not write bun.lock when the lockfile comes from package-lock.json", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

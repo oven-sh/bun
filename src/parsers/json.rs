@@ -981,7 +981,7 @@ pub mod scan {
         let end = super::skip_ws_and_comments(contents, start)?;
         Some(Gap {
             end,
-            has_comment: contents[start..end].contains(&b'/'),
+            has_comment: strings::contains_char(&contents[start..end], b'/'),
         })
     }
 

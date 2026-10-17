@@ -68,6 +68,16 @@ function ranFiles(stderr: string, names: string[]): string[] {
   return names.filter(n => stderr.includes(n + ":")).sort();
 }
 
+/** The given test-file basenames in the order their file header first appears
+ *  in bun test's stderr. Names that never appear are omitted. */
+function fileOrder(stderr: string, names: string[]): string[] {
+  return names
+    .map(n => [stderr.indexOf(n + ":"), n] as const)
+    .filter(([i]) => i !== -1)
+    .sort(([a], [b]) => a - b)
+    .map(([, n]) => n);
+}
+
 // The --watch test at the end is the slow one; everything else is independent
 // git repos so run them concurrently.
 describe.concurrent("bun test --changed", () => {
@@ -392,6 +402,175 @@ describe.concurrent("bun test --changed", () => {
     const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("bun test --changed-first", () => {
+  // x.test.ts + y.test.ts import shared.ts; a.test.ts and b.test.ts do not.
+  // Affected files sort after unaffected ones so an ignored flag (system bun)
+  // does not accidentally produce the expected order.
+  const fixture = {
+    "package.json": JSON.stringify({ name: "changed-first", type: "module" }),
+    "shared.ts": `export const v = 1;\n`,
+    "a.test.ts": `import { test, expect } from "bun:test";\ntest("a", () => expect(1).toBe(1));\n`,
+    "b.test.ts": `import { test, expect } from "bun:test";\ntest("b", () => expect(1).toBe(1));\n`,
+    "x.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./shared";\ntest("x", () => expect(v).toBe(1));\n`,
+    "y.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./shared";\ntest("y", () => expect(v).toBe(1));\n`,
+  };
+  const names = ["a.test.ts", "b.test.ts", "x.test.ts", "y.test.ts"];
+  const affected = ["x.test.ts", "y.test.ts"];
+  const unaffected = ["a.test.ts", "b.test.ts"];
+
+  async function run(cwd: string, extra: string[] = []) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed-first", ...extra],
+      cwd,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("serial: affected files run first, nothing is dropped", async () => {
+    using dir = tempDir("changed-first-serial", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await run(String(dir));
+    // All four files ran.
+    expect(ranFiles(stderr, names)).toEqual(names);
+    // Affected (x, y) print before unaffected (a, b).
+    expect(fileOrder(stderr, names)).toEqual([...affected, ...unaffected]);
+    expect(stderr).toContain("--changed-first:");
+    expect(stderr).toContain("2/4 test files affected");
+    expect(exitCode).toBe(0);
+  });
+
+  test("parallel: affected files dispatched before any worker starts its own chunk", async () => {
+    using dir = tempDir("changed-first-parallel", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    // A huge --parallel-delay keeps the pool at one worker, so file headers
+    // appear strictly in dispatch order and the priority range is observable.
+    const { stderr, exitCode } = await run(String(dir), ["--parallel=2", "--parallel-delay=1000000"]);
+    expect(ranFiles(stderr, names)).toEqual(names);
+    expect(fileOrder(stderr, names)).toEqual([...affected, ...unaffected]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("no changed files: runs everything in the usual order", async () => {
+    using dir = tempDir("changed-first-none", fixture);
+    initRepo(String(dir));
+
+    const { stderr, exitCode } = await run(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(names);
+    expect(stderr).toContain("--changed-first:");
+    expect(stderr).toContain("no changed files");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--changed-first=<ref> compares against a commit", async () => {
+    using dir = tempDir("changed-first-ref", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// v2\n");
+    git(String(dir), "add", "-A");
+    git(String(dir), "commit", "-q", "-m", "v2");
+
+    // Working tree is clean, so bare --changed-first prioritizes nothing.
+    {
+      const { stderr, exitCode } = await run(String(dir));
+      expect(stderr).toContain("no changed files");
+      expect(ranFiles(stderr, names)).toEqual(names);
+      expect(exitCode).toBe(0);
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed-first=HEAD~1"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(fileOrder(stderr, names)).toEqual([...affected, ...unaffected]);
+    expect(ranFiles(stderr, names)).toEqual(names);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--shard: membership is unchanged; affected files run first within the shard", async () => {
+    using dir = tempDir("changed-first-shard", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    async function shardFiles(extra: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...extra],
+        cwd: String(dir),
+        env: gitEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return { ran: ranFiles(stderr, names), order: fileOrder(stderr, names) };
+    }
+
+    for (const shard of ["1/2", "2/2"]) {
+      const without = await shardFiles([`--shard=${shard}`]);
+      const withFlag = await shardFiles(["--changed-first", `--shard=${shard}`]);
+      // Same files either way.
+      expect(withFlag.ran).toEqual(without.ran);
+      // Within the shard, affected files come first.
+      const aff = withFlag.order.filter(n => affected.includes(n));
+      const unaff = withFlag.order.filter(n => unaffected.includes(n));
+      expect(withFlag.order).toEqual([...aff, ...unaff]);
+      // Each 1/2 shard of {a, b, x, y} holds one affected and one unaffected
+      // file, so this reordering is observable.
+      expect(aff.length).toBeGreaterThan(0);
+      expect(unaff.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("--timings: affected files are ordered slowest-first", async () => {
+    using dir = tempDir("changed-first-timings", {
+      ...fixture,
+      "timings.json": JSON.stringify({
+        version: 1,
+        files: { "y.test.ts": 100, "x.test.ts": 10, "a.test.ts": 50, "b.test.ts": 50 },
+      }),
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await run(String(dir), ["--timings=timings.json"]);
+    expect(ranFiles(stderr, names)).toEqual(names);
+    // y before x (slower), then the unaffected tail.
+    expect(fileOrder(stderr, names)).toEqual(["y.test.ts", "x.test.ts", ...unaffected]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--changed and --changed-first together is an error", async () => {
+    using dir = tempDir("changed-first-conflict", fixture);
+    initRepo(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--changed-first"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("cannot be used together");
+    expect(exitCode).not.toBe(0);
   });
 });
 

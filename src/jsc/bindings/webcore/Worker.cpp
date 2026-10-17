@@ -53,6 +53,7 @@
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
 
 namespace WebCore {
 
@@ -265,10 +266,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable, (JSGlobalObject * lexicalG
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// Node also gives an ArrayBuffer a detach key here, so that nothing can detach it afterwards:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L1078-L1086
+// JSC has no detach key; the permanent pin is the closest thing. With isDetachable() false,
+// transferTo() copies instead of detaching (see pinStorage in bindings.cpp) and a BYOB read throws.
+// Only this entry point pins: napi.cpp marks its external buffers with markAsUntransferable() alone,
+// because Node keeps those detachable.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    if (auto* object = callFrame->argument(0).getObject())
-        markAsUntransferable(lexicalGlobalObject->vm(), *object);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSValue value = callFrame->argument(0);
+    auto* object = value.getObject();
+    if (!object)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    markAsUntransferable(vm, *object);
+    if (auto* arrayBuffer = JSC::toUnsharedArrayBuffer(vm, value))
+        arrayBuffer->pinAndLock();
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

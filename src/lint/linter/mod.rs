@@ -1524,7 +1524,8 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             }
             _ => return,
         }
-        let rules = match comment::parse_json_like_config(self.file.slice(comment.value)) {
+        let rules = match comment::parse_json_like_config(self.file.slice_of_comment(comment.value))
+        {
             Ok(rules) => rules,
             Err(message) => return self.fatal(comment, message),
         };
@@ -1839,7 +1840,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             ]);
             return self.error(comment, None, message);
         }
-        let list = self.file.slice(comment.value);
+        let list = self.file.slice_of_comment(comment.value);
         let mut names = comment::parse_list_config(list);
         let (line, column) = if kind == disable::Kind::DisableNextLine {
             end
@@ -1877,8 +1878,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         parents.push(disable::Parent {
             comment: comment.span,
             list,
+            list_span: comment.value,
             names,
-            justification: self.file.slice(comment.justification),
+            justification: self.file.slice_of_comment(comment.justification),
             start,
             tool: match self.file.slice(comment.label_span).starts_with(b"oxlint") {
                 true => "oxlint",

@@ -2029,6 +2029,38 @@ test("an autolink can't contain ASCII control characters", () => {
   expect(Markdown.html("<http://a\x7Fb>")).toBe("<p>&lt;http://a\x7Fb&gt;</p>\n");
 });
 
+// A run of one or two `~` only matches a run of the same length, and the match uses up both runs.
+describe("strikethrough", () => {
+  test.each([
+    ["~a~", "<del>a</del>", "~a~"],
+    ["~~a~~", "<del>a</del>", "~~a~~"],
+    ["~~a~", "~~a~", "~~a~"],
+    ["~a~~", "~a~~", "~a~~"],
+    ["b ~~~a~~~", "b ~~~a~~~", "b ~~~a~~~"],
+    ["~a~ ~~b~~ ~c~", "<del>a</del> <del>b</del> <del>c</del>", "~a~ ~~b~~ ~c~"],
+    ["~~a ~b~ c~~", "<del>a <del>b</del> c</del>", "~~a ~b~ c~~"],
+    ["~a ~~b~~ c~", "<del>a <del>b</del> c</del>", "~a ~~b~~ c~"],
+    ["*~a~*", "<em><del>a</del></em>", "<em>~a~</em>"],
+    ["~*a*~", "<del><em>a</em></del>", "~<em>a</em>~"],
+    ["**~~a~~**", "<strong><del>a</del></strong>", "<strong>~~a~~</strong>"],
+    ["~~__a__~~", "<del><strong>a</strong></del>", "~~<strong>a</strong>~~"],
+    ["*~a*~", "<em>~a</em>~", "<em>~a</em>~"],
+    ["~*a~*", "<del>*a</del>*", "~<em>a~</em>"],
+    ["~~a~~b~~c~~", "<del>a</del>b<del>c</del>", "~~a~~b~~c~~"],
+    ["~a~b~c~", "<del>a</del>b<del>c</del>", "~a~b~c~"],
+    ["a~~b~~c", "a<del>b</del>c", "a~~b~~c"],
+    ["~~ a~~", "~~ a~~", "~~ a~~"],
+    ["~~a ~~", "~~a ~~", "~~a ~~"],
+    ["~~a\nb~~", "<del>a\nb</del>", "~~a\nb~~"],
+    ["~~a~~~", "~~a~~~", "~~a~~~"],
+    ["~~**a~~**", "<del>**a</del>**", "~~<strong>a~~</strong>"],
+    ["_~~a~~_ ~b~", "<em><del>a</del></em> <del>b</del>", "<em>~~a~~</em> ~b~"],
+  ])("%j", (text, on, off) => {
+    expect(Markdown.html(text)).toBe(`<p>${on}</p>\n`);
+    expect(Markdown.html(text, { strikethrough: false })).toBe(`<p>${off}</p>\n`);
+  });
+});
+
 test("a long delimiter run uses all of its characters to open and close emphasis", () => {
   const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
   const nested = (depth: number, text: string) =>

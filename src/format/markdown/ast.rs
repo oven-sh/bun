@@ -343,6 +343,54 @@ impl Tree {
         }
     }
 
+    /// For a tree that was parsed from a copy of `text` in which every line break is `\n`, after [`Tree::map_offsets`]. Puts
+    /// the line breaks of `text` back into the strings that were copied: the `value` of HTML and text nodes, and the label
+    /// of a definition. In those, the nth line break of the string is the nth line break of the node, unless one was
+    /// written as `&#10;`.
+    pub(crate) fn restore_line_breaks(&mut self, text: &[u8]) {
+        for node in &mut self.nodes {
+            let string = match node.kind {
+                Kind::Html | Kind::Text => &mut node.value,
+                Kind::Definition => &mut node.third,
+                _ => continue,
+            };
+            let mut source = text
+                .get(node.start as usize..node.end as usize)
+                .unwrap_or_default();
+            if string.len & Str::OWNED == 0 || !bun_core::strings::contains_char(source, b'\r') {
+                continue;
+            }
+            let (start, len) = (string.start as usize, (string.len & !Str::OWNED) as usize);
+            let copied = self.strings.get(start..start + len).unwrap_or_default();
+            if !bun_core::strings::contains_char(copied, b'\n') {
+                continue;
+            }
+            let copied = copied.to_vec();
+            let restored_from = self.strings.len();
+            for (index, line) in bun_core::strings::split(&copied, b"\n").enumerate() {
+                if index > 0 {
+                    let at =
+                        bun_core::strings::index_of_any(source, b"\r\n").unwrap_or(source.len());
+                    let len = match &source[at..] {
+                        [b'\r', b'\n', ..] => 2,
+                        [] => 0,
+                        _ => 1,
+                    };
+                    self.strings.extend_from_slice(match len {
+                        0 => b"\n",
+                        _ => &source[at..at + len],
+                    });
+                    source = &source[at + len..];
+                }
+                self.strings.extend_from_slice(line);
+            }
+            *string = Str {
+                start: restored_from as u32,
+                len: (self.strings.len() - restored_from) as u32 | Str::OWNED,
+            };
+        }
+    }
+
     /// The column alignments of the table `node`.
     pub fn aligns(&self, node: &Node) -> &[Align] {
         let first = node.first_align as usize;

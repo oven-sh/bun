@@ -88,6 +88,7 @@ impl Language for Json {
         Ok(Parsed {
             tree: Box::new(tree),
             comments,
+            joined: Vec::new(),
         })
     }
 }

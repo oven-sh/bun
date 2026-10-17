@@ -11,7 +11,7 @@ use bun_core::strings;
 use bun_format::markdown::ast::{self, Kind, NONE, NodeId, Tree};
 use bun_format::markdown::{Extensions, parse_to_mdast};
 use bun_lint::ast::File;
-use bun_lint::languages::Comment;
+use bun_lint::languages::{Comment, JoinedComment};
 use bun_lint::span::Span;
 use std::cell::{Cell, OnceCell};
 use std::sync::OnceLock;
@@ -223,22 +223,25 @@ impl<'t> Document<'t> {
     }
 
     /// The HTML comments in the file, which can configure ESLint: `<!-- eslint-disable -->`.
-    pub(crate) fn comments(&self) -> Vec<Comment> {
-        let mut comments = Vec::new();
+    pub(crate) fn comments(&self) -> (Vec<Comment>, Vec<JoinedComment>) {
+        let (mut comments, mut joined) = (Vec::new(), Vec::new());
         if !strings::contains(self.text, b"eslint") {
-            return comments;
+            return (comments, joined);
         }
         let mut node = self.root();
         loop {
             if node.kind() == Kind::Html {
-                let start = node.span().start;
-                comments.extend(crate::util::html_comments(node.text()).map(|(from, to)| {
-                    let span = Span::new(start + from as u32, start + to as u32);
-                    Comment {
-                        span,
-                        value: span.shrink(4, 3),
+                let html = JoinedComment::new(self.text, node.span(), node.container_prefixes());
+                for (from, to) in crate::util::html_comments(html.text()) {
+                    let span = html.span_of(from..to);
+                    let value = span.shrink(4, 3);
+                    comments.push(Comment { span, value });
+                    let is_inside = |gap: &&Span| value.contains(**gap);
+                    let gaps: Vec<Span> = html.gaps().iter().filter(is_inside).copied().collect();
+                    if !gaps.is_empty() {
+                        joined.push(JoinedComment::new(self.text, value, gaps));
                     }
-                }));
+                }
             }
             if let Some(child) = node.first_child() {
                 node = child;
@@ -251,7 +254,7 @@ impl<'t> Document<'t> {
                 }
                 match node.parent() {
                     Some(parent) => node = parent,
-                    None => return comments,
+                    None => return (comments, joined),
                 }
             }
         }
@@ -384,6 +387,27 @@ impl<'d> Node<'d> {
     #[inline]
     pub(crate) fn text(self) -> &'d [u8] {
         self.document.slice(self.span())
+    }
+
+    /// What the source has at the start of each further line of the node that `node.value` doesn't have: the `> ` of a
+    /// block quote, the indentation of a list item.
+    fn container_prefixes(self) -> Vec<Span> {
+        let (text, value) = (self.text(), self.value().unwrap_or_default());
+        let mut prefixes = Vec::new();
+        if text == value {
+            return prefixes;
+        }
+        let lines = crate::util::lines(text).zip(crate::util::lines(value));
+        for (line, line_of_value) in lines.skip(1) {
+            let same = line.iter().rev().zip(line_of_value.iter().rev());
+            let prefix = line.len() - same.take_while(|(a, b)| a == b).count();
+            if prefix > 0 {
+                let start =
+                    self.span().start + (line.as_ptr().addr() - text.as_ptr().addr()) as u32;
+                prefixes.push(Span::new(start, start + prefix as u32));
+            }
+        }
+        prefixes
     }
 
     /// `sourceCode.getParent(node)`

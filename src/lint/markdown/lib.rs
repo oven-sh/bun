@@ -187,10 +187,11 @@ impl bun_lint::languages::Language for Markdown {
                 column: 1,
             }]);
         };
-        let comments = Document::new(&mdast, text).comments();
+        let (comments, joined) = Document::new(&mdast, text).comments();
         Ok(Parsed {
             tree: Box::new(mdast),
             comments,
+            joined,
         })
     }
 }

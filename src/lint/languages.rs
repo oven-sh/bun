@@ -71,6 +71,8 @@ pub struct Parsed {
     pub tree: Box<dyn Any + Send + Sync>,
     /// In source order. Comments that don't start with `eslint` are ignored.
     pub comments: Vec<Comment>,
+    /// The comments whose text isn't one piece of the source.
+    pub joined: Vec<JoinedComment>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -79,6 +81,74 @@ pub struct Comment {
     pub span: Span,
     /// Excludes the delimiters.
     pub value: Span,
+}
+
+/// The text of a comment that the source interrupts. In Markdown, every further line of a comment in a block quote starts
+/// with `> `, which isn't part of the comment.
+pub struct JoinedComment {
+    /// [`Comment::value`]
+    value: Span,
+    /// The parts of `value` that don't belong to the comment, in source order.
+    gaps: Vec<Span>,
+    /// `value` without `gaps`.
+    text: Vec<u8>,
+}
+
+impl JoinedComment {
+    /// `text` is the text of the file.
+    pub fn new(text: &[u8], value: Span, gaps: Vec<Span>) -> JoinedComment {
+        let mut joined = Vec::with_capacity(value.len() as usize);
+        let mut from = value.start;
+        for &gap in &gaps {
+            joined.extend_from_slice(
+                text.get(Span::before(from, gap).range())
+                    .unwrap_or_default(),
+            );
+            from = gap.end;
+        }
+        joined.extend_from_slice(
+            text.get(Span::new(from, value.end).range())
+                .unwrap_or_default(),
+        );
+        JoinedComment {
+            value,
+            gaps,
+            text: joined,
+        }
+    }
+
+    pub(crate) fn value(&self) -> Span {
+        self.value
+    }
+
+    pub fn gaps(&self) -> &[Span] {
+        &self.gaps
+    }
+
+    pub fn text(&self) -> &[u8] {
+        &self.text
+    }
+
+    /// The index into [`JoinedComment::text`] of `offset`, which is an offset into the source and not in a gap.
+    pub(crate) fn index_of(&self, offset: u32) -> usize {
+        let before = self.gaps.iter().take_while(|gap| gap.end <= offset);
+        let skipped: u32 = before.map(|gap| gap.len()).sum();
+        offset.saturating_sub(self.value.start + skipped) as usize
+    }
+
+    /// Where `part` of [`JoinedComment::text`] is in the source. An end of `part` that is at a gap maps to the end of the gap.
+    pub fn span_of(&self, part: std::ops::Range<usize>) -> Span {
+        let offset_of = |index: usize| {
+            let start = self.value.start + index as u32;
+            self.gaps
+                .iter()
+                .fold(start, |offset, gap| match gap.start <= offset {
+                    true => offset + gap.len(),
+                    false => offset,
+                })
+        };
+        Span::new(offset_of(part.start), offset_of(part.end))
+    }
 }
 
 pub struct SyntaxError {

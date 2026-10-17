@@ -186,7 +186,7 @@ function configSection(rule: Rule, { toggle, needsOptions, defaults }: Config) {
 }
 
 /** The files that an ESLint config usually gives a language to. */
-const FILES: Record<string, string> = {
+export const FILES: Record<string, string> = {
   "json/json": "**/*.json",
   "json/jsonc": "**/*.jsonc",
   "json/json5": "**/*.json5",

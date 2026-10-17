@@ -165,7 +165,8 @@ impl AsRead {
 }
 
 /// Fills `tree` with the mdast of `text`, which can have any kind of line break, and returns the root. Offsets in the
-/// tree are offsets into `text`. In a string that isn't a plain range of `text`, every line break is `\n`.
+/// tree are offsets into `text`. In a string that isn't a plain range of `text`, every line break is `\n`, except in
+/// those that [`ast::Tree::restore_line_breaks`] names.
 pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Option<ast::NodeId> {
     let is_changed = bun_core::strings::index_of_any(text, b"\r\0").is_some();
     let as_read = match is_changed {
@@ -198,6 +199,7 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
                 has_replaced
             },
         );
+        tree.restore_line_breaks(text);
     }
     Some(root)
 }

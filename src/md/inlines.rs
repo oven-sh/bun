@@ -116,6 +116,7 @@ impl Default for EmphDelim {
 }
 
 impl EmphDelim {
+    #[inline]
     fn has_room(&self, is_open: bool) -> bool {
         let num = if is_open {
             self.open_num
@@ -125,6 +126,7 @@ impl EmphDelim {
         (num as usize) < MAX_EMPH_MATCHES
     }
 
+    #[inline]
     fn push_match(&mut self, is_open: bool, size: u8) {
         let (sizes, num) = match is_open {
             true => (&mut self.open_sizes, &mut self.open_num),
@@ -1221,24 +1223,21 @@ impl Parser<'_> {
                     };
                     let use_ = usize::from(size);
 
-                    self.emph_delims[oi].remaining -= use_;
-                    self.emph_delims[oi].open_count += use_;
-                    if (self.emph_delims[oi].open_num as usize) < MAX_EMPH_MATCHES {
-                        let n = self.emph_delims[oi].open_num as usize;
-                        self.emph_delims[oi].open_sizes[n] = size;
-                        self.emph_delims[oi].open_num += 1;
-                    } else {
-                        self.room_for_more_matches(oi, true).push_match(true, size);
+                    let opener = &mut self.emph_delims[oi];
+                    opener.remaining -= use_;
+                    opener.open_count += use_;
+                    match opener.has_room(true) {
+                        true => opener.push_match(true, size),
+                        false => self.room_for_more_matches(oi, true).push_match(true, size),
                     }
-                    self.emph_delims[closer_idx].remaining -= use_;
-                    self.emph_delims[closer_idx].close_count += use_;
-                    if (self.emph_delims[closer_idx].close_num as usize) < MAX_EMPH_MATCHES {
-                        let n = self.emph_delims[closer_idx].close_num as usize;
-                        self.emph_delims[closer_idx].close_sizes[n] = size;
-                        self.emph_delims[closer_idx].close_num += 1;
-                    } else {
-                        self.room_for_more_matches(closer_idx, false)
-                            .push_match(false, size);
+                    let closer = &mut self.emph_delims[closer_idx];
+                    closer.remaining -= use_;
+                    closer.close_count += use_;
+                    match closer.has_room(false) {
+                        true => closer.push_match(false, size),
+                        false => self
+                            .room_for_more_matches(closer_idx, false)
+                            .push_match(false, size),
                     }
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)

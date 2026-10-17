@@ -2174,6 +2174,100 @@ describe.concurrent("bun lint with built-in Markdown", () => {
     expect(severities).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1]);
   });
 
+  describe("a directive comment that spans lines inside a container", () => {
+    const within = (first: string, rest: string, text: string) =>
+      `${text
+        .split("\n")
+        .map((line, i) => (i ? rest : first) + line)
+        .join("\n")}\n`;
+    const directive = "<!-- eslint-disable markdown/no-html,\nmarkdown/no-bare-urls -->";
+    const bad = "<b>a</b> https://x.y";
+
+    // The `> ` or the indentation at the start of the second line isn't part of the comment.
+    test.each([
+      ["a block quote", within("> ", "> ", `${directive}\n${bad}`)],
+      ["a block quote without the space", within(">", ">", `${directive}\n${bad}`)],
+      ["a block quote with a tab", within(">\t", ">\t", `${directive}\n${bad}`)],
+      ["a list item", within("- ", "  ", `${directive}\n${bad}`)],
+      ["a numbered list item", within("10. ", "    ", `${directive}\n${bad}`)],
+      ["a list item indented with a tab", within("-\t", "\t", `${directive}\n${bad}`)],
+      ["a block quote in a list item", within("- > ", "  > ", `${directive}\n${bad}`)],
+      ["a list item in a block quote", within("> - ", ">   ", `${directive}\n${bad}`)],
+      ["a block quote in a block quote", within("> > ", "> > ", `${directive}\n${bad}`)],
+      ["a footnote definition", `${within("[^a]: ", "    ", `${directive}\n${bad}`)}\n[^a]\n`],
+      ["a paragraph in a block quote", within("> ", "> ", `a ${directive} ${bad}`)],
+      ["a paragraph in a block quote, with a lazy second line", `> a ${directive} ${bad}\n`],
+      ["a block quote with CRLF", within("> ", "> ", `${directive}\n${bad}`).replaceAll("\n", "\r\n")],
+    ])("disables every rule it lists: %s", async (_, text) => {
+      const result = await lint({ ...project, "a.gfm.md": text }, ["-f", "json", "a.gfm.md"]);
+      const [{ messages, suppressedMessages }] = JSON.parse(result.raw);
+      expect(messages).toEqual([]);
+      expect(suppressedMessages.map((it: any) => it.ruleId)).toEqual(["markdown/no-html", "markdown/no-bare-urls"]);
+    });
+
+    test("configures a rule, and has a justification", async () => {
+      const result = await lint(
+        {
+          ...project,
+          "config.md": within(
+            "> ",
+            "> ",
+            '<!-- eslint markdown/no-html: ["error",\n{ allowed: ["b"] }] -->\n<b>a</b> <i>c</i>',
+          ),
+          "why.md": within("> ", "> ", "<!-- eslint-disable-next-line markdown/no-html -- one\ntwo -->\n<b>a</b>"),
+        },
+        ["-f", "json", "."],
+      );
+      expect(summary(result.raw)).toBe(
+        'config.md: 3:12 markdown/no-html HTML element "i" is not allowed.\n' +
+          'why.md: 3:3 markdown/no-html HTML element "b" is not allowed. [suppressed: one\ntwo]',
+      );
+    });
+
+    // The plugin's ranges for these fixes are wrong, because it finds a comment by its index in the HTML node's `value`,
+    // which has no `> `: 2 to 65, -1 to 17 and 15 to 38.
+    test("--fix removes what is unused, and nothing else", async () => {
+      const files = {
+        "all.gfm.md": within("> ", "> ", `${directive}\na`),
+        "first.gfm.md": within("> ", "> ", `${directive}\nhttps://x.y`),
+        "last.gfm.md": within("> ", "> ", `${directive}\n<b>a</b>`),
+      };
+      const found = await lint({ ...project, ...files }, ["-f", "json", "."]);
+      expect(summary(found.raw).replaceAll(/^.* markdown\/.*\n?/gm, "")).toMatchInlineSnapshot(`
+        "all.gfm.md: 1:3 null Unused eslint-disable directive (no problems were reported from 'markdown/no-html' or 'markdown/no-bare-urls'). [fix 2,67 " "]
+        first.gfm.md: 1:3 null Unused eslint-disable directive (no problems were reported from 'markdown/no-html'). [fix 22,42 ""]
+        last.gfm.md: 1:3 null Unused eslint-disable directive (no problems were reported from 'markdown/no-bare-urls'). [fix 38,63 ""]
+        "
+      `);
+      const fixed = await lint({ ...project, ...files }, ["--fix", "."], Object.keys(files));
+      expect(fixed.files).toEqual({
+        "all.gfm.md": ">  \n> a\n",
+        "first.gfm.md": "> <!-- eslint-disable markdown/no-bare-urls -->\n> https://x.y\n",
+        "last.gfm.md": "> <!-- eslint-disable markdown/no-html -->\n> <b>a</b>\n",
+      });
+    });
+  });
+
+  test("with CRLF, text that spans lines keeps its line breaks", async () => {
+    const result = await lint(
+      {
+        ...project,
+        // The plugin counts from the start of the HTML in its `value`, which has no `> `, so it is two columns off.
+        "h1.md": "> <h1>a</h1>\r\n> <h1>b</h1>\r\n",
+        "label.md": "[a\r\nb]: c\r\n",
+        "heading.md": "d\\*\r\ne\r\n---\r\n\r\nd\\*\r\ne\r\n---\r\n",
+      },
+      ["-f", "json", "."],
+    );
+    expect(summary(result.raw).replaceAll(/^.*no-html.*\n/gm, "")).toBe(
+      [
+        "h1.md: 2:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.",
+        'heading.md: 5:1 markdown/no-duplicate-headings Duplicate heading "d*\r\ne" found.',
+        "label.md: 1:1 markdown/no-unused-definitions Unexpected unused definition `a b` (label: `a\r\nb`) found.",
+      ].join("\n"),
+    );
+  });
+
   test("noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity", async () => {
     const files = {
       ...markdownPackage(),
@@ -2256,19 +2350,36 @@ describe.concurrent("bun lint with built-in Markdown", () => {
       `"markdown/fenced-code-meta": ["error", "sometimes"]`,
       'Value "sometimes" should be equal to one of the allowed values.',
     ],
-    [
-      `"markdown/no-missing-link-fragments": ["error", { allowPattern: "(" }]`,
-      "Invalid regular expression: /(/u: Unterminated group",
-    ],
-    [
-      `"markdown/no-multiple-h1": ["error", { frontmatterTitle: "(" }]`,
-      "Invalid regular expression: /(/iu: Unterminated group",
-    ],
   ])("options are validated: %s", async (rule, message) => {
     const config = markdownConfig(`{ files: ["a.md"], rules: { ${rule} } }`);
     const result = await lint({ ...markdownPackage(), "eslint.config.mjs": config, "a.md": "# a\n" }, ["a.md"]);
     expect(result.stderr).toContain(message);
     expect(result.exitCode).toBe(2);
+  });
+
+  // The plugin compiles these options in `create()`, so `new RegExp` throws there and ESLint stops.
+  test.each([
+    ["heading-increment", "frontmatterTitle", "iu"],
+    ["no-multiple-h1", "frontmatterTitle", "iu"],
+    ["no-missing-link-fragments", "allowPattern", "u"],
+  ])("an invalid regex in the options of %s ends the run with ESLint's error", async (rule, option, flags) => {
+    const files = {
+      ...markdownPackage(),
+      "eslint.config.mjs": markdownConfig(
+        `{ files: ["config.md"], rules: { "markdown/${rule}": ["error", { ${option}: "(" }] } }`,
+      ),
+      "config.md": "# a\n",
+      "comment.md": `# a\n\n<!-- eslint markdown/${rule}: ["error", { ${option}: "[" }] -->\n`,
+    };
+    const [config, comment] = await Promise.all([lint(files, ["config.md"]), lint(files, ["comment.md"])]);
+    const loading = `SyntaxError: Error while loading rule 'markdown/${rule}': Invalid regular expression:`;
+    expect(config.stderr).toContain(
+      `${loading} /(/${flags}: Unterminated group\nOccurred while linting <dir>/config.md`,
+    );
+    expect(comment.stderr).toContain(
+      `${loading} /[/${flags}: Unterminated character class\nOccurred while linting <dir>/comment.md`,
+    );
+    expect([config.exitCode, comment.exitCode]).toEqual([2, 2]);
   });
 
   test("--fix, after a byte order mark and with CRLF", async () => {

@@ -46,6 +46,39 @@ interface Http1FallbackResponseHead {
   keepAliveTimeoutSecs: number;
 }
 
+interface Http1FallbackEndEntries {
+  writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs): void;
+  end(chunk, encoding, callback, strictContentLength, trailerSection?: string): number;
+}
+
+// The end entries that take the framed trailer section, as on the native handle. Every handle shares them.
+function endWithTrailers(
+  this: Http1FallbackEndEntries,
+  chunk,
+  encoding,
+  callback,
+  strictContentLength,
+  trailerSection,
+) {
+  return this.end(chunk, encoding, callback, strictContentLength, trailerSection);
+}
+
+function writeHeadAndEndWithTrailers(
+  this: Http1FallbackEndEntries,
+  statusCode,
+  statusMessage,
+  headers,
+  chunk,
+  encoding,
+  strictContentLength,
+  autoHeaderBits,
+  keepAliveTimeoutSecs,
+  trailerSection,
+) {
+  this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
+  return this.end(chunk, encoding, undefined, strictContentLength, trailerSection);
+}
+
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head: Http1FallbackResponseHead | null = null;
@@ -71,6 +104,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let hasDate = false;
     let hasConnection = false;
     let hasKeepAlive = false;
+    let hasTrailer = false;
     const headers = head?.headers;
     if (headers) {
       // ServerResponse drives this handle with renderNativeHeaders(): a flat
@@ -102,6 +136,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
           case "keep-alive":
             hasKeepAlive = true;
             break;
+          case "trailer":
+            hasTrailer = true;
+            break;
         }
         out += `${name}: ${value}\r\n`;
       }
@@ -119,7 +156,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let autoContentLength = null;
     let autoChunked = false;
     if (!hasContentLength && !hasTransferEncoding && !noBody && !closeDelimited) {
-      if (chunkedFromAutoBits || contentLength === null) {
+      // Like Node's _storeHeader: a Trailer header means the known length is not used.
+      if (chunkedFromAutoBits || contentLength === null || hasTrailer) {
         chunked = true;
         autoChunked = !chunkedFromAutoBits;
       } else {
@@ -302,7 +340,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       // An empty write has no length to negate.
       return length > 0 ? -length : -1;
     },
-    end(chunk, encoding, _callback, _strictContentLength) {
+    end(chunk, encoding, _callback, _strictContentLength, trailerSection?: string) {
       if (this.ended) return 0;
       // A finished response emits no 'drain': native disarms its drain callback in end() too.
       this.onwritable = null;
@@ -314,7 +352,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       // Transfer-Encoding: chunked themselves.
       const terminated = chunked && !noBody;
       writeBody(buf, terminated ? undefined : onEndWritten);
-      if (terminated) writeToSocket("0\r\n\r\n", onEndWritten);
+      if (terminated) {
+        if (!trailerSection) writeToSocket("0\r\n\r\n", onEndWritten);
+        // One latin1 write, like Node's _finish().
+        else if (!socket.writableEnded) socket.write(trailerSection, "latin1", onEndWritten);
+      }
       this.ended = true;
       // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished when its last write completes.
       if (socket.writableLength > 0 && !socket.destroyed) {
@@ -336,6 +378,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       // The native handle's contract: -(length + 1) while bytes still drain, so that ServerResponse#end() holds 'finish' back.
       return this.finished ? length : -(length + 1);
     },
+    endWithTrailers,
+    writeHeadAndEndWithTrailers,
     flushed,
     abort() {
       this.aborted = true;

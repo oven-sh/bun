@@ -945,6 +945,19 @@ pub mod scan {
 
     /// Start of the next token at or after `p`; `None` when only whitespace and comments are left.
     pub fn next_token(contents: &[u8], p: usize) -> Option<usize> {
+        gap(contents, p).map(|gap| gap.end)
+    }
+
+    /// What is between two tokens.
+    #[derive(Clone, Copy)]
+    pub struct Gap {
+        /// Where the next token starts.
+        pub end: usize,
+        pub has_comment: bool,
+    }
+
+    /// The gap at `p`; `None` when only whitespace and comments are left.
+    pub fn gap(contents: &[u8], p: usize) -> Option<Gap> {
         // Most gaps are blanks and line feeds, and most tokens start with a byte that no gap
         // has: those do not need the scanner of every gap.
         let blanks = contents
@@ -952,10 +965,19 @@ pub mod scan {
             .iter()
             .take_while(|byte| matches!(byte, b' ' | b'\n'))
             .count();
-        let p = p + blanks;
-        match contents.get(p) {
-            Some(&byte) if byte > b' ' && byte < 0x80 && byte != b'/' => Some(p),
-            _ => super::skip_ws_and_comments(contents, p),
+        let start = p + blanks;
+        match contents.get(start) {
+            Some(&byte) if byte > b' ' && byte < 0x80 && byte != b'/' => Some(Gap {
+                end: start,
+                has_comment: false,
+            }),
+            _ => {
+                let end = super::skip_ws_and_comments(contents, start)?;
+                Some(Gap {
+                    end,
+                    has_comment: contents[start..end].contains(&b'/'),
+                })
+            }
         }
     }
 

@@ -458,13 +458,44 @@ fn the_tree_that_is_read_back_is_the_tree_that_was_saved() {
 #[test]
 fn strict_json_stays_strict_json() {
     bun_ast::initialize_store_or_reset();
-    // With a comment, the text reads as the tree. It is the text of a file that has comments.
     let with_comment = b"{\"a\": [ // c\n] }";
-    assert!(read_as(with_comment, || true, false).is_some());
-    // It is not the text of a file that had none.
-    assert!(read_as(with_comment, || false, false).is_none());
-    assert!(read_as(b"{\"a\": [1,], }", || false, false).is_none());
-    assert!(read_as(b"{\"a\": [1]}", || false, false).is_some());
+    let with_comma = b"{\"a\": [1,], }";
+    let strict = b"{\"a\": [1]}";
+    // Whatever the old text looks like: a text with a comment or a trailing comma is the
+    // text of a file that has one, and not of a file that has none.
+    for looks_jsonc in [false, true] {
+        for new in [&with_comment[..], with_comma] {
+            assert!(read_new(new, with_comment, looks_jsonc, false).is_some());
+            assert!(read_new(new, with_comma, looks_jsonc, false).is_some());
+            assert!(read_new(new, strict, looks_jsonc, false).is_none());
+        }
+        for old in [&with_comment[..], with_comma, strict] {
+            assert!(read_new(strict, old, looks_jsonc, false).is_some());
+        }
+    }
+}
+
+#[test]
+fn the_old_text_looks_like_what_it_is() {
+    bun_ast::initialize_store_or_reset();
+    let bump = bun_alloc::Arena::new();
+    for (text, looks_jsonc) in [
+        (
+            &b"{\"a\": [1], \"url\": \"https://example.com\", \"c\": \"/* no */\"}"[..],
+            false,
+        ),
+        (b"{\"a\": [1]} // after", true),
+        (b"// before\n{\"a\": [1]}", true),
+        (b"{\"a\": /* in */ [1]}", true),
+        (b"{\"a\": [1,]}", true),
+        (b"{\"a\": [1],}", true),
+        (b"{\"a\": [1 // one\n]}", true),
+    ] {
+        let root = parse(text, &bump);
+        let mut read = Text::new(text, Indentation::default());
+        assert!(read.document(&root).is_ok());
+        assert_eq!(read.looks_jsonc, looks_jsonc, "{:?}", bstr::BStr::new(text));
+    }
 }
 
 // ───── many texts and many edits ─────
@@ -907,11 +938,14 @@ fn check(seed: u64, edits: usize) {
         "{}",
         context()
     );
-    assert!(
-        read_as(&printed, || !is_strict, false).is_some(),
-        "{}",
-        context()
-    );
+    for looks_jsonc in [false, true] {
+        assert!(
+            read_new(&printed, old, looks_jsonc, false).is_some(),
+            "{}",
+            context()
+        );
+    }
+    assert_eq!(text.looks_jsonc, !is_strict, "{}", context());
     assert_eq!(value_of(&parse(&printed, &bump)), value, "{}", context());
     if edits == 0 {
         assert_eq!(

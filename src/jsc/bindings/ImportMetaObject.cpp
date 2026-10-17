@@ -24,6 +24,8 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/JSBoundFunction.h>
 
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -347,7 +349,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    auto thisValue = callFrame->thisValue();
+    auto* meta = uncheckedDowncast<ImportMetaObject>(callFrame->thisValue());
     auto specifierValue = callFrame->argument(0);
     // 1. Set specifier to ? ToString(specifier).
     auto specifier = specifierValue.toWTFString(globalObject);
@@ -379,24 +381,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 
     if (!from) {
-        auto* thisObject = dynamicDowncast<JSC::JSObject>(thisValue);
-        if (!thisObject) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
-            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
-        }
-
-        auto clientData = WebCore::clientData(vm);
-        JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (pathProperty && pathProperty.isString()) [[likely]] {
-            from = pathProperty;
-        } else {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
-            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
-        }
+        from = meta->pathProperty.getInitializedOnMainThread(meta);
     }
     ASSERT(from);
 
@@ -443,6 +428,24 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
     }
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolve, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName propertyName))
+{
+    auto* meta = uncheckedDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    auto* globalObject = meta->globalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* target = JSFunction::create(vm, globalObject, 1, "resolve"_s, functionImportMeta__resolve, ImplementationVisibility::Public);
+    auto source = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+    auto* resolve = JSBoundFunction::create(vm, globalObject, target, meta, ArgList(), 1, Bun::commonStrings(vm).resolveString(), source);
+    RETURN_IF_EXCEPTION(scope, {});
+    // Node's resolver name does not include JSBoundFunction's lazy "bound " prefix.
+    resolve->ensureRareData(vm)->setHasReifiedName();
+    resolve->putDirect(vm, vm.propertyNames->name, Bun::commonStrings(vm).resolveString(), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+    // Freeze/seal reify this CustomValue before changing its attributes.
+    meta->putDirect(vm, propertyName, resolve, 0);
+    return JSValue::encode(resolve);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
@@ -560,7 +563,6 @@ static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
-    { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
     { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolveSync, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_url, 0 } },
 };
@@ -575,7 +577,6 @@ static const HashTableValue ImportMetaObjectBakePrototypeValues[] = {
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
-    { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
     { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolveSync, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_url, 0 } },
 };
@@ -642,6 +643,9 @@ void ImportMetaObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    // CustomValue preserves a writable data property while binding only on first access.
+    putDirectCustomAccessor(vm, vm.propertyNames->resolve, CustomGetterSetter::create(vm, jsImportMetaObjectGetter_resolve, nullptr), static_cast<unsigned>(PropertyAttribute::CustomValue));
 
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
         auto scope = DECLARE_THROW_SCOPE(init.vm);

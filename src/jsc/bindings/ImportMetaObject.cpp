@@ -47,6 +47,7 @@
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
 #include "PathInlines.h"
+#include "NodeURLHelpers.h"
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
@@ -88,7 +89,8 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     return ImportMetaObject::createFromSpecifier(globalObject, specifier);
 }
 
-ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+// Inline, so that createFromSpecifier() (once for each module) does not pay a call for the sharing.
+ALWAYS_INLINE static URL fileURLOfSpecifier(const String& specifier)
 {
     auto index = specifier.find('?');
     URL url;
@@ -99,7 +101,17 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }
-    return create(globalObject, url.string());
+    return url;
+}
+
+WTF::URL ImportMetaObject::urlOfSpecifier(const String& specifier)
+{
+    return fileURLOfSpecifier(specifier);
+}
+
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+{
+    return create(globalObject, fileURLOfSpecifier(specifier).string());
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -537,7 +549,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(Bun::fileSystemPathOfInternalURL(url), url.queryWithLeadingQuestionMark())));
     }
 
     if (!globalObject->scriptExecutionContext()->isMainThread())
@@ -652,7 +664,7 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         if (url.isValid()) {
             if (url.protocolIsFile()) {
-                path = url.fileSystemPath();
+                path = Bun::fileSystemPathOfInternalURL(url);
             } else {
                 path = url.path().toString();
             }
@@ -676,7 +688,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String dirname;
 
         if (url.protocolIsFile()) {
-            dirname = url.fileSystemPath();
+            dirname = Bun::fileSystemPathOfInternalURL(url);
         } else {
             dirname = url.path().toString();
         }
@@ -696,7 +708,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String path;
 
         if (url.protocolIsFile()) {
-            path = url.fileSystemPath();
+            path = Bun::fileSystemPathOfInternalURL(url);
         } else {
             path = url.path().toString();
         }
@@ -715,7 +727,7 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         WTF::URL url(meta->url);
         if (url.protocolIsFile()) {
-            init.set(jsString(init.vm, url.fileSystemPath()));
+            init.set(jsString(init.vm, Bun::fileSystemPathOfInternalURL(url)));
         } else {
             init.set(jsString(init.vm, url.path()));
         }

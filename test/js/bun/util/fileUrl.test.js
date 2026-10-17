@@ -61,4 +61,25 @@ describe("fileURLToPath", () => {
     expect(fileURLToPath(url)).toBe(import.meta.path);
     expect(fileURLToPath(import.meta.url)).toBe(import.meta.path);
   });
+
+  // "50%deposit.db" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+  // Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+  describe.skipIf(isWindows)("a path that does not percent-decode to UTF-8", () => {
+    it.each(["50%deposit.db", "caf%E9.db", "%80", "%C0%AF", "%ED%A0%80", "%F4%90%80%80"])(
+      "throws a URIError: %s",
+      name => {
+        const url = new URL(name, pathToFileURL(import.meta.dir + "/"));
+        for (const input of [url, url.href]) {
+          let error;
+          try {
+            fileURLToPath(input);
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(URIError);
+          expect({ message: error.message, code: error.code }).toEqual({ message: "URI malformed", code: undefined });
+        }
+      },
+    );
+  });
 });

@@ -2660,30 +2660,12 @@ WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* v
     return WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue0);
 }
 
-BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
+BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, Bun::FileURLToPathError* error)
 {
-    const WTF::URL& url = arg0->href();
-    if (url.protocolIsFile()) {
-#if !OS(WINDOWS)
-        if (!url.host().isEmpty()) {
-            *errorCode = 1;
-            return BunString { BunStringTag::Dead, nullptr };
-        }
-#endif
-        if (url.path().containsIgnoringASCIICase("%2f"_s)) {
-            *errorCode = 2;
-            return BunString { BunStringTag::Dead, nullptr };
-        }
-#if OS(WINDOWS)
-        if (url.path().containsIgnoringASCIICase("%5c"_s)) {
-            *errorCode = 2;
-            return BunString { BunStringTag::Dead, nullptr };
-        }
-#endif
-        return Bun::toStringRef(url.fileSystemPath());
-    }
-    *errorCode = 3;
-    return BunString { BunStringTag::Dead, nullptr };
+    auto path = Bun::fileURLToPath(arg0->href(), *error);
+    if (!path)
+        return BunString { BunStringTag::Dead, nullptr };
+    return Bun::toStringRef(*path);
 }
 
 // Taken from unwrapBoxedPrimitive in JSONObject.cpp in WebKit

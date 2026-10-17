@@ -56,6 +56,8 @@ fn is_bare_esm_specifier(s: &[u8]) -> bool {
         [b'.', b, ..] if is_sep(*b) => return false,
         [b'.', b'.', b, ..] if is_sep(*b) => return false,
         [d, b':', b, ..] if d.is_ascii_alphabetic() && is_sep(*b) => return false,
+        // A `file:` URL names a file, not the package "file:".
+        _ if s.starts_with(b"file:") => return false,
         _ => {}
     }
     true

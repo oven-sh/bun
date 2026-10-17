@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, canBuildNodeAddons, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // These tests share one node-gyp-built V8 addon (the compile dominates the wall
@@ -239,4 +239,12 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
       expect(exitCode).toBe(0);
     });
   });
+});
+
+// "50%deposit.node" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// With the path "" for it, dlopen() opens the program itself.
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+test.skipIf(isWindows)("process.dlopen does not accept a file: URL whose path does not percent-decode to UTF-8", () => {
+  const url = new URL("50%deposit.node", import.meta.url);
+  expect(() => process.dlopen({ exports: {} }, url.href)).toThrow("invalid file: URL passed to dlopen");
 });

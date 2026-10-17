@@ -21,6 +21,7 @@
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
+#include "NodeURLHelpers.h"
 #include "ErrorCode.h"
 #include "BunString.h"
 
@@ -245,20 +246,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!isAbsolutePath(val)) {
-        WTF::URL url(val);
-        if (!url.isValid()) {
+        // Empty for a string that is not a file: URL, and for a path that does not percent-decode to UTF-8.
+        auto path = Bun::fileSystemPath(WTF::URL(val));
+        if (!path) {
             ERR::INVALID_ARG_VALUE(scope, globalObject,
                 "filename"_s, argument,
                 "must be a file URL object, file URL string, or absolute path string"_s);
             RELEASE_AND_RETURN(scope, {});
         }
-        if (!url.protocolIsFile()) {
-            ERR::INVALID_ARG_VALUE(scope, globalObject,
-                "filename"_s, argument,
-                "must be a file URL object, file URL string, or absolute path string"_s);
-            RELEASE_AND_RETURN(scope, {});
-        }
-        val = url.fileSystemPath();
+        val = WTF::move(*path);
     }
 
     bool trailingSlash = val.endsWith('/');

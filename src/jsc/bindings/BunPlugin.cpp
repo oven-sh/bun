@@ -4,6 +4,7 @@
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCast.h"
 #include "headers-handwritten.h"
+#include "NodeURLHelpers.h"
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
@@ -382,8 +383,17 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     return nullptr;
 }
 
+// The path of `joined`, which is URL(base, specifier) for a relative path. When a "%" of the name makes an escape that is not UTF-8, the join is done again with each "%" escaped.
+static String fileSystemPathOfRelativeSpecifier(const URL& joined, const URL& base, const String& specifier)
+{
+    if (auto path = Bun::fileSystemPath(joined))
+        return WTF::move(*path);
+    return Bun::fileSystemPathOfInternalURL(URL(base, makeStringByReplacingAll(specifier, "%"_s, "%25"_s)));
+}
+
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
+    ASSERT(!path.isNull());
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
 
     if (globalObject->onLoadPlugins.virtualModules == nullptr) {
@@ -640,20 +650,20 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         const URL& url = sourceOrigin.url();
 
         if (specifier.startsWith("file:"_s)) {
-            URL fileURL = URL(url, specifier);
-            if (fileURL.isValid()) {
-                specifier = fileURL.fileSystemPath();
-                specifierString = jsString(vm, specifier);
-                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
-                return;
-            } else {
+            // Empty for a URL that is not valid, and for a path that does not percent-decode to UTF-8.
+            auto path = Bun::fileSystemPath(URL(url, specifier));
+            if (!path) {
                 scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
                 return;
             }
+            specifier = WTF::move(*path);
+            specifierString = jsString(vm, specifier);
+            globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+            return;
         }
 
         if (url.isValid() && url.protocolIsFile()) {
-            auto fromString = url.fileSystemPath();
+            auto fromString = Bun::fileSystemPathOfInternalURL(url);
             BunString from = Bun::toString(fromString);
             // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
             // while resolving (e.g. by an onResolve plugin) propagates.
@@ -674,7 +684,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
                     if (relativeURL.protocolIsFile())
-                        specifier = relativeURL.fileSystemPath();
+                        specifier = fileSystemPathOfRelativeSpecifier(relativeURL, url, specifier);
                     else
                         specifier = relativeURL.string();
 
@@ -880,9 +890,10 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = URL(url, path).fileSystemPath();
+            joinedPath = fileSystemPathOfRelativeSpecifier(URL(url, path), url, path);
         }
 
+        ASSERT(!joinedPath.isNull());
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;
     }
 

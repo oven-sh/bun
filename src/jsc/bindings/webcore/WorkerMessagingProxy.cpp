@@ -38,6 +38,7 @@
 #include "SerializedScriptValue.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
+#include "NodeURLHelpers.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -126,10 +127,10 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     preloadModules.reserveInitialCapacity(m_options.preloadModules.size());
     for (auto& str : m_options.preloadModules) {
         if (str.startsWith("file://"_s)) {
-            WTF::URL urlObject = WTF::URL(str);
-            if (!urlObject.isValid())
+            auto path = Bun::fileSystemPath(WTF::URL(str));
+            if (!path)
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
-            str = urlObject.fileSystemPath();
+            str = WTF::move(*path);
         }
         preloadModules.append(Bun::toString(str));
     }

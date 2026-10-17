@@ -4,6 +4,7 @@
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
+#include "NodeURLHelpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 
 #include "JavaScriptCore/JSCJSValue.h"
@@ -626,14 +627,14 @@ extern "C" BunString URL__getHref(const BunString* input)
     return Bun::toStringRef(url.string());
 }
 
+// Dead for a string that is not a file: URL, and for a path that does not percent-decode to UTF-8.
 extern "C" BunString URL__pathFromFileURL(const BunString* input)
 {
-    auto&& str = input->toWTFString();
-    auto url = WTF::URL(str);
-    if (!url.isValid() || url.isEmpty())
+    auto path = Bun::fileSystemPath(WTF::URL(input->toWTFString()));
+    if (!path)
         return { BunStringTag::Dead };
 
-    return Bun::toStringRef(url.fileSystemPath());
+    return Bun::toStringRef(*path);
 }
 
 extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString* relativeStr)

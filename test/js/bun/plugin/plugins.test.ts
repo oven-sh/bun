@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -1182,12 +1182,16 @@ describe.concurrent("what onResolve answers without a namespace", () => {
         "bare.img": "bare",
         "symlink.img": join(import.meta.dir, "src", "link.img"),
         "long.img": "/" + Buffer.alloc(200_000, "a") + ".js",
+        "undecodable.img": "file:///50%deposit.mjs",
       };
       Bun.plugin({
         name: "answers",
         setup(build) {
           build.onResolve({ filter: /\\.img$/ }, ({ path }) => ({ path: answers[path] ?? path }));
           build.onResolve({ filter: /\\.importer$/ }, ({ importer }) => ({ path: basename(importer), namespace: "served" }));
+          build.onResolve({ filter: /\\/claimed%E9\\.mjs$/ }, () => ({ path: import.meta.dir + "/src/public/a.mjs" }));
+          build.onResolve({ filter: /\\/invalid-answer%E9\\.mjs$/ }, () => ({ path: 123 }));
+          build.onResolve({ filter: /\\/absent-answer%E9\\.mjs$/ }, () => ({ path: import.meta.dir + "/src/does-not-exist.mjs" }));
           build.module("a-module", () => ({ exports: { default: "a module" }, loader: "object" }));
           build.onLoad({ filter: /.*/, namespace: "served" }, ({ path }) => ({
             contents: "export default " + JSON.stringify(path),
@@ -1290,6 +1294,66 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     `;
     expect(await run("entry.cjs", source)).toEqual({
       stdout: "require() ENAMETOOLONG\nimport() ENAMETOOLONG\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // "50%deposit.mjs" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+  // A null string as its path is a crash: the lookup among the build.module() modules hashes it.
+  // Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+  it.skipIf(isWindows)(
+    "is an error to catch when it is a file URL whose path does not percent-decode to UTF-8",
+    async () => {
+      const source = `
+        try { require("undecodable.img"); } catch (error) { console.log("require()", error.name, error.message.split("\\n")[0]); }
+        for (const specifier of ["undecodable.img", "file:///50%deposit.mjs"])
+          await import(specifier).catch(error => console.log("import()", error.name, error.message.split(" imported")[0]));
+      `;
+      expect(await run("entry.mjs", source)).toEqual({
+        stdout:
+          "require() ResolveMessage Cannot find module 'file:///50%deposit.mjs'\n" +
+          "import() ResolveMessage Cannot find module 'file:///50%deposit.mjs'\n" +
+          // As node: import() of the URL itself rejects with decodeURIComponent()'s error.
+          "import() URIError URI malformed\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Such a URL has no path to look for. A plugin is still asked about it, and its answer is used.
+  it.skipIf(isWindows)("is used for a file URL whose path does not percent-decode to UTF-8", async () => {
+    const source = `
+      const url = "file:///claimed%E9.mjs";
+      console.log("import()", (await import(url)).default);
+      console.log("require()", require(url).default);
+      console.log("Bun.resolveSync()", Bun.resolveSync(url, import.meta.dir) === require.resolve("./public/a.mjs"));
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout: "import() a.mjs\nrequire() a.mjs\nBun.resolveSync() true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What the plugin reports, and the miss of the path that it answers, stay the errors of import() too.
+  it.skipIf(isWindows)("keeps its error for a file URL whose path does not percent-decode to UTF-8", async () => {
+    const source = `
+      for (const url of ["file:///invalid-answer%E9.mjs", "file:///absent-answer%E9.mjs"]) {
+        const errors = [];
+        try { require(url); } catch (error) { errors.push(error); }
+        await import(url).catch(error => errors.push(error));
+        for (const error of errors)
+          console.log(error.name + ": " + error.message.split("\\n")[0].split(" imported from ")[0].replace(import.meta.dir, "<src>"));
+      }
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout:
+        'Error: Expected "path" to be a string in onResolve plugin\n' +
+        'Error: Expected "path" to be a string in onResolve plugin\n' +
+        "ResolveMessage: Cannot find module '<src>/does-not-exist.mjs'\n" +
+        "ResolveMessage: Cannot find module '<src>/does-not-exist.mjs'\n",
       stderr: "",
       exitCode: 0,
     });

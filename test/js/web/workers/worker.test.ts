@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -815,3 +815,59 @@ describe("worker_threads", () => {
     expect(message).toEqual("hello");
   });
 });
+
+// "50%deposit.js" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// With the path "" for it, the worker runs the index.js of the current directory.
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789), so the worker starts.
+test.skipIf(isWindows)(
+  "a Worker does not start for a file URL whose path does not percent-decode to UTF-8",
+  async () => {
+    using dir = tempDir("worker-undecodable-file-url", {
+      "index.js": `console.log("the index.js of the current directory ran");`,
+      "entry.js": `console.log("the entry ran");`,
+      "main.js": `
+        const { pathToFileURL } = require("node:url");
+        const wt = require("node:worker_threads");
+        const href = new URL("50%deposit.js", pathToFileURL(__dirname + require("node:path").sep)).href;
+        const cases = {
+          "the global Worker, a string": () => new Worker(href),
+          "the global Worker, a URL": () => new Worker(new URL(href)),
+          "the global Worker, a preload": () => new Worker("./entry.js", { preload: [href] }),
+          "worker_threads.Worker": () => new wt.Worker(new URL(href)),
+        };
+        const results = {};
+        for (const [name, construct] of Object.entries(cases)) {
+          try {
+            const worker = construct();
+            await new Promise(resolve => worker.once ? worker.once("exit", resolve) : worker.addEventListener("close", resolve));
+            results[name] = "started";
+          } catch (error) {
+            results[name] = [error.name, error.message.replaceAll(href, "<href>")];
+          }
+        }
+        console.log(JSON.stringify(results, null, 2));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = {
+      // The same error as for a file: URL that is not valid.
+      "the global Worker, a string": ["TypeError", 'Invalid file URL: "<href>"'],
+      "the global Worker, a URL": ["TypeError", 'Invalid file URL: "<href>"'],
+      "the global Worker, a preload": ["TypeError", 'Invalid file URL: "<href>"'],
+      // As node: the conversion in node:worker_threads throws decodeURIComponent()'s error.
+      "worker_threads.Worker": ["URIError", "URI malformed"],
+    };
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(expected, null, 2) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

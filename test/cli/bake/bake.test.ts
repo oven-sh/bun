@@ -8,6 +8,10 @@ const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" 
 
 const page = `<!doctype html><html><body></body></html>`;
 
+// The type checker reads only the ES library, which keeps `--check` fast in a debug build.
+// `app/server.ts` declares what it uses of the web APIs instead (`declare const Response: any;`).
+const checkedTsconfig = JSON.stringify({ compilerOptions: { lib: ["ES2022"], types: [], strict: true } });
+
 async function getServerUrl(proc: Subprocess<"ignore", "pipe", "pipe">) {
   const decoder = new TextDecoder();
   let text = "";
@@ -77,9 +81,10 @@ test.concurrent.each([
   { name: "bun bake --check", args: ["bake", "--check"] },
 ])("$name does not serve a project with type errors", async ({ args }) => {
   using dir = tempDir("bake-command-check", {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { lib: ["ESNext", "DOM"], strict: true } }),
+    "tsconfig.json": checkedTsconfig,
     "app/pages/index.html": page,
     "app/server.ts": `
+      declare const Response: any;
       const count: number = "not a number";
       export default { fetch: () => new Response(String(count)) };
     `,
@@ -95,9 +100,10 @@ test.concurrent.each([
 
 test.concurrent("bun bake --check serves a project with no type errors", async () => {
   using dir = tempDir("bake-command-check-ok", {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { lib: ["ESNext", "DOM"], strict: true } }),
+    "tsconfig.json": checkedTsconfig,
     "app/pages/index.html": page,
     "app/server.ts": `
+      declare const Response: any;
       const count: number = 1;
       export default { fetch: () => new Response(String(count)) };
     `,
@@ -260,11 +266,13 @@ function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
 test.concurrent.each([
   { name: "bun --check --watch bake", args: ["--check", "--watch", "bake"] },
   { name: "bun --hot bake --check", args: ["--hot", "bake", "--check"] },
+  { name: "bun --check bake --hot", args: ["--check", "bake", "--hot"] },
 ])("$name starts the server once the type errors are fixed", async ({ args }) => {
   using dir = tempDir("bake-command-check-watch", {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { lib: ["ESNext", "DOM"], strict: true } }),
+    "tsconfig.json": checkedTsconfig,
     "app/pages/index.html": page,
     "app/server.ts": `
+      declare const Response: any;
       const count: number = "not a number";
       export default { fetch: () => new Response(String(count)) };
     `,
@@ -276,7 +284,7 @@ test.concurrent.each([
 
   await Bun.write(
     join(String(dir), "app/server.ts"),
-    `const count: number = 1;\nexport default { fetch: () => new Response(String(count)) };\n`,
+    `declare const Response: any;\nconst count: number = 1;\nexport default { fetch: () => new Response(String(count)) };\n`,
   );
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 

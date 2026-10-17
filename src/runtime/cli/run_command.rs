@@ -2804,8 +2804,11 @@ impl RunCommand {
                     let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
                 }
             }
-            if check && !ctx.runtime_options.check {
+            if check {
                 ctx.runtime_options.check = true;
+            }
+            // Also when `--check` came before `bake` and `--hot` after it.
+            if ctx.runtime_options.check {
                 cli::watch_instead_of_hot_for_check(ctx);
             }
             if hot_reload != ctx.debug.hot_reload {

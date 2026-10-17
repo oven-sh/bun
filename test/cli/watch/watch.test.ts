@@ -3,6 +3,7 @@ import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { constants } from "node:os";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -395,6 +396,39 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(afterReload).toContain("iter second");
   expect(await stderr).toContain(clearScreen);
 }, 30000);
+
+// Only Linux has SIGPWR. JSC owns its OS handler there, so process.on("SIGPWR") installs none.
+// The reload does not need one: it emits the event of the kill signal itself.
+it.skipIf(!("SIGPWR" in constants.signals))(
+  "--watch-kill-signal SIGPWR runs the SIGPWR listeners before the restart",
+  async () => {
+    using dir = tempDir("watch-kill-signal-sigpwr", {
+      "app.js": `
+        process.on("SIGPWR", (name, number) => console.log("listener", name, number));
+        console.log("iter first");
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "--watch-kill-signal", "SIGPWR", "app.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const { waitFor, release, output } = stdoutWaiter(watchee);
+
+    await waitFor("iter first");
+    await Bun.write(join(String(dir), "app.js"), `console.log("iter second"); process.exit(0);`);
+    await waitFor("iter second\n");
+
+    release();
+    expect(output()).toBe("iter first\nlistener SIGPWR 30\niter second\n");
+  },
+  30000,
+);
 
 // execve replaces the process without reaching on_exit(), so the compile
 // cache must be flushed explicitly on the reload path; otherwise

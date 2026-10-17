@@ -220,3 +220,39 @@ test.concurrent("dropped writer with only buffered bytes lets the process exit",
     exited: 0,
   });
 });
+
+// The stream is free when write() checks it, and an option getter gives it to a reader before the
+// upload starts. The upload fails on the lock and must leave the stream to that reader: it used to
+// clear the stream's controller, and the reader's next read crashed.
+test.concurrent("an upload that fails on the stream's lock leaves the stream to the reader that holds it", async () => {
+  const body = `
+    const bytes = new TextEncoder().encode("hello");
+    const stream = new ReadableStream({ type: "bytes", pull(c) { c.enqueue(bytes.slice()); c.close(); } });
+    let reader;
+    const result = await client.file("key").write(stream, {
+      get accessKeyId() { reader ??= stream.getReader({ mode: "byob" }); return "key"; },
+    }).then(() => "resolved", e => "rejected: " + e.code);
+    const { value } = await reader.read(new Uint8Array(16));
+    console.log(result, new TextDecoder().decode(value));
+  `;
+  expect(await run({ body, waitFor: `true` })).toEqual({
+    stdout: `rejected: ERR_INVALID_STATE hello\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// Nobody holds this stream: its file fails to open when the upload starts it. The upload was its
+// only consumer, so it closes the stream.
+test.concurrent("an upload of a file stream that fails to open rejects and closes the stream", async () => {
+  const body = `
+    const stream = Bun.file("missing").stream();
+    const result = await client.file("key").write(stream).then(() => "resolved", e => "rejected: " + e.code);
+    console.log(result, Bun.inspect(stream), JSON.stringify(await stream.getReader().read()));
+  `;
+  expect(await run({ body, waitFor: `true` })).toEqual({
+    stdout: `rejected: ENOENT ReadableStream { locked: false, state: 'closed', supportsBYOB: false } {"done":true}\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});

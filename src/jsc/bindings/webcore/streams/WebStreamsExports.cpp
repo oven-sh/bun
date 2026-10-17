@@ -224,6 +224,17 @@ static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
     return nullptr;
 }
 
+static void lockNative(JSC::VM& vm, JSReadableStream* stream)
+{
+    stream->m_disturbed = true;
+    stream->m_lockedWithoutReader = true;
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return;
+    if (auto* slot = lockedStreamSlot(handle.asCell()))
+        slot->set(vm, handle.asCell(), stream);
+}
+
 // A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
 // Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
 // disturbed checks behave as they do after readStreamIntoSink acquires a reader.
@@ -232,13 +243,19 @@ extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableS
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
-    stream->m_disturbed = true;
-    stream->m_lockedWithoutReader = true;
-    JSValue handle = stream->m_nativePtr.get();
-    if (handle.isEmpty() || !handle.isCell())
-        return;
-    if (auto* slot = lockedStreamSlot(handle.asCell()))
-        slot->set(JSC::getVM(globalObject), handle.asCell(), stream);
+    lockNative(JSC::getVM(globalObject), stream);
+}
+
+// ReadableStream__lockNative for a sink that is about to wire itself to the native source. It takes
+// only a stream that nothing started and nobody holds: a started source already feeds a controller.
+// false: nothing was written, and the caller falls back to readStreamIntoSink.
+extern "C" bool ReadableStream__tryLockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream || stream->m_bunMode != BunStreamMode::NativePending || isReadableStreamLocked(stream))
+        return false;
+    lockNative(JSC::getVM(globalObject), stream);
+    return true;
 }
 
 // The source of a stream that ReadableStream__lockNative locked dropped its sink: error the stream with `reason`, or close it if `reason` is empty.

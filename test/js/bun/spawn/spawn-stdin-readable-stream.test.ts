@@ -868,6 +868,397 @@ describe("spawn stdin ReadableStream", () => {
     },
   );
 
+  // The stdin attach fails on a stream that another consumer holds. It must write nothing to that
+  // stream. It used to clear the stream's controller, start a native source under the sink that
+  // held it, and take a native source from its reader: the owner crashed (BYOB reader, text()),
+  // never settled (default reader, tee()), or lost bytes.
+  describe("a stdin stream that another consumer holds stays whole for that consumer", () => {
+    const prelude = `
+      const bytes = new TextEncoder().encode("hello");
+      const decode = chunk => new TextDecoder().decode(chunk);
+      // Bun.spawn throws for a stream it cannot take, or it returns a Subprocess whose stdin pump
+      // rejects. Which one is not under test: the last line printed says what happened.
+      const refusals = [];
+      const threw = error => refusals.push("threw " + error?.code);
+      process.on("unhandledRejection", error => refusals.push("unhandledRejection " + error?.code));
+      process.on("exit", () => console.log(refusals.join(", ") || "not refused"));
+      const exe = process.execPath;
+      const cmd = [exe, "-e", ""];
+      const echo = [exe, "-e", "console.log(await Bun.stdin.text())"];
+      const count = [exe, "-e", "console.log((await Bun.stdin.bytes()).length)"];
+      const pulled = () => new ReadableStream({ type: "bytes", pull(c) { c.enqueue(bytes.slice()); c.close(); } });
+      const queued = () => new ReadableStream({ start(c) { c.enqueue(bytes.slice()); c.close(); } });
+      const spawnWithStdin = stream => {
+        try { Bun.spawn({ cmd, stdin: stream, stdout: "ignore", stderr: "ignore" }); } catch (error) { threw(error); }
+      };
+      // Writes 2 MiB, reports on stderr, then writes 6 MiB more: it is still writing when the spawns below run.
+      const producing = () => Bun.spawn({
+        cmd: [exe, "-e", 'await Bun.write(Bun.stdout, Buffer.alloc(2 << 20, "a")); await Bun.write(Bun.stderr, "ready"); await Bun.write(Bun.stdout, Buffer.alloc(6 << 20, "a"));'],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // A fetch() response whose body has sent \`first\`. It sends \`rest\` once \`attached\` resolves.
+      const attached = Promise.withResolvers();
+      const fetching = (first, rest) => {
+        const server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(first);
+              await controller.flush();
+              await attached.promise;
+              for (const chunk of rest) { controller.write(chunk); await controller.flush(); }
+              controller.close();
+            },
+          })),
+        });
+        server.unref();
+        return fetch(server.url);
+      };
+    `;
+    // No top-level await: a read that never settles lets the child exit with nothing read.
+    const owners: [owner: string, read: string, script: string, refused?: false][] = [
+      [
+        "a BYOB reader",
+        "hello",
+        `
+          const stream = pulled();
+          const reader = stream.getReader({ mode: "byob" });
+          spawnWithStdin(stream);
+          reader.read(new Uint8Array(16)).then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        "a default reader",
+        "hello",
+        `
+          const stream = queued();
+          const reader = stream.getReader();
+          spawnWithStdin(stream);
+          reader.read().then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        "tee() of a Response body, with the Response as stdin",
+        "hello hello",
+        `
+          const response = new Response(queued());
+          const [a, b] = response.body.tee();
+          const texts = Promise.all([new Response(a).text(), new Response(b).text()]);
+          spawnWithStdin(response);
+          texts.then(([a, b]) => console.log(a, b));
+        `,
+      ],
+      [
+        "an async iterator, with the stream as stdio[0]",
+        "hello",
+        `
+          const stream = queued();
+          const iterator = stream.values();
+          try { Bun.spawn({ cmd, stdio: [stream, "ignore", "ignore"] }); } catch (error) { threw(error); }
+          iterator.next().then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        'a reader on a type: "direct" stream',
+        "hello",
+        `
+          const stream = new ReadableStream({ type: "direct", pull(controller) { controller.write(bytes); controller.close(); } });
+          const reader = stream.getReader();
+          spawnWithStdin(stream);
+          reader.read().then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        // The stream is free when the stdin option is validated. The getter locks it before the pump starts.
+        "text() started by a later option getter",
+        "hello",
+        `
+          const stream = pulled();
+          let text;
+          try {
+            Bun.spawn({ cmd, stdin: stream, get stdout() { text ??= stream.text(); return "ignore"; }, stderr: "ignore" });
+          } catch (error) { threw(error); }
+          text.then(value => console.log(value));
+        `,
+      ],
+      [
+        "a reader that cancels: the source gets the reason",
+        "stop",
+        `
+          let reason;
+          const stream = new ReadableStream({ pull() {}, cancel(value) { reason = value; } });
+          const reader = stream.getReader();
+          spawnWithStdin(stream);
+          reader.cancel("stop").then(() => console.log(reason));
+        `,
+      ],
+      [
+        "a reader that releases it: the stream is as it was, and the next Bun.spawn pumps it",
+        "hello",
+        `
+          const stream = pulled();
+          const reader = stream.getReader();
+          const before = Bun.inspect(stream);
+          spawnWithStdin(stream);
+          if (Bun.inspect(stream) !== before) throw new Error("the stream changed: " + Bun.inspect(stream));
+          reader.releaseLock();
+          Bun.spawn({ cmd: echo, stdin: stream, stdout: "pipe", stderr: "inherit" }).stdout.text().then(text => console.log(text.trim()));
+        `,
+      ],
+      [
+        // The first pump has read "he" and the stream holds "llo" when it reads again.
+        "another Bun.spawn that a later option getter starts: its child gets every chunk and the end",
+        "hello",
+        `
+          let controller;
+          const stream = new ReadableStream({ start(c) { controller = c; } });
+          let first;
+          try {
+            Bun.spawn({
+              cmd,
+              stdin: stream,
+              get stdout() { first ??= Bun.spawn({ cmd: echo, stdin: stream, stdout: "pipe", stderr: "inherit" }); return "ignore"; },
+              stderr: "ignore",
+            });
+          } catch (error) { threw(error); }
+          controller.enqueue(bytes.slice(0, 2));
+          controller.enqueue(bytes.slice(2));
+          controller.close();
+          first.stdout.text().then(text => console.log(text.trim()));
+        `,
+      ],
+      [
+        // The stream is another child's stdout: the attach would take its native source from the reader.
+        "a reader that a later option getter takes on a child's stdout",
+        "hello 0",
+        `
+          const stream = Bun.spawn({ cmd: [exe, "-e", "await Bun.write(Bun.stdout, 'hello')"], stdout: "pipe", stderr: "inherit" }).stdout;
+          let reader, refused;
+          try {
+            refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { reader ??= stream.getReader(); return "pipe"; }, stderr: "inherit" });
+          } catch (error) { threw(error); }
+          (async () => {
+            let text = "";
+            for (let chunk; !(chunk = await reader.read()).done; ) text += decode(chunk.value);
+            console.log(text, refused ? (await refused.stdout.text()).trim() : 0);
+          })();
+        `,
+      ],
+      [
+        // The same with a fetch() body, which has a different native source.
+        "a reader that a later option getter takes on a fetch body",
+        "hellohello 0",
+        `
+          fetching("hello", ["hello"]).then(async response => {
+            const stream = response.body;
+            let reader, refused;
+            try {
+              refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { reader ??= stream.getReader(); return "pipe"; }, stderr: "inherit" });
+            } catch (error) { threw(error); }
+            attached.resolve();
+            let text = "";
+            for (let chunk; !(chunk = await reader.read()).done; ) text += decode(chunk.value);
+            console.log(text, refused ? (await refused.stdout.text()).trim() : 0);
+          });
+        `,
+      ],
+      [
+        // Readable.fromWeb() takes the native source and leaves the stream locked and unstarted.
+        "a node:stream Readable that a later option getter makes from a child's stdout",
+        "hello 0",
+        `
+          const { Readable } = require("node:stream");
+          const stream = Bun.spawn({ cmd: [exe, "-e", "await Bun.write(Bun.stdout, 'hello')"], stdout: "pipe", stderr: "inherit" }).stdout;
+          let readable, refused;
+          try {
+            refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { readable ??= Readable.fromWeb(stream); return "pipe"; }, stderr: "inherit" });
+          } catch (error) { threw(error); }
+          let text = "";
+          readable.on("data", chunk => (text += decode(chunk)));
+          readable.on("end", async () => console.log(text, refused ? (await refused.stdout.text()).trim() : 0));
+        `,
+      ],
+      [
+        // The first Bun.spawn takes the child's stdout natively. The refused attach must not start that source again.
+        "another Bun.spawn that a later option getter starts on a child's stdout: its child gets every byte",
+        "8388608",
+        `
+          const producer = producing();
+          producer.stderr.getReader().read().then(() => {
+            const stream = producer.stdout;
+            let owner;
+            try {
+              Bun.spawn({
+                cmd,
+                stdin: stream,
+                get stdout() { owner ??= Bun.spawn({ cmd: count, stdin: stream, stdout: "pipe", stderr: "inherit" }); return "ignore"; },
+                stderr: "ignore",
+              });
+            } catch (error) { threw(error); }
+            owner.stdout.text().then(text => console.log(text.trim()));
+          });
+        `,
+      ],
+      [
+        "another Bun.spawn that a later option getter starts on a fetch body: its child gets every byte",
+        "8388608",
+        `
+          const part = Buffer.alloc(1 << 20, "a");
+          fetching(part, Array(7).fill(part)).then(response => {
+            const stream = response.body;
+            let owner;
+            try {
+              Bun.spawn({
+                cmd,
+                stdin: stream,
+                get stdout() { owner ??= Bun.spawn({ cmd: count, stdin: stream, stdout: "pipe", stderr: "inherit" }); return "ignore"; },
+                stderr: "ignore",
+              });
+            } catch (error) { threw(error); }
+            attached.resolve();
+            owner.stdout.text().then(text => console.log(text.trim()));
+          });
+        `,
+      ],
+      [
+        // Nobody holds this stream when the attach runs, so the attach is not refused. A reader started
+        // its native source, so the attach must read through the stream: the source alone has lost bytes.
+        "a reader that a later option getter takes and releases on a child's stdout: the child gets every byte",
+        "8388608",
+        `
+          const producer = producing();
+          producer.stderr.getReader().read().then(async () => {
+            const stream = producer.stdout;
+            let released, child;
+            try {
+              child = Bun.spawn({ cmd: count, stdin: stream, get stdout() { released ??= (stream.getReader().releaseLock(), true); return "pipe"; }, stderr: "inherit" });
+            } catch (error) { threw(error); }
+            console.log(child ? (await child.stdout.text()).trim() : "no child");
+          });
+        `,
+        false,
+      ],
+    ];
+
+    test.each(owners)("%s", async (_owner, read, script, refused = true) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", prelude + script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout.trim().split("\n");
+      expect({
+        read: lines.slice(0, -1).join("\n"),
+        refusal: lines.at(-1),
+        stderr,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        read,
+        refusal: refused ? expect.stringMatching(/^(threw|unhandledRejection) ERR_INVALID_STATE$/) : "not refused",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
+  // A stream that is a child's stdin stays lazy: its native source never started for JS. A call that
+  // fails on that lock must not start it. What it read never reached the child. Not on Windows: the
+  // start reads nothing there, and the producer does not report while its pipe is full.
+  test.skipIf(isWindows).each<[string, (stream: ReadableStream) => unknown]>([
+    ["getReader()", stream => stream.getReader()],
+    ["values()", stream => stream.values()],
+    ["tee()", stream => stream.tee()],
+    ["new ReadableStreamDefaultReader()", stream => new ReadableStreamDefaultReader(stream)],
+  ])(
+    "%s fails on a child's stdout that is another child's stdin, and takes no bytes from it",
+    async (_name, attempt) => {
+      // Writes 2 MiB and reports. When its stdin ends it writes 1 MiB more and reports again.
+      await using producer = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          await Bun.write(Bun.stdout, Buffer.alloc(2 << 20, "a"));
+          await Bun.write(Bun.stderr, "1");
+          await Bun.stdin.bytes();
+          const out = Bun.stdout.writer();
+          out.write(Buffer.alloc(1 << 20, "a"));
+          out.flush();
+          await Bun.write(Bun.stderr, "2");
+          await out.end();
+        `,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // The stream buffers what the child writes before a consumer attaches.
+      const stream = producer.stdout;
+      const reports = producer.stderr.getReader();
+      await reports.read();
+      // The child reads stdin only when it gets a message. Until then its sink is full, and the source pauses.
+      await using consumer = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("message", async () => { console.log((await Bun.stdin.bytes()).length); process.exit(0); });`,
+        ],
+        env: bunEnv,
+        stdin: stream,
+        stdout: "pipe",
+        stderr: "inherit",
+        ipc() {},
+      });
+      // The producer's pipe now holds bytes that the paused source has not read.
+      producer.stdin.end();
+      await reports.read();
+      expect(() => attempt(stream)).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      consumer.send("read");
+      expect(await consumer.stdout.text()).toBe(`${3 << 20}\n`);
+    },
+  );
+
+  // The same in one process: Bun.write holds the process's stdin stream, and process.stdin fails on
+  // that lock. Nothing reads the child's stdout until it reports, so its write is paused by then.
+  test.skipIf(isWindows)(
+    "process.stdin fails on the stdin stream that Bun.write() took, and takes no bytes from it",
+    async () => {
+      using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const written = Bun.write(Bun.stdout, Bun.stdin.stream());
+        let code;
+        try { process.stdin.resume(); } catch (error) { code = error.code; }
+        await Bun.write(Bun.stderr, String(code));
+        await written;
+      `,
+        ],
+        env: bunEnv,
+        stdin: Bun.file(path.join(String(dir), "in")),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const report = await proc.stderr.getReader().read();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
+        report: "ERR_INVALID_STATE",
+        length: 1 << 20,
+        exitCode: 0,
+      });
+    },
+  );
+
   test("ReadableStream object type count", async () => {
     const iterations = isASAN
       ? // With ASAN, entire process gets killed. Likely an OOM or out of file

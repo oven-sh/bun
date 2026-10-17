@@ -1,5 +1,6 @@
 use super::{FileBuild, Fx};
 use crate::builder::Var;
+use crate::declared::prim;
 use crate::id::V;
 use crate::ir::{Op, Operation};
 use bun_sema::bind::{AssignmentKind, Decl, Parent, PatParent, SymFlags};
@@ -314,6 +315,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let is_query = self.replaced_scalar_class(fx.file, e) == Some(ScalarClass::Query);
                 let constructor = self.expr(fx, hir[call].callee);
                 let input = self.expr(fx, argument_expr);
+                let said = self.ty(fx, input);
+                if is_query && !said.is_none() && self.out.tys.get(said).prims & (prim::STRING | prim::LITERAL_STRING) == 0 {
+                    return self.with_preevaluated_operands(fx, &[(hir[call].callee, constructor), (argument_expr, input)], generic);
+                }
                 let number = self.emit(fx, Op::Int(if is_query { URL_SEARCH_PARAMS_CONSTRUCTOR_HOST_CLASS } else { URL_CONSTRUCTOR_HOST_CLASS }));
                 let is_original = self.emit(fx, Op::Operation { which: Operation::HasHostClassStructure, args: [constructor, number].into_iter().collect() });
                 fx.b.func.values[is_original.idx()].ty = self.known.boolean;

@@ -64,9 +64,10 @@ bun_core::declare_scope!(cache, visible);
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
-/// Version 35: A block-level function in sloppy code stays a declaration instead of becoming a `let`.
-/// Version 36: A function declaration as the body of a label or `if` in sloppy code makes an ambiguous file CommonJS.
-const EXPECTED_VERSION: u32 = 36;
+/// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
+/// Version 36: A block-level function in sloppy code stays a declaration instead of becoming a `let`.
+/// Version 37: A function declaration as the body of a label or `if` in sloppy code makes an ambiguous file CommonJS.
+const EXPECTED_VERSION: u32 = 37;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

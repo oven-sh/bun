@@ -176,7 +176,7 @@ bun install --frozen-lockfile
 
 `package.json` disagrees with `bun.lock` when an edit adds a package, removes one, or changes a version. The error names the first dependency that changed. Run `bun install` and commit the updated `bun.lock` to fix it.
 
-Edits that keep every package at its locked version don't fail the install. For example, you can change `^1.0.0` to `>=1.0.0`, move a dependency to another group, or add a dependency that another workspace already has. The same goes for a workspace's `version`, `bin` and `scripts`, and for `trustedDependencies` and `patchedDependencies`. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what's locked.
+Edits that keep every package at its locked version don't fail the install. For example, you can change `^1.0.0` to `>=1.0.0`, move a dependency to another group, or add a dependency that another workspace already has. The same goes for a workspace's `version`, `bin` and `scripts`, and for `trustedDependencies` and `patchedDependencies`. An edit to `patchedDependencies` still takes effect: Bun applies a patch that you added, and installs the original package again when you removed its patch. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what's locked.
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
@@ -420,15 +420,18 @@ Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${versio
 
 When the `node_modules` folder exists, Bun decides whether to install a package from what is already there. The hoisted linker checks that the `"name"` and `"version"` in the `package.json` at the expected `node_modules` location match the expected name and version. The isolated linker checks only that the package's [store entry](/pm/isolated-installs#resolution-algorithm) exists.
 
-The isolated linker also checks which patch the installed copy has, if any. It makes the patch part of the [store entry's name](/pm/isolated-installs#directory-structure). The name of a [patched package](/pm/cli/patch)'s entry ends in `+` and 16 hex digits.
+Both linkers also check which patch the installed copy has, if any:
 
-With the isolated linker, Bun installs the package again when the copy has a patch other than the expected one, or has a patch when none is expected. `bun install` therefore restores the original package after `package.json` and `bun.lock` lose a patch in one step, for example in a `git checkout`.
+- The hoisted linker writes the hash of the patch file into the installed copy of a [patched package](/pm/cli/patch) and reads it on the next install. The hash is the first key, `"_bunPatchHash"`, of the copy's `package.json`. For a git, GitHub or tarball package, the hash is the second line of the copy's `.bun-tag` file instead.
+- The isolated linker makes the patch part of the [store entry's name](/pm/isolated-installs#directory-structure). The name of a patched package's entry ends in `+` and 16 hex digits.
 
-An entry that an older version of Bun made does not record its patch. [Removing a patch](/pm/cli/patch#removing-a-patch) describes what Bun does with such an entry.
+Bun installs the package again when the copy has a patch other than the expected one, or has a patch when none is expected. `bun install` therefore restores the original package after `package.json` and `bun.lock` lose a patch in one step, for example in a `git checkout`. Bun writes the hash into `node_modules` only, never into the [global cache](/pm/global-cache).
+
+A copy that an older version of Bun installed does not record its patch. [Removing a patch](/pm/cli/patch#removing-a-patch) describes what Bun does with such a copy.
 
 When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, Bun downloads and extracts tarballs eagerly while resolving.
 
-When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version` already exists in the expected location within `node_modules`, Bun doesn’t attempt to download the tarball.
+When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version`, and with the expected patch, already exists in the expected location within `node_modules`, Bun doesn’t attempt to download the tarball.
 
 ## CI/CD
 

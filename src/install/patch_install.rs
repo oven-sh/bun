@@ -922,7 +922,181 @@ impl PatchTask {
     }
 }
 
+/// How a patched package in a hoisted `node_modules` names its patch: the first key of package.json, or line 2 of `.bun-tag`.
+pub(crate) struct PatchStamp;
+
+impl PatchStamp {
+    fn in_bun_tag(tag: ResolutionTag) -> bool {
+        tag.is_git() || tag.is_tarball()
+    }
+
+    /// The file of a package that `PackageInstall::verify` reads.
+    pub(crate) fn file(tag: ResolutionTag) -> &'static ZStr {
+        if Self::in_bun_tag(tag) {
+            bun_core::zstr!(".bun-tag")
+        } else {
+            bun_core::zstr!("package.json")
+        }
+    }
+
+    fn file_path<'a>(
+        buf: &'a mut [u8],
+        spill: &'a mut Vec<u8>,
+        folder: &[u8],
+        tag: ResolutionTag,
+    ) -> &'a ZStr {
+        path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
+            buf,
+            spill,
+            &[folder, Self::file(tag).as_bytes()],
+        )
+    }
+
+    /// The patch hash in the digits of the `_patch_hash=` cache folder name and of the `.bun-tag-` marker.
+    pub(crate) fn hex(buf: &mut [u8; 16], patch_hash: u64) -> &[u8] {
+        bun_core::fmt::u64_hex_var_lower(buf, patch_hash)
+    }
+
+    /// Line 1 of `.bun-tag`: the commit, or the integrity of a tarball.
+    pub(crate) fn bun_tag_resolved(bun_tag: &[u8]) -> &[u8] {
+        strings::split_once_char(bun_tag, b'\n').map_or(bun_tag, |(resolved, _)| resolved)
+    }
+
+    /// Line 2 of `.bun-tag`: the patch hash. Empty when the copy names none.
+    pub(crate) fn bun_tag_patch_hash(bun_tag: &[u8]) -> &[u8] {
+        strings::split_once_char(bun_tag, b'\n').map_or(b"", |(_, patch_hash)| patch_hash)
+    }
+
+    /// `contents` of [`Self::file`] with `patch_hash` named. `None` when they name it already, or are a package.json whose root is no object.
+    fn stamped(tag: ResolutionTag, contents: &[u8], patch_hash: u64) -> Option<Vec<u8>> {
+        let mut buf = [0u8; 16];
+        let hex = Self::hex(&mut buf, patch_hash);
+        if Self::held(tag, contents) == Some(hex) {
+            return None;
+        }
+        if Self::in_bun_tag(tag) {
+            return Some([Self::bun_tag_resolved(contents), b"\n", hex].concat());
+        }
+        PackageJSONVersionChecker::with_patch_hash(contents, hex)
+    }
+
+    /// `contents` of [`Self::file`] without the patch hash they name. `None` when they name none.
+    fn unstamped(tag: ResolutionTag, contents: &[u8]) -> Option<Vec<u8>> {
+        if Self::in_bun_tag(tag) {
+            return Self::held(tag, contents).map(|_| Self::bun_tag_resolved(contents).to_vec());
+        }
+        PackageJSONVersionChecker::without_patch_hash(contents)
+    }
+
+    /// The patch hash that `contents` of [`Self::file`] name.
+    fn held(tag: ResolutionTag, contents: &[u8]) -> Option<&[u8]> {
+        if Self::in_bun_tag(tag) {
+            let patch_hash = Self::bun_tag_patch_hash(contents);
+            return (!patch_hash.is_empty()).then_some(patch_hash);
+        }
+        PackageJSONVersionChecker::leading_patch_hash(contents)
+    }
+
+    /// The contents of a file and its permission bits.
+    fn read(dir: Fd, path: &ZStr) -> sys::Result<(Vec<u8>, sys::Mode)> {
+        let file = sys::File::openat(dir, path.as_bytes(), sys::O::RDONLY, 0)?;
+        let mode = (file.stat()?.st_mode as sys::Mode) & 0o777;
+        Ok((file.read_to_end()?, mode))
+    }
+
+    /// Whether the unpatched package names `patch_hash` itself: it was published from a patched copy.
+    #[cold]
+    pub(crate) fn published_with(
+        unpatched_dir: Fd,
+        unpatched_folder: &[u8],
+        tag: ResolutionTag,
+        patch_hash: &[u8],
+    ) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let path = Self::file_path(&mut buf.0, &mut spill, unpatched_folder, tag);
+        let Ok(contents) = sys::File::read_from(unpatched_dir, path.as_bytes()) else {
+            return false;
+        };
+        if Self::in_bun_tag(tag) {
+            return Self::bun_tag_patch_hash(&contents) == patch_hash;
+        }
+        // Read as `PackageInstall::verify` reads the copy, so that an unpatched copy of such a package always passes.
+        crate::initialize_store();
+        let source = Source::init_path_string_owned(b"package.json", contents);
+        let mut log = Log::init();
+        let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+        checker.parse().is_ok() && checker.found_patch_hash() == patch_hash
+    }
+
+    /// [`Self::file`] of the copy in `folder` without the patch hash that `bun install` wrote there, and the permission bits of that file. `None` when it wrote none.
+    pub(crate) fn without_hash(
+        folder: &[u8],
+        unpatched_folder: &[u8],
+        tag: ResolutionTag,
+    ) -> sys::Result<Option<(Vec<u8>, sys::Mode)>> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let path = Self::file_path(&mut buf.0, &mut spill, folder, tag);
+        let (contents, mode) = match Self::read(Fd::cwd(), path) {
+            Ok(read) => read,
+            Err(e) if e.get_errno() == sys::Errno::ENOENT => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let Some(without_hash) = Self::unstamped(tag, &contents) else {
+            return Ok(None);
+        };
+        let path = Self::file_path(&mut buf.0, &mut spill, unpatched_folder, tag);
+        let unpatched = sys::File::read_from(Fd::cwd(), path.as_bytes()).unwrap_or_default();
+        // A hash that the unpatched package holds too is a key of the package itself, not the mark of a patch.
+        let is_written = Self::held(tag, &contents) != Self::held(tag, &unpatched);
+        Ok(is_written.then_some((without_hash, mode)))
+    }
+
+    /// Names `patch_hash` in the installed copy of a package at `package_subpath` of `dir`. Not for a cache folder: `PatchTask::apply` leaves those without it.
+    #[cold]
+    pub(crate) fn write(
+        dir: Fd,
+        package_subpath: &[u8],
+        tag: ResolutionTag,
+        patch_hash: u64,
+    ) -> sys::Result<()> {
+        // Only a copy of a cache folder is patched. Elsewhere the file is the user's own.
+        if !tag.can_enqueue_install_task() {
+            return Ok(());
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let path = Self::file_path(&mut buf.0, &mut spill, package_subpath, tag);
+        let (contents, mode) = match Self::read(dir, path) {
+            Ok(read) => read,
+            // Without this file the up-to-date check installs the package every time.
+            Err(e) if e.get_errno() == sys::Errno::ENOENT => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        let Some(stamped) = Self::stamped(tag, &contents, patch_hash) else {
+            return Ok(());
+        };
+        // Never written in place: through a hard link or a symlink the file is the cache's own.
+        sys::unlinkat(dir, path)?;
+        let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL;
+        let file = sys::File::openat(dir, path.as_bytes(), flags, mode)?;
+        // The umask cut the mode. On Windows `openat` took it, and `fchmod` wants a descriptor of libuv.
+        #[cfg(not(windows))]
+        let _ = sys::fchmod(file.handle(), mode);
+        let written = file.write_all(&stamped);
+        drop(file);
+        // A `.bun-tag` cut short can pass for the empty one of `--no-verify`.
+        if written.is_err() {
+            let _ = sys::unlinkat(dir, path);
+        }
+        written
+    }
+}
+
 use crate::PreinstallState;
+use crate::ResolutionTag;
+use crate::bun_json::PackageJSONVersionChecker;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
 use crate::package_manager::Options::LogLevel;

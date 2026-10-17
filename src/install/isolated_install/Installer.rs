@@ -107,6 +107,18 @@ pub struct Installer<'a> {
 
     /// Main-thread only: entries that returned `Result::RunScripts`, in that order.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
+
+    /// Added to by the tasks of the root and the workspaces. See `unlink_dropped_bins`.
+    pub(crate) replaced_links: bun_threading::Guarded<Vec<ReplacedLink>>,
+}
+
+/// A dependency of the root or of a workspace whose link led to another package before.
+pub(crate) struct ReplacedLink {
+    importer: StoreEntryId,
+    dep_id: install::DependencyID,
+    entry_id: StoreEntryId,
+    /// Where the link led. Absolute.
+    old_target: Box<[u8]>,
 }
 
 /// A task on the pool reads `self` and the store through `Task::installer`.
@@ -1903,6 +1915,7 @@ impl<'a> Installer<'a> {
             is_absolute: false,
             #[cfg(windows)]
             fallback_junction_target: full_target.into_sep::<{ PathSeparators::ANY }>(),
+            replaced: None,
         };
 
         // symlinks won't exist if node_modules/.bun is new
@@ -2027,6 +2040,8 @@ impl<'a> Installer<'a> {
             _ => 0,
         };
         let mut real_scope: &[u8] = b"";
+        // Its `.bin` is on the PATH of `bun run`: `unlink_dropped_bins`.
+        let is_importer = matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace);
 
         // Gives `dest` back, with the `real_len` the symlinker ends with.
         let link = |mut dest: AutoPath, mut to: AutoAbsPath, real_len: usize| {
@@ -2048,12 +2063,13 @@ impl<'a> Installer<'a> {
                 is_absolute: all_absolute || (cfg!(windows) && is_linked && !stays_behind_link),
                 #[cfg(windows)]
                 fallback_junction_target: to.into_sep::<{ PathSeparators::ANY }>(),
+                replaced: is_importer.then(Vec::new),
             };
             let written = symlinker
                 .ensure_symlink(strategy)
                 .map_err(TaskError::SymlinkDependencies);
             let dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
-            (dest, symlinker.real_len, written)
+            (dest, symlinker.real_len, written, symlinker.replaced)
         };
 
         let mut changed = Relink::Unchanged;
@@ -2103,13 +2119,30 @@ impl<'a> Installer<'a> {
                 self.append_store_path(&mut dep_store_path, dep.entry_id);
             }
 
-            let (linked_dest, looked_len, written) = link(dest, dep_store_path, real_len);
+            let (linked_dest, looked_len, written, replaced) = link(dest, dep_store_path, real_len);
             dest = linked_dest;
             if !all_real && looked_len != real_len {
                 real_len = looked_len;
                 real_scope = dep_name
                     .get(..real_len.saturating_sub(base_len + 1))
                     .unwrap_or(b"");
+            }
+            if let Some(old_link) = replaced.filter(|old_link| !old_link.is_empty()) {
+                let mut old_target_buf = paths::path_buffer_pool::get();
+                let old_target =
+                    paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+                        dest.dirname().unwrap_or_default(),
+                        old_target_buf.as_mut_slice(),
+                        &[&old_link],
+                    );
+                if let Some(old_target) = old_target {
+                    self.replaced_links.lock().push(ReplacedLink {
+                        importer: entry_id,
+                        dep_id: dep.dep_id,
+                        entry_id: dep.entry_id,
+                        old_target: old_target.into(),
+                    });
+                }
             }
             if written? {
                 let behavior = dependencies[dep.dep_id as usize].behavior;
@@ -2141,7 +2174,7 @@ impl<'a> Installer<'a> {
 
                 dest.set_length(base_len);
                 append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
-                let (linked_dest, _, written) = link(dest, shipped, real_len.min(base_len));
+                let (linked_dest, _, written, _) = link(dest, shipped, real_len.min(base_len));
                 dest = linked_dest;
                 if written? {
                     changed = Relink::Changed;
@@ -2205,6 +2238,43 @@ impl<'a> Installer<'a> {
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!("{}", bun_core::fmt::escape_control_chars(text)),
+            );
+        }
+    }
+
+    /// Main thread, once every task is done: the package that a link led to before is whole,
+    /// also when a task of this install linked it again, and so is the package it leads to now.
+    pub(crate) fn unlink_dropped_bins(&self) {
+        let replaced_links = core::mem::take(&mut *self.replaced_links.lock());
+        let (lockfile, manager) = (self.lockfile(), self.manager());
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+        for link in &replaced_links {
+            let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
+            self.append_real_store_node_modules_path(
+                &mut node_modules_path,
+                link.importer,
+                Which::Final,
+            );
+            // Nothing behind a `node_modules` that is a symlink is removed.
+            if LinkedNodeModules::is_at(node_modules_path.slice_z()) == Some(true) {
+                continue;
+            }
+            let alias = lockfile.buffers.dependencies[link.dep_id as usize]
+                .name
+                .slice(string_buf);
+            let Some(outgoing_bins) = bin_real::InstalledBins::read(alias, &link.old_target) else {
+                continue;
+            };
+            let pkg_id = self.store.ids(link.entry_id).pkg_id;
+            let global = manager.options.global && link.importer == StoreEntryId::ROOT;
+            outgoing_bins.unlink_dropped(
+                &lockfile.packages.items_bin()[pkg_id as usize],
+                string_buf,
+                lockfile.buffers.extern_strings.as_slice(),
+                alias,
+                node_modules_path.slice(),
+                global.then_some(manager.options.bin_path.as_bytes()),
             );
         }
     }

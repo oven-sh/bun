@@ -16,7 +16,8 @@ use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    TruncatedPackageNameHash, bin, bun_fs, bun_json, buntaghashbuf_make, initialize_store,
+    resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -48,6 +49,14 @@ pub(crate) struct PackageFiles<'a> {
 #[derive(Clone, Copy)]
 pub struct Patch {
     pub(crate) contents_hash: u64,
+}
+
+/// The bins of the package that `verify` found where the package to install goes.
+pub(crate) enum OutgoingBins {
+    /// `verify` read no package.json there.
+    Unread,
+    /// What that package.json declares. `None`: there is none, or it declares no bin.
+    Read(Option<bin::InstalledBins>),
 }
 
 #[derive(Default)]
@@ -1214,12 +1223,14 @@ impl<'a> PackageInstall<'a> {
         matches(&bun_tag_file.bytes)
     }
 
+    /// `outgoing_bins` is set when this reads the package.json of the package that is there.
     pub(crate) fn verify(
         &mut self,
         resolution: &Resolution,
         integrity: &Integrity,
         skips_verify: bool,
         root_node_modules_dir: &Dir,
+        outgoing_bins: &mut OutgoingBins,
     ) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git | resolution::Tag::Github => {
@@ -1250,7 +1261,11 @@ impl<'a> PackageInstall<'a> {
                     self.verify_directory_exists(root_node_modules_dir)
                 }
             }
-            _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
+            _ => self.verify_package_json_name_and_version(
+                root_node_modules_dir,
+                resolution.tag,
+                outgoing_bins,
+            ),
         };
 
         verified
@@ -1335,14 +1350,25 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         root_node_modules_dir: &Dir,
         resolution_tag: resolution::Tag,
+        outgoing_bins: &mut OutgoingBins,
     ) -> bool {
         // The first attempt treats a short read as the end of the file, which saves a `read` call.
         // A few file systems return short reads earlier and truncate the JSON, so retry until EOF.
-        self.verify_installed_package_json(root_node_modules_dir, resolution_tag, false)
-            .or_else(|| {
-                self.verify_installed_package_json(root_node_modules_dir, resolution_tag, true)
-            })
-            .unwrap_or(false)
+        self.verify_installed_package_json(
+            root_node_modules_dir,
+            resolution_tag,
+            false,
+            outgoing_bins,
+        )
+        .or_else(|| {
+            self.verify_installed_package_json(
+                root_node_modules_dir,
+                resolution_tag,
+                true,
+                outgoing_bins,
+            )
+        })
+        .unwrap_or(false)
     }
 
     /// Returns `None` if the bytes that were read are not a complete JSON document.
@@ -1351,7 +1377,9 @@ impl<'a> PackageInstall<'a> {
         root_node_modules_dir: &Dir,
         resolution_tag: resolution::Tag,
         until_eof: bool,
+        outgoing_bins: &mut OutgoingBins,
     ) -> Option<bool> {
+        *outgoing_bins = OutgoingBins::Read(None);
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
@@ -1365,8 +1393,31 @@ impl<'a> PackageInstall<'a> {
         else {
             return Some(false);
         };
-        let source = &source;
 
+        let verified = self.name_and_version_match(&source, resolution_tag);
+        if verified != Some(true) {
+            let alias = self.destination_dir_subpath.as_bytes();
+            let mut package_dir_buf = bun_paths::path_buffer_pool::get();
+            *outgoing_bins = OutgoingBins::Read(
+                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                    &self.node_modules.path,
+                    package_dir_buf.as_mut_slice(),
+                    &[alias],
+                )
+                .and_then(|package_dir| {
+                    bin::InstalledBins::parse(source.contents(), alias, package_dir)
+                }),
+            );
+        }
+        verified
+    }
+
+    /// Returns `None` if `source` is not a complete JSON document.
+    fn name_and_version_match(
+        &self,
+        source: &bun_ast::Source,
+        resolution_tag: resolution::Tag,
+    ) -> Option<bool> {
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
         let minimum =
             if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
@@ -1436,6 +1487,30 @@ impl<'a> PackageInstall<'a> {
             package_json_checker.found_name()
                 == self.package_name.slice(&self.lockfile.buffers.string_bytes),
         )
+    }
+
+    /// What the package at the destination declares, when `verify` did not read its package.json.
+    pub(crate) fn read_outgoing_bins(
+        &self,
+        root_node_modules_dir: &Dir,
+    ) -> Option<bin::InstalledBins> {
+        let alias = self.destination_dir_subpath.as_bytes();
+        let mut spill = Vec::new();
+        let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+            &mut spill,
+            &[alias, b"package.json"],
+        );
+        let package_json = self
+            .node_modules
+            .read_small_file(root_node_modules_dir, package_json_path)
+            .ok()?;
+        let mut package_dir_buf = bun_paths::path_buffer_pool::get();
+        let package_dir = path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+            &self.node_modules.path,
+            package_dir_buf.as_mut_slice(),
+            &[alias],
+        )?;
+        bin::InstalledBins::parse(&package_json.bytes, alias, package_dir)
     }
 }
 

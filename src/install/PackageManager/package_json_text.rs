@@ -51,8 +51,7 @@ fn write(
     let is_wrong = match text.document(&root) {
         Ok(()) => {
             let new = text.out.list;
-            let is_jsonc = || read(old, json::JSONOptions::DEFAULT, false).is_none();
-            if let Some(read) = read_as(&new, is_jsonc, with_positions)
+            if let Some(read) = read_new(&new, old, text.looks_jsonc, with_positions)
                 && is_tree(&read.root, &root, stack)
             {
                 return Ok((new, Some(read)));
@@ -65,7 +64,7 @@ fn write(
     };
     // A text that `root` was parsed from, and that no edit has changed, says it as it is.
     let same = old.to_vec();
-    if let Some(read) = read_as(&same, || true, with_positions)
+    if let Some(read) = read(&same, json::PACKAGE_JSON_OPTS, with_positions)
         && is_tree(&read.root, &root, stack)
     {
         return Ok((same, Some(read)));
@@ -96,16 +95,30 @@ fn print_new_file(old: &[u8], root: Expr, indentation: Indentation) -> js_printe
     Ok(writer.ctx.written_without_trailing_zero().to_vec())
 }
 
-/// What the parser reads `text` as. Strict JSON first: a text with a comment or a trailing
-/// comma is read only if `is_jsonc` says that it may have them.
-fn read_as(
-    text: &[u8],
-    is_jsonc: impl FnOnce() -> bool,
+/// What the parser reads `new` as. `None` also for a text that has a comment or a trailing
+/// comma when `old` has none: strict JSON stays strict JSON.
+///
+/// `old_looks_jsonc` only says which dialect to read first, so that a file is read once when
+/// it is as it looks. Whether `old` is strict JSON is for the parser to say.
+fn read_new(
+    new: &[u8],
+    old: &[u8],
+    old_looks_jsonc: bool,
     with_positions: bool,
 ) -> Option<json::ParsedJson> {
-    read(text, json::JSONOptions::DEFAULT, with_positions).or_else(|| {
-        if is_jsonc() {
-            read(text, json::PACKAGE_JSON_OPTS, with_positions)
+    let strict = json::JSONOptions::DEFAULT;
+    let old_is_jsonc = || read(old, strict, false).is_none();
+    if old_looks_jsonc {
+        let read_as_jsonc = read(new, json::PACKAGE_JSON_OPTS, with_positions)?;
+        return if old_is_jsonc() {
+            Some(read_as_jsonc)
+        } else {
+            read(new, strict, with_positions)
+        };
+    }
+    read(new, strict, with_positions).or_else(|| {
+        if old_is_jsonc() {
+            read(new, json::PACKAGE_JSON_OPTS, with_positions)
         } else {
             None
         }
@@ -444,6 +457,8 @@ struct Text<'a> {
     scratch: Vec<u8>,
     /// A `//` comment was written without its line break: what comes next starts a line.
     in_line_comment: bool,
+    /// The old text has a comment or a trailing comma, as far as it was read.
+    looks_jsonc: bool,
     stack: StackCheck,
     no_source: Source,
 }
@@ -467,6 +482,7 @@ impl<'a> Text<'a> {
             open_members: Vec::with_capacity(32),
             scratch: Vec::new(),
             in_line_comment: false,
+            looks_jsonc: false,
             stack: StackCheck::init(),
             no_source: Source::init_empty_file(b"package.json"),
         }
@@ -486,12 +502,13 @@ impl<'a> Text<'a> {
 
     fn document(&mut self, root: &Expr) -> Step {
         let text = self.text;
-        let start = scan::next_token(text, 0).ok_or(Stop::NotTheText)?;
+        let start = self.token(0)?;
         if Entries::of(root, text[start]).is_none() {
             return Err(Stop::NotTheText);
         }
         let index = self.read(start)?;
         let container = self.containers[index];
+        self.looks_jsonc |= text[container.close..].contains(&b'/');
         let old = OldValue {
             at: start,
             end: container.close + 1,
@@ -551,6 +568,13 @@ impl<'a> Text<'a> {
         (from, false)
     }
 
+    /// Where the next token of the old text is, at or after `at`.
+    fn token(&mut self, at: usize) -> Step<usize> {
+        let gap = scan::gap(self.text, at).ok_or(Stop::NotTheText)?;
+        self.looks_jsonc |= gap.has_comment;
+        Ok(gap.end)
+    }
+
     /// Reads the container that opens at `open` and the containers in it, each token once.
     /// Returns its index in `self.containers`.
     fn read(&mut self, open: usize) -> Step<usize> {
@@ -562,9 +586,11 @@ impl<'a> Text<'a> {
         let closing = if is_object { b'}' } else { b']' };
         let mark = self.open_members.len();
         let mut at = open + 1;
+        let mut is_after_comma = false;
         let close = loop {
-            let token = scan::next_token(text, at).ok_or(Stop::NotTheText)?;
+            let token = self.token(at)?;
             if text[token] == closing {
+                self.looks_jsonc |= is_after_comma;
                 break token;
             }
             let mut member = Member {
@@ -579,13 +605,13 @@ impl<'a> Text<'a> {
             };
             if is_object {
                 let key = scan::string(text, token).ok_or(Stop::NotTheText)?;
-                let colon = scan::next_token(text, key.end).ok_or(Stop::NotTheText)?;
+                let colon = self.token(key.end)?;
                 if text[colon] != b':' {
                     return Err(Stop::NotTheText);
                 }
                 member.key_end = key.end;
                 member.key_is_plain = !key.has_escape;
-                member.value = scan::next_token(text, colon + 1).ok_or(Stop::NotTheText)?;
+                member.value = self.token(colon + 1)?;
             }
             match text[member.value] {
                 b'{' | b'[' => {
@@ -607,8 +633,9 @@ impl<'a> Text<'a> {
                 member.key_end = member.value_end;
                 member.key_is_plain = member.value_is_plain;
             }
-            at = scan::next_token(text, member.value_end).ok_or(Stop::NotTheText)?;
-            if text[at] == b',' {
+            at = self.token(member.value_end)?;
+            is_after_comma = text[at] == b',';
+            if is_after_comma {
                 member.comma = Some(at);
                 at += 1;
             } else if text[at] != closing {

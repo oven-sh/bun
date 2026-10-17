@@ -73,23 +73,24 @@ enum FuncNode<'a> {
 
 /// Whether the type of `node` can have call signatures at all.
 fn may_be_function(node: Expr) -> bool {
-    !matches!(
-        node.tag(),
-        ExprTag::Missing
-            | ExprTag::Spread
-            | ExprTag::Null
-            | ExprTag::True
-            | ExprTag::False
-            | ExprTag::Number
-            | ExprTag::String
-            | ExprTag::BigInt
-            | ExprTag::Regex
-            | ExprTag::Template
-            | ExprTag::Array
-            | ExprTag::Object
-            | ExprTag::Class
-            | ExprTag::Unary
-    )
+    node.has_jsdoc_cast()
+        || !matches!(
+            node.tag(),
+            ExprTag::Missing
+                | ExprTag::Spread
+                | ExprTag::Null
+                | ExprTag::True
+                | ExprTag::False
+                | ExprTag::Number
+                | ExprTag::String
+                | ExprTag::BigInt
+                | ExprTag::Regex
+                | ExprTag::Template
+                | ExprTag::Array
+                | ExprTag::Object
+                | ExprTag::Class
+                | ExprTag::Unary
+        )
 }
 
 fn is_void(ty: Type) -> bool {
@@ -245,7 +246,7 @@ impl StrictVoidReturn {
                     true => ty.get_construct_signatures(),
                     false => ty.get_call_signatures(),
                 };
-                tsutils::union_constituents(call.callee().ty())
+                tsutils::union_constituents(call.callee().ts_node_with_parentheses().get_type_at_location())
                     .iter()
                     .flat_map(signatures_of)
                     .collect()
@@ -293,7 +294,8 @@ impl StrictVoidReturn {
                 };
                 if self.returns_a_value(FuncNode::Method(func))
                     && let Some(prop_symbol) = object
-                        .contextual_type()
+                        .ts_node()
+                        .get_contextual_type()
                         .and_then(|it| it.get_property(name.bytes()))
                     && is_void_returning_function_type(prop_symbol.get_type_at_location(prop_node))
                 {

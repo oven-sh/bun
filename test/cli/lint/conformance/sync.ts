@@ -5,9 +5,10 @@
 //   bun test/cli/lint/conformance/sync.ts [<fixtures>]        # `fixtures` next to this file, unless named
 //   bun test/cli/lint/conformance/sync.ts --more <name> <directory>   # `more/<name>/` is what `<directory>/<plugin>/<rule>.json` are
 //   bun test/cli/lint/conformance/sync.ts --oxlint <directory>        # `oxlint/` is what `extract-oxlint.ts` wrote to `<directory>`
+//   bun test/cli/lint/conformance/sync.ts --plugin <name> <fixtures>  # replaces `<name>/` with `<fixtures>/<name>/<rule>.json`
 //   bun test/cli/lint/conformance/sync.ts --extract <part of a path, or ""> <directory>
 //
-// Each of the first three leaves the rest of the bundle as it is.
+// Each of the first four leaves the rest of the bundle untouched.
 //
 // The suites of eslint-plugin-import, -react and -prettier are recorded with the published packages and come into the bundle
 // rule by rule, as a rule here does the same as the package's. None of these commands touches them: see `RECORDED`.
@@ -41,7 +42,7 @@ const PACKAGES = [
 ] as const;
 
 /** What is in the bundle rule by rule, with the projects that the cases are files of. */
-const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/"];
+const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/", "json/", "markdown/"];
 
 function directoryOf(variable: string): string {
   const directory = process.env[variable];
@@ -109,9 +110,18 @@ if (first === "--extract" && rest.length === 2) {
     files.set(path.startsWith("import-project/") ? `oxlint-${path}` : `oxlint/${path}`, bytes);
   writeBundle(bundle, files);
   console.log(`oxlint: ${summary(found)}. In all: ${summary(files)}`);
+} else if (first === "--plugin" && rest.length === 2 && RECORDED.includes(`${rest[0]}/`)) {
+  const [name, fixtures] = rest;
+  const files = kept(path => !path.startsWith(`${name}/`));
+  const found = new Map<string, Uint8Array>();
+  collect(fixtures, name, found, file => !file.endsWith(".json"));
+  clean(found, [fixtures]);
+  for (const [path, bytes] of found) files.set(path, bytes);
+  writeBundle(bundle, files);
+  console.log(`${name}: ${summary(found)}. In all: ${summary(files)}`);
 } else if (first?.startsWith("--")) {
   console.error(
-    "usage: bun sync.ts [<fixtures>] | --more <name> <directory> | --oxlint <directory> | --extract <part of a path> <directory>",
+    "usage: bun sync.ts [<fixtures>] | --more <name> <directory> | --oxlint <directory> | --plugin <name> <fixtures> | --extract <part of a path> <directory>",
   );
   process.exit(1);
 } else {

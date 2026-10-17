@@ -75,11 +75,12 @@ const spellings: Record<string, string[]> = {
 const setting = (id: string, severity: string): Setting =>
   id.endsWith("enforce-node-protocol-usage") ? [severity, "always"] : severity;
 
-type Listed = { scope: string; value: string; type_aware: boolean };
+type Listed = { scope: string; value: string; type_aware: boolean; modes: string[] };
 
 async function listed() {
   const { stdout } = await lint({}, ["--rules", "-f", "json"]);
-  const rules = JSON.parse(stdout) as Listed[];
+  // Rules for languages other than JavaScript only exist with an ESLint config.
+  const rules = (JSON.parse(stdout) as Listed[]).filter(it => it.modes.includes("native"));
   expect(rules.length).toBeGreaterThan(1000);
   expect([...new Set(rules.map(it => it.scope))].filter(it => !(it in spellings))).toEqual([]);
   return rules;

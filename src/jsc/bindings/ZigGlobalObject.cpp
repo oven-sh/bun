@@ -445,15 +445,6 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
-static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
-{
-    auto* globalObject = defaultGlobalObject();
-    if (auto queue = globalObject->m_nextTickQueue.get()) {
-        globalObject->resetOnEachMicrotaskTick();
-        queue->drain(vm, globalObject);
-    }
-}
-
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &globalObjectMethodTable());
@@ -487,16 +478,6 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
     auto* structure = JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
     structure->setTransitionWatchpointIsLikelyToBeFired(true);
     return structure;
-}
-
-void Zig::GlobalObject::resetOnEachMicrotaskTick()
-{
-    auto& vm = this->vm();
-    if (this->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(nullptr);
-    } else {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-    }
 }
 
 extern "C" size_t Bun__reported_memory_size;
@@ -608,15 +589,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
-    vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        // if you process.nextTick on a microtask we need this
-        auto* globalObject = defaultGlobalObject();
-        if (auto queue = globalObject->m_nextTickQueue.get()) {
-            globalObject->resetOnEachMicrotaskTick();
-            queue->drain(vm, globalObject);
-            return;
-        }
-    });
 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
@@ -3216,6 +3188,27 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
     return globalObject->drainMicrotasks();
 }
 
+// The promise jobs without the ticks, for VirtualMachine::finish_entry_load.
+extern "C" uint8_t JSC__JSGlobalObject__drainPromiseJobs(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
+        Bun__VM__takeTerminationOutsideScript(globalObject);
+        return 1;
+    }
+    vm.drainMicrotasks();
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (vm.isTerminationException(exception)) {
+            Bun__VM__takeTerminationOutsideScript(globalObject);
+            return 1;
+        }
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    }
+    return 0;
+}
+
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)
 {
     anything.visit(visitor);
@@ -3718,8 +3711,10 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
     return promise;
 }
 
+extern "C" void Bun__VM__setEntryModuleKey(void*, const BunString*);
+
 JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
-    JSModuleLoader* loader, JSValue key, const WTF::String&,
+    JSModuleLoader* loader, JSValue key, const WTF::String& referrer,
     RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher>)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3738,6 +3733,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);
+    // What bun:main imports is the entry point.
+    if (referrer == "bun:main"_s) [[unlikely]]
+        Bun__VM__setEntryModuleKey(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), &moduleKeyBun);
     auto& sourceString = vm.propertyNames->undefinedKeyword.string();
     auto typeAttributeString = String();
 
@@ -4248,30 +4246,6 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return importMeta;
 }
 
-extern "C" bool Bun__VM__entryEvaluationStarted(void*);
-extern "C" BunString Bun__VM__entryRootKey(void*);
-extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
-
-// A module body is about to run. That means "the entry's graph is linked and executing" only if it is
-// part of the entry root's own evaluation — the root's record is Evaluating (or beyond) from the moment
-// linkAndEvaluateModule() enters it, and its dependencies run inside that (post-order). A module that
-// evaluates before then is some other root: a preload's un-awaited import() finishing while the entry is
-// still fetching.
-static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
-{
-    void* bunVM = globalObject->bunVM();
-    if (Bun__VM__entryEvaluationStarted(bunVM))
-        return;
-    BunString rootKey = Bun__VM__entryRootKey(bunVM);
-    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
-    if (!entry)
-        return;
-    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-    if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating)
-        return;
-    Bun__VM__noteEntryEvaluationStarted(bunVM);
-}
-
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
@@ -4282,7 +4256,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
@@ -4301,7 +4274,6 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.ModuleGraph.
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(globalObject, moduleLoader);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
@@ -4463,6 +4435,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
+    } else if (handler == Bun__onResolveEntryLoad) {
+        return GlobalObject::PromiseFunctions::Bun__onResolveEntryLoad;
+    } else if (handler == Bun__onRejectEntryLoad) {
+        return GlobalObject::PromiseFunctions::Bun__onRejectEntryLoad;
     } else if (handler == Bun__NodeHTTPRequest__onResolve) {
         return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
     } else if (handler == Bun__NodeHTTPRequest__onReject) {

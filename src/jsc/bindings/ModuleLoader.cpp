@@ -908,17 +908,37 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
-extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+extern "C" BunString JSC__JSModuleLoader__resolve(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, specifier->toWTFString()), {}, nullptr, /* useImportMap */ true);
+    RETURN_IF_EXCEPTION(scope, BunStringEmpty);
+    return Bun::toStringRef(key.string());
+}
+
+// The two halves of JSC::loadAndEvaluateModule(), for VirtualMachine::finish_entry_load to evaluate the graph itself.
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__loadModule(JSC::JSGlobalObject* globalObject, const BunString* key)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, specifier->toWTFString()), {}, nullptr, /* useImportMap */ true);
-    if (scope.exception()) [[unlikely]]
-        return nullptr;
-
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    auto* promise = JSC::loadModule(globalObject, JSC::Identifier::fromString(vm, key->toWTFString()), nullptr, nullptr);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     return promise;
+}
+
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__linkAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto identifier = JSC::Identifier::fromString(vm, key->toWTFString());
+    // JSC takes the record from this registry entry without a check.
+    auto* entry = globalObject->moduleLoader()->getRegisteredMayBeNull(identifier, JSC::ScriptFetchParameters::Type::JavaScript);
+    if (!entry || !entry->record()) [[unlikely]] {
+        throwException(globalObject, scope, createError(globalObject, makeString("Module \""_s, identifier.string(), "\" has not been loaded"_s)));
+        return nullptr;
+    }
+    RELEASE_AND_RETURN(scope, JSC::linkAndEvaluateModule(globalObject, identifier, nullptr));
 }
 
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin

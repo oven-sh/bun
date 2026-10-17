@@ -1,8 +1,10 @@
 // Running this file in jest/vitest does not work as expected. Jest & Vitest
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 const isBun = !!process.versions.bun;
 
 it("a tick that throws goes to uncaughtException and the ticks queued after it still run, in order", async () => {
@@ -104,6 +106,271 @@ it("after the tick queue went idle, a promise reaction does not run inside proce
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({ tick: true, reaction: false });
   expect(exitCode).toBe(0);
+});
+
+// An entry-like module is evaluated outside any microtask checkpoint, and a checkpoint follows.
+// Each expected output is what node v26.12.0 prints.
+describe.concurrent("the entry point and the first checkpoint", () => {
+  async function run(files, args) {
+    using dir = tempDir("entry-checkpoint", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const queues = `
+    Promise.resolve().then(() => console.log("promise job"));
+    process.nextTick(() => console.log("tick"));
+  `;
+  const listens = `process.on("uncaughtException", (error, origin) => console.log(error.message + " is an " + origin));`;
+  const usesNextTick = `process.nextTick(() => {});`;
+
+  // A module that finishes without a top-level await gets its ticks before its promise jobs.
+  it.each([
+    ["a CommonJS entry point", { "entry.cjs": queues }, ["entry.cjs"]],
+    ["an ES module entry point", { "entry.mjs": queues }, ["entry.mjs"]],
+    ["an ES module entry point that imports node:fs", { "entry.mjs": `import "node:fs";\n${queues}` }, ["entry.mjs"]],
+    [
+      "a CommonJS entry point after a preload that used process.nextTick",
+      { "preload.cjs": usesNextTick, "entry.cjs": queues },
+      ["--preload", "./preload.cjs", "entry.cjs"],
+    ],
+    [
+      "an ES module entry point after a preload that used process.nextTick",
+      { "preload.cjs": usesNextTick, "entry.mjs": queues },
+      ["--preload", "./preload.cjs", "entry.mjs"],
+    ],
+    [
+      "a CommonJS preload",
+      { "preload.cjs": `require("node:fs");\n${queues}`, "entry.cjs": "" },
+      ["--preload", "./preload.cjs", "entry.cjs"],
+    ],
+    [
+      'a .js entry point with "type": "commonjs"',
+      { "entry.js": queues, "package.json": `{ "type": "commonjs" }` },
+      ["entry.js"],
+    ],
+    ["-e with CommonJS source", {}, ["-e", `require("node:os");\n${queues}`]],
+    // node:stream uses process.nextTick when it loads, and node:fs reads it.
+    [
+      "a CommonJS entry point after a preload that requires node:stream",
+      { "preload.cjs": `require("node:stream");`, "entry.cjs": queues },
+      ["--preload", "./preload.cjs", "entry.cjs"],
+    ],
+    [
+      "a CommonJS entry point after a preload that requires node:fs",
+      { "preload.cjs": `require("node:fs");`, "entry.cjs": queues },
+      ["--preload", "./preload.cjs", "entry.cjs"],
+    ],
+    // node loads the entry point through the ES module loader when there is an --import.
+    [
+      "a CommonJS entry point after an --import that imports node:stream",
+      { "preload.mjs": `import "node:stream";`, "entry.cjs": queues },
+      ["--import", "./preload.mjs", "entry.cjs"],
+    ],
+  ])("%s gets its ticks before its promise jobs", async (_name, files, args) => {
+    expect(await run(files, args)).toEqual({ stdout: "tick\npromise job\n", stderr: "", exitCode: 0 });
+  });
+
+  // `bun --bun node` keeps the symlink as the main path. The module is keyed by its real path.
+  it("a symlink to a CommonJS entry point that bun runs as node gets its ticks before its promise jobs", async () => {
+    using dir = tempDir("entry-checkpoint", { "preload.cjs": usesNextTick, "real/bin.cjs": queues });
+    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"), "file");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "node", "-r", "./preload.cjs", "./bin.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "tick\npromise job\n", stderr: "", exitCode: 0 });
+  });
+
+  // https://github.com/oven-sh/bun/issues/34115
+  it("Writable.toWeb() rejects close() after a preload that required node:stream", async () => {
+    const files = {
+      "preload.js": `require("node:stream");`,
+      "entry.js": `
+        const { Writable } = require("stream");
+        const writable = new Writable({ write(chunk, encoding, callback) { callback(); } });
+        Writable.toWeb(writable).close().then(
+          () => console.log("resolved"),
+          error => console.log("rejected: " + error.code),
+        );
+        writable.end();
+      `,
+    };
+    expect(await run(files, ["--preload", "./preload.js", "entry.js"])).toEqual({
+      stdout: "rejected: ABORT_ERR\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A module with a top-level await is evaluated in promise jobs: they run before the ticks.
+  it("an entry point with a top-level await gets its promise jobs before its ticks", async () => {
+    const entry = `
+      Promise.resolve().then(() => console.log("promise job 1"));
+      process.nextTick(() => console.log("tick 1"));
+      await 0;
+      console.log("after await");
+      Promise.resolve().then(() => console.log("promise job 2"));
+      process.nextTick(() => console.log("tick 2"));
+    `;
+    expect(await run({ "entry.mjs": entry }, ["entry.mjs"])).toEqual({
+      stdout: "promise job 1\nafter await\npromise job 2\ntick 1\ntick 2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each(["entry.cjs", "entry.mjs"])(
+    "what %s throws is an uncaughtException before its ticks and promise jobs",
+    async entry => {
+      const source = `${listens}\n${queues}\nthrow new Error("fatal");`;
+      expect(await run({ [entry]: source }, [entry])).toEqual({
+        stdout: "fatal is an uncaughtException\ntick\npromise job\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it("what a CommonJS preload throws is an uncaughtException before its ticks and promise jobs", async () => {
+    const files = {
+      "preload.cjs": `require("node:fs");\n${listens}\n${queues}\nthrow new Error("fatal");`,
+      "entry.cjs": "",
+    };
+    expect(await run(files, ["--preload", "./preload.cjs", "entry.cjs"])).toEqual({
+      stdout: "fatal is an uncaughtException\ntick\npromise job\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("what an entry point throws after a top-level await is an unhandledRejection before its ticks", async () => {
+    const source = `${listens}\n${queues}\nawait Promise.reject(new Error("fatal"));`;
+    expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: "promise job\nfatal is an unhandledRejection\ntick\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each(["entry.cjs", "entry.mjs"])("when nothing takes what %s throws, nothing that it queued runs", async entry => {
+    const result = await run({ [entry]: `${queues}\nthrow new Error("fatal");` }, [entry]);
+    expect({ ...result, stderr: result.stderr.split("\n").filter(line => line.startsWith("error: ")) }).toEqual({
+      stdout: "",
+      stderr: ["error: fatal"],
+      exitCode: 1,
+    });
+  });
+
+  // The report is not a promise job: no promise job of the module runs before it.
+  const chain = `
+    process.on("uncaughtException", () => steps.push("report"));
+    const steps = [];
+    let promise = Promise.resolve();
+    for (let i = 1; i <= 7; i++) promise = promise.then(() => steps.push(i));
+    setImmediate(() => console.log(steps.join(" ")));
+    throw new Error("fatal");
+  `;
+  it.each([
+    ["a CommonJS entry point", { "entry.cjs": chain }, "entry.cjs"],
+    ["an ES module entry point", { "entry.mjs": chain }, "entry.mjs"],
+    [
+      "an ES module that the entry point imports",
+      { "entry.mjs": `import "./dependency.mjs";`, "dependency.mjs": chain },
+      "entry.mjs",
+    ],
+  ])("what %s throws is reported before its first promise job", async (_name, files, entry) => {
+    expect(await run(files, [entry])).toEqual({ stdout: "report 1 2 3 4 5 6 7\n", stderr: "", exitCode: 0 });
+  });
+
+  it.each(["entry.cjs", "entry.mjs"])(
+    "the first tick of the process, scheduled by a promise job of %s, runs after the promise jobs",
+    async entry => {
+      const source = `
+        const order = [];
+        Promise.resolve().then(() => {
+          order.push("job 1");
+          process.nextTick(() => order.push("tick"));
+        });
+        Promise.resolve().then(() => order.push("job 2"));
+        queueMicrotask(() => order.push("job 3"));
+        setImmediate(() => console.log(order.join(", ")));
+      `;
+      expect(await run({ [entry]: source }, [entry])).toEqual({
+        stdout: "job 1, job 2, job 3, tick\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Node rethrows what a worker's entry point throws from a tick, after the ticks that the worker queued.
+  it.each(["worker.cjs", "worker.mjs"])(
+    "what %s throws is reported after its ticks and before its promise jobs",
+    async worker => {
+      const parent = `
+      const worker = new (require("node:worker_threads").Worker)("./${worker}");
+      worker.on("error", error => console.log("error: " + error.message));
+      worker.on("exit", code => console.log("exit: " + code));
+    `;
+      const files = { "parent.cjs": parent, [worker]: `${queues}\nthrow new Error("fatal");` };
+      expect(await run(files, ["parent.cjs"])).toEqual({
+        stdout: "tick\nerror: fatal\nexit: 1\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.each(["entry.cjs", "entry.mjs"])(
+    "an async function of %s resumes when nothing keeps the event loop alive",
+    async entry => {
+      const source = `
+      (async () => {
+        await null;
+        console.log("resumed");
+        await new Promise(resolve => process.nextTick(resolve));
+        console.log("after a tick");
+      })();
+      console.log("first");
+    `;
+      expect(await run({ [entry]: source }, [entry])).toEqual({
+        stdout: "first\nresumed\nafter a tick\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Bun only. bun:main reads the default export when the body of the entry point finishes, before what that body queued.
+  it.each([
+    ["entry.cjs", "module.exports ="],
+    ["entry.mjs", "export default"],
+  ])("the default export of %s is served before a tick that the entry point queued", async (entry, exports) => {
+    const source = `
+      ${exports} { port: 0, fetch: () => new Response("ok") };
+      process.nextTick(() => {
+        console.log("tick");
+        process.exit(0);
+      });
+    `;
+    const { stdout, stderr, exitCode } = await run({ [entry]: source }, [entry]);
+    expect({ stdout: stdout.replace(/:\d+\n/, ":<port>\n"), stderr, exitCode }).toEqual({
+      stdout: "Started development server: http://localhost:<port>\ntick\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 it("process.nextTick", async () => {

@@ -1129,9 +1129,9 @@ console.log("survived", require("./late.js"));`,
         stderr: "",
         exitCode: 0,
       });
-      // What the main file throws is not lost for it.
+      // What the main file throws is reported when it throws, before the rejection of the override.
       expect(await run(handlers + preload, false, `throw new Error("from main");`)).toEqual({
-        stdout: "unhandledRejection: after the original\nuncaughtException: from main\n",
+        stdout: "uncaughtException: from main\nunhandledRejection: after the original\n",
         stderr: "",
         exitCode: 0,
       });

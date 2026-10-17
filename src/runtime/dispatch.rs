@@ -510,6 +510,9 @@ pub(crate) fn run_task(
         task_tag::PollPendingModulesTask => {
             vm.modules.on_poll();
         }
+        task_tag::EntryLoadEvaluate => {
+            vm.finish_entry_load()?;
+        }
         task_tag::RuntimeTranspilerStore => {
             let store = cast!(RuntimeTranspilerStore);
             store.run_from_js_thread(el.into(), global, vm.into());
@@ -728,7 +731,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1447,6 +1450,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NativeZlib => release!(NativeZlib),
         task_tag::NativeZstd => release!(NativeZstd),
         task_tag::PollPendingModulesTask => release!(bun_jsc::async_module::Queue),
+        task_tag::EntryLoadEvaluate => release!(bun_jsc::virtual_machine::EntryLoad),
         task_tag::PosixSignalTask => release!(PosixSignalTask),
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {

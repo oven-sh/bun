@@ -68,10 +68,37 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
-    /// True when the entry module evaluated as CommonJS: Node reports a CJS
-    /// entry's top-level throw with origin `uncaughtException` but an ESM
-    /// entry rejection with `unhandledRejection`; the run command consults this.
-    pub evaluated_as_cjs: bool,
+}
+
+/// An entry-like load (entry point, preload, worker entry, test file): its graph loads, then a task evaluates it.
+pub struct EntryLoad {
+    /// Key of the graph to link and evaluate. Empty unless a load is between its two steps.
+    root: bun_core::String,
+    /// Key of the entry-like module while its graph loads: as CommonJS, its body runs when the graph is linked.
+    module: bun_core::String,
+    loaded: bool,
+    failure_handled: bool,
+}
+
+impl Default for EntryLoad {
+    fn default() -> Self {
+        Self {
+            root: bun_core::String::EMPTY,
+            module: bun_core::String::EMPTY,
+            loaded: false,
+            failure_handled: false,
+        }
+    }
+}
+
+impl bun_event_loop::Taskable for EntryLoad {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::EntryLoadEvaluate;
+    /// `this` is the VM's own field; nothing is owned.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Evaluates the entry point's graph, in the realm's own context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -233,12 +260,7 @@ pub struct VirtualMachine {
     // outlives the VM.
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,
-    /// The current entry load reached module evaluation: the root's graph is
-    /// linked and executing (set from the moduleLoaderEvaluate hook once the
-    /// root record — `Bun__VM__entryRootKey` — is Evaluating; a module some
-    /// other root evaluates meanwhile, e.g. a preload's un-awaited import(),
-    /// does not count). What is still pending on the entry promise after that
-    /// is a top-level await.
+    /// The current entry load has been evaluated: what is still pending on its promise is a top-level await.
     pub entry_evaluation_started: bool,
 
     pub(crate) had_errors: bool,
@@ -298,6 +320,11 @@ pub struct VirtualMachine {
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
+    pub(crate) entry_load: EntryLoad,
+    /// Exits the process after an entry-like load failed unhandled. Set by the runner that owns the process.
+    pub exit_after_entry_failure: Option<fn(&mut VirtualMachine) -> !>,
+    /// The runner is calling an override of `Module.runMain`: the original starts the entry load.
+    pub(crate) run_main_override_running: bool,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
@@ -467,6 +494,7 @@ unsafe extern "C" {
 }
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
+bun_core::define_scoped_log!(entry_log, EntryLoad, hidden);
 
 pub use bun_options_types::context::HotReload;
 
@@ -750,32 +778,6 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> u8 {
         vm.exit_handler.exit_code
-    }
-
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
-        vm.entry_evaluation_started = true;
-    }
-
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
-    /// any other VM answers `true` so the hook's registry probe never runs there.
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started || vm.worker.is_none()
-    }
-
-    /// The module-registry key of the current entry load's root: the
-    /// `bun:main` wrapper when the entry is transpiled through it, else the
-    /// entry path itself (see `reload_entry_point`). Borrowed.
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__entryRootKey(
-        vm: &VirtualMachine,
-    ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
-            bun_core::StringView::static_(MAIN_FILE_NAME)
-        } else {
-            bun_core::StringView::borrow_utf8(vm.main())
-        }
     }
 
     #[unsafe(no_mangle)]
@@ -2260,11 +2262,7 @@ impl VirtualMachine {
         ExitHandler::dispatch_on_exit(self);
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
-        if !self.is_inside_deferred_task_queue.get() {
-            self.is_inside_deferred_task_queue.set(true);
-            self.event_loop_mut().deferred_tasks.run();
-            self.is_inside_deferred_task_queue.set(false);
-        }
+        self.run_deferred_tasks();
 
         // The loop won't tick again, so flush now. Don't use `uws_loop()`: inside spawnSync it
         // returns a loop that has no uWS LoopData.
@@ -2287,6 +2285,14 @@ impl VirtualMachine {
         if self.is_main_thread() {
             crate::node_compile_cache::persist_at_exit();
             crate::bytecode_order_recorder::write_at_exit(self, standalone_module_graph());
+        }
+    }
+
+    fn run_deferred_tasks(&mut self) {
+        if !self.is_inside_deferred_task_queue.get() {
+            self.is_inside_deferred_task_queue.set(true);
+            self.event_loop_mut().deferred_tasks.run();
+            self.is_inside_deferred_task_queue.set(false);
         }
     }
 
@@ -3119,6 +3125,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> *mut JSInternalPromise;
+    safe fn JSC__JSGlobalObject__drainPromiseJobs(global: &JSGlobalObject) -> u8;
 }
 
 fn get_origin_timestamp() -> u64 {
@@ -3219,6 +3226,9 @@ impl VirtualMachine {
             // (replacing `pending_internal_promise`) instead of deferring,
             // dropping the error on the floor.
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
+            addr_of_mut!((*vm).entry_load).write(EntryLoad::default());
+            addr_of_mut!((*vm).exit_after_entry_failure).write(None);
+            addr_of_mut!((*vm).run_main_override_running).write(false);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
@@ -3514,11 +3524,14 @@ impl VirtualMachine {
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)?;
+                    self.entry_load = EntryLoad::default();
+                    self.run_main_override_running = true;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
                         }) {
                             Ok(ret) => {
+                                self.run_main_override_running = false;
                                 // If the override stored a promise itself, use that; otherwise
                                 // wrap its return value.
                                 if let Some(stored) = self.pending_internal_promise() {
@@ -3531,6 +3544,7 @@ impl VirtualMachine {
                                 })?
                             }
                             Err(err) => {
+                                self.run_main_override_running = false;
                                 let rejected =
                                     crate::JSPromise::rejected_promise_with_caught_exception(
                                         global_ref, err,
@@ -3554,10 +3568,14 @@ impl VirtualMachine {
             // Preloads (evaluated above, synchronously) are not the entry: only
             // module evaluations from here on mark the entry graph as executing.
             self.entry_evaluation_started = false;
+            self.entry_load = EntryLoad::default();
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
-            let promise = if !self.main_is_html_entrypoint {
+            let promise = if !self.main_is_html_entrypoint && self.hot_reload_counter == 0 {
+                self.begin_entry_load(bun_core::String::static_(MAIN_FILE_NAME))?
+            } else if !self.main_is_html_entrypoint {
+                // A --hot reload keeps the loader's own evaluation.
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                     .map(NonNull::as_ptr)
@@ -3575,16 +3593,212 @@ impl VirtualMachine {
             self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         } else {
-            self.entry_evaluation_started = false;
-            let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
-            let promise =
-                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
-            self.set_pending_internal_promise(Some(promise));
-            Ok(promise)
+            self.begin_entry_like_load(&main_str)
         }
+    }
+
+    /// Starts an entry-like load: the graph of `root` loads, then a task links and evaluates it. Returns its promise.
+    pub(crate) fn begin_entry_load(
+        &mut self,
+        root: bun_core::String,
+    ) -> crate::CrateResult<*mut JSInternalPromise> {
+        // The entry-like module is `root`, or what `bun:main` imports, which the loader reports.
+        let module = if root.eql_utf8(MAIN_FILE_NAME) {
+            bun_core::String::EMPTY
+        } else {
+            root.clone()
+        };
+        self.entry_load = EntryLoad {
+            root,
+            module,
+            ..Default::default()
+        };
+        self.entry_evaluation_started = false;
+        self.pending_internal_promise_reported_at = u32::MAX;
+        entry_log!(
+            "begin root={} module={}",
+            self.entry_load.root,
+            self.entry_load.module
+        );
+        let Some(loaded) = jsc::JSModuleLoader::load_module_ptr(self.global, &self.entry_load.root)
+        else {
+            self.entry_load = EntryLoad::default();
+            return Err(crate::CrateError::JSError);
+        };
+        let global = self.global();
+        let promise: *mut JSInternalPromise = core::ptr::from_mut(crate::JSPromise::create(global));
+        self.set_pending_internal_promise(Some(promise));
+        JSValue::from_cell(loaded.as_ptr()).then2(
+            global,
+            JSValue::from_cell(promise),
+            __jsc_host_on_resolve_entry_load,
+            __jsc_host_on_reject_entry_load,
+        );
+        Ok(promise)
+    }
+
+    /// [`Self::begin_entry_load`] of the module that `specifier` names. `Err`, with the exception pending, if it does not resolve.
+    pub fn begin_entry_like_load(
+        &mut self,
+        specifier: &bun_core::String,
+    ) -> crate::CrateResult<*mut JSInternalPromise> {
+        let key = jsc::JSModuleLoader::resolve(self.global(), specifier)
+            .map_err(|_| crate::CrateError::JSError)?;
+        self.begin_entry_load(key)
+    }
+
+    pub(crate) fn set_entry_module_key(&mut self, key: &bun_core::String) {
+        if self.entry_graph_is_loading() && self.entry_load.module.is_empty() {
+            self.entry_load.module = key.clone();
+        }
+    }
+
+    pub(crate) fn is_entry_module_key(&self, key: &bun_core::String) -> bool {
+        !self.entry_load.module.is_empty() && self.entry_load.module.eql(key)
+    }
+
+    /// The original `Module.runMain`, called by an override that the runner is calling, starts the entry load.
+    pub(crate) fn begin_run_main(
+        &mut self,
+        key: &bun_core::String,
+    ) -> crate::CrateResult<*mut JSInternalPromise> {
+        if !self.run_main_override_running || self.pending_internal_promise().is_some() {
+            return Ok(core::ptr::null_mut());
+        }
+        self.begin_entry_load(key.clone())
+    }
+
+    fn entry_graph_is_loading(&self) -> bool {
+        !self.entry_load.root.is_empty()
+    }
+
+    /// The task of an entry-like load: links and evaluates the loaded graph outside any microtask checkpoint.
+    pub fn finish_entry_load(&mut self) -> JsResult<()> {
+        use crate::js_promise::Status;
+
+        let Some(promise) = self.pending_internal_promise() else {
+            return Ok(());
+        };
+        if !self.entry_load.loaded {
+            return Ok(());
+        }
+        let root = core::mem::replace(&mut self.entry_load.root, bun_core::String::EMPTY);
+        self.entry_load.module = bun_core::String::EMPTY;
+        self.entry_load.loaded = false;
+        entry_log!("evaluate root={}", root);
+
+        let global = self.global();
+        let promise = crate::JSPromise::opaque_mut(promise);
+        let evaluated = jsc::JSModuleLoader::link_and_evaluate_module_ptr(global, &root);
+        self.entry_evaluation_started = true;
+        let reason = match evaluated {
+            Ok(evaluation) => {
+                let evaluation = crate::JSPromise::opaque_mut(evaluation.as_ptr());
+                match evaluation.status() {
+                    Status::Fulfilled => return promise.resolve(global, JSValue::UNDEFINED),
+                    Status::Pending => {
+                        evaluation.to_js().then2(
+                            global,
+                            promise.to_js(),
+                            __jsc_host_on_resolve_entry_load,
+                            __jsc_host_on_reject_entry_load,
+                        );
+                        // Node runs the promise jobs of a graph with a top-level await before its ticks.
+                        JSC__JSGlobalObject__drainPromiseJobs(global);
+                        return Ok(());
+                    }
+                    Status::Rejected => {
+                        evaluation.set_handled();
+                        evaluation.result(global.vm())
+                    }
+                }
+            }
+            Err(err) => {
+                let exception = global.take_exception(err);
+                if exception.is_termination_exception() {
+                    return Ok(());
+                }
+                exception.to_error().unwrap_or(exception)
+            }
+        };
+        promise.reject_as_handled(global, reason)?;
+        // Node rethrows what a worker's entry point throws from a tick (`emitUncaughtException`, lib/internal/event_target.js).
+        if self.worker.is_some() {
+            return self.queue_entry_failure_tick(reason);
+        }
+        self.report_entry_failure(reason, false);
+        Ok(())
+    }
+
+    /// The reactions of an entry-like load: on the load of its graph, then on a top-level await of its evaluation.
+    fn entry_load_settled(&mut self, promise: JSValue, rejection: Option<JSValue>) -> JsResult<()> {
+        // A later load has replaced this one.
+        if self
+            .pending_internal_promise()
+            .map(|p| JSValue::from_cell(p))
+            != Some(promise)
+        {
+            return Ok(());
+        }
+        let global = self.global();
+        let loading = self.entry_graph_is_loading();
+        let Some(promise) = promise.as_promise() else {
+            return Ok(());
+        };
+        let promise = crate::JSPromise::opaque_mut(promise);
+        match rejection {
+            None if loading => {
+                self.entry_load.loaded = true;
+                let task = bun_event_loop::Task::init(core::ptr::from_mut(&mut self.entry_load));
+                self.enqueue_task(task);
+                Ok(())
+            }
+            None => promise.resolve(global, JSValue::UNDEFINED),
+            Some(reason) => {
+                self.entry_load.root = bun_core::String::EMPTY;
+                self.entry_load.module = bun_core::String::EMPTY;
+                promise.reject_as_handled(global, reason)?;
+                // What rejects after a top-level await is a rejection; a graph that did not load never ran.
+                self.report_entry_failure(reason, !loading);
+                Ok(())
+            }
+        }
+    }
+
+    fn queue_entry_failure_tick(&mut self, reason: JSValue) -> JsResult<()> {
+        let global = self.global();
+        let report = jsc::JSFunction::create(
+            global,
+            "",
+            __jsc_host_report_entry_failure_from_tick,
+            1,
+            Default::default(),
+        );
+        JSValue::call_next_tick_1(report, global, reason)
+    }
+
+    fn entry_failure_reported(&self) -> bool {
+        self.pending_internal_promise_reported_at == self.hot_reload_counter
+    }
+
+    /// The one reporter of a failed entry-like load, once per load. Returns whether something took the failure.
+    pub fn report_entry_failure(&mut self, reason: JSValue, is_rejection: bool) -> bool {
+        if self.entry_failure_reported() {
+            return self.entry_load.failure_handled;
+        }
+        self.pending_internal_promise_reported_at = self.hot_reload_counter;
+        // What the program wrote to a sink comes before the report, as when the report followed a checkpoint.
+        self.run_deferred_tasks();
+        let global = self.global();
+        let handled = self.uncaught_exception(global, reason, is_rejection);
+        self.entry_load.failure_handled = handled;
+        if !handled && self.hot_reload == HotReload::None {
+            if let Some(exit) = self.exit_after_entry_failure {
+                exit(self);
+            }
+        }
+        handled
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
@@ -3624,6 +3838,33 @@ impl VirtualMachine {
 
         Ok(self.pending_internal_promise().unwrap_or(promise))
     }
+}
+
+#[crate::host_fn]
+fn report_entry_failure_from_tick(
+    global: &JSGlobalObject,
+    frame: &jsc::CallFrame,
+) -> JsResult<JSValue> {
+    let [reason] = frame.arguments_as_array::<1>();
+    global.bun_vm().as_mut().report_entry_failure(reason, false);
+    Ok(JSValue::UNDEFINED)
+}
+
+#[crate::host_fn(export = "Bun__onResolveEntryLoad")]
+fn on_resolve_entry_load(global: &JSGlobalObject, frame: &jsc::CallFrame) -> JsResult<JSValue> {
+    let [_value, promise] = frame.arguments_as_array::<2>();
+    global.bun_vm().as_mut().entry_load_settled(promise, None)?;
+    Ok(JSValue::UNDEFINED)
+}
+
+#[crate::host_fn(export = "Bun__onRejectEntryLoad")]
+fn on_reject_entry_load(global: &JSGlobalObject, frame: &jsc::CallFrame) -> JsResult<JSValue> {
+    let [reason, promise] = frame.arguments_as_array::<2>();
+    global
+        .bun_vm()
+        .as_mut()
+        .entry_load_settled(promise, Some(reason))?;
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Synthesize a JS `BuildMessage` / `ResolveMessage` / `AggregateError` from
@@ -5603,6 +5844,7 @@ impl VirtualMachine {
 
         drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
+        drop(core::mem::take(&mut self.entry_load));
 
         self.overridden_main.deinit();
         self.pending_internal_promise.deinit();
@@ -5684,15 +5926,11 @@ impl VirtualMachine {
             }
         }
 
-        // Note: reshaped for borrowck.
-        let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
-        let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
-            global, &main_str,
-        ) {
-            Some(promise) => promise.as_ptr(),
+        let promise = match self.begin_entry_like_load(&main_str) {
+            Ok(promise) => promise,
             // Not resolving is this file's failure, like not loading.
-            None => {
+            Err(_) => {
                 let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
                     self.global(),
                     jsc::JsError::Thrown,
@@ -5718,7 +5956,8 @@ impl VirtualMachine {
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
-            if worker.has_requested_terminate() {
+            // A reported failure of the entry itself also stops the worker: that one is read from the promise.
+            if worker.has_requested_terminate() && !self.entry_failure_reported() {
                 return Err(crate::CrateError::WorkerTerminated);
             }
         }
@@ -5940,7 +6179,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
-        self.entry_point_result.evaluated_as_cjs = false;
+        self.entry_load = EntryLoad::default();
         self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
         self.set_main(b"");

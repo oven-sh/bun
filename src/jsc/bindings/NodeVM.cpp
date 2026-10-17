@@ -1150,9 +1150,7 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
         return;
 
     VM& vm = this->vm();
-    // Same drain mode as VM::drainMicrotasks so process.nextTick interop
-    // (onEachMicrotaskTick) keeps working inside the checkpoint.
-    microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
+    microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ false>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
 }
 
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)

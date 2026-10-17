@@ -363,8 +363,6 @@ public:
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
 
-    void resetOnEachMicrotaskTick();
-
     enum class PromiseFunctions : uint8_t {
         BunServe__Plugins__onResolve,
         BunServe__Plugins__onReject,
@@ -394,6 +392,8 @@ public:
         Bun__HTMLRewriter__onHandlerReject,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
+        Bun__onResolveEntryLoad,
+        Bun__onRejectEntryLoad,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
         Bun__FileSink__onResolveStream,

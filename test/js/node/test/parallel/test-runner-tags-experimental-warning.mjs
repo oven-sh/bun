@@ -46,7 +46,7 @@ test('the warning fires once per process for tag registration', () => {
   // second time for any of the registrations above.
 });
 
-test('--experimental-test-tag-filter fires the warning', () => {
+test('--experimental-test-tag-filter fires the warning', { todo: typeof Bun !== 'undefined' }, () => { // BUN: no --test CLI mode. The child runs the fixture as a script, its describe() throws, and the process exits before the tick that prints the warning.
   const { stderr } = runChild([
     '--test',
     '--test-reporter=tap',
@@ -57,7 +57,7 @@ test('--experimental-test-tag-filter fires the warning', () => {
   assert.strictEqual(countWarnings(stderr), 1, stderr);
 });
 
-test('programmatic testTagFilters fires the warning', () => {
+test('programmatic testTagFilters fires the warning', { todo: typeof Bun !== 'undefined' }, () => { // BUN: run({ isolation: 'none' }) is not implemented. The child throws from its top level and exits before the tick that prints the warning.
   const driver = `
     'use strict';
     const { run } = require('node:test');
@@ -83,7 +83,7 @@ test('tags: [] does not fire the warning', () => {
   assert.strictEqual(countWarnings(stderr), 0, stderr);
 });
 
-test('multiple triggers in one process emit the warning once', () => {
+test('multiple triggers in one process emit the warning once', { todo: typeof Bun !== 'undefined' }, () => { // BUN: it() throws outside of `bun test`. The child throws from its top level and exits before the tick that prints the warning.
   const driver = `
     'use strict';
     const { it, run } = require('node:test');

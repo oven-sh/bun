@@ -57,6 +57,21 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
 }
 
+// HOST_EXPORT(Bun__VM__setEntryModuleKey, c)
+pub fn set_entry_module_key(this: &mut VirtualMachine, key: &BunString) {
+    this.set_entry_module_key(key);
+}
+
+// HOST_EXPORT(Bun__VM__isEntryModuleKey, c)
+pub fn is_entry_module_key(this: &mut VirtualMachine, key: &BunString) -> bool {
+    this.is_entry_module_key(key)
+}
+
+// HOST_EXPORT(Bun__VirtualMachine__beginRunMain, c)
+pub fn begin_run_main(this: &mut VirtualMachine, key: &BunString) -> *mut JSPromise {
+    this.begin_run_main(key).unwrap_or(core::ptr::null_mut())
+}
+
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 

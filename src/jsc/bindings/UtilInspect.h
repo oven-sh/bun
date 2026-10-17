@@ -9,4 +9,6 @@ JSC::Structure* createUtilInspectOptionsStructure(JSC::VM& vm, JSC::JSGlobalObje
 // internalBinding('util').getOwnNonIndexProperties(object, filter)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties);
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionIntrinsicTypedArrayConstructor);
+
 }

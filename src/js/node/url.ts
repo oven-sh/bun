@@ -493,7 +493,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
 
 // Same as node's lib/url.js noEscapeAuth table (noEscape plus the colon).
 // prettier-ignore
-const noEscapeAuth = new Int8Array([
+const noEscapeAuth = new Uint8Array([
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x00 - 0x0F
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x10 - 0x1F
   0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, // 0x20 - 0x2F
@@ -514,7 +514,7 @@ function getHexTable() {
 }
 
 // Port of node's internal/querystring encodeStr, used for auth encoding.
-function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
+function encodeStr(str: string, noEscapeTable: Uint8Array, hexTable: string[]) {
   const len = str.length;
   if (len === 0) return "";
 

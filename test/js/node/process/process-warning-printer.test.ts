@@ -75,6 +75,16 @@ const cases: Record<string, Case> = {
     stdout: "done\n",
     stderr: "(node:PID) [DEP0999] DeprecationWarning: old\n" + hint,
   },
+  "the hint names the base name of process.argv0": {
+    source: `const captured = []; process.stderr.write = chunk => (captured.push(String(chunk)), true); process.argv0 = "/some/where/tool"; process.emitWarning("named"); ${settle} console.log(captured[1].split(" ")[1]);`,
+    stdout: "`tool\n",
+    stderr: "",
+  },
+  "a patch of path.basename made before the first warning names the hint": {
+    source: `import path from "node:path"; const captured = []; process.stderr.write = chunk => (captured.push(String(chunk)), true); path.basename = given => "patched-" + typeof given; process.emitWarning("named"); ${settle} console.log(captured[1].split(" ")[1]);`,
+    stdout: "`patched-string\n",
+    stderr: "",
+  },
   "a timer's delay that does not fit, from native code": {
     source: `clearTimeout(setTimeout(() => {}, 2 ** 31)); ${settle} console.log("done");`,
     stdout: "done\n",

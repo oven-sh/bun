@@ -1,4 +1,4 @@
-import { placeKinds, type Place, type Table, type TableDoor } from "../../scripts/build/islands-layout.ts";
+import { groupsOfPlaces, placeKinds, type Place, type Table, type TableDoor } from "../../scripts/build/islands-layout.ts";
 
 function refuse(why: string): never {
   throw new Error(`refused: ${why}`);
@@ -10,6 +10,24 @@ const signExtended = (field: number, bits: number) => (field << (32 - bits)) >> 
 function asField(value: number, bits: number): number {
   if (!Number.isInteger(value) || value < -(2 ** (bits - 1)) || value >= 2 ** (bits - 1)) refuse(`${value} does not fit ${bits} bits`);
   return (value & (2 ** bits - 1)) >>> 0;
+}
+
+const immediate21 = (word: number) => signExtended((((word >>> 5) & 0x7ffff) << 2) | ((word >>> 29) & 3), 21);
+
+function withImmediate21(word: number, immediate: number): number {
+  const field = asField(immediate, 21);
+  return ((word & 0x9f00001f) | ((field & 3) << 29) | ((field >>> 2) << 5)) >>> 0;
+}
+
+export function unrelax(file: Buffer, offsets: [number, number], places: Place[], door: number, stub: number): void {
+  const adr = places[0]!.kind === placeKinds.adr ? 0 : 1;
+  const word = file.readUInt32LE(offsets[adr]!);
+  if ((word & 0x9f000000) >>> 0 !== 0x10000000) refuse(`${hex(word)} at ${hex(places[adr]!.address)} is no adr`);
+  if (places[adr]!.address + immediate21(word) !== door) refuse(`the adr at ${hex(places[adr]!.address)} does not point at ${hex(door)}`);
+  if (file.readUInt32LE(offsets[1 - adr]!) !== 0xd503201f) refuse(`there is no nop at ${hex(places[1 - adr]!.address)}`);
+  const register = word & 31;
+  file.writeUInt32LE(withImmediate21(0x90000000 + register, Math.floor(stub / 4096) - Math.floor(places[0]!.address / 4096)), offsets[0]);
+  file.writeUInt32LE((0x91000000 | ((stub % 4096) << 10) | (register << 5) | register) >>> 0, offsets[1]);
 }
 
 export function redirect(file: Buffer, offset: number, place: Place, door: number, stub: number): void {
@@ -49,14 +67,10 @@ export function redirect(file: Buffer, offset: number, place: Place, door: numbe
       pointsAtTheDoor(signExtended(word, 26) * 4 === distanceTo(door));
       return write((word & 0xfc000000) | asField(distanceTo(stub) / 4, 26));
     }
-    case placeKinds.page21:
-    case placeKinds.adr21: {
-      const isPage = place.kind === placeKinds.page21;
-      const immediateFor = isPage ? pagesTo : distanceTo;
-      const word = instruction(0x9f000000, isPage ? 0x90000000 : 0x10000000);
-      pointsAtTheDoor(signExtended((((word >>> 5) & 0x7ffff) << 2) | ((word >>> 29) & 3), 21) === immediateFor(door));
-      const immediate = asField(immediateFor(stub), 21);
-      return write((word & 0x9f00001f) | ((immediate & 3) << 29) | ((immediate >>> 2) << 5));
+    case placeKinds.page21: {
+      const word = instruction(0x9f000000, 0x90000000);
+      pointsAtTheDoor(immediate21(word) === pagesTo(door));
+      return write(withImmediate21(word, pagesTo(stub)));
     }
     case placeKinds.low12: {
       const word = instruction(0xffc00000, 0x91000000);
@@ -130,7 +144,11 @@ export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm6
       const at = door.whenShut === "exit" ? nextExitStub : strip.start + exitStubs;
       if (door.whenShut === "exit") nextExitStub += stubSize(door);
       layStub(at, number, door);
-      for (const place of door.places!) if (!isDead(place.address)) redirect(out, offsetOf(place.address), place, door.address, at);
+      for (const [place, later] of groupsOfPlaces(door.places!) ?? refuse("an adr has no nop beside it")) {
+        if (isDead(place!.address)) continue;
+        if (later === undefined) redirect(out, offsetOf(place!.address), place!, door.address, at);
+        else unrelax(out, [offsetOf(place!.address), offsetOf(later.address)], [place!, later], door.address, at);
+      }
     }
   }
   for (const { door, number } of shut) {

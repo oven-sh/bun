@@ -358,6 +358,17 @@ function addressGivenOnArm64(image: Image): AddressGiven {
   };
 }
 
+export function namedBytesOfPe(executable: string, symbolMap: string): { symbols: [string, number][]; between(start: number, end: number): Buffer | undefined } {
+  const image = imageOf(executable);
+  return {
+    symbols: readSymbols(symbolMap).symbols.map(symbol => [symbol.name, symbol.address]),
+    between(start, end) {
+      const found = image.at(start, end - start);
+      return found && found[0].subarray(found[1], found[1] + end - start);
+    },
+  };
+}
+
 function exportedAddresses(executable: string): number[] {
   const fd = openSync(executable, "r");
   const pe = readAt(fd, 0x3c, 4).readUInt32LE(0);

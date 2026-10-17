@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { placeKinds, type Table } from "../../scripts/build/islands-layout.ts";
-import { redirect, shutDoors } from "./islands-shut-doors.ts";
+import { redirect, shutDoors, unrelax } from "./islands-shut-doors.ts";
 
-const { add32, add64, branch26, page21, low12, adr21, pointer36 } = placeKinds;
+const { add32, add64, branch26, page21, low12, adr, pointer36, nop } = placeKinds;
 
 describe("a place is sent from the door to its stub, as src/exe_islands/lib.rs does it", () => {
   function redirected(kind: number, address: number, door: number, stub: number, field: Buffer): Buffer {
@@ -93,14 +93,31 @@ describe("a place is sent from the door to its stub, as src/exe_islands/lib.rs d
     expect(() => low(0x205080, 0x203ff0, 0xf9404000)).toThrow("refused");
   });
 
-  test("adr21", () => {
-    const adr = word(adr21, 0x201308);
-    expect(adr(0x201080, 0x204000, 0x10ffebc1)).toBe(0x100167c1);
-    expect(adr(0x204000, 0x201080, 0x100167c1)).toBe(0x10ffebc1);
-    expect(adr(0x201080, 0x201308 + 0xfffff, 0x10ffebc1)).toBe(0x707fffe1);
-    expect(() => adr(0x201080, 0x201308 + 0x100000, 0x10ffebc1)).toThrow("refused");
-    expect(() => adr(0x201084, 0x204000, 0x10ffebc1)).toThrow("refused");
-    expect(() => adr(0x201080, 0x204000, 0x90ffebc1)).toThrow("refused");
+  test("an adr and its nop become adrp and add again", () => {
+    const nopWord = 0xd503201f;
+    function unrelaxed(first: [number, number, number], second: [number, number, number], door: number, stub: number): number[] {
+      const file = Buffer.alloc(12, 0xaa);
+      file.writeUInt32LE(first[2], 0);
+      file.writeUInt32LE(second[2], 8);
+      unrelax(file, [0, 8], [first, second].map(([address, kind]) => ({ address, kind })), door, stub);
+      expect(file.readUInt32LE(4)).toBe(0xaaaaaaaa);
+      return [file.readUInt32LE(0), file.readUInt32LE(8)];
+    }
+    const adrFirst = (door: number, stub: number, first: number, second: number) => unrelaxed([0x201308, adr, first], [0x20130c, nop, second], door, stub);
+    const nopFirst = (door: number, stub: number, first: number, second: number) => unrelaxed([0x201304, nop, first], [0x201308, adr, second], door, stub);
+    expect(adrFirst(0x201080, 0x5204010, 0x10ffebc1, nopWord)).toEqual([0xf0028001, 0x91004021]);
+    expect(nopFirst(0x201080, 0x5204010, nopWord, 0x10ffebc1)).toEqual([0xf0028001, 0x91004021]);
+    expect(adrFirst(0x201080, 0x100ff8, 0x10ffebc1, nopWord)).toEqual([0xf0fff7e1, 0x913fe021]);
+    expect(adrFirst(0x204000, 0x201000, 0x100167dc, nopWord)).toEqual([0x9000001c, 0x9100039c]);
+    expect(unrelaxed([0x201ffc, adr, 0x10000423], [0x202000, nop, nopWord], 0x202080, 0x204008)).toEqual([0xf0000003, 0x91002063]);
+    expect(unrelaxed([0x201ffc, nop, nopWord], [0x202000, adr, 0x10000403], 0x202080, 0x204008)).toEqual([0xf0000003, 0x91002063]);
+    expect(adrFirst(0x201080, 0x201000 + 0xfffff * 4096, 0x10ffebc1, nopWord)).toEqual([0xf07fffe1, 0x91000021]);
+    expect(() => adrFirst(0x201080, 0x201000 + 0x100000 * 4096, 0x10ffebc1, nopWord)).toThrow("refused");
+    expect(() => adrFirst(0x201084, 0x5204010, 0x10ffebc1, nopWord)).toThrow("refused");
+    expect(() => adrFirst(0x201080, 0x5204010, 0x90ffebc1, nopWord)).toThrow("refused");
+    expect(() => adrFirst(0x201080, 0x5204010, 0x10ffebc1, 0x91004021)).toThrow("refused");
+    expect(() => nopFirst(0x201080, 0x5204010, 0x10ffebc1, nopWord)).toThrow("refused");
+    for (const kind of [adr, nop]) expect(() => word(kind, 0x201308)(0x201080, 0x204000, 0x10ffebc1)).toThrow("refused");
   });
 });
 
@@ -246,11 +263,14 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
             { address: 0x201100, kind: branch26 },
             { address: 0x201104, kind: page21 },
             { address: 0x201108, kind: low12 },
-            { address: 0x20110c, kind: adr21 },
+            { address: 0x20110c, kind: adr },
+            { address: 0x201110, kind: nop },
+            { address: 0x201120, kind: nop },
+            { address: 0x201124, kind: adr },
             { address: 0x403008, kind: add64 },
           ],
         },
-        { address: 0x202300, feature: "a", whenShut: "return", places: [{ address: 0x201110, kind: branch26 }] },
+        { address: 0x202300, feature: "a", whenShut: "return", places: [{ address: 0x201114, kind: branch26 }] },
       ],
     };
     const before = executable();
@@ -259,13 +279,17 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
     putWord(before, 0x201108, 0x91040000);
     putWord(before, 0x20110c, 0x10007fa0);
     putPointer(before, 0x403008, 0x202100);
-    putWord(before, 0x201110, 0x1400047c);
+    putWord(before, 0x201110, 0xd503201f);
+    putWord(before, 0x201120, 0xd503201f);
+    putWord(before, 0x201124, 0x10007ee3);
+    putWord(before, 0x201114, 0x1400047b);
     const file = shutDoors(before, arm64, ["a"], true);
     const words = (...addresses: number[]) => addresses.map(address => file.readUInt32LE(at(address)));
     expect([...file.subarray(at(0x202002), at(0x202004))]).toEqual([0x20, 0x00]);
     expect(words(0x202004, 0x202008, 0x20200c)).toEqual([0x52800000, 0x72a00000, 0x17fffc01]);
     expect(words(0x202010, 0x202014)).toEqual([0x52800000, 0xd65f03c0]);
-    expect(words(0x201100, 0x201104, 0x201108, 0x20110c, 0x201110)).toEqual([0x940003c1, 0xb0000000, 0x91001000, 0x100077c0, 0x140003c0]);
+    expect(words(0x201100, 0x201104, 0x201108, 0x20110c, 0x201110, 0x201114)).toEqual([0x940003c1, 0xb0000000, 0x91001000, 0xb0000000, 0x91001000, 0x140003bf]);
+    expect(words(0x201120, 0x201124)).toEqual([0xb0000003, 0x91001063]);
     expect(file.readBigUInt64LE(at(0x403008))).toBe(0x202004n);
   });
 });

@@ -468,6 +468,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
+    safe fn Bun__hasWorker() -> bool;
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
 
@@ -2155,6 +2156,7 @@ impl VirtualMachine {
     /// otherwise only occur using Workers.
     pub(crate) fn should_destruct_main_thread_on_exit(&self) -> bool {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
+            && Bun__hasWorker()
     }
 
     pub fn uncaught_exception(

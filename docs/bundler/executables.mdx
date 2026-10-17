@@ -927,7 +927,7 @@ Nothing that stays is moved, so addresses in crash reports and profiles mean the
 
 Should the executable ever reach a part that was left out in some other way, it does not go on: it prints which part and a number, and exits with code 70. That is a bug in Bun. Please report it with the number.
 
-The flag works for Linux and macOS targets, with a `bun` that was itself linked for it. Any other `bun` refuses the flag:
+The flag works for Linux, macOS and Windows targets, with a `bun` that was itself linked for it. Any other `bun` refuses the flag:
 
 ```txt
 --compile-trim-runtime: nothing can be left out of this Bun: NoIslands

@@ -45,16 +45,22 @@ const ESCAPES: [(&str, &[&[u8]]); 4] = [("the global object", &[b"global"]), ("B
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Name {
-    Member(usize, Atom),
+    Member(u8, Atom),
     Native(Atom, Atom),
+    NativeModule(Atom),
     Property(Atom),
 }
 
 impl Name {
+    fn member(kind: usize, name: Atom) -> Name {
+        Name::Member(kind as u8, name)
+    }
+
     fn fact(self, atoms: &Interner<'_>) -> Vec<u8> {
         match self {
-            Name::Member(kind, name) => [GLOBALS.get(kind).map_or(&b"global"[..], |global| global.0), b" ", if name.is_some() { atoms.bytes(name) } else { b"*" }].concat(),
+            Name::Member(kind, name) => [GLOBALS.get(usize::from(kind)).map_or(&b"global"[..], |global| global.0), b" ", if name.is_some() { atoms.bytes(name) } else { b"*" }].concat(),
             Name::Native(file, symbol) => [b"native ", atoms.bytes(file), b":", atoms.bytes(symbol)].concat(),
+            Name::NativeModule(specifier) => [&b"native "[..], Alias::get(atoms.bytes(specifier), bun_ast::Target::Bun, Cfg::default()).map_or(atoms.bytes(specifier), |alias| alias.path.as_bytes())].concat(),
             Name::Property(name) => [&b"property "[..], if name.is_some() { atoms.bytes(name) } else { b"*" }].concat(),
         }
     }
@@ -78,7 +84,6 @@ pub struct RuntimeUse {
     uncompiled_runtime_sources: Vec<Vec<u8>>,
     openings: Vec<(Vec<u8>, ExprId, &'static str)>,
     files_that_may_be_sloppy: Vec<Vec<u8>>,
-    native_modules: Vec<Vec<u8>>,
     reading_any_property: Vec<Vec<u8>>,
     named_at: Vec<(Vec<u8>, Vec<(ExprId, Name)>)>,
 }
@@ -654,6 +659,14 @@ fn is_free(module: &Module<'_>, e: ExprId) -> bool {
         })
 }
 
+fn native_module(atoms: &Interner<'_>, specifier: Atom) -> Option<Name> {
+    let alias = Alias::get(atoms.bytes(Some(specifier).filter(|specifier| specifier.is_some())?), bun_ast::Target::Bun, Cfg::default())?;
+    let manifest = Archive::embedded().manifest();
+    let has_source = |name: &[u8]| manifest.module_for_loader(name).is_some();
+    let is_internal = alias.path.as_bytes().strip_prefix(b"internal/").is_some_and(|rest| has_source(&[b"internal:", rest].concat()));
+    (!is_internal && !has_source(alias.path.as_bytes())).then_some(Name::NativeModule(specifier))
+}
+
 fn names_global(module: &Module<'_>, atoms: &Interner<'_>, e: ExprId, name: Atom) -> bool {
     module.bound.expr_parent[e.idx()] != Parent::None && is_free(module, e) && !(module.builtin.is_some() && atoms.bytes(name).starts_with(b"$"))
 }
@@ -714,16 +727,34 @@ fn is_child_in_compiled_program(program: &Program, file: FileId, parent: Parent,
     if function.is_some() { compiled.is_reached(function) } else { compiled.is_evaluated }
 }
 
-const HAND_OUT_A_MEMBER: [(&[u8], &[u8]); 3] = [(b"Reflect", b"get"), (b"Reflect", b"getOwnPropertyDescriptor"), (b"Object", b"getOwnPropertyDescriptor")];
+#[derive(Copy, Clone)]
+struct Reflection {
+    reflect: Atom,
+    object: Atom,
+    get: Atom,
+    get_own_property_descriptor: Atom,
+    get_own_property_descriptors: Atom,
+}
+
+impl Reflection {
+    fn new(atoms: &Interner<'_>) -> Reflection {
+        let known = |name: &[u8]| atoms.lookup(name).unwrap_or(Atom::NONE);
+        Reflection { reflect: known(b"Reflect"), object: known(b"Object"), get: known(b"get"), get_own_property_descriptor: known(b"getOwnPropertyDescriptor"), get_own_property_descriptors: known(b"getOwnPropertyDescriptors") }
+    }
+
+    fn is_name_of_function(self, name: Atom) -> bool {
+        name == self.get || name == self.get_own_property_descriptor || name == self.get_own_property_descriptors
+    }
+}
 
 struct Properties<'a, 's> {
     module: &'a Module<'s>,
-    atoms: &'a Interner<'s>,
+    reflection: Reflection,
 }
 
 impl Properties<'_, '_> {
-    fn is_global(&self, e: ExprId, name: &[u8]) -> bool {
-        matches!(self.module.hir[e].kind, ExprKind::Ident(written) if self.atoms.bytes(written) == name) && is_free(self.module, e)
+    fn is_global(&self, e: ExprId, name: Atom) -> bool {
+        matches!(self.module.hir[e].kind, ExprKind::Ident(written) if written == name) && is_free(self.module, e)
     }
 
     fn constant_key(&self, mut e: ExprId) -> Option<Atom> {
@@ -754,12 +785,13 @@ impl Properties<'_, '_> {
 
     fn named_by(&self, e: ExprId, found: &mut Vec<Atom>) {
         let (hir, bound) = (&self.module.hir, &self.module.bound);
-        let hands_out = |obj: ExprId, name: Atom| HAND_OUT_A_MEMBER.iter().any(|it| it.1 == self.atoms.bytes(name) && self.is_global(obj, it.0));
+        let known = self.reflection;
+        let hands_out = |obj: ExprId, name: Atom| name == known.get && self.is_global(obj, known.reflect) || name == known.get_own_property_descriptor && (self.is_global(obj, known.reflect) || self.is_global(obj, known.object));
         match hir[e].kind {
             ExprKind::Dot { obj, name, .. } => {
                 found.push(name);
                 let is_called = matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) if hir[call].callee == e));
-                if hands_out(obj, name) && !is_called || self.atoms.bytes(name) == b"getOwnPropertyDescriptors" && self.is_global(obj, b"Object") {
+                if hands_out(obj, name) && !is_called || name == known.get_own_property_descriptors && self.is_global(obj, known.object) {
                     found.push(Atom::NONE);
                 }
             }
@@ -771,7 +803,7 @@ impl Properties<'_, '_> {
                     found.push(hir.ids(hir[call].args).nth(1).and_then(|key: ExprId| self.constant_key(key)).unwrap_or(Atom::NONE));
                 }
             }
-            ExprKind::Ident(_) if self.is_global(e, b"Reflect") || self.is_global(e, b"Object") => {
+            ExprKind::Ident(written) if (written == known.reflect || written == known.object) && is_free(self.module, e) => {
                 let is_only_read = matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if match hir[around].kind {
                     ExprKind::Dot { obj, .. } => obj == e,
                     ExprKind::Index { obj, index, .. } => obj == e && self.constant_key(index).is_some(),
@@ -784,7 +816,7 @@ impl Properties<'_, '_> {
                     found.push(Atom::NONE);
                 }
             }
-            ExprKind::Assign { op: None, target, .. } => {
+            ExprKind::Assign { op: None, target, .. } if matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_)) => {
                 let mut targets = vec![target];
                 while let Some(target) = targets.pop() {
                     match hir[target].kind {
@@ -917,7 +949,7 @@ impl<'a, 's> Scan<'a, 's> {
             aliases.extend([import.default, import.namespace].into_iter().filter(|name| name.is_some()).map(|name| (name, global)));
             for spec in import.named.iter().map(|spec| &hir[spec]).filter(|spec| !spec.type_only) {
                 self.read.insert((global, spec.imported));
-                named_at.push((ExprId::NONE, Name::Member(global, spec.imported)));
+                named_at.push((ExprId::NONE, Name::member(global, spec.imported)));
             }
         }
         for used in hir.specifier_uses.iter() {
@@ -928,6 +960,9 @@ impl<'a, 's> Scan<'a, 's> {
                 continue;
             }
             self.name(used.spec);
+            if !used.kind.is_call() {
+                named_at.extend(native_module(self.atoms, used.spec).map(|name| (ExprId::NONE, name)));
+            }
             if used.spec.is_some() && self.atoms.bytes(used.spec) == b"bun:internal-for-testing" {
                 why_open.push(("bun:internal-for-testing", ExprId::NONE));
             }
@@ -952,6 +987,7 @@ impl<'a, 's> Scan<'a, 's> {
             };
             if loads {
                 self.name(specifier);
+                named_at.extend(native_module(self.atoms, specifier).map(|name| (call.callee, name)));
                 if self.atoms.bytes(specifier) == b"bun:internal-for-testing" {
                     why_open.push(("bun:internal-for-testing", call.callee));
                 }
@@ -1004,6 +1040,11 @@ impl<'a, 's> Scan<'a, 's> {
             }
             if let Some(global) = global_at(e) {
                 mentions.push((e, global));
+            }
+            if let ExprKind::ImportCall { args } = expr.kind
+                && let ExprKind::String(specifier) = hir[hir.id_at(args, 0)].kind
+            {
+                named_at.extend(native_module(self.atoms, specifier).map(|name| (e, name)));
             }
             if let ExprKind::Ident(name) = expr.kind
                 && names_global(module, self.atoms, e, name)
@@ -1071,7 +1112,7 @@ impl<'a, 's> Scan<'a, 's> {
                 }
             }
         }
-        named_at.extend(read.iter().filter(|it| it.1.is_some() || it.0 == 2).map(|it| (it.2, Name::Member(it.0, it.1))));
+        named_at.extend(read.iter().filter(|it| it.1.is_some() || it.0 == 2).map(|it| (it.2, Name::member(it.0, it.1))));
         self.read.extend(read.into_iter().map(|it| (it.0, it.1)));
 
         let is = |name: Atom, text: &[u8]| self.atoms.bytes(name) == text;
@@ -1154,7 +1195,7 @@ impl<'a, 's> Scan<'a, 's> {
             match hir[obj].kind {
                 ExprKind::Ident(object) if self.global_objects.contains(&object) && is_free(obj) && !is_operand_of_type_query(module, obj) => {
                     global_names.push(name);
-                    named_at.push((ExprId::from(index as u32), Name::Member(GLOBAL_OBJECT, name)));
+                    named_at.push((ExprId::from(index as u32), Name::member(GLOBAL_OBJECT, name)));
                     touched.extend(looked_up_through(module, self.atoms, name, ExprId::from(index as u32)).map(|name| (GLOBAL_OBJECT, name, ExprId::from(index as u32))));
                     own_functions.add_member(module, name, ExprId::from(index as u32));
                     if self.global_objects.contains(&name) {
@@ -1185,8 +1226,8 @@ impl<'a, 's> Scan<'a, 's> {
         let mut names_via_global_object: Vec<(Atom, ExprId)> = Vec::new();
         let mut stays_visible = |e: ExprId| match reads_of_global_object(module, self.atoms, &self.global_objects, &self.globals, self.get_builtin_module, e) {
             Some((names, found, touched)) => {
-                named_via_global_object.extend(names.iter().map(|&(name, member)| (member.some().unwrap_or(e), Name::Member(GLOBAL_OBJECT, name))));
-                named_via_global_object.extend(found.iter().map(|&(global, name)| (e, Name::Member(global, name))));
+                named_via_global_object.extend(names.iter().map(|&(name, member)| (member.some().unwrap_or(e), Name::member(GLOBAL_OBJECT, name))));
+                named_via_global_object.extend(found.iter().map(|&(global, name)| (e, Name::member(global, name))));
                 names_via_global_object.extend(names);
                 read_via_global_object.extend(found);
                 touched_via_global_object.extend(touched.into_iter().map(|(kind, name)| (kind, name, e)));
@@ -1228,6 +1269,7 @@ impl<'a, 's> Scan<'a, 's> {
                 is_harmless.insert(loads);
                 self.file_loader_entry_sites.push((number, loads));
                 why_open.push(("require or import() of a parameter", loads));
+                named_at.extend(handed.iter().filter_map(|&specifier| native_module(self.atoms, specifier)).map(|name| (loads, name)));
                 named_via_created_requires.extend(handed);
             }
         }
@@ -1358,7 +1400,10 @@ impl<'a, 's> Scan<'a, 's> {
                 });
                 let is_resolve = matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Dot { obj, name, .. } if obj == e && is(name, b"resolve")));
                 match written {
-                    Some(specifier) => named_via_created_requires.push(specifier),
+                    Some(specifier) => {
+                        named_via_created_requires.push(specifier);
+                        named_at.extend(native_module(self.atoms, specifier).map(|name| (e, name)));
+                    }
                     None if is_resolve => {}
                     None => is_always_safe = false,
                 }
@@ -1405,7 +1450,7 @@ impl<'a, 's> Scan<'a, 's> {
         self.read.extend(read_via_global_object);
         named_at.extend(named_via_global_object);
         for (kind, name, place) in touched.into_iter().chain(touched_via_global_object) {
-            named_at.push((place, Name::Member(kind, name)));
+            named_at.push((place, Name::member(kind, name)));
             match kind {
                 _ if name.is_none() => self.touches_every_member_of[kind] = true,
                 GLOBAL_OBJECT => global_names.push(name),
@@ -1606,8 +1651,7 @@ pub(crate) fn find(loaded: &[Option<Box<Module<'_>>>], atoms: &Interner<'_>, is_
         .collect();
     runtime_use.openings = scan.openings.iter().chain(if_dispatched).chain(&own_calls).filter_map(|&(number, at, why)| Some((loaded[number as usize].as_deref()?.path.text.to_vec(), at, why))).collect();
     runtime_use.open_for(runtime_use.openings.iter().map(|opening| (opening.2, opening.0.clone())).collect());
-    runtime_use.native_modules = native.iter().map(|module| [b"native ", &module.0[..]].concat()).collect();
-    runtime_use.facts.extend_from_slice(&runtime_use.native_modules);
+    runtime_use.facts.extend(native.iter().map(|module| [b"native ", &module.0[..]].concat()));
     runtime_use.add_names_of(&scan);
     for of_file in scan.named_at.chunk_by(|one, next| one.0 == next.0) {
         let Some(module) = loaded[of_file[0].0 as usize].as_deref() else { continue };
@@ -1667,8 +1711,8 @@ pub(crate) fn add_what_the_loaded_program_shows(found: &mut Found, program: &Pro
             }
             match reads_of_global_object(module, atoms, &context.global_objects, &context.globals, context.get_builtin_module, this) {
                 Some((names_of_this, read_of_this, touched_through_this)) => {
-                    named_through_this.extend(names_of_this.iter().map(|&(name, member)| (member.some().unwrap_or(this), Name::Member(GLOBAL_OBJECT, name))));
-                    named_through_this.extend(read_of_this.iter().chain(&touched_through_this).map(|&(kind, name)| (this, Name::Member(kind, name))));
+                    named_through_this.extend(names_of_this.iter().map(|&(name, member)| (member.some().unwrap_or(this), Name::member(GLOBAL_OBJECT, name))));
+                    named_through_this.extend(read_of_this.iter().chain(&touched_through_this).map(|&(kind, name)| (this, Name::member(kind, name))));
                     names.extend(names_of_this.into_iter().map(|read| read.0));
                     read.extend(read_of_this);
                     for (kind, name) in touched_through_this {
@@ -1696,6 +1740,50 @@ pub(crate) fn add_what_the_loaded_program_shows(found: &mut Found, program: &Pro
     found.runtime_use.open_for(reasons);
 }
 
+fn outermost_function_at(module: &Module<'_>, pos: u32) -> FnId {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let holds = |function: &bun_sema::bind::FnInfo| match function.owner {
+        FnOwner::Stmt(owner) => function.enclosing.is_none() && (hir[owner].start..hir[owner].loc.end).contains(&pos),
+        _ => false,
+    };
+    bound.fns.iter().position(holds).map_or(FnId::NONE, |function| FnId::from(function as u32))
+}
+
+fn is_among(facts: &FxHashSet<Vec<u8>>, fact: &[u8]) -> bool {
+    let kind = fact.split(|&byte| byte == b' ').next().unwrap_or(fact);
+    facts.contains(fact) || facts.contains(&[kind, b" *"].concat())
+}
+
+#[derive(Default)]
+struct Counted {
+    names: FxHashSet<Name>,
+    reading_any_property: Vec<FileId>,
+    on_behalf_of: Vec<(&'static [Box<[u8]>], Name, FileId)>,
+}
+
+impl Counted {
+    fn is_known(&self, name: Name, file: FileId) -> bool {
+        if name == Name::Property(Atom::NONE) { self.reading_any_property.last() == Some(&file) } else { self.names.contains(&name) }
+    }
+
+    fn add(&mut self, atoms: &Interner<'_>, module: &Module<'_>, file: FileId, mut function: FnId, name: Name) {
+        let mut stands_for = None;
+        if matches!(module.builtin, Some(Builtin::Functions)) && function.is_some() {
+            while let Some(outer) = module.bound.fns[function.idx()].enclosing.some() {
+                function = outer;
+            }
+            let manifest = Archive::embedded().manifest();
+            let written = Some(module.hir[function].name).filter(|written| written.is_some());
+            stands_for = written.and_then(|written| manifest.builtin_function_id(module.path.text, atoms.bytes(written))).and_then(|id| manifest.on_behalf_of(id, &name.fact(atoms)));
+        }
+        match stands_for {
+            Some(stands_for) => self.on_behalf_of.push((stands_for, name, file)),
+            None if name == Name::Property(Atom::NONE) => self.reading_any_property.push(file),
+            None => _ = self.names.insert(name),
+        }
+    }
+}
+
 pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program: &Program, in_parallel: crate::InParallel<'_>) {
     let (atoms, files, runtime_use) = (&program.files.atoms, &program.files, &mut found.runtime_use);
     runtime_use.uncompiled_runtime_sources = program.uncompiled_runtime_sources.lock().iter().map(|&file| files.module(file).path.text.to_vec()).collect();
@@ -1708,14 +1796,19 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
     if !files.modules.iter().any(|module| module.compiled_functions.get().is_some()) {
         return;
     }
-    let mut named: FxHashSet<Name> = FxHashSet::default();
+    let mut counted = Counted::default();
     for (path, named_at) in &runtime_use.named_at {
         let is_reached = reached_in(path);
-        named.extend(named_at.iter().filter(|it| is_reached(it.0)).map(|it| it.1));
+        counted.names.extend(named_at.iter().filter(|it| is_reached(it.0)).map(|it| it.1));
     }
     for source in &mut runtime_use.runtime_sources {
         let is_reached = reached_in(&source.path);
-        named.extend(source.named_at.iter().filter(|it| is_reached(it.0)).map(|it| it.1));
+        if let Some(file) = files.by_path.get(&source.path) {
+            let module = files.module(file);
+            for &(place, name) in source.named_at.iter().filter(|it| is_reached(it.0)) {
+                counted.add(atoms, module, file, place.some().map_or(FnId::NONE, |place| function_around(module, module.bound.expr_parent[place.idx()])), name);
+            }
+        }
         source.escapes.retain(|escape| is_reached(escape.0));
         source.facts = source.module.iter().filter(|_| is_reached(ExprId::NONE)).cloned().collect();
     }
@@ -1723,59 +1816,81 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
     let scanned: Vec<FileId> = (0..files.modules.len()).filter(|&file| is_scanned(&files.modules[file])).map(|file| FileId(file as u32)).collect();
     const FILES_PER_TASK: usize = 64;
     let slices: Vec<&[FileId]> = scanned.chunks(FILES_PER_TASK).collect();
-    let walked: Vec<std::sync::OnceLock<(FxHashSet<Name>, Vec<FileId>)>> = slices.iter().map(|_| std::sync::OnceLock::new()).collect();
+    let walked = std::sync::Mutex::new(counted);
+    let reflection = Reflection::new(atoms);
     in_parallel(slices.len(), &|slice| {
-        let mut of_slice: FxHashSet<Name> = FxHashSet::default();
-        let mut handing_out_members: Vec<FileId> = Vec::new();
+        let mut of_slice = Counted::default();
         let mut names: Vec<Atom> = Vec::new();
         for &file in slices[slice] {
             let module = files.module(file);
-            let (hir, properties) = (&module.hir, Properties { module, atoms });
+            let (hir, properties) = (&module.hir, Properties { module, reflection });
             let is_private = |name: Atom| module.builtin.is_some() && name.is_some() && atoms.bytes(name).starts_with(b"$");
-            let add = |of_slice: &mut FxHashSet<Name>, handing_out_members: &mut Vec<FileId>, names: &mut Vec<Atom>, parent: Parent, pos: u32| {
-                for name in names.drain(..).filter(|&name| !is_private(name)) {
-                    let is_known = if name.is_some() { of_slice.contains(&Name::Property(name)) } else { handing_out_members.last() == Some(&file) };
-                    if is_known || !is_child_in_compiled_program(program, file, parent, pos) {
-                        continue;
-                    }
-                    match name.is_some() {
-                        true => _ = of_slice.insert(Name::Property(name)),
-                        false => handing_out_members.push(file),
-                    }
+            let add = |of_slice: &mut Counted, name: Name, parent: Parent, pos: u32| {
+                if !of_slice.is_known(name, file) && is_child_in_compiled_program(program, file, parent, pos) {
+                    of_slice.add(atoms, module, file, function_around(module, parent), name);
                 }
             };
             for (index, expr) in hir.exprs.iter().enumerate().filter(|it| module.bound.expr_parent[it.0] != Parent::None) {
-                let e = ExprId::from(index as u32);
+                let (e, parent) = (ExprId::from(index as u32), module.bound.expr_parent[index]);
                 if let ExprKind::Ident(name) = expr.kind
-                    && !of_slice.contains(&Name::Member(GLOBAL_OBJECT, name))
+                    && !of_slice.names.contains(&Name::member(GLOBAL_OBJECT, name))
                     && names_global(module, atoms, e, name)
                     && !is_operand_of_type_query(module, e)
-                    && is_in_compiled_program(program, file, e)
                 {
-                    of_slice.insert(Name::Member(GLOBAL_OBJECT, name));
+                    add(&mut of_slice, Name::member(GLOBAL_OBJECT, name), parent, expr.pos);
+                }
+                if matches!(expr.kind, ExprKind::Dot { name, .. } if !reflection.is_name_of_function(name) && of_slice.names.contains(&Name::Property(name))) {
+                    continue;
                 }
                 properties.named_by(e, &mut names);
-                add(&mut of_slice, &mut handing_out_members, &mut names, module.bound.expr_parent[index], expr.pos);
+                for name in names.drain(..).filter(|&name| !is_private(name)) {
+                    add(&mut of_slice, Name::Property(name), parent, expr.pos);
+                }
             }
             for (index, prop) in hir.pat_props.iter().enumerate().filter(|it| !it.1.is_rest) {
-                names.extend(match (prop.key, hir[prop.value].kind) {
+                let name = match (prop.key, hir[prop.value].kind) {
                     (PropKey::Name(name), _) | (PropKey::None, PatKind::Ident(name)) => Some(name),
                     (PropKey::Computed(key), _) => properties.constant_key(key),
                     _ => None,
-                });
-                add(&mut of_slice, &mut handing_out_members, &mut names, Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
+                };
+                if let Some(name) = name.filter(|&name| !is_private(name)) {
+                    add(&mut of_slice, Name::Property(name), Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
+                }
             }
         }
-        _ = walked[slice].set((of_slice, handing_out_members));
+        let mut counted = walked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        counted.names.extend(of_slice.names);
+        counted.reading_any_property.extend(of_slice.reading_any_property);
+        counted.on_behalf_of.extend(of_slice.on_behalf_of);
     });
-    let mut reading_any_property: Vec<FileId> = program.reads_of_any_property.lock().iter().map(|read| read.0).collect();
-    for (of_slice, handing_out_members) in walked.into_iter().filter_map(std::sync::OnceLock::into_inner) {
-        named.extend(of_slice);
-        reading_any_property.extend(handing_out_members);
+    let mut counted = walked.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+    for &(file, pos) in program.reads_of_any_property.lock().iter() {
+        let module = files.module(file);
+        counted.add(atoms, module, file, outermost_function_at(module, pos), Name::Property(Atom::NONE));
     }
+    let mut facts: FxHashSet<Vec<u8>> = counted.names.iter().map(|name| name.fact(atoms)).collect();
+    for source in &runtime_use.runtime_sources {
+        facts.extend(source.facts.iter().cloned());
+        facts.extend(source.escapes.iter().flat_map(|escape| ESCAPES.iter().filter(move |it| it.0 == escape.1)).flat_map(|it| it.1).map(|kind| [kind, &b" *"[..]].concat()));
+    }
+    facts.extend(counted.reading_any_property.first().map(|_| Name::Property(Atom::NONE).fact(atoms)));
+    loop {
+        let waiting = counted.on_behalf_of.len();
+        counted.on_behalf_of.retain(|&(stands_for, name, file)| {
+            let counts = stands_for.iter().any(|fact| is_among(&facts, fact));
+            if counts {
+                facts.insert(name.fact(atoms));
+                counted.reading_any_property.extend((name == Name::Property(Atom::NONE)).then_some(file));
+            }
+            !counts
+        });
+        if counted.on_behalf_of.len() == waiting {
+            break;
+        }
+    }
+    let mut reading_any_property = counted.reading_any_property;
     reading_any_property.sort_unstable_by_key(|&file| (files.module(file).builtin.is_some(), file.idx()));
     reading_any_property.dedup();
-    named.extend(reading_any_property.first().map(|_| Name::Property(Atom::NONE)));
     runtime_use.reading_any_property = reading_any_property.chunk_by(|one, next| files.module(*one).builtin.is_some() == files.module(*next).builtin.is_some()).flat_map(|alike| alike.iter().take(PLACES_SHOWN_PER_REASON)).map(|&file| files.module(file).path.text.to_vec()).collect();
-    runtime_use.facts = runtime_use.native_modules.iter().cloned().chain(named.into_iter().map(|name| name.fact(atoms))).collect();
+    runtime_use.facts = facts.into_iter().collect();
 }

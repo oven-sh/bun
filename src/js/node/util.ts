@@ -8,11 +8,10 @@ const {
   validateObject,
   validateInteger,
 } = require("internal/validators");
-const { resistStopPropagation, ErrnoException } = require("internal/shared");
+const { resistStopPropagation, ErrnoException, getSystemErrorName } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
-const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
 const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);
 const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 
@@ -403,12 +402,6 @@ function styleText(format, text, options) {
   if (skipColorize) return text;
 
   return `${openCodes}${processedText}${closeCodes}`;
-}
-
-function getSystemErrorName(err: any) {
-  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
-  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
-  return internalErrorName(err);
 }
 
 // libuv's uv_strerror() messages keyed by error name (target-independent).

@@ -88,12 +88,11 @@ function callWithAnyArguments(callback: any, args: any): unknown {
 }
 
 const queue = new TickQueue();
-let installedNextTick: unknown = queue;
+let installedNextTick: unknown = {};
 let tickInitHooks!: unknown[];
 let tickingProcess!: typeof globalThis.process;
 let nextTickQueue: any;
 let drainMicrotasks!: () => void;
-let validateFunction!: (value: unknown, name: string) => void;
 let isSetUp = false;
 
 function processTicksAndRejections() {
@@ -184,7 +183,7 @@ function pushWithInitHooks(cb: unknown, args: unknown[] | undefined, frame: unkn
 }
 
 function nextTick(cb: unknown, ...args: unknown[]) {
-  if (typeof cb !== "function") validateFunction(cb, "callback");
+  if (typeof cb !== "function") throw $ERR_INVALID_ARG_TYPE("callback", "function", cb);
   if (!isSetUp) setUp();
   if (tickingProcess._exiting) return;
 
@@ -281,7 +280,6 @@ function queueTick3(target: any, callback: unknown, first: unknown, second: unkn
 function initializeNextTickQueue(_process: typeof globalThis.process, marker: unknown, drainMicrotasksFn: () => void) {
   nextTickQueue = marker;
   drainMicrotasks = drainMicrotasksFn;
-  validateFunction = require("internal/validators").validateFunction;
   installedNextTick = nextTick;
   return nextTick;
 }

@@ -5,7 +5,6 @@ mod macho;
 mod pe;
 
 use bun_collections::index_sort::sort_slice_by_key;
-use bun_core::strings;
 use core::ops::Range;
 
 use bytes::{put_u32, put_u64, slice, slice_mut, u16_at, u32_at, u64_at, usize_at};
@@ -149,18 +148,20 @@ enum PlaceKind {
     Branch26,
     Page21,
     Low12,
-    Adr21,
+    Adr,
     Pointer36,
+    Nop,
 }
 
-const PLACE_KINDS: [PlaceKind; 7] = [
+const PLACE_KINDS: [PlaceKind; 8] = [
     PlaceKind::Add32,
     PlaceKind::Add64,
     PlaceKind::Branch26,
     PlaceKind::Page21,
     PlaceKind::Low12,
-    PlaceKind::Adr21,
+    PlaceKind::Adr,
     PlaceKind::Pointer36,
+    PlaceKind::Nop,
 ];
 
 struct Place {
@@ -309,20 +310,34 @@ impl<'a> Table<'a> {
                 }
             }
         }
-        let mut next = 0;
-        for _ in 0..reader.count()? {
-            let number = bytes::plus(next, reader.number()?)?;
+        let thin = reader.count()?;
+        let unit = if thin > 0 { reader.number()? } else { 1 };
+        if unit != 1 && unit != 4 {
+            return Err(Error::InvalidExecutable);
+        }
+        let (mut next, mut last_first) = (0, 0u64);
+        for _ in 0..thin {
+            let head = reader.number()?;
+            let number = bytes::plus(next, head >> 2)?;
             let door = usize::try_from(number).ok().and_then(|number| doors.get_mut(number)).ok_or(Error::InvalidExecutable)?;
-            let mut address = 0;
-            for index in 0..=reader.count()? {
+            let more = if head & 3 < 3 { (head & 3) as usize } else { reader.count()? + 3 };
+            let mut address = last_first;
+            for index in 0..=more {
                 let field = reader.number()?;
-                if index > 0 && field < 8 {
-                    return Err(Error::InvalidExecutable);
-                }
-                address = bytes::plus(address, field >> 3)?;
-                let kind = *PLACE_KINDS.get((field & 7) as usize).ok_or(Error::InvalidExecutable)?;
-                door.places.push(Place { address, kind });
+                let steps = field >> 3;
+                let times_unit = |steps: u64| steps.checked_mul(unit).ok_or(Error::InvalidExecutable);
+                address = if index > 0 {
+                    ensure(steps > 0)?;
+                    bytes::plus(address, times_unit(steps)?)?
+                } else if steps & 1 == 0 {
+                    bytes::plus(address, times_unit(steps / 2)?)?
+                } else {
+                    bytes::minus(address, times_unit(steps / 2 + 1)?)?
+                };
+                door.places.push(Place { address, kind: PLACE_KINDS[(field & 7) as usize] });
             }
+            groups_of(&door.places).try_for_each(|group| group.map(|_| ()))?;
+            last_first = door.places[0].address;
             next = number + 1;
         }
         let mut packages = Vec::new();
@@ -429,6 +444,20 @@ fn as_field(value: i64, bits: u32) -> Result<u32> {
     Ok(value as u32 & ((1 << bits) - 1))
 }
 
+const ADR: u32 = 0x1000_0000;
+const ADRP: u32 = 0x9000_0000;
+const ADD: u32 = 0x9100_0000;
+const NOP: u32 = 0xd503_201f;
+
+fn immediate21(word: u32) -> i64 {
+    sign_extended((((word >> 5) & 0x7_ffff) << 2) | ((word >> 29) & 3), 21)
+}
+
+fn with_immediate21(word: u32, immediate: i64) -> Result<u32> {
+    let immediate = as_field(immediate, 21)?;
+    Ok((word & 0x9f00_001f) | ((immediate & 3) << 29) | ((immediate >> 2) << 5))
+}
+
 fn redirect(file: &mut [u8], offset: usize, place: &Place, door: u64, stub: u64) -> Result<()> {
     const POINTER_TARGET: u64 = (1 << 36) - 1;
     let delta = stub.wrapping_sub(door) as i64;
@@ -454,21 +483,48 @@ fn redirect(file: &mut [u8], offset: usize, place: &Place, door: u64, stub: u64)
             ensure(word & 0x7c00_0000 == 0x1400_0000 && sign_extended(word, 26) * 4 == distance_to(door) && distance_to(stub) % 4 == 0)?;
             put_u32(file, offset, (word & 0xfc00_0000) | as_field(distance_to(stub) / 4, 26)?)
         }
-        PlaceKind::Page21 | PlaceKind::Adr21 => {
+        PlaceKind::Page21 => {
             let word = u32_at(file, offset)?;
-            let is_page = place.kind == PlaceKind::Page21;
-            let immediate_for = |target: u64| if is_page { pages_to(target) } else { distance_to(target) };
-            let immediate = sign_extended((((word >> 5) & 0x7_ffff) << 2) | ((word >> 29) & 3), 21);
-            ensure(word & 0x9f00_0000 == if is_page { 0x9000_0000 } else { 0x1000_0000 } && immediate == immediate_for(door))?;
-            let immediate = as_field(immediate_for(stub), 21)?;
-            put_u32(file, offset, (word & 0x9f00_001f) | ((immediate & 3) << 29) | ((immediate >> 2) << 5))
+            ensure(word & 0x9f00_0000 == ADRP && immediate21(word) == pages_to(door))?;
+            put_u32(file, offset, with_immediate21(word, pages_to(stub))?)
         }
         PlaceKind::Low12 => {
             let word = u32_at(file, offset)?;
-            ensure(word & 0xffc0_0000 == 0x9100_0000 && u64::from((word >> 10) & 0xfff) == door & 0xfff)?;
+            ensure(word & 0xffc0_0000 == ADD && u64::from((word >> 10) & 0xfff) == door & 0xfff)?;
             put_u32(file, offset, (word & 0xffc0_03ff) | (((stub & 0xfff) as u32) << 10))
         }
+        PlaceKind::Adr | PlaceKind::Nop => Err(Error::InvalidExecutable),
     }
+}
+
+fn unrelax(file: &mut [u8], offsets: [usize; 2], places: &[Place], door: u64, stub: u64) -> Result<()> {
+    let adr = usize::from(places[0].kind != PlaceKind::Adr);
+    let word = u32_at(file, offsets[adr])?;
+    let points_at = places[adr].address.wrapping_add_signed(immediate21(word));
+    ensure(word & 0x9f00_0000 == ADR && points_at == door && u32_at(file, offsets[1 - adr])? == NOP)?;
+    let register = word & 0x1f;
+    let pages = ((stub & !0xfff).wrapping_sub(places[0].address & !0xfff) as i64) >> 12;
+    put_u32(file, offsets[0], with_immediate21(ADRP | register, pages)?)?;
+    put_u32(file, offsets[1], ADD | (((stub & 0xfff) as u32) << 10) | (register << 5) | register)
+}
+
+fn groups_of(places: &[Place]) -> impl Iterator<Item = Result<&[Place]>> {
+    let mut rest = places;
+    core::iter::from_fn(move || {
+        let first = rest.first()?;
+        let other = match first.kind {
+            PlaceKind::Adr => Some(PlaceKind::Nop),
+            PlaceKind::Nop => Some(PlaceKind::Adr),
+            _ => None,
+        };
+        if other.is_some() && rest.get(1).map(|place| place.kind) != other {
+            rest = &[];
+            return Some(Err(Error::InvalidExecutable));
+        }
+        let (group, after) = rest.split_at(if other.is_some() { 2 } else { 1 });
+        rest = after;
+        Some(Ok(group))
+    })
 }
 
 fn shut_thin_doors(
@@ -507,9 +563,16 @@ fn shut_thin_doors(
         let code = shut_door(&stub, number, table.stub, container, is_arm64)?;
         let offset = container.offset_of(file, start)?;
         slice_mut(file, offset, code.len())?.copy_from_slice(&code);
-        for place in door.places.iter().filter(|place| !dead.iter().any(|addresses| addresses.contains(&place.address))) {
-            let offset = container.offset_of(file, place.address)?;
-            redirect(file, offset, place, door.addresses.start, start)?;
+        for group in groups_of(&door.places) {
+            let group = group?;
+            if dead.iter().any(|addresses| addresses.contains(&group[0].address)) {
+                continue;
+            }
+            let offset = container.offset_of(file, group[0].address)?;
+            match group.get(1) {
+                Some(later) => unrelax(file, [offset, container.offset_of(file, later.address)?], group, door.addresses.start, start)?,
+                None => redirect(file, offset, &group[0], door.addresses.start, start)?,
+            }
         }
     }
     Ok(Some(strip))
@@ -525,17 +588,35 @@ const KINDS_OF_FACTS: [&[u8]; 9] = [b"world", b"global", b"Bun", b"process", b"c
 pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {
     let range = Container::of(file)?.table_range(file)?;
     let table = Table::parse(&file[range])?;
+    Ok(unused_by(&table, facts).into_iter().map(|feature| table.features[feature].to_vec()).collect())
+}
+
+fn unused_by(table: &Table, facts: &[u8]) -> Vec<usize> {
+    let follows_a_feature = |condition: &&Condition| condition.kind == b"feature";
     let holds = |condition: &Condition| {
-        !KINDS_OF_FACTS.contains(&condition.kind)
-            || strings::split(facts, b"\n")
-                .filter_map(|line| line.strip_prefix(condition.kind)?.strip_prefix(b" "))
-                .any(|name| name == b"*" || name == condition.name)
+        !follows_a_feature(&condition)
+            && (!KINDS_OF_FACTS.contains(&condition.kind)
+                || facts
+                    .split(|&byte| byte == b'\n')
+                    .filter_map(|line| line.strip_prefix(condition.kind)?.strip_prefix(b" "))
+                    .any(|name| name == b"*" || name == condition.name))
     };
     let conditions_of = |feature: usize| table.conditions.iter().filter(move |condition| condition.feature == feature);
-    Ok((0..table.features.len())
-        .filter(|&feature| conditions_of(feature).next().is_some() && !conditions_of(feature).any(holds))
-        .map(|feature| table.features[feature].to_vec())
-        .collect())
+    let mut is_kept: Vec<bool> = (0..table.features.len()).map(|feature| conditions_of(feature).next().is_none() || conditions_of(feature).any(holds)).collect();
+    loop {
+        let mut has_grown = false;
+        for condition in table.conditions.iter().filter(follows_a_feature) {
+            let followed = table.features.iter().position(|name| *name == condition.name);
+            if !is_kept[condition.feature] && followed.is_none_or(|feature| is_kept[feature]) {
+                is_kept[condition.feature] = true;
+                has_grown = true;
+            }
+        }
+        if !has_grown {
+            break;
+        }
+    }
+    (0..table.features.len()).filter(|&feature| !is_kept[feature]).collect()
 }
 
 fn shut(file: &mut [u8], container: Container, is_arm64: bool, table: &Table, is_excluded: &[bool]) -> Result<Vec<Range<u64>>> {
@@ -624,7 +705,7 @@ mod tests {
         b"\x02\x01\x00\x02\x00\x01",
         b"\x03\x80\x80\x81\x01\xff\x7f\x00\x00\x8f\x80\x01\x01\xf0\xff\x3c\xff\x7f\x00",
         b"\x02\x80\xa0\x80\x01\x80\x01\x00\x00\x01\x80\xa2\x80\x01\x01\x80\xa4\x80\x01\x00",
-        b"\x02\x01\x02\x88\xb0\x82\x08\x80\xd0\x07\xb9\x80\xf6\x07\x00\x00\x88\xb1\x82\x08",
+        b"\x02\x01\x06\x90\xe0\x84\x10\x80\xd0\x07\xb9\x80\xf6\x07\x00\x80\x02",
     ];
 
     fn error_of(table: &[u8]) -> Option<Error> {
@@ -763,18 +844,43 @@ mod tests {
     fn places() {
         let places_of_door = |number: usize, section: &[u8]| Table::parse(&with_part(9, section)).map(|table| places_of(&table.doors[number]));
         assert_eq!(places_of_door(1, b"\x00"), Ok(vec![]));
-        assert_eq!(places_of_door(3, b"\x01\x03\x00\x08"), Ok(vec![(1, 0)]));
-        assert_eq!(places_of_door(3, b"\x01\x04\x00\x08"), Err(Error::InvalidExecutable));
-        assert_eq!(places_of_door(3, b"\x02\x02\x00\x08\x00\x00\x08"), Ok(vec![(1, 0)]));
-        assert_eq!(places_of_door(3, b"\x02\x03\x00\x08\x00\x00\x08"), Err(Error::InvalidExecutable));
-        assert_eq!(places_of_door(0, b"\x01\x00\x01\x08\x09"), Ok(vec![(1, 0), (2, 1)]));
-        assert_eq!(places_of_door(0, b"\x01\x00\x01\x08\x01"), Err(Error::InvalidExecutable));
-        assert_eq!(places_of_door(0, b"\x01\x00\x00\x06"), Ok(vec![(0, 6)]));
-        assert_eq!(places_of_door(0, b"\x01\x00\x00\x0f"), Err(Error::InvalidExecutable));
-        assert_eq!(places_of_door(0, b"\x01\x00\x01\x08"), Err(Error::InvalidExecutable));
-        assert_eq!(places_of_door(0, b"\x01\x00\xff\xff\xff\xff\x0f\x08"), Err(Error::InvalidExecutable));
-        assert_eq!(places_of_door(0, b"\x01\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01\x00\x08"), Err(Error::InvalidExecutable));
-        assert_eq!(places_of_door(0, b"\x01\x00\x00\xfe\xff\xff\xff\xff\xff\xff\xff\xff\x01"), Ok(vec![(u64::MAX >> 3, 6)]));
+        assert_eq!(places_of_door(3, b"\x01\x01\x0c\x10"), Ok(vec![(1, 0)]));
+        assert_eq!(places_of_door(3, b"\x01\x01\x10\x10"), Err(Error::InvalidExecutable));
+        assert_eq!(places_of_door(3, b"\x02\x01\x08\x10\x00\x10"), Ok(vec![(2, 0)]));
+        assert_eq!(places_of_door(3, b"\x02\x01\x0c\x10\x00\x10"), Err(Error::InvalidExecutable));
+        assert_eq!(places_of_door(0, b"\x01\x01\x01\x10\x09"), Ok(vec![(1, 0), (2, 1)]));
+        assert_eq!(places_of_door(0, b"\x01\x01\x01\x10\x01"), Err(Error::InvalidExecutable));
+        assert_eq!(places_of_door(0, b"\x01\x01\x00\x06"), Ok(vec![(0, 6)]));
+        assert_eq!(places_of_door(0, b"\x01\x01\x01\x10"), Err(Error::InvalidExecutable));
+        assert_eq!(places_of_door(0, b"\x01\x01\x03\x00\x10\x08\x08\x08"), Ok(vec![(1, 0), (2, 0), (3, 0), (4, 0)]));
+        assert_eq!(places_of_door(0, b"\x01\x01\x03\x01\x10\x08\x08\x08\x0e"), Ok(vec![(1, 0), (2, 0), (3, 0), (4, 0), (5, 6)]));
+        assert_eq!(places_of_door(0, b"\x01\x01\x03\xff\xff\xff\xff\x0f\x10"), Err(Error::InvalidExecutable));
+        assert_eq!(places_of_door(0, b"\x01\x01\xfc\xff\xff\xff\xff\xff\xff\xff\xff\x01\x10"), Err(Error::InvalidExecutable));
+    }
+
+    #[test]
+    fn the_first_place_of_a_door_is_told_from_that_of_the_last_door() {
+        let firsts = |section: &[u8]| Table::parse(&with_part(9, section)).map(|table| [places_of(&table.doors[0]), places_of(&table.doors[1])]);
+        assert_eq!(firsts(b"\x02\x01\x01\xa0\x01\x08\x00\x20"), Ok([vec![(10, 0), (11, 0)], vec![(12, 0)]]));
+        assert_eq!(firsts(b"\x02\x01\x00\xa0\x01\x00\x18"), Ok([vec![(10, 0)], vec![(8, 0)]]));
+        assert_eq!(firsts(b"\x02\x01\x00\xa0\x01\x00\x00"), Ok([vec![(10, 0)], vec![(10, 0)]]));
+        assert_eq!(firsts(b"\x02\x01\x00\xa0\x01\x00\x98\x01"), Ok([vec![(10, 0)], vec![(0, 0)]]));
+        assert_eq!(firsts(b"\x02\x01\x00\xa0\x01\x00\xa8\x01"), Err(Error::InvalidExecutable));
+        assert_eq!(firsts(b"\x01\x01\x00\x08"), Err(Error::InvalidExecutable));
+    }
+
+    #[test]
+    fn places_that_are_all_multiples_of_four_are_counted_in_fours() {
+        let firsts = |section: &[u8]| Table::parse(&with_part(9, section)).map(|table| [places_of(&table.doors[0]), places_of(&table.doors[1])]);
+        assert_eq!(firsts(b"\x02\x04\x01\xa0\x01\x0a\x00\x1a"), Ok([vec![(40, 0), (44, 2)], vec![(32, 2)]]));
+        for unit in [0, 2, 3, 5, 8] {
+            assert_eq!(firsts(&[1, unit, 0, 0x10]), Err(Error::InvalidExecutable));
+        }
+        let largest = b"\x01\x04\x00\xf0\xff\xff\xff\xff\xff\xff\xff\xff\x01";
+        assert_eq!(firsts(largest), Ok([vec![((u64::MAX >> 4) * 4, 0)], vec![]]));
+        let far = b"\xf8\xff\xff\xff\xff\xff\xff\xff\xff\x01";
+        assert_eq!(firsts(&[b"\x01\x04\x02\x00", &far[..], &far[..]].concat()).map(|_| ()), Ok(()));
+        assert_eq!(firsts(&[b"\x01\x04\x03\x00\x00", &far[..], &far[..], &far[..]].concat()), Err(Error::InvalidExecutable));
     }
 
     fn redirected(kind: PlaceKind, address: u64, door: u64, stub: u64, field: &[u8]) -> Result<Vec<u8>> {
@@ -871,15 +977,48 @@ mod tests {
         assert_eq!(low12(0x205080, 0x203ff0, 0xf940_4000), Err(REFUSED));
     }
 
+    fn unrelaxed(first: (u64, PlaceKind, u32), second: (u64, PlaceKind, u32), door: u64, stub: u64) -> Result<[u32; 2]> {
+        let mut file = [first.2.to_le_bytes(), [0xaa; 4], second.2.to_le_bytes()].concat();
+        let places = [Place { address: first.0, kind: first.1 }, Place { address: second.0, kind: second.1 }];
+        unrelax(&mut file, [0, 8], &places, door, stub)?;
+        assert_eq!(file[4..8], [0xaa; 4]);
+        Ok([u32_at(&file, 0).unwrap(), u32_at(&file, 8).unwrap()])
+    }
+
     #[test]
-    fn adr21() {
-        let adr21 = |door, stub, word| redirected_word(PlaceKind::Adr21, 0x201308, door, stub, word);
-        assert_eq!(adr21(0x201080, 0x204000, 0x10ff_ebc1), Ok(0x1001_67c1));
-        assert_eq!(adr21(0x204000, 0x201080, 0x1001_67c1), Ok(0x10ff_ebc1));
-        assert_eq!(adr21(0x201080, 0x201308 + 0xf_ffff, 0x10ff_ebc1), Ok(0x707f_ffe1));
-        assert_eq!(adr21(0x201080, 0x201308 + 0x10_0000, 0x10ff_ebc1), Err(REFUSED));
-        assert_eq!(adr21(0x201084, 0x204000, 0x10ff_ebc1), Err(REFUSED));
-        assert_eq!(adr21(0x201080, 0x204000, 0x90ff_ebc1), Err(REFUSED));
+    fn an_adr_and_its_nop_become_adrp_and_add_again() {
+        use PlaceKind::{Adr, Nop};
+        let adr_first = |door, stub, adr, nop| unrelaxed((0x201308, Adr, adr), (0x20130c, Nop, nop), door, stub);
+        let nop_first = |door, stub, nop, adr| unrelaxed((0x201304, Nop, nop), (0x201308, Adr, adr), door, stub);
+        assert_eq!(adr_first(0x201080, 0x5204010, 0x10ff_ebc1, NOP), Ok([0xf002_8001, 0x9100_4021]));
+        assert_eq!(nop_first(0x201080, 0x5204010, NOP, 0x10ff_ebc1), Ok([0xf002_8001, 0x9100_4021]));
+        assert_eq!(adr_first(0x201080, 0x100ff8, 0x10ff_ebc1, NOP), Ok([0xf0ff_f7e1, 0x913f_e021]));
+        assert_eq!(adr_first(0x204000, 0x201000, 0x1001_67dc, NOP), Ok([0x9000_001c, 0x9100_039c]));
+        assert_eq!(unrelaxed((0x201ffc, Adr, 0x1000_0423), (0x202000, Nop, NOP), 0x202080, 0x204008), Ok([0xf000_0003, 0x9100_2063]));
+        assert_eq!(unrelaxed((0x201ffc, Nop, NOP), (0x202000, Adr, 0x1000_0403), 0x202080, 0x204008), Ok([0xf000_0003, 0x9100_2063]));
+        assert_eq!(adr_first(0x201080, 0x201000 + (0xf_ffff << 12), 0x10ff_ebc1, NOP), Ok([0xf07f_ffe1, 0x9100_0021]));
+        assert_eq!(adr_first(0x201080, 0x201000 + (0x10_0000 << 12), 0x10ff_ebc1, NOP), Err(REFUSED));
+        assert_eq!(adr_first(0x201084, 0x5204010, 0x10ff_ebc1, NOP), Err(REFUSED));
+        assert_eq!(adr_first(0x201080, 0x5204010, 0x90ff_ebc1, NOP), Err(REFUSED));
+        assert_eq!(adr_first(0x201080, 0x5204010, 0x10ff_ebc1, 0x9100_4021), Err(REFUSED));
+        assert_eq!(nop_first(0x201080, 0x5204010, 0x10ff_ebc1, NOP), Err(REFUSED));
+        for kind in [Adr, Nop] {
+            assert_eq!(redirected_word(kind, 0x201308, 0x201080, 0x204000, 0x10ff_ebc1), Err(REFUSED));
+        }
+    }
+
+    #[test]
+    fn an_adr_has_its_nop_beside_it() {
+        let error_of_places = |fields: &[u8]| error_of(&with_part(9, &[&[1, 4, 3, fields.len() as u8 - 4][..], fields].concat()));
+        assert_eq!(error_of_places(&[0x10, 0x0d, 0x0f, 0x08]), None);
+        assert_eq!(error_of_places(&[0x10, 0x0f, 0x0d, 0x08]), None);
+        assert_eq!(error_of_places(&[0x15, 0x0f, 0x0f, 0x0d]), None);
+        assert_eq!(error_of_places(&[0x10, 0x08, 0x08, 0x0d]), Some(REFUSED));
+        assert_eq!(error_of_places(&[0x10, 0x08, 0x08, 0x0f]), Some(REFUSED));
+        assert_eq!(error_of_places(&[0x10, 0x0d, 0x08, 0x0f]), Some(REFUSED));
+        assert_eq!(error_of_places(&[0x15, 0x0d, 0x0f, 0x0f]), Some(REFUSED));
+        assert_eq!(error_of_places(&[0x17, 0x0f, 0x0d, 0x0d]), Some(REFUSED));
+        assert_eq!(error_of_places(&[0x15, 0x0f, 0x0d, 0x08]), Some(REFUSED));
     }
 
     const CODE: Range<u64> = 0x201000..0x203000;
@@ -963,6 +1102,21 @@ mod tests {
 
     fn fill(file: &mut [u8], addresses: Range<u64>, byte: u8) {
         file[at(addresses.start)..at(addresses.end - 1) + 1].fill(byte);
+    }
+
+    #[test]
+    fn a_feature_is_kept_with_the_features_it_follows() {
+        let when = |feature, kind: &'static [u8], name: &'static [u8]| Condition { feature, kind, name };
+        let conditions = vec![when(0, b"feature", b"b"), when(1, b"feature", b"c"), when(2, b"Bun", b"serve"), when(2, b"global", b"fetch")];
+        let follows = Table { conditions, ..table() };
+        assert_eq!(unused_by(&follows, b"closed\nBun write\n"), [0, 1, 2]);
+        assert_eq!(unused_by(&follows, b"closed\nglobal fetch\n"), []);
+        let own_fact_too = Table { conditions: vec![when(0, b"feature", b"c"), when(0, b"Bun", b"write"), when(1, b"feature", b"a"), when(2, b"Bun", b"serve")], ..table() };
+        assert_eq!(unused_by(&own_fact_too, b"Bun write\n"), [2]);
+        let one_another = Table { conditions: vec![when(0, b"feature", b"b"), when(1, b"feature", b"a"), when(2, b"Bun", b"serve")], ..table() };
+        assert_eq!(unused_by(&one_another, b"Bun serve\n"), [0, 1]);
+        let unknown = Table { conditions: vec![when(0, b"feature", b"nothing of that name"), when(1, b"Bun", b"serve"), when(2, b"Bun", b"serve")], ..table() };
+        assert_eq!(unused_by(&unknown, b""), [1, 2]);
     }
 
     #[test]
@@ -1078,7 +1232,7 @@ mod tests {
 
     #[test]
     fn arm64() {
-        use PlaceKind::{Add64, Adr21, Branch26, Low12, Page21};
+        use PlaceKind::{Add64, Adr, Branch26, Low12, Nop, Page21};
         let word_at = |file: &[u8], address: u64| u32_at(file, at(address)).unwrap();
         let table = Table {
             stub: TRIMMED_OUT,
@@ -1086,8 +1240,8 @@ mod tests {
             conditions: Vec::new(),
             islands: vec![island(0x202002..0x202800, &[0])],
             doors: vec![
-                door(0x202100, 0, WhenShut::Exit, &[(0x201100, Branch26), (0x201104, Page21), (0x201108, Low12), (0x20110c, Adr21), (0x403008, Add64)]),
-                door(0x202300, 0, WhenShut::Return, &[(0x201110, Branch26)]),
+                door(0x202100, 0, WhenShut::Exit, &[(0x201100, Branch26), (0x201104, Page21), (0x201108, Low12), (0x20110c, Adr), (0x201110, Nop), (0x201120, Nop), (0x201124, Adr), (0x403008, Add64)]),
+                door(0x202300, 0, WhenShut::Return, &[(0x201114, Branch26)]),
             ],
             packages: Vec::new(),
         };
@@ -1097,7 +1251,10 @@ mod tests {
         put(&mut file, 0x201108, &0x9104_0000u32.to_le_bytes());
         put(&mut file, 0x20110c, &0x1000_7fa0u32.to_le_bytes());
         put(&mut file, 0x403008, &0x202100u64.to_le_bytes());
-        put(&mut file, 0x201110, &0x1400_047cu32.to_le_bytes());
+        put(&mut file, 0x201110, &NOP.to_le_bytes());
+        put(&mut file, 0x201120, &NOP.to_le_bytes());
+        put(&mut file, 0x201124, &0x1000_7ee3u32.to_le_bytes());
+        put(&mut file, 0x201114, &0x1400_047bu32.to_le_bytes());
         let dead = shut(&mut file, Container::Elf, true, &table, &[true]).unwrap();
         assert_eq!((dead.len(), dead[0].clone()), (1, 0x202018..0x202800));
         assert_eq!(file[at(0x202002)..][..2], [0x20, 0x00]);
@@ -1106,8 +1263,9 @@ mod tests {
         assert_eq!(word_at(&file, 0x201100), 0x9400_03c1);
         assert_eq!(word_at(&file, 0x201104), 0xb000_0000);
         assert_eq!(word_at(&file, 0x201108), 0x9100_1000);
-        assert_eq!(word_at(&file, 0x20110c), 0x1000_77c0);
+        assert_eq!([0x20110c, 0x201110].map(|address| word_at(&file, address)), [0xb000_0000, 0x9100_1000]);
+        assert_eq!([0x201120, 0x201124].map(|address| word_at(&file, address)), [0xb000_0003, 0x9100_1063]);
         assert_eq!(u64_at(&file, at(0x403008)), Ok(0x202004));
-        assert_eq!(word_at(&file, 0x201110), 0x1400_03c0);
+        assert_eq!(word_at(&file, 0x201114), 0x1400_03bf);
     }
 }

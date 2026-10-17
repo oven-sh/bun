@@ -64,12 +64,12 @@ export function Array$forEach<T>(a: T[], f: unknown, thisArg: unknown): void {
     if (isDoubleArray(a)) {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
-            if (x === x) $call<unknown>(f, thisArg, x, k, a);
+            if (x === x) $call<unknown>(f, thisArg, x, k & 0x7fffffff, a);
         }
     } else if (isContiguousArray(a)) {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
-            if (has) $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a);
+            if (has) $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
         }
     }
     if (k < n) forEachFrom(a, f, thisArg, k, n);
@@ -92,7 +92,7 @@ export function Array$map<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) continue;
-            const y = $call<U>(f, thisArg, x, k, a);
+            const y = $call<U>(f, thisArg, x, k & 0x7fffffff, a);
             const isStored: boolean = $tryPutByValDirect(out, k, y);
             if (!isStored) {
                 out[k++] = y;
@@ -103,7 +103,7 @@ export function Array$map<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) continue;
-            const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k, a);
+            const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
             const isStored: boolean = $tryPutByValDirect(out, k, y);
             if (!isStored) {
                 out[k++] = y;
@@ -132,7 +132,7 @@ export function Array$mapJoin<T>(items: unknown, f: unknown, separator: string):
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
             result = "";
-            if (x === x) result = $call<unknown>(f, undefined, x, k, a);
+            if (x === x) result = $call<unknown>(f, undefined, x, k & 0x7fffffff, a);
             hasResult = x === x;
             if (typeof result !== "string") break;
             remaining = (remaining - result.length) | 0;
@@ -148,7 +148,7 @@ export function Array$mapJoin<T>(items: unknown, f: unknown, separator: string):
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
             result = "";
-            if (has) result = $call<unknown>(f, undefined, $getContiguousIndex<T>(a, k), k, a);
+            if (has) result = $call<unknown>(f, undefined, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
             hasResult = has;
             if (typeof result !== "string") break;
             remaining = (remaining - result.length) | 0;
@@ -229,7 +229,7 @@ export function Array$filter<T>(a: T[], f: unknown, thisArg: unknown): T[] {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) continue;
-            if (!$call<unknown>(f, thisArg, x, k, a)) continue;
+            if (!$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) continue;
             const isStored: boolean = $tryPutByValDirect(out, to, x);
             if (!isStored) {
                 out[to] = x as unknown as T;
@@ -244,7 +244,7 @@ export function Array$filter<T>(a: T[], f: unknown, thisArg: unknown): T[] {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) continue;
             const x = $getContiguousIndex<T>(a, k);
-            if (!$call<unknown>(f, thisArg, x, k, a)) continue;
+            if (!$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) continue;
             const isStored: boolean = $tryPutByValDirect(out, to, x);
             if (!isStored) {
                 out[to] = x;
@@ -303,12 +303,12 @@ export function Array$some<T>(a: T[], f: unknown, thisArg: unknown): boolean {
     if (isDoubleArray(a)) {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
-            if (x === x && $call<unknown>(f, thisArg, x, k, a)) return true;
+            if (x === x && $call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return true;
         }
     } else if (isContiguousArray(a)) {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
-            if (has && $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return true;
+            if (has && $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return true;
         }
     }
     return k < n && someFrom(a, f, thisArg, k, n);
@@ -330,12 +330,12 @@ export function Array$every<T>(a: T[], f: unknown, thisArg: unknown): boolean {
     if (isDoubleArray(a)) {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
-            if (x === x && !$call<unknown>(f, thisArg, x, k, a)) return false;
+            if (x === x && !$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return false;
         }
     } else if (isContiguousArray(a)) {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
-            if (has && !$call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return false;
+            if (has && !$call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return false;
         }
     }
     return k >= n || everyFrom(a, f, thisArg, k, n);
@@ -358,14 +358,14 @@ export function Array$find<T>(a: T[], f: unknown, thisArg: unknown): T | undefin
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) break;
-            if ($call<unknown>(f, thisArg, x, k, a)) return x as unknown as T;
+            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x as unknown as T;
         }
     } else if (isContiguousArray(a)) {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) break;
             const x = $getContiguousIndex<T>(a, k);
-            if ($call<unknown>(f, thisArg, x, k, a)) return x;
+            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x;
         }
     }
     return k < n ? findFrom(a, f, thisArg, k, n) : undefined;
@@ -387,14 +387,14 @@ export function Array$findLast<T>(a: T[], f: unknown, thisArg: unknown): T | und
         for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) break;
-            if ($call<unknown>(f, thisArg, x, k, a)) return x as unknown as T;
+            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x as unknown as T;
         }
     } else if (isContiguousArray(a)) {
         for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) break;
             const x = $getContiguousIndex<T>(a, k);
-            if ($call<unknown>(f, thisArg, x, k, a)) return x;
+            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x;
         }
     }
     return k >= 0 ? findLastFrom(a, f, thisArg, k) : undefined;
@@ -416,13 +416,13 @@ export function Array$findIndex<T>(a: T[], f: unknown, thisArg: unknown): number
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) break;
-            if ($call<unknown>(f, thisArg, x, k, a)) return k;
+            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return k;
         }
     } else if (isContiguousArray(a)) {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) break;
-            if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return k;
+            if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return k;
         }
     }
     return k < n ? findIndexFrom(a, f, thisArg, k, n) : -1;
@@ -443,13 +443,13 @@ export function Array$findLastIndex<T>(a: T[], f: unknown, thisArg: unknown): nu
         for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) break;
-            if ($call<unknown>(f, thisArg, x, k, a)) return k;
+            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return k;
         }
     } else if (isContiguousArray(a)) {
         for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) break;
-            if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return k;
+            if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return k;
         }
     }
     return k >= 0 ? findLastIndexFrom(a, f, thisArg, k) : -1;
@@ -476,7 +476,7 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
             for (; k < m && isDoubleArray(a) && k < a.length; k++) {
                 const x: number = $getDoubleIndex(a, k);
                 if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k, a);
+                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -489,7 +489,7 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
             for (; k < m && isContiguousArray(a) && k < a.length; k++) {
                 const has: boolean = $hasContiguousIndex(a, k);
                 if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
+                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -503,12 +503,12 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
     } else if (isDoubleArray(a)) {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
-            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k, a);
+            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k & 0x7fffffff, a);
         }
     } else if (isContiguousArray(a)) {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
-            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
+            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
         }
     }
     if (k < n) acc = reduceFrom(a, f, acc, k, n);
@@ -534,7 +534,7 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
             for (; k < m && isDoubleArray(a) && k < a.length; k++) {
                 const x: number = $getDoubleIndex(a, k);
                 if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k, a);
+                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -547,7 +547,7 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
             for (; k < m && isContiguousArray(a) && k < a.length; k++) {
                 const has: boolean = $hasContiguousIndex(a, k);
                 if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
+                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -561,12 +561,12 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
     } else if (isDoubleArray(a)) {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
-            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k, a);
+            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k & 0x7fffffff, a);
         }
     } else if (isContiguousArray(a)) {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
-            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
+            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
         }
     }
     if (k < n) acc = reduceFrom(a, f, acc, k, n);
@@ -593,7 +593,7 @@ export function Array$reduceRight<T, A>(a: T[], f: unknown, initial: A): A {
             for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
                 const x: number = $getDoubleIndex(a, k);
                 if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k, a);
+                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -606,7 +606,7 @@ export function Array$reduceRight<T, A>(a: T[], f: unknown, initial: A): A {
             for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
                 const has: boolean = $hasContiguousIndex(a, k);
                 if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
+                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -620,12 +620,12 @@ export function Array$reduceRight<T, A>(a: T[], f: unknown, initial: A): A {
     } else if (isDoubleArray(a)) {
         for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
             const x: number = $getDoubleIndex(a, k);
-            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k, a);
+            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k & 0x7fffffff, a);
         }
     } else if (isContiguousArray(a)) {
         for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
             const has: boolean = $hasContiguousIndex(a, k);
-            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
+            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
         }
     }
     if (k >= 0) acc = reduceRightFrom(a, f, acc, k);
@@ -650,7 +650,7 @@ export function Array$reduceRightWithoutInitialValue<T>(a: T[], f: unknown): T {
             for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
                 const x: number = $getDoubleIndex(a, k);
                 if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k, a);
+                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -663,7 +663,7 @@ export function Array$reduceRightWithoutInitialValue<T>(a: T[], f: unknown): T {
             for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
                 const has: boolean = $hasContiguousIndex(a, k);
                 if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
+                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -677,12 +677,12 @@ export function Array$reduceRightWithoutInitialValue<T>(a: T[], f: unknown): T {
     } else if (isDoubleArray(a)) {
         for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
             const x: number = $getDoubleIndex(a, k);
-            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k, a);
+            if (x === x) acc = $call<unknown>(f, undefined, acc, x, k & 0x7fffffff, a);
         }
     } else if (isContiguousArray(a)) {
         for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
             const has: boolean = $hasContiguousIndex(a, k);
-            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
+            if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
         }
     }
     if (k >= 0) acc = reduceRightFrom(a, f, acc, k);
@@ -722,7 +722,7 @@ export function Array$flatMap<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) continue;
-            const y = $call<unknown>(f, thisArg, x, k, a);
+            const y = $call<unknown>(f, thisArg, x, k & 0x7fffffff, a);
             const isOriginal: boolean = $isOriginalArray(y);
             let count = 1;
             if (isOriginal) count = (y as U[]).length;
@@ -771,7 +771,7 @@ export function Array$flatMap<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) continue;
-            const y = $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a);
+            const y = $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
             const isOriginal: boolean = $isOriginalArray(y);
             let count = 1;
             if (isOriginal) count = (y as U[]).length;
@@ -821,13 +821,357 @@ export function Array$flatMap<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
     return $truncateNewArray<U>(out, to);
 }
 
+function gallop(key: unknown, from: unknown[], base: number, length: number, hint: number, f: unknown, isAfterEqual: boolean): number {
+    let lastOffset = 0;
+    let offset = 1;
+    const atHint: unknown = $getIndex<unknown>(from, base + hint);
+    if (isAfterEqual ? !saysLess($callNoInline<unknown>(f, undefined, key, atHint)) : saysLess($callNoInline<unknown>(f, undefined, atHint, key))) {
+        const maxOffset = (length - hint) | 0;
+        while (offset < maxOffset) {
+            const x: unknown = $getIndex<unknown>(from, base + hint + offset);
+            if (isAfterEqual ? saysLess($callNoInline<unknown>(f, undefined, key, x)) : !saysLess($callNoInline<unknown>(f, undefined, x, key))) break;
+            lastOffset = offset;
+            offset = (offset * 2 + 1) | 0;
+            if (offset > maxOffset) offset = maxOffset;
+        }
+        lastOffset = (lastOffset + hint) | 0;
+        offset = (offset + hint) | 0;
+    } else {
+        const maxOffset = (hint + 1) | 0;
+        while (offset < maxOffset) {
+            const x: unknown = $getIndex<unknown>(from, base + hint - offset);
+            if (isAfterEqual ? !saysLess($callNoInline<unknown>(f, undefined, key, x)) : saysLess($callNoInline<unknown>(f, undefined, x, key))) break;
+            lastOffset = offset;
+            offset = (offset * 2 + 1) | 0;
+            if (offset > maxOffset) offset = maxOffset;
+        }
+        const previous = lastOffset;
+        lastOffset = (hint - offset) | 0;
+        offset = (hint - previous) | 0;
+    }
+    lastOffset = (lastOffset + 1) | 0;
+    while (lastOffset < offset) {
+        const middle = (lastOffset + ((offset - lastOffset) >> 1)) | 0;
+        const x: unknown = $getIndex<unknown>(from, base + middle);
+        if (isAfterEqual ? !saysLess($callNoInline<unknown>(f, undefined, key, x)) : saysLess($callNoInline<unknown>(f, undefined, x, key))) lastOffset = (middle + 1) | 0;
+        else offset = middle;
+    }
+    return offset;
+}
+
+function sortValues<T>(from: T[], count: number, f: unknown): void {
+    let to: T[] = from;
+    let depth = 0;
+    let minGallop = 7;
+    let previousBegin = 0;
+    let previousEnd = 0;
+    for (let begin = 0; ; ) {
+        let end = begin;
+        let power = -1;
+        if (begin < count) {
+            if (count >= 8 && end + 1 < count) {
+                const first: T = $getContiguousIndex<T>(from, end);
+                const second: T = $getContiguousIndex<T>(from, end + 1);
+                end = (end + 1) | 0;
+                if (saysLess($call<unknown>(f, undefined, second, first))) {
+                    for (; end + 1 < count; end = (end + 1) | 0) {
+                        const x: T = $getContiguousIndex<T>(from, end + 1);
+                        const y: T = $getContiguousIndex<T>(from, end);
+                        if (!saysLess($call<unknown>(f, undefined, x, y))) break;
+                    }
+                    for (let low = begin, high = end; low < high; low = (low + 1) | 0, high = (high - 1) | 0) {
+                        const x: T = $getContiguousIndex<T>(from, low);
+                        $putContiguousIndex(from, low, $getContiguousIndex<T>(from, high));
+                        $putContiguousIndex(from, high, x);
+                    }
+                } else {
+                    for (; end + 1 < count; end = (end + 1) | 0) {
+                        const x: T = $getContiguousIndex<T>(from, end + 1);
+                        const y: T = $getContiguousIndex<T>(from, end);
+                        if (saysLess($call<unknown>(f, undefined, x, y))) break;
+                    }
+                }
+            }
+            if (end - begin < 8) {
+                const limit = count - begin < 64 ? count : (begin + 64) | 0;
+                for (let i = (end + 1) | 0; i < limit; i = (i + 1) | 0) {
+                    const x: T = $getContiguousIndex<T>(from, i);
+                    let left = begin;
+                    let right = i;
+                    while (left < right) {
+                        const middle = (left + ((right - left) >> 1)) | 0;
+                        const y: T = $getContiguousIndex<T>(from, middle);
+                        if (saysLess($call<unknown>(f, undefined, x, y))) right = middle;
+                        else left = (middle + 1) | 0;
+                    }
+                    let j = i;
+                    for (; j - 1 > left; j = (j - 2) | 0) {
+                        const above: T = $getContiguousIndex<T>(from, j - 1);
+                        const below: T = $getContiguousIndex<T>(from, j - 2);
+                        $putContiguousIndex(from, j, above);
+                        $putContiguousIndex(from, j - 1, below);
+                    }
+                    if (j > left) $putContiguousIndex(from, j, $getContiguousIndex<T>(from, j - 1));
+                    $putContiguousIndex(from, left, x);
+                }
+                end = (limit - 1) | 0;
+            }
+            for (; end + 1 < count; end = (end + 1) | 0) {
+                const x: T = $getContiguousIndex<T>(from, end + 1);
+                const y: T = $getContiguousIndex<T>(from, end);
+                if (saysLess($call<unknown>(f, undefined, x, y))) break;
+            }
+            if (begin > 0) {
+                let a = previousBegin + begin;
+                let b = begin + end + 1;
+                power = 0;
+                while (a >= count === b >= count) {
+                    if (a >= count) {
+                        a -= count;
+                        b -= count;
+                    }
+                    a *= 2;
+                    b *= 2;
+                    power = (power + 1) | 0;
+                }
+            }
+        }
+        while (depth > 0) {
+            const powerBelow: number = $getContiguousIndex<number>(to, count + depth * 2 - 1);
+            if (powerBelow <= power) break;
+            depth = (depth - 1) | 0;
+            const low: number = $getContiguousIndex<number>(to, count + depth * 2) | 0;
+            const middle = previousBegin;
+            previousBegin = low;
+            let left = (low + gallop($getContiguousIndex<T>(from, middle), from, low, middle - low, 0, f, true)) | 0;
+            if (left >= middle) continue;
+            const high = (middle + gallop($getContiguousIndex<T>(from, middle - 1), from, middle, previousEnd + 1 - middle, previousEnd - middle, f, false)) | 0;
+            if (high <= middle) continue;
+            const first = left;
+            let right = middle;
+            let t = left;
+            merging: for (;;) {
+                let leftWins = 0;
+                let rightWins = 0;
+                while (leftWins < minGallop && rightWins < minGallop) {
+                    if (right >= high || left >= middle) break merging;
+                    const x: T = $getContiguousIndex<T>(from, left);
+                    const y: T = $getContiguousIndex<T>(from, right);
+                    if (saysLess($call<unknown>(f, undefined, y, x))) {
+                        $putContiguousIndex(to, t, y);
+                        right = (right + 1) | 0;
+                        rightWins = (rightWins + 1) | 0;
+                        leftWins = 0;
+                    } else {
+                        $putContiguousIndex(to, t, x);
+                        left = (left + 1) | 0;
+                        leftWins = (leftWins + 1) | 0;
+                        rightWins = 0;
+                    }
+                    t = (t + 1) | 0;
+                }
+                minGallop = (minGallop + 1) | 0;
+                do {
+                    if (minGallop > 1) minGallop = (minGallop - 1) | 0;
+                    if (left >= middle || right >= high) break merging;
+                    leftWins = gallop($getContiguousIndex<T>(from, right), from, left, middle - left, 0, f, true);
+                    for (let k = 0; k < leftWins; k = (k + 1) | 0, t = (t + 1) | 0, left = (left + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, left));
+                    $putContiguousIndex(to, t, $getContiguousIndex<T>(from, right));
+                    t = (t + 1) | 0;
+                    right = (right + 1) | 0;
+                    if (left >= middle || right >= high) break merging;
+                    rightWins = gallop($getContiguousIndex<T>(from, left), from, right, high - right, 0, f, false);
+                    for (let k = 0; k < rightWins; k = (k + 1) | 0, t = (t + 1) | 0, right = (right + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, right));
+                    $putContiguousIndex(to, t, $getContiguousIndex<T>(from, left));
+                    t = (t + 1) | 0;
+                    left = (left + 1) | 0;
+                    if (left >= middle || right >= high) break merging;
+                } while (leftWins >= 7 || rightWins >= 7);
+                minGallop = (minGallop + 1) | 0;
+            }
+            for (; left < middle; left = (left + 1) | 0, t = (t + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, left));
+            for (; right < high; right = (right + 1) | 0, t = (t + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, right));
+            for (let k = first; k < high; k = (k + 1) | 0) $putContiguousIndex(from, k, $getContiguousIndex<T>(to, k));
+        }
+        if (begin >= count) return;
+        if (begin > 0) {
+            if (to === from) to = $newContiguousArray<T>(count + 72);
+            $putContiguousIndex(to, count + depth * 2, previousBegin);
+            $putContiguousIndex(to, count + depth * 2 + 1, power);
+            depth = (depth + 1) | 0;
+        }
+        previousBegin = begin;
+        previousEnd = end;
+        begin = (end + 1) | 0;
+    }
+}
+
+function sortDoubles(from: number[], count: number, f: unknown): void {
+    let to: number[] = from;
+    let depth = 0;
+    let minGallop = 7;
+    let previousBegin = 0;
+    let previousEnd = 0;
+    for (let begin = 0; ; ) {
+        let end = begin;
+        let power = -1;
+        if (begin < count) {
+            if (count >= 8 && end + 1 < count) {
+                const first: number = $getDoubleIndex(from, end);
+                const second: number = $getDoubleIndex(from, end + 1);
+                end = (end + 1) | 0;
+                if (saysLess($call<unknown>(f, undefined, second, first))) {
+                    for (; end + 1 < count; end = (end + 1) | 0) {
+                        const x: number = $getDoubleIndex(from, end + 1);
+                        const y: number = $getDoubleIndex(from, end);
+                        if (!saysLess($call<unknown>(f, undefined, x, y))) break;
+                    }
+                    for (let low = begin, high = end; low < high; low = (low + 1) | 0, high = (high - 1) | 0) {
+                        const x: number = $getDoubleIndex(from, low);
+                        $putDoubleIndex(from, low, $getDoubleIndex(from, high));
+                        $putDoubleIndex(from, high, x);
+                    }
+                } else {
+                    for (; end + 1 < count; end = (end + 1) | 0) {
+                        const x: number = $getDoubleIndex(from, end + 1);
+                        const y: number = $getDoubleIndex(from, end);
+                        if (saysLess($call<unknown>(f, undefined, x, y))) break;
+                    }
+                }
+            }
+            if (end - begin < 8) {
+                const limit = count - begin < 64 ? count : (begin + 64) | 0;
+                for (let i = (end + 1) | 0; i < limit; i = (i + 1) | 0) {
+                    const x: number = $getDoubleIndex(from, i);
+                    let left = begin;
+                    let right = i;
+                    while (left < right) {
+                        const middle = (left + ((right - left) >> 1)) | 0;
+                        const y: number = $getDoubleIndex(from, middle);
+                        if (saysLess($call<unknown>(f, undefined, x, y))) right = middle;
+                        else left = (middle + 1) | 0;
+                    }
+                    let j = i;
+                    for (; j - 1 > left; j = (j - 2) | 0) {
+                        const above: number = $getDoubleIndex(from, j - 1);
+                        const below: number = $getDoubleIndex(from, j - 2);
+                        $putDoubleIndex(from, j, above);
+                        $putDoubleIndex(from, j - 1, below);
+                    }
+                    if (j > left) $putDoubleIndex(from, j, $getDoubleIndex(from, j - 1));
+                    $putDoubleIndex(from, left, x);
+                }
+                end = (limit - 1) | 0;
+            }
+            for (; end + 1 < count; end = (end + 1) | 0) {
+                const x: number = $getDoubleIndex(from, end + 1);
+                const y: number = $getDoubleIndex(from, end);
+                if (saysLess($call<unknown>(f, undefined, x, y))) break;
+            }
+            if (begin > 0) {
+                let a = previousBegin + begin;
+                let b = begin + end + 1;
+                power = 0;
+                while (a >= count === b >= count) {
+                    if (a >= count) {
+                        a -= count;
+                        b -= count;
+                    }
+                    a *= 2;
+                    b *= 2;
+                    power = (power + 1) | 0;
+                }
+            }
+        }
+        while (depth > 0) {
+            const powerBelow: number = $getDoubleIndex(to, count + depth * 2 - 1);
+            if (powerBelow <= power) break;
+            depth = (depth - 1) | 0;
+            const low: number = $getDoubleIndex(to, count + depth * 2) | 0;
+            const middle = previousBegin;
+            previousBegin = low;
+            let left = (low + gallop($getDoubleIndex(from, middle), from, low, middle - low, 0, f, true)) | 0;
+            if (left >= middle) continue;
+            const high = (middle + gallop($getDoubleIndex(from, middle - 1), from, middle, previousEnd + 1 - middle, previousEnd - middle, f, false)) | 0;
+            if (high <= middle) continue;
+            const first = left;
+            let right = middle;
+            let t = left;
+            merging: for (;;) {
+                let leftWins = 0;
+                let rightWins = 0;
+                while (leftWins < minGallop && rightWins < minGallop) {
+                    if (right >= high || left >= middle) break merging;
+                    const x: number = $getDoubleIndex(from, left);
+                    const y: number = $getDoubleIndex(from, right);
+                    if (saysLess($call<unknown>(f, undefined, y, x))) {
+                        $putDoubleIndex(to, t, y);
+                        right = (right + 1) | 0;
+                        rightWins = (rightWins + 1) | 0;
+                        leftWins = 0;
+                    } else {
+                        $putDoubleIndex(to, t, x);
+                        left = (left + 1) | 0;
+                        leftWins = (leftWins + 1) | 0;
+                        rightWins = 0;
+                    }
+                    t = (t + 1) | 0;
+                }
+                minGallop = (minGallop + 1) | 0;
+                do {
+                    if (minGallop > 1) minGallop = (minGallop - 1) | 0;
+                    if (left >= middle || right >= high) break merging;
+                    leftWins = gallop($getDoubleIndex(from, right), from, left, middle - left, 0, f, true);
+                    for (let k = 0; k < leftWins; k = (k + 1) | 0, t = (t + 1) | 0, left = (left + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, left));
+                    $putDoubleIndex(to, t, $getDoubleIndex(from, right));
+                    t = (t + 1) | 0;
+                    right = (right + 1) | 0;
+                    if (left >= middle || right >= high) break merging;
+                    rightWins = gallop($getDoubleIndex(from, left), from, right, high - right, 0, f, false);
+                    for (let k = 0; k < rightWins; k = (k + 1) | 0, t = (t + 1) | 0, right = (right + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, right));
+                    $putDoubleIndex(to, t, $getDoubleIndex(from, left));
+                    t = (t + 1) | 0;
+                    left = (left + 1) | 0;
+                    if (left >= middle || right >= high) break merging;
+                } while (leftWins >= 7 || rightWins >= 7);
+                minGallop = (minGallop + 1) | 0;
+            }
+            for (; left < middle; left = (left + 1) | 0, t = (t + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, left));
+            for (; right < high; right = (right + 1) | 0, t = (t + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, right));
+            for (let k = first; k < high; k = (k + 1) | 0) $putDoubleIndex(from, k, $getDoubleIndex(to, k));
+        }
+        if (begin >= count) return;
+        if (begin > 0) {
+            if (to === from) to = $newDoubleArray(count + 72);
+            $putDoubleIndex(to, count + depth * 2, previousBegin);
+            $putDoubleIndex(to, count + depth * 2 + 1, power);
+            depth = (depth + 1) | 0;
+        }
+        previousBegin = begin;
+        previousEnd = end;
+        begin = (end + 1) | 0;
+    }
+}
+
+function insertDoubles(a: number[], n: number, f: unknown): void {
+    for (let i = 1; i < n; i = (i + 1) | 0) {
+        const x: number = $getDoubleIndex(a, i);
+        let j = i;
+        for (; j > 0; j = (j - 1) | 0) {
+            const y: number = $getDoubleIndex(a, j - 1);
+            if (!saysLess($call<unknown>(f, undefined, x, y))) break;
+            $putDoubleIndex(a, j, y);
+        }
+        $putDoubleIndex(a, j, x);
+    }
+}
+
 export function Array$sort<T>(a: T[], f: unknown): T[] {
     if (!isCallable(f)) return (a as any).sort(f, undefined);
     const n = a.length;
     if (n < 2) return a;
-    let undefinedCount = 0;
     if (isDoubleArray(a)) {
-        let from: number[] = $newDoubleArray(n);
+        const from: number[] = $newDoubleArray(n);
         let count = 0;
         for (let k = 0; k < n; k++) {
             const x: number = $getDoubleIndex(a, k);
@@ -835,73 +1179,7 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
             $putDoubleIndex(from, count, x);
             count = (count + 1) | 0;
         }
-        let i = 1;
-        for (; i < count; i = (i + 1) | 0) {
-            const x: number = $getDoubleIndex(from, i);
-            const y: number = $getDoubleIndex(from, i - 1);
-            if (!saysLess($call<unknown>(f, undefined, x, y))) break;
-        }
-        const isWholeInOrder = i >= count;
-        if (i === 1) i = 2;
-        else {
-            for (let first = 0, last = (i - 1) | 0; first < last; first = (first + 1) | 0, last = (last - 1) | 0) {
-                const x: number = $getDoubleIndex(from, first);
-                $putDoubleIndex(from, first, $getDoubleIndex(from, last));
-                $putDoubleIndex(from, last, x);
-            }
-        }
-        for (let base = i & -8; base < count; base = (base + 8) | 0, i = (i + 1) | 0) {
-            const end = base + 8 < count ? (base + 8) | 0 : count;
-            for (; i < end; i = (i + 1) | 0) {
-                const x: number = $getDoubleIndex(from, i);
-                let j = (i - 1) | 0;
-                for (; j >= base; j = (j - 1) | 0) {
-                    const y: number = $getDoubleIndex(from, j);
-                    if (!saysLess($call<unknown>(f, undefined, x, y))) break;
-                    $putDoubleIndex(from, j + 1, y);
-                }
-                $putDoubleIndex(from, j + 1, x);
-            }
-        }
-        if (count > 8 && !isWholeInOrder) {
-            let to: number[] = $newDoubleArray(n);
-            for (let width = 8; width < count; width = (width * 2) | 0) {
-                for (let low = 0; low < count; low = (low + width * 2) | 0) {
-                    const middle = low + width < count ? (low + width) | 0 : count;
-                    const high = low + width * 2 < count ? (low + width * 2) | 0 : count;
-                    let left = low;
-                    let right = middle;
-                    let t = low;
-                    let isOrdered = middle >= high;
-                    if (!isOrdered) {
-                        const last: number = $getDoubleIndex(from, middle - 1);
-                        const next: number = $getDoubleIndex(from, middle);
-                        isOrdered = !saysLess($call<unknown>(f, undefined, next, last));
-                    }
-                    if (isOrdered) {
-                        for (; left < high; left = (left + 1) | 0) $putDoubleIndex(to, left, $getDoubleIndex(from, left));
-                        continue;
-                    }
-                    while (left < middle && right < high) {
-                        const x: number = $getDoubleIndex(from, left);
-                        const y: number = $getDoubleIndex(from, right);
-                        if (saysLess($call<unknown>(f, undefined, y, x))) {
-                            $putDoubleIndex(to, t, y);
-                            right = (right + 1) | 0;
-                        } else {
-                            $putDoubleIndex(to, t, x);
-                            left = (left + 1) | 0;
-                        }
-                        t = (t + 1) | 0;
-                    }
-                    for (; left < middle; left = (left + 1) | 0, t = (t + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, left));
-                    for (; right < high; right = (right + 1) | 0, t = (t + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, right));
-                }
-                const swapped = from;
-                from = to;
-                to = swapped;
-            }
-        }
+        sortDoubles(from, count, f);
         let k = 0;
         if (count > 0) {
             const first: number = $getDoubleIndex(from, 0);
@@ -921,112 +1199,46 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
         return a;
     }
     if (!isContiguousArray(a)) return (a as any).sort(f, undefined);
-        let from: T[] = $newContiguousArray<T>(n);
-        let count = 0;
-        for (let k = 0; k < n; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) continue;
-            const x = $getContiguousIndex<T>(a, k);
-            if (x === undefined) {
-                undefinedCount = (undefinedCount + 1) | 0;
-                continue;
-            }
-            $putContiguousIndex(from, count, x);
-            count = (count + 1) | 0;
+    const from: T[] = $newContiguousArray<T>(n);
+    let undefinedCount = 0;
+    let count = 0;
+    for (let k = 0; k < n; k++) {
+        const has: boolean = $hasContiguousIndex(a, k);
+        if (!has) continue;
+        const x = $getContiguousIndex<T>(a, k);
+        if (x === undefined) {
+            undefinedCount = (undefinedCount + 1) | 0;
+            continue;
         }
-        let i = 1;
-        for (; i < count; i = (i + 1) | 0) {
-            const x: T = $getContiguousIndex<T>(from, i);
-            const y: T = $getContiguousIndex<T>(from, i - 1);
-            if (!saysLess($call<unknown>(f, undefined, x, y))) break;
+        $putContiguousIndex(from, count, x);
+        count = (count + 1) | 0;
+    }
+    sortValues<T>(from, count, f);
+    let k = 0;
+    if (count > 0) {
+        const first = $getContiguousIndex<T>(from, 0);
+        const isFirstStored: boolean = $tryPutIndex(a, 0, first);
+        if (!isFirstStored) a[0] = first;
+        k = 1;
+        if (isContiguousArray(a) && count <= a.length) {
+            for (; k < count; k++) $putContiguousIndex(a, k, $getContiguousIndex<T>(from, k));
         }
-        const isWholeInOrder = i >= count;
-        if (i === 1) i = 2;
-        else {
-            for (let first = 0, last = (i - 1) | 0; first < last; first = (first + 1) | 0, last = (last - 1) | 0) {
-                const x: T = $getContiguousIndex<T>(from, first);
-                $putContiguousIndex(from, first, $getContiguousIndex<T>(from, last));
-                $putContiguousIndex(from, last, x);
-            }
-        }
-        for (let base = i & -8; base < count; base = (base + 8) | 0, i = (i + 1) | 0) {
-            const end = base + 8 < count ? (base + 8) | 0 : count;
-            for (; i < end; i = (i + 1) | 0) {
-                const x: T = $getContiguousIndex<T>(from, i);
-                let j = (i - 1) | 0;
-                for (; j >= base; j = (j - 1) | 0) {
-                    const y: T = $getContiguousIndex<T>(from, j);
-                    if (!saysLess($call<unknown>(f, undefined, x, y))) break;
-                    $putContiguousIndex(from, j + 1, y);
-                }
-                $putContiguousIndex(from, j + 1, x);
-            }
-        }
-        if (count > 8 && !isWholeInOrder) {
-            let to: T[] = $newContiguousArray<T>(n);
-            for (let width = 8; width < count; width = (width * 2) | 0) {
-                for (let low = 0; low < count; low = (low + width * 2) | 0) {
-                    const middle = low + width < count ? (low + width) | 0 : count;
-                    const high = low + width * 2 < count ? (low + width * 2) | 0 : count;
-                    let left = low;
-                    let right = middle;
-                    let t = low;
-                    let isOrdered = middle >= high;
-                    if (!isOrdered) {
-                        const last: T = $getContiguousIndex<T>(from, middle - 1);
-                        const next: T = $getContiguousIndex<T>(from, middle);
-                        isOrdered = !saysLess($call<unknown>(f, undefined, next, last));
-                    }
-                    if (isOrdered) {
-                        for (; left < high; left = (left + 1) | 0) $putContiguousIndex(to, left, $getContiguousIndex<T>(from, left));
-                        continue;
-                    }
-                    while (left < middle && right < high) {
-                        const x: T = $getContiguousIndex<T>(from, left);
-                        const y: T = $getContiguousIndex<T>(from, right);
-                        if (saysLess($call<unknown>(f, undefined, y, x))) {
-                            $putContiguousIndex(to, t, y);
-                            right = (right + 1) | 0;
-                        } else {
-                            $putContiguousIndex(to, t, x);
-                            left = (left + 1) | 0;
-                        }
-                        t = (t + 1) | 0;
-                    }
-                    for (; left < middle; left = (left + 1) | 0, t = (t + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, left));
-                    for (; right < high; right = (right + 1) | 0, t = (t + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, right));
-                }
-                const swapped = from;
-                from = to;
-                to = swapped;
-            }
-        }
-        let k = 0;
-        if (count > 0) {
-            const first = $getContiguousIndex<T>(from, 0);
-            const isFirstStored: boolean = $tryPutIndex(a, 0, first);
-            if (!isFirstStored) a[0] = first;
-            k = 1;
-            if (isContiguousArray(a) && count <= a.length) {
-                for (; k < count; k++) $putContiguousIndex(a, k, $getContiguousIndex<T>(from, k));
-            }
-        }
-        for (; k < count; k++) {
-            const x = $getContiguousIndex<T>(from, k);
-            const isStored: boolean = $tryPutIndex(a, k, x);
-            if (!isStored) a[k] = x;
-        }
-        for (; undefinedCount > 0; undefinedCount = (undefinedCount - 1) | 0, k++) a[k] = undefined as unknown as T;
-        for (; k < n; k++) delete a[k];
-        return a;
+    }
+    for (; k < count; k++) {
+        const x = $getContiguousIndex<T>(from, k);
+        const isStored: boolean = $tryPutIndex(a, k, x);
+        if (!isStored) a[k] = x;
+    }
+    for (; undefinedCount > 0; undefinedCount = (undefinedCount - 1) | 0, k++) a[k] = undefined as unknown as T;
+    for (; k < n; k++) delete a[k];
+    return a;
 }
 
 export function Array$toSorted<T>(a: T[], f: unknown): T[] {
     if (!isCallable(f)) return (a as any).toSorted(f, undefined);
     const n = a.length;
-    let undefinedCount = 0;
     if (isDoubleArray(a)) {
-        let from: number[] = $newDoubleArray(n);
+        const from: number[] = $newDoubleArray(n);
         let count = 0;
         for (let k = 0; k < n; k++) {
             const x: number = $getDoubleIndex(a, k);
@@ -1035,167 +1247,60 @@ export function Array$toSorted<T>(a: T[], f: unknown): T[] {
             count = (count + 1) | 0;
         }
         if (count !== n) return (a as any).toSorted(f, undefined);
-        let i = 1;
-        for (; i < count; i = (i + 1) | 0) {
-            const x: number = $getDoubleIndex(from, i);
-            const y: number = $getDoubleIndex(from, i - 1);
-            if (!saysLess($call<unknown>(f, undefined, x, y))) break;
-        }
-        const isWholeInOrder = i >= count;
-        if (i === 1) i = 2;
-        else {
-            for (let first = 0, last = (i - 1) | 0; first < last; first = (first + 1) | 0, last = (last - 1) | 0) {
-                const x: number = $getDoubleIndex(from, first);
-                $putDoubleIndex(from, first, $getDoubleIndex(from, last));
-                $putDoubleIndex(from, last, x);
-            }
-        }
-        for (let base = i & -8; base < count; base = (base + 8) | 0, i = (i + 1) | 0) {
-            const end = base + 8 < count ? (base + 8) | 0 : count;
-            for (; i < end; i = (i + 1) | 0) {
-                const x: number = $getDoubleIndex(from, i);
-                let j = (i - 1) | 0;
-                for (; j >= base; j = (j - 1) | 0) {
-                    const y: number = $getDoubleIndex(from, j);
-                    if (!saysLess($call<unknown>(f, undefined, x, y))) break;
-                    $putDoubleIndex(from, j + 1, y);
-                }
-                $putDoubleIndex(from, j + 1, x);
-            }
-        }
-        if (count > 8 && !isWholeInOrder) {
-            let to: number[] = $newDoubleArray(n);
-            for (let width = 8; width < count; width = (width * 2) | 0) {
-                for (let low = 0; low < count; low = (low + width * 2) | 0) {
-                    const middle = low + width < count ? (low + width) | 0 : count;
-                    const high = low + width * 2 < count ? (low + width * 2) | 0 : count;
-                    let left = low;
-                    let right = middle;
-                    let t = low;
-                    let isOrdered = middle >= high;
-                    if (!isOrdered) {
-                        const last: number = $getDoubleIndex(from, middle - 1);
-                        const next: number = $getDoubleIndex(from, middle);
-                        isOrdered = !saysLess($call<unknown>(f, undefined, next, last));
-                    }
-                    if (isOrdered) {
-                        for (; left < high; left = (left + 1) | 0) $putDoubleIndex(to, left, $getDoubleIndex(from, left));
-                        continue;
-                    }
-                    while (left < middle && right < high) {
-                        const x: number = $getDoubleIndex(from, left);
-                        const y: number = $getDoubleIndex(from, right);
-                        if (saysLess($call<unknown>(f, undefined, y, x))) {
-                            $putDoubleIndex(to, t, y);
-                            right = (right + 1) | 0;
-                        } else {
-                            $putDoubleIndex(to, t, x);
-                            left = (left + 1) | 0;
-                        }
-                        t = (t + 1) | 0;
-                    }
-                    for (; left < middle; left = (left + 1) | 0, t = (t + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, left));
-                    for (; right < high; right = (right + 1) | 0, t = (t + 1) | 0) $putDoubleIndex(to, t, $getDoubleIndex(from, right));
-                }
-                const swapped = from;
-                from = to;
-                to = swapped;
-            }
-        }
+        sortDoubles(from, count, f);
         return $truncateNewArray<T>(from as unknown as T[], n);
     }
     if (!isContiguousArray(a)) return (a as any).toSorted(f, undefined);
-        let from: T[] = $newContiguousArray<T>(n);
-        let count = 0;
-        for (let k = 0; k < n; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) continue;
-            const x = $getContiguousIndex<T>(a, k);
-            if (x === undefined) {
-                undefinedCount = (undefinedCount + 1) | 0;
-                continue;
-            }
-            $putContiguousIndex(from, count, x);
-            count = (count + 1) | 0;
-        }
-        let i = 1;
-        for (; i < count; i = (i + 1) | 0) {
-            const x: T = $getContiguousIndex<T>(from, i);
-            const y: T = $getContiguousIndex<T>(from, i - 1);
-            if (!saysLess($call<unknown>(f, undefined, x, y))) break;
-        }
-        const isWholeInOrder = i >= count;
-        if (i === 1) i = 2;
-        else {
-            for (let first = 0, last = (i - 1) | 0; first < last; first = (first + 1) | 0, last = (last - 1) | 0) {
-                const x: T = $getContiguousIndex<T>(from, first);
-                $putContiguousIndex(from, first, $getContiguousIndex<T>(from, last));
-                $putContiguousIndex(from, last, x);
-            }
-        }
-        for (let base = i & -8; base < count; base = (base + 8) | 0, i = (i + 1) | 0) {
-            const end = base + 8 < count ? (base + 8) | 0 : count;
-            for (; i < end; i = (i + 1) | 0) {
-                const x: T = $getContiguousIndex<T>(from, i);
-                let j = (i - 1) | 0;
-                for (; j >= base; j = (j - 1) | 0) {
-                    const y: T = $getContiguousIndex<T>(from, j);
-                    if (!saysLess($call<unknown>(f, undefined, x, y))) break;
-                    $putContiguousIndex(from, j + 1, y);
-                }
-                $putContiguousIndex(from, j + 1, x);
-            }
-        }
-        if (count > 8 && !isWholeInOrder) {
-            let to: T[] = $newContiguousArray<T>(n);
-            for (let width = 8; width < count; width = (width * 2) | 0) {
-                for (let low = 0; low < count; low = (low + width * 2) | 0) {
-                    const middle = low + width < count ? (low + width) | 0 : count;
-                    const high = low + width * 2 < count ? (low + width * 2) | 0 : count;
-                    let left = low;
-                    let right = middle;
-                    let t = low;
-                    let isOrdered = middle >= high;
-                    if (!isOrdered) {
-                        const last: T = $getContiguousIndex<T>(from, middle - 1);
-                        const next: T = $getContiguousIndex<T>(from, middle);
-                        isOrdered = !saysLess($call<unknown>(f, undefined, next, last));
-                    }
-                    if (isOrdered) {
-                        for (; left < high; left = (left + 1) | 0) $putContiguousIndex(to, left, $getContiguousIndex<T>(from, left));
-                        continue;
-                    }
-                    while (left < middle && right < high) {
-                        const x: T = $getContiguousIndex<T>(from, left);
-                        const y: T = $getContiguousIndex<T>(from, right);
-                        if (saysLess($call<unknown>(f, undefined, y, x))) {
-                            $putContiguousIndex(to, t, y);
-                            right = (right + 1) | 0;
-                        } else {
-                            $putContiguousIndex(to, t, x);
-                            left = (left + 1) | 0;
-                        }
-                        t = (t + 1) | 0;
-                    }
-                    for (; left < middle; left = (left + 1) | 0, t = (t + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, left));
-                    for (; right < high; right = (right + 1) | 0, t = (t + 1) | 0) $putContiguousIndex(to, t, $getContiguousIndex<T>(from, right));
-                }
-                const swapped = from;
-                from = to;
-                to = swapped;
-            }
-        }
-        for (let k = count; k < n; k++) $putContiguousIndex(from, k, undefined);
-        return $truncateNewArray<T>(from, n);
+    const from: T[] = $newContiguousArray<T>(n);
+    let count = 0;
+    for (let k = 0; k < n; k++) {
+        const has: boolean = $hasContiguousIndex(a, k);
+        if (!has) continue;
+        const x = $getContiguousIndex<T>(a, k);
+        if (x === undefined) continue;
+        $putContiguousIndex(from, count, x);
+        count = (count + 1) | 0;
+    }
+    sortValues<T>(from, count, f);
+    for (let k = count; k < n; k++) $putContiguousIndex(from, k, undefined);
+    return $truncateNewArray<T>(from, n);
 }
 
 export function Array$sortByKey<T>(a: T[], f: unknown, name: unknown, flags: number): T[] {
+    const n = a.length;
+    if (n <= 16 && name === undefined && (flags & 8) === 0 && isDoubleArray(a)) {
+        let k = 0;
+        for (; k < n; k++) {
+            const x: number = $getDoubleIndex(a, k);
+            if (x !== x) break;
+        }
+        if (n < 2) return a;
+        const isWritable: boolean = k === n && $tryPutIndex(a, 0, $getDoubleIndex(a, 0));
+        if (isWritable && isDoubleArray(a) && a.length === n) {
+            insertDoubles(a as unknown as number[], n, f);
+            return a;
+        }
+    }
     const sorted: T[] | null = $trySortByKey<T>(a, name, flags);
     if (sorted !== null) return sorted;
     return (a as any).sort(f, undefined);
 }
 
 export function Array$toSortedByKey<T>(a: T[], f: unknown, name: unknown, flags: number): T[] {
+    const n = a.length;
+    if (n <= 16 && name === undefined && (flags & 8) === 0 && isDoubleArray(a)) {
+        const from: number[] = $newDoubleArray(n);
+        let k = 0;
+        for (; k < n; k++) {
+            const x: number = $getDoubleIndex(a, k);
+            if (x !== x) break;
+            $putDoubleIndex(from, k, x);
+        }
+        if (k === n) {
+            insertDoubles(from, n, f);
+            return $truncateNewArray<T>(from as unknown as T[], n);
+        }
+    }
     const sorted: T[] | null = $trySortByKey<T>(a, name, flags | 2);
     if (sorted !== null) return sorted;
     return (a as any).toSorted(f, undefined);
@@ -1234,7 +1339,7 @@ export function Array$from<T, U>(items: unknown, f: unknown, thisArg: unknown): 
         for (; k < m && isDoubleArray(a) && k < a.length; k++) {
             const x: number = $getDoubleIndex(a, k);
             if (x !== x) break;
-            const y = $call<U>(f, thisArg, x, k);
+            const y = $call<U>(f, thisArg, x, k & 0x7fffffff);
             const isStored: boolean = $tryPutByValDirect(out, k, y);
             if (!isStored) {
                 out[k++] = y;
@@ -1245,7 +1350,7 @@ export function Array$from<T, U>(items: unknown, f: unknown, thisArg: unknown): 
         for (; k < m && isContiguousArray(a) && k < a.length; k++) {
             const has: boolean = $hasContiguousIndex(a, k);
             if (!has) break;
-            const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k);
+            const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff);
             const isStored: boolean = $tryPutByValDirect(out, k, y);
             if (!isStored) {
                 out[k++] = y;

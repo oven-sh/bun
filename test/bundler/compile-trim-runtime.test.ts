@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
@@ -240,6 +240,23 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  const canSeeMemory = isMacOS && Bun.spawnSync({ cmd: ["vmmap", String(process.pid)], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+  test.skipIf(!canSeeMemory)("macOS: no piece of the constants that hold addresses can be written while the program runs", async () => {
+    using dir = tempDir("compile-trim-runtime-constants", {
+      "waits.ts": `console.log("ready"); for await (const _ of Bun.stdin.stream()) break;`,
+    });
+    const folder = String(dir);
+    expect(await run([bunExe(), "build", "--compile", "--compile-trim-runtime", "waits.ts", "--outfile", "waits"], folder)).toMatchObject({ exitCode: 0 });
+    await using child = Bun.spawn({ cmd: [join(folder, "waits")], env: bunEnv, stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+    expect(new TextDecoder().decode((await child.stdout.getReader().read()).value)).toBe("ready\n");
+    const map = await run(["vmmap", String(child.pid)], folder);
+    const pieces = map.stdout.split("\n").filter(line => line.startsWith("__DATA_CONST") && line.endsWith("/waits"));
+    expect(pieces.length).toBeGreaterThan(0);
+    expect(pieces.filter(line => !line.includes("] r--/"))).toEqual([]);
+    child.stdin.end();
   });
 
   test("compile: { trimRuntime: true }", async () => {

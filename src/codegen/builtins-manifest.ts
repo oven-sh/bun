@@ -170,7 +170,7 @@ function resolve(specifier: string, importer: string) {
 }
 const idsOf = (specifiers: string[]) => specifiers.map(specifier => resolve(specifier, ""));
 
-const console_ = ["node:util", "internal/validators", "internal/util/debuglog"];
+const console_ = ["internal/util/inspect", "internal/validators", "internal/util/debuglog"];
 const ipc = ["node:net", "node:dgram", "internal/dgram", "node:fs", "internal/serialization_buffers"];
 const standardStream = ["node:tty", "node:fs", "internal/fs/streams"];
 
@@ -190,8 +190,8 @@ const triggers: Record<string, string[]> = {
   "process.openStdin": standardStream,
   "process.channel": ["node:events"],
   "process.send": ipc,
-  "process._rawDebug": ["node:util", "node:fs", "node:os"],
-  "process.loadEnvFile": ["internal/validators", "node:fs", "node:util"],
+  "process._rawDebug": ["internal/util/inspect", "node:fs", "node:os"],
+  "process.loadEnvFile": ["internal/validators", "node:fs"],
   "console.Console": console_,
   "Bun.spawn": ipc,
   "Bun.sql": ["bun:sql"],
@@ -247,11 +247,8 @@ for (const [id, file] of sourceFiles.entries()) {
 
 const alwaysIncluded = [
   "internal/process/next_tick_queue",
-  "internal/validators",
-  "internal/shared",
-  "internal/fixed_queue",
-  "internal/async_hooks_tick",
-  "node:util",
+  "internal/util/inspect",
+  "node:timers/promises",
   "node:path",
 ];
 for (const id of idsOf(alwaysIncluded)) {
@@ -261,12 +258,80 @@ for (const id of idsOf(alwaysIncluded)) {
 for (const file of functionFiles) {
   lines.push(`functions\t${file}`);
 }
+const functionIds = builtinFunctionIds(path.join(BASE, "builtins"));
+for (const [key, id] of functionIds) {
+  lines.push(`function\t${id}\tbuiltins/${key}`);
+}
 for (const line of fs.readFileSync(path.join(ENGINE, "functions.txt"), "utf8").split("\n").filter(Boolean)) {
   const [id, file, name] = line.split("\t");
   lines.push(`function\t${id}\tengine/${file}\t${name}`);
+  functionIds.set(`engine/${file}\t${name}`, Number(id));
 }
-for (const [key, id] of builtinFunctionIds(path.join(BASE, "builtins"))) {
-  lines.push(`function\t${id}\tbuiltins/${key}`);
+
+const standardOutput = ["process stdout", "process stderr"];
+const standardInput = ["process stdin", "process openStdin"];
+const bundlerPlugins = { "*": ["Bun build", "Bun serve", "Bun plugin"] };
+const keysAreIndexesOrSymbols = { "property *": [] };
+const keysAreCountedAtTheCaller = { "property *": [] };
+const readsOnlyItsOwnNewObject = { "property *": [] };
+const onBehalfOf: Record<string, Record<string, string[]>> = {
+  "Bake.ts\trenderRoutesForProdStatic": { "*": ["Bun build"] },
+  "BundlerPlugin.ts\tloadAndResolvePluginsForServe": bundlerPlugins,
+  "BundlerPlugin.ts\trunOnEndCallbacks": bundlerPlugins,
+  "BundlerPlugin.ts\trunOnLoadPlugins": bundlerPlugins,
+  "BundlerPlugin.ts\trunOnResolvePlugins": bundlerPlugins,
+  "BundlerPlugin.ts\trunSetupFunction": bundlerPlugins,
+  "CommonJS.ts\tinternalRequire": { "process dlopen": ["loader napi"] },
+  "CommonJS.ts\toverridableRequire": { "Bun jest": ["native bun:test"] },
+  "ConsoleObject.ts\tasyncIterator": { "*": ["console @@asyncIterator"] },
+  "ConsoleObject.ts\tcreateConsoleConstructor": { "*": ["console Console"] },
+  "ConsoleObject.ts\twrite": { "*": ["console write"] },
+  "Glob.ts\tscan": { "*": ["Bun Glob"] },
+  "Glob.ts\tscanSync": { "*": ["Bun Glob"] },
+  "Peek.ts\tpeek": { "*": ["Bun peek"] },
+  "Peek.ts\tpeekStatus": { "*": ["Bun peek"] },
+  "ProcessObjectInternals.ts\tbuildAllowedNodeEnvironmentFlags": { "*": ["process allowedNodeEnvironmentFlags"] },
+  "ProcessObjectInternals.ts\tcreateProcessFinalization": { "*": ["process finalization"] },
+  "ProcessObjectInternals.ts\tgetChannel": { "*": ["process channel"] },
+  "ProcessObjectInternals.ts\tgetNodeWorkerStdioStream": { "*": [...standardOutput, ...standardInput] },
+  "ProcessObjectInternals.ts\tgetStdinStream": { "*": standardInput },
+  "ProcessObjectInternals.ts\tgetStdioWriteStream": { "*": standardOutput },
+  "ProcessObjectInternals.ts\tloadEnvFile": { "*": ["process loadEnvFile"] },
+  "ProcessObjectInternals.ts\trawDebug": { "*": ["process _rawDebug"] },
+  "WasmStreaming.ts\tconsumeStream": { "*": ["global WebAssembly"] },
+  "shell.ts\tcreateBunShellTemplateFunction": { "*": ["Bun $"] },
+  "JSBufferConstructor.ts\tfrom": keysAreIndexesOrSymbols,
+  "ProcessObjectInternals.ts\twindowsEnv": keysAreCountedAtTheCaller,
+  "engine/ArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
+  "engine/ArrayConstructor.js\tfromAsync": keysAreIndexesOrSymbols,
+  "engine/ArrayIteratorPrototype.js\tarrayIteratorNextHelper": keysAreIndexesOrSymbols,
+  "engine/ArrayPrototype.js\tat": keysAreIndexesOrSymbols,
+  "engine/ArrayPrototype.js\tfindLast": keysAreIndexesOrSymbols,
+  "engine/ArrayPrototype.js\tfindLastIndex": keysAreIndexesOrSymbols,
+  "engine/ArrayPrototype.js\treduceRight": keysAreIndexesOrSymbols,
+  "engine/AsyncDisposableStackPrototype.js\tdisposeAsync": keysAreIndexesOrSymbols,
+  "engine/DisposableStackPrototype.js\tdispose": keysAreIndexesOrSymbols,
+  "engine/IteratorHelpers.js\tperformIteration": keysAreIndexesOrSymbols,
+  "engine/JSIteratorConstructor.js\tcloseAllIterators": keysAreIndexesOrSymbols,
+  "engine/JSIteratorConstructor.js\tconcat": keysAreIndexesOrSymbols,
+  "engine/JSIteratorConstructor.js\tgetIteratorFlattenable": keysAreIndexesOrSymbols,
+  "engine/JSIteratorConstructor.js\tgetIteratorSync": keysAreIndexesOrSymbols,
+  "engine/JSIteratorConstructor.js\titeratorCloseAllNormal": keysAreIndexesOrSymbols,
+  "engine/JSIteratorConstructor.js\tzipKeyed": { "property *": ["property zipKeyed"] },
+  "engine/MapConstructor.js\tgroupBy": keysAreIndexesOrSymbols,
+  "engine/ObjectConstructor.js\tgroupBy": readsOnlyItsOwnNewObject,
+  "engine/ReflectObject.js\tget": keysAreCountedAtTheCaller,
+  "engine/ShadowRealmPrototype.js\timportValue": { "property *": ["global ShadowRealm"] },
+  "engine/TypedArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
+  "engine/TypedArrayPrototype.js\tat": keysAreIndexesOrSymbols,
+  "engine/TypedArrayPrototype.js\ttoLocaleString": { "*": ["property toLocaleString"] },
+};
+for (const [key, names] of Object.entries(onBehalfOf)) {
+  const id = functionIds.get(key);
+  if (id === undefined) throw new Error(`\`onBehalfOf\` names ${key.replace("\t", ": ")}, which is no built-in function`);
+  for (const [name, facts] of Object.entries(names)) {
+    lines.push(`behalf\t${id}\t${name}\t${facts.join("\t")}`);
+  }
 }
 
 for (const [property, specifiers] of Object.entries(triggers)) {

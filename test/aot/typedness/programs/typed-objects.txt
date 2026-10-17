@@ -464,7 +464,7 @@ uninitialized-fields: 8 layouts, 0 given, 0 open, places 64 of 81, reads 74 of 9
 uninitialized-variable-declarations: 0 layouts, 0 given, 1 open, places 11 of 21, reads 1 of 6
 uninitialized-variables: 3 layouts, 0 given, 1 open, places 47 of 61, reads 12 of 31
 union-of-twenty-functions: 105 layouts, 0 given, 84 open, places 275 of 285, reads 104 of 106
-union-optional-fields-changed-by-untyped-code: 2 layouts, 8 given, 4 open, places 42 of 92, reads 2 of 73
+union-optional-fields-changed-by-untyped-code: 2 layouts, 10 given, 4 open, places 42 of 92, reads 2 of 73
 untouched-uninitialized-fields: 7 layouts, 0 given, 0 open, places 23 of 38, reads 2 of 6
 untyped-code-tampers-with-typed-objects: 4 layouts, 0 given, 4 open, places 20 of 98, reads 34 of 59
 untyped-function-results-checked: 5 layouts, 0 given, 7 open, places 39 of 90, reads 4 of 9

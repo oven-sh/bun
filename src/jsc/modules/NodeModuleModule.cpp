@@ -602,8 +602,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
     (JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    return JSValue::encode(globalObject->getDirect(
-        globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->get(globalObject, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName())));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,

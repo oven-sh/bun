@@ -884,7 +884,7 @@ const aotSources = [
   "test/aot/",
   "scripts/build/deps/webkit.ts",
 ];
-const aotGroupsOfLinuxX64 = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
+const aotGroupsOfLinuxX64 = ["aot/collector-stress/", "aot/bad-time/", "aot/heat/", "aot/instruction-counts/"];
 const aotGroupsOfTheCompiler = [...aotGroupsOfLinuxX64, "aot/startup-scaling/", "aot/variant-"];
 
 // The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.

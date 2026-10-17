@@ -1853,6 +1853,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalO
 #endif
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionBasenameForWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue nodePath = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::NodePath).get();
+    if (nodePath && nodePath.isObject()) {
+        JSValue basename = nodePath.get(globalObject, Identifier::fromString(vm, "basename"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::MarkedArgumentBuffer args;
+        args.append(callFrame->argument(0));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, basename, args, "basename is not a function"_s)));
+    }
+    EncodedJSValue path = JSValue::encode(callFrame->argument(0));
+#if OS(WINDOWS)
+    constexpr bool isWindows = true;
+#else
+    constexpr bool isWindows = false;
+#endif
+    RELEASE_AND_RETURN(scope, Bun__Path__basename(globalObject, isWindows, &path, 1));
+}
+
 JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
 {
     if (auto* onWarning = m_onWarning.get())
@@ -1895,6 +1917,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     }
     args.append(disabled);
     args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionWriteToUntouchedStderr, JSC::ImplementationVisibility::Private));
+    args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionBasenameForWarning, JSC::ImplementationVisibility::Private));
 #if !OS(WINDOWS)
     JSValue nodeFS = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::NodeFS).get();
     bool isNodeFSLoaded = nodeFS && !nodeFS.isUndefined();

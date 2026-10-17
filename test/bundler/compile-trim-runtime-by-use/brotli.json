@@ -1,0 +1,1 @@
+{ "features": ["brotli_encoder", "brotli_decoder"] }

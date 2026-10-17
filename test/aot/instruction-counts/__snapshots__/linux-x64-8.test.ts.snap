@@ -143,7 +143,7 @@ untyped, module level: 135.93 instructions (stub FrontEndTypedCloneObject 55.88,
 exports[`reads a field of an object that JSON.parse made 1`] = `
 "typed, function: 45.47 instructions (kernel 35.35, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, module 0.12), 411 bytes
 typed, module level: 46.33 instructions (module 36.33, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 2197 bytes
-untyped, function: 66.58 instructions (kernel 35.33, stub GetLengthByNamePreservingTwo 13.13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8, module 0.12), 341 bytes
+untyped, function: 56.50 instructions (kernel 38.38, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8, module 0.12), 382 bytes
 untyped, module level: 65.44 instructions (module 34.31, stub GetLengthByNamePreservingTwo 13.13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 1671 bytes"
 `;
 
@@ -183,10 +183,10 @@ untyped, module level: 135.55 instructions (stub SetHas 80.15, module 55.40), 26
 `;
 
 exports[`sorts a copy of an array of numbers that fall with a comparator 1`] = `
-"typed, function: 38.27 instructions (kernel 31.08, stub ArrayCopy 3.92, stub NewArrayUnderConstructionWithDouble 3.08, module 0.19), 6198 bytes
-typed, module level: 37.98 instructions (module 30.98, stub ArrayCopy 3.92, stub NewArrayUnderConstructionWithDouble 3.08), 7798 bytes
-untyped, function: 66.67 instructions (kernel 59.25, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08, stub Add 0.25, module 0.19), 8250 bytes
-untyped, module level: 67.33 instructions (module 60.34, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08), 9752 bytes"
+"typed, function: 44.42 instructions (the runtime 38.66, stub ArrayCopy 3.92, kernel 0.83, elsewhere 0.58, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 804 bytes
+typed, module level: 44.19 instructions (the runtime 38.66, stub ArrayCopy 3.92, module 0.78, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2268 bytes
+untyped, function: 81.94 instructions (the runtime 75.69, stub ArrayCopy 3.91, kernel 1.08, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 1147 bytes
+untyped, module level: 81.66 instructions (the runtime 75.69, stub ArrayCopy 3.91, module 1.23, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2737 bytes"
 `;
 
 exports[`copies a record that has an undeclared property into a literal of its own type 1`] = `

@@ -3542,7 +3542,7 @@ fn shared_directory_length(path: &[u8], other: &[u8]) -> usize {
     strings::last_index_of_char(&path[..shared], b'/').map_or(0, |slash| slash + 1)
 }
 
-const SCANNING_THREADS: usize = 6;
+const SCANNING_THREADS: usize = 16;
 
 fn for_each_on_scanning_threads(count: usize, work: &(dyn Fn(usize) + Sync)) {
     let next = AtomicUsize::new(0);

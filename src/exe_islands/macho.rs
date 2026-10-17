@@ -26,6 +26,7 @@ const SECTION: usize = 80;
 const N_STAB: u8 = 0xe0;
 const N_TYPE: u8 = 0x0e;
 const N_SECT: u8 = 0x0e;
+const SG_READ_ONLY: u32 = 0x10;
 const SECTION_TYPE: u32 = 0xff;
 const S_ZEROFILL: u32 = 0x1;
 const S_GB_ZEROFILL: u32 = 0xc;
@@ -393,15 +394,18 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     for &(kind, at, size) in &commands {
         let mut bytes = slice(file, at, size)?.to_vec();
         if let Some(pieces) = segments.iter().position(|&segment| segment == at).map(|index| &kept[index]).filter(|pieces| pieces.len() > 1) {
-            let (start, offset) = (u64_at(file, at + 24)?, u64_at(file, at + 40)?);
+            let (start, offset, flags) = (u64_at(file, at + 24)?, u64_at(file, at + 40)?, u32_at(file, at + 68)?);
+            let largest = (0..pieces.len()).max_by_key(|&index| pieces[index].addresses.end - pieces[index].addresses.start);
+            let keeps_its_name = largest.filter(|_| flags & SG_READ_ONLY != 0).unwrap_or(0);
             for (index, piece) in pieces.iter().enumerate() {
                 let Range { start: piece_start, end: piece_end } = piece.addresses;
                 let mut segment = slice(file, at, SEGMENT)?.to_vec();
-                if index > 0 {
+                if index != keeps_its_name {
                     let mut label = name(slice(file, at + 8, 16)?).to_vec();
                     label.extend_from_slice(format!(".{index}").as_bytes());
                     segment[8..24].fill(0);
                     segment.get_mut(8..8 + label.len()).filter(|_| label.len() <= 16).ok_or(Error::InvalidExecutable)?.copy_from_slice(&label);
+                    put_u32(&mut segment, 68, flags & !SG_READ_ONLY)?;
                 }
                 put_u32(&mut segment, 4, (SEGMENT + piece.sections.len() * SECTION) as u32)?;
                 put_u64(&mut segment, 24, piece_start)?;
@@ -750,13 +754,13 @@ mod tests {
         let out = without_pages(&file, &dead).unwrap();
         let found = segments_of(&out);
         let labels: Vec<&[u8]> = found.iter().map(|segment| &segment.0[..]).collect();
-        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__TEXT.1", b"__DATA_CONST", b"__DATA_CONST.1", b"__DATA_CONST.2", b"__DATA", b"__LINKEDIT"]);
+        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__TEXT.1", b"__DATA_CONST.0", b"__DATA_CONST.1", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
         let places: Vec<(u64, u64, u64, u64, u32)> = found.iter().map(|s| (s.1 - IMAGE.min(s.1), s.2, s.3, s.4, s.5)).collect();
         assert_eq!(places[1..7], [
             (0, 0x4000, 0, 0x4000, 0),
             (0xc000, 0x4000, 0x4000, 0x4000, 0),
-            (0x10000, 0x4000, 0x8000, 0x4000, 0x10),
-            (0x1c000, 0x4000, 0xc000, 0x4000, 0x10),
+            (0x10000, 0x4000, 0x8000, 0x4000, 0),
+            (0x1c000, 0x4000, 0xc000, 0x4000, 0),
             (0x24000, 0x10000, 0x10000, 0x10000, 0x10),
             (0x34000, 0x8000, 0x20000, 0x4000, 0),
         ]);
@@ -807,7 +811,7 @@ mod tests {
         put_u64(&mut file, text + SEGMENT + 40, 0x10000 - u64::from(end_of_commands + 16 + room)).unwrap();
         let out = without_pages(&file, &[IMAGE + 0x4000..IMAGE + 0x8000, CONSTANTS + 0x4000..CONSTANTS + 0xc000]).unwrap();
         let labels: Vec<Vec<u8>> = segments_of(&out).into_iter().map(|segment| segment.0).collect();
-        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__DATA_CONST", b"__DATA_CONST.1", b"__DATA", b"__LINKEDIT"]);
+        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__DATA_CONST.0", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
     }
 
     #[test]

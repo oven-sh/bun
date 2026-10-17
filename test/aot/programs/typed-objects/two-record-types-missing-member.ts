@@ -1,4 +1,4 @@
-// An object created as one record type is used as a second record type that requires a property the object does not have: TypeError. Plain Bun prints undefined.
+// An object created as one record type comes out of `any` into a second record type that requires a property the object does not have: it goes on as it is, and the property reads undefined as in plain Bun, whether or not the compiler sees through the `any`.
 function row(name: string, f: () => unknown): void {
   try {
     console.log(name + ": " + String(f()));

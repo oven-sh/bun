@@ -4,6 +4,7 @@ import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeTable } from "../../scripts/build/islands-layout.ts";
 import { packageOf } from "./icu-data-package.ts";
+import { shutDoors } from "./islands-shut-doors.ts";
 
 const wrapper = join(import.meta.dir, "../../scripts/build/islands.ts");
 const tools = Object.fromEntries(["clang", "ld.lld", "llvm-cxxfilt", "llvm-nm", "llvm-objcopy"].map(name => [name, Bun.which(name)]));
@@ -95,7 +96,7 @@ async function linked(
   const isDoor = (name: string) => table.doors.some(door => door.address === addressOf.get(name));
   const canGo = (name: string) => islands.some(([start, end]) => start <= addressOf.get(name)! && addressOf.get(name)! < end);
   fillWithTraps(folder, islands);
-  return { said: said.stdout, addressOf, canGo, isDoor, ran: await run([join(folder, "program")], folder), ranTrimmed: await run([join(folder, "trimmed")], folder) };
+  return { said: said.stdout, table, addressOf, canGo, isDoor, ran: await run([join(folder, "program")], folder), ranTrimmed: await run([join(folder, "trimmed")], folder) };
 }
 
 const start = `
@@ -402,6 +403,85 @@ describe.skipIf(!canLink)("what stays can reach what lies behind the door by", (
     expect(["small_door", "behind_the_small_door", "behind_0"].map(canGo)).toEqual([false, false, true]);
     expect(ranTrimmed.exitCode).toBe(0);
   });
+
+  test("a door whose first byte is another function's too stays open", async () => {
+    using dir = tempDir("islands-road", {
+      ...sources,
+      "more.c": `
+        __attribute__((noinline)) int behind_the_shared_door(int x) { for (int i = 0; i < 3; i++) x = x * 3 + i; return x ^ 5; }
+        __attribute__((noinline)) int shared_door(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return behind_the_shared_door(x) & 0xffff; }
+        int another_name(int) __attribute__((alias("shared_door")));
+      `,
+      "main.c": `
+        ${start}
+        int shared_door(int);
+        int another_name(int);
+        int main(int argc, char **argv) { return argc > 6 ? shared_door(argc) : argc > 5 ? the_door(argc) : another_name(argc) < 0x10000 ? 0 : 1; }
+      `,
+      "doors": sources.doors + "door extra exit ^shared_door$\n",
+    });
+    const { said, isDoor, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"]);
+    expect(said).toContain("1 doors were folded into other functions and stay open");
+    expect(isDoor("shared_door")).toBe(false);
+    expect(["shared_door", "behind_the_shared_door", "behind_0"].map(canGo)).toEqual([false, false, true]);
+    expect(ranTrimmed.exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(!canLink)("a thin door", () => {
+  const thin = {
+    ...sources,
+    "door.c": `
+      int behind(int);
+      __attribute__((noinline)) int the_door(int x) { for (int i = 0; i < 5; i++) x += behind(x + i) * 3 + behind(x ^ i); return x; }
+    `,
+    "main.c": `
+      void _exit(int);
+      int the_door(int);
+      __attribute__((noinline)) void Bun__trimmedOut(int feature) { _exit(70); }
+      int (*const handlers[2])(int) = { 0, the_door };
+      int (*volatile pointer)(int);
+      __attribute__((noinline)) static int tail(int x) { return the_door(x + 1); }
+      int main(int argc, char **argv) {
+        if (argc == 2) return the_door(argc) & 63;
+        if (argc == 3) return handlers[argc - 2](argc) & 63;
+        if (argc == 4) { pointer = the_door; return pointer(argc) & 63; }
+        if (argc == 5) return tail(argc) & 63;
+        return 0;
+      }
+    `,
+  };
+  const roads = [[], ["call"], ["a", "table"], ["an", "address", "taken"], ["a", "jump", "at", "the end"]];
+
+  async function exitCodes(folder: string, program: string) {
+    const codes: number[] = [];
+    for (const road of roads) codes.push((await run([join(folder, program), ...road], folder)).exitCode);
+    return codes;
+  }
+
+  test("goes with its feature, and everybody who names it meets the stub", async () => {
+    using dir = tempDir("islands-thin", thin);
+    const folder = String(dir);
+    const { said, table, canGo, addressOf } = await linked(folder, "none", ["behind", "door", "table", "main"]);
+    expect(said).toContain("1 doors are thin");
+    expect(canGo("the_door")).toBe(true);
+    const door = table.doors.find(door => door.address === addressOf.get("the_door"))!;
+    expect(door.places!.length).toBeGreaterThanOrEqual(3);
+    const whole = await exitCodes(folder, "program");
+    expect(whole[0]).toBe(0);
+    expect(whole.slice(1)).not.toContain(70);
+    writeFileSync(join(folder, "shut"), shutDoors(readFileSync(join(folder, "program")), table, ["extra"], process.arch === "arm64"));
+    chmodSync(join(folder, "shut"), 0o755);
+    expect(await exitCodes(folder, "shut")).toEqual([0, 70, 70, 70, 70]);
+  });
+
+  test("stays fat when the executable exports it", async () => {
+    using dir = tempDir("islands-thin", thin);
+    const { said, table, canGo, addressOf } = await linked(String(dir), "none", ["behind", "door", "table", "main"], {}, ["-Wl,--export-dynamic-symbol=the_door"]);
+    expect(said).toContain("0 doors are thin");
+    expect(canGo("the_door")).toBe(false);
+    expect(table.doors.find(door => door.address === addressOf.get("the_door"))?.places ?? []).toEqual([]);
+  });
 });
 
 describe.skipIf(!canLink)("a link with islands", () => {
@@ -430,6 +510,22 @@ describe.skipIf(!canLink)("a link with islands", () => {
     expect(once.said).not.toContain("first link");
     expect(once.said).toContain("link by an earlier build's plan");
     expect(["behind", "behind_1499", "behind_numbers", "table_that_stays", "stays"].map(once.canGo)).toEqual([true, true, true, false, false]);
+  });
+
+  test("the room is cut to the table; a plan whose table was smaller costs a link and nothing else", async () => {
+    using dir = tempDir("islands-link", sources);
+    const folder = String(dir);
+    const own = await linked(folder, "none");
+    expect(own.said).toMatch(/; the table takes \d+ of 1024 bytes: /);
+    expect(own.said).not.toContain("linking again");
+    const plan = readFileSync(join(folder, "program.plan"), "utf8");
+    expect(plan).toMatch(/\ntable \d+\n/);
+    writeFileSync(join(folder, "small.plan"), plan.replace(/\ntable \d+\n/, "\ntable 0\n"));
+    const again = await linked(folder, "small.plan");
+    expect(again.said).toMatch(/the table takes \d+ bytes and there is room for 0: linking again/);
+    expect(again.said).toMatch(/; the table takes \d+ of 1024 bytes: /);
+    expect(["behind", "behind_1499", "behind_numbers", "table_that_stays", "stays"].map(again.canGo)).toEqual([true, true, true, false, false]);
+    expect(again.ran.exitCode).toBe(0);
   });
 
   test("a plan that names what stays costs bytes and nothing else", async () => {

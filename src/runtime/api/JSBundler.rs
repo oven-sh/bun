@@ -2329,6 +2329,7 @@ impl BuildArtifact {
         JSValue::NULL
     }
 
+    #[inline(never)]
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         this_value: JSValue,

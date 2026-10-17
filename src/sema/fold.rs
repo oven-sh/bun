@@ -1,7 +1,7 @@
-use crate::atom::Atom;
+use crate::atom::{Atom, known};
 use crate::bind::{self, Decl, Parent, PatParent, SymFlags};
 use crate::check::locked_builtins::{Builtin, KnownValue, global_object};
-use crate::hir::{BinOp, Chain, EnumMemberId, ExprId, ExprKind, File, FileKind, Flags, FnBody, FnId, IdList, PatId, StmtId, StmtKind, UnOp, VarKind};
+use crate::hir::{BinOp, Chain, EnumMemberId, ExprId, ExprKind, File, FileKind, Flags, FnBody, FnId, IdList, PatId, ResolutionMode, StmtId, StmtKind, UnOp, VarKind};
 use crate::program::{FileId, Files, Sym};
 use crate::util::{FxHashMap, FxHashSet, InParallel, for_each_mut};
 use std::cell::{Cell, RefCell};
@@ -497,14 +497,50 @@ impl<'a, 's> Folder<'a, 's> {
         if local.is_none() {
             return None;
         }
-        let mut holder = self.files.sym(file, local);
+        let named = self.files.sym(file, local);
+        let mut holder = named;
         if self.files.flags(holder).contains(SymFlags::ALIAS) {
             holder = self.files.resolve_alias(holder)?;
         }
         if !self.files.flags(holder).intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE) {
             return None;
         }
-        self.fold_symbol(self.files.export(holder, name)?)
+        match self.files.export(holder, name) {
+            Some(member) => self.fold_symbol(member),
+            None => (self.is_namespace_import(named) && name != known::__esModule && self.es_module_lacks_export(holder, name, &mut Vec::new())).then_some(Folded::Value(Constant::Undefined)),
+        }
+    }
+
+    fn is_namespace_import(&self, sym: Sym) -> bool {
+        matches!(self.files.decls(sym).as_slice(), &[(file, Decl::ImportNamespace(import))] if !self.files.hir(file)[import].is_deferred)
+    }
+
+    fn es_module_lacks_export(&self, module: Sym, name: Atom, seen: &mut Vec<FileId>) -> bool {
+        let Some((file, Decl::File)) = self.files.value_declaration(module) else { return false };
+        let of = self.files.module(file);
+        let runs_as_es_module = match of.is_runtime_commonjs {
+            Some(is_commonjs) => !is_commonjs,
+            None => self.is_bundled.is_none() && of.implied_format != ResolutionMode::Require,
+        };
+        if !runs_as_es_module || of.is_commonjs() || of.builtin.is_some() || of.bound.ran_out_of_stack || matches!(of.hir.kind, FileKind::Declaration | FileKind::Json) {
+            return false;
+        }
+        if self.files.export(module, name).is_some() || self.files.export(module, known::export_equals).is_some() {
+            return false;
+        }
+        if name == known::default || seen.contains(&file) {
+            return true;
+        }
+        seen.push(file);
+        let mut own_stars = of.bound.export_stars.iter().filter(|star| star.0 == of.bound.file_symbol);
+        own_stars.all(|star| match of.hir[star.1].kind {
+            StmtKind::ExportStar { type_only: true, .. } => true,
+            StmtKind::ExportStar { spec, mode, .. } => {
+                let starred = self.files.module_of_specifier_as(file, spec, self.files.mode_of_import(file, mode));
+                starred.is_some_and(|starred| self.es_module_lacks_export(starred, name, seen))
+            }
+            _ => false,
+        })
     }
 
     fn fold_call(&self, file: FileId, e: ExprId) -> Option<Folded> {

@@ -7,10 +7,10 @@ const tsconfig = JSON.stringify({
   compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, allowJs: true, types: [] },
 });
 
-async function runtimeUse(files: Record<string, string>, command = ["check", "--aot", "--no-pretty"]) {
+async function runtimeUse(files: Record<string, string>, command = ["check", "--aot", "--no-pretty"], entryPoint = "main.ts") {
   using dir = tempDir("aot-runtime-use", { "tsconfig.json": tsconfig, ...files });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), ...command, "--aot-explain=runtime-use", "main.ts"],
+    cmd: [bunExe(), ...command, "--aot-explain=runtime-use", entryPoint],
     cwd: String(dir),
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",
@@ -28,6 +28,8 @@ async function runtimeUse(files: Record<string, string>, command = ["check", "--
 
 const declared = `declare const HTMLRewriter: any, Bun: any, process: any, console: any, require: any, module: any, Worker: any, addEventListener: any;\n`;
 const of = (text: string) => runtimeUse({ "main.ts": declared + text });
+const declaredForServers = `declare const Response: any, Bun: any, process: any, console: any, setTimeout: any, reportError: any;\n`;
+const withDeclarations = (files: Record<string, string>) => Object.fromEntries(Object.entries(files).map(([path, text]) => [path, path.endsWith(".ts") ? declaredForServers + text : text]));
 
 describe.concurrent("what a program names of the runtime", () => {
   test("a program that names nothing special has a closed world", async () => {
@@ -362,15 +364,66 @@ describe.concurrent("only what is part of the compiled program counts", () => {
     expect({ world: use.world, color: use.facts.has("Bun color"), rewriter: use.facts.has("global HTMLRewriter") }).toEqual({ world: "closed", color: true, rewriter: false });
   });
 
-  test("what a built-in function that native code calls leads to counts in every program", async () => {
+  test("what a built-in function that native code may always call names counts in every program", async () => {
     const hello = await of(`console.log(1);`);
-    expect({ itself: hello.facts.has("Bun indexOfLine"), nested: hello.facts.has("process hrtime") }).toEqual({ itself: true, nested: true });
+    expect(hello.facts.has("Bun main")).toBe(true);
   });
 
   test("a built-in module names what its reached functions name", async () => {
     const [hello, zlib] = await Promise.all([of(`console.log(1);`), runtimeUse({ "main.ts": `import { gzipSync } from "node:zlib";\ndeclare const console: any;\nconsole.log(gzipSync("a"));` })]);
     const native = "native node_zlib_binding.rs:NativeZlib";
     expect({ hello: hello.facts.has(native), zlib: zlib.facts.has(native) }).toEqual({ hello: false, zlib: true });
+  });
+});
+
+describe.concurrent("what a built-in function names counts on behalf of what hands the function out", () => {
+  const conditional = ["Bun write", "Bun resolve", "Bun jest", "Bun stdout", "Bun stdin", "Bun indexOfLine", "process dlopen", "process hrtime"];
+  const named = (use: Awaited<ReturnType<typeof of>>) => conditional.filter(fact => use.facts.has(fact));
+
+  test("a program that names none of them names nothing of theirs", async () => {
+    const use = await of(`console.log(1);`);
+    expect({ world: use.world, named: named(use) }).toEqual({ world: "closed", named: [] });
+  });
+
+  test.each([
+    ["Bun.build", `console.log(Bun.build({ entrypoints: [] }));`, ["Bun write", "Bun resolve"]],
+    ["Bun.serve", `console.log(Bun.serve({ fetch: () => new Response("") }));`, ["Bun resolve"]],
+    ["bun:test", `console.log(require("bun:test"));`, ["Bun jest"]],
+    ["console.write", `console.write("a");`, ["Bun stdout"]],
+    ["console.Console", `console.log(new console.Console(process.stdout));`, ["process hrtime"]],
+    ["console that is iterated", `for await (const line of console) console.log(line);`, ["Bun stdout", "Bun stdin", "Bun indexOfLine", "process hrtime"]],
+    ["process.stdin", `console.log(process.stdin);`, ["Bun stdin"]],
+    ["process.openStdin", `console.log(process.openStdin());`, ["Bun stdin"]],
+    ["any member of process", `delete process.title;`, ["Bun stdin"]],
+  ])("%s brings what it leads to", async (_, text, expected) => {
+    const use = await of(`declare const Response: any;\nexport {};\n` + text);
+    expect({ world: use.world, named: named(use).filter(fact => expected.includes(fact)) }).toEqual({ world: "closed", named: expected });
+  });
+
+  test("a function that nothing mentions brings nothing", async () => {
+    const use = await of(`function never() { return Bun.build({ entrypoints: [] }); }\nconsole.log(1);`);
+    expect(named(use)).toEqual([]);
+  });
+});
+
+describe.concurrent("a native module is named where it is loaded", () => {
+  test("a built-in module that has a source is none", async () => {
+    const use = await of(`console.log(1);`);
+    expect(use.lines.filter(line => line.startsWith("native internal"))).toEqual([]);
+  });
+
+  test.each([
+    ["an import", `import { heapStats } from "bun:jsc";\nconsole.log(heapStats);`, true],
+    ["an import for its effects", `import "bun:jsc";\nconsole.log(1);`, true],
+    ["require in a function that is called", `function load() { return require("bun:jsc"); }\nconsole.log(load());`, true],
+    ["import() in a function that is called", `function load() { return import("bun:jsc"); }\nconsole.log(load());`, true],
+    ["process.getBuiltinModule in a function that is called", `function load() { return process.getBuiltinModule("bun:jsc"); }\nconsole.log(load());`, true],
+    ["require in a function that nothing mentions", `function never() { return require("bun:jsc"); }\nconsole.log(1);`, false],
+    ["import() in a function that nothing mentions", `function never() { return import("bun:jsc"); }\nconsole.log(1);`, false],
+    ["an import of its types", `import type { HeapStats } from "bun:jsc";\nlet stats: HeapStats | undefined;\nconsole.log(stats);`, false],
+  ])("%s", async (_, text, named) => {
+    const use = await runtimeUse({ "main.ts": "// @ts-nocheck\n" + text });
+    expect({ world: use.world, named: use.facts.has("native bun:jsc") }).toEqual({ world: "closed", named });
   });
 });
 
@@ -557,6 +610,109 @@ describe.concurrent("whether anything but the compiled program may run", () => {
     const use = await runtimeUse(hello, [...build, "--compile-in-place"]);
     expect({ first: use.lines[0], aboutTheWorld: aboutTheWorld(use.lines), exitCode: use.exitCode }).toEqual({ first: "open it runs in place", aboutTheWorld: ["world open"], exitCode: 0 });
     expect(use.lines).toContain("global console");
+  });
+});
+
+describe.concurrent("Bun.serve for the default export of the entry point", () => {
+  const build = ["build", "--compile", "--aot", "--outfile", "main"];
+  const server = `{ port: 0, fetch() { return new Response("served"); } }`;
+  const named = async (files: Record<string, string>, entryPoint?: string) => {
+    const use = await runtimeUse(withDeclarations(files), build, entryPoint);
+    return { serve: use.facts.has("Bun serve"), world: use.world, exitCode: use.exitCode };
+  };
+
+  test.each([
+    ["no exports", { "main.ts": `console.log("hello");` }],
+    ["no exports, in JavaScript", { "main.js": `console.log("hello");` }],
+    ["other exports", { "main.ts": `export const port = 3000;\nexport function fetch() { return new Response("not served"); }` }],
+    ["export * from a module that has a default export, which a star does not carry", { "main.ts": `export * from "./other";`, "other.ts": `export default ${server};\nexport const port = 3000;` }],
+    ["export * in a circle", { "main.ts": `export * from "./other";`, "other.ts": `export * from "./main";\nexport const port = 3000;` }],
+    ["an export named then that is a number", { "main.ts": `export const then = 1;` }],
+  ])("is not named with %s", async (_, files) => {
+    expect(await named(files, Object.keys(files)[0])).toEqual({ serve: false, world: "closed", exitCode: 0 });
+  });
+
+  test.each([
+    ["export default of an object", { "main.ts": `export default ${server};` }],
+    ["export default of a variable", { "main.ts": `const config = ${server};\nexport default config;` }],
+    ["export default of a class", { "main.ts": `export default class Server {}` }],
+    ["export default of a function", { "main.ts": `export default function serve() {}` }],
+    ["export default of a promise", { "main.ts": `export default Promise.resolve(${server});` }],
+    ["export { config as default }", { "main.ts": `const config = ${server};\nexport { config as default };` }],
+    ["export { default } from", { "main.ts": `export { default } from "./other";`, "other.ts": `export default ${server};` }],
+    ["export { config as default } from", { "main.ts": `export { config as default } from "./other";`, "other.ts": `export const config = ${server};` }],
+    ["export * as default from", { "main.ts": `export * as default from "./other";`, "other.ts": `export const port = 0;\nexport function fetch() { return new Response("served"); }` }],
+    ["export default, in JavaScript", { "main.js": `export default ${server};` }],
+    ["an export named then that is a function", { "main.ts": `export function then(resolve: (namespace: object) => void) { resolve({ default: ${server} }); }` }],
+    ["export * from a module that exports then", { "main.ts": `export * from "./other";`, "other.ts": `export function then(resolve: (namespace: object) => void) { resolve({ default: ${server} }); }` }],
+    ["export * from a CommonJS module", { "main.ts": `// @ts-ignore\nexport * from "./other.cjs";`, "other.cjs": `exports.then = function (resolve) { resolve({ default: ${server} }); };` }],
+    ["module.exports", { "main.cjs": `module.exports = ${server};` }],
+    ["exports.default", { "main.cjs": `exports.default = ${server};` }],
+    ["a CommonJS module that exports nothing", { "main.cjs": `console.log("hello");` }],
+  ])("is named with %s", async (_, files) => {
+    expect(await named(files, Object.keys(files)[0])).toMatchObject({ serve: true, exitCode: 0 });
+  });
+});
+
+describe.concurrent("what is done with the exports of the entry point does not depend on how the program runs", () => {
+  async function said(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replace(/^Started (development )?server: http:\/\/localhost:\d+$/gm, "Started a server"), stderr, exitCode };
+  }
+
+  const leaves = `setTimeout(() => process.exit(0), 50);`;
+
+  test.each([
+    ["no exports", { "main.ts": `console.log("hello");` }, "hello\n"],
+    ["a server's configuration", { "main.ts": `export default { port: 0, fetch() { return new Response("served"); } };\n${leaves}` }, "Started a server\n"],
+    ["a server's configuration out of another module", { "main.ts": `export { default } from "./other";\n${leaves}`, "other.ts": `export default { port: 0, fetch() { return new Response("served"); } };` }, "Started a server\n"],
+    ["a server's configuration behind a star", { "main.ts": `export * from "./other";`, "other.ts": `export default { port: 0, fetch() { return new Response("served"); } };` }, ""],
+    ["a server's configuration in a CommonJS module", { "main.cjs": `module.exports = { port: 0, fetch() { return new Response("served"); } };\n${leaves}` }, "Started a server\n"],
+    ["a server", { "main.ts": `const server = Bun.serve({ port: 0, fetch() { return new Response("served"); } });\nexport default server;\n${leaves}` }, ""],
+    ["a class", { "main.ts": `export default class Server { static fetch = "no function"; }` }, ""],
+    ["the global object", { "main.ts": `export default globalThis;` }, ""],
+    [
+      "an object that says what is read of it",
+      { "main.ts": `export default new Proxy({}, { get(_, name) { console.log("read", String(name)); return undefined; } });` },
+      "read fetch\nread app\n",
+    ],
+    [
+      "a binding that changes while it is looked at",
+      {
+        "main.ts": `
+          const second = { get port() { console.log("the second is served"); return 0; }, fetch() { return new Response("second"); } };
+          let config = { get port() { console.log("the first is served"); return 0; }, get fetch() { config = second; return () => new Response("first"); } };
+          export { config as default };
+          ${leaves}
+        `,
+      },
+      "the second is served\nStarted a server\n",
+    ],
+    [
+      "a function named then",
+      {
+        "main.ts": `
+          export function then(this: object, resolve: (namespace: object) => void, reject: unknown) {
+            console.log("then", Object.prototype.toString.call(this), Object.keys(this).join(), reject === reportError);
+            resolve({ default: { port: 0, fetch() { return new Response("served"); } } });
+            ${leaves}
+          }
+          export default { get fetch() { console.log("the default export is not looked at"); return undefined; } };
+        `,
+      },
+      "then [object Module] default,then true\nStarted a server\n",
+    ],
+  ])("%s", async (_, files, stdout) => {
+    using dir = tempDir("aot-runtime-use-entry", { "tsconfig.json": tsconfig, ...withDeclarations(files) });
+    const [cwd, entryPoint] = [String(dir), Object.keys(files)[0]];
+    const built = await Promise.all([
+      said([bunExe(), "build", "--compile", entryPoint, "--outfile", "bundled"], cwd),
+      said([bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", "compiled"], cwd),
+    ]);
+    expect(built.map(it => ({ stderr: it.stderr, exitCode: it.exitCode }))).toEqual([{ stderr: "", exitCode: 0 }, { stderr: "", exitCode: 0 }]);
+    const expected = { stdout, stderr: "", exitCode: 0 };
+    expect(await Promise.all([said([bunExe(), entryPoint], cwd), said([join(cwd, "bundled")], cwd), said([join(cwd, "compiled")], cwd)])).toEqual([expected, expected, expected]);
   });
 });
 

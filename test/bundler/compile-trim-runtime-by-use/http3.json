@@ -1,0 +1,1 @@
+{ "features": ["http3", "mux", "nodehttp2"] }

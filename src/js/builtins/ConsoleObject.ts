@@ -146,7 +146,7 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
 // to do extra work at startup, since most people do not need `console.Console`.
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
-  const { inspect, formatWithOptions } = require("node:util");
+  const { inspect, formatWithOptions } = require("internal/util/inspect");
   const { isBuffer } = require("node:buffer");
   const { isMapIterator, isSetIterator } = require("node:util/types");
 

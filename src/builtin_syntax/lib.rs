@@ -30,6 +30,13 @@ pub struct Manifest {
     triggered: Vec<(u32, Box<[u32]>)>,
     always_included: Vec<u32>,
     triggers: Vec<Trigger>,
+    on_behalf_of: Vec<OnBehalfOf>,
+}
+
+struct OnBehalfOf {
+    function: u32,
+    name: Box<[u8]>,
+    facts: Vec<Box<[u8]>>,
 }
 
 pub struct Trigger {
@@ -156,6 +163,11 @@ impl Manifest {
                 b"always" => {
                     let id = number(field()?).ok_or_else(error)?;
                     manifest.always_included.push(id);
+                }
+                b"behalf" => {
+                    let function = number(field()?).ok_or_else(error)?;
+                    let name = field()?.into();
+                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.map(Into::into).collect() });
                 }
                 b"trigger" => {
                     let path = field()?;
@@ -317,6 +329,11 @@ impl Manifest {
     pub fn builtin_function_id(&self, path: &[u8], name: &[u8]) -> Option<u32> {
         let path = path.strip_prefix(VIRTUAL_ROOT).unwrap_or(path);
         find(&self.builtin_functions, &[path, name].join(&b'\t'))
+    }
+
+    pub fn on_behalf_of(&self, function: u32, name: &[u8]) -> Option<&[Box<[u8]>]> {
+        let of_function = self.on_behalf_of.iter().filter(|entry| entry.function == function);
+        of_function.filter(|entry| *entry.name == *name || *entry.name == *b"*").map(|entry| &entry.facts[..]).next()
     }
 
     pub fn native_bindings(&self) -> impl Iterator<Item = NativeBinding<'_>> {

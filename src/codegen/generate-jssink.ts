@@ -891,6 +891,21 @@ void ${controller}::destroy(JSCell* cell)
 `;
   }
 
+  for (let name of classes) {
+    const { controllerPrototypeName } = names(name);
+    templ += `
+static NEVER_INLINE JSObject* create${name}Prototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    return JS${name}Prototype::create(vm, globalObject, JS${name}Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+static NEVER_INLINE JSObject* create${name}ControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    return ${controllerPrototypeName}::create(vm, globalObject, ${controllerPrototypeName}::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+`;
+  }
+
   templ += `
   JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
   {
@@ -899,7 +914,7 @@ void ${controller}::destroy(JSCell* cell)
   for (let name of classes) {
     templ += `
     case ${name}:
-        return JS${name}Prototype::create(vm, globalObject, JS${name}Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+        return create${name}Prototype(vm, globalObject);
 `;
   }
   templ += `
@@ -914,10 +929,9 @@ JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* glob
     switch (sinkID) {
   `;
   for (let name of classes) {
-    const { controllerPrototypeName } = names(name);
     templ += `
   case ${name}:
-      return ${controllerPrototypeName}::create(vm, globalObject, ${controllerPrototypeName}::createStructure(vm, globalObject, globalObject->objectPrototype()));
+      return create${name}ControllerPrototype(vm, globalObject);
 `;
   }
   templ += `

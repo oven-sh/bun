@@ -78,10 +78,10 @@ untyped, module level: 169.21 instructions (stub FrontEndTypedCloneObjectAndExte
 `;
 
 exports[`sorts a copy of an array of records that fall by a numeric key 1`] = `
-"typed, function: 57.31 instructions (kernel 50.14, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08, module 0.19), 3900 bytes
-typed, module level: 57.03 instructions (module 50.05, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08), 5372 bytes
-untyped, function: 93.64 instructions (kernel 66.22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 9.84, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 9.84, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, module 0.19), 9128 bytes
-untyped, module level: 93.39 instructions (module 66.16, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 9.84, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 9.84, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25), 10601 bytes"
+"typed, function: 145.88 instructions (the runtime 139.91, stub ArrayCopy 3.91, kernel 0.92, elsewhere 0.58, stub OperationValueWithInstance 0.22, module 0.19, stub TypedStringInRDX 0.13, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 449 bytes
+typed, module level: 145.63 instructions (the runtime 139.91, stub ArrayCopy 3.91, module 0.98, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 1718 bytes
+untyped, function: 120.03 instructions (the runtime 113.33, stub ArrayCopy 3.91, kernel 1.09, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, module 0.19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.16, stub GetByNameWithDirectColumnWithReceiverInRAX 0.16, stub TypedStringInRDX 0.13, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 572 bytes
+untyped, module level: 119.77 instructions (the runtime 113.33, stub ArrayCopy 3.91, module 1.14, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.16, stub GetByNameWithDirectColumnWithReceiverInRAX 0.16, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2035 bytes"
 `;
 
 exports[`writes every byte of a Uint8Array ten times in the function that made the array 1`] = `

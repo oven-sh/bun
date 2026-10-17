@@ -33,7 +33,6 @@
 
 let BufferModule;
 
-const primordials = require("internal/primordials");
 const {
   MapPrototypeGetSize,
   SafeMap,
@@ -41,7 +40,7 @@ const {
   SetPrototypeGetSize,
   TypedArrayPrototypeGetLength,
   TypedArrayPrototypeGetSymbolToStringTag,
-} = primordials;
+} = require("internal/primordials");
 
 const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -1645,7 +1644,7 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       if (constructor === null) {
         fallback = TypedArrayPrototypeGetSymbolToStringTag(value);
         // Reconstruct the array information.
-        bound = new primordials[fallback as string](value);
+        bound = new ($newCppFunction("UtilInspect.cpp", "jsFunctionIntrinsicTypedArrayConstructor", 1)(value))(value);
       }
       const size = TypedArrayPrototypeGetLength(value);
       const prefix = getPrefix(constructor, tag, fallback, `(${size})`);

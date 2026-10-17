@@ -50,10 +50,10 @@ untyped, module level: 3388.53 instructions (the runtime 2659.03, read 218, modu
 `;
 
 exports[`passes plain objects that hold another plain object to a typed function, which reads through both 1`] = `
-"typed, function: 431.88 instructions (stub ConvertByPlan 314, kernel 39.21, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, stub ColdOperationValue to operationAOTTypedCoerce 16, the runtime 14.71, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.68, module 0.12), 447 bytes
-typed, module level: 429.84 instructions (stub ConvertByPlan 314, module 37.15, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, the runtime 14.85, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.68), 1513 bytes
-untyped, function: 156.49 instructions (kernel 50.19, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, the runtime 14.34, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.68, module 0.12), 516 bytes
-untyped, module level: 173 instructions (module 37.15, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 20, the runtime 14.01, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, elsewhere 0.68), 1274 bytes"
+"typed, function: 452.88 instructions (stub ConvertByPlan 314, kernel 60.21, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, stub ColdOperationValue to operationAOTTypedCoerce 16, the runtime 14.71, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.68, module 0.12), 636 bytes
+typed, module level: 453.90 instructions (stub ConvertByPlan 314, module 61.15, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, the runtime 14.90, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.68), 1684 bytes
+untyped, function: 155.16 instructions (kernel 49.19, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, the runtime 14.01, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.68, module 0.12), 510 bytes
+untyped, module level: 172 instructions (module 36.15, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub NewObjectFromDescriptor2 21.09, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 20, the runtime 14.01, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, elsewhere 0.68), 1253 bytes"
 `;
 
 exports[`builds objects with a spread of a typed record and two more properties in a callback whose result has no declared type, so each is born plain with two properties out of line and is then copied into its record type, which has a field that is a union of string literals 1`] = `
@@ -64,10 +64,10 @@ untyped, module level: 391.07 instructions (stub FrontEndTypedCloneObjectAndExte
 `;
 
 exports[`passes plain objects of six properties (number, typed object, array, string, fraction, boolean) to a typed function, which reads all six 1`] = `
-"typed, function: 340.42 instructions (stub ConvertByPlan 234, kernel 53.30, stub NewObjectFromDescriptor4 34, stub ColdOperationValue to operationAOTTypedCoerce 16, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, module 0.12), 713 bytes
-typed, module level: 338.24 instructions (stub ConvertByPlan 234, module 51.24, stub NewObjectFromDescriptor4 34, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3), 1828 bytes
-untyped, function: 276.82 instructions (kernel 115.76, stub Add 52, outlined code 38, stub NewObjectFromDescriptor4 34, stub GetLengthByNamePreservingTwo 27, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, module 0.12, the runtime -0.06), 1061 bytes
-untyped, module level: 310.31 instructions (module 88.74, stub Add 52, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 50, outlined code 38, stub NewObjectFromDescriptor4 34, stub GetLengthByNamePreservingTwo 27, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInR15 10, the runtime 0.57), 1660 bytes"
+"typed, function: 135.42 instructions (kernel 101.30, stub NewObjectFromDescriptor4 34, module 0.12), 1111 bytes
+typed, module level: 133.30 instructions (module 99.24, stub NewObjectFromDescriptor4 34, the runtime 0.06), 2157 bytes
+untyped, function: 274.88 instructions (kernel 113.76, stub Add 52, outlined code 38, stub NewObjectFromDescriptor4 34, stub GetLengthByNamePreservingTwo 27, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, module 0.12), 1049 bytes
+untyped, module level: 308.31 instructions (module 86.74, stub Add 52, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 50, outlined code 38, stub NewObjectFromDescriptor4 34, stub GetLengthByNamePreservingTwo 27, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInR15 10, the runtime 0.57), 1633 bytes"
 `;
 
 exports[`makes an empty array of numbers 1`] = `
@@ -204,10 +204,10 @@ untyped, module level: 103.77 instructions (module 32.09, stub CallHostFunction2
 `;
 
 exports[`sorts a copy of an array of numbers that rise with a comparator 1`] = `
-"typed, function: 66.06 instructions (kernel 55.80, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92, module 0.19), 6198 bytes
-typed, module level: 65.78 instructions (module 55.70, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92), 7759 bytes
-untyped, function: 95.02 instructions (kernel 84.52, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub Add 0.25, module 0.19), 8250 bytes
-untyped, module level: 95.67 instructions (module 85.61, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 9739 bytes"
+"typed, function: 34.28 instructions (the runtime 28.52, stub ArrayCopy 3.92, kernel 0.83, elsewhere 0.58, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 804 bytes
+typed, module level: 34.05 instructions (the runtime 28.52, stub ArrayCopy 3.92, module 0.78, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2253 bytes
+untyped, function: 71.80 instructions (the runtime 65.55, stub ArrayCopy 3.91, kernel 1.08, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 1147 bytes
+untyped, module level: 71.52 instructions (the runtime 65.55, stub ArrayCopy 3.91, module 1.23, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2724 bytes"
 `;
 
 exports[`throws a new Error in a function that only a loop calls and catches it in the loop 1`] = `

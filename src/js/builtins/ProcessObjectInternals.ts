@@ -331,7 +331,7 @@ export function windowsEnv(
   coerceForWrite,
   resetForDelete,
 ) {
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  (internalEnv as any)[Symbol.for("nodejs.util.inspect.custom")] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];
@@ -508,7 +508,7 @@ export function rawDebug() {
   // util.format straight to fd 2, bypassing process.stderr (which may be
   // hijacked or broken). os.EOL, not "\n": Node's _rawDebug writes through
   // text-mode stderr (\r\n on Windows) and the upstream test asserts it.
-  const { formatWithOptions } = require("node:util");
+  const { formatWithOptions } = require("internal/util/inspect");
   const { writeSync } = require("node:fs");
   const { EOL } = require("node:os");
   // Node's _rawDebug is a never-throw last resort (fwrite return ignored):
@@ -521,7 +521,7 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-export function createOnWarning(process, redirectPath, disabledArr, writeToUntouchedStderr, appendToWarningsFile) {
+export function createOnWarning(process, redirectPath, disabledArr, writeToUntouchedStderr, basename, appendToWarningsFile) {
   const appendFileSync = redirectPath && !appendToWarningsFile ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
@@ -576,7 +576,6 @@ export function createOnWarning(process, redirectPath, disabledArr, writeToUntou
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
-      const { basename } = require("node:path");
       writeOut(
         `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
       );
@@ -595,7 +594,7 @@ export function loadEnvFile(path) {
     validateString(path, "path");
   }
   const content = require("node:fs").readFileSync(path, "utf8");
-  const parsed = require("node:util").parseEnv(content);
+  const parsed = $newRustFunction("node_util_binding.rs", "parseEnv", 1)(content);
   const env = process.env;
   for (const key of Object.keys(parsed)) {
     // Node: existing env keys win; the file only fills in missing ones.

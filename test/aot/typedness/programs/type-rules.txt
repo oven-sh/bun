@@ -103,7 +103,7 @@ object-create-through-interfaces: 6 layouts, 0 given, 6 open, places 20 of 41, r
 object-missing-required-properties: 3 layouts, 0 given, 2 open, places 9 of 18, reads 1 of 5
 object-prototype-not-extensible: 0 layouts, 0 given, 0 open, places 1 of 9, reads 0 of 5
 object-rest-patterns: 4 layouts, 0 given, 4 open, places 18 of 32, reads 4 of 10
-object-spread: 1 layouts, 0 given, 0 open, places 6 of 20, reads 1 of 12
+object-spread: 0 layouts, 14 given, 0 open, places 5 of 19, reads 1 of 12
 objects-mutated-during-loop: 1 layouts, 0 given, 0 open, places 42 of 53, reads 10 of 28
 objects-observed-during-construction: 1 layouts, 7 given, 3 open, places 54 of 78, reads 10 of 41
 objects-reaching-untyped-code-indirectly: 3 layouts, 0 given, 2 open, places 60 of 95, reads 9 of 43

@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #if OS(DARWIN)
 #include <mach-o/loader.h>
+#include <sys/mman.h>
 #endif
 #else
 #include <uv.h>
@@ -705,10 +706,31 @@ extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 #if OS(DARWIN)
 extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
 extern "C" struct mach_header __dso_handle;
+
+static void makePiecesOfConstantsReadOnly()
+{
+    const auto* header = reinterpret_cast<const mach_header_64*>(&__dso_handle);
+    const auto* command = reinterpret_cast<const load_command*>(header + 1);
+    uintptr_t slide = 0;
+    for (uint32_t index = 0; index < header->ncmds; index++) {
+        if (command->cmd == LC_SEGMENT_64) {
+            const auto* segment = reinterpret_cast<const segment_command_64*>(command);
+            if (!strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)))
+                slide = reinterpret_cast<uintptr_t>(header) - segment->vmaddr;
+            else if (!strncmp(segment->segname, "__DATA_CONST.", 13))
+                mprotect(reinterpret_cast<void*>(segment->vmaddr + slide), segment->vmsize, PROT_READ);
+        }
+        command = reinterpret_cast<const load_command*>(reinterpret_cast<const char*>(command) + command->cmdsize);
+    }
+}
 #endif
 
 extern "C" void bun_initialize_process()
 {
+#if OS(DARWIN)
+    makePiecesOfConstantsReadOnly();
+#endif
+
     // Disable printf() buffering. We buffer it ourselves.
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);
@@ -1230,6 +1252,20 @@ extern "C" __attribute__((noinline)) bool Bun__hasBundler()
     uint32_t hasBundler = 2;
     asm volatile("" : "+r"(hasBundler));
     return hasBundler;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasWorker()
+{
+    uint32_t hasWorker = 6;
+    asm volatile("" : "+r"(hasWorker));
+    return hasWorker;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasWebAssembly()
+{
+    uint32_t hasWebAssembly = 5;
+    asm volatile("" : "+r"(hasWebAssembly));
+    return hasWebAssembly;
 }
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)

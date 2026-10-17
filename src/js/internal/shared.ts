@@ -48,7 +48,15 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   console.warn(new NotImplementedError(feature, issue));
 }
 
-let util: typeof import("node:util");
+const NumberIsSafeInteger = Number.isSafeInteger;
+let internalErrorName: (err: number) => string;
+function getSystemErrorName(err: any) {
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  internalErrorName ??= $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
+  return internalErrorName(err);
+}
+
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
@@ -60,8 +68,7 @@ class ExceptionWithHostPort extends Error {
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
     // is no longer exposed to user land.
-    util ??= require("node:util");
-    const code = util.getSystemErrorName(err);
+    const code = getSystemErrorName(err);
     let details = "";
     if (port && port > 0) {
       details = ` ${address}:${port}`;
@@ -112,8 +119,7 @@ class ErrnoException extends Error {
   syscall: string;
 
   constructor(err, syscall, original?) {
-    util ??= require("node:util");
-    const code = util.getSystemErrorName(err);
+    const code = getSystemErrorName(err);
     const message = original ? `${syscall} ${code} ${original}` : `${syscall} ${code}`;
 
     super(message);
@@ -432,6 +438,7 @@ export default {
   NodeAggregateError,
   ConnResetException,
   ErrnoException,
+  getSystemErrorName,
   once,
   getLazy,
   guardCallback,

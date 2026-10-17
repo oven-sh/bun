@@ -66,6 +66,7 @@ impl Archive {
     }
 
     /// Pretty-print for console.log
+    #[inline(never)]
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,

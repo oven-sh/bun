@@ -1620,6 +1620,7 @@ impl<'a> Resolver<'a> {
             return Ok(());
         }
 
+        let side_effects_are_read = SIDE_EFFECTS_ARE_READ.load(core::sync::atomic::Ordering::Relaxed);
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         let mut is_primary = true;
@@ -1648,8 +1649,10 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
                 );
 
-                result.primary_side_effects_data =
-                    primary_side_effects(&existing.side_effects, path.text());
+                if side_effects_are_read {
+                    result.primary_side_effects_data =
+                        primary_side_effects(&existing.side_effects, path.text());
+                }
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -1660,7 +1663,7 @@ impl<'a> Resolver<'a> {
                 .package_json
                 .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
 
-            if needs_side_effects {
+            if needs_side_effects && side_effects_are_read {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
                     result.primary_side_effects_data =
                         primary_side_effects(&package_json.side_effects, path.text());
@@ -6893,6 +6896,14 @@ impl<'b> BrowserMapPath<'b> {
     }
 }
 
+static SIDE_EFFECTS_ARE_READ: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn read_side_effects_from_now_on() {
+    SIDE_EFFECTS_ARE_READ.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+#[inline(never)]
 fn primary_side_effects(
     side_effects: &crate::package_json::SideEffects,
     path: &[u8],

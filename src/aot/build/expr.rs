@@ -1805,10 +1805,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (!self.c.is_declared_ambient(member)).then_some(member)
     }
 
-    fn asserted_module_namespace(&mut self, fx: &Fx, obj: ExprId) -> Option<Sym> {
-        self.asserted_module_namespace_in(fx.file, obj)
-    }
-
     fn asserted_module_namespace_in(&mut self, file: FileId, obj: ExprId) -> Option<Sym> {
         let named = crate::positions::skip_assertions(self.hir(file), obj);
         if named == obj {
@@ -1818,10 +1814,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         matches!(self.value_declaration(sym), Some((_, Decl::File))).then_some(sym)
     }
 
-    fn is_module_namespace_ref(&mut self, fx: &Fx, obj: ExprId) -> bool {
+    fn module_namespace(&mut self, fx: &Fx, obj: ExprId) -> Option<Sym> {
         let named = self.skip_assertions(fx, obj);
-        let sym = self.namespace_for_expr(fx, named);
-        sym.is_some_and(|sym| matches!(self.value_declaration(sym), Some((_, Decl::File))))
+        let sym = self.namespace_for_expr(fx, named)?;
+        matches!(self.value_declaration(sym), Some((_, Decl::File))).then_some(sym)
+    }
+
+    fn is_module_namespace_ref(&mut self, fx: &Fx, obj: ExprId) -> bool {
+        self.module_namespace(fx, obj).is_some()
     }
 
     fn namespace_for_expr(&mut self, fx: &Fx, e: ExprId) -> Option<Sym> {
@@ -1894,7 +1894,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let value = self.imported_namespace_member(fx, importer, file, name);
             return self.coerce_to_expr_type(fx, value, e);
         }
-        if let Some(module) = self.asserted_module_namespace(fx, obj)
+        if let Some(module) = self.module_namespace(fx, obj)
             && self.definitely_lacks_export(module.file, name)
             && self.c.atoms().bytes(name) != b"__esModule"
         {

@@ -1,6 +1,6 @@
 use crate::declared::{Declared, Part, prim};
 use crate::id::V;
-use crate::ir::{Def, Func, Op, Operation, Program, class_flags};
+use crate::ir::{Def, Func, Op, Operation, Program, class_flags, func_flags};
 use bun_sema::program::FileId;
 use bun_sema::util::{InParallel, for_each_mut};
 
@@ -52,6 +52,7 @@ pub(super) fn reads_of_any_property(program: &Program, modules: &[FileId], in_pa
                     && let Some((obj, key)) = read_by_key(func, op)
                     && may_be_a_name(program.tys.get(func.ty(key)))
                     && !is_own_object(program.tys.get(func.ty(obj)), &is_own)
+                    && (func.has(func_flags::IS_BUILTIN) || found.last().is_none_or(|last| last.0 != modules[func.module.idx()]))
                 {
                     found.push((modules[func.module.idx()], value.pos));
                 }

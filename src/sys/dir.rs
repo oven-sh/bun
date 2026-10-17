@@ -387,10 +387,8 @@ impl Dir {
         Ok(File::from_fd(fd))
     }
 
-    /// Create `sub_path` as a new file (`O_CREAT | O_EXCL`, mode 0o666). Whatever is at that
-    /// name first (a file with any mode, a symlink, a directory) is removed and the file created
-    /// again. The existing file is never opened or truncated in place: it can be a hardlink of the
-    /// file about to be copied into it, and `O_TRUNC` would empty both.
+    /// Create `sub_path` as a new file, replacing whatever is at that name (mode 0o666). Never
+    /// truncates in place: the old file can be a hardlink of the one about to be copied into it.
     pub fn create_fresh_file_z(&self, sub_path: &ZStr) -> Maybe<File> {
         let open = || {
             openat(

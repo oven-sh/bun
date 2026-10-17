@@ -252,6 +252,104 @@ describe("transportParams.maxIdleTimeout", () => {
   });
 });
 
+// The endpoint keeps a keyed set beside its ordered session list, and the
+// set's index only exists above 8 entries (ArrayHashMap's INDEX_THRESHOLD).
+// Every other test here holds one or two sessions, so without this one the
+// indexed lookup and the removal that patches the index never run.
+describe("a session registry past its index threshold", () => {
+  test("serves every session and keeps serving after removals", async () => {
+    const total = 16;
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    const tp = { maxIdleTimeout: 30 };
+    // Each server session by the body of its first echo, which names the
+    // client session that reached it.
+    const serverSessions = new Map<string, any>();
+    let announced = 0;
+    await using server = await listen(
+      (s: any) => {
+        announced++;
+        s.onerror = () => {};
+        s.closed.catch(() => {});
+        s.onstream = (st: any) => {
+          const chunks: Buffer[] = [];
+          (async () => {
+            try {
+              for await (const c of st) chunks.push(...[c].flat());
+            } catch {}
+            const body = Buffer.concat(chunks);
+            const text = body.toString();
+            if (text.startsWith("first-")) serverSessions.set(text, s);
+            st.setBody(body);
+          })();
+        };
+      },
+      { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+
+    // One client endpoint for every session, so each endpoint holds all 16 in
+    // its registry at once.
+    await using endpoint = new QuicEndpoint();
+    const echo = async (session: any, body: string) => {
+      const stream = await session.createBidirectionalStream({});
+      stream.closed.catch(() => {});
+      stream.writer.writeSync(Buffer.from(body));
+      stream.writer.endSync();
+      const chunks: Buffer[] = [];
+      for await (const c of stream) chunks.push(...[c].flat());
+      return Buffer.concat(chunks).toString();
+    };
+
+    const sessions: any[] = [];
+    for (let i = 0; i < total; i++) {
+      const s = await connect(server.address, {
+        endpoint,
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: tp,
+      });
+      s.closed.catch(() => {});
+      await s.opened;
+      sessions.push(s);
+    }
+
+    const before = await Promise.all(sessions.map((s, i) => echo(s, `first-${i}`)));
+
+    // A client's `closed` settles before the server has read its close, so
+    // wait for the server's side too: only then has the server's registry
+    // dropped the session.
+    const closeOnBothEnds = async (indices: number[]) => {
+      for (const i of indices) sessions[i].close();
+      await Promise.all(
+        indices.flatMap(i => [
+          sessions[i].closed.catch(() => {}),
+          serverSessions.get(`first-${i}`).closed.catch(() => {}),
+        ]),
+      );
+    };
+    const indices = Array.from({ length: total }, (_, i) => i);
+    const even = indices.filter(i => i % 2 === 0);
+    const odd = indices.filter(i => i % 2 === 1);
+
+    await closeOnBothEnds(even);
+    const after = await Promise.all(odd.map(i => echo(sessions[i], `second-${i}`)));
+    // Close the rest on both ends before the endpoints go away. An endpoint
+    // torn down while lsquic still holds a stateless packet it could not send
+    // leaks it, and LeakSanitizer then fails this file.
+    await closeOnBothEnds(odd);
+
+    expect({
+      announced,
+      before,
+      after,
+    }).toEqual({
+      announced: total,
+      before: indices.map(i => `first-${i}`),
+      after: odd.map(i => `second-${i}`),
+    });
+  });
+});
+
 // A graceful close() waits for live sessions to drain, but the listener kept
 // accepting: each new session re-filled `sessions`, so the
 // `closing && sessions.is_empty()` finish gate never tripped and `closed`

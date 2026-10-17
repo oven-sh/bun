@@ -13,8 +13,10 @@ const envWithoutProxy = {
   ...bunEnv,
   HTTP_PROXY: undefined,
   HTTPS_PROXY: undefined,
+  ALL_PROXY: undefined,
   http_proxy: undefined,
   https_proxy: undefined,
+  all_proxy: undefined,
 };
 
 const fixture = `

@@ -170,8 +170,6 @@ export const function_replacements = [
   "$newRustFunction",
   "$cpp",
   "$newCppFunction",
-  "$isPromiseFulfilled",
-  "$isPromiseRejected",
   "$isPromisePending",
   "$bindgen",
 ];
@@ -257,10 +255,10 @@ export function applyReplacements(src: string, length: number) {
       const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : null);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
-    } else if (name === "isPromiseFulfilled" || name === "isPromiseRejected" || name === "isPromisePending") {
+    } else if (name === "isPromisePending") {
       const inner = sliceSourceCode(rest, true);
-      // JSC::JSPromise::Status: Pending = 0, Fulfilled = 1, Rejected = 2.
-      const status = name === "isPromisePending" ? 0 : name === "isPromiseFulfilled" ? 1 : 2;
+      // JSC::JSPromise::Status::Pending
+      const status = 0;
       let args;
       if (debug) {
         // use a property on @lazy as a temporary holder for the expression. only in debug!

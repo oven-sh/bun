@@ -749,10 +749,6 @@ export default {
   resolveObject: urlResolveObject,
   format: urlFormat,
   Url: Url,
-  // pathToFileURL: pathToFileURL,
-  // fileURLToPath: fileURLToPath,
-  // domainToASCII,
-  // domainToUnicode,
   URL,
   URLSearchParams,
 };

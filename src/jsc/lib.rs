@@ -174,9 +174,8 @@ pub mod uuid;
 pub mod weak;
 
 pub use self::js_value::{
-    CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
-    Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
-    TemporalType,
+    ComparisonResult, FromAny, FromJsEnum, JSValue, Protected as ProtectedJSValue, ProxyField,
+    SerializedFlags, SerializedScriptValue, TemporalType,
 };
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete
@@ -358,10 +357,8 @@ pub use self::weak::{Weak, WeakRefType};
 pub use self::exception::Exception;
 pub use self::js_type::JSType;
 pub use self::top_exception_scope::{
-    ExceptionValidationScope, ExceptionValidationScopeGuard, SourceLocation, TopExceptionScope,
-    TopExceptionScopeGuard, call_check_slow, call_check_slow_at, call_false_is_throw,
-    call_false_is_throw_at, call_null_is_throw, call_null_is_throw_at, call_zero_is_throw,
-    call_zero_is_throw_at,
+    ExceptionValidationScope, SourceLocation, TopExceptionScope, call_check_slow,
+    call_false_is_throw, call_null_is_throw, call_zero_is_throw,
 };
 /// Generated FFI wrappers for C++ `[[ZIG_EXPORT(mode)]]` functions.
 /// Emitted by `src/codegen/cppbind.ts` into
@@ -681,10 +678,10 @@ pub use bun_core::heap;
 pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
-    JSHostFn, JSHostFnZig, from_js_host_call, from_js_host_call_generic, host_construct_result,
-    host_fn_result, host_setter_result, to_js_host_call, to_js_host_fn_result,
+    JSHostFn, JSHostFnZig, from_js_host_call, from_js_host_call_generic, host_fn_result,
+    host_setter_result, to_js_host_call, to_js_host_fn_result,
 };
-pub use self::host_object::{HostFnEntry, create_host_function_object};
+pub use self::host_object::create_host_function_object;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `__macro_support` — runtime helpers invoked by `#[bun_jsc::host_fn]` /
@@ -778,8 +775,7 @@ pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
 pub use script_execution_context::{
-    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
-    StopReason,
+    AbortCause, AbortHandle, ContextId, ContextTimer, ScriptExecutionContext, StopReason,
 };
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
@@ -1071,7 +1067,7 @@ pub struct ValidateObjectOpts {
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
-pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
+pub use self::js_object::{ExternColumnIdentifier, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CallFrame / ArgumentsSlice (real module in CallFrame.rs).
@@ -1240,9 +1236,9 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
-    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentTask, CppTask, DeferredTaskQueue,
+    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
+    Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]

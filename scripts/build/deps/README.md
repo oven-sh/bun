@@ -153,7 +153,7 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **webkit.ts** — `nested-cmake` (`sourceSubdir`, `preBuild`) and `prebuilt`
+- **webkit.ts** — `nested-cmake` (`preBuild`) and `prebuilt`
 
 ## How the three-step build works
 

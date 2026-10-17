@@ -185,8 +185,6 @@ export interface CompileCommand {
 export interface NinjaOptions {
   /** Absolute path to build directory. All paths in build.ninja are relative to this. */
   buildDir: string;
-  /** Minimum ninja version to require. */
-  ninjaVersion?: string;
 }
 
 /**
@@ -240,7 +238,7 @@ export class Ninja {
     this.buildDir = resolve(opts.buildDir);
     // 1.11: validations (`|@`). Below that: implicit outputs (1.7),
     // console pool (1.5), restat (1.0). No dyndep.
-    this.ninjaVersion = opts.ninjaVersion ?? "1.11";
+    this.ninjaVersion = "1.11";
   }
 
   /**

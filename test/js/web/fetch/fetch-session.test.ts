@@ -185,7 +185,7 @@ describe("Bun.FetchSession", () => {
     }
     // The close crosses two threads after the collection; give it until a
     // deadline, and fail with a message instead of hanging.
-    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline;) {
+    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
       await new Promise(resolve => setImmediate(resolve));
     }
     expect(done).toBe(true);
@@ -440,6 +440,65 @@ describe("Bun.FetchSession", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
       out: { without_option: 0, after_first: 1, after_pooled: 1, during_no_keepalive: 2, held_body: "holddone" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A refused option must not leave the request running without the bound it
+  // asked for. An LD_PRELOAD shim makes setsockopt(TCP_USER_TIMEOUT) fail.
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  test.skipIf(!isLinux || !cc)("tcp.userTimeout fails the request when the OS refuses the option", async () => {
+    using dir = tempDir("fetch-session-user-timeout-refused", {
+      "shim.c": String.raw`
+        #define _GNU_SOURCE
+        #include <dlfcn.h>
+        #include <errno.h>
+        #include <netinet/in.h>
+        #include <netinet/tcp.h>
+        #include <sys/socket.h>
+        static int (*real_setsockopt)(int, int, int, const void *, socklen_t);
+        int setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen) {
+            if (!real_setsockopt) {
+                real_setsockopt = (int (*)(int, int, int, const void *, socklen_t)) dlsym(RTLD_NEXT, "setsockopt");
+            }
+            if (level == IPPROTO_TCP && optname == TCP_USER_TIMEOUT) {
+                errno = EPERM;
+                return -1;
+            }
+            return real_setsockopt(fd, level, optname, optval, optlen);
+        }
+      `,
+      "fixture.js": /* js */ `
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const url = "http://127.0.0.1:" + server.port + "/";
+        const outcome = init => fetch(url, init).then(r => r.text(), e => e.code + ": " + e.message);
+        console.log(JSON.stringify({
+          plain: await outcome({ session: new Bun.FetchSession() }),
+          bounded: await outcome({ session: new Bun.FetchSession({ tcp: { userTimeout: 1000 } }) }),
+        }));
+      `,
+    });
+    const shim = join(String(dir), "shim.so");
+    await using ccProc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      out: { plain: "ok", bounded: "EPERM: EPERM: The OS refused the TCP user timeout of this FetchSession" },
       stderr: "",
       exitCode: 0,
     });

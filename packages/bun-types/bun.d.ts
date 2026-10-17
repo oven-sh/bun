@@ -16,13 +16,15 @@
 declare module "bun" {
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
-    NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
+    | NodeJS.TypedArray<TArrayBuffer>
+    | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray<ArrayBufferLike> | DataView<ArrayBufferLike> | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
-    ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
+    | ReadableStreamDefaultReadValueResult<T>
+    | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
@@ -3250,11 +3252,10 @@ declare module "bun" {
      *
      * @default "esm"
      */
-    format?:
-      /**
-       * ECMAScript Module format
-       */
-      | "esm"
+    format?: /**
+     * ECMAScript Module format
+     */
+    | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -5160,7 +5161,10 @@ declare module "bun" {
      * The current state of the connection
      */
     readonly readyState:
-      typeof WebSocket.CONNECTING | typeof WebSocket.OPEN | typeof WebSocket.CLOSING | typeof WebSocket.CLOSED;
+      | typeof WebSocket.CONNECTING
+      | typeof WebSocket.OPEN
+      | typeof WebSocket.CLOSING
+      | typeof WebSocket.CLOSED;
 
     /**
      * The number of bytes of data that have been queued using send() but not yet transmitted to the network
@@ -5410,12 +5414,11 @@ declare module "bun" {
    */
   function color(
     input: ColorInput,
-    outputFormat?:
-      /**
-       * True color ANSI color string, for use in terminals
-       * @example \x1b[38;2;100;200;200m
-       */
-      | "ansi"
+    outputFormat?: /**
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -6170,7 +6173,27 @@ declare module "bun" {
      * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
-      -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
+      | -9
+      | -10
+      | -11
+      | -12
+      | -13
+      | -14
+      | -15
+      | 9
+      | 10
+      | 11
+      | 12
+      | 13
+      | 14
+      | 15
+      | 25
+      | 26
+      | 27
+      | 28
+      | 29
+      | 30
+      | 31;
     /**
      * Tunes the compression algorithm.
      *
@@ -8021,17 +8044,11 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
        * data. Reading begins only when you access the `stdout` or `stderr`
@@ -9112,16 +9129,20 @@ declare module "bun" {
            * write that the kernel buffers restarts it. This option bounds
            * that too.
            *
-           * It covers only data Bun has sent and the peer has not
-           * acknowledged: the request line, headers and body. It does not
-           * bound the wait for a response once the request is acknowledged.
-           * On Linux it also aborts a connection to a peer that stops reading
-           * for that long, and a value above about 60 seconds lengthens how
-           * long an idle half-open connection takes to be detected.
+           * It covers data Bun has sent and the peer has not acknowledged: the
+           * request line, headers and body. A live server that takes long to
+           * answer is not affected. On Linux the value also replaces the
+           * keepalive probe count as the abort rule for an idle connection.
+           * Bun probes after 60 seconds idle, and the kernel then drops the
+           * connection once no data arrived for `max(60 s, userTimeout)` and
+           * a probe is unanswered. With a value of 60 seconds or less, one
+           * lost probe is enough. On Linux it also aborts a connection to a
+           * peer that stops reading for that long.
            *
            * Linux: `TCP_USER_TIMEOUT`. macOS: `TCP_RXT_CONNDROPTIME`, in whole
            * seconds, rounded up. Windows: `TCP_MAXRTMS`. `0` means the OS
-           * default. The largest value is 2147483647.
+           * default. The largest value is 2147483647. If the OS refuses the
+           * option, the request fails with the `setsockopt` error code.
            *
            * @default 0
            */

@@ -2006,23 +2006,15 @@ impl<'a> HTTPClient<'a> {
         if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
             let _ = socket.set_keep_alive(true, 60);
         }
-        // `FetchSession({ tcp: { userTimeout } })`: kernel-side bound on sent
-        // data the peer has not acknowledged. The idle timer above also catches
-        // a dead peer, but at >= 4s granularity, not while a streaming upload
-        // keeps re-arming it, and not when the request disabled it. Keepalive
-        // probes do not run while data is in flight. Not gated on
-        // `disable_keepalive`: that flag is Node Agent parity, not a reason to
-        // leave the socket unbounded.
+        // `FetchSession({ tcp: { userTimeout } })` is an explicit request, so a
+        // socket the OS will not bound is not used: the request fails with the
+        // setsockopt errno instead of running without the bound.
         if self.pool.user_timeout_ms != 0 && self.unix_socket_path.is_empty() {
             let err = socket.set_user_timeout(self.pool.user_timeout_ms);
             if err != 0 {
-                bun_core::scoped_log!(
-                    fetch,
-                    "TCP_USER_TIMEOUT {}ms failed: errno {} {}\n",
-                    self.pool.user_timeout_ms,
-                    err,
-                    BStr::new(self.url.href)
-                );
+                self.state.connect_errno = err;
+                self.close_and_fail::<IS_SSL>(crate::Error::SocketOptionRefused, socket);
+                return Ok(());
             }
         }
 

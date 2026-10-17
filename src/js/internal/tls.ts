@@ -227,8 +227,7 @@ function validateSecureContextOptions(options) {
       }
     }
   }
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L254-L259
-  // BoringSSL has no SSL_CTX_set_dh_auto, so 'auto' is the unsupported-operation error.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L254-L259 (BoringSSL has no SSL_CTX_set_dh_auto)
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   } else if (dhparam !== undefined && dhparam !== null) {

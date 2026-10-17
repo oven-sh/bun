@@ -216,10 +216,8 @@ impl SecureContext {
         Ok(result)
     }
 
-    /// `SecureContext.validateDHParam(dhparam)` - Node's `SecureContext::SetDHParam`
-    /// size policy: under 1024 bits throws, under 2048 bits returns the warning
-    /// text, a value that is not a PKCS#3 "DH PARAMETERS" PEM is ignored.
-    /// BoringSSL has no DHE suites, so nothing is set on an SSL_CTX.
+    /// `SecureContext.validateDHParam(dhparam)` - the size policy of Node's
+    /// `SecureContext::SetDHParam`: throws under 1024 bits, returns the warning text under 2048.
     pub(crate) fn validate_dh_param(
         global: &JSGlobalObject,
         callframe: &CallFrame,

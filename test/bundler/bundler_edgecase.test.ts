@@ -27,6 +27,125 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  // A CommonJS module with no statements, or only hoistable ones, still needs a `require_*` wrapper symbol.
+  itBundled("edgecase/StatementlessCommonJSModuleNamedImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b';
+        console.log(typeof B);
+      `,
+      "/b.tsx": `;`,
+      "/package.json": `{"name":"proj","type":"commonjs"}`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleStarImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as b from './b.cjs';
+        console.log(typeof b);
+      `,
+      "/b.cjs": `// comment only\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        const b = require('./b.cjs');
+        console.log(typeof b);
+      `,
+      "/b.cjs": `;`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").not.toMatch(/\bvar b = ;/);
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleDynamicImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        const ns = await import('./b.cjs');
+        console.log(typeof ns, typeof ns.default);
+      `,
+      "/b.cjs": `// comment only\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").not.toContain("__toESM(,");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object object",
+    },
+  });
+  itBundled("edgecase/DirectiveOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as b from './b.cjs';
+        console.log(typeof b);
+      `,
+      "/b.cjs": `"use strict";\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/HoistableOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b.cjs';
+        console.log(typeof B);
+      `,
+      "/b.cjs": `function foo() {}\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  // DEFAULT_UNWRAP_COMMONJS_PACKAGES parse as Esm with FORCE_CJS_TO_ESM. A default import makes the linker CJS-wrap them.
+  itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import Def from 'scheduler/empty.js';
+        console.log(typeof Def);
+      `,
+      "/node_modules/scheduler/empty.js": `function foo() {}\n`,
+      "/node_modules/scheduler/package.json": `{"name":"scheduler","version":"1.0.0"}`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_empty");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
   itBundled("edgecase/NestedRedirectToABuiltin", {
     files: {
       "/entry.js": /* js */ `

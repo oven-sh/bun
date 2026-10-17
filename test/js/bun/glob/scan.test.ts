@@ -24,7 +24,18 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isDebug, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isRoot,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1266,6 +1277,7 @@ describe("a group that crosses a path separator", () => {
   const scan = (pattern: string, cwd: string, opts: GlobScanOptions = {}) =>
     norm([...new Glob(pattern).scanSync({ cwd, ...opts })]);
   const tree = (prefix: string, files: string[]) => tempDir(prefix, Object.fromEntries(files.map(f => [f, ""])));
+  const repeated = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
   const files = [
     "src/a/index.ts",
     "src/b/c/index.ts",
@@ -1434,7 +1446,7 @@ describe("a group that crosses a path separator", () => {
     // A closer of the other kind closes nothing.
     ["{a)/b,c}", ["a)/b", "c"]],
     // More open groups than the splitter counts.
-    [`@(${"{".repeat(64)}a${"}".repeat(64)}/x|c)`, ["a/x", "c"]],
+    [`@(${repeated("{", 64)}a${repeated("}", 64)}/x|c)`, ["a/x", "c"]],
     // A `]` that is first in a class is a member, also after a `!`.
     ["{[]/]x,k}", ["]x", "k"]],
     ["{[!]/]x,k}", ["k", "qx"]],
@@ -1686,34 +1698,29 @@ describe("a group that crosses a path separator", () => {
   test("many groups and many alternatives", () => {
     using dir = tree("glob-scan-group-many", ["x", "a/x", "a/b/x", "a0/q/b0/x", "a39/b39/x", "a/57/b", "a/123/b"]);
     const cwd = String(dir);
-    expect(scan(Buffer.alloc(30 * 9, "{**/,**/}").toString() + "x", cwd)).toEqual([
-      "a/b/x",
-      "a/x",
-      "a0/q/b0/x",
-      "a39/b39/x",
-      "x",
-    ]);
+    expect(scan(repeated("{**/,**/}", 30) + "x", cwd)).toEqual(["a/b/x", "a/x", "a0/q/b0/x", "a39/b39/x", "x"]);
     const list = (count: number, item: (i: number) => string) =>
       `{${Array.from({ length: count }, (_, i) => item(i))}}`;
     expect(scan(`${list(40, i => `a${i}/**`)}/${list(40, i => `b${i}/x`)}`, cwd)).toEqual(["a0/q/b0/x", "a39/b39/x"]);
     expect(scan(`${list(40, i => `a${i}/`)}${list(40, i => `b${i}/x`)}`, cwd)).toEqual(["a39/b39/x"]);
     // Two groups in one path segment: a thousand times a thousand ways.
     expect(scan(list(1000, i => `a/${i}`) + list(1000, i => `${i}/b`), cwd)).toEqual(["a/123/b", "a/57/b"]);
-    const nested = Buffer.alloc(2000 * 3, "{a/").toString() + "x" + Buffer.alloc(2000 * 3, ",b}").toString();
+    const nested = repeated("{a/", 2000) + "x" + repeated(",b}", 2000);
     expect(scan(nested, cwd, { onlyFiles: false })).toEqual(["a/b"]);
   });
 
   // The splitter and the tail read a pattern once. A pass for each bracket or for each group takes minutes for these.
   test("long patterns are read once", () => {
     using dir = tree("glob-scan-group-repeated", ["x", "a/x", "a/a/x", "za", "w/ya"]);
-    const budgetMs = 5000;
+    // One pass takes about 10 ms in a release build and about 130 ms in a debug build for the slowest of these.
+    const budgetMs = isDebug || isASAN ? 20_000 : 5_000;
     for (const [label, pattern, expected] of [
-      ["{**/,**/} 10,000 times", "{**/,**/}".repeat(10_000) + "x", ["a/a/x", "a/x", "x"]],
-      ["{a/,} 10,000 times", "{a/,}".repeat(10_000) + "x", ["a/a/x", "a/x", "x"]],
-      ["?(a/) 10,000 times", "?(a/)".repeat(10_000) + "x", ["a/a/x", "a/x", "x"]],
+      ["{**/,**/} 10,000 times", repeated("{**/,**/}", 10_000) + "x", ["a/a/x", "a/x", "x"]],
+      ["{a/,} 10,000 times", repeated("{a/,}", 10_000) + "x", ["a/a/x", "a/x", "x"]],
+      ["?(a/) 10,000 times", repeated("?(a/)", 10_000) + "x", ["a/a/x", "a/x", "x"]],
       // No `]` closes any of these `[`. The matcher reads to the end of the pattern to find that out, so the splitter asks once.
-      ["100,000 `[` in a group", "{" + "[".repeat(100_000) + "/q,a/x,x}", ["a/x", "x"]],
-      ["20,000 groups in a group", "{w/y,z}" + "+(".repeat(20_000) + "a" + ")".repeat(20_000), ["w/ya", "za"]],
+      ["100,000 `[` in a group", "{" + repeated("[", 100_000) + "/q,a/x,x}", ["a/x", "x"]],
+      ["20,000 groups in a group", "{w/y,z}" + repeated("+(", 20_000) + "a" + repeated(")", 20_000), ["w/ya", "za"]],
     ] as [string, string, string[]][]) {
       const start = performance.now();
       expect({ label, listed: scan(pattern, String(dir)) }).toEqual({ label, listed: expected });

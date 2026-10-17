@@ -1603,7 +1603,11 @@ describe.concurrent("bun pm pkg", () => {
       expect(emptied).toBe(`{\n  "name": "app",\n  "repository": {},\n  "files": []\n}`);
       expect(JSON.parse(emptied)).toEqual({ name: "app", repository: {}, files: [] });
       expect(
-        await edited(`{\n  "repository": { "url": "https://example.com/app.git" }, // where\n  "n": 1\n}\n`, "delete", "repository.url"),
+        await edited(
+          `{\n  "repository": { "url": "https://example.com/app.git" }, // where\n  "n": 1\n}\n`,
+          "delete",
+          "repository.url",
+        ),
       ).toBe(`{\n  "repository": {}, // where\n  "n": 1\n}\n`);
     });
 

@@ -81,22 +81,24 @@ Bun inlines every local asset it finds in your HTML: anything with a relative pa
 
 ### What gets inlined
 
-| In your source                                   | In the output                                                            |
-| ------------------------------------------------ | ------------------------------------------------------------------------ |
-| `<script src="./app.tsx">`                       | `<script type="module">...bundled code...</script>`                      |
-| `<link rel="stylesheet" href="./styles.css">`    | `<style>...bundled CSS...</style>`                                       |
-| `<img src="./logo.png">`                         | `<img src="data:image/png;base64,...">`                                  |
-| `<img src="./icon.svg">`                         | `<img src="data:image/svg+xml;base64,...">`                              |
-| `<video src="./demo.mp4">`                       | `<video src="data:video/mp4;base64,...">`                                |
-| `<audio src="./click.wav">`                      | `<audio src="data:audio/x-wav;base64,...">`                              |
-| `<source src="./clip.webm">`                     | `<source src="data:video/webm;base64,...">`                              |
-| `<video poster="./thumb.jpg">`                   | `<video poster="data:image/jpeg;base64,...">`                            |
-| `<link rel="icon" href="./favicon.ico">`         | `<link rel="icon" href="data:image/x-icon;base64,...">`                  |
-| `<link rel="manifest" href="./app.webmanifest">` | `<link rel="manifest" href="data:application/manifest+json;base64,...">` |
-| CSS `url("./bg.png")`                            | CSS `url(data:image/png;base64,...)`                                     |
-| CSS `@import "./reset.css"`                      | Flattened into the `<style>` tag                                         |
-| CSS `url("./font.woff2")`                        | CSS `url(data:font/woff2;base64,...)`                                    |
-| JS `import "./styles.css"`                       | Merged into the `<style>` tag                                            |
+| In your source                                   | In the output                                                               |
+| ------------------------------------------------ | --------------------------------------------------------------------------- |
+| `<script src="./app.tsx">`                       | `<script type="module">...bundled code...</script>`                         |
+| `<link rel="stylesheet" href="./styles.css">`    | `<style>...bundled CSS...</style>`                                          |
+| `<img src="./logo.png">`                         | `<img src="data:image/png;base64,...">`                                     |
+| `<img src="./icon.svg">`                         | `<img src="data:image/svg+xml;base64,...">`                                 |
+| `<img src="./icons.svg#menu">`                   | `<img src="data:image/svg+xml;base64,...#menu">`                            |
+| `<img srcset="./a.png 1x, ./b.png 2x">`          | `<img srcset="data:image/png;base64,... 1x, data:image/png;base64,... 2x">` |
+| `<video src="./demo.mp4">`                       | `<video src="data:video/mp4;base64,...">`                                   |
+| `<audio src="./click.wav">`                      | `<audio src="data:audio/x-wav;base64,...">`                                 |
+| `<source src="./clip.webm">`                     | `<source src="data:video/webm;base64,...">`                                 |
+| `<video poster="./thumb.jpg">`                   | `<video poster="data:image/jpeg;base64,...">`                               |
+| `<link rel="icon" href="./favicon.ico">`         | `<link rel="icon" href="data:image/x-icon;base64,...">`                     |
+| `<link rel="manifest" href="./app.webmanifest">` | `<link rel="manifest" href="data:application/manifest+json;base64,...">`    |
+| CSS `url("./bg.png")`                            | CSS `url(data:image/png;base64,...)`                                        |
+| CSS `@import "./reset.css"`                      | Flattened into the `<style>` tag                                            |
+| CSS `url("./font.woff2")`                        | CSS `url(data:font/woff2;base64,...)`                                       |
+| JS `import "./styles.css"`                       | Merged into the `<style>` tag                                               |
 
 Images, fonts, WASM binaries, videos, audio files, SVGs: Bun base64-encodes any file referenced by a relative path into a `data:` URI and embeds it directly in the HTML. Bun detects the MIME type from the file extension.
 

@@ -1264,7 +1264,7 @@ pub(crate) mod command {
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
         if runs_several
             && ctx.runtime_options.check
-            && !super::check_command::check_project_before()
+            && !super::check_command::check_project_before(None)
         {
             Global::exit(1);
         }

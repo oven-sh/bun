@@ -987,7 +987,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
             // It has no entry point to start from, like a script of a package.json.
-            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
+            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
                 Global::exit(1);
             }
             let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
@@ -999,12 +999,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx.runtime_options.check && ctx.runtime_options.eval.interactive_script.is_none();
         // `Run::start` does it then, once there is a file watcher.
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
-        if is_checked
-            && !watches
-            && main == BootMain::File
-            && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
-        {
-            Global::exit(1);
+        if is_checked && !watches {
+            let has_type_errors = match main {
+                BootMain::File => {
+                    !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
+                }
+                BootMain::Bake => !crate::cli::check_command::check_project_before(None),
+            };
+            if has_type_errors {
+                Global::exit(1);
+            }
         }
 
         // `bun_jsc::initialize`
@@ -1176,7 +1180,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
-            unchecked: (is_checked && watches).then_some(loader),
+            unchecked: (is_checked && watches).then_some(match main {
+                BootMain::File => Unchecked::Main(loader),
+                BootMain::Bake => Unchecked::Project,
+            }),
         }
         .start()
     }
@@ -1317,9 +1324,18 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
-    /// `--check` under `--watch`: `loader` of `boot`. With errors the program is not run, and the
-    /// process waits for a change.
-    unchecked: Option<Option<Loader>>,
+    /// `--check` under `--watch`: what to type check before the program runs. With errors the
+    /// program is not run, and the process waits for a change.
+    unchecked: Option<Unchecked>,
+}
+
+/// What `Run::start` type checks under `--check --watch`.
+#[derive(Clone, Copy)]
+enum Unchecked {
+    /// The main module and what it imports. `loader` of `boot`.
+    Main(Option<Loader>),
+    /// The project that contains the working directory, for `bun bake`.
+    Project,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1502,14 +1518,23 @@ impl Run<'_> {
             }
         }
 
-        let has_type_errors = unchecked.is_some_and(|loader| {
-            let watching = crate::cli::check_command::watching(vm);
-            !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
-        });
-        if has_type_errors {
-            // It is not read if the options are wrong.
-            vm.add_main_to_watcher_if_needed();
-        }
+        let has_type_errors = match unchecked {
+            None => false,
+            Some(Unchecked::Main(loader)) => {
+                let watching = crate::cli::check_command::watching(vm);
+                let has_type_errors =
+                    !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching);
+                if has_type_errors {
+                    // It is not read if the options are wrong.
+                    vm.add_main_to_watcher_if_needed();
+                }
+                has_type_errors
+            }
+            Some(Unchecked::Project) => {
+                let watching = crate::cli::check_command::watching(vm);
+                !crate::cli::check_command::check_project_before(watching)
+            }
+        };
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
         match loaded {
             None => {}
@@ -2502,7 +2527,7 @@ impl RunCommand {
 
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
                         if ctx.runtime_options.check
-                            && !crate::cli::check_command::check_project_before()
+                            && !crate::cli::check_command::check_project_before(None)
                         {
                             Global::exit(1);
                         }
@@ -2704,7 +2729,7 @@ impl RunCommand {
                 {
                     // It has no entry point to start from, like a script of a package.json.
                     if ctx.runtime_options.check
-                        && !crate::cli::check_command::check_project_before()
+                        && !crate::cli::check_command::check_project_before(None)
                     {
                         Global::exit(1);
                     }
@@ -2731,6 +2756,15 @@ impl RunCommand {
 
         // `bun bake` in a project with no `bake` script, file or binary of its own.
         if target_name == b"bake" && bun_core::FeatureFlags::bake() {
+            // `bun bake --check` is `bun --check bake`.
+            if let Some(i) = ctx
+                .passthrough
+                .iter()
+                .position(|arg| &arg[..] == b"--check")
+            {
+                ctx.passthrough.remove(i);
+                ctx.runtime_options.check = true;
+            }
             let cwd = match bun_sys::getcwd_alloc() {
                 Ok(cwd) => cwd,
                 Err(err) => {

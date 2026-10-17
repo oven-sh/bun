@@ -62,12 +62,15 @@ export default {
 
 ## Options
 
-| Flag                               | Description                                |
-| ---------------------------------- | ------------------------------------------ |
-| `--port=<NUM>`                     | The port. The default is `$PORT`, or 3000. |
-| `--host=<STR>`, `--hostname=<STR>` | The hostname. The default is `localhost`.  |
-| `--console`                        | Print the browser's console logs.          |
-| `--no-console`                     | Do not print the browser's console logs.   |
+| Flag                               | Description                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| `--port <NUM>`                     | The port. The default is `$PORT`, or 3000.                                 |
+| `--host <STR>`, `--hostname <STR>` | The hostname. The default is `localhost`. `host:3000` also sets the port.  |
+| `--console`                        | Print the browser's console logs.                                          |
+| `--no-console`                     | Do not print the browser's console logs.                                   |
+| `--check`                          | Type check the project first. With type errors, `bun bake` does not start. |
+
+A flag and its value can also be one argument: `--port=3000`. `bun --check bake` is the same as `bun bake --check`. With `--watch`, `bun --check --watch bake` type checks again after each change, and starts the server when there are no errors.
 
 ## A `bake` script or file of your own
 

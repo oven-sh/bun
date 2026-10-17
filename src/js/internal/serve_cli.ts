@@ -16,32 +16,62 @@ function defaultServeFlags(): ServeFlags {
   return { hostname: "localhost", port: undefined, console: false };
 }
 
-/** Applies `arg` to `flags` when it is a server flag. Returns false for any other argument. */
-function parseServeFlag(arg: string, flags: ServeFlags): boolean {
-  if (arg.startsWith("--hostname=")) {
-    flags.hostname = arg.slice("--hostname=".length);
-    if (flags.hostname.includes(":")) {
-      const [host, portString] = flags.hostname.split(":");
-      flags.hostname = host;
-      flags.port = parseInt(portString, 10);
+/** Sets the hostname, and the port if there is one: `host`, `host:3000`, `::1`, `[::1]` or `[::1]:3000`. */
+function applyHost(value: string, flags: ServeFlags) {
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    if (end !== -1) {
+      flags.hostname = value.slice(1, end);
+      const rest = value.slice(end + 1);
+      if (rest.startsWith(":")) flags.port = parseInt(rest.slice(1), 10);
+      return;
     }
-  } else if (arg.startsWith("--port=")) {
-    flags.port = parseInt(arg.slice("--port=".length), 10);
-  } else if (arg.startsWith("--host=")) {
-    flags.hostname = arg.slice("--host=".length);
-    if (flags.hostname.includes(":")) {
-      const [host, portString] = flags.hostname.split(":");
-      flags.hostname = host;
-      flags.port = parseInt(portString, 10);
-    }
-  } else if (arg === "--console") {
-    flags.console = true;
-  } else if (arg === "--no-console") {
-    flags.console = false;
-  } else {
-    return false;
   }
-  return true;
+  const colon = value.indexOf(":");
+  // More than one `:` is an IPv6 address without a port.
+  if (colon !== -1 && colon === value.lastIndexOf(":")) {
+    flags.hostname = value.slice(0, colon);
+    flags.port = parseInt(value.slice(colon + 1), 10);
+  } else {
+    flags.hostname = value;
+  }
+}
+
+/**
+ * Applies the server flag at `args[i]` to `flags`, as `--port=3000` or `--port 3000`.
+ * Returns how many arguments it used: 0 when `args[i]` is not a server flag.
+ */
+function parseServeFlag(args: string[], i: number, flags: ServeFlags): number {
+  const arg = args[i];
+  if (arg === "--console") {
+    flags.console = true;
+    return 1;
+  }
+  if (arg === "--no-console") {
+    flags.console = false;
+    return 1;
+  }
+  for (const name of ["--hostname", "--host", "--port"]) {
+    let value: string;
+    let used: number;
+    if (arg.startsWith(name + "=")) {
+      value = arg.slice(name.length + 1);
+      used = 1;
+    } else if (arg === name) {
+      if (i + 1 >= args.length) throw new Error(`"${name}" needs a value.`);
+      value = args[i + 1];
+      used = 2;
+    } else {
+      continue;
+    }
+    if (name === "--port") {
+      flags.port = parseInt(value, 10);
+    } else {
+      applyHost(value, flags);
+    }
+    return used;
+  }
+  return 0;
 }
 
 /**
@@ -164,17 +194,21 @@ function printBannerAndHandleShortcuts(banner: Banner) {
         case "o\n":
           const url = server.url.toString();
 
-          if (process.platform === "darwin") {
-            // TODO: copy the AppleScript from create-react-app or Vite.
-            Bun.spawn(["open", url]).exited.catch(() => {});
-          } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
-          } else if (process.platform === "android") {
-            Bun.spawn(["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]).exited.catch(
-              () => {},
-            );
-          } else {
-            Bun.spawn(["xdg-open", url]).exited.catch(() => {});
+          // TODO: copy the AppleScript from create-react-app or Vite.
+          const opener =
+            process.platform === "darwin"
+              ? ["open", url]
+              : process.platform === "win32"
+                ? // `start` is a command of cmd.exe, not a program. Its first quoted argument is the window title.
+                  ["cmd", "/c", "start", "", url]
+                : process.platform === "android"
+                  ? ["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]
+                  : ["xdg-open", url];
+          try {
+            Bun.spawn(opener).exited.catch(() => {});
+          } catch {
+            // `Bun.spawn` throws when the opener is not installed. The URL is in the banner.
+            console.log(`Could not open a browser. Open ${url}`);
           }
           break;
 

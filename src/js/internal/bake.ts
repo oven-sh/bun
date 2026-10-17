@@ -13,6 +13,9 @@ const {
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
 
+// `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
+const ObjectKeys = Object.keys;
+
 const help = `
 Bun v${Bun.version} (bake)
 
@@ -28,13 +31,14 @@ Serves the app in the working directory, with hot reloading:
 
 Options:
 
-  --port=<NUM>
-  --host=<STR>, --hostname=<STR>
+  --port <NUM>
+  --host <STR>, --hostname <STR>
   --console # print console logs from browser
   --no-console # don't print console logs from browser
+  --check # type check the project first, and do not serve it if it has errors
 `;
 
-const serverOptionNames = ["routes", "fetch", "websocket"];
+type Page = { route: string; file: string; bundle: HTMLBundle };
 
 type AppServer = {
   routes?: Record<string, unknown>;
@@ -55,7 +59,7 @@ function routeOfPage(file: string): string {
   return route;
 }
 
-async function loadPages(pagesDir: string) {
+async function loadPages(pagesDir: string): Promise<Page[]> {
   let files: string[];
   try {
     files = [...new Bun.Glob("**/*.html").scanSync({ cwd: pagesDir, onlyFiles: true })];
@@ -65,13 +69,21 @@ async function loadPages(pagesDir: string) {
   }
   files.sort((a, b) => a.localeCompare(b));
 
-  const pages: { route: string; file: string; bundle: HTMLBundle }[] = [];
+  const pages: Page[] = [];
+  const fileOfRoute: Record<string, string> = { __proto__: null } as any;
   for (const relative of files) {
     const file = path.join(pagesDir, relative);
-    if (relative.includes("[")) {
-      throw new Error(`"${display(file)}": an HTML page cannot have a [param] in its path. Its URL must be fixed.`);
+    // `Bun.serve` routes read `:` as a parameter and `*` as a wildcard. `[` is the parameter syntax of page files.
+    if (/[[\]:*]/.test(relative)) {
+      throw new Error(`"${display(file)}": a page cannot have "[", ":" or "*" in its path. Its URL must be fixed.`);
     }
-    pages.push({ route: routeOfPage(relative), file, bundle: (await import(file)).default });
+    const route = routeOfPage(relative);
+    const other = fileOfRoute[route];
+    if (other !== undefined) {
+      throw new Error(`"${display(other)}" and "${display(file)}" are both the page "/${route}".`);
+    }
+    fileOfRoute[route] = file;
+    pages.push({ route, file, bundle: (await import(file)).default });
   }
   return pages;
 }
@@ -80,8 +92,9 @@ async function loadAppServer(cwd: string): Promise<{ file: string; server: AppSe
   let file: string;
   try {
     file = Bun.resolveSync("./app/server", cwd);
-  } catch {
-    return undefined;
+  } catch (error: any) {
+    if (error?.code === "ERR_MODULE_NOT_FOUND") return undefined;
+    throw error;
   }
 
   const server = (await import(file)).default;
@@ -89,31 +102,36 @@ async function loadAppServer(cwd: string): Promise<{ file: string; server: AppSe
   if (server === null || typeof server !== "object") {
     throw new TypeError(`"${name}" must have a default export with "routes", "fetch" or "websocket".`);
   }
-  for (const key of Object.keys(server)) {
-    if (!serverOptionNames.includes(key)) {
+  const keys = ObjectKeys(server);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (key !== "routes" && key !== "fetch" && key !== "websocket") {
       throw new TypeError(
-        `"${name}": the default export has "${key}", but "bun bake" only uses ${serverOptionNames.map(n => `"${n}"`).join(", ")}.`,
+        `"${name}": the default export has "${key}", but "bun bake" only uses "routes", "fetch", "websocket".`,
       );
     }
   }
-  if (server.fetch !== undefined && !$isCallable(server.fetch)) {
-    throw $ERR_INVALID_ARG_TYPE("fetch", "function", server.fetch);
+  const fetch = server.fetch;
+  if (fetch !== undefined && !$isCallable(fetch)) {
+    throw $ERR_INVALID_ARG_TYPE("fetch", "function", fetch);
   }
-  return { file, server };
+  return { file, server: { routes: server.routes, fetch, websocket: server.websocket } };
 }
 
 async function start() {
   const flags = defaultServeFlags();
   // argv[1] is the entry point `bun bake` boots with.
-  for (let i = 2, argvLength = argv.length; i < argvLength; i++) {
+  for (let i = 2, argvLength = argv.length; i < argvLength;) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       console.log(help);
       process.exit(0);
     }
-    if (!parseServeFlag(arg, flags)) {
+    const used = parseServeFlag(argv, i, flags);
+    if (used === 0) {
       throw new Error(`Unknown argument "${arg}". Run "bun bake --help" for the usage.`);
     }
+    i += used;
   }
 
   const cwd = process.cwd();
@@ -124,15 +142,23 @@ async function start() {
   }
 
   const routes: Record<string, unknown> = {};
-  for (const page of pages) {
+  const pageOfRoute: Record<string, Page> = { __proto__: null } as any;
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
     routes["/" + page.route] = page.bundle;
+    pageOfRoute["/" + page.route] = page;
   }
-  for (const [route, value] of Object.entries(app?.server.routes ?? {})) {
-    const page = pages.find(page => "/" + page.route === route);
-    if (page !== undefined) {
-      throw new Error(`The route "${route}" in "${display(app!.file)}" is also the page "${display(page.file)}".`);
+  const appRoutes = app?.server.routes;
+  if (appRoutes !== undefined) {
+    const names = ObjectKeys(appRoutes);
+    for (let i = 0; i < names.length; i++) {
+      const route = names[i];
+      const page = pageOfRoute[route];
+      if (page !== undefined) {
+        throw new Error(`The route "${route}" in "${display(app!.file)}" is also the page "${display(page.file)}".`);
+      }
+      routes[route] = appRoutes[route];
     }
-    routes[route] = value;
   }
 
   const fetch = app?.server.fetch ?? (() => new Response("Not found", { status: 404 }));
@@ -151,12 +177,11 @@ async function start() {
   );
   const elapsed = (performance.now() - initial).toFixed(2);
 
-  printBannerAndHandleShortcuts({
-    server,
-    elapsed,
-    pathname: "/",
-    routes: pages.map(({ route, file }) => ({ route, file })),
-  });
+  const listed: { route: string; file: string }[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    listed[i] = { route: pages[i].route, file: pages[i].file };
+  }
+  printBannerAndHandleShortcuts({ server, elapsed, pathname: "/", routes: listed });
 }
 
 export default start;

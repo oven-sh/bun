@@ -25,7 +25,8 @@ async function start() {
     const arg = argv[i];
 
     if (!arg.endsWith(".html")) {
-      parseServeFlag(arg, flags);
+      const used = parseServeFlag(argv, i, flags);
+      if (used > 1) i += used - 1;
 
       if (arg === "--help") {
         console.log(`
@@ -36,8 +37,8 @@ Usage:
 
 Options:
 
-  --port=<NUM>
-  --host=<STR>, --hostname=<STR>
+  --port <NUM>
+  --host <STR>, --hostname <STR>
   --console # print console logs from browser
   --no-console # don't print console logs from browser
 Examples:

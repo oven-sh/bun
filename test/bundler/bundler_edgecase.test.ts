@@ -2101,6 +2101,108 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
+  // "/a.js" and "/b.js" have no wrapper to call, so a require() of one whose
+  // result is unused has nothing to print. It still has to be an expression.
+  itBundled("edgecase/EsmWrapperEliminationUnusedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        export function f(flag, key) {
+          const log = [];
+          flag ? require("./a.js") : require("./b.js");
+          require("./a.js") ? log.push("test") : log.push("unreachable");
+          require("./a.js")[key];
+          require("./a.js"), log.push("left");
+          log.push("right"), require("./b.js");
+          flag ? log.push("yes") : (log.push("no"), require("./b.js"));
+          for (require("./a.js"); ; ) break;
+          require("./b.js");
+          const { name } = require("./b.js");
+          log.push(name);
+          return log.join(" ");
+        }
+        console.log(f(true, "name"));
+        console.log(f(false, "name"));
+      `,
+      "/a.js": `export const name = "a";`,
+      "/b.js": `export const name = "b";`,
+    },
+    target: "bun",
+    run: { stdout: "test left right yes b\ntest left right no b" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.slice(out.indexOf("// entry.js"))).toMatchInlineSnapshot(`
+        "// entry.js
+        function f(flag, key) {
+          const log = [];
+          flag ? __toCommonJS(exports_a) : __toCommonJS(exports_b);
+          __toCommonJS(exports_a) ? log.push("test") : log.push("unreachable");
+          __toCommonJS(exports_a)[key];
+          0, log.push("left");
+          log.push("right"), 0;
+          flag ? log.push("yes") : (log.push("no"), __toCommonJS(exports_b));
+          for (0;; )
+            break;
+          0;
+          0;
+          log.push(name2);
+          return log.join(" ");
+        }
+        console.log(f(true, "name"));
+        console.log(f(false, "name"));
+        export {
+          f
+        };
+        "
+      `);
+    },
+  });
+  // --minify-syntax joins adjacent expression statements with commas, and
+  // --minify-whitespace drops the ";" of a last statement.
+  itBundled("edgecase/EsmWrapperEliminationUnusedRequireMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        export function f() {
+          const log = [];
+          log.push(1);
+          require("./a.js");
+          log.push(2);
+          return log.join(" ");
+        }
+        function g(flag) {
+          return require("./b.js"), String(flag);
+        }
+        function h(flag) {
+          if (flag) require("./a.js");
+        }
+        console.log(f(), g(true), h(true));
+      `,
+      "/a.js": `export const name = "a";`,
+      "/b.js": `export const name = "b";`,
+    },
+    target: "bun",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: "1 2 true undefined" },
+  });
+  // "/w.js" has a wrapper, and init_w() returns undefined. The test of a
+  // conditional and the target of an index read the value of the require().
+  itBundled("edgecase/RequireOfEsmAsConditionalTestOrIndexTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        export function f(key) {
+          const log = [];
+          require("./w.js") ? log.push("truthy") : log.push("falsy");
+          require("./w.js")[key];
+          log.push(globalThis.ranW);
+          return log.join(" ");
+        }
+        console.log(f("name"));
+      `,
+      "/w.js": `globalThis.ranW = "w ran"; export const name = "w";`,
+    },
+    target: "bun",
+    run: { stdout: "truthy w ran" },
+  });
   itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass", {
     files: {
       "/entry.ts": `

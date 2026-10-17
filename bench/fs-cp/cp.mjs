@@ -3,9 +3,10 @@
 //   bun cp.mjs
 //   node cp.mjs
 //
-// The "regular files only" trees are eligible for the whole-tree clonefile()
-// fast path on macOS; the trees containing a symlink always go through the
-// node-ported walker.
+// The "regular files only" trees take the native copy (thread pool, or one
+// whole-tree clonefile() on macOS). The trees containing a symlink take it on
+// Linux only. macOS sends them through the node-ported walker, and Windows
+// sends every tree through it. A `filter` always means the walker.
 import { cpSync, mkdirSync, promises, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,6 +72,13 @@ recursiveCopyBench(`fs.promises.cp recursive (${totalFiles} files, regular files
 );
 recursiveCopyBench(`fs.promises.cp recursive (${totalFiles} files, tree contains a symlink)`, dest =>
   promises.cp(symlinkSrc, dest, { recursive: true }),
+);
+recursiveCopyBench(`fs.promises.cp recursive (${totalFiles} files, destination is an empty directory)`, dest => {
+  mkdirSync(dest);
+  return promises.cp(plainSrc, dest, { recursive: true });
+});
+recursiveCopyBench(`fs.promises.cp recursive (${totalFiles} files, filter)`, dest =>
+  promises.cp(plainSrc, dest, { recursive: true, filter: () => true }),
 );
 
 try {

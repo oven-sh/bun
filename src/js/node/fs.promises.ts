@@ -178,16 +178,17 @@ function watch(
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 async function cp(src, dest, options) {
-  const { validateCpOptions } = require("internal/fs/cp-sync");
+  const { validateCpOptions, nativeHonorsOptions } = require("internal/fs/cp-sync");
   const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
-  const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
-  if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
+  if (nativeHonorsOptions(options)) {
     const { ok, checked } = await require("internal/fs/cp").tryNativeFastPath(src, dest, options);
     if (ok) {
-      return fs.cp(src, dest, recursive, errorOnExist, force, mode);
+      const { errorOnExist, force, recursive, mode } = options;
+      // node ignores `errorOnExist` when `force` is set.
+      return fs.cp(src, dest, recursive, errorOnExist && !force, force, mode);
     }
     return require("internal/fs/cp").cpFn(src, dest, options, checked);
   }

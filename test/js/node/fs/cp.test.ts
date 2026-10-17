@@ -301,12 +301,203 @@ for (const [name, copy] of impls) {
       });
     });
 
+    for (const withLinks of [false, true]) {
+      test.skipIf(isWindows)(
+        `recursive - the default copy and the walker give the same tree${withLinks ? " (with symlinks)" : ""}`,
+        async () => {
+          // A `filter` always takes the node-ported walker. The default options
+          // take the native copy where it applies.
+          await using basename = tempDir("cp", {
+            "from/a.txt": "a",
+            "from/empty.txt": "",
+            "from/bin/run.sh": "#!/bin/sh\n",
+            "from/nested/deep/er/f.txt": "f",
+            "from/private/secret.txt": "s",
+          });
+          const from = join(basename, "from");
+          fs.mkdirSync(join(from, "empty-dir"));
+          fs.chmodSync(join(from, "bin", "run.sh"), 0o755);
+          fs.chmodSync(join(from, "private", "secret.txt"), 0o600);
+          fs.chmodSync(join(from, "private"), 0o700);
+          fs.chmodSync(join(from, "nested", "deep"), 0o750);
+          if (withLinks) {
+            fs.symlinkSync("a.txt", join(from, "rel-link"));
+            fs.symlinkSync(join("nested", "deep") + "/", join(from, "dir-link"));
+            fs.symlinkSync(join(from, "a.txt"), join(from, "abs-link"));
+            fs.symlinkSync("missing", join(from, "nested", "dangling"));
+          }
+
+          function snapshot(root: string) {
+            const tree: Record<string, unknown> = { ".": fs.statSync(root).mode & 0o7777 };
+            for (const name of (fs.readdirSync(root, { recursive: true }) as string[]).sort()) {
+              const stat = fs.lstatSync(join(root, name));
+              const mode = stat.mode & 0o7777;
+              if (stat.isSymbolicLink()) tree[name] = { link: fs.readlinkSync(join(root, name)) };
+              else if (stat.isDirectory()) tree[name] = { dir: mode };
+              else tree[name] = { file: mode, content: fs.readFileSync(join(root, name), "utf8") };
+            }
+            return tree;
+          }
+
+          await copy(from, join(basename, "default"), { recursive: true });
+          await copy(from, join(basename, "walker"), { recursive: true, filter: () => true });
+
+          const walker = snapshot(join(basename, "walker"));
+          expect(walker["private"]).toEqual({ dir: 0o700 });
+          expect(snapshot(join(basename, "default"))).toEqual(walker);
+        },
+      );
+    }
+
+    test.skipIf(isWindows)("recursive - an existing empty destination keeps its mode", async () => {
+      // node only sets the mode of a directory it creates (verified against
+      // fs.promises.cp in node v26.3.0).
+      await using basename = tempDir("cp", {
+        "from/d/f.txt": "x",
+      });
+      fs.chmodSync(join(basename, "from", "d"), 0o700);
+      fs.chmodSync(join(basename, "from"), 0o700);
+      fs.mkdirSync(join(basename, "result"));
+      fs.chmodSync(join(basename, "result"), 0o755);
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+      expect({
+        destMode: fs.statSync(join(basename, "result")).mode & 0o777,
+        dirMode: fs.statSync(join(basename, "result", "d")).mode & 0o777,
+        content: fs.readFileSync(join(basename, "result", "d", "f.txt"), "utf8"),
+      }).toEqual({
+        destMode: 0o755,
+        dirMode: 0o700,
+        content: "x",
+      });
+    });
+
+    test.skipIf(isWindows)(
+      "recursive - a source directory without write permission is copied with its mode",
+      async () => {
+        // node sets a directory's mode after it copies the entries. Setting it
+        // first would make the copy into the directory fail with EACCES.
+        await using basename = tempDir("cp", {
+          "from/ro/a.txt": "a",
+          "from/ro/sub/b.txt": "b",
+        });
+        const readOnlyDirs = ["from", "result"].flatMap(root => [
+          join(basename, root, "ro", "sub"),
+          join(basename, root, "ro"),
+        ]);
+        fs.chmodSync(join(basename, "from", "ro", "sub"), 0o555);
+        fs.chmodSync(join(basename, "from", "ro"), 0o555);
+        try {
+          await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+          expect({
+            roMode: fs.statSync(join(basename, "result", "ro")).mode & 0o777,
+            subMode: fs.statSync(join(basename, "result", "ro", "sub")).mode & 0o777,
+            a: fs.readFileSync(join(basename, "result", "ro", "a.txt"), "utf8"),
+            b: fs.readFileSync(join(basename, "result", "ro", "sub", "b.txt"), "utf8"),
+          }).toEqual({
+            roMode: 0o555,
+            subMode: 0o555,
+            a: "a",
+            b: "b",
+          });
+        } finally {
+          // tempDir cannot remove the entries of a directory it cannot write to.
+          for (const dir of readOnlyDirs) {
+            if (fs.existsSync(dir)) fs.chmodSync(dir, 0o755);
+          }
+        }
+      },
+    );
+
+    // root reads any file, so the copy cannot fail this way. macOS does not
+    // copy file by file: it clones the whole tree with one clonefile().
+    test.skipIf(!isLinux || process.getuid?.() === 0)(
+      "a file that cannot be read fails as a copyfile error",
+      async () => {
+        await using basename = tempDir("cp", {
+          "from/d/secret.txt": "secret",
+        });
+        const secret = join(basename, "from", "d", "secret.txt");
+        fs.chmodSync(secret, 0o000);
+
+        const inTree = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+        const alone = await copyShouldThrow(secret, join(basename, "out.txt"));
+
+        // node copies each file with copyFile (verified against fs.promises.cp
+        // in node v26.3.0).
+        const shape = (e: any) => ({ code: e.code, syscall: e.syscall, path: e.path, dest: e.dest });
+        expect({ inTree: shape(inTree), alone: shape(alone) }).toEqual({
+          inTree: {
+            code: "EACCES",
+            syscall: "copyfile",
+            path: secret,
+            dest: join(basename, "result", "d", "secret.txt"),
+          },
+          alone: { code: "EACCES", syscall: "copyfile", path: secret, dest: join(basename, "out.txt") },
+        });
+      },
+    );
+
+    test.skipIf(!isLinux || process.getuid?.() === 0)(
+      "recursive - a file in a directory without search permission fails at lstat",
+      async () => {
+        // readdir only needs read permission, so the directory lists its file.
+        // node stats the entry before it copies it (verified against
+        // fs.promises.cp in node v26.3.0).
+        await using basename = tempDir("cp", {
+          "from/locked/f.txt": "x",
+        });
+        const locked = join(basename, "from", "locked");
+        fs.chmodSync(locked, 0o600);
+        try {
+          const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+          expect({ code: e.code, syscall: e.syscall, path: e.path, dest: e.dest }).toEqual({
+            code: "EACCES",
+            syscall: "lstat",
+            path: join(locked, "f.txt"),
+            dest: undefined,
+          });
+        } finally {
+          fs.chmodSync(locked, 0o700);
+        }
+      },
+    );
+
+    test.skipIf(isWindows)(
+      "symlinks - relative target with a trailing slash is resolved like path.resolve",
+      async () => {
+        await using basename = tempDir("cp", {
+          "from/sub/keep.txt": "keep",
+        });
+        fs.symlinkSync("sub/", join(basename, "from", "link"));
+
+        await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+        // Verified against node v26.3.0: no trailing separator.
+        expect(fs.readlinkSync(join(basename, "result", "link"))).toBe(join(basename, "from", "sub"));
+      },
+    );
+
     test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
       mkfifo(join(basename, "from", "pipe"), 0o666);
       expect(fs.lstatSync(join(basename, "from", "pipe")).isFIFO()).toBe(true);
+
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
+    });
+
+    test.skipIf(isWindows)("recursive - FIFO in one of many sibling directories is rejected", async () => {
+      // More directories on one level than the source scan reads at a time.
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+      for (let d = 0; d < 130; d++) fs.mkdirSync(join(basename, "from", `dir-${d}`));
+      mkfifo(join(basename, "from", "dir-129", "pipe"), 0o666);
 
       const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
@@ -593,6 +784,66 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
   },
 );
 
+// An empty destination has to fail the way node's walker fails it: mkdir("")
+// -> ENOENT, with nothing created. (node's cpSync alone reports whatever
+// std::filesystem::create_directories("") says in its C++ copy, EINVAL on Linux
+// and ESRCH on Windows; given a filter it walks in JS and reports ENOENT/mkdir
+// like its async forms do everywhere.)
+// On macOS a directory source takes the native recursive copy, which rebuilds
+// its destination from a stack buffer; an empty operand used to be returned
+// without ever being copied into that buffer, so the tree was copied to
+// whatever bytes the buffer happened to hold. The copies run in a child so ""
+// resolves against a throwaway cwd, and the listing afterwards proves the cwd
+// is untouched.
+test("empty destination is rejected with ENOENT and creates nothing", async () => {
+  using dir = tempDir("cp-empty-dest", {
+    "d/f": "f",
+    "d/sub/g": "g",
+    "file": "file",
+  });
+  const script = `
+    const fs = require("fs");
+    const shape = e => ({ code: e.code, syscall: e.syscall });
+    const forms = {
+      cpSync: (src, opts) => { try { fs.cpSync(src, "", opts); } catch (e) { return shape(e); } },
+      "promises.cp": (src, opts) => fs.promises.cp(src, "", opts).then(() => undefined, shape),
+      cp: (src, opts) => new Promise(resolve => fs.cp(src, "", opts, e => resolve(e ? shape(e) : undefined))),
+    };
+    (async () => {
+      const results = {};
+      for (const src of ["d", "file"]) {
+        for (const name in forms) {
+          results[name + "(" + src + ")"] = (await forms[name](src, { recursive: true })) ?? "resolved";
+        }
+      }
+      console.log(JSON.stringify({ results, cwd: fs.readdirSync(".", { recursive: true }) }));
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { results, cwd } = JSON.parse(stdout);
+  // Single-file copies report whichever syscall hit "" on that platform (mkdir
+  // of its parent on Linux, copyfile on Windows), so only the code is pinned
+  // for them.
+  expect({ ...results, cwd: cwd.map((entry: string) => entry.replaceAll("\\", "/")).sort() }).toEqual({
+    "cpSync(d)": { code: "ENOENT", syscall: "mkdir" },
+    "promises.cp(d)": { code: "ENOENT", syscall: "mkdir" },
+    "cp(d)": { code: "ENOENT", syscall: "mkdir" },
+    "cpSync(file)": { code: "ENOENT", syscall: expect.any(String) },
+    "promises.cp(file)": { code: "ENOENT", syscall: expect.any(String) },
+    "cp(file)": { code: "ENOENT", syscall: expect.any(String) },
+    cwd: ["d", "d/f", "d/sub", "d/sub/g", "file"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 // fs.promises.cp recursive: when one SingleTask copy fails while siblings are
 // still in flight on the thread pool, the parent AsyncCpTask must not be
 // destroyed until every subtask has dropped its reference. Before the fix,
@@ -654,6 +905,147 @@ test.skipIf(!isPosix)(
     expect(exitCode).toBe(0);
   },
 );
+
+test("fs.promises.cp with errorOnExist and without force rejects an existing empty destination", async () => {
+  // Verified against node v26.3.0. Nothing has to be merged, but node checks
+  // the destination directory itself.
+  using dir = tempDir("cp-error-on-exist", {
+    "from/d/f.txt": "x",
+  });
+  fs.mkdirSync(join(String(dir), "result"));
+
+  await expect(
+    fs.promises.cp(join(String(dir), "from"), join(String(dir), "result"), {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+    }),
+  ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+});
+
+// The node-ported walker copies one entry at a time and awaits several thread
+// pool round trips for each. The native copy runs the file copies on the thread
+// pool in parallel, so a copy it does exactly like node must not go through the
+// walker. The walker binds copyFile/copyFileSync when it first loads, so a
+// fresh process can count how many files it copied.
+describe.concurrent("recursive cp takes the JS walker only when the native copy can differ from node", () => {
+  // `options` is source text for the child process.
+  type Case = {
+    label: string;
+    options?: string;
+    withSymlink?: boolean;
+    destExists?: boolean;
+    depth?: number;
+    walker?: boolean;
+    mayFail?: boolean;
+    skip: boolean;
+  };
+  const cases: Case[] = [
+    // Windows keeps the walker: the native copy there stops at MAX_PATH.
+    { label: "default options", skip: isWindows },
+    { label: "destination is an empty directory", destExists: true, skip: isWindows },
+    // `force` and `errorOnExist` only matter for an entry that exists at the
+    // destination, and the native copy ignores `mode` like a plain copy does.
+    { label: "force: false", options: "{ force: false }", skip: isWindows },
+    { label: "errorOnExist without force", options: "{ errorOnExist: true, force: false }", skip: isWindows },
+    { label: "mode: COPYFILE_FICLONE", options: "{ mode: fs.constants.COPYFILE_FICLONE }", skip: isWindows },
+    // macOS keeps the walker: clonefile() copies a relative link target as
+    // written, and node rewrites it against the source tree.
+    { label: "tree contains a relative symlink", withSymlink: true, skip: !isLinux },
+    // The copy has to fail where a clone is not possible. Only copyFile does
+    // that, so only the route is checked.
+    {
+      label: "mode: COPYFILE_FICLONE_FORCE",
+      options: "{ mode: fs.constants.COPYFILE_FICLONE_FORCE }",
+      walker: true,
+      mayFail: true,
+      skip: false,
+    },
+    { label: "filter", options: "{ filter: () => true }", walker: true, skip: false },
+    // The native copy recurses once per directory level on a thread stack.
+    { label: "tree deeper than 64 levels", depth: 70, walker: true, skip: false },
+  ];
+  const forms = ["cpSync", "cp", "promises.cp"];
+  for (const {
+    label,
+    options = "{}",
+    withSymlink = false,
+    destExists = false,
+    depth = 0,
+    walker = false,
+    mayFail = false,
+    skip,
+  } of cases) {
+    test.skipIf(skip)(label, async () => {
+      const files: Record<string, string> = {};
+      for (let d = 0; d < 4; d++) {
+        for (let f = 0; f < 4; f++) files[`from/dir-${d}/file-${f}.txt`] = `${d}-${f}`;
+      }
+      using dir = tempDir("cp-native-path", files);
+      if (depth) {
+        const levels = Array.from({ length: depth }, () => "n");
+        fs.mkdirSync(join(String(dir), "from", ...levels), { recursive: true });
+        fs.writeFileSync(join(String(dir), "from", ...levels, "deep.txt"), "deep");
+      }
+      if (withSymlink) fs.symlinkSync(join("dir-0", "file-0.txt"), join(String(dir), "from", "link"));
+      if (destExists) {
+        for (const form of forms) fs.mkdirSync(join(String(dir), "to-" + form));
+      }
+
+      const script = `
+        import fs from "node:fs";
+        let walkerCopies = 0;
+        const { copyFileSync } = fs;
+        const { copyFile } = fs.promises;
+        fs.copyFileSync = function () { walkerCopies++; return copyFileSync.apply(this, arguments); };
+        fs.promises.copyFile = function () { walkerCopies++; return copyFile.apply(this, arguments); };
+        const options = { recursive: true, ...${options} };
+        const copies = {
+          "cpSync": dest => fs.cpSync("from", dest, options),
+          "cp": dest => new Promise((resolve, reject) => fs.cp("from", dest, options, err => (err ? reject(err) : resolve()))),
+          "promises.cp": dest => fs.promises.cp("from", dest, options),
+        };
+        const result = {};
+        for (const form in copies) {
+          walkerCopies = 0;
+          let error = null;
+          try { await copies[form]("to-" + form); } catch (e) { error = e.code; }
+          const copied = fs.existsSync("to-" + form)
+            ? fs.readdirSync("to-" + form, { recursive: true }).filter(name => name.endsWith(".txt")).length
+            : 0;
+          result[form] = { tookWalker: walkerCopies > 0, copied, error };
+        }
+        console.log(JSON.stringify(result));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout);
+      if (mayFail) {
+        expect(forms.map(form => [form, result[form].tookWalker])).toEqual(forms.map(form => [form, walker]));
+      } else {
+        const copied = depth ? 17 : 16;
+        expect(result).toEqual(
+          Object.fromEntries(forms.map(form => [form, { tookWalker: walker, copied, error: null }])),
+        );
+      }
+      expect(exitCode).toBe(0);
+      if (withSymlink) {
+        // The child resolves the link against its working directory.
+        const cwd = fs.realpathSync(String(dir));
+        for (const form of forms) {
+          expect(fs.readlinkSync(join(cwd, "to-" + form, "link"))).toBe(join(cwd, "from", "dir-0", "file-0.txt"));
+        }
+      }
+    });
+  }
+});
 
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {
   using dir = tempDir("cp-dest-mode", {});

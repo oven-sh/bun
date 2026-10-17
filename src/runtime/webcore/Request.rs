@@ -162,6 +162,10 @@ impl crate::webcore::body::BodyOwnerJs for Request {
     fn stream_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         js_gen::stream_set_cached(this, global, value)
     }
+    #[inline]
+    fn body_error_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        crate::generated_classes::js_Request::body_error_set_cached(this, global, value)
+    }
 }
 
 impl BodyMixin for Request {
@@ -408,6 +412,7 @@ impl Request {
             cloned.js_ref.set(JsRef::init_weak(js_wrapper));
         }
         cloned.check_body_stream_ref(global_this);
+        cloned.check_body_error_ref(global_this);
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
     }
 }
@@ -481,6 +486,8 @@ impl Request {
         self.js_ref.set(JsRef::init_weak(js_value));
 
         self.check_body_stream_ref(global_object);
+        // A body that failed before it had a wrapper: the clone of a failed Request.
+        self.check_body_error_ref(global_object);
         js_value
     }
 }
@@ -976,6 +983,11 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
+    #[inline]
+    fn check_body_error_ref(&self, global_object: &JSGlobalObject) {
+        <Self as BodyMixin>::check_body_error_ref(self, global_object)
+    }
+
     pub(crate) fn construct_into(
         cx: &bun_jsc::JsThread<'_>,
         arguments: &[JSValue],
@@ -1099,6 +1111,10 @@ impl Request {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
+                        // `clone_into` wrote an empty `js_ref` over the one seeded above.
+                        req.js_ref.set(JsRef::init_weak(this_value));
+                        req.check_body_stream_ref(cx.global());
+                        req.check_body_error_ref(cx.global());
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
                         return Ok(req);
@@ -1428,6 +1444,8 @@ impl Request {
 
         req.calculate_estimated_byte_size();
         req.check_body_stream_ref(cx.global());
+        // The body can be the copy of a failed Request's or Response's.
+        req.check_body_error_ref(cx.global());
         success = true;
 
         cleanup(&mut req, body_seed_ptr, success);

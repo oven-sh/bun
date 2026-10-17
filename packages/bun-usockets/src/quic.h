@@ -143,7 +143,14 @@ void us_quic_stream_shutdown(us_quic_stream_t *s);
 void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
-void us_quic_stream_reset(us_quic_stream_t *s);
+
+/* RESET_STREAM(error_code) instead of FIN: in HTTP/3 a FIN marks the bytes
+ * sent so far as a complete message. */
+void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code);
+/* Non-zero, with the code in *code, once the peer has sent RESET_STREAM for
+ * the half we read from. Answers only while the stream is live, up to and
+ * including on_stream_close. */
+int us_quic_stream_peer_reset(us_quic_stream_t *s, uint64_t *code);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);

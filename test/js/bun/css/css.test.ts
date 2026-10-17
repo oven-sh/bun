@@ -223,6 +223,100 @@ describe("css tests", () => {
     minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
+  describe("round() folding", () => {
+    // CSS Values 4: round() picks between "lower B", the multiple of B nearer to -∞, and "upper B",
+    // the multiple nearer to +∞. `nearest` takes upper B when the value is exactly halfway.
+    // The expected values are what Chrome computes.
+    minify_test(`a { margin-left: round(2.5px, 1px) }`, `a{margin-left:3px}`);
+    minify_test(`a { margin-left: round(-2.5px, 1px) }`, `a{margin-left:-2px}`);
+    minify_test(`a { margin-left: round(7.5px, 5px) }`, `a{margin-left:10px}`);
+    minify_test(`a { margin-left: round(-7.5px, 5px) }`, `a{margin-left:-5px}`);
+    minify_test(`a { margin-left: round(-1.5px, 1px) }`, `a{margin-left:-1px}`);
+    minify_test(`a { margin-left: round(-.5px, 1px) }`, `a{margin-left:0}`);
+    minify_test(`a { margin-left: round(nearest, -2.5px, 1px) }`, `a{margin-left:-2px}`);
+    // Not a tie: the nearer multiple wins on both sides of zero.
+    minify_test(`a { margin-left: round(13px, 10px) }`, `a{margin-left:10px}`);
+    minify_test(`a { margin-left: round(18px, 10px) }`, `a{margin-left:20px}`);
+    minify_test(`a { margin-left: round(-13px, 10px) }`, `a{margin-left:-10px}`);
+    minify_test(`a { margin-left: round(-18px, 10px) }`, `a{margin-left:-20px}`);
+    // A value that is already a multiple stays, with every strategy.
+    minify_test(`a { margin-left: round(-10px, 5px) }`, `a{margin-left:-10px}`);
+    minify_test(`a { margin-left: round(up, 10px, 5px) }`, `a{margin-left:10px}`);
+    minify_test(`a { margin-left: round(down, 10px, 5px) }`, `a{margin-left:10px}`);
+    minify_test(`a { margin-left: round(to-zero, 10px, 5px) }`, `a{margin-left:10px}`);
+    minify_test(`a { margin-left: round(up, -10px, 5px) }`, `a{margin-left:-10px}`);
+    minify_test(`a { margin-left: round(down, -10px, 5px) }`, `a{margin-left:-10px}`);
+    minify_test(`a { margin-left: round(to-zero, -10px, 5px) }`, `a{margin-left:-10px}`);
+    // The other strategies at a negative tie.
+    minify_test(`a { margin-left: round(up, -15px, 10px) }`, `a{margin-left:-10px}`);
+    minify_test(`a { margin-left: round(down, -15px, 10px) }`, `a{margin-left:-20px}`);
+    minify_test(`a { margin-left: round(to-zero, -15px, 10px) }`, `a{margin-left:-10px}`);
+    // The sign of the step does not change which multiple is the upper one. The first six rows
+    // are the "negative step" block of WPT css/css-values/round-function.html.
+    minify_test(`a { margin-left: round(23px, -10px) }`, `a{margin-left:20px}`);
+    minify_test(`a { margin-left: round(18px, -10px) }`, `a{margin-left:20px}`);
+    minify_test(`a { margin-left: round(15px, -10px) }`, `a{margin-left:20px}`);
+    minify_test(`a { margin-left: round(13px, -10px) }`, `a{margin-left:10px}`);
+    minify_test(`a { margin-left: round(-13px, -10px) }`, `a{margin-left:-10px}`);
+    minify_test(`a { margin-left: round(-18px, -10px) }`, `a{margin-left:-20px}`);
+    minify_test(`a { margin-left: round(-15px, -10px) }`, `a{margin-left:-10px}`);
+    minify_test(`a { margin-left: round(up, 23px, -10px) }`, `a{margin-left:30px}`);
+    minify_test(`a { margin-left: round(down, 23px, -10px) }`, `a{margin-left:20px}`);
+    minify_test(`a { margin-left: round(up, -23px, -10px) }`, `a{margin-left:-20px}`);
+    minify_test(`a { margin-left: round(down, -23px, -10px) }`, `a{margin-left:-30px}`);
+    minify_test(`a { margin-left: round(to-zero, 23px, -10px) }`, `a{margin-left:20px}`);
+    minify_test(`a { margin-left: round(to-zero, -23px, -10px) }`, `a{margin-left:-20px}`);
+    // A finite value with an infinite step is zero. The exceptions are `up` with a positive
+    // value (+∞) and `down` with a negative value (-∞).
+    minify_test(`a { margin-left: round(up, 5px, calc(infinity * 1px)) }`, `a{margin-left:3.40282e38px}`);
+    minify_test(`a { margin-left: round(down, -5px, calc(infinity * 1px)) }`, `a{margin-left:-3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px + round(5px, calc(infinity * 1px))) }`, `a{margin-left:1px}`);
+    minify_test(`a { margin-left: calc(1px + round(up, -5px, calc(infinity * 1px))) }`, `a{margin-left:1px}`);
+    minify_test(`a { margin-left: calc(1px + round(down, 5px, calc(infinity * 1px))) }`, `a{margin-left:1px}`);
+    minify_test(`a { margin-left: calc(1px + round(to-zero, -5px, calc(-infinity * 1px))) }`, `a{margin-left:1px}`);
+    // A zero value is not positive and not negative, so `up` and `down` give a zero too.
+    minify_test(`a { margin-left: calc(1px + round(up, 0px, calc(infinity * 1px))) }`, `a{margin-left:1px}`);
+    minify_test(`a { margin-left: calc(1px + round(down, 0px, calc(infinity * 1px))) }`, `a{margin-left:1px}`);
+    // That zero has the sign of the value: pow(+0, -1) is +∞ and pow(-0, -1) is -∞.
+    minify_test(`a { margin-left: calc(1px * pow(round(up, 0, infinity), -1)) }`, `a{margin-left:3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px * pow(round(up, -1 * 0, infinity), -1)) }`, `a{margin-left:-3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px * pow(round(down, 0, infinity), -1)) }`, `a{margin-left:3.40282e38px}`);
+    minify_test(
+      `a { margin-left: calc(1px * pow(round(down, -1 * 0, infinity), -1)) }`,
+      `a{margin-left:-3.40282e38px}`,
+    );
+    // An infinite value keeps its infinity. A zero step is NaN, and so are two infinite
+    // arguments with every strategy. NaN prints as zero.
+    minify_test(`a { margin-left: round(calc(-infinity * 1px), -5px) }`, `a{margin-left:-3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px + round(5px, 0px)) }`, `a{margin-left:0px}`);
+    minify_test(
+      `a { margin-left: calc(1px + round(up, calc(infinity * 1px), calc(infinity * 1px))) }`,
+      `a{margin-left:0px}`,
+    );
+    minify_test(
+      `a { margin-left: calc(1px + round(down, calc(-infinity * 1px), calc(infinity * 1px))) }`,
+      `a{margin-left:0px}`,
+    );
+    // Other value types and contexts.
+    minify_test(`a { rotate: round(-45deg, 30deg) }`, `a{rotate:-30deg}`);
+    minify_test(`a { transition-delay: round(-2.5s, 1s) }`, `a{transition-delay:-2s}`);
+    minify_test(`a { transition-delay: round(-2.5s, 1000ms) }`, `a{transition-delay:-2s}`);
+    minify_test(`a { margin-left: round(-75%, 50%) }`, `a{margin-left:-50%}`);
+    minify_test(`a { margin-left: round(-1.5em, 1em) }`, `a{margin-left:-1em}`);
+    minify_test(`a { scale: round(-2.5, 1) }`, `a{scale:-2}`);
+    minify_test(`a { color: hsl(round(-45, 30) 50% 50%) }`, `a{color:#bf4080}`);
+    minify_test(`@media (min-width: round(-2.5px, 1px)) { a { color: red } }`, `@media (width>=-2px){a{color:red}}`);
+    minify_test(
+      `@property --x { syntax: "<length>"; inherits: false; initial-value: round(-2.5px, 1px) }`,
+      `@property --x{syntax:"<length>";inherits:false;initial-value:-2px}`,
+    );
+    // The folded value feeds the enclosing math function.
+    minify_test(`a { margin-left: calc(round(-2.5px, 1px) * 2) }`, `a{margin-left:-4px}`);
+    minify_test(`a { margin-left: max(round(-2.5px, 1px), -2.75px) }`, `a{margin-left:-2px}`);
+    // A zero result has a sign: round(-.5, 1) and round(-.4, 1) are both -0.
+    minify_test(`a { margin-left: calc(1px * pow(round(-.5, 1), -1)) }`, `a{margin-left:-3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px * pow(round(-.4, 1), -1)) }`, `a{margin-left:-3.40282e38px}`);
+  });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
     minify_test(`a { width: calc(100% - 2 - 1) }`, `a{width:calc(100% - 2 - 1)}`); // ideally 100% - 3

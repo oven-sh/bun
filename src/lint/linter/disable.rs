@@ -22,6 +22,7 @@ pub(crate) struct Parent<'a> {
     pub(crate) comment: Span,
     /// The list of rules as it is written, trimmed.
     pub(crate) list: &'a [u8],
+    pub(crate) list_span: Span,
     /// The names in `list`, of rules that exist and of others.
     pub(crate) names: Vec<&'a [u8]>,
     pub(crate) justification: &'a [u8],
@@ -86,8 +87,14 @@ impl Input<'_, '_> {
     /// `createIndividualDirectivesRemoval`: removes `name` from the list of `parent`.
     fn removal_from_list(&self, parent: &Parent, name: &[u8]) -> Option<Span> {
         let (text, list) = (self.file.text(), parent.list);
-        let list_start = parent.comment.start as usize
-            + strings::index_of(text.get(parent.comment.start as usize..)?, list)?;
+        let joined = self.file.joined_comment(parent.list_span);
+        let list_start = match joined {
+            Some(joined) => joined.index_of(parent.list_span.start),
+            None => {
+                parent.comment.start as usize
+                    + strings::index_of(text.get(parent.comment.start as usize..)?, list)?
+            }
+        };
         // `(?:^|\s*,\s*)(?<quote>['"]?)name\k<quote>(?:\s*,\s*|$)`
         let mut from = 0;
         while let Some(found) = strings::index_of(&list[from..], name) {
@@ -134,10 +141,11 @@ impl Input<'_, '_> {
                 (Some(before), Some(after)) => (before, after),
                 _ => (start, end),
             };
-            return Some(Span::new(
-                (list_start + start) as u32,
-                (list_start + end) as u32,
-            ));
+            let (start, end) = (list_start + start, list_start + end);
+            return Some(match joined {
+                Some(joined) => joined.span_of(start..end),
+                None => Span::new(start as u32, end as u32),
+            });
         }
         None
     }

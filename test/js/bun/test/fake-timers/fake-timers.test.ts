@@ -933,7 +933,7 @@ describe("performance.now() mocking", () => {
   test("performance.timeOrigin follows the fake clock", () => {
     const realTimeOrigin = performance.timeOrigin;
     const fakeNow = new Date("2000-01-01T00:00:00.000Z").getTime();
-    vi.useFakeTimers({ now: fakeNow });
+    bunVi.useFakeTimers({ now: fakeNow });
 
     // performance.now() restarts at 0, so the fake epoch is the origin.
     expect(performance.now()).toBe(0);
@@ -955,6 +955,17 @@ describe("performance.now() mocking", () => {
 
     vi.useRealTimers();
     expect(performance.timeOrigin).toBe(realTimeOrigin);
+  });
+
+  test(`for vi of "vitest", setSystemTime() leaves performance.timeOrigin where useFakeTimers() put it`, () => {
+    vi.useFakeTimers({ now: 5000 });
+    vi.setSystemTime(20_000);
+    vi.advanceTimersByTime(3);
+    expect({ timeOrigin: performance.timeOrigin, date: Date.now(), now: performance.now() }).toEqual({
+      timeOrigin: 5000,
+      date: 20_003,
+      now: 3,
+    });
   });
 
   test("performance.timeOrigin is not affected by setSystemTime without fake timers", () => {
@@ -1001,6 +1012,84 @@ describe("performance.now() mocking", () => {
     );
     expect(Date.now()).toBe(5000);
     expect(performance.timeOrigin).toBe(5000);
+  });
+});
+
+describe.each([
+  ["vi", vi],
+  ["jest", jest],
+])("what a test put on Date.now and performance.now, %s", (_, api) => {
+  const builtins = [Date.now, performance.now];
+  const descriptors = () => [
+    Object.getOwnPropertyDescriptor(Date, "now"),
+    Object.getOwnPropertyDescriptor(performance, "now"),
+  ];
+  const untouched = descriptors();
+  afterEach(() => {
+    api.useRealTimers();
+    api.restoreAllMocks();
+    [Date.now, performance.now] = builtins;
+  });
+
+  test("a spy makes way for the fake clock and is back afterwards", () => {
+    const spies = [api.spyOn(Date, "now").mockReturnValue(1000), api.spyOn(performance, "now").mockReturnValue(7)];
+    api.useFakeTimers({ now: 50_000 });
+    api.advanceTimersByTime(250);
+    expect([Date.now(), performance.now()]).toEqual([50_250, 250]);
+    expect(spies.map(spy => spy.mock.calls.length)).toEqual([0, 0]);
+    api.useRealTimers();
+    expect([Date.now(), performance.now()]).toEqual([1000, 7]);
+  });
+
+  test("so does a function that was assigned", () => {
+    Date.now = () => 5;
+    performance.now = () => 6;
+    api.useFakeTimers({ now: 50_000 });
+    expect([Date.now(), performance.now()]).toEqual([50_000, 0]);
+    api.useRealTimers();
+    expect([Date.now(), performance.now()]).toEqual([5, 6]);
+  });
+
+  test("a spy stays if its clock isn't faked", () => {
+    api.spyOn(Date, "now").mockReturnValue(1000);
+    api.spyOn(performance, "now").mockReturnValue(7);
+    api.useFakeTimers({ doNotFake: ["Date", "performance"] });
+    expect([Date.now(), performance.now()]).toEqual([1000, 7]);
+  });
+
+  test("a spy put on while the clock is faked goes with the fake clock", () => {
+    api.useFakeTimers({ now: 50_000 });
+    api.spyOn(Date, "now").mockReturnValue(1000);
+    api.spyOn(performance, "now").mockReturnValue(7);
+    expect([Date.now(), performance.now()]).toEqual([1000, 7]);
+    api.useRealTimers();
+    expect([Date.now, performance.now]).toEqual(builtins);
+  });
+
+  test("a spy restored while the clock is faked stays away", () => {
+    api.spyOn(Date, "now").mockReturnValue(1000);
+    api.spyOn(performance, "now").mockReturnValue(7);
+    api.useFakeTimers({ now: 50_000 });
+    api.restoreAllMocks();
+    expect([Date.now(), performance.now()]).toEqual([50_000, 0]);
+    api.useRealTimers();
+    expect([Date.now, performance.now]).toEqual(builtins);
+  });
+
+  test("without any, both properties are left as they are", () => {
+    api.useFakeTimers();
+    expect(descriptors()).toEqual(untouched);
+    api.useRealTimers();
+    expect(descriptors()).toEqual(untouched);
+  });
+
+  test("afterwards, both properties have the attributes they had", () => {
+    api.spyOn(Date, "now");
+    api.spyOn(performance, "now");
+    api.useFakeTimers();
+    api.useRealTimers();
+    api.restoreAllMocks();
+    expect(descriptors()).toEqual(untouched);
   });
 });
 

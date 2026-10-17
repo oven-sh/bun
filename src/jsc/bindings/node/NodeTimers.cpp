@@ -8,6 +8,8 @@
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
 #include "InternalModuleRegistry.h"
+#include "Performance.h"
+#include <JavaScriptCore/DateConstructor.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -301,6 +303,16 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeRequestAnimationFrame, (JSGlobalObject * gl
     RELEASE_AND_RETURN(scope, Bun__FakeTimers__requestAnimationFrame(globalObject, JSValue::encode(callFrame->jsCallee()), JSValue::encode(callback)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionFakeDateNow, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(dateNowImpl(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFakePerformanceNow, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsDoubleNumber(static_cast<double>(Bun__readOriginTimer(bunVM(globalObject))) / 1000000.0));
+}
+
 // Must match `Api` in FakeTimers.rs.
 enum class FakeTimerFunction : uint8_t {
     SetTimeout,
@@ -313,6 +325,8 @@ enum class FakeTimerFunction : uint8_t {
     QueueMicrotask,
     RequestAnimationFrame,
     CancelAnimationFrame,
+    DateNow,
+    PerformanceNow,
 };
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__FakeTimers__createFunction(Zig::GlobalObject* globalObject, uint8_t function)
@@ -358,6 +372,10 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__FakeTimers__cr
         return JSValue::encode(create("requestAnimationFrame"_s, functionFakeRequestAnimationFrame));
     case FakeTimerFunction::CancelAnimationFrame:
         return JSValue::encode(create("cancelAnimationFrame"_s, functionClearTimeout));
+    case FakeTimerFunction::DateNow:
+        return JSValue::encode(JSFunction::create(vm, globalObject, 0, "now"_s, functionFakeDateNow, ImplementationVisibility::Public));
+    case FakeTimerFunction::PerformanceNow:
+        return JSValue::encode(JSFunction::create(vm, globalObject, 0, "now"_s, functionFakePerformanceNow, ImplementationVisibility::Public));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -389,6 +407,17 @@ extern "C" JSC::EncodedJSValue Bun__FakeTimers__getDirect(Zig::GlobalObject* glo
     return JSValue::encode(asObject(JSValue::decode(owner))->getDirect(vm, Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy))));
 }
 
+// Keeps the property's attributes: `Date.now` isn't enumerable.
+extern "C" void Bun__FakeTimers__putDirect(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* object = asObject(JSValue::decode(owner));
+    auto property = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
+    unsigned attributes = 0;
+    object->getDirect(vm, property, attributes);
+    object->putDirect(vm, property, JSValue::decode(value), attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+}
+
 // node:timers and node:timers/promises capture the globals when first loaded, so load them before installing fakes.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::GlobalObject* globalObject)
 {
@@ -403,6 +432,23 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__FakeTimers__processObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->processObject());
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__FakeTimers__dateConstructor(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->datePrototype()->getDirect(vm, vm.propertyNames->constructor));
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__FakeTimers__performanceObject(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->m_performanceObject.getInitializedOnMainThread(globalObject));
+}
+
+extern "C" bool Bun__FakeTimers__isNativeFunction(JSC::EncodedJSValue value)
+{
+    auto* function = dynamicDowncast<JSFunction>(JSValue::decode(value));
+    return function && function->isHostFunction();
 }
 
 // NaN if setSystemTime() hasn't set a time.

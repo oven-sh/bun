@@ -17,6 +17,7 @@ use bun_jsc::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
+    safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
 }
 
 unsafe extern "C" {
@@ -28,6 +29,13 @@ unsafe extern "C" {
         original: JSValue,
     );
     safe fn Bun__FakeTimers__originalOf(originals: JSValue, value: JSValue) -> JSValue;
+    safe fn Bun__FakeTimers__isNativeFunction(value: JSValue) -> bool;
+    safe fn Bun__FakeTimers__putDirect(
+        global: &JSGlobalObject,
+        owner: JSValue,
+        name: &bun_core::String,
+        value: JSValue,
+    );
     safe fn Bun__FakeTimers__getDirect(
         global: &JSGlobalObject,
         owner: JSValue,
@@ -55,7 +63,7 @@ enum Api {
 }
 
 impl Api {
-    const FUNCTIONS: [Api; 10] = [
+    const FUNCTIONS: [Api; 12] = [
         Api::SetTimeout,
         Api::ClearTimeout,
         Api::SetInterval,
@@ -66,6 +74,8 @@ impl Api {
         Api::QueueMicrotask,
         Api::RequestAnimationFrame,
         Api::CancelAnimationFrame,
+        Api::Date,
+        Api::Performance,
     ];
 
     /// Indexed by `Api as usize`. A `None` name is accepted but there's nothing to fake for it.
@@ -93,9 +103,24 @@ impl Api {
         Self::NAMES[self as usize].0
     }
 
+    /// The property of `owner()` that holds the function.
+    fn property(self) -> &'static str {
+        match self {
+            Api::Date | Api::Performance => "now",
+            _ => self.name(),
+        }
+    }
+
+    fn put(self, global: &JSGlobalObject, function: JSValue) {
+        let name = bun_core::String::static_(self.property());
+        Bun__FakeTimers__putDirect(global, self.owner(global), &name, function);
+    }
+
     fn owner(self, global: &JSGlobalObject) -> JSValue {
         match self {
             Api::NextTick => bun_jsc::cpp::Bun__FakeTimers__processObject(global),
+            Api::Date => bun_jsc::cpp::Bun__FakeTimers__dateConstructor(global),
+            Api::Performance => bun_jsc::cpp::Bun__FakeTimers__performanceObject(global),
             _ => global.to_js_value(),
         }
     }
@@ -197,6 +222,7 @@ struct Options {
     now: Option<f64>,
     faked: ApiSet,
     fakes_abort_signal_timeout: bool,
+    system_time_moves_time_origin: bool,
     tick_mode: TickMode,
     loop_limit: u32,
 }
@@ -208,6 +234,7 @@ impl Options {
             now: None,
             faked,
             fakes_abort_signal_timeout: true,
+            system_time_moves_time_origin: true,
             tick_mode: TickMode::Manual,
             loop_limit: match flavor {
                 Flavor::Vi => 10_000,
@@ -446,6 +473,8 @@ pub(crate) struct FakeTimers {
     pub(crate) timers: TimerHeap,
     now: Timespec,
     date_now_offset: f64,
+    /// `performance.timeOrigin` for `vi` of "vitest": the time at `useFakeTimers()`, whatever `setSystemTime()` does later.
+    fixed_time_origin: Option<f64>,
     loop_limit: u32,
     replaced: Vec<Replaced>,
     /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
@@ -472,6 +501,7 @@ impl Default for FakeTimers {
             timers: TimerHeap::default(),
             now: Timespec::EPOCH,
             date_now_offset: 0.0,
+            fixed_time_origin: None,
             loop_limit: 0,
             replaced: Vec::new(),
             originals: StrongOptional::empty(),
@@ -493,7 +523,7 @@ const AUTO_STEP: u32 = 0;
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
-/// move, so `performance.timeOrigin` follows the rebased offset. While fake
+/// move, so `performance.timeOrigin` follows the rebased offset, except for `vi` of "vitest". While fake
 /// timers are inactive it only records `from_preload`. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
@@ -643,7 +673,8 @@ impl FakeTimers {
             vm.overridden_performance_now = Some(self.now.ns());
             // `Date.now() == date_now_offset + performance.now()`, so the offset is
             // the fake clock's `performance.timeOrigin`.
-            vm.overridden_time_origin = Some(self.date_now_offset);
+            vm.overridden_time_origin =
+                Some(self.fixed_time_origin.unwrap_or(self.date_now_offset));
         }
     }
 
@@ -675,6 +706,8 @@ impl FakeTimers {
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
         self.date_now_offset = date_now.floor();
+        self.fixed_time_origin =
+            (!options.system_time_moves_time_origin).then_some(self.date_now_offset);
         self.publish_clock(global);
     }
 
@@ -804,7 +837,11 @@ impl FakeTimers {
         if restore == Restore::WhereStillInstalled {
             let _reading = ReadingGlobals::begin();
             deactivated.replaced.retain(|replaced| {
-                match replaced.api.owner(global).get(global, replaced.api.name()) {
+                match replaced
+                    .api
+                    .owner(global)
+                    .get(global, replaced.api.property())
+                {
                     Ok(installed) => installed == Some(replaced.fake.get()),
                     Err(err) => {
                         crate::dispatch::fold(Err(err));
@@ -814,8 +851,12 @@ impl FakeTimers {
             });
         }
         for Replaced { api, original, .. } in deactivated.replaced {
-            api.owner(global)
-                .put(global, api.name().as_bytes(), original.get());
+            // Restored while the clock was faked, it has already put back what it replaced.
+            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
+            {
+                continue;
+            }
+            api.put(global, original.get());
         }
         deactivated.drives
     }
@@ -836,8 +877,7 @@ impl FakeTimers {
                 .activate(global, options, date_now)
         };
         for Replaced { api, fake, .. } in &replaced {
-            api.owner(global)
-                .put(global, api.name().as_bytes(), fake.get());
+            api.put(global, fake.get());
         }
         // SAFETY: as above.
         unsafe { (*timer_all()).fake_timers.replaced = replaced };
@@ -861,7 +901,8 @@ impl FakeTimers {
         let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
         let mut fakes = Vec::new();
         for api in Api::FUNCTIONS {
-            if !faked.contains(api) {
+            // A test can take `Date.prototype.constructor` away.
+            if !faked.contains(api) || !api.owner(global).is_object() {
                 continue;
             }
             // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
@@ -872,7 +913,7 @@ impl FakeTimers {
             let original = match replaced_now {
                 Some(original) => original,
                 None => {
-                    let installed = api.owner(global).get(global, api.name())?;
+                    let installed = api.owner(global).get(global, api.property())?;
                     let installed = installed.unwrap_or(JSValue::UNDEFINED);
                     original_of(originals, installed).unwrap_or(installed)
                 }
@@ -881,6 +922,17 @@ impl FakeTimers {
             if matches!(api, Api::RequestAnimationFrame | Api::CancelAnimationFrame)
                 && !original.is_callable()
             {
+                continue;
+            }
+            // These two clocks are faked below the builtin `now`, which stays. A spy on it makes way, as when sinon replaces the whole object.
+            if matches!(api, Api::Date | Api::Performance)
+                && Bun__FakeTimers__isNativeFunction(original)
+            {
+                fakes.push(Replaced {
+                    api,
+                    original: Strong::create(original, global),
+                    fake: Strong::create(original, global),
+                });
                 continue;
             }
             let fake = bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?;
@@ -902,13 +954,16 @@ impl FakeTimers {
         };
         for api in Api::FUNCTIONS {
             let owner = api.owner(global);
-            let name = bun_core::String::static_(api.name());
+            if !owner.is_object() {
+                continue;
+            }
+            let name = bun_core::String::static_(api.property());
             let installed = Bun__FakeTimers__getDirect(global, owner, &name);
             // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
             if !unsafe { (*timer_all()).fake_timers.is_installed(installed) }
                 && let Some(original) = original_of(originals, installed)
             {
-                owner.put(global, api.name().as_bytes(), original);
+                api.put(global, original);
             }
         }
     }
@@ -1510,14 +1565,14 @@ fn use_fake_timers(
     frame: &CallFrame,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    use_fake_timers_with_default(global, frame, flavor, ApiSet::DEFAULT, true)
+    use_fake_timers_with_default(global, frame, flavor, ApiSet::DEFAULT, false)
 }
 
 /// `vi.useFakeTimers()` of "vitest".
 #[bun_jsc::host_fn]
 fn vitest_use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let faked = ApiSet(ApiSet::DEFAULT.0 | ApiSet::IMMEDIATES.0);
-    use_fake_timers_with_default(global, frame, Flavor::Vi, faked, false)
+    use_fake_timers_with_default(global, frame, Flavor::Vi, faked, true)
 }
 
 #[optimize(size)]
@@ -1526,10 +1581,11 @@ fn use_fake_timers_with_default(
     frame: &CallFrame,
     flavor: Flavor,
     faked: ApiSet,
-    fakes_abort_signal_timeout: bool,
+    is_of_vitest: bool,
 ) -> JsResult<JSValue> {
     let mut options = Options::from_js(global, frame.argument(0), flavor, faked)?;
-    options.fakes_abort_signal_timeout = fakes_abort_signal_timeout;
+    options.fakes_abort_signal_timeout = !is_of_vitest;
+    options.system_time_moves_time_origin = !is_of_vitest;
     let date_now = options.now.unwrap_or_else(|| match flavor {
         // vitest starts from the current `Date.now()`, mocked or not (`setSystemTime()`, the previous fake clock).
         Flavor::Vi => bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global),

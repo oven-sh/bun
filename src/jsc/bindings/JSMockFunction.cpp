@@ -806,6 +806,8 @@ public:
     // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
+    bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
+
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
@@ -2786,6 +2788,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
 }
 
 extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);
+
+extern "C" bool JSMock__isRestoredSpy(JSC::EncodedJSValue value)
+{
+    auto* mock = dynamicDowncast<JSMockFunction>(JSValue::decode(value));
+    return mock && mock->isRestoredSpy();
+}
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
@@ -394,6 +394,80 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
+  });
+
+  // The spill copies the pending tail into the uWS backpressure queue. The
+  // chunk CRLF and the terminating chunk go right behind it. If that growth
+  // fits the tail exactly, those few bytes grow the queue a second time and
+  // copy the whole tail, so the server holds two copies of the body at once.
+  // VmHWM is Linux only, and the test reads the peak of a child of its own.
+  test.skipIf(!isLinux)("the framing behind a spilled tail does not copy the tail again", async () => {
+    using dir = tempDir("pinned-write-peak", {});
+    const socketPath = `${dir}/s`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        const http = require("node:http");
+        const net = require("node:net");
+        const { once } = require("node:events");
+        const CHUNK_SIZE = ${CHUNK_SIZE};
+        // A unix socket takes about 200 KB, so the rest of the body waits.
+        const SOCKET = ${JSON.stringify(socketPath)};
+        const peakBytes = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
+
+        const wrote = Promise.withResolvers();
+        const ended = Promise.withResolvers();
+        let baseline = 0;
+        let peakOverBaseline = 0;
+        const server = http.createServer((req, res) => {
+          baseline = peakBytes();
+          // Zero pages are not resident, so the peak counts the copies only.
+          // No Content-Length: chunked framing is what follows the tail.
+          res.write(Buffer.alloc(CHUNK_SIZE));
+          req.on("end", () => {
+            // uWS has the socket corked while it reads the request body.
+            res.end();
+            peakOverBaseline = peakBytes() - baseline;
+            ended.resolve();
+          });
+          req.resume();
+          wrote.resolve();
+        });
+        await once(server.listen(SOCKET), "listening");
+
+        const socket = net.connect(SOCKET);
+        await once(socket, "connect");
+        socket.pause();
+        socket.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 5\\r\\nConnection: close\\r\\n\\r\\nhe");
+        await wrote.promise;
+        socket.write("llo");
+        await ended.promise;
+
+        let bodyBytes = -4;
+        socket.on("data", chunk => { bodyBytes += chunk.length; });
+        socket.resume();
+        await once(socket, "close");
+        server.close();
+        console.log(JSON.stringify({ bodyBytes, ratio: Math.round((peakOverBaseline / CHUNK_SIZE) * 100) / 100 }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { bodyBytes, ratio } = JSON.parse(stdout.trim());
+    // The head, the chunk size lines and the terminating chunk ride along.
+    expect(bodyBytes).toBeGreaterThan(CHUNK_SIZE);
+    // One copy of the tail is 1.0. Two copies, which is what an exact fit
+    // costs, measure 2.0 and 2.2 under the sanitizer.
+    expect(ratio).toBeLessThan(1.5);
   });
 
   test("a second write before drain releases the pin on the first buffer", async () => {

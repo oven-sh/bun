@@ -50,6 +50,12 @@
 #ifndef us_strdup
 #define us_strdup mi_strdup
 #endif
+/* The size of the block an allocation really got, which is at least the
+ * requested size. A buffer that reads it keeps the rest of its block instead
+ * of asking the allocator for those bytes later. */
+#ifndef us_usable_size
+#define us_usable_size(ptr, requested) mi_usable_size(ptr)
+#endif
 #else
 #ifndef us_calloc
 #define us_calloc calloc
@@ -65,6 +71,11 @@
 #endif
 #ifndef us_strdup
 #define us_strdup strdup
+#endif
+/* The sanitizer allocator reports exactly what was asked for, and reading past
+ * it is what the sanitizer looks for. */
+#ifndef us_usable_size
+#define us_usable_size(ptr, requested) (requested)
 #endif
 #endif
 

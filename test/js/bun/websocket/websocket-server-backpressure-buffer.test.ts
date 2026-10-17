@@ -1,4 +1,5 @@
 import { setSocketOptions } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { tls as cert, isWindows } from "harness";
 import crypto from "node:crypto";
@@ -246,6 +247,44 @@ describe("BackPressure buffer", () => {
     expect(sent).toBe(COUNT);
     expect(received).toBe(target);
     expect(hash.digest("hex")).toBe(expectedHash);
+  });
+
+  // A growth of the buffer keeps room behind the bytes it was asked for, so a
+  // short frame sent behind a large unsent one fits. Without that room the
+  // buffer grows a second time and copies the large frame.
+  // estimateShallowMemoryUsageOf reports the buffer's capacity.
+  it.skipIf(isWindows)("a short frame behind a large unsent frame keeps the buffer where it is", async () => {
+    const SIZE = 4 * 1024 * 1024;
+    const opened = Promise.withResolvers<import("bun").ServerWebSocket<unknown>>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("no", { status: 500 });
+      },
+      websocket: {
+        backpressureLimit: SIZE * 4,
+        idleTimeout: 0,
+        open(ws) {
+          opened.resolve(ws);
+        },
+        message() {},
+      },
+    });
+
+    const { sock } = await pausedClient(server.port!);
+    const ws = await opened.promise;
+    setSocketOptions(ws, 1, SEND_BUFFER);
+    // Both sends run here, outside a websocket handler, so neither is corked.
+    ws.sendBinary(patternBuffer(SIZE, 0x1234));
+    const queued = ws.getBufferedAmount();
+    const capacityBefore = estimateShallowMemoryUsageOf(ws);
+    ws.send("x");
+    expect({
+      queuedAtLeastHalf: queued > SIZE / 2,
+      capacityGrew: estimateShallowMemoryUsageOf(ws) > capacityBefore,
+    }).toEqual({ queuedAtLeastHalf: true, capacityGrew: false });
+    sock.destroy();
   });
 });
 

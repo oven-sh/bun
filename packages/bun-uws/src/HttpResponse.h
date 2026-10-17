@@ -66,6 +66,9 @@ public:
     }
     /* The chunk-size line of a chunk. Returns its length. */
     static constexpr size_t CHUNK_HEAD_MAX = 10;
+    /* A queued chunk is followed by its CRLF and then the next chunk-size
+     * line, so the room a growth of the queue keeps has to hold both. */
+    static_assert(BackPressure::TAIL_ROOM >= 2 + CHUNK_HEAD_MAX);
     static size_t chunkHead(char (&buf)[CHUNK_HEAD_MAX], unsigned int chunkLength) {
         int length = utils::u32toaHex(chunkLength, buf);
         buf[length++] = '\r';

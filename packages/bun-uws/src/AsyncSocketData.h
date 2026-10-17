@@ -30,7 +30,9 @@ namespace uWS {
 
 /* Contiguous buffer with a moving head cursor: erase() bumps head,
  * append()/resize() compact into the drained head gap before growing, so
- * draining never memmoves or reallocates. */
+ * draining never memmoves or reallocates. A growth keeps TAIL_ROOM bytes
+ * behind the new data, so the framing a writer appends behind a queued payload
+ * does not move that payload. */
 struct BackPressure {
     BackPressure() = default;
     BackPressure(BackPressure &&other) noexcept
@@ -93,6 +95,14 @@ struct BackPressure {
         }
     }
 
+    /* Room a growth keeps behind the bytes it was asked for. A writer that
+     * queues a payload appends its framing right behind it: the chunk CRLF (2)
+     * and a chunk size line (HttpResponse::CHUNK_HEAD_MAX), the 7-byte
+     * terminating chunk, a WebSocket ping or close frame (2 to 8), an HTTP/2
+     * frame header (9). Without the room that append grows the buffer a second
+     * time and copies the whole payload. */
+    static constexpr size_t TAIL_ROOM = 12;
+
 private:
     static constexpr size_t MIN_CAPACITY = 4096;
 
@@ -102,7 +112,9 @@ private:
     size_t cap = 0;
 
     /* Ensure [tail, tail+n) is writable. Prefers compacting into the drained
-     * head gap over growing so steady-state producer/consumer never reallocs. */
+     * head gap over growing so steady-state producer/consumer never reallocs.
+     * A growth asks for TAIL_ROOM more than it needs and keeps whatever the
+     * allocator gave on top of that. */
     void ensureTailRoom(size_t n) {
         /* tail + n and live + n cannot wrap past this; cap * 2 wrapping is
          * harmless because live + n then wins the max(). */
@@ -117,7 +129,9 @@ private:
             return;
         }
 
-        size_t newCap = std::max(std::max(cap * 2, live + n), MIN_CAPACITY);
+        if (live + n > SIZE_MAX - TAIL_ROOM) std::abort();
+        size_t need = live + n + TAIL_ROOM;
+        size_t newCap = std::max(std::max(cap * 2, need), MIN_CAPACITY);
         char *nb;
         if (head == 0) {
             /* mi_realloc may extend in place. */
@@ -132,7 +146,10 @@ private:
             tail = live;
         }
         buf = nb;
-        cap = newCap;
+        /* A doubled or minimum-size request already sits on an allocator block
+         * boundary. A request of exactly what this append needs does not, and
+         * the rest of its block is room this buffer has paid for. */
+        cap = newCap == need ? us_usable_size(nb, newCap) : newCap;
     }
 
     void release() {

@@ -4178,12 +4178,11 @@ impl NativeCallbacks {
     }
     /// Whether the attached parser takes over the half-close, to send the FIN after its own output.
     pub(crate) fn defer_shutdown(&self) -> bool {
-        let h2 = match self {
-            NativeCallbacks::H2(h2) => h2.as_ptr(),
-            NativeCallbacks::None => return false,
-        };
-        // SAFETY: the slot holds a ref on `h2`, and `defer_shutdown` does not re-enter.
-        unsafe { (*h2).defer_shutdown() }
+        match self {
+            // No JS runs under this call, so the cell keeps its ref on the parser.
+            NativeCallbacks::H2(h2) => h2.defer_shutdown(),
+            NativeCallbacks::None => false,
+        }
     }
 }
 

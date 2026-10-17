@@ -655,6 +655,95 @@ describe("color-mix() percentage range", () => {
   });
 });
 
+// css-color-4 #interpolation-space and #powerless: converting an operand into the
+// interpolation space leaves its channels alone (out-of-gamut values are interpolated
+// as-is); a hue the conversion makes powerless becomes missing and is taken from the
+// other operand. An operand written in that space is mixed as written.
+describe("color-mix() operand conversion", () => {
+  test.each([
+    // color(display-p3 0 1 0) is color(srgb -0.511605 1.01827 -0.310675); these used to come
+    // out as each other's result (#4d9654 and #0b9b0b).
+    ["color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+    ["color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+    ["color-mix(in srgb, color(srgb -0.5 1.5 -0.5), color(srgb 0.5 0.5 0.5))", "#0f0"],
+    ["color-mix(in srgb-linear, color(srgb-linear 1.5 0 0), white)", "color(srgb-linear 1.25 .5 .5)"],
+    // Hue made powerless by the conversion.
+    ["color-mix(in lch, lab(50% 0 0), lch(50% 50 120))", "lch(50% 25 120)"],
+    ["color-mix(in lch, black, lch(50% 50 120))", "lch(25% 25 120)"],
+    ["color-mix(in oklch, white, oklch(50% 0.2 120))", "oklch(75% .1 120)"],
+    ["color-mix(in oklch, oklab(50% 0 0), black)", "oklch(25% 0 none)"],
+    // Powerless components written out stay in effect.
+    ["color-mix(in lch, lch(50% 0 200), lch(50% 50 120))", "lch(50% 25 160)"],
+    ["color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120))", "oklch(50% .1 160)"],
+    ["color-mix(in hsl, hsl(120 none 50%), hsl(200 100% 50%))", "#0fa"],
+    ["color-mix(in hwb, hwb(120 50% none), hwb(200 0% 40%))", "#40997b"],
+    ["color-mix(in lab, lab(0% 30 40), lab(50% 50 -20))", "lab(25% 40 10)"],
+    // Lightness does not make anything powerless.
+    ["color-mix(in lab, black, lab(50% 50 -20))", "lab(25% 25 -10)"],
+    ["color-mix(in hsl, red, white)", "#df9f9f"],
+    ["color-mix(in hsl, hsl(200 100% 50%), black)", "#204a60"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // Rows of WPT css/css-color/parsing/color-computed-color-mix-function.html; the first two
+  // are also the worked example in css-color-5. The hue is the interesting part: white and
+  // black convert to a powerless hue, so the result takes the hue of the chromatic operand.
+  // Lightness and chroma go through cbrt()/pow(), hence the tolerance.
+  function lch(input: string): number[] {
+    const css = color(input, "css") as string;
+    expect(css).toMatch(/^(ok)?lch\(/);
+    return css.match(/-?[\d.]+(e-?\d+)?/g)!.map(Number);
+  }
+
+  test.each([
+    ["color-mix(in lch, white, blue)", [64.78, 65.6, 301.36]],
+    ["color-mix(in oklch, white, blue)", [72.6, 0.1566, 264.05]],
+    ["color-mix(in lch, red, black)", [27.15, 53.43, 40.86]],
+    ["color-mix(in lch, red, white)", [77.15, 53.43, 40.86]],
+    ["color-mix(in oklch, red, black)", [31.4, 0.1289, 29.23]],
+    ["color-mix(in oklch, red, white)", [81.4, 0.1289, 29.23]],
+  ])("%s", (input, [l, c, h]) => {
+    const [actualL, actualC, actualH] = lch(input);
+    expect(actualL).toBeCloseTo(l, 1);
+    expect(actualC).toBeCloseTo(c, c < 1 ? 3 : 1);
+    expect(actualH).toBeCloseTo(h, 1);
+  });
+
+  test("greys converted into lch keep no hue of their own", () => {
+    expect(lch("color-mix(in lch, gray, lch(50% 50 120))")[2]).toBe(120);
+    expect(lch("color-mix(in oklch, gray, oklch(50% 0.2 120))")[2]).toBe(120);
+    expect(lch("color-mix(in lch, white, lch(50% 50 120))")[2]).toBe(120);
+  });
+
+  test("the mixed color is what the other output formats convert", () => {
+    expect(color("color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "hex")).toBe("#0b9b0b");
+    expect(color("color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "{rgb}")).toEqual({
+      r: 11,
+      g: 155,
+      b: 11,
+    });
+    expect(color("color-mix(in lch, black, lch(50% 50 120))", "hex")).toBe(color("lch(25% 25 120)", "hex"));
+  });
+});
+
+// The alpha scales the lightness and the chroma of an operand, and never its hue.
+// https://www.w3.org/TR/css-color-4/#interpolation-alpha
+describe("color-mix() in lch and oklch with a translucent operand", () => {
+  test.each([
+    ["color-mix(in oklch, oklch(70% 0.15 300 / 0.5), oklch(70% 0.15 200))", "oklch(70% .15 250 / .75)"],
+    ["color-mix(in oklch, oklch(0.7 0.15 300 / 0.5), oklch(0.7 0.15 200))", "oklch(70% .15 250 / .75)"],
+    ["color-mix(in lch, lch(70% 50 300 / 0.5), lch(70% 50 200))", "lch(70% 50 250 / .75)"],
+    ["color-mix(in oklch, oklch(80% 0.2 300 / 0.25), oklch(40% 0.1 200 / 0.75))", "oklch(50% .125 250 / .5)"],
+    ["color-mix(in oklch longer hue, oklch(70% 0.15 300 / 0.5), oklch(70% 0.15 200))", "oklch(70% .15 70 / .75)"],
+    ["color-mix(in oklch, oklch(70% 0.15 30 / 0.5), oklch(70% 0.15 350))", "oklch(70% .15 10 / .75)"],
+    // A result with an alpha of 0 keeps its hue.
+    ["color-mix(in oklch, oklch(70% 0.15 300 / 0), oklch(70% 0.15 200 / 0))", "oklch(0% 0 250 / 0)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
 describe("rgb() channel order and legacy syntax", () => {
   // Distinct channel values, so any two channels ending up in each other's
   // place shows in the output. The legacy comma syntax gives the channels on a
@@ -767,5 +856,258 @@ describe("conversions between color spaces", () => {
       [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
       4,
     );
+  });
+});
+
+// rgb(), hsl() and hwb() hold sRGB. A browser computes a relative color whose origin is outside
+// sRGB unclamped (w3c/csswg-drafts#8444): the display-p3 green below paints as #00ff00 on an sRGB
+// display and the lab() color as #ff96ff. A gamut-mapped origin gives #00f942 and #ffffff, so the
+// color is not resolved.
+describe("relative colors with an origin outside the sRGB gamut", () => {
+  test.each([
+    "rgb(from lab(100% 104.3 -50.9) r g b)",
+    "hsl(from color(display-p3 0 1 0) h s l)",
+    "hwb(from oklch(100% 0.399 336.3) h w b)",
+    "rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)",
+    "color-mix(in srgb, rgb(from lab(100% 104.3 -50.9) r g b), red)",
+  ])("%s is not resolved", input => {
+    expect([color(input, "css"), color(input, "hex")]).toEqual([null, null]);
+  });
+
+  test.each([
+    // An origin inside sRGB resolves.
+    ["rgb(from lab(50% 40 -50) r g b)", "#965dcd"],
+    ["hsl(from oklch(50% 0.1 120) h s l)", "#5c6b21"],
+    ["hwb(from color(display-p3 0.4 0.4 0.4) h w b)", "#666"],
+    // The unbounded functions hold any origin, so they resolve one outside sRGB too.
+    ["lab(from oklch(100% 0.399 336.3) l a b)", "lab(94.0205% 119.644 -57.6823)"],
+    ["color(from lab(100% 104.3 -50.9) srgb r g b)", "color(srgb 1.5935 .587758 1.40555)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // A boundary color written in another space converts back a few 1e-7 outside the gamut.
+  // That is conversion noise, not an out-of-gamut origin: every color on the faces of the
+  // sRGB cube, written as the lab() Bun.color prints for it, still resolves to itself.
+  test("boundary colors written as lab() still resolve", () => {
+    withoutAggressiveGC(() => {
+      const steps = [0, 51, 102, 153, 204, 255];
+      for (const face of [0, 255]) {
+        for (let axis = 0; axis < 3; axis++) {
+          for (const x of steps) {
+            for (const y of steps) {
+              const rgb = [0, 0, 0];
+              rgb[axis] = face;
+              rgb[(axis + 1) % 3] = x;
+              rgb[(axis + 2) % 3] = y;
+              const hex = color({ r: rgb[0], g: rgb[1], b: rgb[2] }, "hex");
+              const lab = color(hex!, "lab");
+              for (const relative of [`rgb(from ${lab} r g b)`, `hsl(from ${lab} h s l)`, `hwb(from ${lab} h w b)`]) {
+                const resolved = color(relative, "hex");
+                if (resolved !== hex) {
+                  throw new Error(`${relative} resolved to ${resolved}, expected ${hex}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+});
+
+// Every channel of lab(), lch(), oklab() and oklch() is `<percentage> | <number> | none`.
+// 100% of the lightness is the number 100 in lab()/lch() and 1 in oklab()/oklch(); 100% of
+// a/b is 125 in lab() and 0.4 in oklab(); 100% of the chroma is 150 in lch() and 0.4 in
+// oklch(). Only the percentage lightness with number a/b/chroma used to parse (#16727).
+// https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+// https://www.w3.org/TR/css-color-4/#specifying-oklab-oklch
+describe("lab-family channels written as numbers or percentages", () => {
+  test.each([
+    ["lab(50 40 -50)", "lab(50% 40 -50)", "#965dcd"],
+    ["lch(50 60 120)", "lch(50% 60 120)", "#548404"],
+    ["oklab(0.5 0.1 -0.1)", "oklab(50% .1 -.1)", "#81459a"],
+    ["oklch(0.5 0.1 120)", "oklch(50% .1 120)", "#5c6b21"],
+    // Tailwind v4's red-500, which is documented as #fb2c36.
+    ["oklch(0.637 0.237 25.331)", "oklch(63.7% .237 25.331)", "#fb2c36"],
+    ["lab(50% 32% -40%)", "lab(50% 40 -50)", "#965dcd"],
+    ["lch(50% 40% 120)", "lch(50% 60 120)", "#548404"],
+    ["oklab(50% 25% -25%)", "oklab(50% .1 -.1)", "#81459a"],
+    ["oklch(50% 25% 120)", "oklch(50% .1 120)", "#5c6b21"],
+    ["lab(50 32% -50)", "lab(50% 40 -50)", "#965dcd"],
+    // The input of #16727.
+    ["lab(50% 50% 50%)", "lab(50% 62.5 62.5)", "#db3702"],
+    ["lab(50 40 -50 / 0.5)", "lab(50% 40 -50 / .5)", "#965dcd"],
+    ["lab(calc(50) 40 -50)", "lab(50% 40 -50)", "#965dcd"],
+    ["lab(50% calc(32%) -50)", "lab(50% 40 -50)", "#965dcd"],
+    ["lab(50 none none)", "lab(50% none none)", "#777777"],
+    ["color-mix(in oklch, oklch(0.5 0.1 120), oklch(50% 0.1 120))", "oklch(50% .1 120)", "#5c6b21"],
+    // Black has no hue, so the mix keeps the hue of the other operand.
+    ["color-mix(in oklch, oklch(0.62 0.19 255), black 20%)", "oklch(49.6% .152 255)", "#1361b6"],
+    // A negative lightness or chroma clamps to 0, like the forms that already parsed.
+    ["lab(-10 0 0)", "lab(0% 0 0)", "#000000"],
+    ["lch(50 -20% 120)", "lch(50% 0 120)", "#777777"],
+  ])("%s", (input, css, hex) => {
+    expect([color(input, "css"), color(input, "hex")]).toEqual([css, hex]);
+  });
+
+  test.each(["lab(50 40)", "lab(50, 40, -50)", "oklch(0.5 0.1 120 0.5)", "lab(50deg 0 0)", "lch(50 60 120%)"])(
+    "%s is still invalid",
+    input => {
+      expect(color(input, "css")).toBeNull();
+    },
+  );
+});
+
+describe("relative colors in the lab family", () => {
+  test.each([
+    ["oklch(from red 0.5 c h)", "oklch(50% .257683 29.2339)"],
+    ["lab(from red 50 a b)", "lab(50% 80.8049 69.891)"],
+    ["lab(from red l 50% b)", "lab(54.2905% 62.5 69.891)"],
+    // A channel keyword is not scaled by the basis.
+    ["lab(from red l a b)", "lab(54.2905% 80.8049 69.891)"],
+    ["lab(from lab(50% 20 30) calc(l * 1.2) a b)", "lab(60% 20 30)"],
+    // An origin written this way resolves if it is inside sRGB. The unbounded functions resolve any origin.
+    ["rgb(from oklch(0.5 0.1 120) r g b)", "#5c6b21"],
+    ["hsl(from lab(50 40 -50) h s l)", "#965dcd"],
+    ["lab(from oklch(1 0.399 336.3) l a b)", "lab(94.0205% 119.644 -57.6823)"],
+    ["color(from lab(100 104.3 -50.9) srgb r g b)", "color(srgb 1.5935 .587758 1.40555)"],
+    ["rgb(from lab(100 104.3 -50.9) r g b)", null],
+    ["hwb(from oklch(1 0.399 336.3) h w b)", null],
+    // A number added to a keyword that holds a unit value is not resolved, and is not `none`.
+    ["oklch(from oklch(0.5 0.1 40) calc(l - 0.1) c h)", null],
+    ["oklch(from oklch(50% 0.1 40) calc(l - 0.1) c h)", null],
+    ["hsl(from red h calc(s + 10) l)", null],
+    ["rgb(from oklch(0.7 0.1 40) calc(r + 10) g b)", null],
+    ["rgb(from #808080 calc(r + 10) g b)", null],
+    ["rgb(from #808080 calc(255 - r) g b)", null],
+    // A product and a percentage do not depend on the range, so they resolve.
+    ["rgb(from #808080 calc(r * 0.5) g b)", "#408080"],
+    ["rgb(from #808080 calc(r + 10%) g b)", "#9a8080"],
+    ["color(from red srgb calc(r - 0.5) g b)", "color(srgb .5 0 0)"],
+    ["rgb(from red r g b / calc(alpha - 0.5))", "#ff000080"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // A calc() that adds a number to a percentage has no type. It is not a `none` channel.
+  test.each(["lab(50% calc(10% + 1) 0)", "lch(50% calc(10% + 1) 0)", "oklab(calc(50% + 0.1) 0 0)"])(
+    "%s is invalid",
+    input => {
+      expect(color(input, "css")).toBeNull();
+    },
+  );
+});
+
+// An omitted alpha is the alpha of the origin: https://drafts.csswg.org/css-color-5/#relative-colors
+describe("relative colors keep the alpha of the origin", () => {
+  test.each([
+    ["rgb(from #0008 r g b)", "#0008"],
+    ["rgb(from #0008 r g b / alpha)", "#0008"],
+    ["rgb(from #0008 r g b / 1)", "#000"],
+    ["rgb(from #000 r g b)", "#000"],
+    ["hsl(from #0008 h s l)", "#0008"],
+    ["hwb(from #0008 h w b)", "#0008"],
+    ["rgb(from oklch(0.7 0.1 40 / 0.5) r g b)", "#d4896e80"],
+    ["oklch(from oklch(50% 0 0 / 50%) l c h)", "oklch(50% 0 0 / .5)"],
+    ["oklch(from oklch(50% 0 0 / 50%) l c h / 1)", "oklch(50% 0 0)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("the alpha converts with the channels", () => {
+    expect(color("rgb(from rgb(1 2 3 / 50%) r g b)", "[rgba]")).toEqual([1, 2, 3, 128]);
+    expect(color("hsl(from rgb(1 2 3 / 50%) calc(h + 180) s l)", "[rgba]")).toEqual([3, 2, 1, 128]);
+    expect(color("rgb(from rgb(1 2 3 / 50%) r g b / 1)", "[rgba]")).toEqual([1, 2, 3, 255]);
+  });
+});
+
+// In the modern (space separated) syntax, the saturation and lightness of hsl()
+// and the whiteness and blackness of hwb() are <percentage> | <number> | none,
+// and the number is the percentage without its sign: hsl(120 50 40) is
+// hsl(120 50% 40%). The legacy comma syntax takes only percentages.
+// https://www.w3.org/TR/css-color-4/#the-hsl-notation
+// https://www.w3.org/TR/css-color-4/#the-hwb-notation
+describe("hsl() and hwb() number channels", () => {
+  // Every expected value is what the same color spelled with percentages gives.
+  test.each([
+    ["hsl(120 50 40)", "#393"],
+    ["hsl(120 50 40%)", "#393"],
+    ["hsl(120 50% 40)", "#393"],
+    ["hsl(120deg 50 40)", "#393"],
+    ["hsla(120 50 40)", "#393"],
+    ["hsl(120 50 40 / 0.5)", "#33993380"],
+    ["hsl(120 50 40 / 50%)", "#33993380"],
+    ["hsla(120 50 40 / 0.5)", "#33993380"],
+    ["hsl(120 none 40)", "#666"],
+    ["hsl(120 50 none)", "#000"],
+    ["hsl(none 50 40)", "#933"],
+    ["hsl(120.5 50.5 40.5)", "#339b34"],
+    ["hsl(120 .5 40)", "#656765"],
+    ["hsl(120 1e1 40)", "#5c705c"],
+    ["hsl(120 calc(25 * 2) 40)", "#393"],
+    ["hsl(120 calc(25% * 2) 40)", "#393"],
+    ["hsl(120 50 calc(20 * 2))", "#393"],
+    ["hwb(120 20 30)", "#33b333"],
+    ["hwb(120 20 30%)", "#33b333"],
+    ["hwb(120 20% 30)", "#33b333"],
+    ["hwb(120deg 20 30)", "#33b333"],
+    ["hwb(120 20 30 / 0.5)", "#33b33380"],
+    ["hwb(120 none 30)", "#00b300"],
+    ["hwb(120 20 none)", "#3f3"],
+    ["hwb(120 0 0)", "#0f0"],
+    ["hwb(120 100 0)", "#fff"],
+    ["hwb(120 0 100)", "#000"],
+    ["hwb(120 calc(10 * 2) 30)", "#33b333"],
+    // Relative color syntax is the modern syntax, so it takes numbers too, as
+    // do the origin colors and the operands of color-mix().
+    ["hsl(from red h 50 l)", "#bf4040"],
+    ["hwb(from red h 20 b)", "#f33"],
+    ["hsl(from hsl(120 50 40) h s l)", "#393"],
+    ["hwb(from hwb(120 20 30) h w b)", "#33b333"],
+    ["rgb(from hsl(120 50 40) r g b)", "#393"],
+    ["color-mix(in hsl, hsl(120 50 40), hwb(120 20 30))", "#33a633"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // Out-of-range numbers clamp exactly like the corresponding percentages:
+  // hsl() to 0..100, hwb() to 0..100 and then w + b is normalized to 100.
+  test.each([
+    ["hsl(120 150 40)", "hsl(120 150% 40%)", "#00cc00"],
+    ["hsl(120 -50 40)", "hsl(120 -50% 40%)", "#666666"],
+    ["hsl(120 50 140)", "hsl(120 50% 140%)", "#ffffff"],
+    ["hsl(120 50 -40)", "hsl(120 50% -40%)", "#000000"],
+    ["hwb(120 60 60)", "hwb(120 60% 60%)", "#808080"],
+    ["hwb(120 -20 30)", "hwb(120 -20% 30%)", "#00b300"],
+    ["hwb(120 20 130)", "hwb(120 20% 130%)", "#2a2a2a"],
+  ])("%s is %s", (numbers, percentages, expected) => {
+    expect(color(numbers, "hex")).toBe(expected);
+    expect(color(percentages, "hex")).toBe(expected);
+  });
+
+  test.each([
+    "hsl(120, 50, 40)",
+    "hsl(120, 50%, 40)",
+    "hsl(120, 50, 40%)",
+    "hsla(120, 50, 40, 0.5)",
+    // hwb() has no legacy syntax at all.
+    "hwb(120, 20, 30)",
+    "hwb(120, 20%, 30%)",
+    "hsl(120 50, 40)",
+    "hsl(120 50 40 60)",
+    // The legacy rgb() percentage form shares the percentage parser and still
+    // does not take numbers.
+    "rgb(10%, 20, 30)",
+  ])("%s is invalid", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+
+  test.each([
+    ["hsl(120, 50%, 40%)", "#393"],
+    ["hsla(120, 50%, 40%, 0.5)", "#33993380"],
+    ["rgb(10%, 20%, 30%)", "#1a334d"],
+  ])("%s still parses", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
   });
 });

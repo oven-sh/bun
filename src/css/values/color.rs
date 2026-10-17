@@ -763,13 +763,7 @@ impl CssColor {
         method: HueInterpolationMethod,
     ) -> Option<CssColor>
     where
-        T: Colorspace
-            + ColorGamut
-            + Interpolate
-            + Into<OKLCH>
-            + From<OKLCH>
-            + Into<OKLAB>
-            + 'static,
+        T: Interpolate + 'static,
     {
         if matches!(self, CssColor::CurrentColor) || matches!(other, CssColor::CurrentColor) {
             return None;
@@ -801,7 +795,8 @@ impl CssColor {
             });
         }
 
-        fn check_converted<T: 'static>(color: &CssColor) -> Option<bool> {
+        /// `CssColor::Rgba` (hex, named and legacy colors) is in no space `T`: it counts as converted, and a grey one has no hue.
+        fn is_in_space<T: 'static>(color: &CssColor) -> Option<bool> {
             use core::any::TypeId;
             debug_assert!(!matches!(
                 color,
@@ -819,20 +814,13 @@ impl CssColor {
             }
         }
 
-        let converted_first = check_converted::<T>(self)?;
-        let converted_second = check_converted::<T>(other)?;
+        let converted_first = !is_in_space::<T>(self)?;
+        let converted_second = !is_in_space::<T>(other)?;
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
+        // No gamut mapping here: https://www.w3.org/TR/css-color-4/#interpolation-space
         let mut first_color = T::try_from_css_color(self)?;
         let mut second_color = T::try_from_css_color(other)?;
-
-        if converted_first && !first_color.in_gamut() {
-            first_color = map_gamut(first_color);
-        }
-
-        if converted_second && !second_color.in_gamut() {
-            second_color = map_gamut(second_color);
-        }
 
         // https://www.w3.org/TR/css-color-4/#powerless
         if converted_first {
@@ -1069,6 +1057,8 @@ pub trait Colorspace: Copy + Sized + FromAnyColorspace {
 
 /// Gamut behavior — in-gamut check and clipping per color space.
 pub trait ColorGamut: Sized + Copy {
+    /// Whether the space can only hold colors inside its gamut (the lab family and XYZ hold any).
+    const BOUNDED: bool;
     fn in_gamut(&self) -> bool;
     fn clip(&self) -> Self;
 }
@@ -1127,18 +1117,34 @@ pub(crate) fn parse_color_function(
     let mut parser = ComponentParser::new(true);
 
     crate::match_ignore_ascii_case! { function, {
-        b"lab" => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
-            LABColor::Lab(LAB { l, a, b, alpha })
-        }),
-        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
-            LABColor::Oklab(OKLAB { l, a, b, alpha })
-        }),
-        b"lch" => parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
-            LABColor::Lch(LCH { l, c, h, alpha })
-        }),
-        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
-            LABColor::Oklch(OKLCH { l, c, h, alpha })
-        }),
+        b"lab" => parse_lab::<LAB>(
+            input,
+            &mut parser,
+            LAB_L_BASIS,
+            LAB_AB_BASIS,
+            |l, a, b, alpha| LABColor::Lab(LAB { l, a, b, alpha }),
+        ),
+        b"oklab" => parse_lab::<OKLAB>(
+            input,
+            &mut parser,
+            OKLAB_L_BASIS,
+            OKLAB_AB_BASIS,
+            |l, a, b, alpha| LABColor::Oklab(OKLAB { l, a, b, alpha }),
+        ),
+        b"lch" => parse_lch::<LCH>(
+            input,
+            &mut parser,
+            LAB_L_BASIS,
+            LCH_C_BASIS,
+            |l, c, h, alpha| LABColor::Lch(LCH { l, c, h, alpha }),
+        ),
+        b"oklch" => parse_lch::<OKLCH>(
+            input,
+            &mut parser,
+            OKLAB_L_BASIS,
+            OKLCH_C_BASIS,
+            |l, c, h, alpha| LABColor::Oklch(OKLCH { l, c, h, alpha }),
+        ),
         b"color" => parse_predefined(input, &mut parser),
         b"hsl" | b"hsla" => parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
             let hsl = HSL { h, s, l, alpha: a };
@@ -1188,7 +1194,7 @@ pub(crate) fn parse_rgb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
 ) -> CssResult<RgbComponents> {
-    let red = parser.parse_number_or_percentage(input)?;
+    let red = parser.parse_number_or_percentage(input, false)?;
 
     let is_legacy_syntax = parser.from.is_none()
         && !red.unit_value().is_nan()
@@ -1198,18 +1204,18 @@ pub(crate) fn parse_rgb_components(
         match red {
             NumberOrPercentage::Number { value } => {
                 let r = value.round().clamp(0.0, 255.0);
-                let g = parser.parse_number(input)?.round().clamp(0.0, 255.0);
+                let g = parser.parse_number(input, None)?.round().clamp(0.0, 255.0);
                 input.expect_comma()?;
-                let b = parser.parse_number(input)?.round().clamp(0.0, 255.0);
+                let b = parser.parse_number(input, None)?.round().clamp(0.0, 255.0);
                 (r, g, b)
             }
             NumberOrPercentage::Percentage { unit_value } => {
                 let r = (unit_value * 255.0).round().clamp(0.0, 255.0);
-                let g = (parser.parse_percentage(input)? * 255.0)
+                let g = (parser.parse_percentage(input, None)? * 255.0)
                     .round()
                     .clamp(0.0, 255.0);
                 input.expect_comma()?;
-                let b = (parser.parse_percentage(input)? * 255.0)
+                let b = (parser.parse_percentage(input, None)? * 255.0)
                     .round()
                     .clamp(0.0, 255.0);
                 (r, g, b)
@@ -1230,8 +1236,8 @@ pub(crate) fn parse_rgb_components(
         }
 
         let r = get_component(red);
-        let g = get_component(parser.parse_number_or_percentage(input)?);
-        let b = get_component(parser.parse_number_or_percentage(input)?);
+        let g = get_component(parser.parse_number_or_percentage(input, false)?);
+        let b = get_component(parser.parse_number_or_percentage(input, false)?);
         (r, g, b)
     };
 
@@ -1323,9 +1329,19 @@ fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
     (delta_l.powi(2) + delta_a.powi(2) + delta_b.powi(2)).sqrt()
 }
 
+// What `100%` stands for in each channel of the lab family: https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+const LAB_L_BASIS: f32 = 100.0;
+const LAB_AB_BASIS: f32 = 125.0;
+const LCH_C_BASIS: f32 = 150.0;
+const OKLAB_L_BASIS: f32 = 1.0;
+const OKLAB_AB_BASIS: f32 = 0.4;
+const OKLCH_C_BASIS: f32 = 0.4;
+
 pub(crate) fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
+    ab_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor>
 where
@@ -1335,9 +1351,9 @@ where
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
-            let a = p.parse_number(i)?;
-            let b = p.parse_number(i)?;
+            let l = p.parse_percentage(i, Some(l_basis))?.clamp(0.0, f32::MAX);
+            let a = p.parse_number(i, Some(ab_basis))?;
+            let b = p.parse_number(i, Some(ab_basis))?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, a, b, alpha);
             Ok(CssColor::Lab(Box::new(lab)))
@@ -1348,6 +1364,8 @@ where
 pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
+    c_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
@@ -1361,8 +1379,8 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
                 }
             }
 
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
-            let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
+            let l = p.parse_percentage(i, Some(l_basis))?.clamp(0.0, f32::MAX);
+            let c = p.parse_number(i, Some(c_basis))?.clamp(0.0, f32::MAX);
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, c, h, alpha);
@@ -1396,6 +1414,9 @@ pub(crate) fn parse_hsl_hwb<
     })
 }
 
+// What `100%` stands for in the 2nd and 3rd channel of hsl() and hwb(): https://www.w3.org/TR/css-color-4/#the-hsl-notation
+const HSL_PERCENT_BASIS: f32 = 100.0;
+
 pub(crate) fn parse_hsl_hwb_components<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
@@ -1408,13 +1429,20 @@ pub(crate) fn parse_hsl_hwb_components<T>(
         && !h.is_nan()
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    // The legacy comma syntax takes only `<percentage>`: browsers reject `hsl(120, 50, 40)`. lightningcss accepts it.
+    let number_basis = (!is_legacy_syntax).then_some(HSL_PERCENT_BASIS);
+
+    let a = parser
+        .parse_percentage(input, number_basis)?
+        .clamp(0.0, 1.0);
 
     if is_legacy_syntax {
         input.expect_comma()?;
     }
 
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    let b = parser
+        .parse_percentage(input, number_basis)?
+        .clamp(0.0, 1.0);
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
@@ -1472,20 +1500,22 @@ fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssR
 }
 
 fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
-    let res = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
-        parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
+    if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
+        return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
+    }
 
-    Ok(res)
+    // A relative color without an alpha takes the alpha of its origin: https://drafts.csswg.org/css-color-5/#relative-colors
+    Ok(match &parser.from {
+        Some(from) => from.components.3,
+        None => 1.0,
+    })
 }
 
 pub(crate) fn parse_number_or_percentage(
     input: &mut css::Parser,
     parser: &ComponentParser,
 ) -> CssResult<f32> {
-    Ok(parser.parse_number_or_percentage(input)?.unit_value())
+    Ok(parser.parse_number_or_percentage(input, true)?.unit_value())
 }
 
 impl LABColor {
@@ -1536,7 +1566,7 @@ macro_rules! define_colorspace {
         types = ($ta:expr, $tb:expr, $tc:expr);
         gamut = $gamut:ident;
         premultiply = $pre:ident;
-        powerless = $pow:ident;
+        powerless = $pow:ident $(($eps:literal))?;
         into_css = $into_css:expr;
     ) => {
         $(#[$meta])*
@@ -1568,18 +1598,20 @@ macro_rules! define_colorspace {
         }
 
         define_colorspace!(@gamut $gamut $name { $a, $b, $c });
-        define_colorspace!(@interp $pre $pow $name { $a, $b, $c });
+        define_colorspace!(@interp $pre $pow $(($eps))? $name { $a, $b, $c });
     };
 
     // Gamut variants
     (@gamut unbounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = false;
             fn in_gamut(&self) -> bool { true }
             fn clip(&self) -> Self { *self }
         }
     };
     (@gamut bounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0
                     && self.$b >= 0.0 && self.$b <= 1.0
@@ -1597,6 +1629,7 @@ macro_rules! define_colorspace {
     };
     (@gamut hsl_hwb $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0 && self.$b >= 0.0 && self.$b <= 1.0
             }
@@ -1613,7 +1646,7 @@ macro_rules! define_colorspace {
     (@gamut none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
     // Interpolate / premultiply / powerless variants
-    (@interp rectangular $pow:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {
+    (@interp rectangular $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl Interpolate for $name {
             fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
                 let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
@@ -1635,54 +1668,54 @@ macro_rules! define_colorspace {
                     self.alpha *= alpha_multiplier;
                 }
             }
-            define_colorspace!(@powerless $pow $name { $a, $b, $c });
+            define_colorspace!(@powerless $pow $(($eps))? $name { $a, $b, $c });
         }
     };
-    (@interp polar $pow:ident $name:ident { $h:ident, $a:ident, $b:ident }) => {
+    (@interp polar $pow:ident $(($eps:literal))? $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl Interpolate for $name {
             fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
                 let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
                 $name { $h: a, $a: b, $b: c, alpha }
             }
-            fn premultiply(&mut self) {
-                if !self.alpha.is_nan() {
-                    self.$a *= self.alpha;
-                    self.$b *= self.alpha;
-                }
-            }
-            fn unpremultiply(&mut self, alpha_multiplier: f32) {
-                self.$h = self.$h.rem_euclid(360.0);
-                if !self.alpha.is_nan() {
-                    // PERF: precalculate 1/alpha?
-                    self.$a /= self.alpha;
-                    self.$b /= self.alpha;
-                    self.alpha *= alpha_multiplier;
-                }
-            }
-            define_colorspace!(@powerless $pow $name { $h, $a, $b });
+            define_colorspace!(@premultiply_polar $h, $a, $b);
+            define_colorspace!(@powerless $pow $(($eps))? $name { $h, $a, $b });
         }
     };
-    (@interp none $pow:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {};
+    (@interp polar_hue_last $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $h:ident }) => {
+        impl Interpolate for $name {
+            fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
+                let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
+                $name { $a: a, $b: b, $h: c, alpha }
+            }
+            define_colorspace!(@premultiply_polar $h, $a, $b);
+            define_colorspace!(@powerless $pow $(($eps))? $name { $a, $b, $h });
+        }
+    };
+    // The alpha does not scale a hue: https://www.w3.org/TR/css-color-4/#interpolation-alpha
+    (@premultiply_polar $h:ident, $a:ident, $b:ident) => {
+        fn premultiply(&mut self) {
+            if !self.alpha.is_nan() {
+                self.$a *= self.alpha;
+                self.$b *= self.alpha;
+            }
+        }
+        fn unpremultiply(&mut self, alpha_multiplier: f32) {
+            self.$h = self.$h.rem_euclid(360.0);
+            if !self.alpha.is_nan() && self.alpha != 0.0 {
+                // PERF: precalculate 1/alpha?
+                self.$a /= self.alpha;
+                self.$b /= self.alpha;
+                self.alpha *= alpha_multiplier;
+            }
+        }
+    };
+    (@interp none $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
+    // $eps is the chroma at or below which a converted color has no hue: https://www.w3.org/TR/css-color-4/#lab-to-lch
     (@powerless none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
-    (@powerless lab $name:ident { $l:ident, $a:ident, $b:ident }) => {
+    (@powerless lch($eps:literal) $name:ident { $l:ident, $c:ident, $h:ident }) => {
         fn adjust_powerless_components(&mut self) {
-            // If the lightness of a LAB color is 0%, both the a and b components are powerless.
-            if self.$l.abs() < f32::EPSILON {
-                self.$a = f32::NAN;
-                self.$b = f32::NAN;
-            }
-        }
-    };
-    (@powerless lch $name:ident { $l:ident, $c:ident, $h:ident }) => {
-        fn adjust_powerless_components(&mut self) {
-            // If the chroma of an LCH color is 0%, the hue component is powerless.
-            // If the lightness of an LCH color is 0%, both the hue and chroma components are powerless.
-            if self.$c.abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-            }
-            if self.$l.abs() < f32::EPSILON {
-                self.$c = f32::NAN;
+            if self.$c <= $eps {
                 self.$h = f32::NAN;
             }
         }
@@ -1690,27 +1723,19 @@ macro_rules! define_colorspace {
             method.interpolate(&mut self.$h, &mut other.$h);
         }
     };
-    (@powerless hsl $name:ident { $h:ident, $s:ident, $l:ident }) => {
+    (@powerless hsl($eps:literal) $name:ident { $h:ident, $s:ident, $l:ident }) => {
         fn adjust_powerless_components(&mut self) {
-            // If the saturation of an HSL color is 0%, then the hue component is powerless.
-            // If the lightness of an HSL color is 0% or 100%, both the saturation and hue components are powerless.
-            if self.$s.abs() < f32::EPSILON {
+            if self.$s <= $eps {
                 self.$h = f32::NAN;
-            }
-            if self.$l.abs() < f32::EPSILON || (self.$l - 1.0).abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-                self.$s = f32::NAN;
             }
         }
         fn adjust_hue(&mut self, other: &mut Self, method: HueInterpolationMethod) {
             method.interpolate(&mut self.$h, &mut other.$h);
         }
     };
-    (@powerless hwb $name:ident { $h:ident, $w:ident, $b:ident }) => {
+    (@powerless hwb($eps:literal) $name:ident { $h:ident, $w:ident, $b:ident }) => {
         fn adjust_powerless_components(&mut self) {
-            // If white+black is equal to 100% (after normalization), it defines an achromatic color,
-            // i.e. some shade of gray, without any hint of the chosen hue. In this case, the hue component is powerless.
-            if (self.$w + self.$b - 1.0).abs() < f32::EPSILON {
+            if self.$w + self.$b >= 1.0 - $eps {
                 self.$h = f32::NAN;
             }
         }
@@ -1730,7 +1755,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_NUM);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lab;
+    powerless = none;
     into_css = |c: &LAB| CssColor::Lab(Box::new(LABColor::Lab(*c)));
 }
 
@@ -1753,6 +1778,14 @@ impl SRGB {
         let rgb = self.resolve();
         RGBA::from_floats(rgb.r, rgb.g, rgb.b, rgb.alpha)
     }
+
+    /// `in_gamut()` with room for the ~1e-6 of noise a boundary color picks up when it converts from another space.
+    fn is_nearly_in_gamut(&self) -> bool {
+        // 0.03 of an 8-bit step.
+        const TOLERANCE: f32 = 1e-4;
+        let nearly = |v: f32| (-TOLERANCE..=1.0 + TOLERANCE).contains(&v);
+        nearly(self.r) && nearly(self.g) && nearly(self.b)
+    }
 }
 
 define_colorspace! {
@@ -1761,7 +1794,8 @@ define_colorspace! {
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
     premultiply = polar;
-    powerless = hsl;
+    // css-color-4: S <= 0.001 (of 100)
+    powerless = hsl(0.00001);
     into_css = |c: &HSL| CssColor::Rgba(RGBA::from(*c));
 }
 
@@ -1771,7 +1805,8 @@ define_colorspace! {
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
     premultiply = polar;
-    powerless = hwb;
+    // css-color-4: W + B >= 99.999 (of 100)
+    powerless = hwb(0.00001);
     into_css = |c: &HWB| CssColor::Rgba(RGBA::from(*c));
 }
 
@@ -1852,8 +1887,9 @@ define_colorspace! {
     LCH { l, c, h }
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
-    premultiply = rectangular;
-    powerless = lch;
+    premultiply = polar_hue_last;
+    // css-color-4: C <= 0.0015
+    powerless = lch(0.0015);
     into_css = |c: &LCH| CssColor::Lab(Box::new(LABColor::Lch(*c)));
 }
 
@@ -1863,7 +1899,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_NUM);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lab;
+    powerless = none;
     into_css = |c: &OKLAB| CssColor::Lab(Box::new(LABColor::Oklab(*c)));
 }
 
@@ -1872,8 +1908,9 @@ define_colorspace! {
     OKLCH { l, c, h }
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
-    premultiply = rectangular;
-    powerless = lch;
+    premultiply = polar_hue_last;
+    // css-color-4: C <= 0.000004
+    powerless = lch(0.000004);
     into_css = |c: &OKLCH| CssColor::Lab(Box::new(LABColor::Oklch(*c)));
 }
 
@@ -1935,6 +1972,15 @@ impl ComponentParser {
             return Ok(C::light_dark_owned(light, dark));
         }
 
+        // rgb(), hsl() and hwb() hold sRGB. A browser keeps an origin outside sRGB unclamped (w3c/csswg-drafts#8444), so the color is left for it.
+        if T::BOUNDED
+            && !matches!(from, CssColor::Rgba(_))
+            && !SRGB::try_from_css_color(&from)
+                .is_some_and(|srgb| srgb.resolve_missing().is_nearly_in_gamut())
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
+
         let new_from = match T::try_from_css_color(&from) {
             Some(v) => v.resolve(),
             None => return Err(input.new_custom_error(css::ParserError::invalid_value)),
@@ -1945,11 +1991,16 @@ impl ComponentParser {
         func(input, self)
     }
 
-    fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
+    /// `unit_range`: a `<number>` in this channel is its unit value, as in alpha and `color()`, and unlike `rgb()`.
+    fn parse_number_or_percentage(
+        &self,
+        input: &mut css::Parser,
+        unit_range: bool,
+    ) -> CssResult<NumberOrPercentage> {
         if let Some(from) = &self.from {
-            if let Ok(res) =
-                input.try_parse(|i| RelativeComponentParser::parse_number_or_percentage(i, from))
-            {
+            if let Ok(res) = input.try_parse(|i| {
+                RelativeComponentParser::parse_number_or_percentage(i, from, unit_range)
+            }) {
                 return Ok(res);
             }
         }
@@ -1994,7 +2045,12 @@ impl ComponentParser {
         }
     }
 
-    fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
+    /// `<percentage>` as a unit value. With `number_basis`, the `<number>` that stands for `100%`, also a `<number>`.
+    fn parse_percentage(
+        &self,
+        input: &mut css::Parser,
+        number_basis: Option<f32>,
+    ) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(res) = input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
             {
@@ -2003,16 +2059,15 @@ impl ComponentParser {
         }
 
         if let Ok(val) = input.try_parse(Percentage::parse) {
-            Ok(val.v)
-        } else if self.allow_none {
-            input.expect_ident_matching(b"none")?;
-            Ok(f32::NAN)
-        } else {
-            Err(input.new_custom_error(css::ParserError::invalid_value))
+            return Ok(val.v);
         }
+        self.parse_none_or(input, number_basis, |i, basis| {
+            Ok(CSSNumberFns::parse(i)? / basis)
+        })
     }
 
-    fn parse_number(&self, input: &mut css::Parser) -> CssResult<f32> {
+    /// `<number>`. With `percent_basis`, the `<number>` that stands for `100%`, also a `<percentage>`.
+    fn parse_number(&self, input: &mut css::Parser, percent_basis: Option<f32>) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(res) = input.try_parse(|i| RelativeComponentParser::parse_number(i, from)) {
                 return Ok(res);
@@ -2020,8 +2075,31 @@ impl ComponentParser {
         }
 
         if let Ok(val) = input.try_parse(CSSNumberFns::parse) {
-            Ok(val)
-        } else if self.allow_none {
+            return Ok(val);
+        }
+        self.parse_none_or(input, percent_basis, |i, basis| {
+            Ok(Percentage::parse(i)?.v * basis)
+        })
+    }
+
+    /// `none`, then with a basis the other literal type. lightningcss reads the number first. This order keeps the probes of a value that parsed before.
+    fn parse_none_or(
+        &self,
+        input: &mut css::Parser,
+        basis: Option<f32>,
+        other: fn(&mut css::Parser, f32) -> CssResult<f32>,
+    ) -> CssResult<f32> {
+        let Some(basis) = basis else {
+            return self.parse_none(input);
+        };
+        match input.try_parse(|i| self.parse_none(i)) {
+            Ok(none) => Ok(none),
+            Err(_) => other(input, basis),
+        }
+    }
+
+    fn parse_none(&self, input: &mut css::Parser) -> CssResult<f32> {
+        if self.allow_none {
             input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
         } else {
@@ -2124,6 +2202,7 @@ impl RelativeComponentParser {
     fn parse_number_or_percentage(
         input: &mut css::Parser,
         this: &RelativeComponentParser,
+        unit_range: bool,
     ) -> CssResult<NumberOrPercentage> {
         let allowed = ChannelType::PERCENTAGE | ChannelType::NUMBER;
         if let Ok(value) =
@@ -2132,8 +2211,10 @@ impl RelativeComponentParser {
             return Ok(NumberOrPercentage::Percentage { unit_value: value });
         }
 
-        if let Ok(value) =
-            input.try_parse(|i| RelativeComponentParser::parse_calc(i, this, allowed))
+        // A keyword holds a unit value. As a `<number>` it is that value only where the range is 0 to 1.
+        if unit_range
+            && let Ok(value) =
+                input.try_parse(|i| RelativeComponentParser::parse_calc(i, this, allowed))
         {
             return Ok(NumberOrPercentage::Percentage { unit_value: value });
         }

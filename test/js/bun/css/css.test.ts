@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -12,6 +12,7 @@ import {
   minify_error_test_with_options,
   minify_test,
   minifyTestWithOptions as minify_test_with_options,
+  minify_test_with_targets,
   ParserFlags,
   ParserOptions,
   prefix_test,
@@ -185,6 +186,9 @@ describe("css tests", () => {
     minify_test(`a { width: max(NaN * 1px, 2px) }`, `a{width:max(0px,2px)}`);
     minify_test(`a { width: calc(NaN * 1%) }`, `a{width:0%}`);
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
+    // A calc() that adds a number to a percentage has no type. It is left for the browser to reject.
+    minify_test(`a { opacity: calc(50% + 0.1) }`, `a{opacity:calc(50% + .1)}`);
+    minify_test(`a { color: lab(50% calc(10% + 1) 0) }`, `a{color:lab(50% calc(10% + 1)0)}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
   });
@@ -7842,6 +7846,238 @@ describe("css tests", () => {
     );
   });
 
+  // color-mix() converts its operands into the interpolation color space. Per css-color-4 the
+  // conversion leaves the channels alone, even when they end up outside the gamut of that
+  // space (#interpolation-space); the one thing it changes is that a hue made powerless by the
+  // conversion (the converted color is achromatic, within the epsilon of the space) becomes
+  // missing and is taken from the other operand (#powerless). An operand written directly in
+  // the interpolation space is mixed exactly as written. Unless a comment says otherwise the
+  // expected values are also lightningcss output; where they differ, the values follow the spec
+  // text and the WPT color-computed-color-mix-function tests. Not covered: `in hsl` and `in hwb`
+  // still gamut map an operand that is outside sRGB when they convert it.
+  describe("color-mix() operand conversion", () => {
+    describe("out-of-gamut operands are interpolated as written", () => {
+      // color(display-p3 0 1 0) is color(srgb -0.511605 1.01827 -0.310675), so both spellings
+      // mix to the same color. The color(srgb) operand used to be gamut mapped to #00f942 first
+      // (#4d9654) and the display-p3 operand was not (#0b9b0b). lightningcss maps the display-p3
+      // operand and not the other one.
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 0.6 0.2 0.4), color(display-p3 0 1 0)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.51 1.018 -0.31) 25%, color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#526739}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 25%, color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#526739}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.51 1.018 -0.31 / 0.5), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#3b792abf}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 1 0 1)) }",
+        ".foo{color:#4a655c}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(rec2020 0 1 0), color(srgb 0.8 0.2 0.6)) }",
+        ".foo{color:#01a020}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, lab(80% -120 80), color(srgb 0.8 0.2 0.6)) }",
+        ".foo{color:#189337}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, light-dark(color(display-p3 0 1 0), color(srgb 1.13 0.2 0)), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:light-dark(#0b9b0b,#d33)}",
+      );
+
+      // Out-of-range channels cancel out or add up during interpolation.
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.5 1.5 -0.5), color(srgb 0.5 0.5 0.5)) }",
+        ".foo{color:#0f0}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 1.5 -0.5 -0.5), color(srgb 0.5 0.5 0.5)) }",
+        ".foo{color:red}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 2 0 0) 25%, color(srgb 0 1 1)) }",
+        ".foo{color:#80bfbf}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 1.13 0 0), color(srgb 0.5 1 1)) }",
+        ".foo{color:#d08080}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb-linear 1.5 0 0), white) }",
+        ".foo{color:color(srgb-linear 1.25 .5 .5)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb-linear -0.5 1.5 -0.5), color(srgb-linear 0.5 0.5 0.5)) }",
+        ".foo{color:color(srgb-linear 0 1 0)}",
+      );
+      // color(srgb 1.19 0 0) is color(srgb-linear 1.48799 0 0); lightningcss maps it first.
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb 1.19 0 0), color(srgb-linear 0 0.5 0.5)) }",
+        ".foo{color:color(srgb-linear .743996 .25 .25)}",
+      );
+
+      // The result is still gamut mapped when it is converted to an rgb color.
+      minify_test(".foo { color: color-mix(in srgb, color(srgb none 2 0), rgb(0 255 0)) }", ".foo{color:#fff}");
+      minify_test(".foo { color: color-mix(in srgb, color(srgb 1.13 0 0), white) }", ".foo{color:#ff8886}");
+      minify_test(".foo { color: color-mix(in srgb, red, blue) }", ".foo{color:purple}");
+    });
+
+    describe("a hue made powerless by the conversion is taken from the other operand", () => {
+      minify_test(".foo { color: color-mix(in lch, lab(50% 0 0), lch(50% 50 120)) }", ".foo{color:lch(50% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, lch(50% 50 120), lab(50% 0 0)) }", ".foo{color:lch(50% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, white, lch(50% 50 120)) }", ".foo{color:lch(75% 25 120)}");
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(50% 0 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .1 120)}",
+      );
+      minify_test(".foo { color: color-mix(in oklch, white, oklch(50% 0.2 120)) }", ".foo{color:oklch(75% .1 120)}");
+      // Black too, but its zero chroma still counts (lightningcss: lch(25% 50 120), oklch(25% .2 120)).
+      minify_test(".foo { color: color-mix(in lch, black, lch(50% 50 120)) }", ".foo{color:lch(25% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, lch(50% 50 120), black) }", ".foo{color:lch(25% 25 120)}");
+      minify_test(".foo { color: color-mix(in oklch, black, oklch(50% 0.2 120)) }", ".foo{color:oklch(25% .1 120)}");
+      // Both hues missing: the result has none as well.
+      minify_test(".foo { color: color-mix(in lch, lab(50% 0 0), black) }", ".foo{color:lch(25% 0 none)}");
+      minify_test(".foo { color: color-mix(in oklch, oklab(50% 0 0), black) }", ".foo{color:oklch(25% 0 none)}");
+      // Greys converted into hsl/hwb already get a missing hue from the rgb conversion.
+      minify_test(".foo { color: color-mix(in hsl, gray, hsl(200 100% 50%)) }", ".foo{color:#4095bf}");
+      minify_test(".foo { color: color-mix(in hwb, gray, hwb(200 0% 0%)) }", ".foo{color:#4095c0}");
+
+      // The powerless hue epsilons of css-color-4: lch C <= 0.0015, oklch C <= 0.000004,
+      // hsl S <= 0.001%, hwb W + B >= 99.999%. (lightningcss only treats exactly 0 as powerless.)
+      minify_test(
+        ".foo { color: color-mix(in lch, lab(50% 0.001 0), lch(50% 50 120)) }",
+        ".foo{color:lch(50% 25.0005 120)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in lch, lab(50% 0.002 0), lch(50% 50 120)) }",
+        ".foo{color:lch(50% 25.001 60)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(50% 0.000002 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .100001 120)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(50% 0.00001 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .100005 60)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hsl, color(srgb 0.5 0.5 0.500001), hsl(0 100% 50%)) }",
+        ".foo{color:#bf4040}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hsl, color(srgb 0.5 0.5 0.5001), hsl(0 100% 50%)) }",
+        ".foo{color:#bf40bf}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hwb, color(srgb 0.5 0.5 0.500001), hwb(0 0% 0%)) }",
+        ".foo{color:#bf4040}",
+      );
+      minify_test(".foo { color: color-mix(in hwb, color(srgb 0.5 0.5 0.5001), hwb(0 0% 0%)) }", ".foo{color:#bf40bf}");
+    });
+
+    describe("an operand written in the interpolation space keeps its powerless components", () => {
+      minify_test(".foo { color: color-mix(in lch, lch(50% 0 200), lch(50% 50 120)) }", ".foo{color:lch(50% 25 160)}");
+      minify_test(
+        ".foo { color: color-mix(in lch, lch(50% 0.001 200), lch(50% 50 120)) }",
+        ".foo{color:lch(50% 25.0005 160)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .1 160)}",
+      );
+      // hsl()/hwb() with a none component stay in hsl/hwb instead of becoming an rgb color.
+      minify_test(".foo { color: color-mix(in hsl, hsl(240 0% none), hsl(0 100% 50%)) }", ".foo{color:#bf40bf}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 0% none), hsl(200 100% 50%)) }", ".foo{color:#40bf95}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 none 100%), hsl(200 100% 50%)) }", ".foo{color:#80ffd5}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 none 50%), hsl(200 100% 50%)) }", ".foo{color:#0fa}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), hsl(120 none 50%)) }", ".foo{color:#0fa}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 none 100%), hwb(200 0% 0%)) }", ".foo{color:#008055}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 50% none), hwb(200 0% 40%)) }", ".foo{color:#40997b}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(200 0% 40%), hwb(120 50% none)) }", ".foo{color:#40997b}");
+      // Without none, hsl() is an rgb color, so it is converted and its hue is powerless.
+      minify_test(".foo { color: color-mix(in hsl, hsl(240 0% 50%), hsl(0 100% 50%)) }", ".foo{color:#bf4040}");
+    });
+
+    describe("nothing else becomes missing", () => {
+      // css-color-4 no longer makes any channel powerless at 0% or 100% lightness, and lab/oklab
+      // have no powerless channels at all, so black and white contribute their zero chroma like
+      // any other color (WPT: color-mix(in hsl, red, white) is rgb(87.5% 62.5% 62.5%) and
+      // color-mix(in hsl, white, blue) is rgb(62.5% 62.5% 87.5%)). lightningcss still applies the
+      // old rules and gives lab(25% 50 -20), #ff8080 and #005580 for the first mixes below.
+      minify_test(".foo { color: color-mix(in lab, black, lab(50% 50 -20)) }", ".foo{color:lab(25% 25 -10)}");
+      minify_test(".foo { color: color-mix(in hsl, red, white) }", ".foo{color:#df9f9f}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), black) }", ".foo{color:#204a60}");
+      minify_test(".foo { color: color-mix(in lab, lab(50% 50 -20), black) }", ".foo{color:lab(25% 25 -10)}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, black, oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .05 -.025)}",
+      );
+      minify_test(".foo { color: color-mix(in hsl, red, black) }", ".foo{color:#602020}");
+      minify_test(".foo { color: color-mix(in hsl, white, blue) }", ".foo{color:#9f9fdf}");
+      minify_test(".foo { color: color-mix(in hsl, white 10%, blue) }", ".foo{color:#2525f4}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), white) }", ".foo{color:#9fcadf}");
+      minify_test(".foo { color: color-mix(in hwb, red, white) }", ".foo{color:#ff8080}");
+      minify_test(".foo { color: color-mix(in hwb, red, black) }", ".foo{color:maroon}");
+      minify_test(".foo { color: color-mix(in hwb, white, blue) }", ".foo{color:#8080ff}");
+
+      // 0% lightness operands, converted (lightningcss: lab(25% 50 -20), lch(25% 50 120)) and as written.
+      minify_test(".foo { color: color-mix(in lab, lch(0% 30 0), lab(50% 50 -20)) }", ".foo{color:lab(25% 40 -10)}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklch(0% 0.1 0), oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .1 -.025)}",
+      );
+      minify_test(".foo { color: color-mix(in lch, lab(0% 30 0), lch(50% 50 120)) }", ".foo{color:lch(25% 40 60)}");
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(0% 0.1 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(25% .15 60)}",
+      );
+      minify_test(".foo { color: color-mix(in lab, lab(0% 30 40), lab(50% 50 -20)) }", ".foo{color:lab(25% 40 10)}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklab(0% 0.1 0.1), oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .1 .025)}",
+      );
+      minify_test(".foo { color: color-mix(in lch, lch(0% 30 40), lch(50% 50 120)) }", ".foo{color:lch(25% 40 80)}");
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(0% 0.1 40), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(25% .15 80)}",
+      );
+
+      // transparent is black with alpha 0: premultiplication makes its channels irrelevant, and
+      // black has no hue in a polar space.
+      minify_test(".foo { color: color-mix(in srgb, red 50%, transparent) }", ".foo{color:#ff000080}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(40 80% 60%) 50%, transparent) }", ".foo{color:#ebb44780}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklab(60% 0.1 0.1) 50%, transparent) }",
+        ".foo{color:oklab(60% .1 .1/.5)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(60% 0.1 40) 50%, transparent) }",
+        ".foo{color:oklch(60% .1 40/.5)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in lch, lch(60% 40 40) 50%, transparent) }",
+        ".foo{color:lch(60% 40 40/.5)}",
+      );
+    });
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");
@@ -7962,6 +8198,299 @@ describe("css tests", () => {
     minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
     minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
+  });
+
+  // Every channel of the lab family is `<percentage> | <number> | none`. A value with a number
+  // lightness or a percentage a, b or chroma has the same fallbacks as its other spelling.
+  // https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+  describe("lab-family colors written as numbers or percentages", () => {
+    minify_test(".foo { color: lab(50 40 -50) }", ".foo{color:lab(50% 40 -50)}");
+    minify_test(".foo { color: lch(50 60 120) }", ".foo{color:lch(50% 60 120)}");
+    minify_test(".foo { color: oklab(0.5 0.1 -0.1) }", ".foo{color:oklab(50% .1 -.1)}");
+    minify_test(".foo { color: oklch(0.5 0.1 120) }", ".foo{color:oklch(50% .1 120)}");
+    minify_test(".foo { color: lab(50% 32% -40%) }", ".foo{color:lab(50% 40 -50)}");
+    minify_test(".foo { color: lch(50% 40% 120) }", ".foo{color:lch(50% 60 120)}");
+    minify_test(".foo { color: oklab(50% 25% -25%) }", ".foo{color:oklab(50% .1 -.1)}");
+    minify_test(".foo { color: oklch(50% 25% 120) }", ".foo{color:oklch(50% .1 120)}");
+    minify_test(".foo { color: var(--x, oklch(0.5 0.1 120)) }", ".foo{color:var(--x,oklch(50% .1 120))}");
+
+    // Both spellings get the same fallbacks for targets without oklch().
+    for (const lightness of ["0.5", "50%"]) {
+      prefix_test(
+        `.foo { color: oklch(${lightness} 0.1 120) }`,
+        indoc`
+          .foo {
+            color: #5c6b21;
+            color: lab(42.8512% -14.3178 37.8447);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+    }
+
+    // An operand with number channels mixes like its percent spelling.
+    describe("color-mix()", () => {
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(0.62 0.19 255), black 20%) }",
+        ".foo{color:oklch(49.6% .152 255)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(0.7 0.15 300 / 0.5), oklch(0.7 0.15 200)) }",
+        ".foo{color:oklch(70% .15 250/.75)}",
+      );
+    });
+
+    describe("relative colors", () => {
+      minify_test(".foo { color: lab(from lab(50 20 30) l a b) }", ".foo{color:lab(50% 20 30)}");
+      minify_test(".foo { color: oklch(from red 0.5 c h) }", ".foo{color:oklch(50% .257683 29.2339)}");
+      minify_test(".foo { color: rgb(from oklch(0.5 0.1 120) r g b) }", ".foo{color:#5c6b21}");
+      minify_test(
+        ".foo { color: color(from lab(100 104.3 -50.9) srgb r g b) }",
+        ".foo{color:color(srgb 1.5935 .587758 1.40555)}",
+      );
+      // An out-of-gamut origin is left alone like its percentage spelling; it is a parsed
+      // color now, which is why it comes back out serialized.
+      minify_test(
+        ".foo { color: rgb(from lab(100 104.3 -50.9) r g b) }",
+        ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b)}",
+      );
+      minify_test(
+        ".foo { color: hwb(from oklch(1 0.399 336.3) h w b) }",
+        ".foo{color:hwb(from oklch(100% .399 336.3) h w b)}",
+      );
+      // `calc(l - 0.1)` adds a number to a percentage-typed keyword. It is not resolved, and it is
+      // not `none`. The origin gets the fallback tiers of a color inside any value that is not resolved.
+      minify_test_with_targets(
+        ".foo { color: oklch(from oklch(0.5 0.1 40) calc(l - 0.1) c h) }",
+        ".foo{color:oklch(from #924d35 calc(l - .1)c h)}@supports (color:lab(0% 0 0)){.foo{color:oklch(from lab(41.2466% 28.0071 27.8824) calc(l - .1)c h)}}",
+        { chrome: 95 << 16 },
+      );
+      minify_test(
+        ".foo { color: oklch(from oklch(50% 0.1 40) calc(l - 0.1) c h) }",
+        ".foo{color:oklch(from oklch(50% .1 40) calc(l - .1)c h)}",
+      );
+    });
+  });
+
+  // rgb(), hsl() and hwb() hold sRGB. A browser computes a relative color whose origin is outside
+  // sRGB unclamped (w3c/csswg-drafts#8444). A gamut-mapped origin paints another color (#fff and
+  // #00f942 for the first two), so the color is left for the browser.
+  describe("relative colors with an origin outside the sRGB gamut", () => {
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b)}",
+    );
+    minify_test(
+      ".foo { color: hsl(from color(display-p3 0 1 0) h s l) }",
+      ".foo{color:hsl(from color(display-p3 0 1 0) h s l)}",
+    );
+    minify_test(
+      ".foo { color: hwb(from oklch(100% 0.399 336.3) h w b) }",
+      ".foo{color:hwb(from oklch(100% .399 336.3) h w b)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b / var(--a)) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b/var(--a))}",
+    );
+    // Under targets without lab(), the origin literal gets the fallback tiers any unresolved
+    // value containing it gets; the relative color itself is still left alone in each tier.
+    prefix_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      indoc`
+        .foo {
+          color: rgb(from #fff r g b);
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            color: rgb(from lab(100% 104.3 -50.9) r g b);
+          }
+        }
+      `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // An origin inside sRGB resolves, and the unbounded functions resolve any origin.
+    minify_test(".foo { color: rgb(from lab(50% 40 -50) r g b) }", ".foo{color:#965dcd}");
+    minify_test(".foo { color: hsl(from color(display-p3 0.4 0.4 0.4) h s l) }", ".foo{color:#666}");
+    minify_test(
+      ".foo { color: color(from lab(100% 104.3 -50.9) srgb r g b) }",
+      ".foo{color:color(srgb 1.5935 .587758 1.40555)}",
+    );
+    // A boundary color converts back a few 1e-7 outside the gamut; that still resolves.
+    minify_test(".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b) }", ".foo{color:red}");
+    minify_test(".foo { color: hsl(from lab(54.2905% 80.8049 69.891) h s l) }", ".foo{color:red}");
+    minify_test(
+      ".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b / var(--a)) }",
+      ".foo{color:rgb(255 0 0/var(--a))}",
+    );
+  });
+
+  describe("hsl() and hwb() number channels", () => {
+    // In the modern syntax the saturation/lightness and whiteness/blackness are
+    // <percentage> | <number> | none, and the number is the percentage without
+    // its sign; only the legacy comma syntax is limited to percentages.
+    // https://www.w3.org/TR/css-color-4/#the-hsl-notation
+    // https://www.w3.org/TR/css-color-4/#the-hwb-notation
+    // Every output below is what the percentage spelling already produced.
+    minify_test(".foo { color: hsl(120 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50 40%) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50% 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120deg 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsla(120 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50 40 / 0.5) }", ".foo{color:#33993380}");
+    minify_test(".foo { color: hsla(120 50 40 / 50%) }", ".foo{color:#33993380}");
+    minify_test(".foo { color: hsl(120 none 40) }", ".foo{color:#666}");
+    minify_test(".foo { color: hsl(120 50 none) }", ".foo{color:#000}");
+    minify_test(".foo { color: hsl(120 150 40) }", ".foo{color:#0c0}");
+    minify_test(".foo { color: hsl(120 -50 40) }", ".foo{color:#666}");
+    minify_test(".foo { color: hsl(120 50 140) }", ".foo{color:#fff}");
+    minify_test(".foo { color: hsl(120.5 50.5 40.5) }", ".foo{color:#339b34}");
+    minify_test(".foo { color: hsl(120 .5 40) }", ".foo{color:#656765}");
+    minify_test(".foo { color: hsl(120 calc(25 * 2) 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 calc(25% * 2) 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hwb(120 20 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20 30%) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20% 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120deg 20 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20 30 / 0.5) }", ".foo{color:#33b33380}");
+    minify_test(".foo { color: hwb(120 none 30) }", ".foo{color:#00b300}");
+    minify_test(".foo { color: hwb(120 20 none) }", ".foo{color:#3f3}");
+    minify_test(".foo { color: hwb(120 60 60) }", ".foo{color:gray}");
+    minify_test(".foo { color: hwb(120 -20 30) }", ".foo{color:#00b300}");
+    minify_test(".foo { color: hwb(120 20 130) }", ".foo{color:#2a2a2a}");
+    minify_test(".foo { color: hwb(120 calc(10 * 2) 30) }", ".foo{color:#33b333}");
+
+    // Relative color syntax is the modern syntax; the origin of a relative
+    // color, the operands of color-mix() and colors nested in other values go
+    // through the same parser.
+    minify_test(".foo { color: hsl(from red h 50 l) }", ".foo{color:#bf4040}");
+    minify_test(".foo { color: hwb(from red h 20 b) }", ".foo{color:#f33}");
+    minify_test(".foo { color: rgb(from hsl(120 50 40) r g b) }", ".foo{color:#393}");
+    minify_test(".foo { color: color-mix(in hsl, hsl(120 50 40), hwb(120 20 30)) }", ".foo{color:#33a633}");
+    minify_test(
+      ".foo { background: linear-gradient(hsl(120 50 40), hwb(120 20 30)) }",
+      ".foo{background:linear-gradient(#393,#33b333)}",
+    );
+    // Colors inside token lists (custom properties, var() fallbacks).
+    minify_test(".foo { --c: hsl(120 50 40) }", ".foo{--c:#393}");
+    minify_test(".foo { --c: hwb(120 20 30) }", ".foo{--c:#33b333}");
+    minify_test(".foo { color: var(--c, hsl(120 50 40)) }", ".foo{color:var(--c,#393)}");
+    // An hsl() whose alpha cannot be resolved keeps its channels, which are
+    // always written as percentages.
+    minify_test(".foo { color: hsl(120 50 40 / var(--a)) }", ".foo{color:hsl(120 50% 40%/var(--a))}");
+    minify_test(".foo { color: hsl(120 50 40% / var(--a)) }", ".foo{color:hsl(120 50% 40%/var(--a))}");
+
+    // Downleveling for targets without the space separated syntax works from
+    // the parsed color, so it is the same as for the percentage spelling.
+    prefix_test(
+      `.foo {
+        color: hsl(120 50 40 / 0.5);
+        border-color: hsl(120 50 40 / var(--a));
+        background: hwb(120 20 30 / 0.5);
+      }`,
+      indoc`
+        .foo {
+          color: rgba(51, 153, 51, .5);
+          border-color: hsla(120, 50%, 40%, var(--a));
+          background: rgba(51, 179, 51, .5);
+        }
+      `,
+      { chrome: Some(60 << 16) },
+    );
+
+    // The legacy comma syntax takes only percentages, and hwb() has no legacy
+    // syntax, so these are left for the browser to reject.
+    minify_test(".foo { color: hsl(120, 50, 40) }", ".foo{color:hsl(120,50,40)}");
+    minify_test(".foo { color: hsl(120, 50%, 40) }", ".foo{color:hsl(120,50%,40)}");
+    minify_test(".foo { color: hsl(120, 50, 40%) }", ".foo{color:hsl(120,50,40%)}");
+    minify_test(".foo { color: hsla(120, 50, 40, 0.5) }", ".foo{color:hsla(120,50,40,.5)}");
+    minify_test(".foo { color: hwb(120, 20, 30) }", ".foo{color:hwb(120,20,30)}");
+    minify_test(".foo { color: hsl(120 50, 40) }", ".foo{color:hsl(120 50,40)}");
+    minify_test(".foo { color: hsl(120 50 40 60) }", ".foo{color:hsl(120 50 40 60)}");
+    minify_test(".foo { --c: hsl(120, 50, 40) }", ".foo{--c:hsl(120,50,40)}");
+    // The legacy rgb() percentage form shares the percentage parser.
+    minify_test(".foo { color: rgb(10%, 20, 30) }", ".foo{color:rgb(10%,20,30)}");
+    minify_test(".foo { color: hsl(120, 50%, 40%) }", ".foo{color:#393}");
+    minify_test(".foo { color: rgb(10%, 20%, 30%) }", ".foo{color:#1a334d}");
+  });
+
+  // A `color` or `text-shadow` that does not parse replaces the declaration before it. While
+  // these spellings did not parse, that deleted a hand-written fallback:
+  // `.x{color:red;color:oklch(0.5 0.1 40)}` came out as `.x{color:oklch(.5 .1 40)}`.
+  describe("a fallback written before a color with number channels", () => {
+    // The browser targets `bun build` uses when the target is a browser.
+    const targets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+
+    // Not every target has the lab family, so the fallback stays in front of it.
+    for (const [written, printed] of [
+      ["oklch(0.5 0.1 40)", "oklch(50% .1 40)"],
+      ["oklab(0.5 0.1 0.1)", "oklab(50% .1 .1)"],
+      ["lab(50 20 30)", "lab(50% 20 30)"],
+      ["lch(50 30 40)", "lch(50% 30 40)"],
+      ["lab(50% 50% 50%)", "lab(50% 62.5 62.5)"],
+    ]) {
+      minify_test_with_targets(`.x{color:red;color:${written}}`, `.x{color:red;color:${printed}}`, targets);
+    }
+    minify_test_with_targets(
+      ".x{text-shadow:1px 1px red;text-shadow:1px 1px oklch(0.5 0.1 40)}",
+      ".x{text-shadow:1px 1px red;text-shadow:1px 1px oklch(50% .1 40)}",
+      targets,
+    );
+    minify_test_with_targets(
+      ".x{color:red;margin:0;color:oklch(0.5 0.1 40)}",
+      ".x{color:red;color:oklch(50% .1 40);margin:0}",
+      targets,
+    );
+
+    // hsl() and hwb() fold to an sRGB color that every target reads, so it replaces the fallback.
+    minify_test_with_targets(".x{color:red;color:hsl(120 50 50)}", ".x{color:#40bf40}", targets);
+    minify_test_with_targets(".x{color:red;color:hwb(120 10 10)}", ".x{color:#1ae61a}", targets);
+
+    // With no fallback in the same list, the color gets the generated ones.
+    const tiers = "color:#924d35;color:color(display-p3 .538188 .317174 .228429);color:lab(41.2466% 28.0071 27.8824)";
+    minify_test_with_targets(".x{color:oklch(0.5 0.1 40)}", `.x{${tiers}}`, targets);
+    minify_test_with_targets(
+      ".x{color:red!important;color:oklch(0.5 0.1 40)}",
+      `.x{${tiers};color:red!important}`,
+      targets,
+    );
+    // The later rule is no longer taken for a duplicate that replaces the first one.
+    minify_test_with_targets(
+      ".x{color:red}.y{top:0}.x{color:oklch(0.5 0.1 40)}",
+      `.x{color:red}.y{top:0}.x{${tiers}}`,
+      targets,
+    );
+
+    // `@property` needs a typed color: this was a build error.
+    minify_test_with_targets(
+      '@property --c{syntax:"<color>";inherits:false;initial-value:oklch(0.5 0.1 40)}',
+      '@property --c{syntax:"<color>";inherits:false;initial-value:oklch(50% .1 40)}',
+      targets,
+    );
+
+    test("bun build keeps the fallback", async () => {
+      using dir = tempDir("css-color-fallback", {
+        "a.css": ".x{color:red;color:oklch(0.5 0.1 40)}",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--minify", "a.css"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: ".x{color:red;color:oklch(50% .1 40)}",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   describe("edge cases", () => {

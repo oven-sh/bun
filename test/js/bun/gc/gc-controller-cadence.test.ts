@@ -608,11 +608,11 @@ test.skipIf(!isLinux || isASAN)(
 // BUN_JSC_logGC prints what each visitor marked after every constraint pass: C is the collector's own visitor, P1..Pn
 // the helpers'. A fixed number of markers makes the count the same on every machine. A debug build takes over 10 s to
 // allocate the 60 MB.
-describe.skipIf(isDebug)("marking helper threads", () => {
-  async function collectionsOf(script: string) {
+describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
+  async function collectionsOf(script: string, extraEnv: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_numberOfGCMarkers: "4", BUN_GC_TIMER_DISABLE: "1" },
+      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_numberOfGCMarkers: "4", BUN_GC_TIMER_DISABLE: "1", ...extraEnv },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -630,25 +630,42 @@ describe.skipIf(isDebug)("marking helper threads", () => {
   }
 
   // A ring of 1024 small objects replaced 200k times over: about 60 MB of short-lived objects, so about 7 eden
-  // collections at the 8 MB budget, each with under 1 MB to mark (the ring is written, so it is remembered). Every one
-  // is marked by the collector's thread alone. The first one is left out: what ran before the loop can leave it more.
-  test("stay out of a collection that marks little", async () => {
-    const collections = await collectionsOf(`
-      const ring = new Array(1024).fill(null);
-      for (let i = 0; i < 200000; i++) {
-        const key = "key" + i;
-        ring[i & 1023] = { v: key, i, a: new Array(24).fill(i) };
-      }
-      console.log("done", ring.length);
-    `);
+  // collections at the 8 MB budget, each with under 1 MB to mark (the ring is written, so it is remembered). The first
+  // one is left out: what ran before the loop can leave it more.
+  const ring = `
+    const ring = new Array(1024).fill(null);
+    for (let i = 0; i < 200000; i++) {
+      const key = "key" + i;
+      ring[i & 1023] = { v: key, i, a: new Array(24).fill(i) };
+    }
+    console.log("done", ring.length);
+  `;
+  async function smallEdenCollectionsOf(extraEnv?: Record<string, string>) {
+    const collections = await collectionsOf(ring, extraEnv);
     const edens = collections.filter(c => c.scope === "Eden").slice(1);
     expect(edens.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(3);
     for (const eden of edens) expect(eden.markedKB, JSON.stringify(eden)).toBeLessThan(1024);
+    return edens;
+  }
+
+  // Every one of them is marked by the collector's thread alone.
+  test("stay out of a collection that marks little", async () => {
+    const edens = await smallEdenCollectionsOf();
     expect(
       edens.map(c => c.helpersKB),
-      JSON.stringify(collections),
+      JSON.stringify(edens),
     ).toEqual(edens.map(() => 0));
-  }, 20_000);
+  });
+
+  // The GC race tests depend on this: with the threshold at 0 they join from the start, and a few hundred KB spread over
+  // 7 collections is enough for them to take some of it.
+  test("join from the start with BUN_JSC_minimumBytesMarkedForParallelMarking=0", async () => {
+    const edens = await smallEdenCollectionsOf({ BUN_JSC_minimumBytesMarkedForParallelMarking: "0" });
+    expect(
+      edens.reduce((sum, c) => sum + c.helpersKB, 0),
+      JSON.stringify(edens),
+    ).toBeGreaterThan(0);
+  });
 
   // 40 MB of live objects: a full collection has far more than 1 MB to mark, and the helpers take part in it.
   test("join a collection that has enough to mark", async () => {
@@ -660,5 +677,5 @@ describe.skipIf(isDebug)("marking helper threads", () => {
     const fulls = collections.filter(c => c.scope === "Full" && c.markedKB > 1024);
     expect(fulls.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(1);
     for (const full of fulls) expect(full.helpersKB, JSON.stringify(full)).toBeGreaterThan(0);
-  }, 20_000);
+  });
 });

@@ -47,7 +47,7 @@ export const any = new AnyType();
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.bytes`, `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
 
-/** A string as UTF-8, or the bytes of a buffer, shared or not, as `&[u8]` that nothing changes during the call. `.orBlob`, `.loose`. */
+/** A string as UTF-8, or the bytes of a buffer, shared or not, as `&[u8]`. `.orBlob`, `.loose`. */
 export const stringOrBuffer = new StringOrBufferType();
 
 /** The native `Blob` behind a JS `Blob`. */

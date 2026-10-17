@@ -720,8 +720,8 @@ export class PossiblySharedBytesType extends BytesType {
 }
 
 /**
- * A string, as UTF-8, or the bytes of a typed array, `DataView`, `ArrayBuffer` or `SharedArrayBuffer`: `&[u8]` that nothing
- * changes during the call. The bytes of a shared buffer, which another thread could change, are a copy.
+ * A string, as UTF-8, or the bytes of a typed array, `DataView`, `ArrayBuffer` or `SharedArrayBuffer`, as `&[u8]`. A buffer's
+ * are where they are, a shared one's too, which another thread can write during the call.
  */
 export class StringOrBufferType extends Type {
   readonly conversion: "Strict" | "Loose" | "LooseNotNullish";
@@ -763,7 +763,7 @@ export class StringOrBufferType extends Type {
     return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
   }
   cppReadLast(target: string, value: string): string[] {
-    return [`${target}.read(*globalObject, ${value});`, `RETURN_IF_EXCEPTION(scope, {});`];
+    return [`${target}.read(${value});`];
   }
   layout(): Layout {
     return { size: 16, align: 8 };

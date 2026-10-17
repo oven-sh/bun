@@ -1171,10 +1171,10 @@ describe("a string or a buffer, as bytes", () => {
     expect(log).toEqual(["data", "after"]);
   });
 
-  it("copies only what another thread could change", () => {
+  it("copies only a string that is not ASCII", () => {
     const ownMemory = bindgen.bytesOfAreSameMemory;
     for (const buffer of buffers(eight)) expect(ownMemory(buffer, buffer)).toBe(true);
-    for (const buffer of buffers(eight, SharedArrayBuffer)) expect(ownMemory(buffer, buffer)).toBe(false);
+    for (const buffer of buffers(eight, SharedArrayBuffer)) expect(ownMemory(buffer, buffer)).toBe(true);
     const blob = new Blob([new Uint8Array(eight)]);
     expect(ownMemory(blob, blob)).toBe(true);
     // The characters of a string that is ASCII are its UTF-8.

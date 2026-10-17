@@ -353,7 +353,7 @@ it reads as an index or a length. Such an argument is always there: it is not `.
 
 Many functions take "a string or a buffer" and want its bytes. `b.stringOrBuffer` is a string
 or a `String` object, as UTF-8, or the bytes of a typed array, `DataView`, `ArrayBuffer` or
-`SharedArrayBuffer`. The body gets `&'a [u8]`, and nothing changes the bytes during the call.
+`SharedArrayBuffer`. The body gets `&'a [u8]`.
 
 - `.orBlob`: the bytes of a `Blob` too. One whose bytes are not in memory, a file here or in S3, throws.
 - `.loose`: anything else is `ToString`. Without it, anything else throws.
@@ -372,9 +372,9 @@ export const gzipSync = b.fn({
 fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
 ```
 
-Nothing is copied but what has to be: a string that is not ASCII is converted, and the bytes
-of a shared buffer, which another thread could write, are copied. Everything else is borrowed
-from where it is. Like `.bytes` it is for an argument of a function that cannot run JavaScript,
+A string that is not ASCII is converted. Everything else is borrowed from where it is, the
+bytes of a shared buffer too: unlike `.bytes` it takes one, and another thread that writes it
+during the call changes what the body reads. Like `.bytes` it is for an argument of a function that cannot run JavaScript,
 its kind is checked in the order of the arguments, and a buffer's pointer and length are read
 after every argument is converted. It is always there: it is not `.optional`. `.withValue` tells
 a string from a buffer, or `undefined` from `"undefined"` under `.loose`.

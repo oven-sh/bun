@@ -10,6 +10,7 @@
 
 #![warn(unused_must_use)]
 
+use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
@@ -68,6 +69,35 @@ pub(crate) fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
     }
 
     imp::wake(ptr, max_waiters);
+}
+
+/// `code` is by value: a reference gives the caller a stack slot, which every `wake()` pays for.
+#[cold]
+#[inline(never)]
+fn unexpected(call: &str, code: impl fmt::Display) -> ! {
+    panic!("Unexpected {call} return code: {code}");
+}
+
+/// A return code that holds an errno, as the message prints it: the code, then the name.
+#[cfg(unix)]
+struct Errno(i64);
+
+#[cfg(unix)]
+impl fmt::Display for Errno {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = bun_sys::SystemErrno::init(self.0).map_or("UNKNOWN", <&'static str>::from);
+        write!(f, "{} - {name}", self.0)
+    }
+}
+
+#[cfg(windows)]
+struct NtStatus(u32);
+
+#[cfg(windows)]
+impl fmt::Display for NtStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#010X}", self.0)
+    }
 }
 
 #[cfg(target_vendor = "apple")]
@@ -165,7 +195,7 @@ mod windows_impl {
                 debug_assert!(timeout.is_some());
                 Err(TimeoutError::Timeout)
             }
-            _ => panic!("Unexpected RtlWaitOnAddress() return code"),
+            windows::NTSTATUS(code) => unexpected("RtlWaitOnAddress()", NtStatus(code)),
         }
     }
 
@@ -264,7 +294,7 @@ mod darwin_impl {
                 }
                 Ok(())
             }
-            _ => panic!("Unexpected __ulock_wait() return code"),
+            _ => unexpected("__ulock_wait()", Errno(status.into())),
         }
     }
 
@@ -289,7 +319,7 @@ mod darwin_impl {
                 c::E::EFAULT => panic!("__ulock_wake() returned EFAULT unexpectedly"), // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
                 c::E::ENOENT => return, // nothing was woken up
                 c::E::EALREADY => panic!("__ulock_wake() returned EALREADY unexpectedly"), // only for ULF_WAKE_THREAD
-                _ => panic!("Unexpected __ulock_wake() return code"),
+                _ => unexpected("__ulock_wake()", Errno(status.into())),
             }
         }
     }
@@ -376,7 +406,7 @@ mod linux_impl {
             linux::E::SUCCESS => {} // successful wake up
             linux::E::INVAL => {}   // invalid futex_wait() on ptr done elsewhere
             linux::E::FAULT => {}   // word already freed (Miri reports this; see `super::wake_raw`)
-            _ => panic!("Unexpected futex_wake() return code"),
+            _ => unexpected("futex_wake()", Errno(rc as i64)),
         }
     }
 }
@@ -431,7 +461,7 @@ mod freebsd_impl {
                 Err(TimeoutError::Timeout)
             }
             E::EINTR => Ok(()), // spurious wake
-            _ => panic!("Unexpected _umtx_op() WAIT return code"),
+            _ => unexpected("_umtx_op() WAIT", Errno(bun_sys::last_errno().into())),
         }
     }
 
@@ -455,7 +485,7 @@ mod freebsd_impl {
             E::SUCCESS => {}
             E::EFAULT => {} // it's ok if the ptr doesn't point to valid memory
             E::EINVAL => panic!("_umtx_op() WAKE returned EINVAL unexpectedly"),
-            _ => panic!("Unexpected _umtx_op() WAKE return code"),
+            _ => unexpected("_umtx_op() WAKE", Errno(bun_sys::last_errno().into())),
         }
     }
 }
@@ -484,7 +514,7 @@ mod wasm_impl {
             0 => Ok(()), // ok
             1 => Ok(()), // expected =! loaded
             2 => Err(TimeoutError::Timeout),
-            _ => panic!("Unexpected memory.atomic.wait32() return code"),
+            _ => unexpected("memory.atomic.wait32()", result),
         }
     }
 
@@ -546,5 +576,23 @@ impl Deadline {
         let elapsed_ns = u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let until_timeout_ns = timeout_ns.saturating_sub(elapsed_ns);
         wait(ptr, expect, Some(until_timeout_ns))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn errno_prints_the_code_and_the_name() {
+        let code = i64::from(-libc::EAGAIN);
+        assert_eq!(format!("{}", Errno(code)), format!("{code} - EAGAIN"));
+        assert_eq!(format!("{}", Errno(-5000)), "-5000 - UNKNOWN");
+    }
+
+    #[test]
+    #[should_panic(expected = "Unexpected futex_wake() return code: -5000 - UNKNOWN")]
+    fn unexpected_panics_with_the_call_and_the_code() {
+        unexpected("futex_wake()", Errno(-5000));
     }
 }

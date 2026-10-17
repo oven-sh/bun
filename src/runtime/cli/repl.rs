@@ -3008,61 +3008,336 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionCont
 }
 
 fn is_incomplete_code(code: &[u8]) -> bool {
+    const fn is_word_char(ch: u8) -> bool {
+        ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
+    }
+
+    /// Keywords after which a `/` starts a regex literal rather than division.
+    const REGEX_KEYWORDS: &[&[u8]] = &[
+        b"return",
+        b"typeof",
+        b"instanceof",
+        b"in",
+        b"of",
+        b"new",
+        b"delete",
+        b"void",
+        b"throw",
+        b"case",
+        b"do",
+        b"else",
+        b"yield",
+        b"await",
+    ];
+
     let mut brace_count: i32 = 0;
     let mut bracket_count: i32 = 0;
     let mut paren_count: i32 = 0;
     let mut in_string: u8 = 0;
     let mut in_template = false;
+    let mut in_block_comment = false;
     let mut escaped = false;
 
-    for &ch in code {
-        if escaped {
-            escaped = false;
-            continue;
-        }
+    // Regex-vs-division context: last significant byte, and the identifier ending at it.
+    let mut prev: u8 = 0;
+    let mut prev_idx = 0usize;
+    let mut word_start = 0usize;
+    let mut word_end = 0usize;
+    // `obj.in` / `this.#in` is a member access, not the `in` keyword.
+    let mut word_after_dot = false;
+    let mut word_after_type_op = false;
+    // Parens opened by `if`/`for`/`while`/`with`; a `/` after such a `)` is a regex.
+    let mut paren_stack: Vec<bool> = Vec::new();
+    let mut last_paren_conditional = false;
+    // Braces opened in statement position (block) vs expression position (object literal).
+    let mut brace_stack: Vec<bool> = Vec::new();
+    let mut last_brace_block = true;
 
-        if ch == b'\\' {
-            escaped = true;
-            continue;
-        }
+    let mut i = 0usize;
+    while i < code.len() {
+        let ch = code[i];
 
-        // Handle strings
-        if in_string == 0 && !in_template {
-            if ch == b'"' || ch == b'\'' {
-                in_string = ch;
-                continue;
+        if in_block_comment {
+            if ch == b'*' && code.get(i + 1) == Some(&b'/') {
+                in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
             }
-            if ch == b'`' {
-                in_template = true;
-                continue;
-            }
-        } else if in_string != 0 && ch == in_string {
-            in_string = 0;
-            continue;
-        } else if in_template && ch == b'`' {
-            in_template = false;
             continue;
         }
 
-        // Skip content inside strings
         if in_string != 0 || in_template {
+            if escaped {
+                escaped = false;
+            } else if ch == b'\\' {
+                escaped = true;
+            } else if in_string != 0 && ch == in_string {
+                in_string = 0;
+            } else if in_template && ch == b'`' {
+                in_template = false;
+            }
+            i += 1;
             continue;
         }
 
-        // Count brackets
+        if ch.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        if ch == b'/' {
+            match code.get(i + 1) {
+                Some(b'/') => {
+                    while i < code.len() && code[i] != b'\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                Some(b'*') => {
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+            // A `/` after a token that cannot end an expression starts a regex.
+            let after_keyword = is_word_char(prev)
+                && !word_after_dot
+                && !word_after_type_op
+                && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
+            // A doubled `+`/`-` is postfix inc/dec, which ends an expression.
+            let postfix_incdec =
+                matches!(prev, b'+' | b'-') && prev_idx > 0 && code[prev_idx - 1] == prev;
+            // `x!` or `x!!` (TS non-null assertion) ends an expression; `!x` does not.
+            let postfix_bang = prev == b'!' && {
+                // Same-line whitespace is allowed before a postfix `!`; a newline is not.
+                let mut j = prev_idx;
+                while j > 0 && matches!(code[j - 1], b'!' | b' ' | b'\t') {
+                    j -= 1;
+                }
+                if j > 0 && matches!(code[j - 1], b')' | b']' | b'}' | b'"' | b'\'' | b'`') {
+                    true
+                } else if j > 0 && is_word_char(code[j - 1]) {
+                    // `x !` and `o.in!` are postfix; `return !` is a prefix.
+                    let end = j;
+                    while j > 0 && is_word_char(code[j - 1]) {
+                        j -= 1;
+                    }
+                    if (j > 0 && matches!(code[j - 1], b'.' | b'#'))
+                        || !REGEX_KEYWORDS.contains(&&code[j..end])
+                    {
+                        true
+                    } else {
+                        // `as void!` asserts a type, so the `!` is still postfix.
+                        let mut k = j;
+                        while k > 0 && matches!(code[k - 1], b' ' | b'\t') {
+                            k -= 1;
+                        }
+                        let kw_end = k;
+                        while k > 0 && is_word_char(code[k - 1]) {
+                            k -= 1;
+                        }
+                        matches!(&code[k..kw_end], b"as" | b"satisfies")
+                    }
+                } else {
+                    false
+                }
+            };
+            // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
+            let jsx_close = prev == b'<' && prev_idx + 1 == i;
+            // `>` ending a JSX tag or generic (`</a>`, `<a/>`, `<T>`) ends an expression.
+            let jsx_end = prev == b'>' && {
+                let mut j = prev_idx;
+                while j > 0 && matches!(code[j - 1], b' ' | b'\t') {
+                    j -= 1;
+                }
+                if j > 0 && code[j - 1] == b'/' {
+                    true
+                } else if j > 0 && (is_word_char(code[j - 1]) || matches!(code[j - 1], b'>' | b']'))
+                {
+                    // Walk the tag-name/type-argument run back to its opener.
+                    while j > 0
+                        && (is_word_char(code[j - 1])
+                            || matches!(
+                                code[j - 1],
+                                b'.' | b'-'
+                                    | b':'
+                                    | b','
+                                    | b'|'
+                                    | b'&'
+                                    | b'['
+                                    | b']'
+                                    | b'>'
+                                    | b' '
+                                    | b'\t'
+                            ))
+                    {
+                        j -= 1;
+                    }
+                    // `</tag>` or `Map<K, V>` (word before `<`) ends an expression; `a < b` does not.
+                    (j > 1 && code[j - 1] == b'/' && code[j - 2] == b'<')
+                        || (j > 1 && code[j - 1] == b'<' && is_word_char(code[j - 2]))
+                } else {
+                    false
+                }
+            };
+            // A block's `}` resumes statement position unless it's inside `()`/`[]`.
+            let after_block =
+                prev == b'}' && last_brace_block && paren_count <= 0 && bracket_count <= 0;
+            let starts_regex = prev == 0
+                || after_keyword
+                || after_block
+                || (prev == b')' && last_paren_conditional)
+                || (!postfix_incdec
+                    && !postfix_bang
+                    && !jsx_close
+                    && !jsx_end
+                    && matches!(
+                        prev,
+                        b'(' | b'['
+                            | b'{'
+                            | b','
+                            | b';'
+                            | b':'
+                            | b'='
+                            | b'!'
+                            | b'&'
+                            | b'|'
+                            | b'?'
+                            | b'+'
+                            | b'-'
+                            | b'*'
+                            | b'/'
+                            | b'%'
+                            | b'<'
+                            | b'>'
+                            | b'^'
+                            | b'~'
+                    ));
+            if starts_regex {
+                // Skip the regex body; `/` in a `[...]` class doesn't end it, a newline does.
+                i += 1;
+                let mut in_class = false;
+                while i < code.len() && code[i] != b'\n' {
+                    match code[i] {
+                        // A trailing escape must not consume the line break.
+                        b'\\' if code.get(i + 1).is_some_and(|&next| next != b'\n') => i += 1,
+                        b'[' => in_class = true,
+                        b']' => in_class = false,
+                        b'/' if !in_class => break,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                // A regex ends an expression; `)` (non-conditional) encodes that.
+                prev = b')';
+                last_paren_conditional = false;
+                i += 1;
+                continue;
+            }
+        }
+
+        if is_word_char(ch) {
+            if word_end != i {
+                // `void` after `as`/`satisfies` (also across `|`/`&`) is a type.
+                word_after_type_op = (is_word_char(prev)
+                    && matches!(&code[word_start..word_end], b"as" | b"satisfies"))
+                    || (word_after_type_op && matches!(prev, b'|' | b'&'));
+                word_start = i;
+                word_after_dot = matches!(prev, b'.' | b'#');
+            }
+            word_end = i + 1;
+        } else if !matches!(ch, b'|' | b'&') {
+            // Any other significant token ends the type position.
+            word_after_type_op = false;
+        }
+
         match ch {
-            b'{' => brace_count += 1,
-            b'}' => brace_count -= 1,
+            b'"' | b'\'' => in_string = ch,
+            b'`' => in_template = true,
+            b'{' => {
+                brace_count += 1;
+                // `=> {` is a body; `{` after an operator/opener/expression keyword is an object.
+                let arrow = prev == b'>' && prev_idx > 0 && code[prev_idx - 1] == b'=';
+                let expr_pos = !arrow
+                    && (matches!(
+                        prev,
+                        b'(' | b'['
+                            | b','
+                            | b':'
+                            | b'='
+                            | b'!'
+                            | b'&'
+                            | b'|'
+                            | b'?'
+                            | b'+'
+                            | b'-'
+                            | b'*'
+                            | b'/'
+                            | b'%'
+                            | b'<'
+                            | b'>'
+                            | b'^'
+                            | b'~'
+                            | b'.'
+                    ) || (is_word_char(prev)
+                        && !word_after_dot
+                        && (REGEX_KEYWORDS.contains(&&code[word_start..word_end])
+                            || matches!(&code[word_start..word_end], b"as" | b"satisfies"))
+                        && !matches!(&code[word_start..word_end], b"do" | b"else")));
+                brace_stack.push(!expr_pos);
+            }
+            b'}' => {
+                brace_count -= 1;
+                last_brace_block = brace_stack.pop().unwrap_or(true);
+            }
             b'[' => bracket_count += 1,
             b']' => bracket_count -= 1,
-            b'(' => paren_count += 1,
-            b')' => paren_count -= 1,
+            b'(' => {
+                paren_count += 1;
+                let mut head = is_word_char(prev)
+                    && !word_after_dot
+                    && matches!(
+                        &code[word_start..word_end],
+                        b"if" | b"for" | b"while" | b"with"
+                    );
+                // `for await (` is a conditional head; bare `await (` is a call-like use.
+                if !head
+                    && is_word_char(prev)
+                    && !word_after_dot
+                    && &code[word_start..word_end] == b"await"
+                {
+                    let mut j = word_start;
+                    while j > 0 && code[j - 1].is_ascii_whitespace() {
+                        j -= 1;
+                    }
+                    let end = j;
+                    while j > 0 && is_word_char(code[j - 1]) {
+                        j -= 1;
+                    }
+                    head = &code[j..end] == b"for";
+                }
+                paren_stack.push(head);
+            }
+            b')' => {
+                paren_count -= 1;
+                last_paren_conditional = paren_stack.pop().unwrap_or(false);
+            }
             _ => {}
         }
+        prev = ch;
+        prev_idx = i;
+        i += 1;
     }
 
-    // Incomplete if any unclosed delimiters or unclosed strings
-    in_string != 0 || in_template || brace_count > 0 || bracket_count > 0 || paren_count > 0
+    // Incomplete if any unclosed delimiters, strings, or block comments
+    in_string != 0
+        || in_template
+        || in_block_comment
+        || brace_count > 0
+        || bracket_count > 0
+        || paren_count > 0
 }
 
 use crate::api::js_transpiler::is_likely_object_literal;

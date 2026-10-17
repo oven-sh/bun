@@ -182,10 +182,6 @@ function assert(p: unknown, message?: string): void {
   if (!p) throw new (require("internal/errors").AssertionError)(message);
 }
 
-const { kValidateObjectAllowArray } = require("internal/validators");
-const validateObject: typeof import("internal/validators").default.validateObject =
-  require("internal/validators").validateObject;
-
 const SymbolToPrimitive = Symbol.toPrimitive;
 
 const ObjectConstructor = Object;
@@ -756,7 +752,7 @@ const defaultOptionsDescriptor: Record<string, unknown> = {
     return inspectDefaultOptions;
   },
   set(options) {
-    validateObject(options, "options");
+    if (typeof options !== "object" || options === null || $isArray(options)) throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     return ObjectAssign(inspectDefaultOptions, options);
   },
 };
@@ -767,7 +763,7 @@ const replDefaultsDescriptor: Record<string, unknown> = {
     return inspectReplDefaults;
   },
   set(options) {
-    validateObject(options, "options");
+    if (typeof options !== "object" || options === null || $isArray(options)) throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     return ObjectAssign(inspectReplDefaults, options);
   },
   // node:repl re-defines this property with its own writer-backed accessor
@@ -831,11 +827,30 @@ const colors: Record<string, any> = {
 };
 inspectAsObject.colors = colors;
 
+function readAliasedColor(holder: any, target: string): unknown {
+  switch (target) {
+    case "gray":
+      return holder.gray;
+    case "bgGray":
+      return holder.bgGray;
+    case "dim":
+      return holder.dim;
+    case "strikethrough":
+      return holder.strikethrough;
+    case "hidden":
+      return holder.hidden;
+    case "inverse":
+      return holder.inverse;
+    default:
+      return holder.doubleunderline;
+  }
+}
+
 function defineColorAlias(target: string, alias: string): void {
   const descriptor: Record<string, unknown> = {
     __proto__: null,
     get(this: any) {
-      return this[target];
+      return readAliasedColor(this, target);
     },
     set(this: any, value) {
       this[target] = value;
@@ -1813,7 +1828,7 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
         try {
           formatted = formatExtraProperties(ctx, value, recurseTimes, extraKeys[i], typedArray);
         } catch {
-          const tempValue = { [extraKeys[i]]: value.buffer[extraKeys[i]] };
+          const tempValue = { [extraKeys[i]]: readExtraProperty(value.buffer, extraKeys[i]) };
           formatted = formatExtraProperties(ctx, tempValue, recurseTimes, extraKeys[i], typedArray);
         }
         ArrayPrototypePush.$call(output, formatted);
@@ -2099,7 +2114,7 @@ function removeDuplicateErrorKeys(ctx: Context, keys: PropertyKey[], err: any, s
     for (const name of ["name", "message", "stack"]) {
       const index = ArrayPrototypeIndexOf.$call(keys, name);
       // Only hide the property in case it's part of the original stack
-      if (index !== -1 && StringPrototypeIncludes.$call(stack, err[name])) {
+      if (index !== -1 && StringPrototypeIncludes.$call(stack, name === "name" ? err.name : name === "message" ? err.message : err.stack)) {
         ArrayPrototypeSplice.$call(keys, index, 1);
       }
     }
@@ -2203,7 +2218,7 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
         if (
           core !== null &&
           (StringPrototypeStartsWith.$call(core[1], "internal/") ||
-            ArrayPrototypeIncludes.$call(require("node:module").builtinModules, core[1]))
+            ArrayPrototypeIncludes.$call($cpp("NodeModuleModule.cpp", "builtinModulesOfNodeModule"), core[1]))
         ) {
           newStack += `\n${stylize(ctx, line, "undefined")}`;
         } else {
@@ -2213,7 +2228,7 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
           if (workingDirectory !== undefined) {
             let newLine = markCwd(ctx, line, workingDirectory);
             if (newLine === line) {
-              esmWorkingDirectory ??= require("node:url").pathToFileURL(workingDirectory).href as string;
+              esmWorkingDirectory ??= require("internal/path_to_file_url")(workingDirectory).href as string;
               newLine = markCwd(ctx, line, esmWorkingDirectory);
             }
             line = newLine;
@@ -2882,9 +2897,24 @@ function formatPromise(ctx: Context, value: any, recurseTimes: number): unknown[
   return output;
 }
 
+function readExtraProperty(value: any, key: string): unknown {
+  switch (key) {
+    case "BYTES_PER_ELEMENT":
+      return value.BYTES_PER_ELEMENT;
+    case "length":
+      return value.length;
+    case "byteLength":
+      return value.byteLength;
+    case "byteOffset":
+      return value.byteOffset;
+    default:
+      return value.buffer;
+  }
+}
+
 function formatExtraProperties(ctx: Context, value: any, recurseTimes: number, key: string, typedArray: unknown): string {
   ctx.indentationLvl += 2;
-  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
+  const str = formatValue(ctx, readExtraProperty(value, key), recurseTimes, typedArray);
   ctx.indentationLvl -= 2;
 
   // These entries are mainly getters. Should they be formatted like getters?
@@ -3180,7 +3210,7 @@ function format(...args: unknown[]): string {
 }
 
 function formatWithOptions(inspectOptions: unknown, ...args: unknown[]): string {
-  validateObject(inspectOptions, "inspectOptions", kValidateObjectAllowArray);
+  if (typeof inspectOptions !== "object" || inspectOptions === null) throw $ERR_INVALID_ARG_TYPE("inspectOptions", "object", inspectOptions);
   return formatWithOptionsInternal(inspectOptions, args);
 }
 

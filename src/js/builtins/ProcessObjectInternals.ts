@@ -330,8 +330,9 @@ export function windowsEnv(
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
   resetForDelete,
+  customInspectSymbol: symbol,
 ) {
-  (internalEnv as any)[Symbol.for("nodejs.util.inspect.custom")] = () => {
+  (internalEnv as any)[customInspectSymbol] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];

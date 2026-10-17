@@ -1200,6 +1200,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Self::boot_standalone(ctx, entry_name, graph)
     }
 
+    #[cold]
+    pub(crate) fn refuse_to_load_code(asked_by: &[u8]) -> ! {
+        Output::err_generic(
+            "{} cannot be used with this executable: it was built with --compile-trim-runtime and runs only the code that was compiled into it",
+            format_args!("{}", bstr::BStr::new(asked_by)),
+        );
+        Global::exit(1);
+    }
+
     /// Entry point for
     /// `bun build --compile` executables. Mirrors [`boot`] but routes through
     /// `VirtualMachine::init_with_module_graph` and applies the standalone
@@ -1232,6 +1241,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
+            if !ctx.preloads.is_empty() && !crate::jsc_hooks::Bun__loadsModulesAtRunTime() {
+                Self::refuse_to_load_code(b"\"preload\" in bunfig.toml");
+            }
         }
 
         // layering — `Options::graph` is the resolver's trait object

@@ -380,6 +380,7 @@ pub(crate) mod js_bundler {
                 bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(
                     trim_runtime.to_boolean(),
                 );
+                this.autoload_bunfig = !trim_runtime.to_boolean();
             }
 
             if let Some(windows) = object.get_own_truthy(global_this, "windows")? {

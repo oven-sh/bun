@@ -3884,7 +3884,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
-     * @default true
+     * @default true, or false with `trimRuntime`
      */
     autoloadBunfig?: boolean;
     /**

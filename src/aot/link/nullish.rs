@@ -548,7 +548,279 @@ pub(super) struct Deleted {
     pub(super) turned: Vec<(LayoutId, StrId)>,
 }
 
-pub(super) fn widen_fields_for_deletions(program: &mut Program, contents: &[u8], fields_by_name: &FieldsByName, in_parallel: InParallel<'_>) -> Deleted {
+#[derive(Default, Clone)]
+struct CopiedObject {
+    sources: SmallVec<[V; 2]>,
+    written: SmallVec<[StrId; 4]>,
+    is_made_elsewhere: bool,
+    is_target_of_assign: bool,
+}
+
+fn is_object_assign(program: &Program, func: &Func, callee: V) -> bool {
+    matches!(func.op(strip_casts(func, callee)), Some(&Op::PropGet { obj, name }) if program.strs.get(name) == b"assign" && matches!(func.op(strip_casts(func, obj)), Some(&Op::FreeGet { name: holder, .. }) if program.strs.get(holder) == b"Object"))
+}
+
+fn expected_callee(func: &Func, op: &Op) -> Option<FuncId> {
+    match *op {
+        Op::CallDirect { func: callee, .. } => Some(callee),
+        Op::Call { callee, .. } => match (func.op(strip_casts(func, callee)), func.prediction(callee)) {
+            (Some(&Op::FuncRef(known)) | Some(&Op::Closure { func: known, .. }) | Some(&Op::ClosureOnce { func: known, .. }), _) | (_, Prediction::Closure(known)) => Some(known),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_handed_a_copier(func: &Func, op: &Op, returns_copy: &[bool]) -> bool {
+    let (Op::Call { args, .. } | Op::CallDirect { args, .. } | Op::CallMethod { args, .. }) = op else { return false };
+    args.iter().any(|&handed| {
+        let known = match (func.op(strip_casts(func, handed)), func.prediction(handed)) {
+            (Some(&Op::FuncRef(known)) | Some(&Op::Closure { func: known, .. }) | Some(&Op::ClosureOnce { func: known, .. }), _) | (_, Prediction::Closure(known)) => known,
+            _ => return false,
+        };
+        returns_copy.get(known.idx()) == Some(&true)
+    })
+}
+
+fn copies_in(program: &Program, func: &Func, returns_copy: &[bool]) -> FxHashMap<V, CopiedObject> {
+    let mut copies: FxHashMap<V, CopiedObject> = FxHashMap::default();
+    let mut written: FxHashMap<V, SmallVec<[StrId; 4]>> = FxHashMap::default();
+    let mut finished: Vec<(V, V)> = Vec::new();
+    let constant = |v: V| match func.op(strip_casts(func, v)) {
+        Some(&Op::Str(name)) => Some(name),
+        _ => None,
+    };
+    for (index, value) in func.values.iter().enumerate() {
+        let (v, Def::Op(op)) = (V::new(index), &value.def) else { continue };
+        match op {
+            Op::Operation { which: Operation::CloneObject | Operation::CopyDataPropertiesExcluding, args } if !args.is_empty() => copies.entry(v).or_default().sources.push(args[0]),
+            Op::Operation { which: Operation::CloneObjectWith, args } if !args.is_empty() => {
+                let copy = copies.entry(v).or_default();
+                copy.sources.push(args[0]);
+                copy.written.extend(args[1..].iter().filter_map(|&name| constant(name)));
+            }
+            Op::Operation { which: Operation::CloneObjectAfter, args } if !args.is_empty() => {
+                if matches!(func.op(strip_casts(func, args[0])), Some(Op::NewObject)) {
+                    finished.push((v, strip_casts(func, args[0])));
+                } else {
+                    let copy = copies.entry(v).or_default();
+                    copy.sources.push(args[0]);
+                    copy.written.extend(args[1..].iter().step_by(2).filter_map(|&name| constant(name)));
+                }
+            }
+            Op::Operation { which: Operation::CopyDataProperties, args } if args.len() == 2 => copies.entry(strip_casts(func, args[0])).or_default().sources.push(args[1]),
+            Op::Operation { which: Operation::DefineField, args } if args.len() == 3 => written.entry(strip_casts(func, args[0])).or_default().extend(constant(args[1])),
+            &Op::PropSet { obj, name, .. } => written.entry(strip_casts(func, obj)).or_default().push(name),
+            Op::Call { callee, args, .. } if args.len() > 1 && is_object_assign(program, func, *callee) => {
+                let copy = copies.entry(v).or_default();
+                copy.sources.extend(args[1..].iter().copied());
+                copy.is_target_of_assign = !matches!(func.op(strip_casts(func, args[0])), Some(Op::NewObject));
+                finished.push((v, strip_casts(func, args[0])));
+                if func.ty(args[0]).is_some() {
+                    let held = program.tys.get(func.ty(args[0])).parts.iter().filter_map(|part| if let Part::Class(view) = part { view.is_some().then_some(*view) } else { None });
+                    copy.written.extend(held.flat_map(|view| program.layouts[view.idx()].fields.iter().filter(|field| field.flags & crate::ir::field_flags::OPTIONAL == 0).map(|field| field.name)));
+                }
+            }
+            Op::CallDirect { .. } | Op::Call { .. } if expected_callee(func, op).is_some_and(|callee| returns_copy.get(callee.idx()) == Some(&true)) => copies.entry(v).or_default().is_made_elsewhere = true,
+            Op::CallDirect { .. } | Op::Call { .. } | Op::CallMethod { .. } if is_handed_a_copier(func, op, returns_copy) => copies.entry(v).or_default().is_made_elsewhere = true,
+            &Op::ElemGet { obj: held, .. } | &Op::IterGet { iter: held, .. } => {
+                let holder = strip_casts(func, if let Some(&Op::IterOpen(opened)) = func.op(held) { opened } else { held });
+                if func.op(holder).is_some_and(|made_by| is_handed_a_copier(func, made_by, returns_copy)) {
+                    copies.entry(v).or_default().is_made_elsewhere = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    for (whole, built) in finished {
+        if let Some(begun) = copies.get(&built).cloned() {
+            let copy = copies.entry(whole).or_default();
+            copy.sources.extend(begun.sources);
+            copy.written.extend(begun.written);
+        }
+        if let Some(names) = written.get(&built).cloned() {
+            written.entry(whole).or_default().extend(names);
+        }
+    }
+    for (made, copy) in &mut copies {
+        copy.written.extend(written.get(made).into_iter().flatten().copied());
+    }
+    copies
+}
+
+fn fields_some_member_does_not_own(program: &Program, view: LayoutId) -> SmallVec<[StrId; 4]> {
+    use crate::ir::field_flags;
+    let looked_at = &program.layouts[view.idx()];
+    let is_left_by = |member: LayoutId, name: StrId| {
+        let of_member = &program.layouts[member.idx()];
+        of_member.is_allocated
+            && match of_member.field(name) {
+                None => true,
+                Some(own) => {
+                    let flags = of_member.fields[own as usize].flags;
+                    flags & (field_flags::NEVER_STORED | field_flags::OPTIONAL | field_flags::ABSENT_AT_CREATION) != 0 || of_member.class_flags & class_flags::PROTOTYPE_IS_SET_BY_TYPED_CODE != 0 && flags & field_flags::SET_AT_CREATION == 0
+                }
+            }
+    };
+    let required = looked_at.fields.iter().filter(|field| field.name.is_some() && field.flags & field_flags::OPTIONAL == 0);
+    required.filter(|field| looked_at.accepts_untyped || looked_at.members.iter().chain(Some(&view)).any(|&member| is_left_by(member, field.name))).map(|field| field.name).collect()
+}
+
+struct CopySite {
+    made_as: LayoutId,
+    sources: SmallVec<[SmallVec<[LayoutId; 2]>; 2]>,
+    written: SmallVec<[StrId; 4]>,
+    is_made_elsewhere: bool,
+    has_prototype_of_its_own: bool,
+}
+
+fn views_of(program: &Program, ty: TyId) -> SmallVec<[LayoutId; 2]> {
+    if ty.is_none() {
+        return SmallVec::new();
+    }
+    program.tys.get(ty).parts.iter().filter_map(|part| if let Part::Class(view) = part { view.is_some().then_some(*view) } else { None }).collect()
+}
+
+pub(super) fn find_members_lost_by_copies(program: &Program, in_parallel: InParallel<'_>) -> Vec<(LayoutId, StrId)> {
+    let is_untyped_object = |func: &Func, v: V| views_of(program, func.ty(v)).is_empty();
+    let mut returns_copy = vec![false; program.funcs.len()];
+    let mut handing_on: Vec<(FuncId, FuncId)> = Vec::new();
+    {
+        let mut runs: Vec<(usize, &[Func], Vec<usize>, Vec<(FuncId, FuncId)>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).enumerate().map(|(run, funcs)| (run * FUNCTIONS_PER_TASK, funcs, Vec::new(), Vec::new())).collect();
+        for_each_mut(&mut runs, in_parallel, &|(first, funcs, returning, handing_on)| {
+            for (index, func) in funcs.iter().enumerate() {
+                let returned: SmallVec<[V; 2]> = func.blocks.iter().filter_map(|block| if let Some(&Term::Return(v)) = block.term.as_ref() { (v.is_some() && is_untyped_object(func, v)).then(|| strip_casts(func, v)) } else { None }).collect();
+                if returned.is_empty() {
+                    continue;
+                }
+                handing_on.extend(returned.iter().filter_map(|&v| Some((expected_callee(func, func.op(v)?)?, FuncId::new(*first + index)))));
+                if returned.iter().any(|&v| matches!(func.op(v), Some(Op::Operation { .. } | Op::NewObject | Op::Call { .. }))) {
+                    let copies = copies_in(program, func, &[]);
+                    if returned.iter().any(|v| copies.contains_key(v)) {
+                        returning.push(*first + index);
+                    }
+                }
+            }
+        });
+        let mut pending: Vec<usize> = Vec::new();
+        for (_, _, returning, mut handing_on_in_run) in runs {
+            pending.extend(returning);
+            handing_on.append(&mut handing_on_in_run);
+        }
+        let mut callers: FxHashMap<FuncId, Vec<FuncId>> = FxHashMap::default();
+        for (callee, caller) in handing_on.drain(..) {
+            callers.entry(callee).or_default().push(caller);
+        }
+        while let Some(function) = pending.pop() {
+            if !std::mem::replace(&mut returns_copy[function], true) {
+                pending.extend(callers.get(&FuncId::new(function)).into_iter().flatten().map(|caller| caller.idx()));
+            }
+        }
+    }
+    let returns_copy = &returns_copy[..];
+    let mut runs: Vec<(&[Func], Vec<CopySite>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Vec::new())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(funcs, sites)| {
+        for func in funcs.iter() {
+            let may_copy = func.values.iter().any(|value| match &value.def {
+                Def::Op(Op::Operation { which: Operation::CloneObject | Operation::CloneObjectWith | Operation::CloneObjectAfter | Operation::CopyDataProperties | Operation::CopyDataPropertiesExcluding, .. }) => true,
+                Def::Op(op @ Op::Call { callee, .. }) => is_object_assign(program, func, *callee) || expected_callee(func, op).is_some_and(|callee| returns_copy[callee.idx()]) || is_handed_a_copier(func, op, returns_copy),
+                Def::Op(op @ Op::CallDirect { func: callee, .. }) => returns_copy[callee.idx()] || is_handed_a_copier(func, op, returns_copy),
+                Def::Op(op @ Op::CallMethod { .. }) => is_handed_a_copier(func, op, returns_copy),
+                _ => false,
+            });
+            if !may_copy {
+                continue;
+            }
+            let copies = copies_in(program, func, returns_copy);
+            for (index, value) in func.values.iter().enumerate() {
+                let (held, to) = match value.def {
+                    Def::Op(Op::Coerce { value: held, to, .. }) => (held, to),
+                    _ => (V::new(index), value.ty),
+                };
+                let Some(copy) = copies.get(&strip_casts(func, held)) else { continue };
+                let sources: SmallVec<[SmallVec<[LayoutId; 2]>; 2]> = copy.sources.iter().map(|&source| views_of(program, func.ty(source))).filter(|seen_as| !seen_as.is_empty()).collect();
+                sites.extend(views_of(program, to).into_iter().map(|made_as| CopySite { made_as, sources: sources.clone(), written: copy.written.clone(), is_made_elsewhere: copy.is_made_elsewhere, has_prototype_of_its_own: copy.is_target_of_assign }));
+            }
+        }
+    });
+    let sites: Vec<CopySite> = runs.into_iter().flat_map(|run| run.1).collect();
+    let is_required = |field: &&crate::ir::Field| field.name.is_some() && field.flags & crate::ir::field_flags::OPTIONAL == 0;
+    let mut not_owned: FxHashMap<LayoutId, SmallVec<[StrId; 4]>> = FxHashMap::default();
+    let mut seen_through: FxHashMap<LayoutId, SmallVec<[LayoutId; 2]>> = FxHashMap::default();
+    for &view in sites.iter().flat_map(|site| site.sources.iter().flatten()) {
+        if let std::collections::hash_map::Entry::Vacant(unknown) = not_owned.entry(view) {
+            unknown.insert(fields_some_member_does_not_own(program, view));
+            for &member in program.layouts[view.idx()].members.iter().chain(Some(&view)) {
+                let views = seen_through.entry(member).or_default();
+                if !views.contains(&view) {
+                    views.push(view);
+                }
+            }
+        }
+    }
+    let mut lost: FxHashSet<(LayoutId, StrId)> = FxHashSet::default();
+    loop {
+        let mut found: Vec<(LayoutId, StrId)> = Vec::new();
+        for site in &sites {
+            let mut may_be_lost: SmallVec<[StrId; 8]> = site.sources.iter().flatten().flat_map(|view| not_owned[view].iter().copied()).collect();
+            let made_as = &program.layouts[site.made_as.idx()];
+            if site.is_made_elsewhere {
+                may_be_lost.extend(made_as.fields.iter().filter(is_required).map(|field| field.name));
+            }
+            if may_be_lost.is_empty() {
+                continue;
+            }
+            let mut is_surely_copied: SmallVec<[StrId; 8]> = SmallVec::new();
+            for seen_as in &site.sources {
+                if let Some((&first, others)) = seen_as.split_first() {
+                    let held_by_all = program.layouts[first.idx()].fields.iter().filter(is_required).map(|field| field.name).filter(|&name| others.iter().all(|other| program.layouts[other.idx()].fields.iter().filter(is_required).any(|field| field.name == name)));
+                    is_surely_copied.extend(held_by_all.filter(|name| seen_as.iter().all(|view| !not_owned[view].contains(name))));
+                }
+            }
+            found.extend(may_be_lost.into_iter().filter(|name| !site.written.contains(name) && !is_surely_copied.contains(name) && made_as.field(*name).is_some()).map(|name| (site.made_as, name)));
+        }
+        let mut is_any_source_poorer = false;
+        for (made_as, name) in found {
+            if !lost.insert((made_as, name)) {
+                continue;
+            }
+            for view in seen_through.get(&made_as).into_iter().flatten() {
+                let is_required_there = program.layouts[view.idx()].fields.iter().filter(is_required).any(|field| field.name == name);
+                let names = not_owned.get_mut(view).expect("a view that copies are made of");
+                if is_required_there && !names.contains(&name) {
+                    names.push(name);
+                    is_any_source_poorer = true;
+                }
+            }
+        }
+        if !is_any_source_poorer {
+            break;
+        }
+    }
+    let mut left_on_prototype: FxHashMap<LayoutId, SmallVec<[StrId; 4]>> = FxHashMap::default();
+    for site in sites.iter().filter(|site| !site.has_prototype_of_its_own) {
+        let mut at = site.made_as;
+        while at.is_some() {
+            let class = &program.layouts[at.idx()];
+            let provided = class.methods.iter().filter(|method| method.name.is_some() && method.flags & method_flags::STATIC == 0 && !site.written.contains(&method.name));
+            left_on_prototype.entry(site.made_as).or_default().extend(provided.map(|method| method.name));
+            at = class.base;
+        }
+    }
+    left_on_prototype.retain(|_, names| !names.is_empty());
+    if !left_on_prototype.is_empty() {
+        for (index, view) in program.layouts.iter().enumerate() {
+            let seen = view.members.iter().filter_map(|member| left_on_prototype.get(member)).flatten();
+            lost.extend(seen.filter(|&&name| view.field(name).is_some()).map(|&name| (LayoutId::new(index), name)));
+        }
+        lost.extend(left_on_prototype.iter().flat_map(|(&made_as, names)| names.iter().map(move |&name| (made_as, name))));
+    }
+    let mut lost: Vec<(LayoutId, StrId)> = lost.into_iter().collect();
+    lost.sort_unstable();
+    lost
+}
+
+pub(super) fn widen_fields_for_deletions(program: &mut Program, contents: &[u8], fields_by_name: &FieldsByName, lost_by_copies: &[(LayoutId, StrId)], in_parallel: InParallel<'_>) -> Deleted {
     let mut deleted = Deleted::default();
     let (mut through, mut by_name): (Vec<(LayoutId, StrId)>, Vec<(LayoutId, StrId)>) = (Vec::new(), Vec::new());
     {
@@ -575,16 +847,17 @@ pub(super) fn widen_fields_for_deletions(program: &mut Program, contents: &[u8],
             by_name.append(&mut by_name_in_run);
         }
     }
-    let through_supertypes = through.len();
+    let (through_supertypes, deleted_from) = (through.len(), through.len() + by_name.len());
     let mut seen: FxHashSet<(LayoutId, StrId)> = FxHashSet::default();
-    for (number, (view, name)) in through.into_iter().chain(by_name).enumerate() {
+    let stays_untyped: Vec<bool> = program.layouts.iter().map(|layout| layout.accepts_untyped).collect();
+    for (number, (view, name)) in through.into_iter().chain(by_name).chain(lost_by_copies.iter().copied().filter(|lost| !stays_untyped[lost.0.idx()])).enumerate() {
         let mut pending = vec![view];
         while let Some(layout) = pending.pop() {
             if !seen.insert((layout, name)) {
                 continue;
             }
             let own = &mut program.layouts[layout.idx()];
-            pending.extend(own.members.iter().chain(&own.specializations).copied());
+            pending.extend(own.members.iter().filter(|_| number < deleted_from).chain(&own.specializations).copied());
             let Some(field) = own.field(name) else { continue };
             let flags = &mut own.fields[field as usize].flags;
             if *flags & (crate::ir::field_flags::OPTIONAL | crate::ir::field_flags::METHOD) == 0 {
@@ -592,7 +865,7 @@ pub(super) fn widen_fields_for_deletions(program: &mut Program, contents: &[u8],
                 *flags &= !crate::ir::field_flags::NEVER_OBSERVED_ABSENT;
                 *flags |= crate::ir::field_flags::OPTIONAL;
                 deleted.turned.push((layout, name));
-                deleted.converted_by_name += usize::from(number >= through_supertypes);
+                deleted.converted_by_name += usize::from(number >= through_supertypes && number < deleted_from);
             }
         }
     }
@@ -832,6 +1105,7 @@ struct Report<'a> {
     fields_by_name: &'a FieldsByName,
     definite_fields: FxHashMap<(LayoutId, StrId), bool>,
     functions_found: FxHashMap<(LayoutId, StrId), SmallVec<[FuncId; 1]>>,
+    left_on_prototype: &'a FxHashSet<(LayoutId, StrId)>,
 }
 
 impl Report<'_> {
@@ -1075,6 +1349,9 @@ impl Report<'_> {
                             self.function_flows.allocation_sites.extend(statics.filter(|method| method.0 == name).map(|method| (node(v), method.1)));
                         }
                         let fields = fields_with_name(program, func.ty(obj), name);
+                        if !self.left_on_prototype.is_empty() && views_of(program, func.ty(obj)).iter().any(|&view| self.left_on_prototype.contains(&(view, name))) {
+                            flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() });
+                        }
                         if fields.is_empty() && func.ty(obj).is_some() && program.tys.get(func.ty(obj)).any_object {
                             self.function_flows.left_out.push(node(v));
                             flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() });
@@ -1483,7 +1760,7 @@ fn has_only_uninhabited_layouts(tys: &DeclaredTable, layouts: &[Layout], ty: TyI
 const FUNCTIONS_PER_TASK: usize = 256;
 const NODES_PER_RUN: usize = 1 << 14;
 
-pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_by_name: &FieldsByName, in_parallel: InParallel<'_>, while_waiting: &mut (dyn FnMut(&Program) + Send)) {
+pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_by_name: &FieldsByName, lost_by_copies: &[(LayoutId, StrId)], in_parallel: InParallel<'_>, while_waiting: &mut (dyn FnMut(&Program) + Send)) {
     let nodes = Nodes::new(program);
     let reaching = {
         let program: &Program = program;
@@ -1501,7 +1778,9 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
             }
         }
         let static_methods_by_constructor = &static_methods_by_constructor;
-        let report = || Report { program, nodes: &nodes, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), function_flows: FunctionValueFlows::default(), methods_by_name, static_methods_by_constructor, fields_by_name, definite_fields: FxHashMap::default(), functions_found: FxHashMap::default() };
+        let left_on_prototype: FxHashSet<(LayoutId, StrId)> = lost_by_copies.iter().copied().filter(|&(view, name)| program.layouts[view.idx()].field(name).is_none()).collect();
+        let left_on_prototype = &left_on_prototype;
+        let report = || Report { program, nodes: &nodes, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), function_flows: FunctionValueFlows::default(), methods_by_name, static_methods_by_constructor, fields_by_name, definite_fields: FxHashMap::default(), functions_found: FxHashMap::default(), left_on_prototype };
         let mut slices: Vec<(usize, Report<'_>, NullishEdges)> = (0..program.funcs.len()).step_by(FUNCTIONS_PER_TASK).map(|first| (first, report(), NullishEdges::default())).collect();
         let mut state = vec![0u32; nodes.count as usize];
         let mut state_left = &mut state[..nodes.results as usize];
@@ -1526,7 +1805,8 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
             found.origins.append(&mut report.origins);
         });
         const FIELDS_PER_TASK: usize = 256;
-        let mut connected: Vec<(LayoutId, u32)> = slices.iter().flat_map(|slice| slice.1.connected.iter().copied()).collect();
+        let emptied: Vec<(LayoutId, u32)> = lost_by_copies.iter().filter_map(|&(view, name)| Some((view, program.layouts[view.idx()].field(name)?))).collect();
+        let mut connected: Vec<(LayoutId, u32)> = slices.iter().flat_map(|slice| slice.1.connected.iter().copied()).chain(emptied.iter().copied()).collect();
         connected.sort_unstable_by_key(|&(layout, field)| (layout.idx(), field));
         connected.dedup();
         let mut connecting: Vec<(&[(LayoutId, u32)], Report<'_>)> = connected.chunks(FIELDS_PER_TASK).map(|fields| (fields, report())).collect();
@@ -1536,6 +1816,7 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
             }
         });
         let mut between_fields = NullishEdges::default();
+        between_fields.origins.extend(emptied.iter().map(|&(view, field)| (nodes.field(view, field), UNDEFINED)));
         for (_, report) in connecting {
             between_fields.edges.extend(report.edges.into_iter().map(|(from, to)| (from, to, NULLISH | UNTYPED_OBJECT)));
             between_fields.origins.extend(report.origins);

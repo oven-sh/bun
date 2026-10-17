@@ -4002,6 +4002,31 @@ impl<'p, 's> Checker<'p, 's> {
         self.function_allocation(declared_in, func, &mut InspectedCast::default())
     }
 
+    pub fn record_results_of_generic_callbacks(&mut self, file: FileId, e: ExprId) {
+        let hir = self.hir(file);
+        let (ExprKind::Call(call) | ExprKind::New(call)) = hir[e].kind else { return };
+        if !hir.ids(hir[call].args).any(|handed| matches!(hir[handed].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })) {
+            return;
+        }
+        let Some(sig) = self.resolved_signature(file, e).sig else { return };
+        let taken = self.sig_params(sig);
+        for (handed, parameter) in hir.ids(hir[call].args).zip(taken.iter()) {
+            if parameter.rest || !matches!(hir[handed].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) {
+                continue;
+            }
+            let of_handed = self.type_of_expr(file, handed);
+            let Some((declared_in, func)) = self.function_for_type(of_handed) else { continue };
+            if self.hir(declared_in)[func].type_params.is_empty() {
+                continue;
+            }
+            let Some(created) = self.function_allocation(declared_in, func, &mut InspectedCast::default()) else { continue };
+            for expected in self.signatures(parameter.ty, false).to_vec() {
+                let produced = self.sig_return(expected);
+                self.record_generic_function_result(&created, produced);
+            }
+        }
+    }
+
     fn function_allocation(&mut self, file: FileId, func: FnId, looked_at: &mut InspectedCast) -> Option<FreshGraph> {
         let (file, func) = if matches!(self.hir(file)[func].body, FnBody::None) { self.implementation_for(file, func).unwrap_or((file, func)) } else { (file, func) };
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -4650,6 +4675,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub fn property_named_by_constant_string(&mut self, file: FileId, key: ExprId) -> Option<Atom> {
+        self.string_held_by_constant(file, key, 0).filter(|&name| name != crate::atom::known::__proto__ && !self.is_numeric_name(name))
+    }
+
     fn string_held_by_constant(&mut self, file: FileId, e: ExprId, depth: u32) -> Option<Atom> {
         match self.hir(file)[e].kind {
             _ if depth > 4 => None,
@@ -4841,10 +4870,6 @@ impl<'p, 's> Checker<'p, 's> {
             let given = self.type_of_expr(file, value);
             !self.is_uninformative(given) && self.is_assignable(given, declared)
         })
-    }
-
-    pub(super) fn members_left_to_prototype(&mut self, birth: &BornByObjectCreate) -> Vec<Atom> {
-        self.properties_of_type(birth.born_as).iter().filter(|prop| !prop.flags.contains(crate::types::PropFlags::OPTIONAL) && !birth.stored.iter().any(|stored| stored.0 == prop.name)).map(|prop| prop.name).collect()
     }
 
     pub fn is_completed_by_prototype(&mut self, record: TypeId, stored: &[(Atom, ExprId)], prototype: TypeId) -> bool {

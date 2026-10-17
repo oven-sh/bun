@@ -1240,6 +1240,12 @@ JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*)
     return JSC::jsBoolean(Bun__streamIterEnabled());
 }
 
+JSC::JSValue builtinModulesOfNodeModule(Zig::GlobalObject* globalObject)
+{
+    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    return constructor->get(globalObject, JSC::Identifier::fromString(globalObject->vm(), "builtinModules"_s));
+}
+
 } // namespace Bun
 
 namespace Zig {

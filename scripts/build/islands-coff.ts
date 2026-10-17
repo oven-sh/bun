@@ -28,7 +28,7 @@ export interface CoffLink {
   symbolMap: string;
   inputs: string[];
   libraryFolders: string[];
-  undname: string;
+  objdump: string;
   work: string;
 }
 
@@ -404,27 +404,81 @@ export function sectionInFile(executable: string, name: string): { offset: numbe
   return undefined;
 }
 
-function spelledAsElsewhere(undname: string, names: string[]): string[] {
+function inFull(objdump: string, work: string, mangled: string[]): string[] {
+  const strings = Buffer.from(mangled.join("\0") + "\0", "latin1");
+  const object = Buffer.alloc(20 + mangled.length * 18 + 4 + strings.length);
+  object.writeUInt16LE(0x8664, 0);
+  object.writeUInt32LE(20, 8);
+  object.writeUInt32LE(mangled.length, 12);
+  let offset = 4;
+  mangled.forEach((name, index) => {
+    const at = 20 + index * 18;
+    object.writeUInt32LE(offset, at + 4);
+    object.writeUInt16LE(0x20, at + 14);
+    object[at + 16] = 2;
+    offset += name.length + 1;
+  });
+  object.writeUInt32LE(4 + strings.length, 20 + mangled.length * 18);
+  strings.copy(object, 20 + mangled.length * 18 + 4);
+  const path = join(work, "names.obj");
+  writeFileSync(path, object);
+  const ran = spawnSync(objdump, ["-t", "-C", path], { encoding: "utf8", maxBuffer: 1 << 30 });
+  if (ran.error !== undefined || ran.status !== 0) throw new Error(`${objdump} failed`);
+  const spelled = new Map<string, string>();
+  for (const line of ran.stdout.split("\n")) {
+    const found = /^\[ *\d+\]\(sec .*?\) 0x[0-9a-f]{8} (\S+) \((.*)\)$/.exec(line);
+    if (found !== null && found[2] !== "invalid mangled name") spelled.set(found[1]!, found[2]!);
+  }
+  return mangled.map(name => spelled.get(name) ?? name);
+}
+
+const convention = /^__(cdecl|stdcall|fastcall|thiscall|vectorcall|clrcall|pascal|regcall|eabi|swift_1|swift_2)\b ?/;
+
+function plainly(full: string, withReturnType: boolean): string {
+  let at = full.startsWith("[thunk]: ") ? 9 : 0;
+  let text = full.slice(0, at);
+  at += /^(public|protected|private): /.exec(full.slice(at, at + 11))?.[0].length ?? 0;
+  for (let word; (word = /^(static|virtual|extern "C") /.exec(full.slice(at, at + 11))) !== null; ) at += word[0].length;
+  const starts = [text.length];
+  let returnsPointerToFunction = false;
+  while (at < full.length) {
+    const character = full[at]!;
+    if (character === "`") {
+      const from = at;
+      for (let depth = 0; at < full.length; at++) {
+        if (full[at] === "`" || (full[at] === "'" && full.startsWith(" for ", at - 5))) depth++;
+        else if (full[at] === "'" && --depth === 0) break;
+      }
+      text += full.slice(from, ++at);
+      continue;
+    }
+    const called = character === "_" && full[at - 1] !== "(" ? convention.exec(full.slice(at, at + 14)) : null;
+    if (called !== null) {
+      if (starts.length === 2 && convention.test(text.slice(starts[1]))) returnsPointerToFunction = !withReturnType && starts.pop() !== undefined;
+      if (!withReturnType) text = text.slice(0, starts.at(-1)! + (text[starts.at(-1)!] === "&" ? 1 : 0));
+      at += called[0].length;
+      continue;
+    }
+    if (returnsPointerToFunction && character === ")" && starts.length === 1) return text;
+    text += character;
+    at++;
+    if (character === "<" || character === "(") starts.push(text.length);
+    else if ((character === ">" || character === ")") && starts.length > 1) starts.pop();
+    else if (character === "," && full[at] === " ") {
+      text += " ";
+      at++;
+      starts[starts.length - 1] = text.length;
+    }
+  }
+  return text;
+}
+
+function spelledAsElsewhere(objdump: string, work: string, names: string[]): string[] {
   const mangled = names.filter(name => name.startsWith("?"));
   if (mangled.length === 0) return names;
-  const run = (flags: string[]) => {
-    const ran = spawnSync(undname, ["--no-access-specifier", "--no-calling-convention", "--no-member-type", ...flags], {
-      input: mangled.join("\n") + "\n",
-      encoding: "utf8",
-      maxBuffer: 1 << 30,
-    });
-    if (ran.error !== undefined) throw new Error(`${undname} failed`);
-    const lines = ran.stdout.split("\n");
-    let at = 0;
-    return mangled.map(name => {
-      while (at < lines.length && lines[at] !== name) at++;
-      const text = lines[at + 1];
-      at++;
-      return text === undefined || text === "" ? name : text;
-    });
-  };
-  const withReturnType = run([]);
-  const plain = run(["--no-return-type"]);
+  const full = inFull(objdump, work, mangled);
+  const withReturnType = full.map(text => plainly(text, true));
+  const plain = full.map(text => plainly(text, false));
   const spelled = new Map<string, string>();
   mangled.forEach((name, index) => {
     let text = plain[index]!;
@@ -732,7 +786,7 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
   }
   const code = [...leaderOf.keys()].filter(node => graph.output[node] === ".text");
   const folded = [...graph.aliases.values()].flat();
-  const spelled = spelledAsElsewhere(link.undname, [...code.map(node => leaderOf.get(node)!), ...folded.map(([, name]) => name.slice(1))]);
+  const spelled = spelledAsElsewhere(link.objdump, link.work, [...code.map(node => leaderOf.get(node)!), ...folded.map(([, name]) => name.slice(1))]);
   code.forEach((node, index) => graph.functionName.set(node, spelled[index]!));
   folded.forEach((alias, index) => void (alias[1] = "_" + spelled[code.length + index]!));
   writeFileSync(

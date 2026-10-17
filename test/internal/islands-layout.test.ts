@@ -467,6 +467,61 @@ describe("the table of islands", () => {
     });
   });
 
+  describe("a door of several features", () => {
+    const withFeature = (index: number, feature: string): Table => ({ ...small, doors: small.doors.map((door, at) => (at === index ? { ...door, feature } : door)) });
+    const plain = encodeTable(small);
+
+    test("is written under its first feature, and the set behind everything else", () => {
+      const table = withFeature(1, "tools,jit");
+      const written = encodeTable(table);
+      expect(written.subarray(0, plain.length)).toEqual(plain);
+      expect(written.subarray(plain.length).toString("hex")).toBe("00" + "01" + "01" + "01");
+      expect(decodeTable(written)).toEqual(table);
+      expect(decodeTable(inItsRoom(written))).toEqual(table);
+    });
+
+    test("a set that no island has is written among the sets", () => {
+      const table = withFeature(2, "jit,text");
+      expect(decodeTable(encodeTable(table))).toEqual(table);
+      expect(encodeTable(table).length).toBe(plain.length + 3 + 4);
+    });
+
+    test("several of them, beside packages", () => {
+      const table: Table = {
+        ...small,
+        doors: small.doors.map((door, index) => ({ ...door, feature: ["tools,text", "tools,jit,text", "jit,text", "text"][index]! })),
+        packages: [{ start: 0x500000, end: 0x600000, runs: [{ first: 1, count: 2, features: "jit,text" }] }],
+      };
+      expect(decodeTable(encodeTable(table))).toEqual(table);
+    });
+
+    test("its place in the table is that of its first feature", () => {
+      const doors: Table["doors"] = [
+        { address: 9, feature: "text", whenShut: "exit" },
+        { address: 7, feature: "jit,text", whenShut: "exit" },
+        { address: 8, feature: "jit", whenShut: "exit" },
+        { address: 6, feature: "jit,text", whenShut: "return" },
+        { address: 5, feature: "tools,text", whenShut: "exit" },
+      ];
+      expect(inTableOrder(small.features, doors).map(door => door.address)).toEqual([5, 7, 8, 6, 9]);
+    });
+
+    test("what cannot be said or read is refused", () => {
+      expect(() => encodeTable(withFeature(1, "tools,other"))).toThrow("the table does not list other");
+      expect(() => encodeTable(withFeature(1, "jit,tools"))).toThrow("the features of a door are not in the order in which they are declared");
+      expect(() => encodeTable(withFeature(1, "tools,tools"))).toThrow("the features of a door are not in the order in which they are declared");
+      expect(() => encodeTable(withFeature(0, "jit,text"))).toThrow("the doors are not in the order of the table");
+      const withSection = (hex: string) => Buffer.concat([plain, Buffer.from("00" + hex, "hex")]);
+      expect(decodeTable(withSection("01" + "01" + "01")).doors[1]!.feature).toBe("tools,jit");
+      expect(decodeTable(withSection("02" + "00" + "01" + "00" + "01")).doors.map(door => door.feature)).toEqual(["tools,jit", "tools,jit", "jit", "text"]);
+      expect(() => decodeTable(withSection("01" + "01" + "00"))).toThrow("the table is malformed");
+      expect(() => decodeTable(withSection("01" + "02" + "01"))).toThrow("the table is malformed");
+      expect(() => decodeTable(withSection("01" + "01" + "02"))).toThrow("the table is malformed");
+      expect(() => decodeTable(withSection("01" + "04" + "01"))).toThrow("the table is malformed");
+      expect(() => decodeTable(withSection("01" + "01"))).toThrow("the table is malformed");
+    });
+  });
+
   describe("the places that hold the address of a thin door", () => {
     const withPlaces = (...places: Table["doors"][number]["places"][]): Table => ({
       ...small,
@@ -616,6 +671,11 @@ describe("the items of ICU's data package", () => {
       { first: 2, count: 1, features: "locales" },
     ]);
     expect(runsOf(named("en.res", "zoneinfo64.res"), claims, features)).toEqual([]);
+  });
+
+  test("an item that the platform keeps is in no run, whoever claims it", () => {
+    expect(runsOf(named("af.res", "ar.res", "coll/de.res", "coll/fr.res", "de.res"), claims, features, [/^[a-z]+\.res$/])).toEqual([{ first: 2, count: 2, features: "collation" }]);
+    expect(runsOf(named("af.res", "coll/de.res", "de.res"), claims, features, [/^coll\//, /^de\./])).toEqual([{ first: 0, count: 1, features: "locales" }]);
   });
 
   test("an item that several features claim waits for all of them, named in the order of the features", () => {

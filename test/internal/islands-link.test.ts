@@ -484,12 +484,219 @@ describe.skipIf(!canLink)("a thin door", () => {
   });
 });
 
+describe.skipIf(!canLink)("two equal doors of two features", () => {
+  const twins = {
+    ...sources,
+    "more.c": `
+      int behind(int);
+      __attribute__((noinline)) int door_of_one(int x) { __asm__ volatile(".rept 6000\\nnop\\n.endr"); for (int i = 0; i < 5; i++) x += behind(x + i) * 3 + behind(x ^ i); return x; }
+      __attribute__((noinline)) int door_of_another(int x) { __asm__ volatile(".rept 6000\\nnop\\n.endr"); for (int i = 0; i < 5; i++) x += behind(x + i) * 3 + behind(x ^ i); return x; }
+    `,
+    "main.c": `
+      void _exit(int);
+      int the_door(int);
+      int door_of_one(int);
+      int door_of_another(int);
+      __attribute__((noinline)) void Bun__trimmedOut(int feature) { _exit(70 + (feature & 255)); }
+      int main(int argc, char **argv) {
+        if (argc == 2) return door_of_one(argc) & 63;
+        if (argc == 3) return door_of_another(argc) & 63;
+        return argc > 5 ? the_door(argc) : 0;
+      }
+    `,
+    "doors": sources.doors + "feature one the first\nfeature another the second\ndoor one exit ^door_of_one$\ndoor another exit ^door_of_another$\n",
+  };
+
+  test("are one body, which goes when both are out and is shut only then", async () => {
+    using dir = tempDir("islands-twins", twins);
+    const folder = String(dir);
+    const { table, addressOf } = await linked(folder, "all", ["behind", "door", "table", "more", "main"]);
+    expect(addressOf.get("door_of_one")).toBe(addressOf.get("door_of_another")!);
+    const door = table.doors.find(door => door.address === addressOf.get("door_of_one"))!;
+    expect(door.feature).toBe("one,another");
+    expect(table.islands.filter(island => island.start <= door.address && door.address < island.end).map(island => island.features)).toEqual(["one,another"]);
+    const codes = async (program: string) => [(await run([join(folder, program), "a"], folder)).exitCode, (await run([join(folder, program), "a", "b"], folder)).exitCode];
+    const whole = await codes("program");
+    for (const [name, excluded] of [["without-one", ["one"]], ["without-both", ["one", "another"]]] as const) {
+      writeFileSync(join(folder, name), shutDoors(readFileSync(join(folder, "program")), table, excluded, process.arch === "arm64"));
+      chmodSync(join(folder, name), 0o755);
+    }
+    expect(await codes("without-one")).toEqual(whole);
+    const first = 70 + table.features.indexOf("one");
+    expect(await codes("without-both")).toEqual([first, first]);
+  });
+});
+
+describe.skipIf(!canLink)("code of one feature that names a door of another", () => {
+  const pair = {
+    ...sources,
+    "door.c": doorTo("more"),
+    "more.c": `int door_of_another(int); int more(int x) { return door_of_another(x) + 1; }`,
+    "other.c": `__attribute__((noinline)) int door_of_another(int x) { for (int i = 0; i < 9; i++) x = x * 11 + i; return x; }`,
+    "main.c": start + `int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : 0; }`,
+  };
+  const objects = ["behind", "door", "more", "other", "main"];
+  const doors = sources.doors + "feature other something else\ndoor other exit ^door_of_another$\nwhen extra global Extra\nwhen other global Other\n";
+
+  test.each([
+    ["is listed", "", 0, "other <- extra: 1 references"],
+    ["stops the link once pairs are argued and this one is not", "argued extra other the other way round\n", 1, "other <- extra: 1 references"],
+    ["is argued", "argued other extra whoever gets there has asked for both\n", 0, ""],
+    ["is kept with it by a condition", "argued extra other the other way round\nwhen other feature extra\n", 0, ""],
+  ])("%s", async (_, lines, exitCode, listed) => {
+    using dir = tempDir("islands-pair", { ...pair, "doors": doors + lines });
+    const said = await wrapped(String(dir), "none", objects, {}, []);
+    expect(said.exitCode).toBe(exitCode);
+    if (exitCode !== 0) expect(said.stderr).toContain('no line "argued" says why');
+    expect(readFileSync(join(String(dir), "work", "pairs.txt"), "utf8").split("\n")[0]).toBe(listed);
+  });
+
+  test("what every stub jumps to stays, though only code behind a door names it", async () => {
+    using dir = tempDir("islands-pair", { ...pair, "more.c": `void Bun__trimmedOut(int); int more(int x) { if (x == 12345) Bun__trimmedOut(x); return x; }` });
+    const { canGo } = await linked(String(dir), "none", ["behind", "door", "more", "main"]);
+    expect({ more: canGo("more"), Bun__trimmedOut: canGo("Bun__trimmedOut") }).toEqual({ more: true, Bun__trimmedOut: false });
+  });
+});
+
+describe.skipIf(!canLink)("code of one feature that names a door of another", () => {
+  const pair = {
+    ...sources,
+    "door.c": doorTo("more"),
+    "more.c": `int door_of_another(int); int more(int x) { return door_of_another(x) + 1; }`,
+    "other.c": `__attribute__((noinline)) int door_of_another(int x) { for (int i = 0; i < 9; i++) x = x * 11 + i; return x; }`,
+    "main.c": start + `int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : 0; }`,
+  };
+  const objects = ["behind", "door", "more", "other", "main"];
+  const doors = sources.doors + "feature other something else\ndoor other exit ^door_of_another$\nwhen extra global Extra\nwhen other global Other\n";
+
+  test.each([
+    ["is listed", "", 0, "other <- extra: 1 references"],
+    ["stops the link once pairs are argued and this one is not", "argued extra other the other way round\n", 1, "other <- extra: 1 references"],
+    ["is argued", "argued other extra whoever gets there has asked for both\n", 0, ""],
+    ["is kept with it by a condition", "argued extra other the other way round\nwhen other feature extra\n", 0, ""],
+  ])("%s", async (_, lines, exitCode, listed) => {
+    using dir = tempDir("islands-pair", { ...pair, "doors": doors + lines });
+    const said = await wrapped(String(dir), "none", objects, {}, []);
+    expect(said.exitCode).toBe(exitCode);
+    if (exitCode !== 0) expect(said.stderr).toContain('no line "argued" says why');
+    expect(readFileSync(join(String(dir), "work", "pairs.txt"), "utf8").split("\n")[0]).toBe(listed);
+  });
+
+  test("a function that runs before main is no door, and what it names stays", async () => {
+    using dir = tempDir("islands-pair", {
+      ...pair,
+      "more.c": `
+        int behind_early(int x) { for (int i = 0; i < 9; i++) x = x * 13 + i; return x; }
+        int early_value;
+        __attribute__((constructor, noinline)) void early(void) { for (int i = 0; i < 9; i++) early_value += behind_early(i); }
+        int more(int x) { return behind_early(x); }
+      `,
+      "main.c": start + `extern int early_value; int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : early_value == 0; }`,
+      "doors": sources.doors + "door extra exit ^early$\n",
+    });
+    const { said, canGo, isDoor, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"]);
+    expect(said).toContain("1 functions that match a door run before main or after it, or have a second entry, and are no doors");
+    expect({ isDoor: isDoor("early"), early: canGo("early"), behind_early: canGo("behind_early"), more: canGo("more") }).toEqual({ isDoor: false, early: false, behind_early: false, more: true });
+    expect(ranTrimmed.exitCode).toBe(0);
+  });
+
+  test("what every stub jumps to stays, though only code behind a door names it", async () => {
+    using dir = tempDir("islands-pair", { ...pair, "more.c": `void Bun__trimmedOut(int); int more(int x) { if (x == 12345) Bun__trimmedOut(x); return x; }` });
+    const { canGo } = await linked(String(dir), "none", ["behind", "door", "more", "main"]);
+    expect({ more: canGo("more"), Bun__trimmedOut: canGo("Bun__trimmedOut") }).toEqual({ more: true, Bun__trimmedOut: false });
+  });
+});
+
+describe.skipIf(!canLink)("what the executable exports", () => {
+  const exporting = {
+    ...sources,
+    "more.c": `
+      __attribute__((noinline)) int only_for_what_is_loaded(int x) { for (int i = 0; i < 3; i++) x = x * 3 + i; return x ^ 5; }
+      __attribute__((noinline)) int for_what_is_loaded(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return only_for_what_is_loaded(x); }
+      __attribute__((noinline)) int door_of_another(int x) { for (int i = 0; i < 5; i++) x = x * 11 + i; return x; }
+    `,
+    "doors": sources.doors + "feature other something else\ndoor other exit ^door_of_another$\n",
+  };
+  const exports = ["-Wl,--export-dynamic-symbol=for_what_is_loaded", "-Wl,--export-dynamic-symbol=door_of_another"];
+  const names = ["for_what_is_loaded", "only_for_what_is_loaded", "door_of_another", "behind_0"];
+
+  test("stays, where nothing says who can call it", async () => {
+    using dir = tempDir("islands-exports", exporting);
+    const { canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "table", "more", "main"], {}, exports);
+    expect(names.map(canGo)).toEqual([false, false, false, true]);
+    expect(ranTrimmed.exitCode).toBe(0);
+  });
+
+  test("goes with the features that alone can load what calls it; a door of another feature stays", async () => {
+    using dir = tempDir("islands-exports", { ...exporting, "doors": exporting.doors + "exported extra\n" });
+    const { canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "table", "more", "main"], {}, exports);
+    expect(names.map(canGo)).toEqual([true, true, false, true]);
+    expect(ranTrimmed.exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(!canLink)("an operation that compiled code calls through the runtime table", () => {
+  const operations = {
+    ...sources,
+    "door.c": `
+      int behind(int);
+      int stays(int);
+      __attribute__((noinline)) int operationOnlyInTheTable(int x) { for (int i = 0; i < 5; i++) x += behind(x + i) * 3 + behind(x ^ i); return x; }
+      __attribute__((noinline)) int operationCalledDirectlyToo(int x) { for (int i = 0; i < 5; i++) x += stays(x + i) * 3 + stays(x ^ i); return x; }
+      __attribute__((noinline)) int operationOfAnotherFeature(int x) { for (int i = 0; i < 7; i++) x += stays(x + i) * 5 + stays(x ^ i); return x; }
+    `,
+    "main.c": `
+      void _exit(int);
+      extern const char table_that_stays[62];
+      int operationOnlyInTheTable(int);
+      int operationCalledDirectlyToo(int);
+      int operationOfAnotherFeature(int);
+      __attribute__((noinline)) void Bun__trimmedOut(int feature) { _exit(70); }
+      __attribute__((noinline)) int stays(int x) { return table_that_stays[x & 31]; }
+      int (*volatile entries[3])(int);
+      void fill(void) __asm__("_ZN3JSC3AOT12RuntimeTableC2ERNS_2VME");
+      __attribute__((noinline)) void fill(void) { entries[0] = operationOnlyInTheTable; entries[1] = operationCalledDirectlyToo; entries[2] = operationOfAnotherFeature; }
+      int main(int argc, char **argv) {
+        fill();
+        if (argc == 2) return entries[0](argc) & 63;
+        if (argc == 3) return entries[1](argc) & 63;
+        if (argc == 4) return operationCalledDirectlyToo(argc) & 63;
+        if (argc == 5) return entries[2](argc) & 63;
+        return 0;
+      }
+    `,
+    "doors": `feature extra what lies behind the door\noperations extra ^operation(OnlyInTheTable|CalledDirectlyToo)$\nfeature other a feature with facts of its own\nwhen other global Other\ndoor other exit ^operationOfAnotherFeature$\n`,
+  };
+
+  test("is a thin door with a condition of its own name, unless other code names it too; a plain door gets the condition as well", async () => {
+    using dir = tempDir("islands-operations", operations);
+    const folder = String(dir);
+    const { said, table, canGo, isDoor } = await linked(folder, "none", ["behind", "door", "table", "main"]);
+    expect(said).toContain("1 operations are named by more than the table that compiled code calls them through and are no doors");
+    expect(said).toContain("2 doors are thin");
+    expect(table.conditions).toEqual([
+      { feature: "extra", kind: "operation", name: "operationOnlyInTheTable" },
+      { feature: "other", kind: "global", name: "Other" },
+      { feature: "other", kind: "operation", name: "operationOfAnotherFeature" },
+    ]);
+    expect({ isDoor: isDoor("operationOnlyInTheTable"), canGo: canGo("operationOnlyInTheTable") }).toEqual({ isDoor: true, canGo: true });
+    expect({ isDoor: isDoor("operationCalledDirectlyToo"), canGo: canGo("operationCalledDirectlyToo") }).toEqual({ isDoor: false, canGo: false });
+    writeFileSync(join(folder, "shut"), shutDoors(readFileSync(join(folder, "program")), table, ["extra"], process.arch === "arm64"));
+    chmodSync(join(folder, "shut"), 0o755);
+    const exitCodes: number[] = [];
+    for (const road of [[], ["through the table"], ["the", "other"], ["the", "other", "directly"], ["that", "of", "another", "feature"]]) exitCodes.push((await run([join(folder, "shut"), ...road], folder)).exitCode);
+    expect(exitCodes[0]).toBe(0);
+    expect(exitCodes[1]).toBe(70);
+    expect(exitCodes.slice(2)).not.toContain(70);
+  });
+});
+
 describe.skipIf(!canLink)("a link with islands", () => {
   test("what only the door reaches can go, code and constants; what stays cannot", async () => {
     using dir = tempDir("islands-link", sources);
     const { canGo, ran } = await linked(String(dir), "none");
     expect(["behind", "behind_0", "behind_1499", "behind_numbers"].map(canGo)).toEqual([true, true, true, true]);
-    expect(["main", "stays", "the_door", "Bun__trimmedOut"].map(canGo)).toEqual([false, false, false, false]);
+    expect(["main", "stays", "Bun__trimmedOut"].map(canGo)).toEqual([false, false, false]);
     expect(ran.exitCode).toBe(0);
   });
 
@@ -582,6 +789,12 @@ describe.skipIf(!canLink)("ICU's data package in a link with islands", () => {
     using dir = tempDir("islands-data", files(""));
     const { addressOf } = await linked(String(dir), "none", ["behind", "door", "data", "main"]);
     expect(packagesOf(String(dir))).toEqual([{ start: addressOf.get("icudt99_dat")!, end: addressOf.get("icudt99_dat")! + packageOf(items).length, runs }]);
+  });
+
+  test("what only Windows keeps is listed all the same where the executable is not for Windows", async () => {
+    using dir = tempDir("islands-data", { ...files(""), "doors": files("").doors + "windows-keeps ^coll/\n" });
+    await linked(String(dir), "none", ["behind", "door", "data", "main"]);
+    expect(packagesOf(String(dir)).map(dataPackage => dataPackage.runs)).toEqual([runs]);
   });
 
   test("a program without it lists none", async () => {

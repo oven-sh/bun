@@ -1122,6 +1122,13 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
+                if ctx.bundler_options.aot_explain.iter().any(|word| **word == *b"runtime-use") {
+                    let facts = bun_standalone_module_graph::StandaloneModuleGraph::facts_of_build(output_files, compile_exec_argv, graph_flags);
+                    for fact in strings::split(&facts, b"\n").filter(|fact| !fact.is_empty()) {
+                        Output::print_errorln(format_args!("aot: runtime use: {}", bstr::BStr::new(fact)));
+                    }
+                }
+
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,

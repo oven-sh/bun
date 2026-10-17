@@ -1210,7 +1210,7 @@ extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
 extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
 {
     const char* description = Bun__trimmedFeatures;
-    for (uint32_t feature = door & 255; feature--;)
+    for (uint32_t feature = door & 4095; feature--;)
         description += strlen(description) + 1;
     const auto print = [](const char* text) {
 #if OS(WINDOWS)
@@ -1229,7 +1229,7 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
     char digits[9];
     size_t first = sizeof(digits) - 1;
     digits[first] = 0;
-    for (uint32_t number = door >> 8; number || !digits[first]; number /= 10)
+    for (uint32_t number = door >> 12; number || !digits[first]; number /= 10)
         digits[--first] = static_cast<char>('0' + number % 10);
     print(", and something has just asked for it.");
     if (getenv("BUN_OPTIONS"))
@@ -1259,13 +1259,6 @@ extern "C" __attribute__((noinline)) bool Bun__hasWorker()
     uint32_t hasWorker = 6;
     asm volatile("" : "+r"(hasWorker));
     return hasWorker;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasWebAssembly()
-{
-    uint32_t hasWebAssembly = 5;
-    asm volatile("" : "+r"(hasWebAssembly));
-    return hasWebAssembly;
 }
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)

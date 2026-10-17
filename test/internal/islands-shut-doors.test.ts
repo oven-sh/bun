@@ -230,6 +230,18 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
     expect(() => shutDoors(linked(), table, ["d"], false)).toThrow("refused: there is no feature d");
   });
 
+  test("a door of several features is shut when all of them are out, and names the first", () => {
+    const doors = table.doors.map((door, index) => (index === 0 || index === 1 ? { ...door, feature: "a,c" } : door));
+    const shared = { ...table, doors };
+    const open = shutDoors(linked(), shared, ["a"], false);
+    expect(open.subarray(at(0x201200), at(0x201200) + 6)).toEqual(linked().subarray(at(0x201200), at(0x201200) + 6));
+    expect(open.readInt32LE(at(0x201111))).toBe(0x201300 - 0x201115);
+    expect(open.subarray(at(0x202000), at(0x202000) + 10)).toEqual(exitStub(0x202000, 2, 0));
+    expect(shutDoors(linked(), shared, ["c"], false).equals(linked())).toBe(true);
+    expect(shutDoors(linked(), shared, ["a", "c"], false).equals(shutDoors(linked(), table, ["a", "c"], false))).toBe(true);
+    expect(shutDoors(linked(), shared, ["a", "c"], false).subarray(at(0x201200), at(0x201200) + 10)).toEqual(exitStub(0x201200, 0, 0));
+  });
+
   test("no strip", () => {
     const withIslands = (islands: Table["islands"]) => ({ ...table, islands });
     const [data, code] = table.islands;

@@ -21,16 +21,15 @@ const {
 const { validateNumber, validateArray } = require("internal/validators");
 
 // Every readline Interface constructs a ReplHistory, but only the REPL (with a
-// history file) touches fs/os/path or the node-shims helpers, so load those on
-// first use instead of pulling node:fs, node:util, node:vm etc. into every
+// history file) touches fs/os/path or util.debuglog, so load those on first use
+// instead of pulling node:fs, node:util etc. into every
 // readline.createInterface() / FileHandle.readLines().
-let fs, os, path, permission;
+let fs, os, path;
 const lazyFs = () => (fs ??= require("node:fs"));
 const lazyOs = () => (os ??= require("node:os"));
 const lazyPath = () => (path ??= require("node:path"));
-const lazyPermission = () => (permission ??= require("internal/repl/node-shims"));
 let debug = (...args) => {
-  debug = require("internal/repl/node-shims").debuglog("repl");
+  debug = require("node:util").debuglog("repl");
   return debug(...args);
 };
 const { clearTimeout, setTimeout } = require("node:timers");
@@ -289,8 +288,7 @@ class ReplHistory {
   }
 
   [kHasWritePermission]() {
-    const permission = lazyPermission();
-    return !(permission.isEnabled() && permission.has("fs.write", this[kHistoryPath]) === false);
+    return true;
   }
 
   [kValidateOptions](options) {

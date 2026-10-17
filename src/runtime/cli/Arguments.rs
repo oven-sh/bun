@@ -441,7 +441,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable"
         ),
         parse_param!(
-            "--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)"
+            "--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true, false with --compile-trim-runtime)"
         ),
         parse_param!(
             "--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable"
@@ -2680,6 +2680,9 @@ fn parse_build_command_options(
             Global::crash();
         }
         bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(true);
+        if !args.flag(b"--compile-autoload-bunfig") {
+            ctx.bundler_options.compile_autoload_bunfig = false;
+        }
     }
 
     if let Some(path) = args.option(b"--compile-executable-path") {

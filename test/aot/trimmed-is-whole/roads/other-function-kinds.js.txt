@@ -1,0 +1,47 @@
+// road: the constructors of async, generator and async generator functions
+const text = "return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter";
+//// async-getPrototypeOf
+//@ todo F1
+console.log(await Object.getPrototypeOf(async function () {}).constructor(text)());
+//// async-dot-constructor
+//@ todo F1
+console.log(await (async function () {}).constructor(text)());
+//// async-arrow
+//@ todo F1
+console.log(await (async () => {}).constructor(text)());
+//// async-new
+//@ todo F1
+const AsyncFunction = (async () => {}).constructor;
+console.log(await new AsyncFunction(text)());
+//// generator-getPrototypeOf
+//@ todo F1
+console.log(new (Object.getPrototypeOf(function* () {}).constructor)(text)().next().value);
+//// generator-dot-constructor
+//@ todo F1
+console.log((function* () {}).constructor(text)().next().value);
+//// async-generator
+//@ todo F1
+console.log((await (async function* () {}).constructor(text)().next()).value);
+//// async-method
+//@ todo F1
+const o = { async m() {} };
+console.log(await o.m.constructor(text)());
+//// generator-method
+//@ todo F1
+const o = { *m() {} };
+console.log(o.m.constructor(text)().next().value);
+//// class-async-method
+//@ todo F1
+class C { async m() {} }
+console.log(await C.prototype.m.constructor(text)());
+//// async-in-try
+//@ todo F2
+try { console.log(await (async () => {}).constructor(text)()); } catch (error) { console.log("caught", error.name); }
+//// generator-prototype-chain
+//@ todo F1
+const GeneratorFunction = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()).constructor === undefined ? function* () {} : function* () {}).constructor;
+console.log(GeneratorFunction(text)().next().value);
+//// generator-object-to-function
+//@ todo F1
+const generatorPrototype = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()));
+console.log(generatorPrototype.constructor.constructor(text)().next().value);

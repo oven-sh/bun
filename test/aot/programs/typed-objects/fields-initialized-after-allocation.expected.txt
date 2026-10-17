@@ -40,4 +40,4 @@ M half ["o","ma"] {"o":[1],"ma":3}
 3 undefined
 M half, a setter ["o"] {"o":[1]}
 5 undefined false
-Other TypeError
+Other {"other":1} undefined

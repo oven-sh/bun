@@ -23,6 +23,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -70,7 +71,6 @@ public:
     LoopData() {
         corkSlots[0].buffer = new char[CORK_BUFFER_SIZE];
         corkSlots[1].buffer = new char[CORK_BUFFER_SIZE];
-        updateDate();
     }
 
     ~LoopData() {
@@ -191,7 +191,14 @@ public:
             tstruct.tm_sec % 99);
     }
 
-    char date[32];
+    std::string_view dateHeader() {
+        if (!date[0]) {
+            updateDate();
+        }
+        return std::string_view(date, 29);
+    }
+
+    char date[32] = {};
 
     /* Good 16k for SSL perf. */
     static constexpr unsigned int CORK_BUFFER_SIZE = 128 * 1024;

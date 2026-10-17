@@ -1409,6 +1409,12 @@ unsafe extern "C" {
         ctx: *mut core::ffi::c_void,
         reserve: extern "C" fn(*mut core::ffi::c_void, usize) -> *mut u8,
     ) -> bool;
+    fn Bun__AOT__imageOperations(
+        image: *const u8,
+        length: usize,
+        ctx: *mut core::ffi::c_void,
+        reserve: extern "C" fn(*mut core::ffi::c_void, usize) -> *mut u8,
+    ) -> bool;
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
     fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
 }
@@ -2759,8 +2765,22 @@ fn is_closed_world(runtime_use: &[u8]) -> bool {
     runtime_use == b"closed" || runtime_use.starts_with(b"closed\n")
 }
 
+pub fn facts_of_build(output_files: &[OutputFile], compile_exec_argv: &[u8], flags: Flags) -> Vec<u8> {
+    let facts: [(&[u8], bool); 8] = [
+        (b"autoload bunfig\n", !flags.contains(Flags::DISABLE_AUTOLOAD_BUNFIG)),
+        (b"autoload package-json\n", !flags.contains(Flags::DISABLE_AUTOLOAD_PACKAGE_JSON)),
+        (b"autoload tsconfig\n", !flags.contains(Flags::DISABLE_AUTOLOAD_TSCONFIG)),
+        (b"environment BUN_DESTRUCT_VM_ON_EXIT\n", true),
+        (b"environment BUN_JSC\n", true),
+        (b"environment BUN_OPTIONS\n", true),
+        (b"option compile-exec-argv\n", !compile_exec_argv.is_empty()),
+        (b"option sourcemap\n", output_files.iter().any(|file| file.source_map_index != u32::MAX)),
+    ];
+    facts.iter().filter(|fact| fact.1).flat_map(|fact| fact.0).copied().collect()
+}
+
 fn trim_runtime(executable: Vec<u8>, has_aot_image: bool, runtime_use: Option<&[u8]>) -> Result<Vec<u8>, bun_exe_islands::Error> {
-    let unused = match runtime_use.filter(|facts| has_aot_image && is_closed_world(facts)) {
+    let unused = match runtime_use.filter(|_| has_aot_image) {
         Some(facts) => bun_exe_islands::features_unused_by(&executable, facts)?,
         None => Vec::new(),
     };
@@ -2980,6 +3000,20 @@ fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd, already_writ
     Syscall::ftruncate(fd, offset).map_err(|error| error.to_string())?;
     bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF written in pieces: {} bytes", offset);
     Ok(true)
+}
+
+fn operations_called_by(aot_image: &[u8]) -> Option<Vec<u8>> {
+    extern "C" fn reserve(facts: *mut core::ffi::c_void, size: usize) -> *mut u8 {
+        // SAFETY: `facts` is the `&mut facts` passed below.
+        let facts = unsafe { &mut *facts.cast::<Vec<u8>>() };
+        facts.resize(size, 0);
+        facts.as_mut_ptr()
+    }
+    let mut facts: Vec<u8> = Vec::new();
+    // SAFETY: `aot_image` is valid for the call. `reserve` gets `facts` back as its context, during
+    // the call only.
+    let is_listed = unsafe { Bun__AOT__imageOperations(aot_image.as_ptr(), aot_image.len(), (&raw mut facts).cast(), reserve) };
+    is_listed.then_some(facts)
 }
 
 #[cfg(unix)]
@@ -4063,7 +4097,11 @@ pub fn to_executable(
     let opened_runtime_use: Option<Vec<u8>> = runtime_use.zip(uncompiled_module).map(|(facts, path)| {
         bun_ast::type_tags::open_world(facts, &[&b"something is not compiled in "[..], &path].concat())
     });
-    let runtime_use = opened_runtime_use.as_deref().or(runtime_use);
+    let runtime_use_of_build: Option<Vec<u8>> = opened_runtime_use.as_deref().or(runtime_use).map(|facts| {
+        let before_facts_of_build: &[u8] = if facts.ends_with(b"\n") { b"" } else { b"\n" };
+        [facts, before_facts_of_build, &facts_of_build(output_files, compile_exec_argv, flags)].concat()
+    });
+    let runtime_use = runtime_use_of_build.as_deref();
 
     let self_exe = match target_executable(target, env, self_exe_path) {
         Ok(p) => p,
@@ -4073,6 +4111,11 @@ pub fn to_executable(
     let aot_image: Option<&[u8]> = (output_files.iter())
         .find(|file| file.output_kind == options::OutputKind::AotImage)
         .map(|image| image.value.as_slice());
+    let with_operations: Option<Vec<u8>> = aot_image
+        .filter(|_| trims_runtime())
+        .and_then(operations_called_by)
+        .map(|operations| [runtime_use.unwrap_or_default(), b"\n", &operations].concat());
+    let runtime_use = with_operations.as_deref().or(runtime_use);
     #[cfg(unix)]
     let list_symbols = || -> Option<(Vec<u8>, usize)> { Some((aot_image_symbols(aot_image?)?, aot_image_at?)) };
     #[cfg(not(unix))]

@@ -21,7 +21,7 @@
 // CALLS+ untypedMatch StringMatchRegExp
 let guard = 0;
 function parsed(line: string): string {
-  if (guard > 1e9) return parsed(line + "x");
+  if (guard > 1e9) parsed(line + "x");
   const m = /^(\d+)-(\w+)(?:-(\d+))?$/.exec(line);
   if (m === null) return "null";
   let total = Number(m[1]);
@@ -30,7 +30,7 @@ function parsed(line: string): string {
   return total + ":" + m.index + ":" + m[0].length + ":" + Number(m[3]) + ":" + m[2].charCodeAt(0) + ":" + typeof m[3] + ":" + typeof m[4] + ":" + Number(m[9]);
 }
 function truthy(line: string): string {
-  if (guard > 1e9) return truthy(line + "x");
+  if (guard > 1e9) truthy(line + "x");
   const m = /(\w+)=(\w*)/.exec(line);
   if (!m) return "none";
   return m[1] + ":" + m[2] + ":" + m[2].length;
@@ -44,13 +44,13 @@ function inLoop(text: string): string {
   return sum + " " + places + re.lastIndex;
 }
 function properties(line: string): string {
-  if (guard > 1e9) return properties(line + "x");
+  if (guard > 1e9) properties(line + "x");
   const m = /b(c*)(z)?/.exec(line);
   if (m == null) return "null " + RegExp.lastMatch;
   return [m.index, m.input, m.length, m[0], m[1], m[2], RegExp.lastMatch, RegExp.$1, RegExp.leftContext, RegExp.rightContext].join("|");
 }
 function twice(a: string, b: string): string {
-  if (guard > 1e9) return twice(a + "x", b);
+  if (guard > 1e9) twice(a + "x", b);
   const re = /(\w)(\w)/;
   const first = re.exec(a);
   const second = re.exec(b);
@@ -64,7 +64,7 @@ function sticky(text: string): string {
   return out;
 }
 function thrown(line: string): string {
-  if (guard > 1e9) return thrown(line + "x");
+  if (guard > 1e9) thrown(line + "x");
   const m = /q(\d)/.exec(line);
   try { return m![1] + m!.index; } catch (e) { return e instanceof TypeError ? "TypeError" : "other"; }
 }
@@ -80,24 +80,24 @@ function objectLastIndex(text: string): string {
   const m = re.exec(text);
   return (m ? m[1] + m.index : "null") + asked + re.lastIndex;
 }
-function returned(line: string): RegExpExecArray | null { if (guard > 1e9) return returned(line + "x"); const m = /(\d)(\d)/.exec(line); if (m && m[1] === "9") guard++; return m; }
-function look(list: string[] | null): number { if (guard > 1e9) return look(list); return list ? list.length : -1; }
-function handedOn(line: string): number { if (guard > 1e9) return handedOn(line + "x"); const m = /(\d)(\d)/.exec(line); return look(m) + (m ? Number(m[1]) : 0); }
-function byVariable(line: string, k: number): string { if (guard > 1e9) return byVariable(line + "x", k); const m = /(\d)(\d)/.exec(line); return m ? m[k] + m[0] : "null"; }
-function written(line: string): string { if (guard > 1e9) return written(line + "x"); const m = /(\d)(\d)/.exec(line); if (!m) return "null"; m[1] = "w"; return m[1] + m[2]; }
-function named(line: string): string { if (guard > 1e9) return named(line + "x"); const m = /(?<a>\d)(?<b>\d)/.exec(line); return m ? m.groups!.a + m[2] : "null"; }
+function returned(line: string): RegExpExecArray | null { if (guard > 1e9) returned(line + "x"); const m = /(\d)(\d)/.exec(line); if (m && m[1] === "9") guard++; return m; }
+function look(list: string[] | null): number { if (guard > 1e9) look(list); return list ? list.length : -1; }
+function handedOn(line: string): number { if (guard > 1e9) handedOn(line + "x"); const m = /(\d)(\d)/.exec(line); return look(m) + (m ? Number(m[1]) : 0); }
+function byVariable(line: string, k: number): string { if (guard > 1e9) byVariable(line + "x", k); const m = /(\d)(\d)/.exec(line); return m ? m[k] + m[0] : "null"; }
+function written(line: string): string { if (guard > 1e9) written(line + "x"); const m = /(\d)(\d)/.exec(line); if (!m) return "null"; m[1] = "w"; return m[1] + m[2]; }
+function named(line: string): string { if (guard > 1e9) named(line + "x"); const m = /(?<a>\d)(?<b>\d)/.exec(line); return m ? m.groups!.a + m[2] : "null"; }
 const held: object[] = [/x/];
-function comparedWithObject(line: string): string { if (guard > 1e9) return comparedWithObject(line + "x"); const re = /(\d)/; held[0] = re; const m: object | null = re.exec(line); return String(m === held[0]) + String(m === null); }
-function destructured(line: string): string { if (guard > 1e9) return destructured(line + "x"); const m = /(\d)(\d)/.exec(line); if (!m) return "null"; const [whole, a, b] = m; return whole + a + b; }
-function namedButByIndex(line: string): string { if (guard > 1e9) return namedButByIndex(line + "x"); const m = /(?<a>\d)(?<b>x)?/.exec(line); return m ? m[1] + m[2] + m.index : "null"; }
-function viaMatch(line: string): string { if (guard > 1e9) return viaMatch(line + "x"); const m = line.match(/(\d)(\w)?/); return m ? Number(m[1]) + ":" + m[2] + ":" + m.index + ":" + m.length + ":" + RegExp.lastMatch : "null"; }
-function stickyMatch(line: string): string { if (guard > 1e9) return stickyMatch(line + "x"); const m = line.match(/a(b)?/y); return m ? m[0] + m[1] + m.index : "null"; }
-function globalMatch(line: string): string { if (guard > 1e9) return globalMatch(line + "x"); const m = line.match(/\w/g); return m ? m[0] + m[1] + m.length : "null"; }
-function matchOfGivenPattern(line: string, re: RegExp): string { if (guard > 1e9) return matchOfGivenPattern(line + "x", re); const m = line.match(re); return m ? m[0] + m.length : "null"; }
-function matchOfPatternUsedTwice(line: string): string { if (guard > 1e9) return matchOfPatternUsedTwice(line + "x"); const re = /(\w)/; (re as { exec: unknown }).exec = () => null; const m = line.match(re); return m ? m[0] : "null"; }
-function matchReturned(line: string): RegExpMatchArray | null { if (guard > 1e9) return matchReturned(line + "x"); const m = line.match(/(\w)(\w)/); if (m && m[1] === "~") guard++; return m; }
-function untypedResult(line: string): string { if (guard > 1e9) return untypedResult(line + "x"); const m: any = /(\w)(\d)?/.exec(line); if (m === null) return "null"; return m[0] + m[1] + m[2] + m.index; }
-function untypedMatch(line: string): string { if (guard > 1e9) return untypedMatch(line + "x"); const re: any = /(\w)(\d)?/; const m: any = line.match(re); return m == null ? "null" : m[1] + m[2]; }
+function comparedWithObject(line: string): string { if (guard > 1e9) comparedWithObject(line + "x"); const re = /(\d)/; held[0] = re; const m: object | null = re.exec(line); return String(m === held[0]) + String(m === null); }
+function destructured(line: string): string { if (guard > 1e9) destructured(line + "x"); const m = /(\d)(\d)/.exec(line); if (!m) return "null"; const [whole, a, b] = m; return whole + a + b; }
+function namedButByIndex(line: string): string { if (guard > 1e9) namedButByIndex(line + "x"); const m = /(?<a>\d)(?<b>x)?/.exec(line); return m ? m[1] + m[2] + m.index : "null"; }
+function viaMatch(line: string): string { if (guard > 1e9) viaMatch(line + "x"); const m = line.match(/(\d)(\w)?/); return m ? Number(m[1]) + ":" + m[2] + ":" + m.index + ":" + m.length + ":" + RegExp.lastMatch : "null"; }
+function stickyMatch(line: string): string { if (guard > 1e9) stickyMatch(line + "x"); const m = line.match(/a(b)?/y); return m ? m[0] + m[1] + m.index : "null"; }
+function globalMatch(line: string): string { if (guard > 1e9) globalMatch(line + "x"); const m = line.match(/\w/g); return m ? m[0] + m[1] + m.length : "null"; }
+function matchOfGivenPattern(line: string, re: RegExp): string { if (guard > 1e9) matchOfGivenPattern(line + "x", re); const m = line.match(re); return m ? m[0] + m.length : "null"; }
+function matchOfPatternUsedTwice(line: string): string { if (guard > 1e9) matchOfPatternUsedTwice(line + "x"); const re = /(\w)/; (re as { exec: unknown }).exec = () => null; const m = line.match(re); return m ? m[0] : "null"; }
+function matchReturned(line: string): RegExpMatchArray | null { if (guard > 1e9) matchReturned(line + "x"); const m = line.match(/(\w)(\w)/); if (m && m[1] === "~") guard++; return m; }
+function untypedResult(line: string): string { if (guard > 1e9) untypedResult(line + "x"); const m: any = /(\w)(\d)?/.exec(line); if (m === null) return "null"; return m[0] + m[1] + m[2] + m.index; }
+function untypedMatch(line: string): string { if (guard > 1e9) untypedMatch(line + "x"); const re: any = /(\w)(\d)?/; const m: any = line.match(re); return m == null ? "null" : m[1] + m[2]; }
 function untypedThrows(line: string): string { const m: any = /q(\d)/.exec(line); try { return m[1] + m.index; } catch (e) { return e instanceof TypeError ? "TypeError" : "other"; } }
 function* between(line: string): Generator<string> { const m = /(\w)(\w)/.exec(line); if (!m) return; yield m[1]; /zz/.exec("zz"); yield m[2]; yield String(m.index); }
 async function later(line: string): Promise<string> { const m = /(\w)-(\w)/.exec(line); if (!m) return "null"; const a = m[1]; await null; /(q)/.exec("q"); return a + m[2] + m.index; }
@@ -114,7 +114,7 @@ let big = "";
 for (let i = 0; i < 3000; i++) big += i + (i % 3 ? "," : ";");
 out += inLoop(big).length + "\n";
 console.log(out);
-function ofNothing(line: string | null | undefined): string { if (guard > 1e9) return ofNothing(line + "x"); const m = /(u|n)(\w)/.exec(line as string); return m ? m[1] + m[2] + m.input : "null"; }
+function ofNothing(line: string | null | undefined): string { if (guard > 1e9) ofNothing(line + "x"); const m = /(u|n)(\w)/.exec(line as string); return m ? m[1] + m[2] + m.input : "null"; }
 console.log(ofNothing(null), ofNothing(undefined), ofNothing("sun"));
 console.log(await later("a-b"), await later("zz"));
 export {};

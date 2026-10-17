@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const lines: string[] = [];
-const sink = { write(text: string) { lines.push(text); return true; } };
+const sink = { write(text: string) { lines.push(text); return true; }, listenerCount: () => 0, once() {}, removeListener() {} };
 const quiet = new console.Console({ stdout: sink as any, stderr: sink as any, colorMode: false });
 quiet.log("%s and %o and %d%%", "text", { a: [1, 2, { b: 3 }] }, 42.5);
 quiet.error(new Map([["key", new Set([1])]]), [undefined, null], -0);

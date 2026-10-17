@@ -49,13 +49,14 @@ pub(crate) fn minus(a: u64, b: u64) -> Result<u64> {
 pub(crate) fn narrow(value: u64) -> Result<u32> {
     u32::try_from(value).map_err(|_| Error::InvalidExecutable)
 }
-/// The whole pages of `range`.
+/// The whole pages of `range`, if they are `smallest` bytes or more.
 pub(crate) fn whole_pages(
     range: &core::ops::Range<u64>,
     page: u64,
+    smallest: u64,
 ) -> Option<core::ops::Range<u64>> {
     let pages = range.start.checked_next_multiple_of(page)?..range.end / page * page;
-    (pages.start < pages.end).then_some(pages)
+    (pages.start < pages.end && pages.end - pages.start >= smallest).then_some(pages)
 }
 
 pub(crate) fn put_u16(bytes: &mut [u8], at: usize, value: u16) -> Result<()> {
@@ -87,4 +88,20 @@ pub(crate) fn slice_mut(bytes: &mut [u8], at: usize, length: usize) -> Result<&m
 /// A name in a field of a fixed size, padded with NUL.
 pub(crate) fn fixed_name(field: &[u8]) -> &[u8] {
     core::ffi::CStr::from_bytes_until_nul(field).map_or(field, core::ffi::CStr::to_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whole_pages_of_a_range() {
+        assert_eq!(whole_pages(&(0x1001..0x4fff), 0x1000, 0), Some(0x2000..0x4000));
+        assert_eq!(whole_pages(&(0x1000..0x2000), 0x1000, 0), Some(0x1000..0x2000));
+        assert_eq!(whole_pages(&(0x1001..0x2fff), 0x1000, 0), None);
+        assert_eq!(whole_pages(&(0x1001..0x1002), 0x1000, 0), None);
+        assert_eq!(whole_pages(&(0x1001..0x4fff), 0x1000, 0x2000), Some(0x2000..0x4000));
+        assert_eq!(whole_pages(&(0x1001..0x4fff), 0x1000, 0x2001), None);
+        assert_eq!(whole_pages(&(u64::MAX - 1..u64::MAX), 0x1000, 0), None);
+    }
 }

@@ -529,13 +529,15 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
     } context { target, result };
     dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) -> int {
         auto& context = *static_cast<Context*>(data);
-        for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+        for (unsigned i = info->dlpi_phnum; i--;) {
             auto& segment = info->dlpi_phdr[i];
             uintptr_t start = info->dlpi_addr + segment.p_vaddr;
-            if (segment.p_type == PT_LOAD && context.target >= start && context.target - start < segment.p_filesz)
+            if (segment.p_type == PT_LOAD && context.target >= start && context.target - start < segment.p_filesz) {
                 context.result = static_cast<off_t>(segment.p_offset + (context.target - start));
+                return 1;
+            }
         }
-        return context.result ? 1 : 0;
+        return 0;
     }, &context);
     return result;
 #endif
@@ -724,6 +726,25 @@ extern "C" bool Bun__AOT__imageSymbols(const uint8_t* image, size_t length, void
     UNUSED_PARAM(reserve);
     return false;
 #endif
+}
+
+extern "C" bool Bun__AOT__imageOperations(const uint8_t* image, size_t length, void* ctx, uint8_t* (*reserve)(void* ctx, size_t size))
+{
+    Vector<uint8_t> facts;
+    for (ASCIILiteral operation : JSC::aotImageOperations({ image, length })) {
+        facts.append(byteCast<uint8_t>("operation "_s.span8()));
+        facts.append(byteCast<uint8_t>(operation.span8()));
+        facts.append('\n');
+    }
+    for (ASCIILiteral operation : JSC::aotImageLanguageOperations({ image, length })) {
+        facts.append(byteCast<uint8_t>("language-operation "_s.span8()));
+        facts.append(byteCast<uint8_t>(operation.span8()));
+        facts.append('\n');
+    }
+    if (facts.isEmpty())
+        return false;
+    memcpy(reserve(ctx, facts.size()), facts.span().data(), facts.size());
+    return true;
 }
 
 extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)

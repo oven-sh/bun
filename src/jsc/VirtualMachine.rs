@@ -3552,9 +3552,12 @@ impl VirtualMachine {
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
-            arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
+            let traced = arg.strip_prefix(b"--trace-e");
+            traced.is_some_and(|what| what.starts_with(b"vent") || what.starts_with(b"nv") || what.starts_with(b"xit")) || arg.starts_with(b"--stack-trace-limit")
         }
-        let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
+        let arguments_of_the_program = if self.is_main_thread && self.standalone_module_graph.is_some() { self.argv.len() } else { 0 };
+        let argv = bun_core::argv();
+        let needs_pre_execution = argv.iter().take(argv.len().saturating_sub(arguments_of_the_program)).any(is_bootstrap_flag)
             || self
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)

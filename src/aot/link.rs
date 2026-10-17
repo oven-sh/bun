@@ -3935,11 +3935,12 @@ fn link_with_helper_threads<'scope>(
     }
     times.add("answers", &mut since);
     let fields_by_name = nullish::fields_with_deleted_names(&program, &contents, in_parallel);
-    let deleted = nullish::widen_fields_for_deletions(&mut program, &contents, &fields_by_name, in_parallel);
+    let lost_by_copies = nullish::find_members_lost_by_copies(&program, in_parallel);
+    let deleted = nullish::widen_fields_for_deletions(&mut program, &contents, &fields_by_name, &lost_by_copies, in_parallel);
     reads::retype_reads_from_subtypes(&mut program, in_parallel);
     let written: Vec<TyId> = program.funcs.iter().flat_map(|func| func.params.iter().copied()).collect();
     let mut found_meanwhile = None;
-    nullish::widen_for_nullish(&mut program, &contents, &fields_by_name, in_parallel, &mut |program| found_meanwhile = Some((literal_structures::find_single_structure_receivers(program, in_parallel), throws::set_up(program, in_parallel))));
+    nullish::widen_for_nullish(&mut program, &contents, &fields_by_name, &lost_by_copies, in_parallel, &mut |program| found_meanwhile = Some((literal_structures::find_single_structure_receivers(program, in_parallel), throws::set_up(program, in_parallel))));
     let ((single_structure_accesses, mut rows), setup_of_what_always_fails) = found_meanwhile.expect("the link waits once for where the functions get");
     let mut left = &written[..];
     for (index, func) in program.funcs.iter().enumerate() {
@@ -4239,7 +4240,10 @@ fn link_with_helper_threads<'scope>(
     since = Instant::now();
     let typedness = typedness::measure(&program, &is_runtime_layout, &modules, checked, in_parallel);
     times.add("typedness", &mut since);
-    *checked.reads_of_any_property.lock() = keys::reads_of_any_property(&program, &modules, in_parallel);
+    let files_of_prelude: FxHashSet<FileId> = crate::prelude::FILES.iter().filter_map(|file| checked.files.by_path.get(&crate::prelude::path_of(shown_from, file.0))).collect();
+    let reads = keys::reads_without_a_name(&program, &modules, &files_of_prelude, in_parallel);
+    *checked.reads_of_any_property.lock() = reads.of_any_property;
+    *checked.reads_that_may_find_the_constructor_of_functions.lock() = reads.that_may_find_the_constructor_of_functions;
     let failure_check = Some(FailureCheck { setup: setup_of_what_always_fails, modules });
     Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found, typedness, times, failure_check }
 }

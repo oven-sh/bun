@@ -101,6 +101,6 @@ Object.defineProperty(Object.getPrototypeOf(half), "ma", { set(value: number) { 
 const later = new Half(list, 5); show("M half, a setter", later); console.log(kept, read(later, "ma"), Object.hasOwn(later, "ma"))
 
 // A callee that is not a constructor function of the type: it declares no `this`, so it does not receive the allocated object, whether
-// or not the compiler knows the callee. What it creates is not an `H`, so TypeError. Plain Bun: `Other {"other":1} undefined`.
+// or not the compiler knows the callee. What it creates is not an `H`; the cast that calls it a constructor of `H` is a prediction, so nothing is thrown: as in plain Bun.
 const Other = function (this: any) { this.other = 1 } as unknown as new (o: number[], k: Flags, n: number) => H
 try { const o = new Other(list, Flags.One, 1); console.log("Other", JSON.stringify(o), read(o, "k")) } catch (e) { console.log("Other", (e as Error).constructor.name) }

@@ -106,7 +106,7 @@ const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
 // created when a server listens, and emission is gated per-request on the
 // category, so this is near-zero cost when tracing is off.
 const kHttpTraceCat = "node,node.http";
-let traceEvents: typeof import("internal/trace_events").default;
+let traceEvents: typeof import("internal/trace_event_recorder").default;
 function traceServerRequestStart(http_res) {
   if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
   traceEvents.emitEvent("b", kHttpTraceCat, "http.server.request");
@@ -172,7 +172,7 @@ function assignSocketInternal(self, socket) {
   socket._httpMessage = self;
   setCloseCallback(socket, onServerResponseClose);
   self.socket = socket;
-  self.emit("socket", socket);
+  if (!isUnheardByResponse(self, "socket")) self.emit("socket", socket);
 }
 
 function onServerResponseClose() {
@@ -717,7 +717,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
   {
     // What the first connection and the first request need, so that neither waits for it.
     getNodeHTTPServerSocket();
-    traceEvents ??= require("internal/trace_events");
+    traceEvents ??= require("internal/trace_event_recorder");
 
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -3586,7 +3586,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     this._header = " ";
     this.finished = true;
     queueTick1(process, markResponseEndedNT, this);
-    this.emit("prefinish");
+    if (!isUnheardByResponse(this, "prefinish")) this.emit("prefinish");
     return this;
   }
   const sentState = NodeHTTPHeaderState.sent;
@@ -3651,7 +3651,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   // listener otherwise), so handlers can still reach res.socket after end().
   this.finished = true;
   queueTick1(process, markResponseEndedNT, this);
-  this.emit("prefinish");
+  if (!isUnheardByResponse(this, "prefinish")) this.emit("prefinish");
 
   if (draining) {
     // Native calls back once the body is out; a dying connection finishes from emit("close").
@@ -3672,7 +3672,7 @@ function queueResponseFinished(res, callback) {
 
 // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
 function emitResponseFinished(res, callback) {
-  queueTick1(process, emitCloseNT, res);
+  queueTick1(process, emitResponseCloseNT, res);
   res.emit("finish");
   if (callback) {
     try {
@@ -4072,21 +4072,43 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   return this;
 };
 
-ServerResponse.prototype.emit = function (event) {
-  if (event === "close") {
-    const callback = this[kPendingFinish];
-    if (callback !== undefined) {
-      // The connection died mid-drain: like Node.js, the response still finishes, then closes.
-      this[kPendingFinish] = undefined;
-      this._closed = true;
-      this._callPendingCallbacks();
-      queueTick2(process, emitResponseFinishedThenClose, this, callback);
-      return false;
-    }
-    callCloseCallback(this);
+function finishesBeforeItCloses(res) {
+  const callback = res[kPendingFinish];
+  if (callback !== undefined) {
+    // The connection died mid-drain: like Node.js, the response still finishes, then closes.
+    res[kPendingFinish] = undefined;
+    res._closed = true;
+    res._callPendingCallbacks();
+    queueTick2(process, emitResponseFinishedThenClose, res, callback);
+    return true;
   }
+  callCloseCallback(res);
+  return false;
+}
+
+ServerResponse.prototype.emit = function (event) {
+  if (event === "close" && finishesBeforeItCloses(this)) return false;
   return StreamPrototype.emit.$apply(this, arguments);
 };
+
+const serverResponseEmit = ServerResponse.prototype.emit;
+const eventEmitterEmit = EventEmitter.prototype.emit;
+
+function isUnheardByResponse(res, name) {
+  if (res.emit !== serverResponseEmit || StreamPrototype.emit !== eventEmitterEmit) return false;
+  const events = res._events;
+  return events === undefined || events[name] === undefined;
+}
+
+function emitResponseCloseNT(res) {
+  if (!res._closed) {
+    res.destroyed = true;
+    res._closed = true;
+    callCloseCallback(res);
+    if (!isUnheardByResponse(res, "close")) res.emit("close");
+    else finishesBeforeItCloses(res);
+  }
+}
 
 function emitResponseFinishedThenClose(res, callback) {
   emitResponseFinished(res, callback);

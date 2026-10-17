@@ -61,15 +61,17 @@ export function Array$forEach<T>(a: T[], f: unknown, thisArg: unknown): void {
     if (!isCallable(f)) throw new TypeError("Array.prototype.forEach callback must be a function");
     const m = a.length;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x === x) $call<unknown>(f, thisArg, x, k & 0x7fffffff, a);
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (has) $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x === x) $call<unknown>(f, thisArg, x, k & 0x7fffffff, a);
+            }
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (has) $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+            }
         }
     }
     if (k < n) forEachFrom(a, f, thisArg, k, n);
@@ -88,26 +90,28 @@ export function Array$map<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
     const out: U[] = $newArrayWithSpecies<U>(n, a);
     const m = a.length;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x !== x) continue;
-            const y = $call<U>(f, thisArg, x, k & 0x7fffffff, a);
-            const isStored: boolean = $tryPutByValDirect(out, k, y);
-            if (!isStored) {
-                out[k++] = y;
-                break;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x !== x) continue;
+                const y = $call<U>(f, thisArg, x, k & 0x7fffffff, a);
+                const isStored: boolean = $tryPutByValDirect(out, k, y);
+                if (!isStored) {
+                    out[k++] = y;
+                    break;
+                }
             }
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) continue;
-            const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
-            const isStored: boolean = $tryPutByValDirect(out, k, y);
-            if (!isStored) {
-                out[k++] = y;
-                break;
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (!has) continue;
+                const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                const isStored: boolean = $tryPutByValDirect(out, k, y);
+                if (!isStored) {
+                    out[k++] = y;
+                    break;
+                }
             }
         }
     }
@@ -128,37 +132,39 @@ export function Array$mapJoin<T>(items: unknown, f: unknown, separator: string):
     let hasResult = false;
     let result: unknown = undefined;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            result = "";
-            if (x === x) result = $call<unknown>(f, undefined, x, k & 0x7fffffff, a);
-            hasResult = x === x;
-            if (typeof result !== "string") break;
-            remaining = (remaining - result.length) | 0;
-            if (remaining < 0) break;
-            if (k) {
-                remaining = (remaining - separatorLength) | 0;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                result = "";
+                if (x === x) result = $call<unknown>(f, undefined, x, k & 0x7fffffff, a);
+                hasResult = x === x;
+                if (typeof result !== "string") break;
+                remaining = (remaining - result.length) | 0;
                 if (remaining < 0) break;
-                joined = `${joined}${separator}${result}`;
-            } else joined = result;
-            hasResult = false;
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            result = "";
-            if (has) result = $call<unknown>(f, undefined, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
-            hasResult = has;
-            if (typeof result !== "string") break;
-            remaining = (remaining - result.length) | 0;
-            if (remaining < 0) break;
-            if (k) {
-                remaining = (remaining - separatorLength) | 0;
+                if (k) {
+                    remaining = (remaining - separatorLength) | 0;
+                    if (remaining < 0) break;
+                    joined = `${joined}${separator}${result}`;
+                } else joined = result;
+                hasResult = false;
+            }
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                result = "";
+                if (has) result = $call<unknown>(f, undefined, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                hasResult = has;
+                if (typeof result !== "string") break;
+                remaining = (remaining - result.length) | 0;
                 if (remaining < 0) break;
-                joined = `${joined}${separator}${result}`;
-            } else joined = result;
-            hasResult = false;
+                if (k) {
+                    remaining = (remaining - separatorLength) | 0;
+                    if (remaining < 0) break;
+                    joined = `${joined}${separator}${result}`;
+                } else joined = result;
+                hasResult = false;
+            }
         }
     }
     if (k === n) return joined;
@@ -225,34 +231,36 @@ export function Array$filter<T>(a: T[], f: unknown, thisArg: unknown): T[] {
     const m = a.length;
     let k = 0;
     let to = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x !== x) continue;
-            if (!$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) continue;
-            const isStored: boolean = $tryPutByValDirect(out, to, x);
-            if (!isStored) {
-                out[to] = x as unknown as T;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x !== x) continue;
+                if (!$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) continue;
+                const isStored: boolean = $tryPutByValDirect(out, to, x);
+                if (!isStored) {
+                    out[to] = x as unknown as T;
+                    to = (to + 1) >>> 0;
+                    k++;
+                    break;
+                }
                 to = (to + 1) >>> 0;
-                k++;
-                break;
             }
-            to = (to + 1) >>> 0;
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) continue;
-            const x = $getContiguousIndex<T>(a, k);
-            if (!$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) continue;
-            const isStored: boolean = $tryPutByValDirect(out, to, x);
-            if (!isStored) {
-                out[to] = x;
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (!has) continue;
+                const x = $getContiguousIndex<T>(a, k);
+                if (!$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) continue;
+                const isStored: boolean = $tryPutByValDirect(out, to, x);
+                if (!isStored) {
+                    out[to] = x;
+                    to = (to + 1) >>> 0;
+                    k++;
+                    break;
+                }
                 to = (to + 1) >>> 0;
-                k++;
-                break;
             }
-            to = (to + 1) >>> 0;
         }
     }
     if (k < n) to = filterFrom(a, f, thisArg, out, to, k, n) >>> 0;
@@ -300,15 +308,17 @@ export function Array$some<T>(a: T[], f: unknown, thisArg: unknown): boolean {
     if (!isCallable(f)) throw new TypeError("Array.prototype.some callback must be a function");
     const m = a.length;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x === x && $call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return true;
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (has && $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return true;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x === x && $call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return true;
+            }
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (has && $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return true;
+            }
         }
     }
     return k < n && someFrom(a, f, thisArg, k, n);
@@ -327,15 +337,17 @@ export function Array$every<T>(a: T[], f: unknown, thisArg: unknown): boolean {
     if (!isCallable(f)) throw new TypeError("Array.prototype.every callback must be a function");
     const m = a.length;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x === x && !$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return false;
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (has && !$call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return false;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x === x && !$call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return false;
+            }
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (has && !$call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return false;
+            }
         }
     }
     return k >= n || everyFrom(a, f, thisArg, k, n);
@@ -354,18 +366,20 @@ export function Array$find<T>(a: T[], f: unknown, thisArg: unknown): T | undefin
     if (!isCallable(f)) throw new TypeError("Array.prototype.find callback must be a function");
     const m = a.length;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x !== x) break;
-            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x as unknown as T;
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) break;
-            const x = $getContiguousIndex<T>(a, k);
-            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x !== x) break;
+                if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x as unknown as T;
+            }
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (!has) break;
+                const x = $getContiguousIndex<T>(a, k);
+                if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return x;
+            }
         }
     }
     return k < n ? findFrom(a, f, thisArg, k, n) : undefined;
@@ -412,17 +426,19 @@ export function Array$findIndex<T>(a: T[], f: unknown, thisArg: unknown): number
     if (!isCallable(f)) throw new TypeError("Array.prototype.findIndex callback must be a function");
     const m = a.length;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x !== x) break;
-            if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return k;
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) break;
-            if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return k;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x !== x) break;
+                if ($call<unknown>(f, thisArg, x, k & 0x7fffffff, a)) return k;
+            }
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (!has) break;
+                if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a)) return k;
+            }
         }
     }
     return k < n ? findIndexFrom(a, f, thisArg, k, n) : -1;
@@ -472,31 +488,33 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
     if (typeof acc === "number") {
         let sum: number = acc;
         let isSum = true;
-        if (isDoubleArray(a)) {
-            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-                const x: number = $getDoubleIndex(a, k);
-                if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
-                if (typeof r !== "number") {
-                    acc = r;
-                    isSum = false;
-                    k++;
-                    break;
+        if (m) {
+            if (isDoubleArray(a)) {
+                for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                    const x: number = $getDoubleIndex(a, k);
+                    if (x !== x) continue;
+                    const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
+                    if (typeof r !== "number") {
+                        acc = r;
+                        isSum = false;
+                        k++;
+                        break;
+                    }
+                    sum = r;
                 }
-                sum = r;
-            }
-        } else if (isContiguousArray(a)) {
-            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-                const has: boolean = $hasContiguousIndex(a, k);
-                if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
-                if (typeof r !== "number") {
-                    acc = r;
-                    isSum = false;
-                    k++;
-                    break;
+            } else if (isContiguousArray(a)) {
+                for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                    const has: boolean = $hasContiguousIndex(a, k);
+                    if (!has) continue;
+                    const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                    if (typeof r !== "number") {
+                        acc = r;
+                        isSum = false;
+                        k++;
+                        break;
+                    }
+                    sum = r;
                 }
-                sum = r;
             }
         }
         if (isSum) acc = sum;
@@ -530,31 +548,33 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
     if (typeof acc === "number") {
         let sum: number = acc;
         let isSum = true;
-        if (isDoubleArray(a)) {
-            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-                const x: number = $getDoubleIndex(a, k);
-                if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
-                if (typeof r !== "number") {
-                    acc = r;
-                    isSum = false;
-                    k++;
-                    break;
+        if (m) {
+            if (isDoubleArray(a)) {
+                for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                    const x: number = $getDoubleIndex(a, k);
+                    if (x !== x) continue;
+                    const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
+                    if (typeof r !== "number") {
+                        acc = r;
+                        isSum = false;
+                        k++;
+                        break;
+                    }
+                    sum = r;
                 }
-                sum = r;
-            }
-        } else if (isContiguousArray(a)) {
-            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-                const has: boolean = $hasContiguousIndex(a, k);
-                if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
-                if (typeof r !== "number") {
-                    acc = r;
-                    isSum = false;
-                    k++;
-                    break;
+            } else if (isContiguousArray(a)) {
+                for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                    const has: boolean = $hasContiguousIndex(a, k);
+                    if (!has) continue;
+                    const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                    if (typeof r !== "number") {
+                        acc = r;
+                        isSum = false;
+                        k++;
+                        break;
+                    }
+                    sum = r;
                 }
-                sum = r;
             }
         }
         if (isSum) acc = sum;
@@ -718,101 +738,103 @@ export function Array$flatMap<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
     const m = a.length;
     let k = 0;
     let to = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x !== x) continue;
-            const y = $call<unknown>(f, thisArg, x, k & 0x7fffffff, a);
-            const isOriginal: boolean = $isOriginalArray(y);
-            let count = 1;
-            if (isOriginal) count = (y as U[]).length;
-            if (to + count > out.length) $growNewArray(out, to + count);
-            if ((isOriginal || !isArray(y)) && isContiguousArray(out) && to + count <= out.length) {
-                if (!isOriginal) {
-                    $putContiguousIndex(out, to, y);
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x !== x) continue;
+                const y = $call<unknown>(f, thisArg, x, k & 0x7fffffff, a);
+                const isOriginal: boolean = $isOriginalArray(y);
+                let count = 1;
+                if (isOriginal) count = (y as U[]).length;
+                if (to + count > out.length) $growNewArray(out, to + count);
+                if ((isOriginal || !isArray(y)) && isContiguousArray(out) && to + count <= out.length) {
+                    if (!isOriginal) {
+                        $putContiguousIndex(out, to, y);
+                        to = (to + 1) >>> 0;
+                        continue;
+                    }
+                    const part = y as U[];
+                    if (isContiguousArray(part)) {
+                        for (let j = 0; j < count; j++) {
+                            const hasPart: boolean = $hasContiguousIndex(part, j);
+                            if (!hasPart) continue;
+                            $putContiguousIndex(out, to, $getContiguousIndex<U>(part, j));
+                            to = (to + 1) >>> 0;
+                        }
+                        continue;
+                    }
+                    if (isDoubleArray(part)) {
+                        for (let j = 0; j < count; j++) {
+                            const d: number = $getDoubleIndex(part, j);
+                            if (d !== d) continue;
+                            $putContiguousIndex(out, to, d);
+                            to = (to + 1) >>> 0;
+                        }
+                        continue;
+                    }
+                }
+                if (!isArray(y)) {
+                    out[to] = y as U;
                     to = (to + 1) >>> 0;
                     continue;
                 }
-                const part = y as U[];
-                if (isContiguousArray(part)) {
-                    for (let j = 0; j < count; j++) {
-                        const hasPart: boolean = $hasContiguousIndex(part, j);
-                        if (!hasPart) continue;
-                        $putContiguousIndex(out, to, $getContiguousIndex<U>(part, j));
+                const length = toLength((y as any).length);
+                for (let j = 0; j < length; j++) {
+                    const hasPart: boolean = $hasIndex(y, j);
+                    if (hasPart) {
+                        out[to] = $getIndex<U>(y, j);
                         to = (to + 1) >>> 0;
                     }
-                    continue;
                 }
-                if (isDoubleArray(part)) {
-                    for (let j = 0; j < count; j++) {
-                        const d: number = $getDoubleIndex(part, j);
-                        if (d !== d) continue;
-                        $putContiguousIndex(out, to, d);
+            }
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (!has) continue;
+                const y = $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                const isOriginal: boolean = $isOriginalArray(y);
+                let count = 1;
+                if (isOriginal) count = (y as U[]).length;
+                if (to + count > out.length) $growNewArray(out, to + count);
+                if ((isOriginal || !isArray(y)) && isContiguousArray(out) && to + count <= out.length) {
+                    if (!isOriginal) {
+                        $putContiguousIndex(out, to, y);
                         to = (to + 1) >>> 0;
+                        continue;
                     }
-                    continue;
+                    const part = y as U[];
+                    if (isContiguousArray(part)) {
+                        for (let j = 0; j < count; j++) {
+                            const hasPart: boolean = $hasContiguousIndex(part, j);
+                            if (!hasPart) continue;
+                            $putContiguousIndex(out, to, $getContiguousIndex<U>(part, j));
+                            to = (to + 1) >>> 0;
+                        }
+                        continue;
+                    }
+                    if (isDoubleArray(part)) {
+                        for (let j = 0; j < count; j++) {
+                            const d: number = $getDoubleIndex(part, j);
+                            if (d !== d) continue;
+                            $putContiguousIndex(out, to, d);
+                            to = (to + 1) >>> 0;
+                        }
+                        continue;
+                    }
                 }
-            }
-            if (!isArray(y)) {
-                out[to] = y as U;
-                to = (to + 1) >>> 0;
-                continue;
-            }
-            const length = toLength((y as any).length);
-            for (let j = 0; j < length; j++) {
-                const hasPart: boolean = $hasIndex(y, j);
-                if (hasPart) {
-                    out[to] = $getIndex<U>(y, j);
+                if (!isArray(y)) {
+                    out[to] = y as U;
                     to = (to + 1) >>> 0;
-                }
-            }
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) continue;
-            const y = $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
-            const isOriginal: boolean = $isOriginalArray(y);
-            let count = 1;
-            if (isOriginal) count = (y as U[]).length;
-            if (to + count > out.length) $growNewArray(out, to + count);
-            if ((isOriginal || !isArray(y)) && isContiguousArray(out) && to + count <= out.length) {
-                if (!isOriginal) {
-                    $putContiguousIndex(out, to, y);
-                    to = (to + 1) >>> 0;
                     continue;
                 }
-                const part = y as U[];
-                if (isContiguousArray(part)) {
-                    for (let j = 0; j < count; j++) {
-                        const hasPart: boolean = $hasContiguousIndex(part, j);
-                        if (!hasPart) continue;
-                        $putContiguousIndex(out, to, $getContiguousIndex<U>(part, j));
+                const length = toLength((y as any).length);
+                for (let j = 0; j < length; j++) {
+                    const hasPart: boolean = $hasIndex(y, j);
+                    if (hasPart) {
+                        out[to] = $getIndex<U>(y, j);
                         to = (to + 1) >>> 0;
                     }
-                    continue;
-                }
-                if (isDoubleArray(part)) {
-                    for (let j = 0; j < count; j++) {
-                        const d: number = $getDoubleIndex(part, j);
-                        if (d !== d) continue;
-                        $putContiguousIndex(out, to, d);
-                        to = (to + 1) >>> 0;
-                    }
-                    continue;
-                }
-            }
-            if (!isArray(y)) {
-                out[to] = y as U;
-                to = (to + 1) >>> 0;
-                continue;
-            }
-            const length = toLength((y as any).length);
-            for (let j = 0; j < length; j++) {
-                const hasPart: boolean = $hasIndex(y, j);
-                if (hasPart) {
-                    out[to] = $getIndex<U>(y, j);
-                    to = (to + 1) >>> 0;
                 }
             }
         }
@@ -1335,26 +1357,28 @@ export function Array$from<T, U>(items: unknown, f: unknown, thisArg: unknown): 
     const out: U[] = $newArrayWithCapacity<U>(n, a);
     const m = a.length;
     let k = 0;
-    if (isDoubleArray(a)) {
-        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
-            const x: number = $getDoubleIndex(a, k);
-            if (x !== x) break;
-            const y = $call<U>(f, thisArg, x, k & 0x7fffffff);
-            const isStored: boolean = $tryPutByValDirect(out, k, y);
-            if (!isStored) {
-                out[k++] = y;
-                break;
+    if (m) {
+        if (isDoubleArray(a)) {
+            for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+                const x: number = $getDoubleIndex(a, k);
+                if (x !== x) break;
+                const y = $call<U>(f, thisArg, x, k & 0x7fffffff);
+                const isStored: boolean = $tryPutByValDirect(out, k, y);
+                if (!isStored) {
+                    out[k++] = y;
+                    break;
+                }
             }
-        }
-    } else if (isContiguousArray(a)) {
-        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
-            const has: boolean = $hasContiguousIndex(a, k);
-            if (!has) break;
-            const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff);
-            const isStored: boolean = $tryPutByValDirect(out, k, y);
-            if (!isStored) {
-                out[k++] = y;
-                break;
+        } else if (isContiguousArray(a)) {
+            for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+                const has: boolean = $hasContiguousIndex(a, k);
+                if (!has) break;
+                const y = $call<U>(f, thisArg, $getContiguousIndex<T>(a, k), k & 0x7fffffff);
+                const isStored: boolean = $tryPutByValDirect(out, k, y);
+                if (!isStored) {
+                    out[k++] = y;
+                    break;
+                }
             }
         }
     }

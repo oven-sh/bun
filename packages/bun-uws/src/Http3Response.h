@@ -50,7 +50,7 @@ struct Http3Response {
         d->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER;
         LoopData *ld = (LoopData *) us_loop_ext(
             (us_loop_t *) us_quic_socket_context_loop(us_quic_stream_context((us_quic_stream_t *) this)));
-        writeHeader("date", std::string_view{ld->date, 29});
+        writeHeader("date", ld->dateHeader());
     }
 
     /* RFC 9114 §4.1: a 1xx response is its own HEADERS frame with no body and

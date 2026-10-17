@@ -25,6 +25,7 @@ const SHN_LORESERVE: usize = 0xff00;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
 const PROGRAM_HEADER: usize = 56;
+const MOST_PROGRAM_HEADERS: usize = 0x1000 / PROGRAM_HEADER;
 const SECTION_HEADER: usize = 64;
 const SYMBOL: usize = 24;
 
@@ -197,7 +198,7 @@ fn stretches(range: Range<u64>, gaps: &[Range<u64>]) -> Vec<Range<u64>> {
 }
 
 /// `file` without the whole pages of `dead`, which is sorted address ranges.
-pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
+pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Limits) -> Result<Vec<u8>> {
     let headers = program_headers(file)?;
     let room = room_for_program_headers(file, &headers)?;
     let loads = || headers.iter().filter(|h| h.kind == PT_LOAD);
@@ -221,7 +222,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     // {addresses, where in the file}
     let mut gaps: Vec<(Range<u64>, u64)> = Vec::new();
     for range in dead {
-        let Some(gap) = whole_pages(range, page) else {
+        let Some(gap) = whole_pages(range, page, limits.smallest_hole) else {
             continue;
         };
         let holds = |h: &&ProgramHeader| {
@@ -236,7 +237,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     }
     // One more header each. The largest that there is room for.
     sort_slice_by_key(&mut gaps, |g| core::cmp::Reverse(g.0.end - g.0.start));
-    gaps.truncate((room.len() / PROGRAM_HEADER).saturating_sub(headers.len()));
+    gaps.truncate((room.len() / PROGRAM_HEADER).min(MOST_PROGRAM_HEADERS).saturating_sub(headers.len()).min(limits.most_holes));
     sort_slice_by_key(&mut gaps, |g| g.1);
     if gaps.is_empty() {
         return Ok(file.to_vec());
@@ -406,4 +407,100 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     put_u16(&mut out, 0x3c, (table.len() / SECTION_HEADER) as u16)?;
     out.extend_from_slice(&table);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CODE: u64 = 0x210000;
+    const PAGE: u64 = 0x1000;
+    const PAGES: u64 = 400;
+
+    fn executable(room: u64) -> Vec<u8> {
+        let note = 0x40 + 4 * PROGRAM_HEADER as u64;
+        let headers = [
+            (PT_PHDR, 4, 0x40, 0x200040, 4 * PROGRAM_HEADER as u64, 8),
+            (PT_LOAD, 4, 0, 0x200000, 0x10000, PAGE),
+            (PT_NOTE, 4, note, 0x200000 + note, 16 + room, 8),
+            (PT_LOAD, 5, 0x10000, CODE, PAGES * PAGE, PAGE),
+        ];
+        let mut file: Vec<u8> = (0..0x10000 + PAGES * PAGE).map(|at| (at / PAGE) as u8).collect();
+        file[..0x10000].fill(0);
+        file[..4].copy_from_slice(b"\x7fELF");
+        put_u64(&mut file, 0x20, 0x40).unwrap();
+        put_u16(&mut file, 0x36, PROGRAM_HEADER as u16).unwrap();
+        put_u16(&mut file, 0x38, headers.len() as u16).unwrap();
+        for (index, (kind, flags, offset, address, size, align)) in headers.into_iter().enumerate() {
+            let header = ProgramHeader { kind, flags, offset, address, physical_address: address, file_size: size, memory_size: size, align };
+            header.write(&mut file, 0x40 + index * PROGRAM_HEADER).unwrap();
+        }
+        for (field, value) in [4, room as u32, 1].into_iter().enumerate() {
+            put_u32(&mut file, note as usize + field * 4, value).unwrap();
+        }
+        file[note as usize + 12..][..4].copy_from_slice(b"Bun\0");
+        file
+    }
+
+    fn pages(range: Range<u64>) -> Range<u64> {
+        CODE + range.start * PAGE..CODE + range.end * PAGE
+    }
+
+    fn of_at_least(smallest_hole: u64) -> crate::Limits {
+        crate::Limits { smallest_hole, most_holes: usize::MAX }
+    }
+
+    fn code_of(file: &[u8]) -> Vec<Range<u64>> {
+        let loads = program_headers(file).unwrap().into_iter().filter(|h| h.kind == PT_LOAD && h.address >= CODE);
+        loads.map(|h| (h.address - CODE) / PAGE..(h.address + h.file_size - CODE) / PAGE).collect()
+    }
+
+    #[test]
+    fn a_hole_that_is_too_small_stays_in_the_file() {
+        let file = executable(3584);
+        let dead = [pages(10..20), pages(30..62), pages(100..131), pages(200..300)];
+        assert_eq!(code_of(&without_pages(&file, &dead, of_at_least(PAGE)).unwrap()), [0..10, 20..30, 62..100, 131..200, 300..PAGES]);
+        let out = without_pages(&file, &dead, of_at_least(32 * PAGE)).unwrap();
+        assert_eq!(code_of(&out), [0..30, 62..200, 300..PAGES]);
+        assert_eq!(out.len() as u64, file.len() as u64 - 132 * PAGE);
+        assert_eq!(without_pages(&file, &dead, of_at_least(101 * PAGE)).unwrap(), file);
+    }
+
+    #[test]
+    fn what_stays_is_where_its_header_says() {
+        let out = without_pages(&executable(3584), &[pages(10..20), pages(200..300)], of_at_least(PAGE)).unwrap();
+        for h in program_headers(&out).unwrap().into_iter().filter(|h| h.kind == PT_LOAD && h.address >= CODE) {
+            for page in (0..h.file_size).step_by(PAGE as usize) {
+                assert_eq!(out[(h.offset + page) as usize], ((0x10000 + h.address - CODE + page) / PAGE) as u8);
+            }
+        }
+    }
+
+    #[test]
+    fn the_largest_holes_take_the_room_there_is() {
+        let file = executable(7 * PROGRAM_HEADER as u64);
+        let dead = [pages(10..12), pages(20..25), pages(30..31), pages(40..44), pages(50..53)];
+        assert_eq!(code_of(&without_pages(&file, &dead, of_at_least(PAGE)).unwrap()), [0..20, 25..40, 44..50, 53..PAGES]);
+    }
+
+    #[test]
+    fn no_more_holes_than_are_asked_for() {
+        let dead = [pages(10..12), pages(20..25), pages(30..31), pages(40..44), pages(50..53)];
+        let with_at_most = |most_holes: usize| code_of(&without_pages(&executable(3584), &dead, crate::Limits { smallest_hole: PAGE, most_holes }).unwrap());
+        assert_eq!(with_at_most(2), [0..20, 25..40, 44..PAGES]);
+        assert_eq!(with_at_most(1), [0..20, 25..PAGES]);
+        assert_eq!(with_at_most(0).len(), 1);
+    }
+
+    #[test]
+    fn the_kernel_reads_no_table_of_program_headers_that_is_longer_than_a_page() {
+        assert_eq!(MOST_PROGRAM_HEADERS, 73);
+        let dead: Vec<Range<u64>> = (0..150).map(|index| pages(index * 2 + 1..index * 2 + 2)).collect();
+        for (room, most) in [(3584, 64), (73 * 56, 73), (74 * 56, 73), (0x2000, 73)] {
+            let out = without_pages(&executable(room), &dead, of_at_least(PAGE)).unwrap();
+            let count = usize::from(u16_at(&out, 0x38).unwrap());
+            assert!(count <= most && count + 1 >= most, "{room}: {count}");
+            assert!(count * PROGRAM_HEADER <= 0x1000);
+        }
+    }
 }

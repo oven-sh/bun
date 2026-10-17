@@ -491,7 +491,7 @@ impl<'a> Transpiler<'a> {
     /// Load env files and build `options.define`. Idempotent — a no-op once
     /// `options.defines_loaded` is set.
     pub fn configure_defines(&mut self) -> crate::Result<()> {
-        if self.options.defines_loaded {
+        if self.options.defines_loaded || self.options.defines_deferred {
             return Ok(());
         }
 
@@ -504,6 +504,25 @@ impl<'a> Transpiler<'a> {
 
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
+
+        let has_user_defines = self
+            .options
+            .transform_options
+            .define
+            .as_ref()
+            .is_some_and(|m| !m.keys.is_empty());
+        if self.options.defer_defines
+            && !has_user_defines
+            && self.options.env.behavior
+                == bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining
+        {
+            self.options.defines_deferred = true;
+            if is_production {
+                self.options.set_production(true);
+                self.resolver.opts.set_production(true);
+            }
+            return Ok(());
+        }
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the
         // explicit sources first so that default isn't mistaken for user intent
@@ -559,6 +578,14 @@ impl<'a> Transpiler<'a> {
             self.resolver.opts.set_production(true);
         }
         Ok(())
+    }
+
+    pub fn load_deferred_defines(&mut self) -> crate::Result<()> {
+        if self.options.defines_loaded || !self.options.defines_deferred {
+            return Ok(());
+        }
+        let env_loader = self.env_mut();
+        self.options.load_defines(self.arena, Some(env_loader))
     }
 
     /// The resolver
@@ -645,7 +672,7 @@ impl<'a> Transpiler<'a> {
         match self.options.env.behavior {
             DotEnvBehavior::prefix
             | DotEnvBehavior::load_all
-            | DotEnvBehavior::load_all_without_inlining => {
+            | DotEnvBehavior::load_all_without_inlining => 'load_env_files: {
                 // Process always has highest priority. Load process env vars
                 // unconditionally before attempting directory traversal, so
                 // that inherited environment variables are always available
@@ -662,6 +689,22 @@ impl<'a> Transpiler<'a> {
                     // (conditional-export `"production"` matching) stays in
                     // sync, instead of the partial single-field write.
                     self.resolver.opts.set_production(true);
+                }
+
+                let suffix = if self.options.is_test() || env.is_test() {
+                    dot_env::DotEnvFileSuffix::Test
+                } else if self.options.production {
+                    dot_env::DotEnvFileSuffix::Production
+                } else {
+                    dot_env::DotEnvFileSuffix::Development
+                };
+
+                let needs_dir_info = self.resolver.opts.load_tsconfig_json
+                    || self.resolver.opts.load_package_json
+                    || !self.options.env.files.is_empty()
+                    || (!skip_default_env && dot_env::Loader::may_have_default_files(suffix));
+                if !needs_dir_info {
+                    break 'load_env_files;
                 }
 
                 // Load the project root for .env file discovery. If the cwd
@@ -701,13 +744,6 @@ impl<'a> Transpiler<'a> {
                 // `--env-file` list is bounded (CLI args), not hot-path.
                 let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
-                let suffix = if self.options.is_test() || env.is_test() {
-                    dot_env::DotEnvFileSuffix::Test
-                } else if self.options.production {
-                    dot_env::DotEnvFileSuffix::Production
-                } else {
-                    dot_env::DotEnvFileSuffix::Development
-                };
                 env.load(&dir, &env_files, suffix, skip_default_env)?;
             }
             DotEnvBehavior::disable => {

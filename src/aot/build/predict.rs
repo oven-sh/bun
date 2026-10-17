@@ -127,7 +127,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn predict_callee(&mut self, fx: &mut Fx, callee: V, e: ExprId) -> V {
-        if !fx.is_typed || fx.b.func.op(callee).is_some() || fx.b.func.prediction(callee) != Prediction::None || !self.wants_prediction(fx, callee) {
+        let is_cast_to_object = self.out.tys.get(self.ty(fx, callee)).any_object;
+        if !fx.is_typed || fx.b.func.op(callee).is_some() || fx.b.func.prediction(callee) != Prediction::None || !self.wants_prediction(fx, callee) && !is_cast_to_object {
             return callee;
         }
         match self.c.function_for_value_expr(fx.file, e) {

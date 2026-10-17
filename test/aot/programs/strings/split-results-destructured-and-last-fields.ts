@@ -15,24 +15,24 @@
 // CALLS+ emptySeparator StringSplitString
 // CALLS+ wideSeparator StringSplitString
 let guard = 0;
-function pair(line: string): string { if (guard > 1e9) return pair(line + "x"); const [a, b] = line.split(":"); return b + "<" + a; }
-function skipping(line: string): string { if (guard > 1e9) return skipping(line + "x"); const [, , c, d] = line.split(","); return c + "<" + d + "<" + Number(c); }
-function withDefaults(line: string): string { if (guard > 1e9) return withDefaults(line + "x"); const [a = "A", b = "B", c = "C"] = line.split(","); return a + b + c; }
-function popped(line: string): string { if (guard > 1e9) return popped(line + "x"); return "" + line.split("/").pop(); }
-function lastByLength(line: string): string { if (guard > 1e9) return lastByLength(line + "x"); const parts = line.split("/"); return parts[parts.length - 1] + "#" + parts.length + "#" + parts[0]; }
-function lastByAt(line: string): string { if (guard > 1e9) return lastByAt(line + "x"); const parts = line.split("."); return parts.at(-1) + "#" + parts[1]; }
-function longSeparator(line: string): string { if (guard > 1e9) return longSeparator(line + "x"); const parts = line.split(", "); return parts[0] + "|" + parts[1] + "|" + parts[2] + "|" + parts.length; }
-function lastOfLong(line: string): string { if (guard > 1e9) return lastOfLong(line + "x"); return "" + line.split("::").pop(); }
-function overlapping(line: string): string { if (guard > 1e9) return overlapping(line + "x"); const parts = line.split("aa"); return parts[0] + "|" + parts[1] + "|" + parts[2] + "|" + parts.length + "|" + parts[parts.length - 1]; }
-function withRest(line: string): string { if (guard > 1e9) return withRest(line + "x"); const [head, ...tail] = line.split(" "); return head + tail.length; }
-function poppedThenRead(line: string): string { if (guard > 1e9) return poppedThenRead(line + "x"); const parts = line.split("/"); const last = parts.pop(); return last + "#" + parts.length + "#" + parts[0]; }
-function poppedTwice(line: string): string { if (guard > 1e9) return poppedTwice(line + "x"); const parts = line.split("/"); return parts.pop() + "#" + parts.pop(); }
-function secondToLast(line: string): string { if (guard > 1e9) return secondToLast(line + "x"); const parts = line.split("/"); return "" + parts[parts.length - 2]; }
-function atVariable(line: string, k: number): string { if (guard > 1e9) return atVariable(line + "x", k); return "" + line.split("/").at(k); }
-function iterated(line: string): string { if (guard > 1e9) return iterated(line + "x"); let out = ""; for (const part of line.split(",")) out += "[" + part + "]"; return out; }
-function emptySeparator(line: string): string { if (guard > 1e9) return emptySeparator(line + "x"); const parts = line.split(""); return parts[0] + "|" + parts[1] + "|" + parts.length; }
-function wideSeparator(line: string): string { if (guard > 1e9) return wideSeparator(line + "x"); const parts = line.split("é"); return parts[0] + "|" + parts[1] + "|" + parts.length; }
-function otherLength(line: string, other: string[]): string { if (guard > 1e9) return otherLength(line + "x", other); const parts = line.split("/"); return "" + parts[other.length - 1]; }
+function pair(line: string): string { if (guard > 1e9) pair(line + "x"); const [a, b] = line.split(":"); return b + "<" + a; }
+function skipping(line: string): string { if (guard > 1e9) skipping(line + "x"); const [, , c, d] = line.split(","); return c + "<" + d + "<" + Number(c); }
+function withDefaults(line: string): string { if (guard > 1e9) withDefaults(line + "x"); const [a = "A", b = "B", c = "C"] = line.split(","); return a + b + c; }
+function popped(line: string): string { if (guard > 1e9) popped(line + "x"); return "" + line.split("/").pop(); }
+function lastByLength(line: string): string { if (guard > 1e9) lastByLength(line + "x"); const parts = line.split("/"); return parts[parts.length - 1] + "#" + parts.length + "#" + parts[0]; }
+function lastByAt(line: string): string { if (guard > 1e9) lastByAt(line + "x"); const parts = line.split("."); return parts.at(-1) + "#" + parts[1]; }
+function longSeparator(line: string): string { if (guard > 1e9) longSeparator(line + "x"); const parts = line.split(", "); return parts[0] + "|" + parts[1] + "|" + parts[2] + "|" + parts.length; }
+function lastOfLong(line: string): string { if (guard > 1e9) lastOfLong(line + "x"); return "" + line.split("::").pop(); }
+function overlapping(line: string): string { if (guard > 1e9) overlapping(line + "x"); const parts = line.split("aa"); return parts[0] + "|" + parts[1] + "|" + parts[2] + "|" + parts.length + "|" + parts[parts.length - 1]; }
+function withRest(line: string): string { if (guard > 1e9) withRest(line + "x"); const [head, ...tail] = line.split(" "); return head + tail.length; }
+function poppedThenRead(line: string): string { if (guard > 1e9) poppedThenRead(line + "x"); const parts = line.split("/"); const last = parts.pop(); return last + "#" + parts.length + "#" + parts[0]; }
+function poppedTwice(line: string): string { if (guard > 1e9) poppedTwice(line + "x"); const parts = line.split("/"); return parts.pop() + "#" + parts.pop(); }
+function secondToLast(line: string): string { if (guard > 1e9) secondToLast(line + "x"); const parts = line.split("/"); return "" + parts[parts.length - 2]; }
+function atVariable(line: string, k: number): string { if (guard > 1e9) atVariable(line + "x", k); return "" + line.split("/").at(k); }
+function iterated(line: string): string { if (guard > 1e9) iterated(line + "x"); let out = ""; for (const part of line.split(",")) out += "[" + part + "]"; return out; }
+function emptySeparator(line: string): string { if (guard > 1e9) emptySeparator(line + "x"); const parts = line.split(""); return parts[0] + "|" + parts[1] + "|" + parts.length; }
+function wideSeparator(line: string): string { if (guard > 1e9) wideSeparator(line + "x"); const parts = line.split("é"); return parts[0] + "|" + parts[1] + "|" + parts.length; }
+function otherLength(line: string, other: string[]): string { if (guard > 1e9) otherLength(line + "x", other); const parts = line.split("/"); return "" + parts[other.length - 1]; }
 const lines = ["", "a", "a:b", "a:b:c", ":", "::", "a::b::c", "x/y/z", "/", "x/", "/x", "1,2,3,4,5", ",,", "a, b, c", ", ", "a,b", "aaa", "aaaa", "baab", "aa", "a.b.c", ".", "é/日本/ü", "日::本", "é, è", "a b c", "héllo"];
 let out = "";
 for (const line of lines) {

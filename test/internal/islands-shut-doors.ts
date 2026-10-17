@@ -82,18 +82,37 @@ export function redirect(file: Buffer, offset: number, place: Place, door: numbe
   }
 }
 
+function segmentsOfElf(file: Buffer) {
+  const firstHeader = Number(file.readBigUInt64LE(0x20));
+  return Array.from({ length: file.readUInt16LE(0x38) }, (_, index) => firstHeader + index * file.readUInt16LE(0x36))
+    .filter(at => file.readUInt32LE(at) === 1)
+    .map(at => ({
+      isCode: (file.readUInt32LE(at + 4) & 1) !== 0,
+      hasFixups: false,
+      offset: Number(file.readBigUInt64LE(at + 8)),
+      address: Number(file.readBigUInt64LE(at + 16)),
+      size: Number(file.readBigUInt64LE(at + 32)),
+    }));
+}
+
+function segmentsOfMachO(file: Buffer) {
+  const commands: number[] = [];
+  for (let at = 32; commands.length < file.readUInt32LE(16); at += file.readUInt32LE(at + 4)) commands.push(at);
+  return commands
+    .filter(at => file.readUInt32LE(at) === 0x19)
+    .map(at => ({
+      isCode: (file.readUInt32LE(at + 60) & 4) !== 0,
+      hasFixups: file.toString("latin1", at + 8, at + 24).replace(/\0.*$/, "") !== "__TEXT",
+      offset: Number(file.readBigUInt64LE(at + 40)),
+      address: Number(file.readBigUInt64LE(at + 24)),
+      size: Number(file.readBigUInt64LE(at + 48)),
+    }));
+}
+
 export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm64: boolean): Buffer {
   const out = Buffer.from(file);
   for (const feature of excluded) if (!table.features.includes(feature)) refuse(`there is no feature ${feature}`);
-  const firstHeader = Number(out.readBigUInt64LE(0x20));
-  const segments = Array.from({ length: out.readUInt16LE(0x38) }, (_, index) => firstHeader + index * out.readUInt16LE(0x36))
-    .filter(at => out.readUInt32LE(at) === 1)
-    .map(at => ({
-      isCode: (out.readUInt32LE(at + 4) & 1) !== 0,
-      offset: Number(out.readBigUInt64LE(at + 8)),
-      address: Number(out.readBigUInt64LE(at + 16)),
-      size: Number(out.readBigUInt64LE(at + 32)),
-    }));
+  const segments = out.readUInt32LE(0) === 0xfeedfacf ? segmentsOfMachO(out) : segmentsOfElf(out);
   const segmentOf = (address: number) =>
     segments.find(segment => address >= segment.address && address - segment.address < segment.size) ?? refuse(`nothing in the file is loaded at ${hex(address)}`);
   const offsetOf = (address: number) => segmentOf(address).offset + address - segmentOf(address).address;
@@ -107,11 +126,11 @@ export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm6
   }
   const isDead = (address: number) => dead.some(({ start, end }) => start <= address && address < end);
   const trap = isArm64 ? [0x20, 0x00, 0x20, 0xd4] : [0xcc];
-  for (const { start, end } of dead) out.fill(Buffer.from(trap), offsetOf(start), offsetOf(start) + end - start);
+  for (const { start, end } of dead) if (!segmentOf(start).hasFixups) out.fill(Buffer.from(trap), offsetOf(start), offsetOf(start) + end - start);
 
   const stubSize = (door: TableDoor) => (isArm64 ? (door.whenShut === "exit" ? 12 : 8) : door.whenShut === "exit" ? 10 : 3);
   const layStub = (at: number, number: number, door: TableDoor) => {
-    const doorAndFeature = table.features.indexOf(door.feature) + number * 256;
+    const doorAndFeature = table.features.indexOf(door.feature.split(",", 1)[0]!) + number * 4096;
     const code = Buffer.alloc(stubSize(door));
     if (isArm64 && door.whenShut === "exit") {
       code.writeUInt32LE((0x52800000 | ((doorAndFeature & 0xffff) << 5)) >>> 0, 0);
@@ -129,7 +148,7 @@ export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm6
     code.copy(out, offsetOf(at));
   };
 
-  const shut = table.doors.map((door, number) => ({ door, number })).filter(({ door }) => excluded.includes(door.feature));
+  const shut = table.doors.map((door, number) => ({ door, number })).filter(({ door }) => door.feature.split(",").every(feature => excluded.includes(feature)));
   const thin = shut.filter(({ door }) => door.places?.length);
   const exitStubs = thin.filter(({ door }) => door.whenShut === "exit").reduce((sum, { door }) => sum + stubSize(door), 0);
   const returnStub = thin.find(({ door }) => door.whenShut === "return");

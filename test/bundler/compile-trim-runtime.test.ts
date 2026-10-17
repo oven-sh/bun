@@ -62,7 +62,8 @@ const programs = {
     }
     console.log((await Bun.build({ entrypoints, target: "bun" })).success);
   `,
-  "names-no-way-to-make-code.ts": `
+  "names-nothing.ts": `console.log(JSON.stringify(process.execArgv));`,
+  "reads-the-constructor-of-a-function.ts": `
     function made(): string {
       try {
         return "made " + (function () {}).constructor("return 1 + 1")();
@@ -78,6 +79,7 @@ const programs = {
     console.log(JSON.stringify(process.execArgv));
   `,
   "preloaded.js": `console.log("preloaded");`,
+  "prints-deep.ts": `console.log({ a: { b: { c: 1 } } });`,
   "names-html-rewriter.ts": `
     const rewriter = new HTMLRewriter().on("p", {
       element(element: { setAttribute(name: string, value: string): unknown }) {
@@ -137,6 +139,16 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       }
     });
 
+    test.skipIf(flags.length > 0 && !!unsupported)(`${how}: bunfig.toml is read only by an executable that was built to read it`, async () => {
+      using dir = tempDir("compile-trim-runtime", { ...programs, "bunfig.toml": "[console]\ndepth = 1\n" });
+      const folder = String(dir);
+      const build = [bunExe(), "build", "--compile", ...flags, "prints-deep.ts", "--compile-trim-runtime", "--outfile"];
+      expect(await run([...build, "by-default"], folder)).toMatchObject({ exitCode: 0 });
+      expect(await run([...build, "asked", "--compile-autoload-bunfig"], folder)).toMatchObject({ exitCode: 0 });
+      expect(await run([join(folder, "by-default")], folder)).toEqual({ stdout: "{\n  a: {\n    b: {\n      c: 1,\n    },\n  },\n}\n", stderr: "", exitCode: 0 });
+      expect(await run([join(folder, "asked")], folder)).toEqual({ stdout: "{\n  a: {\n    b: [Object ...],\n  },\n}\n", stderr: "", exitCode: 0 });
+    });
+
     test.skipIf(flags.length > 0 && !!unsupported)(`${how}: a part that was left out says so when it is asked for`, async () => {
       using dir = tempDir("compile-trim-runtime-door", programs);
       const folder = String(dir);
@@ -160,6 +172,8 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       "EvalError: Code generation from strings disallowed for this context: this executable was built with --compile-trim-runtime, " +
       "and nothing in the program was seen to turn a string into code or to load code at run time";
 
+    const cannotBeUsed = "cannot be used with this executable: it was built with --compile-trim-runtime and runs only the code that was compiled into it";
+
     async function built(program: string, folder: string) {
       const build = [bunExe(), "build", "--compile", "--aot", `${program}.ts`, "--outfile"];
       expect(await run([...build, `${program}-whole`], folder)).toMatchObject({ exitCode: 0 });
@@ -167,32 +181,88 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       return { whole: join(folder, `${program}-whole`), trimmed: join(folder, `${program}-trimmed`) };
     }
 
-    test("runs only its own code, and says why", async () => {
+    test("a program that reads the constructor of a function goes on making code; forced to go without, it says why", async () => {
       using dir = tempDir("compile-trim-runtime-closed", programs);
       const folder = String(dir);
-      const { whole, trimmed } = await built("names-no-way-to-make-code", folder);
+      const { whole, trimmed } = await built("reads-the-constructor-of-a-function", folder);
       expect(await run([whole], folder)).toEqual({ stdout: "made 2\n[]\n", stderr: "", exitCode: 0 });
-      expect(await run([trimmed], folder)).toEqual({ stdout: refusal + "\n[]\n", stderr: "", exitCode: 0 });
+      expect(await run([trimmed], folder)).toEqual({ stdout: "made 2\n[]\n", stderr: "", exitCode: 0 });
+      const forced = [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", "reads-the-constructor-of-a-function.ts", "--outfile", "forced"];
+      expect(await run(forced, folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: "text" })).toMatchObject({ exitCode: 0 });
+      expect(await run([join(folder, "forced")], folder)).toEqual({ stdout: refusal + "\n[]\n", stderr: "", exitCode: 0 });
     });
 
     test("loads nothing that BUN_OPTIONS names, and starts no debugger", async () => {
       using dir = tempDir("compile-trim-runtime-closed-options", programs);
       const folder = String(dir);
-      const { whole, trimmed } = await built("names-no-way-to-make-code", folder);
+      const { whole, trimmed } = await built("names-nothing", folder);
       const preloads = { ...bunEnv, BUN_OPTIONS: "--preload ./preloaded.js" };
-      expect((await run([whole], folder, preloads)).stdout).toStartWith("preloaded\nmade 2\n");
+      expect((await run([whole], folder, preloads)).stdout).toStartWith("preloaded\n[]\n");
       const refused = await run([trimmed], folder, preloads);
-      expect(refused.stderr).toContain(
-        "preloaded.js': it was not compiled into this executable, which was built with --compile-trim-runtime and loads nothing else",
-      );
-      expect(refused).toMatchObject({ stdout: "", exitCode: 1 });
+      expect(refused).toEqual({ stdout: "", stderr: "error: --preload " + cannotBeUsed + "\n", exitCode: 1 });
       const inspected = await run([trimmed], folder, { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/trimmed" });
       expect(inspected.stderr).toContain(
         "BUN_INSPECT cannot be used with an executable built with --compile-trim-runtime: the inspector evaluates code from strings",
       );
       expect(inspected).toMatchObject({ stdout: "", exitCode: 1 });
       const inAnEditor = await run([trimmed], folder, { ...bunEnv, BUN_INSPECT_CONNECT_TO: "unix:///nowhere.sock" });
-      expect(inAnEditor).toEqual({ stdout: refusal + "\n[]\n", stderr: "", exitCode: 0 });
+      expect(inAnEditor).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
+    });
+
+    test.each([
+      ["--preload", "--preload ./preloaded.js"],
+      ["--preload", "--preload=./preloaded.js"],
+      ["-r", "-r ./preloaded.js"],
+      ["--require", "--require ./preloaded.js"],
+      ["--import", "--import ./preloaded.js"],
+      ["--eval", "--eval 1"],
+      ["-e", "-e 1"],
+      ["--print", "--print 1"],
+      ["-p", "-p 1"],
+      ["--import", "--smol --title=-r --import ./preloaded.js"],
+    ])(
+      "refuses %s in %j, by BUN_OPTIONS and by --compile-exec-argv",
+      async (option, options) => {
+        using dir = tempDir("compile-trim-runtime-closed-options", programs);
+        const folder = String(dir);
+        const refusal = { stdout: "", stderr: `error: ${option} ${cannotBeUsed}\n`, exitCode: 1 };
+        const build = [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", "hello.ts", "--outfile"];
+        expect(await run([...build, "hello"], folder)).toMatchObject({ exitCode: 0 });
+        expect(await run([join(folder, "hello")], folder, { ...bunEnv, BUN_OPTIONS: options })).toEqual(refusal);
+        expect(await run([...build, "hello-with-options", "--compile-exec-argv=" + options], folder)).toMatchObject({ exitCode: 0 });
+        expect(await run([join(folder, "hello-with-options")], folder)).toEqual(refusal);
+        expect(await run([join(folder, "hello"), ...options.split(" ")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+      },
+    );
+
+    test("refuses the preload of a bunfig.toml that it was built to read", async () => {
+      using dir = tempDir("compile-trim-runtime-closed-options", { ...programs, "bunfig.toml": `preload = ["./preloaded.js"]\n` });
+      const folder = String(dir);
+      const build = [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", "hello.ts", "--outfile"];
+      expect(await run([...build, "reads-it", "--compile-autoload-bunfig"], folder)).toMatchObject({ exitCode: 0 });
+      expect(await run([join(folder, "reads-it")], folder)).toEqual({ stdout: "", stderr: `error: "preload" in bunfig.toml ${cannotBeUsed}\n`, exitCode: 1 });
+      expect(await run([...build, "hello"], folder)).toMatchObject({ exitCode: 0 });
+      expect(await run([join(folder, "hello")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+    });
+
+    test("refuses what BUN_INSPECT_PRELOAD and the file of --config name", async () => {
+      using dir = tempDir("compile-trim-runtime-closed-options", { ...programs, "own.toml": `preload = ["./preloaded.js"]\n` });
+      const folder = String(dir);
+      expect(await run([bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], folder)).toMatchObject({ exitCode: 0 });
+      const refusedFor = async (env: Record<string, string>) => (await run([join(folder, "hello")], folder, { ...bunEnv, ...env })).stderr;
+      expect(await refusedFor({ BUN_OPTIONS: "--smol", BUN_INSPECT_PRELOAD: "./preloaded.js" })).toBe(`error: BUN_INSPECT_PRELOAD ${cannotBeUsed}\n`);
+      expect(await refusedFor({ BUN_OPTIONS: "--config=own.toml" })).toBe(`error: "preload" in bunfig.toml ${cannotBeUsed}\n`);
+      expect(await run([join(folder, "hello")], folder, { ...bunEnv, BUN_INSPECT_PRELOAD: "./preloaded.js" })).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+    });
+
+    test("an executable that may make code obeys the same options", async () => {
+      using dir = tempDir("compile-trim-runtime-open-options", programs);
+      const folder = String(dir);
+      const { whole, trimmed } = await built("names-eval", folder);
+      for (const options of ["--preload ./preloaded.js", "--require ./preloaded.js", "--import ./preloaded.js", "-e 1", "-p 1"]) {
+        const env = { ...bunEnv, BUN_OPTIONS: options };
+        expect(await run([trimmed], folder, env)).toEqual(await run([whole], folder, env));
+      }
     });
 
     test("a part of Bun stays when the program names it, and goes when it does not", async () => {

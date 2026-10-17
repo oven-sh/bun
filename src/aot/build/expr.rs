@@ -836,6 +836,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     self.c.set_current_site(fx.file, node.pos);
                     self.record_untyped_inflow_to_nested_classes_of(checked);
                 }
+                self.record_instances_of_function_cast_to_constructor(fx, source, checked);
                 if self.is_forced_cast_to_builtin(fx, e, checked, to.id) {
                     let value = self.expr(fx, expr);
                     return self.apply_assertions(fx, e, value, false);
@@ -2521,7 +2522,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn literal_key(&mut self, file: FileId, p: PropId) -> PropKey {
         let prop = &self.hir(file)[p];
         match prop.key {
-            PropKey::Computed(key) if matches!(prop.kind, PropKind::Init | PropKind::Method) => self.c.property_named_by_constant_symbol(file, key).map_or(prop.key, PropKey::Name),
+            PropKey::Computed(key) if matches!(prop.kind, PropKind::Init | PropKind::Method) => self.c.property_named_by_constant_symbol(file, key).or_else(|| self.c.property_named_by_constant_string(file, key)).map_or(prop.key, PropKey::Name),
             key => key,
         }
     }
@@ -4562,7 +4563,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let value = self.with_new_result_type(fx, value, e);
             return self.coerce_to_expr_type(fx, value, e);
         }
-        let layout = self.new_result_layout(fx, e);
+        let layout = self.new_result_layout(fx, e).filter(|_| !self.constructs_untyped_object(fx, c.callee));
         if let Some(layout) = layout {
             self.c.record_object_created_by_new(self.layout_types.get(&layout).copied(), fx.file, c.callee);
         }
@@ -4604,6 +4605,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let Some(created) = self.new_result_ty(fx.file, e) else { return value };
         let checked = self.c.type_of_expr(fx.file, e);
         self.coerce_to(fx, value, Ty { id: created, checked }, CoerceReason::Claim)
+    }
+
+    fn constructs_untyped_object(&mut self, fx: &Fx, callee: ExprId) -> bool {
+        let Some((file, func)) = self.c.function_for_value_expr(fx.file, callee) else { return false };
+        !self.c.fn_this_type(file, func).is_some_and(|this| self.is_record_type(this))
+    }
+
+    fn record_instances_of_function_cast_to_constructor(&mut self, fx: &Fx, source: ExprId, cast_to: TypeId) {
+        let constructs = self.c.signatures(cast_to, true).to_vec();
+        if constructs.is_empty() || !self.constructs_untyped_object(fx, source) {
+            return;
+        }
+        self.c.set_current_site(fx.file, self.hir(fx.file)[source].pos);
+        for signature in constructs {
+            let made_as = self.c.sig_return(signature);
+            if self.is_record_type(made_as) {
+                let view = self.c.layout_defining_type(made_as);
+                self.c.record_untyped(view, TypeId::UNRESOLVED);
+            }
+        }
     }
 
     fn new_result_layout(&mut self, fx: &Fx, e: ExprId) -> Option<LayoutId> {

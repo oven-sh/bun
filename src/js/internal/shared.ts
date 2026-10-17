@@ -35,19 +35,6 @@ function hideFromStack(...fns: Function[]) {
   }
 }
 
-let warned: Set<string>;
-function warnNotImplementedOnce(feature: string, issue?: number) {
-  if (!warned) {
-    warned = new Set();
-  }
-
-  if (warned.has(feature)) {
-    return;
-  }
-  warned.add(feature);
-  console.warn(new NotImplementedError(feature, issue));
-}
-
 const NumberIsSafeInteger = Number.isSafeInteger;
 let internalErrorName: (err: number) => string;
 function getSystemErrorName(err: any) {
@@ -398,7 +385,7 @@ class NodeEntryObserver {
       };
       const AsyncContextFrame = require("internal/async_context_frame");
       if (this.frame === undefined && AsyncContextFrame.currentGraph() === undefined) setImmediate(deliver);
-      else AsyncContextFrame.run(this.frame, setImmediate, undefined, deliver);
+      else AsyncContextFrame.run(this.frame, () => void setImmediate(deliver));
     }
   }
 }
@@ -433,7 +420,7 @@ export default {
   kInternalAssertionSuffix,
   throwNotImplemented,
   hideFromStack,
-  warnNotImplementedOnce,
+  NotImplementedError,
   ExceptionWithHostPort,
   NodeAggregateError,
   ConnResetException,

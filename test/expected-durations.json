@@ -2527,28 +2527,52 @@
     "windows": 145187
   },
   "aot/variant-validated-graphs-1.test.ts": {
-    "default": 235299,
-    "asan": 128813,
-    "musl": 274385,
-    "windows": 278458
+    "default": 117649,
+    "asan": 64406,
+    "musl": 137192,
+    "windows": 139229
   },
   "aot/variant-validated-graphs-2.test.ts": {
-    "default": 231725,
-    "asan": 94586,
-    "musl": 259723,
-    "windows": 267864
+    "default": 115862,
+    "asan": 47293,
+    "musl": 129861,
+    "windows": 133932
   },
   "aot/variant-validated-graphs-3.test.ts": {
-    "default": 196419,
-    "asan": 106113,
-    "musl": 213222,
-    "windows": 261207
+    "default": 98209,
+    "asan": 53056,
+    "musl": 106611,
+    "windows": 130603
   },
   "aot/variant-validated-graphs-4.test.ts": {
-    "default": 259699,
-    "asan": 69162,
-    "musl": 264799,
-    "windows": 256014
+    "default": 129849,
+    "asan": 34581,
+    "musl": 132399,
+    "windows": 128007
+  },
+  "aot/variant-validated-graphs-5.test.ts": {
+    "default": 117649,
+    "asan": 64406,
+    "musl": 137192,
+    "windows": 139229
+  },
+  "aot/variant-validated-graphs-6.test.ts": {
+    "default": 115862,
+    "asan": 47293,
+    "musl": 129861,
+    "windows": 133932
+  },
+  "aot/variant-validated-graphs-7.test.ts": {
+    "default": 98209,
+    "asan": 53056,
+    "musl": 106611,
+    "windows": 130603
+  },
+  "aot/variant-validated-graphs-8.test.ts": {
+    "default": 129849,
+    "asan": 34581,
+    "musl": 132399,
+    "windows": 128007
   },
   "aot/variant-veneers-1.test.ts": {
     "default": 88806,

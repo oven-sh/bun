@@ -35,42 +35,42 @@ function givesAt(list: number[], f: Test, at: number): number {
 }
 function call(give: (x: number) => Test | undefined, x: number): Test | undefined {
   pad(1); pad(2); pad(3); pad(4); pad(5); pad(6); pad(7); pad(8);
-  if (x > 1e9) return call(give, x - 1);
+  if (x > 1e9) call(give, x - 1);
   return give(x);
 }
 let lastSeen: unknown;
 function comparesWithLast(list: number[], f: Test): number { return each(list, x => { const same = lastSeen === f; lastSeen = x % 2 ? f : x; return same; }); }
 function bothInTheFrame(list: number[], limit: number): number {
-  if (limit > 1e9) return bothInTheFrame(list, limit - 1);
+  if (limit > 1e9) bothInTheFrame(list, limit - 1);
   let calls = 0;
   return evenOr(list, x => { calls++; return x > limit; }) * 100 + calls;
 }
 function threeDeep(list: number[], limit: number): number {
-  if (limit > 1e9) return threeDeep(list, limit - 1);
+  if (limit > 1e9) threeDeep(list, limit - 1);
   let calls = 0;
   return thirdAnd(list, x => { calls++; return x > limit; }) * 100 + calls;
 }
 function outerIsKept(list: number[], limit: number): number {
-  if (limit > 1e9) return outerIsKept(list, limit - 1);
+  if (limit > 1e9) outerIsKept(list, limit - 1);
   let calls = 0;
   return evenOrKept(list, x => { calls++; return x > limit; }) * 100 + calls;
 }
 function innerIsKeptByTheOuter(list: number[], limit: number): number {
-  if (limit > 1e9) return innerIsKeptByTheOuter(list, limit - 1);
+  if (limit > 1e9) innerIsKeptByTheOuter(list, limit - 1);
   let calls = 0;
   return keepsAt(list, x => { calls++; return x > limit; }, limit) * 100 + calls;
 }
 function innerIsReturnedByTheOuter(list: number[], limit: number): number {
-  if (limit > 1e9) return innerIsReturnedByTheOuter(list, limit - 1);
+  if (limit > 1e9) innerIsReturnedByTheOuter(list, limit - 1);
   let calls = 0;
   return givesAt(list, x => { calls++; return x > limit; }, limit) * 100 + calls;
 }
 function innerIsComparedByTheOuter(list: number[], limit: number): number {
-  if (limit > 1e9) return innerIsComparedByTheOuter(list, limit - 1);
+  if (limit > 1e9) innerIsComparedByTheOuter(list, limit - 1);
   return comparesWithLast(list, x => x > limit);
 }
 function carriedAcrossIterations(list: number[], limit: number): number {
-  if (limit > 1e9) return carriedAcrossIterations(list, limit - 1);
+  if (limit > 1e9) carriedAcrossIterations(list, limit - 1);
   let previous: Test | undefined;
   let count = 0;
   for (let i = 0; i < list.length; i++) {
@@ -84,7 +84,7 @@ function carriedAcrossIterations(list: number[], limit: number): number {
   return count;
 }
 function throwsThrough(list: number[], limit: number): string {
-  if (limit > 1e9) return throwsThrough(list, limit - 1);
+  if (limit > 1e9) throwsThrough(list, limit - 1);
   let calls = 0;
   try { return "" + evenOr(list, x => { calls++; if (x === limit) throw new Error("at " + x); return x > limit; }); } catch (e) { return (e as Error).message + ":" + calls; }
 }

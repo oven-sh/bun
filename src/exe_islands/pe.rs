@@ -115,7 +115,7 @@ fn without_relocations_in(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
 }
 
 /// `file` without the whole pages of `dead`, which is sorted address ranges.
-pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
+pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Limits) -> Result<Vec<u8>> {
     let file = &without_relocations_in(file, dead)?[..];
     let (pe, sections) = headers(file)?;
     let optional = pe + 24;
@@ -141,7 +141,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     };
 
     let mut gaps: Vec<Range<u64>> = Vec::new();
-    for gap in dead.iter().filter_map(|range| whole_pages(range, page)) {
+    for gap in dead.iter().filter_map(|range| whole_pages(range, page, limits.smallest_hole)) {
         let holds =
             |s: &&Section| gap.start >= s.address && gap.end <= s.address + s.raw_size.min(s.size);
         if (sections.iter().find(holds)).is_some_and(|s| s.flags & IMAGE_SCN_MEM_WRITE == 0) {
@@ -153,7 +153,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     let most =
         MOST_SECTIONS.min(minus(sections[0].address, first_header as u64)? as usize / SECTION);
     sort_slice_by_key(&mut gaps, |g| core::cmp::Reverse(g.end - g.start));
-    gaps.truncate(most.saturating_sub(sections.len() + 1) / 2);
+    gaps.truncate((most.saturating_sub(sections.len() + 1) / 2).min(limits.most_holes));
     sort_slice_by_key(&mut gaps, |g| g.start);
     if gaps.is_empty() {
         return Ok(file.to_vec());

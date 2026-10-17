@@ -1,7 +1,5 @@
 // @ts-check
 // Hardcoded module "node:path"
-const validateString: (value: unknown, name: string) => asserts value is string = require("internal/validators").validateString;
-
 const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
 const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
 const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
@@ -495,13 +493,13 @@ let prevPattern: string | undefined;
 function matchesGlob(isWindows: boolean, path: unknown, pattern: unknown): boolean {
   let glob: Glob;
 
-  validateString(path, "path");
+  if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string", path);
   const subject = isWindows ? path.replaceAll("\\", "/") : path;
 
   if (prevGlob && prevPattern === pattern) {
     glob = prevGlob;
   } else {
-    validateString(pattern, "pattern");
+    if (typeof pattern !== "string") throw $ERR_INVALID_ARG_TYPE("pattern", "string", pattern);
     const text = isWindows ? pattern.replaceAll("\\", "/") : pattern;
     glob = prevGlob = new Bun.Glob(text);
     prevPattern = text;

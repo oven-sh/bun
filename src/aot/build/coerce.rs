@@ -1057,6 +1057,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if fx.is_typed && matches!(kind, ExprKind::Call(_) | ExprKind::New(_)) {
             self.c.record_type_argument_proxies(fx.file, e);
+            self.c.record_results_of_generic_callbacks(fx.file, e);
             if self.c.receives_generic_proxy_factory(fx.file, e) {
                 let produced = self.c.type_of_expr(fx.file, e);
                 self.c.record_nested_proxies(produced);

@@ -11,16 +11,16 @@
 // CALLS+ patternWithRest RegExpExec
 let guard = 0;
 function tried(f: () => string): string { try { return f(); } catch (e) { return e instanceof TypeError ? "TypeError" : "other"; } }
-function asserted(line: string): string { if (guard > 1e9) return asserted(line + "x"); const m = /(\d+)-(\w+)/.exec(line)!; return m[1] + "|" + m[2] + "|" + m.index + "|" + m.length; }
-function assertedAtEachUse(line: string): string { if (guard > 1e9) return assertedAtEachUse(line + "x"); const m = /(\d+)-(\w+)/.exec(line); return m![1]! + "|" + m![2]! + "|" + Number(m![1]); }
-function optionalRead(line: string): string { if (guard > 1e9) return optionalRead(line + "x"); return /(\d+)-(\w+)/.exec(line)?.[2] + "|" + /(\d+)-(\w+)/.exec(line)?.index; }
-function byPattern(line: string): string { if (guard > 1e9) return byPattern(line + "x"); const m = /(\d+)-(\w+)(!)?/.exec(line); if (!m) return "none"; const [whole, a, b, c] = m; return whole + "|" + a + "|" + b + "|" + c; }
-function byPatternWithGaps(line: string): string { if (guard > 1e9) return byPatternWithGaps(line + "x"); const m = /(\d+)-(\w+)(!)?/.exec(line); if (!m) return "none"; const [whole, a, , c = "C"] = m; return whole + "|" + a + "|" + c; }
-function assertedPattern(line: string): string { if (guard > 1e9) return assertedPattern(line + "x"); const [, a, b] = /(\d+)-(\w+)/.exec(line)!; return a + "|" + b; }
-function assertedMatch(line: string): string { if (guard > 1e9) return assertedMatch(line + "x"); const m = line.match(/(\w)=(\w)?/)!; return m[1] + "|" + m[2] + "|" + m.input; }
-function orEmpty(line: string): string { if (guard > 1e9) return orEmpty(line + "x"); const [, a, b] = line.match(/(\d+)-(\w+)/) ?? []; return a + "|" + b; }
-function castToOther(line: string): string { if (guard > 1e9) return castToOther(line + "x"); const m = /(\d+)/.exec(line) as unknown as { length: number } | null; return m ? "" + m.length : "none"; }
-function patternWithRest(line: string): string { if (guard > 1e9) return patternWithRest(line + "x"); const m = /(\d)(\d)(\d)/.exec(line); if (!m) return "none"; const [, ...digits] = m; return digits.join("+"); }
+function asserted(line: string): string { if (guard > 1e9) asserted(line + "x"); const m = /(\d+)-(\w+)/.exec(line)!; return m[1] + "|" + m[2] + "|" + m.index + "|" + m.length; }
+function assertedAtEachUse(line: string): string { if (guard > 1e9) assertedAtEachUse(line + "x"); const m = /(\d+)-(\w+)/.exec(line); return m![1]! + "|" + m![2]! + "|" + Number(m![1]); }
+function optionalRead(line: string): string { if (guard > 1e9) optionalRead(line + "x"); return /(\d+)-(\w+)/.exec(line)?.[2] + "|" + /(\d+)-(\w+)/.exec(line)?.index; }
+function byPattern(line: string): string { if (guard > 1e9) byPattern(line + "x"); const m = /(\d+)-(\w+)(!)?/.exec(line); if (!m) return "none"; const [whole, a, b, c] = m; return whole + "|" + a + "|" + b + "|" + c; }
+function byPatternWithGaps(line: string): string { if (guard > 1e9) byPatternWithGaps(line + "x"); const m = /(\d+)-(\w+)(!)?/.exec(line); if (!m) return "none"; const [whole, a, , c = "C"] = m; return whole + "|" + a + "|" + c; }
+function assertedPattern(line: string): string { if (guard > 1e9) assertedPattern(line + "x"); const [, a, b] = /(\d+)-(\w+)/.exec(line)!; return a + "|" + b; }
+function assertedMatch(line: string): string { if (guard > 1e9) assertedMatch(line + "x"); const m = line.match(/(\w)=(\w)?/)!; return m[1] + "|" + m[2] + "|" + m.input; }
+function orEmpty(line: string): string { if (guard > 1e9) orEmpty(line + "x"); const [, a, b] = line.match(/(\d+)-(\w+)/) ?? []; return a + "|" + b; }
+function castToOther(line: string): string { if (guard > 1e9) castToOther(line + "x"); const m = /(\d+)/.exec(line) as unknown as { length: number } | null; return m ? "" + m.length : "none"; }
+function patternWithRest(line: string): string { if (guard > 1e9) patternWithRest(line + "x"); const m = /(\d)(\d)(\d)/.exec(line); if (!m) return "none"; const [, ...digits] = m; return digits.join("+"); }
 const lines = ["12-ok", "7-no!", "zz", "", "a=b", "k=", "123", "日本12-ok", "9-é", "x=日"];
 let out = "";
 for (const line of lines) {

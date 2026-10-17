@@ -1781,6 +1781,22 @@ static bool acceptsBytesWithoutBlocking(int descriptor)
     } while (ready < 0 && errno == EINTR);
     return ready == 1;
 }
+#else
+static bool writeWhole(uv_file descriptor, const char* next, size_t remaining)
+{
+    while (remaining) {
+        uv_buf_t buffer = uv_buf_init(const_cast<char*>(next), static_cast<unsigned int>(std::min<size_t>(remaining, 1 << 30)));
+        uv_fs_t request;
+        int written = uv_fs_write(nullptr, &request, descriptor, &buffer, 1, -1, nullptr);
+        uv_fs_req_cleanup(&request);
+        if (written <= 0)
+            return false;
+        next += written;
+        remaining -= static_cast<size_t>(written);
+    }
+    return true;
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAppendToWarningsFile, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1790,12 +1806,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAppendToWarningsFile, (JSC::JSGlobalObj
     RETURN_IF_EXCEPTION(scope, {});
     auto message = callFrame->argument(1).toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    int descriptor = ::open(byteCast<char>(path.utf8().data()), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0666);
-    if (descriptor < 0)
-        return JSValue::encode(jsBoolean(false));
     auto bytes = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
     const char* next = byteCast<char>(bytes.data());
     size_t remaining = bytes.length();
+#if OS(WINDOWS)
+    uv_fs_t request;
+    int descriptor = uv_fs_open(nullptr, &request, byteCast<char>(path.utf8().data()), UV_FS_O_WRONLY | UV_FS_O_APPEND | UV_FS_O_CREAT, 0666, nullptr);
+    uv_fs_req_cleanup(&request);
+    if (descriptor < 0)
+        return JSValue::encode(jsBoolean(false));
+    bool isWritten = writeWhole(descriptor, next, remaining);
+    uv_fs_close(nullptr, &request, descriptor, nullptr);
+    uv_fs_req_cleanup(&request);
+    return JSValue::encode(jsBoolean(isWritten));
+#else
+    int descriptor = ::open(byteCast<char>(path.utf8().data()), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0666);
+    if (descriptor < 0)
+        return JSValue::encode(jsBoolean(false));
     while (remaining) {
         ssize_t written = ::write(descriptor, next, remaining);
         if (written < 0 && errno == EINTR)
@@ -1807,8 +1834,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAppendToWarningsFile, (JSC::JSGlobalObj
     }
     ::close(descriptor);
     return JSValue::encode(jsBoolean(!remaining));
-}
 #endif
+}
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1918,12 +1945,10 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     args.append(disabled);
     args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionWriteToUntouchedStderr, JSC::ImplementationVisibility::Private));
     args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionBasenameForWarning, JSC::ImplementationVisibility::Private));
-#if !OS(WINDOWS)
     JSValue nodeFS = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::NodeFS).get();
     bool isNodeFSLoaded = nodeFS && !nodeFS.isUndefined();
     if (!isNodeFSLoaded)
         args.append(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionAppendToWarningsFile, JSC::ImplementationVisibility::Private));
-#endif
     JSValue onWarning = JSC::profiledCall(globalObject, ProfilingReason::API, factory, JSC::getCallData(factory), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_onWarning.set(vm, this, asObject(onWarning));

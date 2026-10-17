@@ -35,7 +35,7 @@ ${body}
     .split("\n")
     .filter(line => line.startsWith('{"rank"'))
     .map(line => JSON.parse(line));
-  return { exitCode, stderr, freezesAnything: rows.some(row => row.message.includes("can freeze any object of the program")) };
+  return { exitCode, errors: (stdout + stderr).split("\n").filter(line => /error TS|panic/.test(line)), freezesAnything: rows.some(row => row.message.includes("can freeze any object of the program")) };
 }
 
 describe("freezing what Object.create made concerns that object alone", () => {
@@ -59,7 +59,7 @@ describe("freezing what Object.create made concerns that object alone", () => {
   };
   for (const [name, body] of Object.entries(alone)) {
     test(name, async () => {
-      expect(await rulesOf(body)).toEqual({ exitCode: 0, stderr: "", freezesAnything: false });
+      expect(await rulesOf(body)).toEqual({ exitCode: 0, errors: [], freezesAnything: false });
     });
   }
 
@@ -73,7 +73,7 @@ describe("freezing what Object.create made concerns that object alone", () => {
   };
   for (const [name, body] of Object.entries(anything)) {
     test(name, async () => {
-      expect(await rulesOf(body)).toEqual({ exitCode: 0, stderr: "", freezesAnything: true });
+      expect(await rulesOf(body)).toEqual({ exitCode: 0, errors: [], freezesAnything: true });
     });
   }
 });

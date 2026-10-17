@@ -18,7 +18,8 @@ export interface Needs {
 
 export interface Plan {
   doors: string[];
-  islands: { features: string; names: string[] }[];
+  first?: string[];
+  islands: { features: string; names: string[]; behindWhatStays?: string[] }[];
   tableBytes?: number;
 }
 
@@ -38,6 +39,8 @@ export function readPlan(path: string | undefined, features: string[], doors: st
     if (line.startsWith("island ")) plan.islands.push({ features: line.slice(7), names: [] });
     else if (line.startsWith("door ")) plan.doors.push(line.slice(5));
     else if (line.startsWith("table ")) plan.tableBytes = Number(line.slice(6));
+    else if (line.startsWith("first ")) (plan.first ??= []).push(line.slice(6));
+    else if (line.startsWith("behind ")) (plan.islands.at(-1)!.behindWhatStays ??= []).push(line.slice(7));
     else if (line !== "") plan.islands.at(-1)?.names.push(line);
   }
   plan.islands = plan.islands.filter(island => island.features.split(",").every(feature => known.has(feature)));
@@ -50,7 +53,8 @@ export function writePlan(path: string, plan: Plan, doors: string): void {
     "for " + doors,
     ...(plan.tableBytes === undefined ? [] : ["table " + plan.tableBytes]),
     ...plan.doors.map(name => "door " + name),
-    ...plan.islands.flatMap(island => ["island " + island.features, ...island.names]),
+    ...(plan.first ?? []).map(name => "first " + name),
+    ...plan.islands.flatMap(island => ["island " + island.features, ...island.names, ...(island.behindWhatStays ?? []).map(name => "behind " + name)]),
   ];
   writeFileSync(path, lines.join("\n") + "\n", "latin1");
 }
@@ -179,8 +183,10 @@ export interface Table {
   packages?: DataPackage[];
 }
 
+const firstFeatureOf = (door: TableDoor) => door.feature.split(",", 1)[0]!;
+
 export function inTableOrder<D extends TableDoor>(features: string[], doors: D[]): D[] {
-  const rank = (door: D) => features.indexOf(door.feature) * 2 + (door.whenShut === "exit" ? 0 : 1);
+  const rank = (door: D) => features.indexOf(firstFeatureOf(door)) * 2 + (door.whenShut === "exit" ? 0 : 1);
   return [...doors].sort((a, b) => rank(a) - rank(b) || a.address - b.address);
 }
 
@@ -217,8 +223,13 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
   const kinds = distinct(table.conditions.map(condition => condition.kind));
   const facts = distinct(table.conditions.map(spell));
   const packages = table.packages ?? [];
-  const sets = distinct([...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs)].map(({ features }) => features));
-  for (const { feature } of [...table.conditions, ...table.doors]) if (!table.features.includes(feature)) throw new Error(`the table does not list ${feature}`);
+  const shared = table.doors.map((door, index) => ({ index, features: door.feature })).filter(door => door.features.includes(","));
+  const sets = distinct([...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs), ...shared].map(({ features }) => features));
+  for (const feature of [...table.conditions, ...table.doors].flatMap(({ feature }) => feature.split(","))) {
+    if (!table.features.includes(feature)) throw new Error(`the table does not list ${feature}`);
+  }
+  const isInDeclaredOrder = (set: string) => set.split(",").every((feature, index, all) => index === 0 || table.features.indexOf(all[index - 1]!) < table.features.indexOf(feature));
+  if (!shared.every(door => isInDeclaredOrder(door.features))) throw new Error("the features of a door are not in the order in which they are declared");
   if (inTableOrder(table.features, table.doors).some((door, index) => door !== table.doors[index])) throw new Error("the doors are not in the order of the table");
 
   number(table.stub);
@@ -248,7 +259,7 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
   }
   for (const feature of table.features) {
     for (const whenShut of ["exit", "return"]) {
-      const doors = table.doors.filter(door => door.feature === feature && door.whenShut === whenShut);
+      const doors = table.doors.filter(door => firstFeatureOf(door) === feature && door.whenShut === whenShut);
       number(doors.length);
       ascending(doors.map(door => door.address));
     }
@@ -274,7 +285,7 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
     lastFirst = places[0]!.address;
     next = index + 1;
   }
-  if (packages.length > 0) {
+  if (packages.length > 0 || shared.length > 0) {
     list(packages, ({ start, end, runs }) => {
       number(start);
       number(end - start);
@@ -285,6 +296,14 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
         indexIn(sets, features);
         next = first + count;
       });
+    });
+  }
+  if (shared.length > 0) {
+    let next = 0;
+    list(shared, ({ index, features }) => {
+      number(index - next);
+      indexIn(sets, features);
+      next = index + 1;
     });
   }
   if (bytes.length > room) throw new Error(`the table takes ${bytes.length} bytes and there is room for ${room}`);
@@ -376,6 +395,18 @@ export function decodeTable(bytes: Uint8Array): Table {
     });
     return { start, end, runs };
   });
+  let nextShared = 0;
+  if (at < bytes.length) {
+    list(() => {
+      const index = sum(nextShared, number());
+      const door = doors[index] ?? malformed();
+      const set = oneOf(sets);
+      const members = set.split(",").map(feature => features.indexOf(feature));
+      if (!set.startsWith(door.feature + ",") || members.some((member, at) => at > 0 && members[at - 1]! >= member)) malformed();
+      door.feature = set;
+      nextShared = index + 1;
+    });
+  }
   if (bytes.subarray(at).some(byte => byte !== 0)) malformed();
   return { stub, smallestDoor, features, conditions, islands, doors, ...(packages.length > 0 ? { packages } : {}) };
 }
@@ -410,9 +441,10 @@ export function itemsOf(dataPackage: Buffer): Item[] {
   });
 }
 
-export function runsOf(items: Item[], claims: Claim[], features: string[]): ItemRun[] {
+export function runsOf(items: Item[], claims: Claim[], features: string[], kept: RegExp[] = []): ItemRun[] {
   const runs: ItemRun[] = [];
   items.forEach(({ name }, index) => {
+    if (kept.some(pattern => pattern.test(name))) return;
     const claimedBy = new Set(claims.filter(claim => claim.pattern.test(name)).map(claim => claim.feature));
     if (claimedBy.size === 0) return;
     const set = features.filter(feature => claimedBy.has(feature)).join(",");

@@ -813,7 +813,6 @@ pub(super) struct State {
     is_searching_from_sources: bool,
     records_external_causes: bool,
     external_data_followed_from: Option<Place>,
-    heirs: Vec<(TypeId, Vec<Atom>)>,
     external_cause_round: u32,
     types_being_walked: Vec<Identity>,
     is_boundary_bounded: bool,
@@ -1202,7 +1201,6 @@ pub(super) struct Search {
     targets_by_source: FxHashMap<Identity, Vec<Identity>>,
     seen_by_other_declarations: FxHashMap<FileId, Place>,
     names: Guarded<FxHashMap<Identity, Vec<Box<[u8]>>>>,
-    births: Guarded<Vec<(FileId, ExprId)>>,
 }
 
 impl Search {
@@ -1225,7 +1223,6 @@ impl Search {
             targets_by_source: FxHashMap::default(),
             seen_by_other_declarations: FxHashMap::default(),
             names: Guarded::default(),
-            births: Guarded::default(),
         }
     }
 
@@ -3222,21 +3219,6 @@ impl<'p, 's> Checker<'p, 's> {
         let files: Vec<FileId> = all().filter(|&file| (self.is_compiled(file) || self.aot.flows.checked_sources.contains(&file)) && !self.is_untyped_file(file)).collect();
         let written: Vec<FileId> = all().filter(|&file| self.hir(file).kind != FileKind::Declaration && !self.is_untyped_file(file)).collect();
         for file in own(&files) {
-            let calls: Vec<ExprId> = self.file_exprs_by_kind(file).of(ExprTag::Call).to_vec();
-            let born: Vec<(FileId, ExprId)> = calls.into_iter().filter(|&call| matches!(self.record_born_by_object_create(file, call), Some(Ok(_)))).map(|call| (file, call)).collect();
-            search.births.lock().extend(born);
-        }
-        search.barrier.wait();
-        let births: Vec<(FileId, ExprId)> = search.births.lock().clone();
-        self.aot.flows.heirs = births
-            .into_iter()
-            .filter_map(|(file, call)| {
-                let birth = self.record_born_by_object_create(file, call)?.ok()?;
-                let left = self.members_left_to_prototype(&birth);
-                (!left.is_empty()).then_some((birth.born_as, left))
-            })
-            .collect();
-        for file in own(&files) {
             self.add_external_data_target_types(file, coercion_targets);
         }
         let untyped: Vec<FileId> = all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file) && !self.aot.flows.generated_from_checked_source.contains(&file)).collect();
@@ -4486,17 +4468,6 @@ impl<'p, 's> Checker<'p, 's> {
                 pending.push((call, call));
             }
         }
-        if !self.aot.flows.heirs.is_empty() {
-            let copies: Vec<ExprId> = by_kind.of(ExprTag::Object).iter().chain(by_kind.of(ExprTag::Call)).copied().collect();
-            for copy in copies {
-                if self.copies_heir_without_its_prototype(file, copy) {
-                    let of_copy = self.type_of_expr(file, copy);
-                    self.note_external_cause(of_copy, ExternalCause::UsedAs { at: Place { file, pos: hir[copy].pos } }, None);
-                    out.push(of_copy);
-                    pending.push((copy, copy));
-                }
-            }
-        }
         let mut holders: FxHashSet<SymbolId> = FxHashSet::default();
         while let Some((mut produced, source)) = pending.pop() {
             self.aot.flows.external_data_followed_from = Some(Place { file, pos: hir[source].pos });
@@ -4535,33 +4506,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.aot.flows.external_data_followed_from = None;
-    }
-
-    fn copies_heir_without_its_prototype(&mut self, file: FileId, copy: ExprId) -> bool {
-        let hir = self.hir(file);
-        let sources: Vec<ExprId> = match hir[copy].kind {
-            ExprKind::Object(props) => props.iter().filter(|&prop| hir[prop].kind == PropKind::Spread).map(|prop| hir[prop].value).collect(),
-            ExprKind::Call(call) if self.is_object_assign(file, copy) => hir.ids(hir[call].args).skip(1).collect(),
-            _ => return false,
-        };
-        if sources.is_empty() {
-            return false;
-        }
-        let heirs = std::mem::take(&mut self.aot.flows.heirs);
-        let copies_heir = sources.into_iter().any(|source| {
-            let of_source = self.type_of_expr(file, source);
-            let copied: Vec<TypeId> = self.parts(of_source).to_vec();
-            heirs.iter().any(|(born_as, _)| {
-                self.parts(*born_as).iter().any(|&born| {
-                    copied.iter().any(|&part| match (self.data(born), self.data(part)) {
-                        (TypeData::Ref { target: of_born, .. }, TypeData::Ref { target: of_part, .. }) => of_born == of_part,
-                        _ => born == part,
-                    })
-                })
-            })
-        });
-        self.aot.flows.heirs = heirs;
-        copies_heir
     }
 
     pub fn is_syntactically_fresh_graph(&mut self, file: FileId, e: ExprId) -> bool {

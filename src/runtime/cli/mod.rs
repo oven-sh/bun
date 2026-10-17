@@ -1172,6 +1172,18 @@ pub(crate) mod command {
 
     type CmdResult = crate::Result<()>;
 
+    #[cold]
+    fn refuse_options_that_load_code(ctx: &ContextData, options: &[&bun_core::ZStr]) {
+        const LOAD_CODE: [&[u8]; 8] = [b"--preload", b"-r", b"--require", b"--import", b"--eval", b"-e", b"--print", b"-p"];
+        let eval = &ctx.runtime_options.eval;
+        if ctx.preloads.is_empty() && eval.script.is_empty() && !eval.eval_and_print {
+            return;
+        }
+        let mut names = options.iter().skip(1).map(|option| strings::split(option.as_bytes(), b"=").next().unwrap_or_default());
+        let otherwise: &[u8] = if bun_core::env_var::BUN_INSPECT_PRELOAD.get().is_some() { b"BUN_INSPECT_PRELOAD" } else { b"\"preload\" in bunfig.toml" };
+        super::run_command::RunCommand::refuse_to_load_code(names.find(|name| LOAD_CODE.contains(name)).unwrap_or(otherwise));
+    }
+
     /// `bun build --compile` standalone-executable boot. Never taken for a
     /// plain `bun` binary; out-lined so the ~2 KB of argv-splice / ctx-setup
     /// code is not decoded on the `bun --version` path.
@@ -1228,6 +1240,9 @@ pub(crate) mod command {
 
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
+                if !crate::jsc_hooks::Bun__loadsModulesAtRunTime() {
+                    refuse_options_that_load_code(result, bun::argv().as_slice());
+                }
 
                 // Restore full argv so passthrough calculation works correctly
                 // SAFETY: single-threaded startup.

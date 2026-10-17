@@ -1,0 +1,191 @@
+// road: text becomes code; the text reaches for an API the program never names
+const text = "return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter";
+//// Function-called
+console.log(Function(text)());
+//// new-Function
+console.log(new Function(text)());
+//// function-expression-constructor
+//@ todo F1
+console.log((function () {}).constructor(text)());
+//// arrow-constructor
+//@ todo F1
+console.log((() => {}).constructor(text)());
+//// declared-function-constructor
+//@ todo F1
+function f() {}
+console.log(f.constructor(text)());
+//// new-f-constructor
+//@ todo F1
+function f() {}
+console.log(new f.constructor(text)());
+//// object-constructor-constructor
+//@ todo F1
+console.log(({}).constructor.constructor(text)());
+//// array-method-constructor
+//@ todo F1
+console.log([].filter.constructor(text)());
+//// string-method-constructor
+//@ todo F1
+console.log("".at.constructor(text)());
+//// console-log-constructor
+//@ todo F1
+console.log(console.log.constructor(text)());
+//// class-constructor-constructor
+//@ todo F1
+class C {}
+console.log(C.constructor(text)());
+//// Function-prototype-constructor
+//@ todo F1
+console.log(Function.prototype.constructor(text)());
+//// getPrototypeOf-function
+//@ todo F1
+console.log(Object.getPrototypeOf(function () {}).constructor(text)());
+//// proto-of-function
+//@ todo F1
+console.log((function () {}).__proto__.constructor(text)());
+//// computed-constructor-literal
+//@ todo F1
+console.log((function () {})["constructor"](text)());
+//// computed-constructor-concat
+//@ todo F1
+console.log((function () {})["const" + "ructor"](text)());
+//// computed-constructor-argv
+//@ todo F1
+//@ args constructor
+console.log((function () {})[process.argv[2]](text)());
+//// destructured-constructor
+//@ todo F1
+const { constructor } = function () {};
+console.log(constructor(text)());
+//// destructured-renamed
+//@ todo F1
+const { constructor: make } = () => {};
+console.log(make(text)());
+//// optional-chaining
+//@ todo F1
+console.log((() => {})?.constructor?.(text)?.());
+//// Reflect-get
+//@ todo F1
+console.log(Reflect.get(() => {}, "constructor")(text)());
+//// Reflect-construct
+//@ todo F1
+console.log(Reflect.construct((() => {}).constructor, [text])());
+//// Reflect-apply
+//@ todo F1
+console.log(Reflect.apply((() => {}).constructor, undefined, [text])());
+//// call
+//@ todo F1
+console.log((() => {}).constructor.call(null, text)());
+//// apply
+//@ todo F1
+console.log((() => {}).constructor.apply(null, [text])());
+//// bind
+//@ todo F1
+console.log((() => {}).constructor.bind(null, text)()());
+//// through-a-variable
+//@ todo F1
+const g = () => {};
+const make = g.constructor;
+console.log(make(text)());
+//// through-a-helper
+//@ todo F1
+function constructorOf(value) { return value.constructor; }
+console.log(constructorOf(() => {})(text)());
+//// through-a-helper-twice
+//@ todo F1
+function constructorOf(value) { return value.constructor; }
+console.log(constructorOf(constructorOf({}))(text)());
+//// descriptor
+//@ todo F1
+console.log(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor").value(text)());
+//// descriptors
+//@ todo F1
+console.log(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => {})).constructor.value(text)());
+//// spread-of-prototype-names
+//@ todo F1
+const proto = Object.getPrototypeOf(() => {});
+for (const name of Object.getOwnPropertyNames(proto)) if (name.length === 11 && name[0] === "c") console.log(proto[name](text)());
+//// class-field
+//@ todo F1
+class C { make = (() => {}).constructor; }
+console.log(new C().make(text)());
+//// static-field
+//@ todo F1
+class C { static make = (() => {}).constructor; }
+console.log(C.make(text)());
+//// getter
+//@ todo F1
+const holder = { get make() { return (() => {}).constructor; } };
+console.log(holder.make(text)());
+//// tagged-template
+//@ todo F1
+console.log((() => {}).constructor`return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter`());
+//// proxy-get
+//@ todo F1
+const proxy = new Proxy(() => {}, {});
+console.log(proxy.constructor(text)());
+//// proxy-handler-hands-out
+//@ todo F1
+const proxy = new Proxy({}, { get: (_, name) => (() => {})[name] });
+console.log(proxy.constructor(text)());
+//// subclass-of-function-constructor
+//@ todo F1
+class F extends (() => {}).constructor {}
+console.log(new F(text)());
+//// extends-Function
+class F extends Function {}
+console.log(new F(text)());
+//// species-like-array-from
+//@ todo F1
+//@ exit 1
+console.log(Array.from.call((() => {}).constructor, [])() === undefined);
+//// promise-then-constructor
+//@ todo F1
+Promise.resolve(() => {}).then(f => console.log(f.constructor(text)()));
+//// map-over-array
+//@ todo F1
+console.log([() => {}].map(f => f.constructor)[0](text)());
+//// JSON-named
+//@ todo F1
+const name = JSON.parse('{"n":"constructor"}').n;
+console.log((() => {})[name](text)());
+//// with-statement
+//@ refused --aot does not support a `with` statement
+//@ ext cjs
+with (function () {}) { console.log(constructor(text)()); }
+//// bound-function-constructor
+//@ todo F1
+console.log((function () {}).bind(null).constructor(text)());
+//// native-constructor-constructor
+//@ todo F1
+console.log(Map.constructor(text)());
+//// symbol-constructor-constructor
+//@ todo F1
+console.log(Symbol.iterator.constructor.constructor(text)());
+//// number-constructor-constructor
+//@ todo F1
+console.log((0).constructor.constructor(text)());
+//// error-constructor-constructor
+//@ todo F1
+try { null.x; } catch (error) { console.log(error.constructor.constructor(text)()); }
+//// arguments-callee
+//@ todo F1
+//@ ext cjs
+(function () { console.log(arguments.callee.constructor(text)()); })();
+//// in-try-with-handler
+//@ todo F2
+try { console.log((() => {}).constructor(text)()); } catch (error) { console.log("caught", error.name); }
+//// Function-in-try-with-handler
+//@ todo F2
+try { console.log(Function(text)()); } catch (error) { console.log("caught", error.name); }
+//// new-Function-in-try-with-handler
+//@ todo F2
+try { console.log(new Function(text)()); } catch (error) { console.log("caught", error.name); }
+//// probe-like-zod
+//@ todo F2
+function allowsEval() { try { const F = Function; new F(""); return true; } catch { return false; } }
+console.log(allowsEval());
+//// probe-then-use
+//@ todo F2
+function allowsEval() { try { const F = Function; new F(""); return true; } catch { return false; } }
+console.log(allowsEval() ? "fast path" : "slow path");

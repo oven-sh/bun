@@ -1852,6 +1852,8 @@ fn runtime_use(c: &LinkerContext) -> Option<Box<[u8]>> {
     let loaders = c.parse_graph().input_files.items_loader();
     let opened_by: Option<[&[u8]; 2]> = if loaders.contains(&Loader::Napi) {
         Some([&b"a native addon"[..], &b""[..]])
+    } else if loaders.contains(&Loader::SqliteEmbedded) {
+        Some([&b"a database that is embedded"[..], &b""[..]])
     } else {
         import_resolved_at_run_time(c).map(|specifier| [&b"an import that is resolved at run time: "[..], specifier])
     };

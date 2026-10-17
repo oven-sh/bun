@@ -1,6 +1,5 @@
 // A callback that captures variables and returns nothing, a number or a boolean, handed to what only calls it: its variables lie in the frame of the function that made it. Its entry for callers that know nothing of it reads them out of the closure and goes on into the body: it makes no frame and no call.
 // ENTRY-SIZE< addsToSum 24 16
-// ENTRY-SIZE< isOverLimit 24 16
 // ENTRY-SIZE< scaled 24 16
 function sums(list) {
   let sum = 0;

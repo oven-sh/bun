@@ -50,10 +50,10 @@ untyped, module level: 60.36 instructions (module 60.36), 2540 bytes"
 `;
 
 exports[`passes object literals typed any, which nothing else holds, to a typed function whose record type has a field that is a union of string literals 1`] = `
-"typed, function: 307.08 instructions (stub ConvertByPlan 190.72, kernel 52.17, stub NewObjectFromDescriptor3 23.08, the runtime 20.96, stub ColdOperationValue to operationAOTTypedCoerce 16, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.72, stub ColdOperationValue 0.29, module 0.12), 621 bytes
-typed, module level: 307.06 instructions (stub ConvertByPlan 190.72, module 52.15, stub NewObjectFromDescriptor3 23.08, the runtime 21.23, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.72, stub ColdOperationValueWithoutFPRs 0.14), 1648 bytes
-untyped, function: 133.21 instructions (kernel 68.65, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR8 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 7.02, elsewhere 0.34, module 0.12), 672 bytes
-untyped, module level: 131.17 instructions (module 66.65, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, the runtime 7.10, elsewhere 0.34), 1639 bytes"
+"typed, function: 85.21 instructions (kernel 54.65, stub NewObjectFromDescriptor3 23.08, the runtime 7.02, elsewhere 0.34, module 0.12), 797 bytes
+typed, module level: 84.09 instructions (module 53.65, stub NewObjectFromDescriptor3 23.08, the runtime 7.02, elsewhere 0.34), 1829 bytes
+untyped, function: 132.34 instructions (kernel 66.65, stub NewObjectFromDescriptor3 23.08, stub GetByNameChainPreservingTwo 21, stub GetLengthByNamePreservingTwo 14, the runtime 7.16, elsewhere 0.34, module 0.12), 659 bytes
+untyped, module level: 130.09 instructions (module 64.65, stub NewObjectFromDescriptor3 23.08, stub GetByNameChainPreservingTwo 21, stub GetLengthByNamePreservingTwo 14, the runtime 7.02, elsewhere 0.34), 1612 bytes"
 `;
 
 exports[`parses a request body behind an untyped function, casts it to a record type that the program also makes, and reads it: a nested record and an array of records 1`] = `

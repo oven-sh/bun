@@ -13,8 +13,8 @@
 13 optional, default 2 1 9 1
 14 the rest 1 2 0
 15 through any: another parameter type TypeError TypeError
-16 through any: another result type TypeError TypeError TypeError TypeError
-17 through any: the result undefined, null TypeError TypeError null undefined
+16 through any: another result type s5 2 2 2
+17 through any: the result undefined, null undefined null null undefined
 18 native 2 3 a true 2
 19 bound 11 N1 30
 20 a proxy 2 42

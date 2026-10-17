@@ -1858,9 +1858,9 @@ function serverHandlersFor(server) {
 // 'e' across the afterConnect(Multiple) / rejected-promise / attempt-timeout paths.
 const kNetTraceCat = "node,node.net,node.net.native";
 const kTraceConnectActive = Symbol("kTraceConnectActive");
-let traceEvents: typeof import("internal/trace_events").default;
+let traceEvents: typeof import("internal/trace_event_recorder").default;
 function traceConnectStart(req, pipePath?) {
-  traceEvents ??= require("internal/trace_events");
+  traceEvents ??= require("internal/trace_event_recorder");
   if (!traceEvents.isCategoryGroupEnabled(kNetTraceCat)) return;
   if (pipePath !== undefined) {
     // Node (pipe_wrap.cc) emits path_type/pipe_path at the top level of the

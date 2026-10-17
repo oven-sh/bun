@@ -1,7 +1,8 @@
-// A function value that a loop calls and does not change is looked at once, ahead of the loop: whatever it is, each call does what a call does.
-// CALLS+ eachOf ResolveCallValue
-// CALLS+ eachOf CallResolvedValue
-// CALLS- eachOf [^e]CallValue2
+// The callback of an array method is looked at once, ahead of the method's loop: whatever it is, each call does what a call does. A loop of the program's own is left as it is.
+// CALLS+ Array$map ResolveCallValue3
+// CALLS- Array$map [^e]CallValue3
+// CALLS+ Array$some ResolveCallValue3
+// CALLS- eachOf ResolveCallValue
 // CALLS- changing ResolveCallValue
 // CALLS- once ResolveCallValue
 function eachOf(list, f) {
@@ -108,7 +109,8 @@ const frozen = Object.freeze(a => a);
 console.log(eachOf(list, frozen));
 
 console.log(changing([1, 2, 3, 4], [a => a, String, (a, b) => a * b]));
-console.log(once(list, (a, b) => a + b));
+const handedOver = [once];
+console.log(handedOver[0](list, (a, b) => a + b));
 console.log(nested([[1, 2], [3], [], [4, 5]], [a => a, String, undefined, (a, b) => a * b]));
 console.log(attempt(() => nested([[1], [2]], [a => a, undefined])));
 

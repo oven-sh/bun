@@ -28,6 +28,7 @@ type-rules/out-of-bounds-array-reads    has one in the plain engine too
 typed-objects/absent-fields-under-another-prototype    has one in the plain engine too
 typed-objects/index-on-array-prototype-object    has one in the plain engine too
 typed-objects/several-first-stores-under-another-prototype    has one in the plain engine too
+typed-objects/stores-under-prototypes-that-refuse-them    has one in the plain engine too: it defines a read-only property at index 0 of a class prototype; without that line it has none
 untyped-code/constant-array-literals    means it: "A BAD TIME" in program.js
 untyped-code/array-species-and-large-arrays    has one in the plain engine too
 untyped-code/inlined-constructors-meet-setters    has one in the plain engine too

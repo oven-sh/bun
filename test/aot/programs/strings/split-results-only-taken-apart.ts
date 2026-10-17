@@ -14,24 +14,24 @@
 // CALLS+ limited StringSplitString
 let guard = 0;
 function parsed(line: string): string {
-  if (guard > 1e9) return parsed(line + "x");
+  if (guard > 1e9) parsed(line + "x");
   const cols = line.split(",");
   return [Number(cols[0]), Number(cols[1]), Number(cols[2]), Number(cols[5]), parseInt(cols[0].slice(1, 3), 10), parseInt(cols[0], 16), parseInt(cols[0])].join(" ");
 }
 function counted(line: string): string {
-  if (guard > 1e9) return counted(line + "x");
+  if (guard > 1e9) counted(line + "x");
   const cols = line.split(";");
   return cols.length + ":" + Number(cols[1]) + ":" + line.split(" ").length;
 }
 function compared(line: string): string {
-  if (guard > 1e9) return compared(line + "x");
+  if (guard > 1e9) compared(line + "x");
   const cols = line.split("|");
   const first = cols[0];
   return [first === "ab", first === "", first.length, first.charCodeAt(0), first.charAt(1), first.slice(1).length, first.substring(1, 2) === "b", first.slice(-1).charCodeAt(0)].join(" ");
 }
 const kept: (string | undefined)[] = [];
 function keptFields(line: string): string {
-  if (guard > 1e9) return keptFields(line + "x");
+  if (guard > 1e9) keptFields(line + "x");
   const cols = line.split(",");
   kept.push(cols[1], cols[1], cols[3]);
   const table = new Map<string | undefined, number>();
@@ -40,15 +40,15 @@ function keptFields(line: string): string {
   table.set(cols[0], (table.get(cols[0]) ?? 0) + 4);
   return cols[0] + "/" + cols[1] + "/" + cols[4] + "/" + [...table].join(";") + "/" + typeof cols[7];
 }
-function returned(line: string): string[] { if (guard > 1e9) return returned(line + "x"); const cols = line.split(","); guard += Number(cols[0]) > 1e12 ? 1 : 0; return cols; }
-function look(list: string[]): number { if (guard > 1e9) return look(list); return list.length * 10 + (list[1] ?? "").length; }
-function handedOn(line: string): number { if (guard > 1e9) return handedOn(line + "x"); const cols = line.split(","); return look(cols) + Number(cols[0]); }
-function byVariable(line: string, k: number): string { if (guard > 1e9) return byVariable(line + "x", k); const cols = line.split(","); return cols[k] + ":" + cols[0]; }
-function written(line: string): string { if (guard > 1e9) return written(line + "x"); const cols = line.split(","); cols[0] = "w"; return cols[0] + cols[1]; }
-function pushedTo(line: string): string { if (guard > 1e9) return pushedTo(line + "x"); const cols = line.split(","); cols.push("p"); return cols[0] + cols.length; }
-function farField(line: string): string { if (guard > 1e9) return farField(line + "x"); const cols = line.split(","); return cols[0] + cols[40]; }
-function longSeparator(line: string): string { if (guard > 1e9) return longSeparator(line + "x"); const cols = line.split(", "); return cols[0] + "+" + cols[1]; }
-function limited(line: string): string { if (guard > 1e9) return limited(line + "x"); const cols = line.split(",", 2); return cols[0] + "+" + cols[2] + cols.length; }
+function returned(line: string): string[] { if (guard > 1e9) returned(line + "x"); const cols = line.split(","); guard += Number(cols[0]) > 1e12 ? 1 : 0; return cols; }
+function look(list: string[]): number { if (guard > 1e9) look(list); return list.length * 10 + (list[1] ?? "").length; }
+function handedOn(line: string): number { if (guard > 1e9) handedOn(line + "x"); const cols = line.split(","); return look(cols) + Number(cols[0]); }
+function byVariable(line: string, k: number): string { if (guard > 1e9) byVariable(line + "x", k); const cols = line.split(","); return cols[k] + ":" + cols[0]; }
+function written(line: string): string { if (guard > 1e9) written(line + "x"); const cols = line.split(","); cols[0] = "w"; return cols[0] + cols[1]; }
+function pushedTo(line: string): string { if (guard > 1e9) pushedTo(line + "x"); const cols = line.split(","); cols.push("p"); return cols[0] + cols.length; }
+function farField(line: string): string { if (guard > 1e9) farField(line + "x"); const cols = line.split(","); return cols[0] + cols[40]; }
+function longSeparator(line: string): string { if (guard > 1e9) longSeparator(line + "x"); const cols = line.split(", "); return cols[0] + "+" + cols[1]; }
+function limited(line: string): string { if (guard > 1e9) limited(line + "x"); const cols = line.split(",", 2); return cols[0] + "+" + cols[2] + cols.length; }
 function inLoop(text: string): number {
   let sum = 0;
   const lines = text.split("\n");

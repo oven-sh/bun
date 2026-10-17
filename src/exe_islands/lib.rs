@@ -15,6 +15,7 @@ pub enum Error {
     InvalidExecutable,
     NoIslands,
     NoSuchFeature,
+    CalledOperationLeftOut,
 }
 
 impl Error {
@@ -24,6 +25,7 @@ impl Error {
             Error::InvalidExecutable => "InvalidExecutable",
             Error::NoIslands => "NoIslands",
             Error::NoSuchFeature => "NoSuchFeature",
+            Error::CalledOperationLeftOut => "CalledOperationLeftOut",
         }
     }
 }
@@ -42,6 +44,12 @@ struct Section<'a> {
     name: &'a [u8],
     addresses: Range<u64>,
     offset: usize,
+}
+
+#[derive(Clone, Copy)]
+struct Limits {
+    smallest_hole: u64,
+    most_holes: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -123,9 +131,9 @@ impl Container {
 
     fn without_pages(self, file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
         match self {
-            Container::Elf => elf::without_pages(file, dead),
-            Container::MachO => macho::without_pages(file, dead),
-            Container::Pe => pe::without_pages(file, dead),
+            Container::Elf => elf::without_pages(file, dead, Limits { smallest_hole: 128 << 10, most_holes: 16 }),
+            Container::MachO => macho::without_pages(file, dead, Limits { smallest_hole: 256 << 10, most_holes: 8 }),
+            Container::Pe => pe::without_pages(file, dead, Limits { smallest_hole: 128 << 10, most_holes: 16 }),
         }
     }
 }
@@ -172,8 +180,15 @@ struct Place {
 struct Door {
     addresses: Range<u64>,
     feature: usize,
+    shared_with: Vec<usize>,
     when_shut: WhenShut,
     places: Vec<Place>,
+}
+
+impl Door {
+    fn is_shut(&self, is_excluded: &[bool]) -> bool {
+        is_excluded[self.feature] && self.shared_with.iter().all(|feature| is_excluded[*feature])
+    }
 }
 
 struct Items {
@@ -306,7 +321,7 @@ impl<'a> Table<'a> {
                 let mut start = 0;
                 for _ in 0..reader.count()? {
                     start = bytes::plus(start, reader.number()?)?;
-                    doors.push(Door { addresses: start..bytes::plus(start, smallest)?, feature, when_shut, places: Vec::new() });
+                    doors.push(Door { addresses: start..bytes::plus(start, smallest)?, feature, shared_with: Vec::new(), when_shut, places: Vec::new() });
                 }
             }
         }
@@ -352,6 +367,16 @@ impl<'a> Table<'a> {
             })?;
             packages.push(Package { addresses, items });
         }
+        let mut next = 0;
+        for _ in 0..if reader.rest.is_empty() { 0 } else { reader.count()? } {
+            let number = bytes::plus(next, reader.number()?)?;
+            let door = usize::try_from(number).ok().and_then(|number| doors.get_mut(number)).ok_or(Error::InvalidExecutable)?;
+            let set = &sets[reader.index_in(&sets)?];
+            let (first, others) = set.split_first().ok_or(Error::InvalidExecutable)?;
+            ensure(*first == door.feature && !others.is_empty() && set.is_sorted_by(|a, b| a < b))?;
+            door.shared_with = others.to_vec();
+            next = number + 1;
+        }
         if reader.rest.iter().any(|&byte| byte != 0) {
             return Err(Error::InvalidExecutable);
         }
@@ -382,10 +407,10 @@ fn elf_is_code(file: &[u8], addresses: &Range<u64>) -> Result<bool> {
 }
 
 fn shut_door(door: &Door, number: usize, stub: u64, container: Container, is_arm64: bool) -> Result<Vec<u8>> {
-    if door.feature >= 1 << 8 || number >= 1 << 24 {
+    if door.feature >= 1 << 12 || number >= 1 << 20 {
         return Err(Error::InvalidExecutable);
     }
-    let door_and_feature = (door.feature | number << 8) as u32;
+    let door_and_feature = (door.feature | number << 12) as u32;
     let mut code = Vec::new();
     if is_arm64 {
         let distance = (stub as i64 - (door.addresses.start as i64 + 8)) / 4;
@@ -535,7 +560,7 @@ fn shut_thin_doors(
     is_excluded: &[bool],
     dead: &[Range<u64>],
 ) -> Result<Option<Range<u64>>> {
-    let thin = || table.doors.iter().enumerate().filter(|(_, door)| is_excluded[door.feature] && !door.places.is_empty());
+    let thin = || table.doors.iter().enumerate().filter(|(_, door)| door.is_shut(is_excluded) && !door.places.is_empty());
     let count_of = |when_shut: WhenShut| thin().filter(|(_, door)| door.when_shut == when_shut).count() as u64;
     let exit_stubs = count_of(WhenShut::Exit) * stub_size(WhenShut::Exit, is_arm64);
     let length = exit_stubs + count_of(WhenShut::Return).min(1) * stub_size(WhenShut::Return, is_arm64);
@@ -559,7 +584,7 @@ fn shut_thin_doors(
         if door.when_shut == WhenShut::Exit {
             next_exit_stub += size;
         }
-        let stub = Door { addresses: start..start + size, feature: door.feature, when_shut: door.when_shut, places: Vec::new() };
+        let stub = Door { addresses: start..start + size, feature: door.feature, shared_with: Vec::new(), when_shut: door.when_shut, places: Vec::new() };
         let code = shut_door(&stub, number, table.stub, container, is_arm64)?;
         let offset = container.offset_of(file, start)?;
         slice_mut(file, offset, code.len())?.copy_from_slice(&code);
@@ -583,23 +608,41 @@ pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
     Ok(Table::parse(&file[range])?.features)
 }
 
-const KINDS_OF_FACTS: [&[u8]; 9] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property"];
+const KINDS_OF_FACTS: [&[u8]; 14] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"environment", b"autoload", b"performance", b"export"];
 
 pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {
     let range = Container::of(file)?.table_range(file)?;
     let table = Table::parse(&file[range])?;
-    Ok(unused_by(&table, facts).into_iter().map(|feature| table.features[feature].to_vec()).collect())
+    let unused = unused_in_its_world_by(&table, facts);
+    let is_called = |condition: &Condition| {
+        let is_named_in = |line: &[u8]| line.strip_prefix(condition.kind).and_then(|rest| rest.strip_prefix(b" ")) == Some(condition.name);
+        KINDS_LISTED_BY_THE_COMPILER.contains(&condition.kind) && bun_core::strings::split(facts, b"\n").any(is_named_in)
+    };
+    if table.conditions.iter().any(|condition| unused.contains(&condition.feature) && is_called(condition)) {
+        return Err(Error::CalledOperationLeftOut);
+    }
+    Ok(unused.into_iter().map(|feature| table.features[feature].to_vec()).collect())
+}
+
+const KINDS_LISTED_BY_THE_COMPILER: [&[u8]; 2] = [b"operation", b"language-operation"];
+
+fn is_closed_world(facts: &[u8]) -> bool {
+    facts == b"closed" || facts.starts_with(b"closed\n")
+}
+
+fn unused_in_its_world_by(table: &Table, facts: &[u8]) -> Vec<usize> {
+    let needs_a_closed_world = |feature: usize| table.conditions.iter().any(|condition| condition.feature == feature && !KINDS_LISTED_BY_THE_COMPILER.contains(&condition.kind));
+    let mut unused = unused_by(table, facts);
+    unused.retain(|&feature| is_closed_world(facts) || !needs_a_closed_world(feature));
+    unused
 }
 
 fn unused_by(table: &Table, facts: &[u8]) -> Vec<usize> {
     let follows_a_feature = |condition: &&Condition| condition.kind == b"feature";
     let holds = |condition: &Condition| {
-        !follows_a_feature(&condition)
-            && (!KINDS_OF_FACTS.contains(&condition.kind)
-                || facts
-                    .split(|&byte| byte == b'\n')
-                    .filter_map(|line| line.strip_prefix(condition.kind)?.strip_prefix(b" "))
-                    .any(|name| name == b"*" || name == condition.name))
+        let mut names = bun_core::strings::split(facts, b"\n").filter_map(|line| line.strip_prefix(condition.kind)?.strip_prefix(b" ")).peekable();
+        let is_listed = if KINDS_LISTED_BY_THE_COMPILER.contains(&condition.kind) { names.peek().is_some() } else { KINDS_OF_FACTS.contains(&condition.kind) };
+        !follows_a_feature(&condition) && (!is_listed || names.any(|name| name == b"*" || name == condition.name))
     };
     let conditions_of = |feature: usize| table.conditions.iter().filter(move |condition| condition.feature == feature);
     let mut is_kept: Vec<bool> = (0..table.features.len()).map(|feature| conditions_of(feature).next().is_none() || conditions_of(feature).any(holds)).collect();
@@ -659,7 +702,7 @@ fn shut(file: &mut [u8], container: Container, is_arm64: bool, table: &Table, is
         }
     }
     let strip = shut_thin_doors(file, container, is_arm64, table, is_excluded, &dead)?;
-    for (number, door) in table.doors.iter().enumerate().filter(|(_, door)| is_excluded[door.feature] && door.places.is_empty()) {
+    for (number, door) in table.doors.iter().enumerate().filter(|(_, door)| door.is_shut(is_excluded) && door.places.is_empty()) {
         if dead.iter().any(|addresses| addresses.contains(&door.addresses.start)) {
             continue;
         }
@@ -743,6 +786,25 @@ mod tests {
         assert_eq!(places_of(&table.doors[1]), [(0x201301, 0), (0x205001, 0), (0x400008, 1)]);
         assert_eq!(places_of(&table.doors[2]), [(0x201311, 0)]);
         assert_eq!(places_of(&table.doors[3]), []);
+    }
+
+    #[test]
+    fn what_the_compiler_lists_counts_in_an_open_world_too() {
+        let mut parts = SMALL;
+        parts[3] = b"\x03\x05world\x03Bun\x09operation";
+        parts[4] = b"\x03\x00\x04open\x01\x0aTranspiler\x02\x04Exec";
+        parts[5] = b"\x01\x02\x01\x00\x02\x01\x02";
+        let bytes = parts.concat();
+        let table = Table::parse(&bytes).unwrap();
+        let unused_by = |facts: &[u8]| unused_in_its_world_by(&table, facts);
+        assert_eq!(unused_by(b"closed\noperation Other\n"), [0, 1, 2]);
+        assert_eq!(unused_by(b"closed\noperation Other\noperation Exec\n"), [1]);
+        assert_eq!(unused_by(b"closed\nBun Transpiler\noperation Other\n"), [0, 1]);
+        assert_eq!(unused_by(b"open eval in a.ts\noperation Other\n"), [0]);
+        assert_eq!(unused_by(b"open eval in a.ts\noperation Exec\n"), []);
+        assert_eq!(unused_by(b"\noperation Other\n"), [0]);
+        assert_eq!(unused_by(b"open eval in a.ts\n"), []);
+        assert_eq!(unused_by(b"closed\n"), [1]);
     }
 
     #[test]
@@ -1053,7 +1115,7 @@ mod tests {
 
     fn door(address: u64, feature: usize, when_shut: WhenShut, places: &[(u64, PlaceKind)]) -> Door {
         let places = places.iter().map(|&(address, kind)| Place { address, kind }).collect();
-        Door { addresses: address..address + 12, feature, when_shut, places }
+        Door { addresses: address..address + 12, feature, shared_with: Vec::new(), when_shut, places }
     }
 
     fn island(addresses: Range<u64>, needed_by: &[usize]) -> Island {
@@ -1064,7 +1126,7 @@ mod tests {
 
     fn exit_stub(address: u64, number: u32, feature: u32) -> Vec<u8> {
         let distance = TRIMMED_OUT.wrapping_sub(address + 10) as u32;
-        [&[0xbf][..], &(feature | number << 8).to_le_bytes(), &[0xe9], &distance.to_le_bytes()].concat()
+        [&[0xbf][..], &(feature | number << 12).to_le_bytes(), &[0xe9], &distance.to_le_bytes()].concat()
     }
 
     fn table() -> Table<'static> {
@@ -1204,6 +1266,44 @@ mod tests {
             assert_eq!(shut(&mut file, Container::Elf, false, &table(), &is_excluded), Ok(vec![]));
             assert!(file == linked());
         }
+    }
+
+    #[test]
+    fn a_door_of_several_features_is_shut_when_all_of_them_are_out_and_names_the_first() {
+        let mut shared = table();
+        shared.doors[0].shared_with = vec![2];
+        shared.doors[1].shared_with = vec![2];
+        let mut open = linked();
+        shut(&mut open, Container::Elf, false, &shared, &[true, false, false]).unwrap();
+        assert_eq!(open[at(0x201200)..][..6], linked()[at(0x201200)..][..6]);
+        assert_eq!(open[at(0x201111)..][..4], linked()[at(0x201111)..][..4]);
+        assert_eq!(open[at(0x202000)..][..10], exit_stub(0x202000, 2, 0));
+        let mut untouched = linked();
+        assert_eq!(shut(&mut untouched, Container::Elf, false, &shared, &[false, false, true]), Ok(vec![]));
+        assert!(untouched == linked());
+        let (mut all_out, mut as_ever) = (linked(), linked());
+        shut(&mut all_out, Container::Elf, false, &shared, &[true, false, true]).unwrap();
+        shut(&mut as_ever, Container::Elf, false, &table(), &[true, false, true]).unwrap();
+        assert!(all_out == as_ever);
+        assert_eq!(all_out[at(0x201200)..][..10], exit_stub(0x201200, 0, 0));
+    }
+
+    #[test]
+    fn doors_of_several_features() {
+        let shared = |section: &[u8]| Table::parse(&[&SMALL.concat()[..], b"\x00", section].concat()).map(|table| table.doors.iter().map(|door| (door.feature, door.shared_with.clone())).collect::<Vec<_>>());
+        assert_eq!(shared(b""), Ok(vec![(0, vec![]), (0, vec![]), (1, vec![]), (2, vec![])]));
+        assert_eq!(shared(b"\x00"), Ok(vec![(0, vec![]), (0, vec![]), (1, vec![]), (2, vec![])]));
+        assert_eq!(shared(b"\x01\x01\x01"), Ok(vec![(0, vec![]), (0, vec![1]), (1, vec![]), (2, vec![])]));
+        assert_eq!(shared(b"\x02\x00\x01\x00\x01"), Ok(vec![(0, vec![1]), (0, vec![1]), (1, vec![]), (2, vec![])]));
+        assert_eq!(shared(b"\x01\x01\x00"), Err(REFUSED));
+        assert_eq!(shared(b"\x01\x02\x01"), Err(REFUSED));
+        assert_eq!(shared(b"\x01\x01\x02"), Err(REFUSED));
+        assert_eq!(shared(b"\x01\x04\x01"), Err(REFUSED));
+        assert_eq!(shared(b"\x01\x01"), Err(REFUSED));
+        let backwards = [&with_part(6, b"\x02\x01\x00\x03\x00\x02\x01")[..], b"\x00\x01\x01\x01"].concat();
+        assert_eq!(error_of(&backwards), Some(REFUSED));
+        let forwards = [&with_part(6, b"\x02\x01\x00\x03\x00\x01\x02")[..], b"\x00\x01\x01\x01"].concat();
+        assert_eq!(error_of(&forwards), None);
     }
 
     #[test]

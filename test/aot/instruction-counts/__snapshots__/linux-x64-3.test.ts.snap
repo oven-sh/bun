@@ -1,5 +1,19 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`passes plain objects, made by a function that the call does not know, to a typed function, which reads three fields 1`] = `
+"typed, function: 162.26 instructions (kernel 84.20, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.02, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34, module 0.12), 735 bytes
+typed, module level: 160.23 instructions (module 82.15, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.16, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34), 1825 bytes
+untyped, function: 168.41 instructions (kernel 63.21, stub Add 28, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 13, stub CallValue3 12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 7.16, growToo 7, grow 4.50, elsewhere 0.34, module 0.12), 600 bytes
+untyped, module level: 178.25 instructions (module 47.18, stub Add 28, stub NewObjectFromDescriptor3 23.08, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 20, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 13, stub CallValue3 12, the runtime 7.16, growToo 7, grow 4.50, elsewhere 0.34), 1376 bytes"
+`;
+
+exports[`passes ten plain objects in turn to a typed function again and again, which reads three fields 1`] = `
+"typed, function: 75.46 instructions (kernel 75.34, module 0.12), 770 bytes
+typed, module level: 74.31 instructions (module 74.31), 2114 bytes
+untyped, function: 93.27 instructions (kernel 83.15, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, module 0.12), 902 bytes
+untyped, module level: 119.18 instructions (module 46.18, stub Add 24, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 20, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 13), 1663 bytes"
+`;
+
 exports[`makes a JSON Response from an object alone 1`] = `
 "typed, function: 2040.30 instructions (the runtime 1720.70, elsewhere 99, kernel 86, stub ReadKnownCustomGetterByName 36, stub CallHostFunction1 27, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, stub PlainOperationWithInstance 10, stub PlainOperation 4, stub ReadOutOfLineByName 4, stub PlainOperation to operationAOTTypedJSONAppendInteger 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONPrepare 2, module 0.60), 673 bytes
 typed, module level: 2028.70 instructions (the runtime 1720.70, elsewhere 99, module 75, stub ReadKnownCustomGetterByName 36, stub CallHostFunction1 27, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, stub PlainOperationWithInstance 10, stub PlainOperation 4, stub ReadOutOfLineByName 4, stub PlainOperation to operationAOTTypedJSONAppendInteger 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONPrepare 2), 1580 bytes
@@ -78,10 +92,10 @@ untyped, module level: 169.21 instructions (stub FrontEndTypedCloneObjectAndExte
 `;
 
 exports[`sorts a copy of an array of records that fall by a numeric key 1`] = `
-"typed, function: 145.88 instructions (the runtime 139.91, stub ArrayCopy 3.91, kernel 0.92, elsewhere 0.58, stub OperationValueWithInstance 0.22, module 0.19, stub TypedStringInRDX 0.13, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 449 bytes
-typed, module level: 145.63 instructions (the runtime 139.91, stub ArrayCopy 3.91, module 0.98, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 1718 bytes
-untyped, function: 120.03 instructions (the runtime 113.33, stub ArrayCopy 3.91, kernel 1.09, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, module 0.19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.16, stub GetByNameWithDirectColumnWithReceiverInRAX 0.16, stub TypedStringInRDX 0.13, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 572 bytes
-untyped, module level: 119.77 instructions (the runtime 113.33, stub ArrayCopy 3.91, module 1.14, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.16, stub GetByNameWithDirectColumnWithReceiverInRAX 0.16, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2035 bytes"
+"typed, function: 125.36 instructions (the runtime 119.39, stub ArrayCopy 3.91, kernel 0.92, elsewhere 0.58, stub OperationValueWithInstance 0.22, module 0.19, stub TypedStringInRDX 0.13, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 449 bytes
+typed, module level: 125.11 instructions (the runtime 119.39, stub ArrayCopy 3.91, module 0.98, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 1719 bytes
+untyped, function: 96.47 instructions (the runtime 89.77, stub ArrayCopy 3.91, kernel 1.09, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, module 0.19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.16, stub GetByNameWithDirectColumnWithReceiverInRAX 0.16, stub TypedStringInRDX 0.13, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 572 bytes
+untyped, module level: 96.20 instructions (the runtime 89.77, stub ArrayCopy 3.91, module 1.14, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.16, stub GetByNameWithDirectColumnWithReceiverInRAX 0.16, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2036 bytes"
 `;
 
 exports[`writes every byte of a Uint8Array ten times in the function that made the array 1`] = `

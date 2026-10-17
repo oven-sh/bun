@@ -12,7 +12,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker> & {
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, NotImplementedError } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -23,6 +23,13 @@ const {
 
 // node's name handling (lib/internal/worker.js): truthy → validateString + trim,
 // falsy (undefined/null/0/"") → default "". So {name: 0|null} is silently ignored.
+let hasWarnedAboutPerformance = false;
+function warnThatPerformanceIsNotImplementedOnce() {
+  if (hasWarnedAboutPerformance) return;
+  hasWarnedAboutPerformance = true;
+  console.warn(new NotImplementedError("worker_threads.Worker.performance"));
+}
+
 function normalizeWorkerName(rawName) {
   if (rawName) {
     validateString(rawName, "options.name");
@@ -1041,7 +1048,7 @@ class Worker extends EventEmitter {
   get performance() {
     return (this.#performance ??= {
       eventLoopUtilization() {
-        warnNotImplementedOnce("worker_threads.Worker.performance");
+        warnThatPerformanceIsNotImplementedOnce();
         return {
           idle: 0,
           active: 0,

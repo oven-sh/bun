@@ -16,7 +16,7 @@ such a property one level down, through an arrow function in a field: 110 charac
 an object without a type, through a function: 23 characters, 0 texts finished by compiled code, 0 values handed to the runtime
 an object without a type, through a method: 23 characters, 0 texts finished by compiled code, 0 values handed to the runtime
 an object without a type, through an arrow function in a field: 23 characters, 0 texts finished by compiled code, 0 values handed to the runtime
-an object of a class, through a function: 13 characters, 97 texts finished by compiled code, 100 values handed to the runtime
+an object of a class, through a function: 13 characters, 99 texts finished by compiled code, 100 values handed to the runtime
 an object of a class, through a method: 13 characters, 100 texts finished by compiled code, 100 values handed to the runtime
 an object of a class, through an arrow function in a field: 13 characters, 100 texts finished by compiled code, 100 values handed to the runtime
 a string, through a function: 6 characters, 100 texts finished by compiled code, 100 values handed to the runtime

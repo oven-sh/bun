@@ -160,16 +160,7 @@ function pushWithInitHooks(cb: unknown, args: unknown[] | undefined, frame: unkn
   const asyncId = asyncHooksTick.newAsyncId();
   const hooks: any[] = tickInitHooks.slice();
   for (let i = 0; i < hooks.length; i++) {
-    try {
-      hooks[i](asyncId, "TickObject", 0, tock);
-    } catch (err) {
-      try {
-        console.error(
-          typeof (err as any)?.stack === "string" ? (err as Error).stack : err,
-        );
-      } catch {}
-      tickingProcess.exit(1);
-    }
+    if (hooks[i](asyncId, "TickObject", 0, tock)) tickingProcess.exit(1);
   }
   const list = tock.args;
   if (list === undefined) {

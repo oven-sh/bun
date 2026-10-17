@@ -55,7 +55,7 @@ double-cast-through-never: 0 layouts, 0 given, 0 open, places 4 of 13, reads 0 o
 dynamic-import-as-record-type: 0 layouts, 0 given, 0 open, places 4 of 20, reads 2 of 4
 dynamic-import-commonjs: 0 layouts, 0 given, 0 open, places 0 of 10, reads 0 of 1
 dynamic-import-commonjs-captured: 0 layouts, 0 given, 0 open, places 1 of 12, reads 3 of 11
-empty-class-instance-cast-to-wider-interface: 5 layouts, 0 given, 5 open, places 13 of 26, reads 0 of 14
+empty-class-instance-cast-to-wider-interface: 5 layouts, 0 given, 6 open, places 13 of 26, reads 0 of 14
 empty-string-static-field: 1 layouts, 0 given, 0 open, places 0 of 9, reads 0 of 2
 enum-between-declarations-lacks-members: 0 layouts, 0 given, 0 open, places 0 of 9, reads 0 of 1
 enum-declared-twice-is-one-object: 0 layouts, 0 given, 0 open, places 0 of 9, reads 0 of 1

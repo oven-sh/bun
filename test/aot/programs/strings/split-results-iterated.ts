@@ -11,25 +11,25 @@
 // CALLS+ iteratedTwice StringSplitString
 // CALLS+ spreadOut StringSplitString
 let guard = 0;
-function summed(line: string): string { if (guard > 1e9) return summed(line + "x"); let n = 0, count = 0; for (const part of line.split(",")) { n += Number(part); count++; } return n + "/" + count; }
+function summed(line: string): string { if (guard > 1e9) summed(line + "x"); let n = 0, count = 0; for (const part of line.split(",")) { n += Number(part); count++; } return n + "/" + count; }
 const kept: string[] = [];
-function keptPieces(line: string): number { if (guard > 1e9) return keptPieces(line + "x"); let n = 0; for (const part of line.split(" ")) { if (part.length > 1) kept.push(part); n += part.length; } return n; }
+function keptPieces(line: string): number { if (guard > 1e9) keptPieces(line + "x"); let n = 0; for (const part of line.split(" ")) { if (part.length > 1) kept.push(part); n += part.length; } return n; }
 function leavesEarly(line: string): string {
-  if (guard > 1e9) return leavesEarly(line + "x");
+  if (guard > 1e9) leavesEarly(line + "x");
   let seen = "";
   for (const part of line.split(",")) { if (part === "") continue; if (part === "stop") break; if (part === "out") return "out:" + seen; seen += "[" + part + "]"; }
   return seen;
 }
 function nested(text: string): string {
-  if (guard > 1e9) return nested(text + "x");
+  if (guard > 1e9) nested(text + "x");
   let out = "";
   for (const line of text.split(";")) { let n = 0; for (const cell of line.split(",")) n += cell.length; out += n + "."; }
   return out;
 }
-function withRest(line: string): string { if (guard > 1e9) return withRest(line + "x"); const [head, second, ...tail] = line.split(","); return head + "|" + second + "|" + tail.length + "|" + tail.join("+"); }
-function longSeparator(line: string): string { if (guard > 1e9) return longSeparator(line + "x"); let out = ""; for (const part of line.split(", ")) out += "<" + part + ">"; return out; }
+function withRest(line: string): string { if (guard > 1e9) withRest(line + "x"); const [head, second, ...tail] = line.split(","); return head + "|" + second + "|" + tail.length + "|" + tail.join("+"); }
+function longSeparator(line: string): string { if (guard > 1e9) longSeparator(line + "x"); let out = ""; for (const part of line.split(", ")) out += "<" + part + ">"; return out; }
 function throwsInside(line: string): string {
-  if (guard > 1e9) return throwsInside(line + "x");
+  if (guard > 1e9) throwsInside(line + "x");
   let out = "";
   try { for (const part of line.split(",")) { if (part === "stop") throw new Error("at " + out); out += part.charAt(0); } } catch (e) { return "caught " + (e as Error).message; }
   return out;
@@ -39,10 +39,10 @@ function labelled(text: string): string {
   outer: for (const line of text.split(";")) { for (const cell of line.split(",")) { if (cell === "stop") continue outer; if (cell === "out") break outer; out += cell + "."; } out += "/"; }
   return out;
 }
-function withEntries(line: string): string { if (guard > 1e9) return withEntries(line + "x"); let out = ""; for (const [i, part] of line.split(",").entries()) out += i + part; return out; }
-function alsoRead(line: string): string { if (guard > 1e9) return alsoRead(line + "x"); const parts = line.split(","); let out = "" + parts.length; for (const part of parts) out += part; return out; }
-function iteratedTwice(line: string): string { if (guard > 1e9) return iteratedTwice(line + "x"); const parts = line.split(","); let out = ""; for (const part of parts) out += part; for (const part of parts) out += part.length; return out; }
-function spreadOut(line: string): string { if (guard > 1e9) return spreadOut(line + "x"); return [...line.split(",")].join("+"); }
+function withEntries(line: string): string { if (guard > 1e9) withEntries(line + "x"); let out = ""; for (const [i, part] of line.split(",").entries()) out += i + part; return out; }
+function alsoRead(line: string): string { if (guard > 1e9) alsoRead(line + "x"); const parts = line.split(","); let out = "" + parts.length; for (const part of parts) out += part; return out; }
+function iteratedTwice(line: string): string { if (guard > 1e9) iteratedTwice(line + "x"); const parts = line.split(","); let out = ""; for (const part of parts) out += part; for (const part of parts) out += part.length; return out; }
+function spreadOut(line: string): string { if (guard > 1e9) spreadOut(line + "x"); return [...line.split(",")].join("+"); }
 function* yielding(line: string): Generator<string> { for (const part of line.split(",")) yield "(" + part + ")"; }
 async function awaiting(line: string): Promise<string> { let out = ""; for (const part of line.split(",")) { await null; out += part + ";"; } return out; }
 const lines = ["", "a", ",", ",,", "1,2,3", "1,2,", ",1", "a b  cc ddd", "x,stop,y", "x,,out,y", "1,2;3;;4,5,6", "a, b, c", ", ", "a,b", "é,日本,ü", "日, 本", "stop", "a,stop;b,c;out,d;e"];

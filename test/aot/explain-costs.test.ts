@@ -64,7 +64,7 @@ const marks = {
   id: number;
   name: string;
 }
-const none = Object.freeze(Object.create(null));
+const none = Object.freeze(JSON.parse("{}"));
 function seal(value: any): void {
   Object.seal(value);
 }

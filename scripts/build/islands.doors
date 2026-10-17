@@ -1,5 +1,116 @@
+feature operations_common_data what compiled code calls for JSON.stringify, Response, Headers and URLs
+feature operations_common_objects what compiled code calls for common forms of objects, classes and promises
+feature operations_common_containers what compiled code calls for common array, typed array, Map and Set methods
+feature operations_common_text what compiled code calls for common string and RegExp methods
+feature operations_common_numbers what compiled code calls for arithmetic on values of unknown type
+feature operations_rare_classes what compiled code calls for rarely used forms of classes, calls and async functions
+feature operations_rare_properties what compiled code calls for properties beyond an object's type
+feature operations_rare_text what compiled code calls for rarely used string and RegExp methods
+feature operations_rare_data what compiled code calls for JSON parsed by type and plain queries
+feature operations_rare_copies what compiled code calls for copies of typed objects
+feature operations_rare_containers what compiled code calls for rarely used array, typed array, Map and Set methods
+feature operations_rare_casts what compiled code calls for casts between unrelated types
+feature operations_rare_numbers what compiled code calls for rarely used arithmetic
 feature tools the Bun command line, the type checker, the linter, the formatter and the ahead-of-time compiler
 feature jit the just-in-time compilers
+feature testing bun:internal-for-testing
+feature test bun:test: expect, its matchers, mocks and the snapshot printer
+feature webview Bun.WebView
+feature open_in_editor Bun.openInEditor
+feature unsafe Bun.unsafe
+feature ffi bun:ffi and its C compiler
+feature plugin Bun.plugin
+feature fsrouter Bun.FileSystemRouter
+feature cron Bun.cron
+feature secrets Bun.secrets
+feature shell Bun.$, the shell
+feature color Bun.color
+feature htmlrewriter HTMLRewriter
+feature markdown Bun.markdown
+feature xml Bun.XML
+feature json5 Bun.JSON5
+feature jsonc Bun.JSONC
+feature jsonl Bun.JSONL
+feature yaml Bun.YAML
+feature toml Bun.TOML
+feature archive Bun.Archive
+feature semver Bun.semver
+feature ansi Bun.sliceAnsi and Bun.wrapAnsi
+feature escape_html Bun.escapeHTML
+feature hash Bun.hash
+feature uuid Bun.randomUUIDv5 and Bun.randomUUIDv7
+feature csrf Bun.CSRF
+feature password Bun.password
+feature hashers Bun.sha and Bun.MD4 to Bun.SHA512_256
+feature sqlite bun:sqlite and node:sqlite
+feature webassembly WebAssembly
+feature nodequic node:quic
+feature nodehttp2 node:http2
+feature sql Bun.sql and Bun.SQL for PostgreSQL and MySQL
+feature node_assert the diff that node:assert prints
+feature urlpattern URLPattern
+feature intl Intl.DisplayNames, ListFormat, Locale, PluralRules, RelativeTimeFormat, Segmenter, getCanonicalLocales and supportedValuesOf
+feature libdeflate_compressor gzip and deflate compression in one call
+feature compression_calls Bun.gzipSync, gunzipSync, deflateSync, inflateSync, zstdCompress, zstdDecompress and their Sync forms
+feature compression_streams CompressionStream and DecompressionStream
+feature inspector the debugger and node:inspector
+feature napi native addons: N-API and the V8 and libuv symbols
+feature node_vm node:vm
+feature bun_jsc bun:jsc
+feature terminal Bun.Terminal
+feature cryptohasher Bun.CryptoHasher
+feature atomics Atomics
+feature udp Bun.udpSocket and node:dgram
+feature net_addresses net.BlockList and net.SocketAddress
+feature process_report process.report
+feature deep_equals Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual and assert.partialDeepStrictEqual
+feature parse_args util.parseArgs
+feature message_channel MessageChannel, MessagePort and BroadcastChannel
+feature outside_bytes values that arrive serialized from another program: IPC with advanced serialization, deserialize of bun:jsc and node:v8
+feature legacy_encodings TextDecoder for encodings other than UTF-8, UTF-16 and Latin-1
+feature brotli_encoder compression with Brotli
+feature node_zlib the native half of node:zlib
+feature websocket the WebSocket client
+feature webcrypto crypto.subtle, SubtleCrypto and CryptoKey
+feature nodecrypto node:crypto
+feature node_os the native half of node:os
+feature node_fs the native half of node:fs
+feature spawn Bun.spawn and Bun.spawnSync
+feature sockets Bun.listen, Bun.connect and node:net
+feature dns Bun.dns and node:dns
+feature http_parser node:http's own parser (process.binding('http_parser'))
+feature text what turns text and files into code at run time
+feature bundler Bun.build, HTML imports and the development server
+feature zstd compression with zstd
+feature package_files reading package.json and tsconfig.json at run time
+feature mux HTTP/2 and HTTP/3 in Bun.serve
+feature bun_info the /bun:info route of a development server
+feature node_http the native half of node:http's server
+feature serve Bun.serve
+feature profiler the CPU and heap profilers, heap snapshots and code coverage
+feature image Bun.Image
+feature temporal Temporal and Date.prototype.toTemporalInstant
+feature valkey Bun.redis and Bun.RedisClient
+feature s3 reading what an S3 server answers
+feature s3client Bun.s3, Bun.S3Client and s3: URLs
+feature worker Worker and node:worker_threads
+feature structured_clone structuredClone and every other copy of a value by serialization
+feature performance_timeline performance.mark, performance.measure, PerformanceObserver and the entries they make
+feature regexp_properties Unicode property escapes in regular expressions
+feature cookie Bun.Cookie and Bun.CookieMap
+feature glob Bun.Glob
+feature collation Intl.Collator and localeCompare
+feature units units in Intl.NumberFormat, Intl.DurationFormat and toLocaleString
+feature formatting Intl.NumberFormat, Intl.DateTimeFormat, toLocaleString, toLocaleDateString and toLocaleTimeString
+feature brotli_decoder decompression of Brotli
+feature source_maps reading source maps: those inside the executable and node:module's SourceMap
+feature cli_options options given to the executable by --compile-exec-argv or BUN_OPTIONS
+feature bunfig reading bunfig.toml when the executable starts
+feature node_path the native half of node:path
+feature http3 HTTP/3 in Bun.serve and fetch
+feature x509 X509Certificate and KeyObject
+feature tls TLS
+feature fetch fetch and Bun.FetchSession
 door tools exit ^bun_runtime::cli::command::(exec_\w+|bun_info|bun_create|bun_getcompletes|which|tag_print_help)$
 door tools return ^Bun__AOT__hasCompiler$
 door tools return ^Bun__hasTypeChecker$
@@ -14,9 +125,21 @@ door tools exit ^Bun__AOTAudit__installFor$
 door tools exit ^<bun_runtime::cli::run_command::RunCommand>::check_main$
 door tools exit ^bun_runtime::cli::aot_audit::prepare$
 door tools exit ^Bun__BytecodeLinkEncoder__setTypedProgram$
+operations operations_common_data ^operationAOT(Typed(ScanPlainURL|FindPlainQueryValue|DateNow|NewResponse|NewResponseFromResponse|GetRequestOrResponseHeader|CallHeadersMethod|JSONAppendInteger|JSONAppendNumber|JSONAppendElementsFrom|JSONKeyOrdersOf|JSONPrepare|NewJSONResponse))$
+operations operations_common_objects ^operationAOT(Typed(GetFreeVariableForTypeOf|SetByNameSloppy|ThrowIfReadOnly|DefineByName|GetByKey|MakeModuleNamespace|CreateArguments|ObjectEntriesFlat|OwnPropertyDescriptorsUnlessCopied|CopyOwnPropertyDescriptors|PromiseAll|InstanceOfClass|CopyClosureOutOfFrame|CoerceProperty|DidCreateFieldAt|EnforceTypeOrConvert|GetByNameCheckedAsNumber|StoreCreatesField|GetAbsentField|PrivateGetAtSite|PrivateSetAtSite|PrivateHas|DefineGetterByKey|DefineSetterByKey|TryGetByValWithKeyParts|FailModuleCycle|SloppyThis|ForInKeys|HasEnumerableProperty|ListFieldsBelow|PropertyIsEnumerable|ObjectCreate|PromiseCatch)|PutByValAndCacheSloppy|DeleteByValAndCacheSloppy)$
+operations operations_common_containers ^operationAOT(Typed(ArrayPushNumber|ArrayGet|ArrayElementAtNumberAs|NewTypedArray|NewMapInImage|GrowNewArray|ArrayGrow|ArrayIndexOfDouble|ArrayIndexOfInt32|NewArrayWithIndexingType|FindBufferAccessor|MapClear)|MapSetWithStringKey|SetAddWithStringKey)$
+operations operations_common_text ^operationAOT(Typed(StringEq|ConcatenateWithIntegers|RegExpTest|RegExpTestFound|NewRegExp|RegExpSource|StringReplaceString|StringSplitRegExp|FindSeparators8|FindSeparators16|StringUTF8Length8|StringLastIndexOfLiteral|StringReverseFindLiteral8|CharactersToCompareWithLiterals|StringBuilderFlush))$
+operations operations_common_numbers ^operationAOT(Typed(DivNumberAndValueAsNumber|Exp|Neg|BitNot|Pow|PutInNumberBox|PutNumberInNumberBox|BigIntConstant|NewBigInt64)|ValueBitXor|ValueURShift|CompareEqToString)$
+operations operations_rare_classes ^operationAOT(Typed(GetStaticField|SetStaticField|SetByNameInThisStructure|PutLazyClosure|Call|ParkAsyncFunction|SuspendAtFirstAwait|GetExternalModule|ConstructWith|DefineAccessors|InheritsFromClass|InstanceOf|DidCreateField|DidCreateFieldsAt|EnsureStorage|CountClosure|CountPlainAllocation|BarrierSlowPreservingRegisters|CountBranch|ThrowStackOverflow|NewObject|NewObjectWithCapacity|FinishObjectLiteral|CreateThis|CreateThisWithCapacity|TryCreateThisWithStores|AssignThisStructure|DidStoreToThis|IterGet|SuspendAsyncFunction|GetIteratorNext))$
+operations operations_rare_properties ^operationAOT(Typed(ValidateGlobalPermanently|SetFreeVariable|SetFreeVariableSloppy|HasName|DeleteByName|SetByKey|GetExtra|HasExtra|PutExtra|TryAddNamedProperties|CachePropertyRun|CachePropertyLocation)|GetByIdWellKnown)$
+operations operations_rare_text ^operationAOT(Typed(ToLiteralString|FieldEqualsString|ParseInt16|StringToNumber16|RegExpFind|RegExpFlags|StringSearchRegExp|StringAppendBegin|StringAppendMeasure|StringAppendSync|FindLongSeparators8|FindLongSeparators16|StringBuilderFinish))$
+operations operations_rare_data ^operationAOT(Typed(ScanPlainURLWithBase|ScanPlainQuery|FindInPlainQuery|PlainQueryEntries|JSONOpen|JSONDecodeSource|JSONStringAt|JSONNumberAt|JSONIntegerAt|JSONKeyAt|JSONValueAt|JSONSkipValue|JSONSkipMember|JSONGiveUpIfEscaped|JSONGiveUpIfRepeated|JSONParseWithShape|JSONAppendDate))$
+operations operations_rare_copies ^operationAOT(Typed(CloneObjectAndExtendWithNumber|CloneObjectAs|CloneObjectWithSubtypeCheck|TryCopyRecordAs|TryCopyRecordAsAt|TryMergeRecordsAs|TryCloneWithPrototype|AdoptPrototype))$
+operations operations_rare_containers ^operationAOT(Typed(ElementOrEmpty|TryMapOrSetLookupWithKeyParts|ArrayPut|TypedArrayIteratorOpen|TypedArrayIteratorHasNext|TypedArrayPut|TryNewMapWithStringKeys|NewArrayEntries|MapKeyAt|MapValueAt|SetKeyAt|ConstantTableHas|ConstantTableGet)|NewArray)$
+operations operations_rare_casts ^operationAOT(Typed(CoerceInPlace|CoerceElement|AuditCoerce|EnforceType|RecordTypeMismatch|AssertionFailed|StoreAssertionFailed|ThrowReachedUnreachable|CheckKnownSlot|SetExpectedRowType|TryConvertRow))$
+operations operations_rare_numbers ^operationAOT(Typed(Add|MulNumberAndValueAsNumber|Sub|Mul|Div|Mod|BitAnd|BitOr|BitXor|Shl|Shr|Ushr|Less|LessEq|Greater|GreaterEq|StrictEq|LooseEq|Truthy|MathSin|MathSinh|MathCos|MathCosh|MathTan|MathTanh|MathASin|MathASinh|MathACos|MathACosh|MathATan|MathATanh|MathLog|MathLog10|MathLog2|MathCbrt|MathExp|MathExpm1|MathLog1p|MathATan2|MathHypot|MathHypot3|MathF16Round)|ValuePow)$
 door jit return ^Bun__installCompilers$
 door jit exit ^JSC::hostFunctionStubWithThunk\(
-feature text what turns text and files into code at run time
 when text world open
 when text Bun Transpiler
 when text Bun FileSystemRouter
@@ -24,7 +147,7 @@ when text Bun plugin
 when text module bun:test
 when text native bun:test
 when text module bun:internal-for-testing
-smallest text 2000000
+smallest text 700000
 door text return ^Bun__loadsModulesAtRunTime$
 door text exit ^Bun__transpileVirtualModule$
 door text exit ^Bun__AOT__functionSourceInFile$
@@ -57,10 +180,10 @@ door text exit ^Bun::generateInternalModuleFromText\(
 door text return ^Bun__textOfBuiltinFunctions$
 door text return ^JSC::textOfBuiltinFunctions\(\)$
 door text exit ^Bun::jsInternalModuleBytecode\(
-feature bundler Bun.build, HTML imports and the development server
 when bundler Bun build
 when bundler loader html
-smallest bundler 1000000
+when bundler Bun serve
+smallest bundler 450000
 door bundler return ^Bun__hasBundler$
 door bundler exit ^<*bun_runtime::bake::(?!dev_server::http::(is_allowed_|host_without_port))
 door bundler exit ^<*bun_runtime::server::html_bundle::
@@ -70,19 +193,16 @@ door bundler exit ^<*bun_bundler::(bundle_v2|linker_context|HTMLScanner|Chunk|ch
 door bundler exit ^BunObject_callback_build$
 door bundler exit ^BunServe__on(Resolve|Reject)Plugins$
 door bundler exit ^WebCore::JS(HTMLBundle|FrameworkFileSystemRouter|BuildArtifact)::create(Prototype|Structure|Constructor)\(
-feature color Bun.color
 when color Bun color
 door color exit ^BunObject_callback_color$
-feature htmlrewriter HTMLRewriter
 when htmlrewriter global HTMLRewriter
-smallest htmlrewriter 100000
+smallest htmlrewriter 20000
 door htmlrewriter exit ^<?<?bun_runtime::api::html_rewriter::
 door htmlrewriter exit ^core::ptr::drop_glue::<(alloc::boxed::Box<)?bun_runtime::api::html_rewriter::
 door htmlrewriter exit ^Bun__HTMLRewriter__
 door htmlrewriter exit ^HTMLRewriterSink__
 door htmlrewriter exit ^WebCore::(HTMLRewriterSink__|JS(Readable)?HTMLRewriterSink)
 door htmlrewriter exit ^WebCore::JS(HTMLRewriter|HTMLRewriterTransform|TextChunk|DocType|DocEnd|Comment|EndTag|AttributeIterator|Element)::create(Prototype|Structure|Constructor)\(
-feature image Bun.Image
 when image Bun Image
 when image property image
 smallest image 200000
@@ -90,7 +210,6 @@ door image exit ^<*bun_runtime::image::
 door image exit ^BunObject_lazyPropCb_wrap_Image\(
 door image exit ^BlobPrototype__doImage$
 door image exit ^WebCore::JSImage::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
-feature sqlite bun:sqlite and node:sqlite
 when sqlite module bun:sqlite
 when sqlite module node:sqlite
 when sqlite native node:sqlite
@@ -104,12 +223,10 @@ door sqlite exit ^Bun::JS(DatabaseSync|StatementSync|StatementSyncIterator|NodeS
 door sqlite exit ^VersionSqlite3::
 door sqlite exit ^Bun__sqliteCheckpointForTermination$
 door sqlite exit ^sqlite3_(busy_timeout|close_v2|wal_checkpoint_v2)$
-feature webassembly WebAssembly
 when webassembly global WebAssembly
 when webassembly module node:wasi
 when webassembly loader wasm
 smallest webassembly 200000
-door webassembly return ^Bun__hasWebAssembly$
 door webassembly exit ^JSC::createWebAssemblyProperty\(
 door webassembly exit ^JSC::(JS)?WebAssembly(?!StreamingContext::createStructure|Instance::destroy)\w*::
 door webassembly exit ^JSC::webAssembly\w+\(
@@ -129,19 +246,17 @@ door webassembly exit ^Zig::(handleResponseOnStreamingAction|GlobalObject::(comp
 door webassembly exit ^JSC__Wasm__StreamingCompiler__addBytes$
 door webassembly exit ^<*bun_runtime::webcore::wasm_streaming::
 door webassembly exit ^Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming$
-feature inspector the debugger and node:inspector
 when inspector module node:inspector
 when inspector module node:inspector/promises
 when inspector native bun:jsc
 smallest inspector 120000
-door inspector exit ^Inspector::(?!(\w+)::~?\1\(|(AgentRegistry|FrontendRouter|ScriptArguments|RemoteControllableTarget|RemoteInspectionTarget|RemoteAutomationTarget)::|RemoteInspector::(singleton|start|registerTarget|unregisterTarget|updateTarget\w*|pushListingsSoon|listingFor\w+|nextAvailableTargetIdentifier)\(|Socket::init\(|createScriptArguments\(|JSGlobalObjectInspectorController::(globalObjectDestroyed|consoleClient)\(|(Console)?BackendDispatcher::create\(|InjectedScriptHost::(create|clearAllWrappers)\(|InjectedScriptManager::(disconnect|discardInjectedScripts)\(|InspectorConsoleAgent::discardValues\(|\w+::\w*[cC]heckedPtr)
+door inspector exit ^Inspector::(?!(\w+)::~?\1\(|(AgentRegistry|FrontendRouter|ScriptArguments|RemoteControllableTarget|RemoteInspectionTarget|RemoteAutomationTarget)::|RemoteInspector::(singleton|start|registerTarget|unregisterTarget|updateTarget\w*|pushListingsSoon|listingFor\w+|nextAvailableTargetIdentifier)\(|Socket::init\(|createScriptArguments\(|JSGlobalObjectInspectorController::(globalObjectDestroyed|consoleClient|jsAgentContext)\(|(Console)?BackendDispatcher::create\(|BackendDispatcher::registerDispatcherForDomain\(|InjectedScriptHost::(create|clearAllWrappers)\(|PerGlobalObjectWrapperWorld::clearAllWrappers\(|InjectedScriptManager::(disconnect|discardInjectedScripts)\(|InspectorConsoleAgent::discardValues\(|\w+::\w*[cC]heckedPtr)
 door inspector exit ^JSC::(Debugger|DebuggerCallFrame|DebuggerScope|DebuggerPausePositions|DebuggerParseData|Breakpoint)::
 door inspector exit ^<*bun_jsc::debugger::(?!(AsyncTaskTracker|DispatchScope)\b)
 door inspector exit ^Bun::BunInspectorConnection::
 door inspector exit ^Bun__startJSDebuggerThread$
 door inspector exit ^Bun::jsFunction\w*NodeInspector\w*\(
 door inspector exit ^functionStartRemoteDebugger\(
-feature profiler the CPU and heap profilers, heap snapshots and code coverage
 when profiler native bun:jsc
 when profiler module node:inspector
 when profiler module node:inspector/promises
@@ -149,7 +264,7 @@ when profiler module node:v8
 when profiler Bun generateHeapSnapshot
 when profiler console takeHeapSnapshot
 smallest profiler 60000
-door profiler exit ^JSC::(SamplingProfiler|HeapProfiler|HeapSnapshot|HeapSnapshotBuilder|BunV8HeapSnapshotBuilder|Profiler|TypeProfiler|TypeProfilerLog|ControlFlowProfiler|FunctionHasExecutedCache)::
+door profiler exit ^JSC::(SamplingProfiler|HeapProfiler|HeapSnapshot|HeapSnapshotBuilder|BunV8HeapSnapshotBuilder|Profiler|TypeProfiler|TypeProfilerLog|ControlFlowProfiler|FunctionHasExecutedCache)::(?!~?FunctionHasExecutedCache\()
 door profiler exit ^Bun__stopCPUProfiler$
 door profiler exit ^Bun::startCPUProfiler\(
 door profiler exit ^<*bun_jsc::bun_(cpu|heap)_profiler::
@@ -159,7 +274,6 @@ door profiler exit ^Bun::functionGenerateHeapSnapshot\(
 door profiler exit ^Bun__ConsoleObject__takeHeapSnapshot$
 door profiler exit ^WebCore::jsWorkerPrototypeFunction_(startCpuProfile|stopCpuProfile|getHeapSnapshot)\w*\(
 door profiler exit ^function(RunProfiler|StartSamplingProfiler|SamplingProfilerStackTraces|GenerateHeapSnapshotForDebugging|CodeCoverageForFile)\(
-feature zstd compression with zstd
 when zstd Bun zstdCompress
 when zstd Bun zstdCompressSync
 when zstd native node_zlib_binding.rs:NativeZstd
@@ -169,9 +283,8 @@ when zstd Bun fetch
 when zstd Bun FetchSession
 when zstd Bun build
 when zstd loader html
-smallest zstd 120000
+smallest zstd 100000
 door zstd exit ^ZSTD_(compress|compressBound|compressStream2|createCCtx|freeCCtx|CCtx_(loadDictionary|reset|setParameter|setPledgedSrcSize))$
-feature archive Bun.Archive
 smallest archive 0
 when archive Bun Archive
 when archive native pack_command.rs:bindings.jsReadTarball
@@ -179,31 +292,26 @@ door archive exit ^<*bun_runtime::api::archive::
 door archive exit ^BunObject_lazyPropCb_wrap_Archive\(
 door archive exit ^WebCore::JSArchive::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
 door archive exit ^JS2Rust___src_runtime_cli_pack_command_rs__bindings_jsReadTarball$
-feature json5 Bun.JSON5
 smallest json5 0
 when json5 Bun JSON5
 door json5 exit ^Bun::Bindgen::Generated::JSON5Object::createJSON5\(
-feature yaml Bun.YAML
 smallest yaml 0
 when yaml Bun YAML
 door yaml exit ^Bun::Bindgen::Generated::YAMLObject::createYAML\(
-feature markdown Bun.markdown
 smallest markdown 0
 when markdown Bun markdown
 door markdown exit ^BunObject_lazyPropCb_wrap_markdown\(
-feature toml Bun.TOML
 smallest toml 0
 when toml Bun TOML
 door toml exit ^Bun::Bindgen::Generated::TOMLObject::createTOML\(
-feature bunfig reading bunfig.toml when the executable starts
 smallest bunfig 0
 when bunfig autoload bunfig
+when bunfig option compile-exec-argv
+when bunfig environment BUN_OPTIONS
 door bunfig exit ^<bun_bunfig::bunfig::Bunfig>::parse$
-feature xml Bun.XML
 smallest xml 0
 when xml Bun XML
 door xml exit ^Bun::Bindgen::Generated::XMLObject::createXML\(
-feature s3 reading what an S3 server answers
 smallest s3 0
 when s3 Bun s3
 when s3 Bun S3Client
@@ -215,7 +323,6 @@ when s3 Bun FetchSession
 door s3 exit ^bun_runtime::webcore::__s3_list_objects::parse_s3_list_objects_result$
 door s3 exit ^<bun_runtime::webcore::__s3_multipart::MultiPartUpload>::start_multi_part_request_result$
 door s3 exit ^bun_runtime::webcore::__s3_xml_response::parse_error$
-feature brotli_encoder compression with Brotli
 smallest brotli_encoder 0
 when brotli_encoder native node_zlib_binding.rs:NativeBrotli
 when brotli_encoder global CompressionStream
@@ -223,7 +330,6 @@ when brotli_encoder global fetch
 when brotli_encoder Bun fetch
 when brotli_encoder Bun FetchSession
 door brotli_encoder exit ^BrotliEncoder(AttachPreparedDictionary|Compress|CompressStream|CreateInstance|DestroyInstance|DestroyPreparedDictionary|MaxCompressedSize|PrepareDictionary|SetParameter)$
-feature brotli_decoder decompression of Brotli
 smallest brotli_decoder 0
 when brotli_decoder native node_zlib_binding.rs:NativeBrotli
 when brotli_decoder global DecompressionStream
@@ -235,12 +341,10 @@ when brotli_decoder Bun S3Client
 when brotli_decoder Bun file
 when brotli_decoder Bun write
 door brotli_decoder exit ^BrotliDecoder(AttachDictionary|CreateInstance|DecompressStream|DestroyInstance|ErrorString|HasMoreOutput|SetParameter)$
-feature compression_streams CompressionStream and DecompressionStream
 smallest compression_streams 0
 when compression_streams global CompressionStream
 when compression_streams global DecompressionStream
 door compression_streams exit ^CompressionStreamCoder__(create|destroy|transform|transformInto|transformAsync)$
-feature libdeflate_compressor gzip and deflate compression in one call
 smallest libdeflate_compressor 0
 when libdeflate_compressor Bun gzipSync
 when libdeflate_compressor Bun deflateSync
@@ -249,7 +353,6 @@ when libdeflate_compressor global fetch
 when libdeflate_compressor Bun fetch
 when libdeflate_compressor Bun FetchSession
 door libdeflate_compressor exit ^libdeflate_(alloc_compressor|free_compressor|(deflate|gzip|zlib)_compress(_bound)?)$
-feature node_zlib the native half of node:zlib
 smallest node_zlib 0
 when node_zlib native node_zlib_binding.rs:NativeZlib
 when node_zlib native node_zlib_binding.rs:NativeBrotli
@@ -258,7 +361,6 @@ door node_zlib exit ^Native(Zlib|Brotli|Zstd)__getConstructor$
 door node_zlib exit ^<*bun_runtime::node::(native_zlib_impl|native_brotli_impl|native_zstd_impl|node_zlib_binding)::
 door node_zlib exit ^WebCore::JSNative(Zlib|Brotli|Zstd)::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
 
-feature napi native addons: N-API and the V8 and libuv symbols
 when napi loader napi
 when napi process dlopen
 when napi module bun:ffi
@@ -270,7 +372,6 @@ door napi exit ^Bun::NapiHandleScopeImpl::(destroy|visitChildren)\(
 door napi exit ^Zig::NapiClass::
 door napi exit ^NapiEnv::~NapiEnv\(
 door napi exit ^v8::shim::GlobalInternals\* JSC::LazyProperty<
-feature ffi bun:ffi and its C compiler
 when ffi module bun:ffi
 when ffi Bun FFI
 smallest ffi 20000
@@ -288,11 +389,10 @@ door ffi exit ^Bun__CreateJSCFFI(Function|Callback)$
 door ffi exit ^WebCore::JSFFI::create(Prototype|Structure|Constructor)\(
 door ffi exit ^Bun::JSFFICStringConstructor::create\(
 door ffi exit ^FFI(Prototype|Class)?__
-feature test bun:test: expect, its matchers, mocks and the snapshot printer
 when test native bun:test
 when test Bun jest
 when test module node:test
-smallest test 120000
+smallest test 100000
 door test exit ^<*bun_runtime::test_runner::(?!timers::)
 door test exit ^_R\w*11bun_runtime11test_runner(?!6timers)
 door test exit ^(Expect\w*|ScopeFunctions|DoneCallback)(Prototype|Class)__
@@ -300,7 +400,6 @@ door test exit ^WebCore::JS(Expect\w*|ScopeFunctions|DoneCallback)::create(Proto
 door test exit ^Bun__Jest__
 door test exit ^BunObject_callback_jest$
 door test exit ^JSC::\w+\* JSC::LazyProperty<JSC::JSGlobalObject, JSC::\w+>::callFunc<Bun::JSMockModule::create\(
-feature shell Bun.$, the shell
 when shell Bun $
 when shell loader sh
 when shell module bun:internal-for-testing
@@ -315,7 +414,6 @@ door shell exit ^_R\w*16bun_shell_parser
 door shell exit ^__bun_dispatch__ProcessExit__Shell__
 door shell exit ^WebCore::JS(ShellInterpreter|ParsedShellScript)::create(Prototype|Structure|Constructor)\(
 door shell exit ^(ShellInterpreter|ParsedShellScript)(Prototype|Class)__
-feature intl Intl.DisplayNames, ListFormat, Locale, PluralRules, RelativeTimeFormat, Segmenter, getCanonicalLocales and supportedValuesOf
 when intl global Intl
 smallest intl 30000
 door intl exit ^JSC::create(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter)Constructor\(JSC::VM&, JSC::JSObject\*\)
@@ -326,32 +424,48 @@ door intl exit ^JSC::intlObjectFunc
 data tools \.(cnv|spp|cfu)$
 data tools ^(cnvalias|unames)\.icu$
 data tools ^translit/
+data tools ^nfkc_scf\.nrm$
+data tools ^windowsZones\.res$
 data text ^coll/(ucadata\.icu|(res_index|root|en|en_US)\.res)$
 data bundler ^coll/(ucadata\.icu|(res_index|root|en|en_US)\.res)$
 data intl ^brkitr/
-feature collation Intl.Collator and localeCompare
 when collation global Intl
 when collation property localeCompare
 smallest collation 0
-door collation exit ^JSC::IntlCollator::initializeCollator\(
+door collation exit ^JSC::IntlCollator(Prototype|Constructor)?::(?!destroy\()
+door collation exit ^JSC::intlCollator\w*\(
+door collation exit ^JSC::(construct|call)IntlCollator\(
+door collation exit ^JSC::createCollatorConstructor\(JSC::VM&, JSC::JSObject\*\)
+door collation exit ^JSC::stringProtoFuncLocaleCompare\(
+door collation exit ^operation(AOTTyped)?StringLocaleCompare$
+door collation exit ^JSC::JSGlobalObject::cachedLocaleCompareCollator\(
 data collation ^coll/
-feature units units in Intl.NumberFormat, Intl.DurationFormat and toLocaleString
 when units global Intl
 when units property toLocaleString
 data units ^unit/
 data units ^(units|grammaticalFeatures)\.res$
-feature formatting Intl.NumberFormat, Intl.DateTimeFormat, toLocaleString, toLocaleDateString and toLocaleTimeString
 when formatting global Intl
 when formatting property toLocaleString
 when formatting property toLocaleDateString
 when formatting property toLocaleTimeString
 smallest formatting 0
-door formatting exit ^JSC::Intl(NumberFormat::initializeNumberFormat|DateTimeFormat::initializeDateTimeFormat)\(
+door formatting exit ^JSC::Intl(NumberFormat|DateTimeFormat|DurationFormat)(Prototype|Constructor)?::(?!destroy\(|~)
+door formatting exit ^JSC::intl(NumberFormat|DateTimeFormat|DurationFormat)\w*\(
+door formatting exit ^JSC::(construct|call)Intl(NumberFormat|DateTimeFormat|DurationFormat)\(
+door formatting exit ^JSC::create(NumberFormat|DateTimeFormat|DurationFormat)Constructor\(JSC::VM&, JSC::JSObject\*\)
+door formatting exit ^JSC::(number|bigInt|date)ProtoFuncToLocale(Date|Time)?String\(
+door formatting exit ^JSC::temporal\w+PrototypeFuncToLocaleString\(
+door formatting exit ^JSC::JSGlobalObject::cachedToLocaleStringNumberFormat\(
+door formatting exit ^operationAOTTyped\w*Format\w*$
+door formatting exit ^icu_\d+::TimeZoneFormat::(format|parse|parseObject|clone|operator==)\(
+door formatting exit ^JSC::UNumber(Range)?FormatterDeleter::operator\(\)\(
 data formatting ^(curr|lang|region|rbnf)/
 data formatting ^zone/(?!(root|pool|en)\.res$)
 data formatting ^(?!(en|en_US|res_index)\.res$)[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
 data formatting ^(currencyNumericCodes|dayPeriods|genderList|plurals|pluralRanges)\.res$
-feature nodequic node:quic
+windows-keeps ^zone/
+windows-keeps ^windowsZones\.res$
+windows-keeps ^[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
 smallest nodequic 0
 when nodequic module node:quic
 when nodequic native node_quic_binding.rs:createNodeQuicBinding
@@ -361,7 +475,6 @@ door nodequic exit ^Quic(Endpoint|Session|Stream)(Prototype|Class)__
 door nodequic exit ^WebCore::JSQuic(Endpoint|Session|Stream)::create(Prototype|Structure|Constructor)\(
 door nodequic exit ^us_nq_
 door nodequic exit ^Bun__nodeQuic__
-feature http3 HTTP/3 in Bun.serve and fetch
 smallest http3 0
 when http3 Bun serve
 when http3 global fetch
@@ -373,13 +486,11 @@ door http3 exit ^us_quic_
 door http3 exit ^us_create_quic_
 door http3 exit ^<*bun_uws_sys::(h3|quic)::
 door http3 exit ^<*bun_http::h3_client::
-feature nodehttp2 node:http2
 smallest nodehttp2 0
 when nodehttp2 native h2_frame_parser.rs:H2FrameParserConstructor
 door nodehttp2 exit ^WebCore::JSH2FrameParser::create(Prototype|Structure|Constructor)\(
 door nodehttp2 exit ^H2FrameParser(Prototype|Class)__
 door nodehttp2 exit ^<*bun_runtime::api::(h2_frame_parser_body|h2)::
-feature mux HTTP/2 and HTTP/3 in Bun.serve
 smallest mux 0
 when mux Bun serve
 door mux exit ^uws_h2_(?!res_is_closed$|res_write_continue$)
@@ -387,7 +498,6 @@ door mux exit (^| )uWS::(Http2|H2)\w*::
 door mux exit ^<*bun_uws_sys::h2::
 door mux exit ^Bun__HTTPRequestContext(Debug)?Mux(TLS)?__
 door mux exit ^<bun_runtime::server::request_context::RequestContext<bun_runtime::server::NewServer<(true|false), (true|false)>, (true|false), (true|false), true>>::(?!render_metadata_corked$)
-feature valkey Bun.redis and Bun.RedisClient
 smallest valkey 0
 when valkey Bun redis
 when valkey Bun RedisClient
@@ -397,7 +507,6 @@ door valkey exit ^RedisClient(Prototype|Class)__
 door valkey exit ^<*bun_runtime::valkey_jsc::
 door valkey exit ^<*bun_valkey::
 door valkey exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::NsHandler<bun_runtime::valkey_jsc::
-feature sql Bun.sql and Bun.SQL for PostgreSQL and MySQL
 smallest sql 0
 when sql Bun sql
 when sql Bun SQL
@@ -410,7 +519,6 @@ door sql exit ^(PostgresSQLConnection|PostgresSQLQuery|MySQLConnection|MySQLQuer
 door sql exit ^<*bun_sql_jsc::
 door sql exit ^<*bun_sql::
 door sql exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::NsHandler<bun_sql_jsc::
-feature s3client Bun.s3, Bun.S3Client and s3: URLs
 when s3client Bun file
 when s3client Bun write
 smallest s3client 0
@@ -426,15 +534,12 @@ door s3client exit ^JSS3File__
 door s3client exit ^<*bun_runtime::webcore::(s3_client|s3_file|s3_stat|__s3_\w+)::
 door s3client exit ^<bun_jsc::webcore_types::store::S3 as bun_runtime::webcore::blob::store::S3Ext>::
 door s3client exit ^<*bun_s3_signing::
-feature csrf Bun.CSRF
 smallest csrf 0
 when csrf Bun CSRF
 door csrf exit ^Bun::Bindgen::Generated::CsrfJsc::createCSRF\(
-feature password Bun.password
 smallest password 0
 when password Bun password
 door password exit ^Bun::Bindgen::Generated::PasswordObject::createPassword\(
-feature hashers Bun.sha and Bun.MD4 to Bun.SHA512_256
 smallest hashers 0
 when hashers Bun sha
 when hashers Bun MD4
@@ -448,13 +553,11 @@ when hashers Bun SHA512_256
 door hashers exit ^BunObject_lazyPropCb_wrap_(MD4|MD5|SHA1|SHA224|SHA256|SHA384|SHA512|SHA512_256)\(
 door hashers exit ^BunObject_callback_sha$
 door hashers exit ^WebCore::JS(MD4|MD5|SHA1|SHA224|SHA256|SHA384|SHA512|SHA512_256)::create(Prototype|Structure|Constructor)\(
-feature cryptohasher Bun.CryptoHasher
 smallest cryptohasher 0
 when cryptohasher Bun CryptoHasher
 when cryptohasher module node:crypto
 door cryptohasher exit ^BunObject_lazyPropCb_wrap_CryptoHasher\(
 door cryptohasher exit ^WebCore::JSCryptoHasher::create(Prototype|Structure|Constructor)\(
-feature websocket the WebSocket client
 smallest websocket 0
 when websocket global WebSocket
 when websocket native JSWebSocket.cpp:createWebSocketBindingForWs
@@ -469,7 +572,6 @@ door websocket exit ^WebCore::(jsWebSocket|setJSWebSocket)
 door websocket exit ^WebSocket__
 door websocket exit ^<*bun_http_jsc::websocket_client::
 door websocket exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::RawPtrHandler<bun_http_jsc::websocket_client::
-feature dns Bun.dns and node:dns
 smallest dns 0
 when dns Bun dns
 when dns module node:dns
@@ -482,7 +584,6 @@ door dns exit ^DNSResolver(Prototype|Class)__
 door dns exit ^<*bun_runtime::dns_jsc::dns_body::(Resolver|ResolveInfoRequest|CAres\w+|Get\w+Request|DNSLookup)[>:]
 door dns exit ^<*bun_runtime::dns_jsc::cares_jsc::ErrorDeferred
 door dns exit ^ares_(process_fd|destroy)$
-feature webcrypto crypto.subtle, SubtleCrypto and CryptoKey
 smallest webcrypto 0
 when webcrypto global crypto
 when webcrypto global Crypto
@@ -494,7 +595,6 @@ door webcrypto exit ^WebCore::SubtleCrypto::SubtleCrypto\(
 door webcrypto exit ^WebCore::toJS\(JSC::JSGlobalObject\*, Zig::GlobalObject\*, WebCore::SubtleCrypto&\)
 door webcrypto exit ^WebCore::CloneSerializer::write\(WebCore::CryptoKey const\*\)
 door webcrypto return ^WebCore::CloneDeserializer::readCryptoKey\(
-feature nodecrypto node:crypto
 smallest nodecrypto 0
 when nodecrypto module node:crypto
 when nodecrypto native node_crypto_binding.cpp:createNodeCryptoBinding
@@ -502,7 +602,6 @@ when nodecrypto native node_crypto_binding.rs:createNodeCryptoBindingZig
 door nodecrypto exit ^Bun::createNodeCryptoBinding\(
 door nodecrypto exit ^JS2Rust___src_runtime_node_node_crypto_binding_rs__createNodeCryptoBindingZig_workaround$
 door nodecrypto exit ^Bun::setup(CipherClassStructure|DiffieHellmanClassStructure|DiffieHellmanGroupClassStructure|ECDHClassStructure|JSHashClassStructure|JSHmacClassStructure|JSSignClassStructure|JSVerifyClassStructure)\(
-feature fetch fetch and Bun.FetchSession
 when fetch Bun file
 when fetch Bun write
 smallest fetch 0
@@ -516,9 +615,8 @@ door fetch exit ^Bun::constructBunFetchObject\(
 door fetch exit ^BunObject_lazyPropCb_wrap_FetchSession\(
 door fetch exit ^WebCore::JSFetchSession::create(Prototype|Structure|Constructor)\(
 door fetch exit ^<*bun_runtime::webcore::fetch::
-door fetch exit ^<*bun_http::(?!ssl_config::|error::|header_value_iterator::|async_http::load_env$|http_thread::shutdown_for_exit$|h3_client::)
+door fetch exit ^<*bun_http::(?!ssl_config::|error::|header_value_iterator::|headers::|lshpack::|websocket::|async_http::(load_env|breaks_header_line)$|http_thread::shutdown_for_exit$|h3_client::|(write_connect_request|normalize_idle_timeout_seconds|strip_ipv6_brackets|configure_http_client_with_alpn|header_has_token|fold_transfer_encoding|is_successful_connect_status|(set_)?max_http_header_size|(set_)?insecure_http_parser)$)
 door fetch exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::HTTPClient<(true|false)>>>::
-feature x509 X509Certificate and KeyObject
 smallest x509 0
 when x509 module node:crypto
 when x509 native node_crypto_binding.cpp:createNodeCryptoBinding
@@ -557,7 +655,6 @@ door x509 exit ^Bun::setup(X509CertificateClassStructure|AsymmetricKeyObjectProt
 door x509 exit ^WebCore::CloneDeserializer::read(KeyObject|X509Certificate)\(
 door x509 exit ^Bun::JSX509Certificate::
 door x509 exit ^Bun::JS(KeyObject|PublicKeyObject|PrivateKeyObject|SecretKeyObject)::(?!finishCreation)
-feature tls TLS
 smallest tls 0
 when tls Bun serve
 when tls Bun listen
@@ -595,9 +692,9 @@ door tls exit ^us_socket_(adopt_tls|alpn_is_h2|on_server_name|release_held_fligh
 door tls exit ^us_listen_socket_(add_server_name|find_server_name_ctx|on_server_name|set_default_ssl_ctx)$
 door tls exit ^us_get_(default_ca_store|shared_default_ca_store|default_ciphers|root_extra_cert_instances|root_system_certs)
 door tls exit ^(us_bundled_root_certs_der|us_x509_verify_cert|sni_add|sni_find|sni_free|sni_new)$
-door tls exit ^(SSL|SSL_CTX|SSL_SESSION|DTLS)_\w+$
+door tls exit ^(?!SSL_library_init$)(SSL|SSL_CTX|SSL_SESSION|DTLS)_\w+$
 door tls exit ^<*bun_uws::ssl_wrapper::
-door tls exit ^<*bun_runtime::api::bun_(secure_context|ssl_context_cache)::
+door tls exit ^<*bun_runtime::api::bun_(secure_context|ssl_context_cache)::(?!SSLContextCache as core::ops::drop::Drop>::drop$)
 door tls exit ^<*bun_runtime::socket::(system_certs|upgraded_duplex|bundled_root_certs|cert_files)::
 door tls exit ^<*bun_runtime::socket::socket_body::(tls_socket_functions::|js_upgrade_duplex_to_tls|DuplexUpgradeContext|select_alpn_callback)
 door tls exit ^<bun_runtime::socket::socket_body::NewSocket<true>>::
@@ -612,14 +709,14 @@ door tls exit ^<bun_runtime::server::request_context::RequestContext<bun_runtime
 door tls exit (^| )uWS::(TemplatedApp|HttpContext|HttpResponse|AsyncSocket|HttpContextData|HttpResponseData)<true>::
 door tls exit (^| )uWS::(WebSocket|WebSocketContext)<true, (true|false), void\*>::
 door tls exit ^void Bun::write(AutoHeaders|FetchHeadersToUWSResponse|ResponseHeader)<true[,>]
-door tls exit ^<*bun_boringssl::
+door tls exit ^bun_boringssl::(ssl_ctx_setup|check_x509_server_identity|write_server_identity_mismatch_reason|check_server_identity|server_identity_mismatch_message|server_identity)($|::)
 door tls exit ^Bun::(getBundledRootCertificates|getExtraCACertificates|getSystemCACertificates|loadExtraCACertificates|parseCACertificates|selectServerName)\(
 door tls exit ^Bun__(get|set)TLSDefaultCiphers$
 door tls exit ^JS2Rust___src_runtime_socket_(Listener_rs__jsAddServerName|Listener_rs__jsSetSecureContext|socket_rs__jsUpgradeDuplexToTLS|socket_rs__jsUpgradeTLSDeferred|socket_rs__jsFirstFlightBeforeFin|socket_rs__jsReleaseHeldFlight|socket_rs__jsCheckServerIdentityInHandshake)$
 door tls exit ^JS2Rust___src_runtime_api_bun_SecureContext_rs__jsLiveCount$
 door tls exit ^us_dispatch_(new_session|server_identity)$
-smallest tools 20000000
-smallest jit 3000000
+smallest tools 9000000
+smallest jit 600000
 door tools exit ^<*bun_runtime::cli::(filter_run|multi_run)::
 door tools exit ^__bun_dispatch__ProcessExit__(FilterRunHandle|MultiRunHandle)__
 door tools exit ^bun_runtime::cli::help_command::exec_with_reason$
@@ -629,7 +726,6 @@ door shell exit ^<*bun_runtime::node::fs::_async_tasks::NewAsyncCpTask<true>
 door bundler exit ^<*std::sync::once::Once>::call_once::?<bun_resolver::node_fallbacks::init_modules>
 door bundler exit ^bun_resolver::node_fallbacks::(init_modules|contents_from_path)$
 door bundler exit ^bun_resolver::resolver::primary_side_effects$
-feature testing bun:internal-for-testing
 smallest testing 0
 when testing module bun:internal-for-testing
 when testing module internal:test/binding
@@ -641,7 +737,6 @@ door testing exit ^Bun::(createIsolatedModuleCacheSourceTypeForTesting|createJSC
 door testing exit ^(Bun__highwayStringsForTesting|Bun__xxhash3_64_forTesting)$
 door testing exit ^Zig::createNativeFrameForTesting\(
 door testing exit ^WebCore::jsFunctionStructuredCloneAdvanced\(
-feature cron Bun.cron
 smallest cron 0
 when cron Bun cron
 door cron exit ^BunObject_lazyPropCb_wrap_cron\(
@@ -649,17 +744,14 @@ door cron exit ^(WebCore::)?CronJob(Prototype|Class)__
 door cron exit ^WebCore::JSCronJob::create(Prototype|Structure|Constructor)\(
 door cron exit ^Bun__CronJob__
 door cron exit ^<*bun_runtime::api::cron::
-feature fsrouter Bun.FileSystemRouter
 smallest fsrouter 0
 when fsrouter Bun FileSystemRouter
 door fsrouter exit ^BunObject_lazyPropCb_wrap_FileSystemRouter\(
 door fsrouter exit ^(WebCore::)?(FileSystemRouter|MatchedRoute)(Prototype|Class)__
 door fsrouter exit ^WebCore::JS(FileSystemRouter|MatchedRoute)::create(Prototype|Structure|Constructor)\(
-feature node_assert the diff that node:assert prints
 smallest node_assert 0
 when node_assert native node_assert_binding.rs:generate
 door node_assert exit ^JS2Rust___src_runtime_node_node_assert_binding_rs__
-feature udp Bun.udpSocket and node:dgram
 smallest udp 0
 when udp Bun udpSocket
 when udp module node:dgram
@@ -671,7 +763,6 @@ door udp exit ^JS2Rust___src_runtime_socket_udp_socket_rs__
 door udp exit ^(WebCore::)?UDPSocket(Prototype|Class)__
 door udp exit ^WebCore::JSUDPSocket::create(Prototype|Structure|Constructor)\(
 door udp exit ^<*bun_runtime::socket::udp_socket\w*::
-feature terminal Bun.Terminal
 smallest terminal 0
 when terminal Bun Terminal
 when terminal Bun spawn
@@ -680,14 +771,12 @@ door terminal exit ^BunObject_lazyPropCb_wrap_Terminal\(
 door terminal exit ^(WebCore::)?Terminal(Prototype|Class)__
 door terminal exit ^WebCore::JSTerminal::create(Prototype|Structure|Constructor)\(
 door terminal exit ^<*bun_runtime::api::bun_terminal\w*::
-feature glob Bun.Glob
 smallest glob 0
 when glob Bun Glob
 door glob exit ^BunObject_lazyPropCb_wrap_Glob\(
 door glob exit ^(finishGlobPrototypeCreation|constructGlob|jsGlobPrototypeFunction_\w+)\(
 door glob exit ^Bun::Bindgen::JSWrapper<Bun::Bindgen::Generated::GlobTraits>::createStructure\(
 door glob exit ^Bun__Bindgen__Glob(Class|Prototype)?__
-feature spawn Bun.spawn and Bun.spawnSync
 smallest spawn 0
 when spawn Bun spawn
 when spawn Bun spawnSync
@@ -696,7 +785,6 @@ door spawn exit ^(WebCore::)?(Subprocess|ResourceUsage)(Prototype|Class)__
 door spawn exit ^WebCore::JS(Subprocess|ResourceUsage)::create(Prototype|Structure|Constructor)\(
 door spawn exit ^<*bun_runtime::api::(bun_subprocess|js_bun_spawn_bindings)::
 door spawn exit ^__bun_dispatch__ProcessExit__Subprocess__
-feature sockets Bun.listen, Bun.connect and node:net
 smallest sockets 0
 when sockets Bun listen
 when sockets Bun connect
@@ -710,7 +798,6 @@ door sockets exit ^JS2Rust___src_runtime_socket_socket_rs__js(GetBufferedAmount|
 door sockets exit ^(WebCore::)?(TCPSocket|Listener)(Prototype|Class)__
 door sockets exit ^WebCore::JS(TCPSocket|Listener)::create(Prototype|Structure|Constructor)\(
 door sockets exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::(BunListener<false>|RawPtrHandler<bun_runtime::socket::socket_body::NewSocket<false>, false>)>>::
-feature node_fs the native half of node:fs
 smallest node_fs 0
 when node_fs native node_fs_binding.rs:createBinding
 door node_fs exit ^JS2Rust___src_runtime_node_node_fs_binding_rs__
@@ -718,26 +805,21 @@ door node_fs exit ^NodeJSFS(Prototype|Class)__
 door node_fs exit ^(FSWatcher|StatWatcher)(Prototype|Class)__
 door node_fs exit ^WebCore::JS(NodeJSFS|FSWatcher|StatWatcher)::create(Prototype|Structure|Constructor)\(
 door node_fs exit ^<*bun_runtime::node::fs::_async_tasks::NewAsyncCpTask<false>
-door node_fs exit ^<*bun_runtime::node::(node_fs_watcher|node_fs_stat_watcher)::
-feature legacy_encodings TextDecoder for encodings other than UTF-8, UTF-16 and Latin-1
+door node_fs exit ^<*bun_runtime::node::(node_fs_watcher|node_fs_stat_watcher)::(?!StatWatcherScheduler>::shutdown_for_exit$)
 smallest legacy_encodings 0
 when legacy_encodings global TextDecoder
 when legacy_encodings global TextDecoderStream
 door legacy_encodings exit ^<encoding_rs::Decoder>::(decode_to_utf16|decode_to_utf16_without_replacement|max_utf16_buffer_length)$
-feature bun_info the /bun:info route of a development server
 smallest bun_info 0
 when bun_info Bun serve
 door bun_info exit ^bun_runtime::server::trampoline::on_bun_info_request::<
-feature source_maps reading source maps: those inside the executable and node:module's SourceMap
 smallest source_maps 0
 when source_maps option sourcemap
 when source_maps export node:module SourceMap
 when source_maps export node:module findSourceMap
-door source_maps exit ^<bun_standalone_graph::StandaloneModuleGraph::LazySourceMap>::load$
 door source_maps exit ^bun_jsc::virtual_machine_exports::add_source_provider_source_map$
 door source_maps exit ^(WebCore::)?SourceMap(Prototype|Class)__
 door source_maps exit ^WebCore::JSSourceMap::create(Prototype|Structure|Constructor)\(
-feature cli_options options given to the executable by --compile-exec-argv or BUN_OPTIONS
 smallest cli_options 0
 when cli_options option compile-exec-argv
 when cli_options environment BUN_OPTIONS
@@ -745,38 +827,33 @@ door cli_options exit ^bun_runtime::cli::command::create_context_data$
 door cli_options exit ^bun_runtime::cli::arguments::disallow_code_generation_from_strings_as_compiled$
 door cli_options exit ^<bun_jsc::hot_reloader::NewHotReloader<bun_jsc::virtual_machine::VirtualMachine, .*>>::enable_hot_module_reloading$
 door cli_options exit ^<bun_watcher::watcher_impl::Watcher>::add_file_by_path_slow$
-feature package_files reading package.json and tsconfig.json at run time
 smallest package_files 0
 when package_files autoload package-json
 when package_files autoload tsconfig
 when package_files Bun build
 when package_files loader html
+when package_files Bun Transpiler
 door package_files exit ^<bun_resolver::tsconfig_json::TSConfigJSON>::parse$
 door package_files exit ^_RINvMs2_\w+12bun_resolver12package_jsonNtB6_11PackageJSON5parse
 door package_files exit ^<bun_resolver::package_json::PackageJSON>::parse
 door package_files exit ^bun_resolver::resolver::primary_side_effects$
-feature semver Bun.semver
 smallest semver 0
 when semver Bun semver
 door semver exit ^Bun::Bindgen::Generated::SemverObject::createSemver\(
-feature jsonc Bun.JSONC
 smallest jsonc 0
 when jsonc Bun JSONC
 door jsonc exit ^Bun::Bindgen::Generated::JSONCObject::createJSONC\(
-feature uuid Bun.randomUUIDv5 and Bun.randomUUIDv7
 smallest uuid 0
 when uuid Bun randomUUIDv5
 when uuid Bun randomUUIDv7
 door uuid exit ^Bun::Bindgen::Generated::Crypto::jsRandomUUIDv5\(
 door uuid exit ^Bun__randomUUIDv7$
-feature net_addresses net.BlockList and net.SocketAddress
 smallest net_addresses 0
 when net_addresses native node_net_binding.rs:BlockList
 when net_addresses native node_net_binding.rs:SocketAddress
 door net_addresses exit ^(BlockList|SocketAddress)__getConstructor$
 door net_addresses exit ^(WebCore::)?(BlockList|SocketAddress)(Prototype|Class)__
 door net_addresses exit ^WebCore::JS(BlockList|SocketAddress)::create(Prototype|Structure|Constructor)\(
-feature compression_calls Bun.gzipSync, gunzipSync, deflateSync, inflateSync, zstdCompress, zstdDecompress and their Sync forms
 smallest compression_calls 0
 when compression_calls Bun gzipSync
 when compression_calls Bun gunzipSync
@@ -787,11 +864,9 @@ when compression_calls Bun zstdCompressSync
 when compression_calls Bun zstdDecompress
 when compression_calls Bun zstdDecompressSync
 door compression_calls exit ^Bun::Bindgen::Generated::BunObject::js(GunzipSync|InflateSync|GzipSync|DeflateSync|Zstd(Compress|Decompress)(Sync)?)\(
-feature parse_args util.parseArgs
 smallest parse_args 0
 when parse_args native parse_args.rs:parseArgs
 door parse_args exit ^JS2Rust___src_runtime_node_util_parse_args_rs__parseArgs$
-feature node_os the native half of node:os
 smallest node_os 0
 when node_os native node_os.bind.ts:cpus
 when node_os native node_os.bind.ts:freemem
@@ -808,11 +883,9 @@ when node_os native node_os.bind.ts:uptime
 when node_os native node_os.bind.ts:userInfo
 when node_os native node_os.bind.ts:version
 door node_os exit ^js2native_bindgen_node_os_
-feature node_path the native half of node:path
 smallest node_path 0
 when node_path native Path.cpp:createNodePathBinding
 door node_path exit ^Bun::createNodePathBinding\(
-feature node_http the native half of node:http's server
 smallest node_http 0
 when node_http native NodeHTTP.cpp:createNodeHTTPInternalBinding
 when node_http native node_http_binding.rs:getBunServerAllClosedPromise
@@ -850,11 +923,11 @@ door jit exit ^JSC::SpecializedThunkJIT::
 door text exit ^JSC::LiteralParser<[^>]+>::(evalRecursivelyEntry|tryJSONPParse)\(
 door text exit ^JSC::(Direct|Indirect)EvalExecutable::(create|tryCreate)\(
 door text exit ^JSC::Interpreter::executeEval\(
+door text exit ^JSC::Interpreter::executeProgram\(
 door text exit ^JSC::dumpBytecode\(
 door text exit ^JSC::CodeBlock::dumpBytecode\(WTF::PrintStream&\)$
 door text exit ^JSC::ModuleProgramExecutable::getUnlinkedCodeBlock\(
 door tools exit ^Bun::LintHost::create\(
-feature webview Bun.WebView
 when webview Bun WebView
 when websocket Bun WebView
 when tls Bun WebView
@@ -864,7 +937,6 @@ door webview exit ^Bun::setupJSWebViewClassStructure\(
 door webview exit ^Bun::(JSWebView\w*|WebView\w*|CDP)::
 door webview exit ^Bun::(?!retireWebViewsForTestIsolation)\w*WebView\w*\(
 door webview exit ^Bun__Chrome__died$
-feature worker Worker and node:worker_threads
 when worker global Worker
 when worker module node:worker_threads
 when worker native Worker.cpp:createNodeWorkerThreadsBinding
@@ -881,7 +953,6 @@ door worker exit ^WebWorker__(?!parentContextWillDestroy|getMessagingProxy)
 door worker exit ^<*bun_jsc::web_worker::
 door worker return ^Bun__hasWorker$
 door worker exit ^Zig__GlobalObject__destructOnExit$
-feature message_channel MessageChannel, MessagePort and BroadcastChannel
 when message_channel global MessageChannel
 when message_channel global MessagePort
 when message_channel global BroadcastChannel
@@ -896,7 +967,6 @@ door message_channel exit ^WebCore::(js|setJS)(MessageChannel|MessagePort|Broadc
 door message_channel exit ^WebCore::(MessageChannel|MessagePort|BroadcastChannel)::(?!getConstructor\(|toWrapped\()
 door message_channel exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(MessageChannel|MessagePort|BroadcastChannel)[&,]
 door message_channel exit ^WebCore::(MessagePortPipe|BunBroadcastChannelRegistry)::
-feature structured_clone structuredClone and every other copy of a value by serialization
 when structured_clone global structuredClone
 when structured_clone global postMessage
 when structured_clone global MessageChannel
@@ -911,6 +981,8 @@ when structured_clone native bun:jsc
 when structured_clone global PerformanceMark
 when structured_clone performance mark
 when structured_clone performance measure
+when structured_clone performance addEventListener
+when structured_clone performance onresourcetimingbufferfull
 when structured_clone process send
 when structured_clone process on
 when structured_clone process once
@@ -922,7 +994,6 @@ when structured_clone Bun spawn
 when structured_clone Bun spawnSync
 smallest structured_clone 20000
 door structured_clone exit ^(\S+ )?WebCore::(SerializedScriptValue|CloneSerializer|CloneDeserializer|CloneBase)::(?!read(AES|AKP|EC|HMAC|OKP|RSA|Raw)Key\(|write\((WebCore::Crypto|WTF::Vector<WebCore::CryptoKey|std::\w+<WebCore::Crypto))
-feature urlpattern URLPattern
 when urlpattern global URLPattern
 smallest urlpattern 20000
 door urlpattern exit ^WebCore::JS(URLPattern)(Prototype|Constructor|Owner)?::(?!toWrapped\()
@@ -932,18 +1003,15 @@ door urlpattern exit ^WebCore::(js|setJS)(URLPattern)(Prototype|Constructor|_)\w
 door urlpattern exit ^WebCore::(URLPattern)::(?!toWrapped\()
 door urlpattern exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(URLPattern)[&,]
 door urlpattern exit ^WebCore::URLPatternUtilities::
-feature node_vm node:vm
 when node_vm module node:vm
 when node_vm native NodeVM.cpp:Bun::createNodeVMBinding
 smallest node_vm 40000
 door node_vm exit ^Bun::createNodeVMBinding\(
-door node_vm exit ^Bun::(NodeVM\w*|JSNodeVM\w*)::(?!importModule\()
+door node_vm exit ^Bun::(?!NodeVM(OptionNames|SourceOriginCache)::)(NodeVM\w*|JSNodeVM\w*)::(?!importModule\()
 door node_vm exit ^Bun::(vm\w+|script\w+|runInContext|constructScript)\(
-feature bun_jsc bun:jsc
 when bun_jsc native bun:jsc
 smallest bun_jsc 0
 door bun_jsc exit ^Zig::generateNativeModule_BunJSC\(
-feature deep_equals Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual and assert.partialDeepStrictEqual
 when deep_equals Bun deepEquals
 when deep_equals Bun deepMatch
 when deep_equals native NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual
@@ -953,20 +1021,16 @@ when deep_equals module node:test
 smallest deep_equals 30000
 door deep_equals exit ^Bun::functionBunDeep(Equals|Match)\(
 door deep_equals exit ^jsFunction(IsDeepStrictEqual|PartialDeepStrictEqual)\(
-feature jsonl Bun.JSONL
 when jsonl Bun JSONL
 smallest jsonl 0
 door jsonl exit ^Bun::constructJSONLObject\(
-feature ansi Bun.sliceAnsi and Bun.wrapAnsi
 when ansi Bun sliceAnsi
 when ansi Bun wrapAnsi
 smallest ansi 0
 door ansi exit ^Bun::jsFunctionBun(Slice|Wrap)Ansi\(
-feature escape_html Bun.escapeHTML
 when escape_html Bun escapeHTML
 smallest escape_html 0
 door escape_html exit ^Bun::jsFunctionBunEscapeHTML\(
-feature cookie Bun.Cookie and Bun.CookieMap
 when cookie Bun Cookie
 when cookie Bun CookieMap
 when cookie property cookies
@@ -980,27 +1044,21 @@ door cookie exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*G
 door cookie exit ^Bun::construct(Cookie|CookieMap)Object\(
 door cookie exit ^WebCore__CookieMap__
 door cookie exit ^CookieMap__
-feature plugin Bun.plugin
 when plugin Bun plugin
 smallest plugin 0
 door plugin exit ^Bun::constructPluginObject\(
-feature secrets Bun.secrets
 when secrets Bun secrets
 smallest secrets 0
 door secrets exit ^Bun::constructSecretsObject\(
-feature hash Bun.hash
 when hash Bun hash
 smallest hash 0
 door hash exit ^Bun::Bindgen::Generated::HashObject::createHash\(
-feature open_in_editor Bun.openInEditor
 when open_in_editor Bun openInEditor
 smallest open_in_editor 0
 door open_in_editor exit ^Bun::Bindgen::Generated::BunObject::jsOpenInEditor\(
-feature unsafe Bun.unsafe
 when unsafe Bun unsafe
 smallest unsafe 0
 door unsafe exit ^Bun::Bindgen::Generated::UnsafeObject::createUnsafe\(
-feature performance_timeline performance.mark, performance.measure, PerformanceObserver and the entries they make
 when performance_timeline global PerformanceMark
 when performance_timeline global PerformanceMeasure
 when performance_timeline global PerformanceObserver
@@ -1021,6 +1079,11 @@ when performance_timeline performance clearMarks
 when performance_timeline performance clearMeasures
 when performance_timeline performance timing
 when performance_timeline performance toJSON
+when performance_timeline performance clearResourceTimings
+when performance_timeline performance setResourceTimingBufferSize
+when performance_timeline performance markResourceTiming
+when performance_timeline performance addEventListener
+when performance_timeline performance onresourcetimingbufferfull
 smallest performance_timeline 0
 door performance_timeline exit ^WebCore::JS(PerformanceMark|PerformanceMeasure|PerformanceObserver|PerformanceObserverEntryList|PerformanceEntry|PerformanceResourceTiming|PerformanceServerTiming|PerformanceTiming|PerformanceObserverCallback)(Prototype|Constructor|Owner)?::(?!getConstructor\(|toWrapped\()
 door performance_timeline exit ^WebCore::JSDOMConstructor(NotConstructable)?<WebCore::JS(PerformanceMark|PerformanceMeasure|PerformanceObserver|PerformanceObserverEntryList|PerformanceEntry|PerformanceResourceTiming|PerformanceServerTiming|PerformanceTiming|PerformanceObserverCallback)[,>]
@@ -1030,7 +1093,6 @@ door performance_timeline exit ^WebCore::(PerformanceMark|PerformanceMeasure|Per
 door performance_timeline exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(PerformanceMark|PerformanceMeasure|PerformanceObserver|PerformanceObserverEntryList|PerformanceEntry|PerformanceResourceTiming|PerformanceServerTiming|PerformanceTiming|PerformanceObserverCallback)[&,]
 door performance_timeline exit ^WebCore::PerformanceUserTiming::
 door performance_timeline exit ^WebCore::jsPerformancePrototypeFunction_(mark|measure|getEntries\w*|clearMarks|clearMeasures|clearResourceTimings|setResourceTimingBufferSize)\w*\(
-feature http_parser node:http's own parser (process.binding('http_parser'))
 when http_parser process binding
 when http_parser module node:_http_common
 when http_parser module internal:http1_server_fallback
@@ -1041,17 +1103,14 @@ door http_parser exit ^Bun::setup(HTTPParser|ConnectionsList)ClassStructure\(
 door http_parser exit ^Bun::(JS)?(HTTPParser|ConnectionsList)\w*::
 door http_parser exit ^Bun::js(HTTPParser|ConnectionsList)\w*\(
 door http_parser exit ^llhttp_
-feature process_report process.report
 when process_report process report
 smallest process_report 0
 door process_report exit ^Bun::constructProcessReportObject\(
-feature atomics Atomics
 when atomics global Atomics
 smallest atomics 0
 door atomics exit ^JSC::createAtomicsProperty\(
 door atomics exit ^JSC::AtomicsObject::
 door atomics exit ^JSC::atomics\w+\(
-feature regexp_properties Unicode property escapes in regular expressions
 when regexp_properties regexp property-escape
 when regexp_properties regexp computed
 smallest regexp_properties 60000
@@ -1059,3 +1118,111 @@ door regexp_properties exit ^JSC::Yarr::sharedUnicodeCharacterClassFor\(
 door regexp_properties exit ^JSC::Yarr::createCharacterClass\d+\(
 door regexp_properties exit ^JSC::Yarr::unicodeMatchProperty(Value)?\(
 door regexp_properties exit ^JSC::Yarr::Parser<[^>]+>::tryConsumeUnicodePropertyExpression\(
+door text exit ^JSC::encode(Function)?CodeBlock\(
+door text exit ^JSC::Unlinked\w+CodeBlock\* JSC::generateUnlinkedCodeBlock\w*<
+door text exit ^JSC::constructFunctionSkippingEvalEnabledCheck\(
+door text exit ^JSC::ModuleAnalyzer::
+door jit exit ^(void )?JSC::RecordedStatuses::
+door jit exit ^JSC::ExecutableAllocator::initializeUnderlyingAllocator\(
+door jit exit ^JSC::CodeBlock::setupWithUnlinkedBaselineCode\(
+door jit exit ^JSC::(DFG|FTL)::OSRExitStream::
+when temporal global Temporal
+when temporal property toTemporalInstant
+when temporal Bun TOML
+when temporal loader toml
+when temporal feature toml
+smallest temporal 0
+door temporal exit ^JSC::dateProtoFuncToTemporalInstant\(
+door temporal exit ^JSC::create(NowObject|(Duration|Instant|PlainDate|PlainDateTime|PlainMonthDay|PlainTime|PlainYearMonth|ZonedDateTime)Constructor)\(JSC::VM&, JSC::JSObject\*\)
+door temporal exit ^JSC::Temporal(Now|Duration|Instant|PlainDate|PlainDateTime|PlainMonthDay|PlainTime|PlainYearMonth|ZonedDateTime)(Prototype|Constructor)?::(?!info\(|toTemporalDurationRecord\()
+door temporal exit ^JSC::temporal(Now|Duration|Instant|PlainDate|PlainDateTime|PlainMonthDay|PlainTime|PlainYearMonth|ZonedDateTime)(Prototype|Constructor)?(Func|Getter)\w*\(
+door temporal exit ^JSC::(construct|call)Temporal\w+\(
+door temporal exit ^Bun__Temporal__
+when serve Bun serve
+when serve loader html
+when serve feature inspector
+smallest serve 100000
+door serve exit ^BunObject_callback_serve$
+door serve exit ^(WebCore::)?((Debug)?HTTPS?Server|ServerWebSocket)(Prototype|Class)__
+door serve exit ^WebCore::JS((Debug)?HTTPS?Server|ServerWebSocket)::create(Prototype|Structure|Constructor)\(
+door serve exit ^Bun__HTTPRequestContext\w*__on(Resolve|Reject)(Stream)?$
+door serve exit ^<*bun_runtime::server::(?!http_status_text::|any_request_context::)
+when outside_bytes native bun:jsc
+when outside_bytes Bun spawn
+when outside_bytes process on
+when outside_bytes process once
+when outside_bytes process addListener
+when outside_bytes process prependListener
+when outside_bytes process prependOnceListener
+when outside_bytes process send
+when outside_bytes process channel
+when outside_bytes process disconnect
+smallest outside_bytes 0
+when structured_clone feature outside_bytes
+when x509 feature outside_bytes
+when webcrypto feature outside_bytes
+when regexp_properties feature outside_bytes
+when regexp_properties global URLPattern
+when regexp_properties property compile
+when s3client native bun:jsc
+when s3client feature outside_bytes
+when s3client feature image
+when s3client feature fetch
+when s3 feature s3client
+when fetch feature s3client
+when fetch feature websocket
+when tls feature fetch
+when tls feature sockets
+when tls feature serve
+when tls feature valkey
+when tls feature sql
+when tls feature websocket
+when tls feature nodequic
+when tls feature testing
+when x509 feature tls
+when http3 feature fetch
+when http3 feature serve
+when brotli_decoder feature fetch
+when mux feature serve
+when bun_info feature serve
+when node_http feature serve
+when sockets feature inspector
+when cryptohasher feature nodecrypto
+when sqlite feature sql
+when text feature bundler
+when text loader sqlite_embedded
+when node_fs loader sqlite_embedded
+when node_fs module bun:internal-for-testing
+when node_zlib native node_zlib_binding.rs:crc32
+when zstd feature bundler
+when libdeflate_compressor feature archive
+when fetch environment BUN_OPTIONS
+when profiler environment BUN_OPTIONS
+when profiler environment BUN_JSC
+when valkey environment BUN_OPTIONS
+when worker environment BUN_DESTRUCT_VM_ON_EXIT
+when fetch option compile-exec-argv
+when valkey option compile-exec-argv
+when sql option compile-exec-argv
+when profiler option compile-exec-argv
+when inspector option compile-exec-argv
+when text option compile-exec-argv
+when net_addresses feature outside_bytes
+when net_addresses feature nodequic
+when napi feature ffi
+when x509 feature nodecrypto
+when text feature inspector
+when text feature node_vm
+when package_files feature text
+when bundler feature testing
+when temporal feature bundler
+when fetch Bun build
+door tools exit ^simdutf::(?!westmere::implementation::(convert_(valid_)?utf32_to_latin1|convert_(valid_)?utf16(le|be)_to_utf32|convert_(valid_)?utf16be_to_latin1|count_utf16(le|be)|utf32_length_from_utf16(le|be))\(|icelake::implementation::convert_(valid_)?utf32_to_(latin1|utf16le)\(|haswell::implementation::convert_(valid_)?(utf16be|utf32)_to_latin1\(|\w+::implementation::convert_utf16(le|be)_to_utf8_with_replacement\()\w+::implementation::\w*(utf32|utf16be)\w*\(
+door tools exit ^simdutf::(?!westmere::implementation::(convert_(valid_)?utf32_to_latin1|convert_(valid_)?utf16(le|be)_to_utf32|convert_(valid_)?utf16be_to_latin1|count_utf16(le|be)|utf32_length_from_utf16(le|be))\(|icelake::implementation::convert_(valid_)?utf32_to_(latin1|utf16le)\(|haswell::implementation::convert_(valid_)?(utf16be|utf32)_to_latin1\(|\w+::implementation::convert_utf16(le|be)_to_utf8_with_replacement\()\w+::implementation::(detect_encodings|count_utf8|count_utf16le|change_endianness_utf16|convert_utf8_to_latin1(_with_errors)?|convert_valid_utf8_to_(latin1|utf16le)|latin1_length_from_utf8|binary_length_from_base64|validate_utf16le_with_errors|validate_utf16le_as_ascii|convert_utf16le_to_utf8_with_replacement)\(
+door tools exit ^simdutf::implementation::autodetect_encoding\(
+door text exit ^JSC::CodeBlock::reconcileLLIntInlineCachesAtGCEnd\(
+door text exit ^JSC::CodeBlock::update(All\w*Predictions\w*|PredictionsConcurrently)\(
+door text exit ^JSC::LLInt::copyInlineCaches?IntoPredecodedInstructions?\(
+door text exit ^JSC::LLIntPrototypeLoadAdaptiveStructureWatchpoint::fireInternal\(
+door jit exit ^std::once_flag::_Prepare_execution::_Prepare_execution<void std::call_once<JSC::LLInt::(arityFixupThunk|getHostCallReturnValueThunk|fuzzerReturnEarlyFromLoopHintThunk)\(\)::\$_0>
+door jit exit ^void std::__1::__call_once_proxy\S*<std::__1::tuple<JSC::LLInt::(arityFixupThunk|getHostCallReturnValueThunk|fuzzerReturnEarlyFromLoopHintThunk)\(\)::\$_0&&>>\(

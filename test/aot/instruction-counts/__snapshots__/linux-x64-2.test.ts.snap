@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`passes plain objects that lack an optional key of the type to a typed function, which reads three fields 1`] = `
+"typed, function: 57.79 instructions (kernel 27.23, stub NewObjectFromDescriptor3 23.08, the runtime 7.02, elsewhere 0.34, module 0.12), 467 bytes
+typed, module level: 55.62 instructions (module 25.18, stub NewObjectFromDescriptor3 23.08, the runtime 7.02, elsewhere 0.34), 1566 bytes
+untyped, function: 135.73 instructions (kernel 58.17, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 7.02, elsewhere 0.34, module 0.12), 606 bytes
+untyped, module level: 132.59 instructions (module 29.15, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 7.02, elsewhere 0.34), 1228 bytes"
+`;
+
 exports[`reads a getter that the prototype holds from an object made with Object.create(prototype) 1`] = `
 "typed, function: 97.14 instructions (stub GetByNameAsDoublePreservingTwo 31, kernel 25.07, stub ReadAccessorByNameWithinFrame 21, get double 12, stub BoxNumber 8, module 0.07), 195 bytes
 typed, module level: 95.08 instructions (stub GetByNameAsDoublePreservingTwo 31, module 23.07, stub ReadAccessorByNameWithinFrame 21, get double 12, stub BoxNumber 8), 1638 bytes
@@ -175,10 +182,10 @@ untyped, module level: 27.53 instructions (module 27.53), 2417 bytes"
 `;
 
 exports[`passes plain objects with a discriminant to a typed function whose parameter is a union of two record types 1`] = `
-"typed, function: 325.74 instructions (stub ConvertByPlan 187, kernel 58.17, stub NewObjectFromDescriptor2 32.03, stub ColdOperationValue to operationAOTTypedCoerce 16, stub PutByNameWithDirectColumn 13, the runtime 7.08, stub AddInlineByName 5, stub WriteBarrier 4, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.34, module 0.12), 773 bytes
-typed, module level: 323.59 instructions (stub ConvertByPlan 187, module 56.15, stub NewObjectFromDescriptor2 32.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, stub PutByNameWithDirectColumnPreservingTwo 13, the runtime 7.08, stub AddInlineByName 5, stub WriteBarrier 4, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.34), 1907 bytes
-untyped, function: 183.10 instructions (kernel 65.67, stub NewObjectFromDescriptor2 32.03, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 30, stub Add 16, stub PutByNameWithDirectColumnPreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 6.94, stub AddInlineByName 5, stub WriteBarrier 4, elsewhere 0.34, module 0.12), 543 bytes
-untyped, module level: 177.96 instructions (module 60.65, stub NewObjectFromDescriptor2 32.03, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 20, stub Add 16, stub PutByNameWithDirectColumn 13, stub GetByNameWithDirectColumnWithReceiverInR15 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, the runtime 6.94, stub AddInlineByName 5, stub WriteBarrier 4, elsewhere 0.34), 1534 bytes"
+"typed, function: 324.60 instructions (stub ConvertByPlan 186, kernel 58.17, stub NewObjectFromDescriptor2 32.03, stub ColdOperationValue to operationAOTTypedCoerce 16, stub PutByNameWithDirectColumn 13, the runtime 6.94, stub AddInlineByName 5, stub WriteBarrier 4, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.34, module 0.12), 773 bytes
+typed, module level: 322.46 instructions (stub ConvertByPlan 186, module 56.15, stub NewObjectFromDescriptor2 32.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, stub PutByNameWithDirectColumnPreservingTwo 13, the runtime 6.94, stub AddInlineByName 5, stub WriteBarrier 4, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.34), 1889 bytes
+untyped, function: 183.10 instructions (kernel 64.67, stub NewObjectFromDescriptor2 32.03, stub GetByNameChainPreservingTwo 21, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 20, stub Add 16, stub PutByNameWithDirectColumnPreservingTwo 13, the runtime 6.94, stub AddInlineByName 5, stub WriteBarrier 4, elsewhere 0.34, module 0.12), 536 bytes
+untyped, module level: 178.09 instructions (module 59.65, stub NewObjectFromDescriptor2 32.03, stub GetByNameChain 21, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 20, stub Add 16, stub PutByNameWithDirectColumn 13, the runtime 7.08, stub AddInlineByName 5, stub WriteBarrier 4, elsewhere 0.34), 1513 bytes"
 `;
 
 exports[`resumes a generator that keeps eight locals alive across its yield 1`] = `

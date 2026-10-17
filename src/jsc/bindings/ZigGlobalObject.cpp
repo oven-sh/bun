@@ -292,7 +292,6 @@ JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
 extern "C" bool Bun__hasStandaloneModuleGraph();
 
 extern "C" void Bun__installCompilers();
-extern "C" bool Bun__hasWebAssembly();
 extern "C" void Bun__AOT__setImageCodec();
 extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses();
 #if ENABLE(AOT)
@@ -435,8 +434,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
 #endif
-            if (!Bun__hasWebAssembly()) [[unlikely]]
-                JSC::Options::useWasm() = false;
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
 

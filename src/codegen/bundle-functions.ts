@@ -88,6 +88,35 @@ interface BundledBuiltin {
   sourceOffset: number;
 }
 
+function builtinSourceMetadata(source: string): (number | boolean)[] {
+  const isAsyncFunction = source.startsWith("(async function (");
+  if (!isAsyncFunction && !source.startsWith("(function (")) throw new Error(`a built-in function begins with ${source.slice(0, 20)}`);
+  const parametersStart = "function (".length + (isAsyncFunction ? "async ".length : 0);
+  let commas = 0;
+  let insideCurlyBrackets = false;
+  let sawOneParameter = false;
+  let hasRestParameter = false;
+  for (let i = parametersStart + 1; source[i] !== ")"; i++) {
+    if (i >= source.length) throw new Error("the parameters of a built-in function do not end");
+    if (source[i] === "}") insideCurlyBrackets = false;
+    else if (source[i] === "{" || insideCurlyBrackets) {
+      insideCurlyBrackets = true;
+      continue;
+    } else if (source[i] === ",") commas++;
+    else if (!" \t\v\f\xa0".includes(source[i]!)) sawOneParameter = true;
+    if (source.startsWith("...", i)) {
+      hasRestParameter = true;
+      i += 2;
+    }
+  }
+  const parameterCount = (commas ? commas + 1 : sawOneParameter ? 1 : 0) - (hasRestParameter ? 1 : 0);
+  let isInStrictContext = false;
+  for (let i = 0; i + 1 + "use strict".length < source.length && !isInStrictContext; i++)
+    isInStrictContext = (source[i] === '"' || source[i] === "'") && source.startsWith("use strict", i + 1);
+  const closeBraceOffsetFromEnd = source.length - source.lastIndexOf("}");
+  return [source.length, parametersStart, parameterCount, closeBraceOffsetFromEnd, isAsyncFunction, isInStrictContext];
+}
+
 /**
  * Source .ts file --> Array<bundled js function code>
  */
@@ -637,6 +666,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     static constexpr JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"};
     static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
     static constexpr JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
+    static constexpr JSC::BuiltinSourceMetadata s_${name}Metadata = { ${builtinSourceMetadata(fn.source).join(", ")} };
 
     `;
     }
@@ -696,7 +726,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
             JSC::Identifier executableName = functionName##PublicName();\\
             if (overriddenName)\\
                 executableName = JSC::Identifier::fromString(m_vm, overriddenName);\\
-            m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute), this, &m_##name##Executable);\\
+            m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, s_##name##Metadata, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute), this, &m_##name##Executable);\\
         }\\
         return m_##name##Executable.get();\\
     }

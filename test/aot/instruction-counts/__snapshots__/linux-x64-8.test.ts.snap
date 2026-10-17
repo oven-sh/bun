@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`passes a typed object whose type is lost to a typed function, which reads three fields 1`] = `
+"typed, function: 24.33 instructions (kernel 24.21, module 0.12), 745 bytes
+typed, module level: 4.26 instructions (module 4.26), 1505 bytes
+untyped, function: 83.27 instructions (kernel 36.15, stub Add 24, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, module 0.12), 393 bytes
+untyped, module level: 96.15 instructions (stub Add 24, module 23.15, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 10), 1204 bytes"
+`;
+
 exports[`makes an object with Object.create(prototype) and stores three properties read from a parameter 1`] = `
 "typed, function: 119.57 instructions (kernel 97.11, stub AllocateTypedObject 17.16, the runtime 5.01, elsewhere 0.21, module 0.07), 1035 bytes
 typed, module level: 117.37 instructions (module 95.11, stub AllocateTypedObject 17.16, the runtime 4.89, elsewhere 0.21), 2229 bytes
@@ -92,10 +99,10 @@ untyped, module level: 43.33 instructions (module 43.33), 2234 bytes"
 `;
 
 exports[`passes plain objects to a typed function whose record type has a field that is a union of string literals; the program never compares that field with a text 1`] = `
-"typed, function: 334.60 instructions (stub ConvertByPlan 224, kernel 53.76, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValue to operationAOTTypedCoerce 16, the runtime 7.30, stub LiteralStringToString 7, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.34, module 0.12), 583 bytes
-typed, module level: 334.46 instructions (stub ConvertByPlan 224, module 53.74, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, the runtime 7.30, stub LiteralStringToString 7, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.34), 1602 bytes
-untyped, function: 118.31 instructions (kernel 63.74, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 7.04, elsewhere 0.34, module 0.12), 777 bytes
-untyped, module level: 129.59 instructions (module 54.74, stub NewObjectFromDescriptor3 23.08, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 20, stub GetLengthByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 10, the runtime 7.43, elsewhere 0.34), 1570 bytes"
+"typed, function: 71.62 instructions (kernel 40.78, stub NewObjectFromDescriptor3 23.08, the runtime 7.30, elsewhere 0.34, module 0.12), 443 bytes
+typed, module level: 71.49 instructions (module 40.77, stub NewObjectFromDescriptor3 23.08, the runtime 7.30, elsewhere 0.34), 1465 bytes
+untyped, function: 117.31 instructions (kernel 62.74, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 7.04, elsewhere 0.34, module 0.12), 771 bytes
+untyped, module level: 128.46 instructions (module 52.74, stub NewObjectFromDescriptor3 23.08, stub GetByNameChainPreservingTwo 21, stub GetLengthByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, the runtime 7.30, elsewhere 0.34), 1537 bytes"
 `;
 
 exports[`makes an array of three numbers that are not known to be integers 1`] = `
@@ -144,7 +151,7 @@ exports[`reads a field of an object that JSON.parse made 1`] = `
 "typed, function: 45.47 instructions (kernel 35.35, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, module 0.12), 411 bytes
 typed, module level: 46.33 instructions (module 36.33, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 2197 bytes
 untyped, function: 56.50 instructions (kernel 38.38, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8, module 0.12), 382 bytes
-untyped, module level: 65.44 instructions (module 34.31, stub GetLengthByNamePreservingTwo 13.13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 1671 bytes"
+untyped, module level: 55.37 instructions (module 37.37, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 1762 bytes"
 `;
 
 exports[`reads a property that lies far out of line in a prototype with hundreds of properties 1`] = `
@@ -183,10 +190,10 @@ untyped, module level: 135.55 instructions (stub SetHas 80.15, module 55.40), 26
 `;
 
 exports[`sorts a copy of an array of numbers that fall with a comparator 1`] = `
-"typed, function: 44.42 instructions (the runtime 38.66, stub ArrayCopy 3.92, kernel 0.83, elsewhere 0.58, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 804 bytes
-typed, module level: 44.19 instructions (the runtime 38.66, stub ArrayCopy 3.92, module 0.78, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2268 bytes
-untyped, function: 81.94 instructions (the runtime 75.69, stub ArrayCopy 3.91, kernel 1.08, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 1147 bytes
-untyped, module level: 81.66 instructions (the runtime 75.69, stub ArrayCopy 3.91, module 1.23, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2737 bytes"
+"typed, function: 44.36 instructions (the runtime 38.59, stub ArrayCopy 3.92, kernel 0.83, elsewhere 0.58, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 804 bytes
+typed, module level: 44.13 instructions (the runtime 38.59, stub ArrayCopy 3.92, module 0.78, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2269 bytes
+untyped, function: 79.05 instructions (the runtime 72.80, stub ArrayCopy 3.91, kernel 1.08, elsewhere 0.58, stub Add 0.25, stub OperationValueWithInstance 0.22, module 0.19, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 1147 bytes
+untyped, module level: 78.77 instructions (the runtime 72.80, stub ArrayCopy 3.91, module 1.23, elsewhere 0.58, stub OperationValueWithInstance 0.22, stub OperationValueWithInstance to operationAOTTypedTrySortByKey 0.03), 2738 bytes"
 `;
 
 exports[`copies a record that has an undeclared property into a literal of its own type 1`] = `

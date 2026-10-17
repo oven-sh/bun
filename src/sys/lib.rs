@@ -8608,7 +8608,7 @@ pub mod elf {
             // SAFETY: dlpi_phdr points to dlpi_phnum entries.
             let phdrs =
                 unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
-            for phdr in phdrs {
+            for phdr in phdrs.iter().rev() {
                 if phdr.p_type != PT_LOAD {
                     continue;
                 }

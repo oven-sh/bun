@@ -1,0 +1,102 @@
+--- a/include/mimalloc/prim.h
++++ b/include/mimalloc/prim.h
+@@ -132,7 +132,11 @@
+ // and -1 on error (for example, if `getenv` cannot be called yet during preloading).
+ int _mi_prim_getenv(const char* name, char* result, size_t result_size);
+ 
++// Can a variable whose name starts with `prefix` (case insensitive) be in the environment?
++// A platform that cannot enumerate its environment answers true.
++bool _mi_prim_env_may_have_prefix(const char* prefix);
+ 
++
+ // Fill a buffer with strong randomness; return `false` on error or if
+ // there is no strong randomization available.
+ bool _mi_prim_random_buf(void* buf, size_t buf_len);
+--- a/src/options.c
++++ b/src/options.c
+@@ -109,6 +109,10 @@
+ #endif
+ #endif
+ 
++#ifndef MI_DEFAULT_USE_NUMA_NODES
++#define MI_DEFAULT_USE_NUMA_NODES  0
++#endif
++
+ #ifndef MI_DEFAULT_COLLECT_MERGES_STATS
+ #define MI_DEFAULT_COLLECT_MERGES_STATS  1
+ #endif
+@@ -143,7 +147,8 @@
+   { 0, MI_OPTION_UNINIT, MI_OPTION(deprecated_segment_reset) },   // reset segment memory on free (needs eager commit)
+   { 1, MI_OPTION_UNINIT, MI_OPTION(deprecated_eager_commit_delay) },
+   { 100, MI_OPTION_UNINIT, MI_OPTION_LEGACY(purge_delay,reset_delay) },  // purge delay in milli-seconds
+-  { 0,   MI_OPTION_UNINIT, MI_OPTION(use_numa_nodes) },           // 0 = use available numa nodes, otherwise use at most N nodes.
++  { MI_DEFAULT_USE_NUMA_NODES,
++         MI_OPTION_UNINIT, MI_OPTION(use_numa_nodes) },           // 0 = use available numa nodes, otherwise use at most N nodes.
+   { 0,   MI_OPTION_UNINIT, MI_OPTION_LEGACY(disallow_os_alloc,limit_os_alloc) },           // 1 = do not use OS memory for allocation (but only reserved arenas)
+   { 240, MI_OPTION_UNINIT, MI_OPTION(os_tag) },                   // macOS VM tag: 240 = VM_MEMORY_APPLICATION_SPECIFIC_1 (100 collided with IOAccelerator)
+   { 32,  MI_OPTION_UNINIT, MI_OPTION(max_errors) },               // maximum errors that are output
+@@ -673,7 +678,23 @@
+ // TODO: implement ourselves to reduce dependencies on the C runtime
+ #include <stdlib.h> // strtol
+ 
++// Most processes have no `mimalloc_` variable at all. One pass over the environment finds that out,
++// instead of a pass per option (and per legacy name) that also reads every option's name.
++static bool mi_env_may_have_options(void) {
++  static _Atomic(int) state; // 0: unknown, 1: no, 2: maybe
++  int known = mi_atomic_load_relaxed(&state);
++  if (known == 0) {
++    known = (_mi_prim_env_may_have_prefix("mimalloc_") ? 2 : 1);
++    mi_atomic_store_relaxed(&state, known);
++  }
++  return (known == 2);
++}
++
+ static void mi_option_init(mi_option_desc_t* desc) {
++  if (!mi_env_may_have_options()) {
++    desc->init = MI_OPTION_DEFAULTED;
++    return;
++  }
+   // Read option value from the environment
+   char s[64 + 1];
+   char buf[64+1];
+--- a/src/prim/unix/prim.c
++++ b/src/prim/unix/prim.c
+@@ -1018,8 +1018,24 @@
+     }
+   }
+   return 0; // not found
++}
++
++bool _mi_prim_env_may_have_prefix(const char* prefix) {
++  const size_t len = _mi_strlen(prefix);
++  char** env = mi_get_environ();
++  if (env == NULL) return true;
++  int i = 0;
++  for (; i < 10000 && env[i] != NULL; i++) {
++    if (_mi_strnicmp(prefix, env[i], len) == 0) return true;
++  }
++  return (i >= 10000);
+ }
+ #else
++bool _mi_prim_env_may_have_prefix(const char* prefix) {
++  MI_UNUSED(prefix);
++  return true;
++}
++
+ // fallback: use standard C `getenv` but this cannot be used while initializing the C runtime
+ int _mi_prim_getenv(const char* name, char* result, size_t result_size) {
+   // cannot call getenv() when still initializing the C runtime.
+--- a/src/prim/windows/prim.c
++++ b/src/prim/windows/prim.c
+@@ -707,6 +707,11 @@
+   return (len < result_size ? (len > 0 ? 1 /* success */ : 0 /* not found */) : -1 /* error */);
+ }
+ 
++bool _mi_prim_env_may_have_prefix(const char* prefix) {
++  MI_UNUSED(prefix);
++  return true;
++}
++
+ 
+ //----------------------------------------------------------------
+ // Random

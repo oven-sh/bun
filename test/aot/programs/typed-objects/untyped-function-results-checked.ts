@@ -42,8 +42,8 @@ attempt("b2", () => identity(5) + "!")
 function untyped(v: any) { return v }
 function typed(v: any): boolean { return untyped(v) }
 attempt("c1", () => typed(true))
-attempt("c2", () => typed("true"))
-attempt("c3", () => typed(1))
+attempt("c2", () => { const b: boolean = typed("true"); return b })
+attempt("c3", () => { const b: boolean = typed(1); return b })
 attempt("d1", () => ["a"].map((x: any): number => x).join())
 attempt("d2", () => [1, 2].map((x: any): number => x).join())
 const loose: any = (v: unknown) => v

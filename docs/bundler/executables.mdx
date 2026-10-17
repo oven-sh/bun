@@ -856,6 +856,7 @@ What no longer works:
 | `BUN_BE_BUN=1 ./myapp install`, `run`, `x`, `-e`, a file name, or no argument | acts as the `bun` CLI | prints that the Bun command line was left out, and exits with code 70 |
 | `BUN_BE_BUN=1 ./myapp --version` or `--revision` | prints it | prints it |
 | `BUN_OPTIONS=--help ./myapp` | prints the help of `bun` | prints that the Bun command line was left out, and exits with code 70 |
+| a `bunfig.toml` in the directory the executable runs in | is read at startup | is not read, unless you also pass `--compile-autoload-bunfig` (`autoloadBunfig: true`) |
 | `Bun.build({ check: true })` or `({ dts: true })`, called by the executable | type checks | throws a `TypeError` |
 | `Bun.build({ compile: { aot: true } })`, called by the executable | compiles ahead of time | throws a `TypeError` |
 
@@ -913,11 +914,15 @@ What no longer works in such an executable, on top of the table above:
 | | otherwise | in an executable that runs only its own code |
 | --- | --- | --- |
 | `f.constructor("code")`, for any function `f` | makes a function | throws an `EvalError` |
-| `BUN_OPTIONS=--preload ./x.js`, `--import` or `--require`, or `preload` in a `bunfig.toml` that the executable reads | loads the file first | prints that the file was not compiled into the executable, and exits |
+| `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print` or `-p` in `BUN_OPTIONS` or `--compile-exec-argv`, or `preload` in a `bunfig.toml` that the executable reads | loads the file first | prints that the option cannot be used with this executable, and exits with code 1 |
 | `BUN_INSPECT` | starts the debugger | prints an error and exits |
 | `BUN_INSPECT_CONNECT_TO`, which editors set for every process in their terminals | connects to the editor | is ignored |
 | `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc` | starts the debugger | throws an `EvalError` |
 | `Bun.serve()` with the experimental `app` option | starts the development server | throws an `EvalError` |
+
+Every other option in `BUN_OPTIONS` and `--compile-exec-argv` is obeyed as before: `--smol`, `--expose-gc`, `--title`, `--console-depth`, `--dns-result-order`, `--max-http-header-size`, `--use-system-ca`, `--unhandled-rejections`, `--env-file`, `--config` and so on. What comes after the name of the executable on the command line is never read as an option of Bun. It goes to your program, whatever it looks like.
+
+An executable that keeps everything, because the first line above says `open` or because it was built without `--aot`, also obeys the eight options that load code.
 
 `process.execArgv` does not list the flag, because nobody passed it. To debug the program, build it without `--compile-trim-runtime`.
 
@@ -1682,7 +1687,7 @@ interface CompileBuildOptions {
   autoloadTsconfig?: boolean; // Load tsconfig.json (default: false)
   autoloadPackageJson?: boolean; // Load package.json (default: false)
   autoloadDotenv?: boolean; // Load .env files (default: true)
-  autoloadBunfig?: boolean; // Load bunfig.toml (default: true)
+  autoloadBunfig?: boolean; // Load bunfig.toml (default: true, or false with trimRuntime)
   bytecodeOrder?: string | string[] | false | null; // Order file(s) to lay the bytecode out by (requires bytecode: true)
   jitPolicy?: number; // JIT tier-up threshold scale at startup (default: 1 = normal)
   trimRuntime?: boolean; // Leave out the parts of Bun that a compiled program cannot reach (default: false)

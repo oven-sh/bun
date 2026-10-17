@@ -1732,6 +1732,26 @@ describe("a rule for a tarball or git dependency", () => {
       expect(exitCode).toBe(0);
     });
 
+    // `a@3.0.0` can share the folder of the project's alias `a`, and the manifest of `b` says whether it does.
+    test.concurrent("asks again for the manifest of an alias that the import can follow", async () => {
+      const spec = at();
+      spec.fail("b");
+
+      const { stdout, stderr, exitCode } = await autoInstall(
+        spec.registry,
+        spec.heal,
+        { name: "foo", dependencies: { a: "npm:b@^3.0.0" } },
+        `const results = [attempt("a@3.0.0")];
+         await turn(); // the registry answers from here on
+         results.push(attempt("a@3.0.0"));
+         console.log(JSON.stringify(results));`,
+      );
+
+      expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]), stderr: "" });
+      expect(spec.requested("a")).toBe(0);
+      expect(exitCode).toBe(0);
+    });
+
     // The manifest that the registry sent has no 2.0.0. The next import asks again, and 2.0.0 is out by then.
     test.concurrent("asks again for a manifest that did not have the version", async () => {
       let versions = ["1.0.0"];

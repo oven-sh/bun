@@ -50,6 +50,141 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("require.cache and Module._cache throw when the global Symbol is replaced, then work once it is restored", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const OriginalSymbol = Symbol;
+          const Module = require("module");
+          const attempt = read => { try { read(); return "no error"; } catch (e) { return e; } };
+          const readCache = () => require.cache;
+          const readModuleCache = () => Module._cache;
+
+          // Symbol is not an object: the builtin's Symbol.for() call throws.
+          globalThis.Symbol = 0;
+          const replaced = [attempt(readCache), attempt(readModuleCache)].map(e => e.name);
+
+          // The Symbol getter throws: each read throws that same error object.
+          const thrown = new Error("thrown by the Symbol getter");
+          Object.defineProperty(globalThis, "Symbol", { configurable: true, get() { throw thrown; } });
+          const rethrown = [attempt(readCache), attempt(readModuleCache)].map(e => e === thrown);
+
+          Object.defineProperty(globalThis, "Symbol", { value: OriginalSymbol, writable: true, configurable: true });
+          const cache = require.cache;
+          console.log(JSON.stringify({ replaced, rethrown, cache: typeof cache, sameAsModuleCache: Module._cache === cache }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe(
+      JSON.stringify({
+        replaced: ["TypeError", "TypeError"],
+        rethrown: [true, true],
+        cache: "object",
+        sameAsModuleCache: true,
+      }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("a require.cache read from inside its own first read returns the same object", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const OriginalSymbol = Symbol;
+          let inner;
+          Object.defineProperty(globalThis, "Symbol", {
+            configurable: true,
+            get() {
+              Object.defineProperty(globalThis, "Symbol", { value: OriginalSymbol, writable: true, configurable: true });
+              inner = require.cache;
+              return OriginalSymbol;
+            },
+          });
+          const outer = require.cache;
+          console.log(typeof inner, inner === outer, require.cache === outer, require("module")._cache === outer);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("object true true true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("require.cache read near the stack limit throws instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          function recurse() {
+            try {
+              recurse();
+            } catch {
+              require.cache;
+            }
+          }
+          recurse();
+          console.log(typeof require.cache);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("object\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("terminate() stops a worker while its first require.cache read runs user code", async () => {
+    using dir = tempDir("require-cache-terminate", {
+      "worker.js": `
+        Object.defineProperty(globalThis, "Symbol", {
+          get() {
+            postMessage("inside");
+            while (true) {}
+          },
+        });
+        require.cache;
+      `,
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        worker.onmessage = () => worker.terminate();
+        worker.addEventListener("close", () => console.log("closed"));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      // Kill switch: before the fix, terminate() did not stop the worker and the process never exited.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("closed\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("listing require.cache does not create a namespace object for each ES module", async () => {
     using dir = tempDir("require-cache-esm-namespaces", {
       "a.mjs": `export const a = 1;`,

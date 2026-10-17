@@ -570,6 +570,15 @@ impl S3Credentials {
                     );
                 }
 
+                let mut content_encoding_encoded_buffer = [0u8; 256];
+                let mut encoded_content_encoding: Option<&[u8]> = None;
+                if let Some(ce) = content_encoding {
+                    encoded_content_encoding = Some(
+                        encode_uri_component::<true>(ce, &mut content_encoding_encoded_buffer)
+                            .map_err(|_| SignError::FailedToGenerateSignature)?,
+                    );
+                }
+
                 let mut content_type_encoded_buffer = [0u8; 256];
                 let mut encoded_content_type: Option<&[u8]> = None;
                 if let Some(ct) = content_type {
@@ -579,69 +588,110 @@ impl S3Credentials {
                     );
                 }
 
-                // Build query parameters in alphabetical order for AWS Signature V4 canonical request
-                let canonical: &[u8] = 'brk_canonical: {
-                    let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
+                // An upload id is up to 2000 bytes and can triple when encoded, so
+                // it gets a heap buffer, and only when one was given.
+                let mut upload_id_encoded_buffer: Vec<u8> = Vec::new();
+                let mut encoded_upload_id: Option<&[u8]> = None;
+                if let Some(id) = sign_options.upload_id {
+                    upload_id_encoded_buffer.resize(id.len() * 3, 0);
+                    encoded_upload_id = Some(
+                        encode_uri_component::<true>(id, &mut upload_id_encoded_buffer)
+                            .map_err(|_| SignError::FailedToGenerateSignature)?,
+                    );
+                }
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
+                let mut part_number_buffer = [0u8; 8];
+                let mut part_number: Option<&[u8]> = None;
+                if let Some(n) = sign_options.part_number {
+                    part_number = Some(
+                        buf_print(&mut part_number_buffer, format_args!("{n}"))
+                            .map_err(|_| SignError::NoSpaceLeft)?,
+                    );
+                }
 
-                    if let Some(v) = encoded_content_md5 {
-                        query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
-                    }
-                    if let Some(v) = acl {
-                        query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
-                    }
-                    query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
-                    query_parts.push(alloc_print!(
-                        "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
+                let mut credential_buffer = [0u8; 512];
+                let credential = buf_print(
+                    &mut credential_buffer,
+                    format_args!(
+                        "{}%2F{}%2F{}%2F{}%2Faws4_request",
                         BStr::new(&self.access_key_id),
                         BStr::new(amz_day),
                         BStr::new(region),
                         service_name
-                    ));
-                    query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
-                    query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
-                    if let Some(token) = encoded_session_token {
-                        query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
-                    }
-                    query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
-                    if let Some(cd) = encoded_content_disposition {
-                        query_parts.push(alloc_print!(
-                            "response-content-disposition={}",
-                            BStr::new(cd)
-                        ));
-                    }
-                    if let Some(ct) = encoded_content_type {
-                        query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
-                    }
-                    if request_payer {
-                        query_parts.push(alloc_print!("x-amz-request-payer=requester"));
-                    }
-                    if let Some(v) = storage_class {
-                        query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v)));
-                    }
-
-                    // Join query parameters with &
-                    let mut query_string: Vec<u8> = Vec::new();
-                    for (i, part) in query_parts.iter().enumerate() {
-                        if i > 0 {
-                            query_string.push(b'&');
-                        }
-                        query_string.extend_from_slice(part);
-                    }
-
-                    break 'brk_canonical buf_print(
-                        &mut tmp_buffer,
-                        format_args!(
-                            "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
-                            method_name,
-                            BStr::new(normalized_path),
-                            BStr::new(&query_string),
-                            BStr::new(&host),
-                            BStr::new(aws_content_hash)
-                        ),
-                    )
+                    ),
+                )
+                .map_err(|_| SignError::NoSpaceLeft)?;
+                let mut expires_buffer = [0u8; 24];
+                let expires = buf_print(&mut expires_buffer, format_args!("{expires}"))
                     .map_err(|_| SignError::NoSpaceLeft)?;
+
+                // The canonical query string and the URL query string are the
+                // same list of parameters, in byte order of the parameter
+                // names, except that the URL also carries `X-Amz-Signature`.
+                // One list, rendered twice, so the two cannot drift.
+                let mut query = PresignQuery::default();
+                if let Some(v) = encoded_content_md5 {
+                    query.push(b"Content-MD5", v);
+                }
+                if let Some(v) = acl {
+                    query.push(b"X-Amz-Acl", v);
+                }
+                query.push(b"X-Amz-Algorithm", b"AWS4-HMAC-SHA256");
+                query.push(b"X-Amz-Credential", credential);
+                query.push(b"X-Amz-Date", &amz_date);
+                query.push(b"X-Amz-Expires", expires);
+                if let Some(token) = encoded_session_token {
+                    query.push(b"X-Amz-Security-Token", token);
+                }
+                query.signature_index = query.len;
+                query.push(b"X-Amz-SignedHeaders", b"host");
+                if let Some(v) = part_number {
+                    query.push(b"partNumber", v);
+                }
+                if let Some(cd) = encoded_content_disposition {
+                    query.push(b"response-content-disposition", cd);
+                }
+                if let Some(ce) = encoded_content_encoding {
+                    query.push(b"response-content-encoding", ce);
+                }
+                if let Some(ct) = encoded_content_type {
+                    query.push(b"response-content-type", ct);
+                }
+                if let Some(v) = encoded_upload_id {
+                    query.push(b"uploadId", v);
+                }
+                if request_payer {
+                    query.push(b"x-amz-request-payer", b"requester");
+                }
+                if let Some(v) = storage_class {
+                    query.push(b"x-amz-storage-class", v);
+                }
+
+                let write_canonical = |w: &mut dyn core::fmt::Write| -> core::fmt::Result {
+                    write!(
+                        w,
+                        "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
+                        method_name,
+                        BStr::new(normalized_path),
+                        query.render(None),
+                        BStr::new(&host),
+                        BStr::new(aws_content_hash)
+                    )
+                };
+                // The stack buffer fits every request without an upload id. A
+                // long encoded upload id (up to 6000 bytes) goes to the heap.
+                let canonical_heap: String;
+                let canonical: &[u8] = {
+                    let mut cursor = bun_core::fmt::SliceCursor::new(&mut tmp_buffer);
+                    if write_canonical(&mut cursor).is_ok() {
+                        let written = cursor.at;
+                        &tmp_buffer[..written]
+                    } else {
+                        let mut heap = String::new();
+                        write_canonical(&mut heap).map_err(|_| SignError::NoSpaceLeft)?;
+                        canonical_heap = heap;
+                        canonical_heap.as_bytes()
+                    }
                 };
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
@@ -670,66 +720,12 @@ impl S3Credentials {
                 )
                 .ok_or(SignError::FailedToGenerateSignature)?;
 
-                // Build final URL with query parameters in alphabetical order to match canonical request
-                let mut url_query_parts: Vec<Vec<u8>> = Vec::with_capacity(14);
-
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
-
-                if let Some(v) = encoded_content_md5 {
-                    url_query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
-                }
-                if let Some(v) = acl {
-                    url_query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
-                }
-                url_query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
-                url_query_parts.push(alloc_print!(
-                    "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
-                    BStr::new(&self.access_key_id),
-                    BStr::new(amz_day),
-                    BStr::new(region),
-                    service_name
-                ));
-                url_query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
-                url_query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
-                if let Some(token) = encoded_session_token {
-                    url_query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
-                }
-                url_query_parts.push(alloc_print!(
-                    "X-Amz-Signature={}",
-                    HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
-                ));
-                url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
-                if let Some(cd) = encoded_content_disposition {
-                    url_query_parts.push(alloc_print!(
-                        "response-content-disposition={}",
-                        BStr::new(cd)
-                    ));
-                }
-                if let Some(ct) = encoded_content_type {
-                    url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
-                }
-                if request_payer {
-                    url_query_parts.push(alloc_print!("x-amz-request-payer=requester"));
-                }
-                if let Some(v) = storage_class {
-                    url_query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v)));
-                }
-
-                // Join URL query parameters with &
-                let mut url_query_string: Vec<u8> = Vec::new();
-                for (i, part) in url_query_parts.iter().enumerate() {
-                    if i > 0 {
-                        url_query_string.push(b'&');
-                    }
-                    url_query_string.extend_from_slice(part);
-                }
-
                 break 'brk alloc_print!(
                     "{}://{}{}?{}",
                     protocol,
                     BStr::new(&host),
                     BStr::new(normalized_path),
-                    BStr::new(&url_query_string)
+                    query.render(Some(&signature[0..DIGESTED_HMAC_256_LEN]))
                 )
                 .into_boxed_slice();
             } else {
@@ -1070,6 +1066,70 @@ pub struct SignOptions<'a> {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
+    /// Presign only: the `uploadId` query parameter, raw (the signer encodes it).
+    pub upload_id: Option<&'a [u8]>,
+    /// Presign only: the `partNumber` query parameter.
+    pub part_number: Option<u16>,
+}
+
+/// The query parameters of a presigned URL. The canonical request and the URL
+/// render the same list, in byte order of the parameter names, as SigV4
+/// requires. The URL also carries `X-Amz-Signature` at [`Self::signature_index`].
+const PRESIGN_QUERY_MAX: usize = 16;
+
+#[derive(Default)]
+struct PresignQuery<'a> {
+    entries: [(&'a [u8], &'a [u8]); PRESIGN_QUERY_MAX],
+    len: usize,
+    signature_index: usize,
+}
+
+impl<'a> PresignQuery<'a> {
+    fn push(&mut self, name: &'a [u8], value: &'a [u8]) {
+        debug_assert!(
+            self.len == 0 || self.entries[self.len - 1].0 < name,
+            "presign query parameters must be pushed in byte order"
+        );
+        self.entries[self.len] = (name, value);
+        self.len += 1;
+    }
+
+    /// With `signature`, the URL form. Without, the canonical form.
+    fn render<'q>(&'q self, signature: Option<&'q [u8]>) -> PresignQueryString<'q, 'a> {
+        PresignQueryString {
+            query: self,
+            signature,
+        }
+    }
+}
+
+struct PresignQueryString<'q, 'a> {
+    query: &'q PresignQuery<'a>,
+    signature: Option<&'q [u8]>,
+}
+
+impl core::fmt::Display for PresignQueryString<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut separate = false;
+        let mut separator = |f: &mut core::fmt::Formatter<'_>| -> core::fmt::Result {
+            if separate {
+                f.write_str("&")?;
+            }
+            separate = true;
+            Ok(())
+        };
+        for (i, (name, value)) in self.query.entries[..self.query.len].iter().enumerate() {
+            if let Some(signature) = self.signature {
+                if i == self.query.signature_index {
+                    separator(f)?;
+                    write!(f, "X-Amz-Signature={}", HexLower(signature))?;
+                }
+            }
+            separator(f)?;
+            write!(f, "{}={}", BStr::new(name), BStr::new(value))?;
+        }
+        Ok(())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1227,6 +1287,8 @@ impl<'a> Default for SignOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            upload_id: None,
+            part_number: None,
         }
     }
 }

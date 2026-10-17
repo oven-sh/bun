@@ -269,6 +269,37 @@ const url = s3file.presign({
 });
 ```
 
+### Browser-driven multipart uploads
+
+A client can upload a large file straight to the bucket in parts, without the bytes going through your server. Your server starts the upload, presigns one `UploadPart` URL per part, and completes the upload with the `ETag` that each part upload returned. Every part except the last has to be at least 5 MiB.
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { s3 } from "bun";
+
+const key = "uploads/video.mp4";
+
+// 1. Start the upload. The options set the type, ACL and storage class of the final file.
+const { uploadId } = await s3.createMultipartUpload(key, { type: "video/mp4" });
+
+// 2. Presign one URL per part and hand them to the client.
+const urls = [1, 2, 3].map(partNumber =>
+  s3.presign(key, { method: "PUT", expiresIn: 3600, uploadId, partNumber }),
+);
+
+// 3. The client PUTs each part and reports the `ETag` response header.
+//    Assemble the file from them.
+await s3.completeMultipartUpload(key, uploadId, [
+  { partNumber: 1, etag: '"d41d8cd98f00b204e9800998ecf8427e"' },
+  { partNumber: 2, etag: '"9e107d9d372bb6826bd81d3542a419d6"' },
+  { partNumber: 3, etag: '"0cc175b9c0f1b6a831c399e269772661"' },
+]);
+
+// Or discard the parts. S3 bills them until the upload is completed or aborted.
+await s3.abortMultipartUpload(key, uploadId);
+```
+
+The same three methods are static on `S3Client`, with the credentials as the last argument.
+
 ### `new Response(S3File)`
 
 To redirect users to a presigned URL for an S3 file, pass an `S3File` instance to a `Response` object as the body.

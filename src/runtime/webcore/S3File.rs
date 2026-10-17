@@ -2,8 +2,10 @@ use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
+use crate::webcore::s3::multipart_ops::{MAX_PART_NUMBER, UploadId, UploadPartResult};
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
+use bstr::BStr;
 use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::bun_string_jsc;
@@ -177,6 +179,171 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         .data
         .as_s3()
         .unlink(store, &global.js_thread_of_caller(callframe), options)
+}
+
+/// `createMultipartUpload(path, options?)`.
+pub(crate) fn create_multipart_upload(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args =
+        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+
+    let error_message = "Expected a S3 or path to create a multipart upload for";
+    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
+    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let store = blob.store.get().as_ref().unwrap();
+    store.data.as_s3().create_multipart_upload(
+        store,
+        &global.js_thread_of_caller(callframe),
+        options,
+    )
+}
+
+/// `completeMultipartUpload(path, uploadId, parts, options?)`.
+pub(crate) fn complete_multipart_upload(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args =
+        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+
+    let error_message = "Expected a S3 or path to complete a multipart upload for";
+    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
+    let upload_id = upload_id_from_js(global, args.next_eat(), b"uploadId")?;
+    let mut parts = parts_from_js(global, args.next_eat())?;
+    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let store = blob.store.get().as_ref().unwrap();
+    store.data.as_s3().complete_multipart_upload(
+        store,
+        &global.js_thread_of_caller(callframe),
+        &upload_id,
+        &mut parts,
+        options,
+    )
+}
+
+/// `abortMultipartUpload(path, uploadId, options?)`.
+pub(crate) fn abort_multipart_upload(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args =
+        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+
+    let error_message = "Expected a S3 or path to abort a multipart upload for";
+    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
+    let upload_id = upload_id_from_js(global, args.next_eat(), b"uploadId")?;
+    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let store = blob.store.get().as_ref().unwrap();
+    store.data.as_s3().abort_multipart_upload(
+        store,
+        &global.js_thread_of_caller(callframe),
+        &upload_id,
+        options,
+    )
+}
+
+/// An `uploadId` argument or option: the id that CreateMultipartUpload
+/// returned.
+pub(crate) fn upload_id_from_js(
+    global: &JSGlobalObject,
+    value: Option<JSValue>,
+    name: &[u8],
+) -> JsResult<UploadId> {
+    let value = value.unwrap_or(JSValue::UNDEFINED);
+    if !value.is_string() {
+        return Err(global.throw_invalid_argument_type_value(name, b"string", value));
+    }
+    let utf8 = value.to_utf8(global)?;
+    UploadId::parse(&utf8).ok_or_else(|| {
+        global.throw_invalid_arguments(format_args!(
+            "{} must be 1 to {} printable ASCII characters without '&', '#' or '?'",
+            BStr::new(name),
+            UploadId::MAX_LEN
+        ))
+    })
+}
+
+/// A `partNumber` argument or option: an integer from 1 to 10000.
+pub(crate) fn part_number_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+    name: &'static [u8],
+) -> JsResult<u16> {
+    let number = global.validate_integer_range::<u16>(
+        value,
+        0,
+        bun_jsc::IntegerRange {
+            min: 1,
+            max: i128::from(MAX_PART_NUMBER),
+            field_name: name,
+        },
+    )?;
+    // `validate_integer_range` returns the default for `undefined` and `NaN`.
+    if number == 0 {
+        return Err(global.throw_invalid_property_type_value(name, b"integer", value));
+    }
+    Ok(number)
+}
+
+/// The `parts` argument of `completeMultipartUpload`: an array of
+/// `{ partNumber, etag }`, one per uploaded part, each part number once.
+pub(crate) fn parts_from_js(
+    global: &JSGlobalObject,
+    value: Option<JSValue>,
+) -> JsResult<Vec<UploadPartResult>> {
+    let value = value.unwrap_or(JSValue::UNDEFINED);
+    if !value.is_array() {
+        return Err(global.throw_invalid_argument_type_value(b"parts", b"array", value));
+    }
+    let len = value.get_length(global)?;
+    if len == 0 || len > u64::from(MAX_PART_NUMBER) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "parts must have 1 to {MAX_PART_NUMBER} entries"
+        )));
+    }
+    let mut parts: Vec<UploadPartResult> = Vec::with_capacity(len as usize);
+    for i in 0..len as u32 {
+        let part = value.get_index(global, i)?;
+        if !part.is_object() {
+            return Err(global.throw_invalid_argument_type_value(
+                b"parts[]",
+                b"{ partNumber, etag }",
+                part,
+            ));
+        }
+        let number = part_number_from_js(
+            global,
+            part.get(global, "partNumber")?.unwrap_or(JSValue::UNDEFINED),
+            b"partNumber",
+        )?;
+        let etag = part.get(global, "etag")?.unwrap_or(JSValue::UNDEFINED);
+        if !etag.is_string() {
+            return Err(global.throw_invalid_property_type_value(b"etag", b"string", etag));
+        }
+        let etag = etag.to_utf8(global)?;
+        if etag.is_empty() {
+            return Err(global.throw_invalid_arguments(format_args!("etag must not be empty")));
+        }
+        parts.push(UploadPartResult {
+            number,
+            etag: Box::from(&*etag),
+        });
+    }
+    bun_collections::index_sort::sort_slice_by(&mut parts, |a, b| a.number.cmp(&b.number));
+    for i in 1..parts.len() {
+        if parts[i - 1].number == parts[i].number {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "parts lists part {} more than once",
+                parts[i].number
+            )));
+        }
+    }
+    Ok(parts)
 }
 
 #[bun_jsc::host_fn]
@@ -558,6 +725,8 @@ pub(crate) fn get_presign_url_from(
 
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
+    let mut upload_id: Option<UploadId> = None;
+    let mut part_number: Option<u16> = None;
 
     let s3 = this.store.get().as_ref().unwrap().data.as_s3();
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
@@ -589,6 +758,16 @@ pub(crate) fn get_presign_url_from(
                 }
                 expires = expires_ as usize;
             }
+            if let Some(value) = options.get(global, "uploadId")? {
+                if !value.is_undefined_or_null() {
+                    upload_id = Some(upload_id_from_js(global, Some(value), b"uploadId")?);
+                }
+            }
+            if let Some(value) = options.get(global, "partNumber")? {
+                if !value.is_undefined_or_null() {
+                    part_number = Some(part_number_from_js(global, value, b"partNumber")?);
+                }
+            }
         }
         credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;
     }
@@ -603,10 +782,12 @@ pub(crate) fn get_presign_url_from(
             request_payer: credentials_with_options.request_payer,
             content_disposition: credentials_with_options.content_disposition.as_deref(),
             content_type: credentials_with_options.content_type.as_deref(),
+            content_encoding: credentials_with_options.content_encoding.as_deref(),
             content_hash: None,
             content_md5: None,
             search_params: None,
-            content_encoding: None,
+            upload_id: upload_id.as_ref().map(UploadId::as_raw),
+            part_number,
         },
         Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {

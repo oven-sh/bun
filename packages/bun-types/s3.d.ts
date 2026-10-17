@@ -460,6 +460,47 @@ declare module "bun" {
      * ```
      */
     method?: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
+
+    /**
+     * The id of a multipart upload, from {@link S3Client.createMultipartUpload}.
+     *
+     * With `method: "PUT"` and {@link partNumber}, the URL uploads one part
+     * of that multipart upload.
+     *
+     * @example
+     * ```ts
+     * const { uploadId } = await bucket.createMultipartUpload("video.mp4");
+     * const url = bucket.presign("video.mp4", {
+     *   method: "PUT",
+     *   expiresIn: 3600,
+     *   uploadId,
+     *   partNumber: 1,
+     * });
+     * ```
+     */
+    uploadId?: string;
+
+    /**
+     * The part number, from 1 to 10000, that the URL uploads (with
+     * {@link uploadId}) or reads.
+     */
+    partNumber?: number;
+  }
+
+  /**
+   * One part of a multipart upload, as {@link S3Client.completeMultipartUpload}
+   * needs it.
+   */
+  interface S3MultipartUploadPart {
+    /**
+     * The part number, from 1 to 10000, that the part was uploaded as.
+     */
+    partNumber: number;
+
+    /**
+     * The `ETag` response header of the part upload, quotes included.
+     */
+    etag: string;
   }
 
   interface S3Stats {
@@ -1475,6 +1516,110 @@ declare module "bun" {
       input?: S3ListObjectsOptions | null,
       options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
     ): Promise<S3ListObjectsResponse>;
+
+    /**
+     * Start a multipart upload for a file, for clients that upload the parts
+     * themselves with presigned URLs.
+     *
+     * The options set the content type, ACL and storage class of the file
+     * that {@link completeMultipartUpload} creates.
+     *
+     * @param path The path to the file in the bucket
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves to the upload id
+     *
+     * @example
+     * ```ts
+     * const { uploadId } = await bucket.createMultipartUpload("video.mp4", {
+     *   type: "video/mp4",
+     * });
+     * // One URL per part, for the client to PUT to
+     * const url = bucket.presign("video.mp4", {
+     *   method: "PUT",
+     *   expiresIn: 3600,
+     *   uploadId,
+     *   partNumber: 1,
+     * });
+     * ```
+     */
+    createMultipartUpload(path: string, options?: S3Options): Promise<{ uploadId: string }>;
+
+    /**
+     * Start a multipart upload for a file, for clients that upload the parts
+     * themselves with presigned URLs.
+     *
+     * @param path The path to the file in the bucket
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves to the upload id
+     */
+    static createMultipartUpload(path: string, options?: S3Options): Promise<{ uploadId: string }>;
+
+    /**
+     * Complete a multipart upload: assemble the uploaded parts into the file.
+     *
+     * @param path The path to the file in the bucket
+     * @param uploadId The id from {@link createMultipartUpload}
+     * @param parts The uploaded parts, each with the `ETag` header its upload returned
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves when the file exists
+     *
+     * @example
+     * ```ts
+     * await bucket.completeMultipartUpload("video.mp4", uploadId, [
+     *   { partNumber: 1, etag: '"d41d8cd98f00b204e9800998ecf8427e"' },
+     *   { partNumber: 2, etag: '"9e107d9d372bb6826bd81d3542a419d6"' },
+     * ]);
+     * ```
+     */
+    completeMultipartUpload(
+      path: string,
+      uploadId: string,
+      parts: S3MultipartUploadPart[],
+      options?: S3Options,
+    ): Promise<void>;
+
+    /**
+     * Complete a multipart upload: assemble the uploaded parts into the file.
+     *
+     * @param path The path to the file in the bucket
+     * @param uploadId The id from {@link createMultipartUpload}
+     * @param parts The uploaded parts, each with the `ETag` header its upload returned
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves when the file exists
+     */
+    static completeMultipartUpload(
+      path: string,
+      uploadId: string,
+      parts: S3MultipartUploadPart[],
+      options?: S3Options,
+    ): Promise<void>;
+
+    /**
+     * Abort a multipart upload: discard the uploaded parts. S3 bills the
+     * parts of an upload until it is completed or aborted.
+     *
+     * @param path The path to the file in the bucket
+     * @param uploadId The id from {@link createMultipartUpload}
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves when the upload is gone
+     *
+     * @example
+     * ```ts
+     * await bucket.abortMultipartUpload("video.mp4", uploadId);
+     * ```
+     */
+    abortMultipartUpload(path: string, uploadId: string, options?: S3Options): Promise<void>;
+
+    /**
+     * Abort a multipart upload: discard the uploaded parts. S3 bills the
+     * parts of an upload until it is completed or aborted.
+     *
+     * @param path The path to the file in the bucket
+     * @param uploadId The id from {@link createMultipartUpload}
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves when the upload is gone
+     */
+    static abortMultipartUpload(path: string, uploadId: string, options?: S3Options): Promise<void>;
   }
 
   /**

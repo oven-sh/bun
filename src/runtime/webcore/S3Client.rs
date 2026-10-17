@@ -578,6 +578,80 @@ impl S3Client {
             .unlink(store, &global.js_thread_of_caller(callframe), options)
     }
 
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn create_multipart_upload(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let (blob, options) = ptr.blob_and_options(
+            global,
+            callframe,
+            "create a multipart upload for",
+            MissingPathError::MissingOrInvalid,
+        )?;
+        let store = blob.store.get().as_ref().unwrap();
+        store.data.as_s3().create_multipart_upload(
+            store,
+            &global.js_thread_of_caller(callframe),
+            options,
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn complete_multipart_upload(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = global.bun_vm();
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
+        let Some(path) = PathLike::from_js(global, &mut args)? else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected a path to complete a multipart upload for"
+            )));
+        };
+        let upload_id = S3File::upload_id_from_js(global, args.next_eat(), b"uploadId")?;
+        let mut parts = S3File::parts_from_js(global, args.next_eat())?;
+        let options = args.next_eat();
+        let blob = ptr.construct_blob(global, path, options)?;
+        let store = blob.store.get().as_ref().unwrap();
+        store.data.as_s3().complete_multipart_upload(
+            store,
+            &global.js_thread_of_caller(callframe),
+            &upload_id,
+            &mut parts,
+            options,
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn abort_multipart_upload(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = global.bun_vm();
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
+        let Some(path) = PathLike::from_js(global, &mut args)? else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected a path to abort a multipart upload for"
+            )));
+        };
+        let upload_id = S3File::upload_id_from_js(global, args.next_eat(), b"uploadId")?;
+        let options = args.next_eat();
+        let blob = ptr.construct_blob(global, path, options)?;
+        let store = blob.store.get().as_ref().unwrap();
+        store.data.as_s3().abort_multipart_upload(
+            store,
+            &global.js_thread_of_caller(callframe),
+            &upload_id,
+            options,
+        )
+    }
+
     // ── Static methods ────────────────────────────────────────────────────
     // Codegen (`generated_classes.rs`) emits `S3ClientClass__static*` extern
     // wrappers that call these as `S3Client::static_*(global, callframe)`,
@@ -630,6 +704,27 @@ impl S3Client {
 
     pub(crate) fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         S3File::stat(global, callframe)
+    }
+
+    pub(crate) fn static_create_multipart_upload(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        S3File::create_multipart_upload(global, callframe)
+    }
+
+    pub(crate) fn static_complete_multipart_upload(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        S3File::complete_multipart_upload(global, callframe)
+    }
+
+    pub(crate) fn static_abort_multipart_upload(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        S3File::abort_multipart_upload(global, callframe)
     }
 
     pub(crate) fn static_list_objects(

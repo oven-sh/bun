@@ -1,7 +1,7 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1411,6 +1411,73 @@ test.concurrent.each([
   expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "undefined", signalCode: null });
   expect(exitCode).toBe(0);
 });
+
+test("Error.appendStackTrace moves the source's frames behind the destination's own", () => {
+  function inner() {
+    try {
+      null();
+    } catch (e) {
+      return e;
+    }
+  }
+  function makeDestination() {
+    const error = new Error("destination");
+    error.name = "DestinationError";
+    return error;
+  }
+  const source = inner();
+  const destination = makeDestination();
+  Error.appendStackTrace(source, destination);
+
+  const lines = destination.stack.split("\n");
+  const destinationFrame = lines.findIndex(line => line.includes("at makeDestination"));
+  const sourceFrame = lines.findIndex(line => line.includes("at inner"));
+  expect(lines[0]).toBe("DestinationError: destination");
+  expect(destinationFrame).toBeGreaterThan(0);
+  expect(sourceFrame).toBeGreaterThan(destinationFrame);
+  // The frames are moved, not copied: the source has none left.
+  expect(source.stack).toBeUndefined();
+});
+
+test.concurrent(
+  "Error.appendStackTrace with the same error as source and destination leaves its trace alone",
+  async () => {
+    // The trace needs enough frames that appending it to itself reallocates the
+    // vector; the default stackTraceLimit of 10 is plenty once f() has recursed.
+    const src = `
+      function f(n) {
+        if (n > 0) return f(n - 1) + 1;
+        try {
+          null();
+        } catch (e) {
+          Error.appendStackTrace(e, e);
+          // Without the guard the trace ends up empty and .stack is undefined.
+          process.stdout.write(JSON.stringify({ frames: String(e.stack).split("\\n").filter(line => line.includes("at f ")).length }));
+        }
+        return 0;
+      }
+      f(64);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      // WTF allocations normally come from bmalloc, where ASAN cannot see the
+      // freed buffer; Malloc=1 routes them through the system allocator.
+      // detect_leaks=0 keeps LeakSanitizer from reporting JSC's exit-time
+      // allocations under that allocator, and symbolize=0 keeps a failing child
+      // from spending seconds symbolizing the report.
+      env: isASAN
+        ? {
+            ...bunEnv,
+            Malloc: "1",
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0", "symbolize=0"].filter(Boolean).join(":"),
+          }
+        : bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify({ frames: 10 }), stderr: "", exitCode: 0 });
+  },
+);
 
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.

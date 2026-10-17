@@ -1264,6 +1264,54 @@ b {
     },
   });
 
+  // Two neighbouring rules stay two rules when one of their two-component values differs.
+  for (const [backend, minifyWhitespace, target] of [
+    ["cli", true, "browser"],
+    ["cli", false, "bun"],
+    ["api", true, "bun"],
+    ["api", false, "browser"],
+  ] as const) {
+    itBundled(`css/TwoComponentValuesStayApart/${backend}/${minifyWhitespace ? "minify" : "pretty"}/${target}`, {
+      files: {
+        "/entry.css": /* css */ `
+          .table { border-spacing: 0 }
+          .rows { border-spacing: 0 8px }
+          .gap { color: red }
+          .circle { border-radius: 50% }
+          .oval { border-radius: 50% / 10% }
+        `,
+      },
+      backend,
+      minifyWhitespace,
+      target,
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(
+          minifyWhitespace
+            ? /* css */ `.table{border-spacing:0}.rows{border-spacing:0 8px}.gap{color:red}.circle{border-radius:50%}.oval{border-radius:50%/10%}`
+            : /* css */ `
+/* entry.css */
+.table {
+  border-spacing: 0;
+}
+.rows {
+  border-spacing: 0 8px;
+}
+.gap {
+  color: red;
+}
+.circle {
+  border-radius: 50%;
+}
+.oval {
+  border-radius: 50% / 10%;
+}
+`,
+        );
+      },
+    });
+  }
+
   itBundled("css/IgnoreURLsInAtRulePrelude", {
     // GENERATED
     files: {

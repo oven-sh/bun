@@ -6593,7 +6593,7 @@ describe("the column name transform of a Statement", () => {
 });
 
 // Each case runs in a child: what it guards against ends the process.
-describe("a statement that is collected in the middle of a write", () => {
+describe.concurrent("a statement that is collected in the middle of a write", () => {
   const prelude = `
     const { Database } = require("bun:sqlite");
     const insert = "INSERT INTO ft VALUES ('hello world') RETURNING 1";
@@ -7083,17 +7083,179 @@ describe("a thread that ends in the middle of a write leaves all of the statemen
     });
 
     it.each([
-      ["ends", ""],
-      ["calls process.exit()", "process.exit(0);"],
+      ["ends", "", all],
+      ["calls process.exit()", "process.exit(0);", all],
+      // sqlite3_step() stays on the stack: the connection is left alone.
       [
         "calls process.exit() in a function of a query",
         `db.function("quit", () => process.exit(0)); db.query("SELECT quit()").get();`,
+        none,
       ],
-    ])("the main thread that %s", async (_, end) => {
+    ])("the main thread that %s", async (_, end, expected) => {
       using dir = tempDir("sqlite-thread-ends", {});
       const file = path.join(String(dir), "db.sqlite");
       await run(leave(tables[name], file, end), { BUN_DESTRUCT_VM_ON_EXIT: "0" });
-      expect(read(file, tables[name])).toEqual(none);
+      expect(read(file, tables[name])).toEqual(expected);
     });
   });
 });
+
+// The statement holds its transaction open, and what the connection writes later is part of it. Each case runs in a child.
+describe.concurrent.each(["delete", "wal"])(
+  "the process ends with a write statement left on its first row, journal_mode = %s",
+  journalMode => {
+    const prelude = `
+      const { Database, constants } = require("bun:sqlite");
+      // A function of the script says so when it is called after this is set.
+      let ending = false;
+      const called = name => void (ending && require("node:fs").writeSync(1, name + " was called\\n"));
+      const open = () => {
+        const db = new Database(process.env.SQLITE_FILE);
+        db.run("PRAGMA journal_mode = ${journalMode}");
+        // The system's SQLite of macOS leaves the -wal and -shm files in place otherwise.
+        db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+        db.run("CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, item); CREATE TABLE IF NOT EXISTS lines (n)");
+        return db;
+      };
+      // The run stays on its first row, and then five statements run to their end.
+      const write = (db, sql = "INSERT INTO orders (item) VALUES ('a'), ('b') RETURNING id") => {
+        globalThis.rows = db.prepare(sql).iterate();
+        rows.next();
+        for (let n = 0; n < 5; n++) db.run("INSERT INTO lines VALUES (?)", n);
+        ending = true;
+      };
+    `;
+    // `openFirst` gets the file before the child starts. The connection it returns stays open until the file has been read.
+    async function inChild(body, openFirst, env = {}) {
+      using dir = tempDir("sqlite-process-ends", {});
+      const file = path.join(String(dir), "db.sqlite");
+      using _ = openFirst?.(file);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", prelude + body],
+        env: { ...bunEnv, SQLITE_FILE: file, BUN_DESTRUCT_VM_ON_EXIT: "0", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // With nothing beside it, the rows are read from the database file itself.
+      const beside = readdirSync(String(dir))
+        .map(name => name.replace("db.sqlite", ""))
+        .filter(Boolean)
+        .sort();
+      using db = new Database(file);
+      db.function("f", { deterministic: true }, x => x);
+      const first = sql => Object.values(db.query(sql).get())[0];
+      return {
+        stdout: stdout.trim(),
+        stderr,
+        signalCode: proc.signalCode,
+        exitCode,
+        beside,
+        orders: first("SELECT group_concat(item) FROM orders"),
+        lines: first("SELECT count(*) FROM lines"),
+        check: first("PRAGMA integrity_check"),
+      };
+    }
+    const quiet = { stdout: "", stderr: "", signalCode: null, exitCode: 0, beside: [] };
+    const all = { ...quiet, orders: "a,b", lines: 5, check: "ok" };
+    const none = { ...quiet, orders: null, lines: 0, check: "ok" };
+
+    it.each([
+      ["at the end of the script", ""],
+      ["in process.exit()", "process.exit();"],
+      ["after db.close()", "db.close();"],
+    ])("all of it is in the file: %s", async (_, end) => {
+      expect(await inChild(`const db = open(); write(db); ${end}`)).toEqual(all);
+    });
+
+    it("all of it is in the file: after an uncaught exception", async () => {
+      // Where the heap is not destructed, the source map that the printed error needed counts as a leak.
+      const ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+      const { stderr, ...rest } = await inChild(
+        `const db = open(); write(db); throw new Error("uncaught");`,
+        undefined,
+        {
+          ASAN_OPTIONS,
+        },
+      );
+      expect(stderr).toContain("error: uncaught");
+      const { stderr: _, ...expected } = all;
+      expect(rest).toEqual({ ...expected, exitCode: 1 });
+    });
+
+    it.each([
+      ["UPDATE", "('x'), ('y')", "UPDATE orders SET item = char(96 + id) RETURNING id"],
+      ["DELETE", "('a'), ('b'), ('c'), ('d')", "DELETE FROM orders WHERE id > 2 RETURNING id"],
+    ])("all of it is in the file: the statement is %s ... RETURNING", async (_, before, sql) => {
+      expect(
+        await inChild(`
+          const db = open();
+          db.run("INSERT INTO orders (item) VALUES ${before}");
+          write(db, "${sql}");
+        `),
+      ).toEqual(all);
+    });
+
+    it("all of it is in the file, and no hook is called", async () => {
+      expect(
+        await inChild(`
+          const db = open();
+          db.onInsert = () => called("the hook");
+          write(db);
+        `),
+      ).toEqual(all);
+    });
+
+    it("all of it is in the file after a function of a query has disposed the graph that opened the database", async () => {
+      expect(
+        await inChild(`
+          const graph = new Bun.ModuleGraph({ onError() {} });
+          let db;
+          graph.run(() => void (db = open()));
+          write(db);
+          db.function("dispose", () => (graph.dispose(), 1));
+          db.query("SELECT dispose()").get();
+        `),
+      ).toEqual(all);
+    });
+
+    it("none of it is in the file when the commit needs a function, which is not called", async () => {
+      expect(
+        await inChild(`
+          const db = open();
+          db.function("f", { deterministic: true }, x => (called("f"), x));
+          db.run("CREATE VIRTUAL TABLE ft USING fts5(x); CREATE INDEX ix ON ft_data (f(id))");
+          write(db, "INSERT INTO ft VALUES ('hello world') RETURNING 1");
+        `),
+      ).toEqual(none);
+    });
+
+    it("a transaction that the user left open is rolled back", async () => {
+      expect(await inChild(`const db = open(); db.run("BEGIN"); write(db);`)).toEqual(none);
+    });
+
+    it("the process does not wait for another connection's lock", async () => {
+      expect(
+        await inChild(`const db = open(); db.run("PRAGMA busy_timeout = 600000"); write(db);`, file => {
+          const reader = new Database(file);
+          reader.run("PRAGMA journal_mode = " + journalMode);
+          reader.run("CREATE TABLE orders (id INTEGER PRIMARY KEY, item); CREATE TABLE lines (n); BEGIN");
+          reader.query("SELECT count(*) FROM orders").get();
+          return reader;
+        }),
+        // A reader stands in the way of a commit to a rollback journal. It keeps a write-ahead log in place.
+      ).toEqual(journalMode === "wal" ? { ...all, beside: ["-shm", "-wal"] } : none);
+    });
+
+    it("all of it can be read while another process has the database open", async () => {
+      expect(
+        await inChild(`const db = open(); write(db);`, file => {
+          const other = new Database(file);
+          other.run("PRAGMA journal_mode = " + journalMode);
+          other.run("CREATE TABLE orders (id INTEGER PRIMARY KEY, item); CREATE TABLE lines (n)");
+          return other;
+        }),
+      ).toEqual(journalMode === "wal" ? { ...all, beside: ["-shm", "-wal"] } : all);
+    });
+  },
+);

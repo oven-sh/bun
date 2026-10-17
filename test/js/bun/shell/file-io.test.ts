@@ -23,6 +23,104 @@ describe("IOWriter file output redirection", () => {
       .runAsTest("zero-length write should trigger onIOWriterChunk callback");
   });
 
+  describe("redirection between arguments", () => {
+    // POSIX allows a redirection anywhere among a simple command's words; words
+    // after the redirect target belong to the same command, not a new one.
+    TestBuilder.command`echo x > log rm cache`
+      .ensureTempDir()
+      .file("cache", "precious")
+      .exitCode(0)
+      .fileEquals("log", "x rm cache\n")
+      .fileEquals("cache", "precious")
+      .runAsTest("words after > file stay as arguments (do not run as a command)");
+
+    TestBuilder.command`printf '[%s]' A > o B`
+      .ensureTempDir()
+      .exitCode(0)
+      .stderr("")
+      .fileEquals("o", "[A][B]")
+      .runAsTest("printf argument after > file is passed to printf");
+
+    TestBuilder.command`echo two >> log extra`
+      .ensureTempDir()
+      .file("log", "one\n")
+      .fileEquals("log", "one\ntwo extra\n")
+      .runAsTest("words after >> file stay as arguments");
+
+    TestBuilder.command`echo x &> both extra`
+      .ensureTempDir()
+      .fileEquals("both", "x extra\n")
+      .runAsTest("words after &> file stay as arguments");
+
+    TestBuilder.command`echo y &>> both extra`
+      .ensureTempDir()
+      .file("both", "x\n")
+      .fileEquals("both", "x\ny extra\n")
+      .runAsTest("words after &>> file stay as arguments");
+
+    TestBuilder.command`cat < f0 f1`
+      .ensureTempDir()
+      .file("f0", "a0\na1\n")
+      .file("f1", "b0\n")
+      .exitCode(0)
+      .stdout("b0\n")
+      .stderr("")
+      .runAsTest("word after < file is a file operand, not a new command");
+
+    // `2>&1` and `1>&2` take no file operand: the next word is an argument and
+    // no file of that name is created or overwritten.
+    TestBuilder.command`echo A 2>&1 B C`
+      .ensureTempDir()
+      .exitCode(0)
+      .stdout("A B C\n")
+      .stderr("")
+      .doesNotExist("B")
+      .runAsTest("words after 2>&1 stay as arguments (fd-dup takes no file operand)");
+
+    TestBuilder.command`echo A 1>&2 B`
+      .ensureTempDir()
+      .exitCode(0)
+      .stdout("")
+      .stderr("A B\n")
+      .doesNotExist("B")
+      .runAsTest("words after 1>&2 stay as arguments");
+
+    TestBuilder.command`echo x 2>&1 important.txt`
+      .ensureTempDir()
+      .file("important.txt", "PRECIOUS\n")
+      .exitCode(0)
+      .stdout("x important.txt\n")
+      .fileEquals("important.txt", "PRECIOUS\n")
+      .runAsTest("2>&1 does not overwrite the file named by the next word");
+
+    TestBuilder.command`printf '[%s]' A 2>&1 B`
+      .ensureTempDir()
+      .stdout("[A][B]")
+      .doesNotExist("B")
+      .runAsTest("printf argument after 2>&1 is passed to printf");
+
+    test("words after a Buffer target stay as arguments", async () => {
+      const buf = Buffer.alloc(16);
+      await Bun.$`echo hi > ${buf} extra words`.quiet();
+      expect(buf.toString("utf8", 0, 15)).toBe("hi extra words\n");
+    });
+
+    // The tail of an interpolated array in the target slot must not run.
+    TestBuilder.command`echo hi > ${["out", "touch", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(0)
+      .fileEquals("out", "hi touch INJECTED\n")
+      .doesNotExist("INJECTED")
+      .runAsTest("interpolated array after > keeps its tail as arguments");
+
+    test("a second redirection throws before anything runs", async () => {
+      using dir = tempDir("shell-second-redirect", {});
+      const run = async () => await Bun.$`echo a > f1 b > f2`.cwd(String(dir)).quiet();
+      await expect(run()).rejects.toThrow("Multiple redirects are not supported yet.");
+      expect(fs.existsSync(join(String(dir), "f1"))).toBe(false);
+    });
+  });
+
   describe("drainBufferedData edge cases", () => {
     TestBuilder.command`echo -n ${"x".repeat(1024 * 10)} > large.txt`
       .exitCode(0)

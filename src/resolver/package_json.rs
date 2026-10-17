@@ -1,6 +1,7 @@
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
+use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
@@ -1064,7 +1065,11 @@ impl ExportsMap {
         log: &mut bun_ast::Log,
         json: js_ast::Expr,
     ) -> Option<ExportsMap> {
-        let mut visitor = Visitor { source, log };
+        let mut visitor = Visitor {
+            source,
+            log,
+            stack_check: StackCheck::init(),
+        };
 
         let root = visitor.visit(json);
 
@@ -1079,6 +1084,7 @@ impl ExportsMap {
 pub(crate) struct Visitor<'a> {
     pub(crate) source: &'a bun_ast::Source,
     pub(crate) log: &'a mut bun_ast::Log,
+    stack_check: StackCheck,
 }
 
 impl<'a> Visitor<'a> {
@@ -1105,6 +1111,10 @@ impl<'a> Visitor<'a> {
         value: &js_ast::E::JsonValue,
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
+        if !self.stack_check.is_safe_to_recurse() {
+            let loc = vloc.resolve(&self.source.contents);
+            return self.too_deep(bun_ast::Range { loc, len: 1 });
+        }
         match value {
             js_ast::E::JsonValue::Null => Entry {
                 data: EntryData::Null,
@@ -1247,6 +1257,18 @@ impl<'a> Visitor<'a> {
             data: EntryData::Invalid,
         }
     }
+
+    #[cold]
+    fn too_deep(&mut self, first_token: bun_ast::Range) -> Entry {
+        self.log.add_range_warning(
+            Some(self.source),
+            first_token,
+            b"This value is nested too deeply",
+        );
+        Entry {
+            data: EntryData::Invalid,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1305,6 +1327,8 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 pub(crate) struct ESModule<'a> {
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
+    /// Guards `resolve_target`'s recursion; the JSON parser's guard (smaller frames) accepts deeper targets.
+    pub(crate) stack_check: StackCheck,
 }
 
 #[derive(Clone)]
@@ -1856,6 +1880,15 @@ impl<'a> ESModule<'a> {
         subpath: &[u8],
         internal: bool,
     ) -> Resolution {
+        if !self.stack_check.is_safe_to_recurse() {
+            if let Some(logs) = self.debug_logs.as_deref_mut() {
+                logs.add_note(b"The package target is nested too deeply".to_vec());
+            }
+            return Resolution {
+                status: Status::InvalidPackageConfiguration,
+                ..Default::default()
+            };
+        }
         match &target.data {
             EntryData::String(str) => {
                 let mb = module_bufs();

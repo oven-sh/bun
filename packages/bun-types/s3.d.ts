@@ -85,8 +85,37 @@ declare module "bun" {
     /**
      * Finish the upload. This also flushes the internal buffer.
      *
-     * @param error Optional error to associate with the end operation
+     * Without an argument, `end()` stores the bytes written so far under the
+     * key, also when you call it from a `catch` block.
+     *
+     * @param error Pass the error if the data is incomplete because its source
+     * failed. The value must be `instanceof Error`. With any other value,
+     * `end()` completes the upload as it does without an argument. With an
+     * error, the upload is not completed, so the object under the key is not
+     * created or replaced. An object that is already under the key stays as it
+     * is. The parts that wait in the queue are cancelled, and
+     * `AbortMultipartUpload` is sent if S3 has already returned an upload id.
+     * The returned Promise and a pending `flush()` reject with `error`. These
+     * rejections count as handled, so you do not have to await them. After an
+     * earlier `end()`, or after the upload has failed, the argument has no
+     * effect.
      * @returns Number of bytes written or a Promise resolving to the number of bytes
+     *
+     * @example
+     * ```ts
+     * const writer = s3.file("backup.tar").writer();
+     * try {
+     *   for await (const chunk of source) {
+     *     writer.write(chunk);
+     *     await writer.flush();
+     *   }
+     * } catch (error) {
+     *   // Discard the incomplete upload: "backup.tar" is not created or replaced
+     *   writer.end(error instanceof Error ? error : new Error("The source failed", { cause: error }));
+     *   throw error;
+     * }
+     * await writer.end();
+     * ```
      */
     end(error?: Error): number | Promise<number>;
 

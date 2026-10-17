@@ -301,8 +301,10 @@ async function implementation() {
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include <JavaScriptCore/ErrorPrototype.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/ProxyObject.h>
 
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -1015,6 +1017,28 @@ ${classes
     default: break;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Whether the argument of a sink's end() is an error: \`value instanceof Error\`,
+// for the Error of any realm. Only stored prototypes are read, and a Proxy is
+// replaced by its target, so no script runs. A DOMException and an ES5-style
+// error (\`util.inherits(MyError, Error)\`) are not ErrorInstance cells, but
+// their prototype chain has an Error.prototype.
+extern "C" bool JSSink__isErrorValue(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return false;
+
+    JSC::JSObject* object = asObject(value);
+    while (object->type() == JSC::ProxyObjectType)
+        object = uncheckedDowncast<JSC::ProxyObject>(object)->target();
+
+    for (; object; object = object->getPrototypeDirect().getObject()) {
+        if (object->type() == JSC::ErrorInstanceType || object->inherits<JSC::ErrorPrototype>())
+            return true;
+    }
+    return false;
 }
 
 extern "C" void JSSinkController__onReady(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue amt, JSC::EncodedJSValue offset)

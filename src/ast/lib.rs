@@ -659,7 +659,7 @@ pub struct Location {
 
 // NOT `#[derive(Clone)]`. `file` / `namespace` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into a `Source` (see `init_or_null`, `css_parser.rs`, `error.rs`,
+// into a `Source` (see `init_or_null`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
 // could outlive the source buffer and read poisoned memory. Instead,
@@ -803,6 +803,10 @@ impl Location {
         Self::init_or_null_impl(_source, r, Some(tracker))
     }
 
+    /// The bytes of a long line that an excerpt keeps before and after the position.
+    const EXCERPT_BEFORE: usize = 40;
+    const EXCERPT_AFTER: usize = 80;
+
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
@@ -830,9 +834,9 @@ impl Location {
             // BYTE offsets; the gate keeps the original shape (no left trim for
             // an error in the last 80 bytes) so `write_format`'s caret aligns.
             let offset_in_line = offset.saturating_sub(data.line_start).min(full_line.len());
-            if full_line.len() > 80 + offset_in_line {
-                let mut lo = offset_in_line.saturating_sub(40);
-                let mut hi = (offset_in_line + 80).min(full_line.len());
+            if full_line.len() > Self::EXCERPT_AFTER + offset_in_line {
+                let mut lo = offset_in_line.saturating_sub(Self::EXCERPT_BEFORE);
+                let mut hi = (offset_in_line + Self::EXCERPT_AFTER).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
                     lo -= 1;
                 }
@@ -1971,46 +1975,38 @@ impl Log {
         }
     }
 
+    /// A warning and its note. An excerpt stays only if it starts where its line starts.
     #[cold]
-    pub fn add_warning_fmt_line_col(
+    pub fn add_warning_fmt_no_long_excerpt(
         &mut self,
-        filepath: Str,
-        line: u32,
-        col: u32,
+        source: Option<&Source>,
+        loc: Loc,
         args: fmt::Arguments<'_>,
+        note: Option<(Loc, fmt::Arguments<'_>)>,
     ) {
-        self.add_warning_fmt_line_col_with_notes(filepath, line, col, args, Box::default())
-    }
+        // Every excerpt that `Location::init_or_null` cut on the left is at least this long.
+        const CUT_EXCERPT_MIN: usize = Location::EXCERPT_BEFORE + Location::EXCERPT_AFTER;
 
-    #[cold]
-    pub fn add_warning_fmt_line_col_with_notes(
-        &mut self,
-        filepath: Str,
-        line: u32,
-        col: u32,
-        args: fmt::Arguments<'_>,
-        notes: Box<[Data]>,
-    ) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
         self.warnings += 1;
-
-        // TODO: do this properly
-
-        let data = Data {
-            text: alloc_print(args),
-            location: Some(Location {
-                // `Location.file` borrows the lifetime-erased `Str`; see the
-                // module-level OWNERSHIP note.
-                file: Cow::Borrowed(filepath),
-                line: i32::try_from(line).expect("int cast"),
-                column: i32::try_from(col).expect("int cast"),
-                ..Default::default()
-            }),
-        }
-        .clone_line_text(self.clone_line_text);
-
+        let mut located = |loc, args| {
+            let range = Range { loc, len: 0 };
+            let mut data = self.tracked_range_data(source, range, alloc_print(args));
+            if let Some(location) = &mut data.location
+                && let Some(excerpt) = &location.line_text
+                && excerpt.len() >= CUT_EXCERPT_MIN
+            {
+                location.line_text = None;
+            }
+            data
+        };
+        let notes: Box<[Data]> = note
+            .map(|(loc, args)| located(loc, args))
+            .into_iter()
+            .collect();
+        let data = located(loc, args);
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -3739,5 +3735,48 @@ mod line_column_tracker_tests {
         assert_eq!(scan_cost(&crlf), (crlf.len() - b"\r\n".len(), 0));
         let cjk = "\u{4E2D}".repeat(32).into_bytes();
         assert_eq!(scan_cost(&cjk), (cjk.len() - "\u{4E2D}".len(), 0));
+    }
+}
+
+#[cfg(test)]
+mod no_long_excerpt_tests {
+    use super::*;
+
+    #[test]
+    fn a_warning_keeps_only_an_excerpt_that_starts_where_its_line_starts() {
+        let long_line = b"short\n".len();
+        let contents = [b"short\n" as &[u8], &[b'a'; 200]].concat();
+        let source = Source::init_path_string_owned(b"t.css" as &[u8], contents);
+        let mut log = Log::default();
+        for at in [0, long_line + 39, long_line + 40, long_line + 199] {
+            log.add_warning_fmt_no_long_excerpt(
+                Some(&source),
+                usize2loc(at),
+                format_args!("warning"),
+                Some((usize2loc(long_line), format_args!("note"))),
+            );
+        }
+
+        let located = |data: &Data| {
+            let location = data.location.as_ref().unwrap();
+            let excerpt_len = location.line_text.as_ref().map(|excerpt| excerpt.len());
+            (location.line, location.column, excerpt_len)
+        };
+        let found: Vec<_> = log
+            .msgs
+            .iter()
+            .map(|msg| (located(&msg.data), located(&msg.notes[0])))
+            .collect();
+        let note = (2, 1, Some(80));
+        assert_eq!(
+            found,
+            [
+                ((1, 1, Some(5)), note),
+                ((2, 40, Some(119)), note),
+                ((2, 41, None), note),
+                ((2, 200, None), note),
+            ]
+        );
+        assert_eq!(log.warnings, 4);
     }
 }

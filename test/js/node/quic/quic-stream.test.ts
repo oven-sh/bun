@@ -2,6 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -516,5 +517,61 @@ describe("QuicStream.onstopsending", () => {
     expect(stream.writer.desiredSize).toBeNull();
     await expect(stream.writer.write(Uint8Array.of(2))).rejects.toBe(error);
     client.close();
+  });
+
+  // The writer marks `closed` handled when it fails. The STOP_SENDING path
+  // errors the writer first, so it has to do the same, or a peer reset on a
+  // stream with a handler turns into an unhandled rejection.
+  test("does not leave an unhandled closed rejection when the peer then resets the stream", async () => {
+    using dir = tempDir("quic-onstopsending", {
+      "main.mjs": `
+        import { listen, connect } from "node:quic";
+        import { createPrivateKey } from "node:crypto";
+        import { readFileSync } from "node:fs";
+        const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+        const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+        process.on("unhandledRejection", e => {
+          console.log("unhandledRejection " + e.code);
+          process.exit(1);
+        });
+        const accepted = Promise.withResolvers();
+        const server = await listen(
+          session => {
+            session.closed.catch(() => {});
+            session.onstream = stream => {
+              stream.closed.catch(() => {});
+              accepted.resolve(stream);
+            };
+          },
+          { sni: { "*": { keys: [key], certs: [cert] } }, alpn: "quic-test" },
+        );
+        const client = await connect(server.address, { alpn: "quic-test", servername: "localhost", verifyPeer: "manual" });
+        client.closed.catch(() => {});
+        await client.opened;
+        const stream = await client.createBidirectionalStream();
+        const stopped = Promise.withResolvers();
+        stream.onstopsending = () => stopped.resolve();
+        stream.writer.writeSync(Uint8Array.of(1));
+        const remote = await accepted.promise;
+        remote.destroy(new Error("peer error"), { code: 9n });
+        await stopped.promise;
+        // Let the close settle. The closed promise is never observed on purpose.
+        while (!stream.destroyed) await new Promise(r => setTimeout(r, 5));
+        await new Promise(r => setTimeout(r, 20));
+        console.log("ok");
+        process.exit(0);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

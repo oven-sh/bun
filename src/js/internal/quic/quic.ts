@@ -2271,6 +2271,9 @@ class QuicStream {
       if (!closed && !errored) {
         errored = true;
         error = reason;
+        // `fail()` no longer runs for this writer, so take over its job
+        // of keeping `closed` from surfacing the same error twice.
+        markPromiseAsHandled(stream.closed);
         if (drainWakeup != null) {
           markPromiseAsHandled(drainWakeup.promise);
           drainWakeup.reject(error);

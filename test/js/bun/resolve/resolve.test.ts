@@ -1892,15 +1892,15 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
-// A tsconfig `paths` target that does not start with `./`, `../` or `/` joins
-// onto `baseUrl`. With no `baseUrl` in the `extends` chain it joins onto the
-// folder of the file that declares `paths`, as in tsc. tsc also reports TS5090
-// for such a target. The runtime prints nothing: TS5090 is for `bun check`.
+// A tsconfig `paths` target that does not start with `./`, `../` or `/` names
+// the same file as that target written with `./`. Both join onto `baseUrl`
+// when a file of the `extends` chain sets one, and otherwise onto the folder
+// of the file that declares `paths`. The runtime prints nothing for the
+// spelling without `./`: TS5090 is for `bun check` to report.
 describe("tsconfig paths target that is not relative, without baseUrl", () => {
-  // `--no-install`: a specifier that misses `paths` fails. It never asks a registry.
   async function run(dir: string, ...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--no-install", ...args],
+      cmd: [bunExe(), ...args],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",
@@ -1909,12 +1909,15 @@ describe("tsconfig paths target that is not relative, without baseUrl", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
   }
+  // `--no-install`: a specifier that misses `paths` fails. It never asks a registry.
+  const runFile = (dir: string, ...args: string[]) => run(dir, "--no-install", ...args);
 
-  const alias = { compilerOptions: { paths: { "zz-components/*": ["zz-components/*"] } } };
+  const tsconfig = (paths: Record<string, string[]>) => JSON.stringify({ compilerOptions: { paths } });
+  const pkg = (name: string, fields: object = {}) => JSON.stringify({ name, version: "1.0.0", ...fields });
 
   test.concurrent("resolves against the tsconfig's folder in every resolve API", async () => {
-    using dir = tempDir("tsconfig-paths-bare-target", {
-      "tsconfig.json": JSON.stringify(alias),
+    using dir = tempDir("tsconfig-paths-bare-target-apis", {
+      "tsconfig.json": tsconfig({ "zz-components/*": ["zz-components/*"] }),
       "zz-components/Button.ts": `export default "Button";`,
       "entry.ts": `
         import Button from "zz-components/Button";
@@ -1933,7 +1936,7 @@ describe("tsconfig paths target that is not relative, without baseUrl", () => {
       `,
     });
 
-    expect(await run(String(dir), "entry.ts")).toEqual({
+    expect(await runFile(String(dir), "entry.ts")).toEqual({
       stdout: JSON.stringify({
         static: "Button",
         dynamic: "Button",
@@ -1952,123 +1955,181 @@ describe("tsconfig paths target that is not relative, without baseUrl", () => {
     ["the --tsconfig-override file", "custom.json", ["--tsconfig-override", "custom.json"]],
   ] as [name: string, file: string, args: string[]][])("also from %s", async (_name, file, args) => {
     using dir = tempDir("tsconfig-paths-bare-target-source", {
-      [file]: JSON.stringify(alias),
-      "zz-components/Button.js": `export default "Button";`,
-      "entry.js": `
-        import Button from "zz-components/Button";
-        console.log(Button);
-      `,
+      [file]: tsconfig({ "zz-components/*": ["zz-components/*"] }),
+      "zz-components/Button.js": `module.exports = "Button";`,
+      "entry.js": `console.log(require("zz-components/Button"));`,
     });
 
-    expect(await run(String(dir), ...args, "entry.js")).toEqual({ stdout: "Button", stderr: "", exitCode: 0 });
+    expect(await runFile(String(dir), ...args, "entry.js")).toEqual({ stdout: "Button", stderr: "", exitCode: 0 });
   });
 
-  const lib = { compilerOptions: { paths: { "zz-lib/*": ["lib/*"] } } };
+  const extended = (leaf: object, base: object) => ({
+    "tsconfig.json": JSON.stringify(leaf),
+    "cfg/base.json": JSON.stringify(base),
+    "lib/x.js": `module.exports = "root";`,
+    "cfg/lib/x.js": `module.exports = "cfg";`,
+    "root2/lib/x.js": `module.exports = "root2";`,
+    "entry.js": `console.log(require("zz-lib/x"));`,
+  });
+
+  // Each case runs twice: with its target written `to`, and written `./to`.
   test.concurrent.each([
     [
       "`paths` in the base, `baseUrl` in the file that extends it",
-      { extends: "./cfg/base.json", compilerOptions: { baseUrl: "./root2" } },
-      lib,
+      p =>
+        extended(
+          { extends: "./cfg/base.json", compilerOptions: { baseUrl: "./root2" } },
+          { compilerOptions: { paths: { "zz-lib/*": [`${p}lib/*`] } } },
+        ),
       "root2",
     ],
     [
       "`baseUrl` in the base, `paths` in the file that extends it",
-      { extends: "./cfg/base.json", ...lib },
-      { compilerOptions: { baseUrl: "../root2" } },
+      p =>
+        extended(
+          { extends: "./cfg/base.json", compilerOptions: { paths: { "zz-lib/*": [`${p}lib/*`] } } },
+          { compilerOptions: { baseUrl: "../root2" } },
+        ),
       "root2",
     ],
-    ["`paths` in the base, no `baseUrl`", { extends: "./cfg/base.json" }, lib, "cfg"],
-  ] as [name: string, tsconfig: object, base: object, expected: string][])(
-    "extends: %s",
-    async (_name, tsconfig, base, expected) => {
-      using dir = tempDir("tsconfig-paths-bare-target-extends", {
-        "tsconfig.json": JSON.stringify(tsconfig),
-        "cfg/base.json": JSON.stringify(base),
-        "lib/x.ts": `export default "root";`,
-        "cfg/lib/x.ts": `export default "cfg";`,
-        "root2/lib/x.ts": `export default "root2";`,
-        "entry.ts": `
-          import where from "zz-lib/x";
-          console.log(where);
-        `,
-      });
-
-      expect(await run(String(dir), "entry.ts")).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    [
+      "`paths` in the base, no `baseUrl`",
+      p => extended({ extends: "./cfg/base.json" }, { compilerOptions: { paths: { "zz-lib/*": [`${p}lib/*`] } } }),
+      "cfg",
+    ],
+    [
+      "targets of zero, one and two characters",
+      p => ({
+        "tsconfig.json": tsconfig({ "zz-root": [p], "zz-one": [`${p}a`], "zz-two": [`${p}ab`] }),
+        "index.js": `module.exports = "index";`,
+        "a.js": `module.exports = "a";`,
+        "ab.js": `module.exports = "ab";`,
+        "entry.js": `console.log(require("zz-root"), require("zz-one"), require("zz-two"));`,
+      }),
+      "index a ab",
+    ],
+    [
+      "a package of the same name, where the project path exists and where it does not",
+      p => ({
+        "tsconfig.json": tsconfig({ "zz-shared/*": [`${p}zz-shared/*`] }),
+        "zz-shared/in-both.js": `module.exports = "project";`,
+        "node_modules/zz-shared/package.json": pkg("zz-shared"),
+        "node_modules/zz-shared/in-both.js": `module.exports = "package";`,
+        "node_modules/zz-shared/in-package.js": `module.exports = "package";`,
+        "entry.js": `console.log(require("zz-shared/in-both"), require("zz-shared/in-package"));`,
+      }),
+      "project package",
+    ],
+    [
+      "a catch-all key that misses",
+      p => ({
+        "tsconfig.json": tsconfig({ "*": [`${p}types/*`] }),
+        "node_modules/zz-package/package.json": pkg("zz-package"),
+        "node_modules/zz-package/index.js": `module.exports = "package";`,
+        "entry.js": `console.log(require("zz-package"));`,
+      }),
+      "package",
+    ],
+    // An exact key whose targets miss does not end the search: a wildcard key is tried next.
+    [
+      "an exact key that misses, beside a wildcard key",
+      p => ({
+        "tsconfig.json": tsconfig({ "zz-m/x": ["./missing.js"], "zz-m/*": [`${p}lib/*`] }),
+        "lib/x.js": `module.exports = "project";`,
+        "node_modules/zz-m/package.json": pkg("zz-m"),
+        "node_modules/zz-m/x.js": `module.exports = "package";`,
+        "entry.js": `console.log(require("zz-m/x"));`,
+      }),
+      "project",
+    ],
+    [
+      "two targets of one key, tried in the order written",
+      p => ({
+        "tsconfig.json": tsconfig({ "zz-mix/*": [`${p}gen/*`, "./src/*"] }),
+        "gen/both.js": `module.exports = "gen";`,
+        "src/both.js": `module.exports = "src";`,
+        "src/only-src.js": `module.exports = "src";`,
+        "node_modules/.keep": "",
+        "entry.js": `console.log(require("zz-mix/both"), require("zz-mix/only-src"));`,
+      }),
+      "gen src",
+    ],
+    // A target names a folder, so "main" picks the file of a package and "exports" is not read.
+    // `paths` also applies to an import that a file inside node_modules makes.
+    [
+      "a catch-all key that names node_modules",
+      p => ({
+        "tsconfig.json": tsconfig({ "*": [`${p}node_modules/*`, `${p}src/types/*`] }),
+        "node_modules/zz-dual/package.json": pkg("zz-dual", { main: "./main.js", exports: "./exports.js" }),
+        "node_modules/zz-dual/main.js": `module.exports = "main";`,
+        "node_modules/zz-dual/exports.js": `module.exports = "exports";`,
+        "node_modules/zz-outer/package.json": pkg("zz-outer"),
+        "node_modules/zz-outer/index.js": `module.exports = require("zz-inner");`,
+        "node_modules/zz-outer/node_modules/zz-inner/package.json": pkg("zz-inner"),
+        "node_modules/zz-outer/node_modules/zz-inner/index.js": `module.exports = "nested";`,
+        "node_modules/zz-inner/package.json": pkg("zz-inner"),
+        "node_modules/zz-inner/index.js": `module.exports = "hoisted";`,
+        "entry.js": `console.log(require("zz-dual"), require("zz-outer"));`,
+      }),
+      "main hoisted",
+    ],
+    [
+      "the tsconfig.json of a dependency",
+      p => ({
+        "node_modules/zz-dep/package.json": pkg("zz-dep"),
+        "node_modules/zz-dep/tsconfig.json": tsconfig({ "zz-inner": [`${p}vendor/zz-inner`] }),
+        "node_modules/zz-dep/index.js": `module.exports = require("zz-inner");`,
+        "node_modules/zz-dep/vendor/zz-inner/index.js": `module.exports = "vendored";`,
+        "node_modules/zz-inner/package.json": pkg("zz-inner"),
+        "node_modules/zz-inner/index.js": `module.exports = "installed";`,
+        "entry.js": `console.log(require("zz-dep"));`,
+      }),
+      "vendored",
+    ],
+  ] as [name: string, files: (prefix: "" | "./") => Record<string, string>, stdout: string][])(
+    "same file as the `./` spelling: %s",
+    async (_name, files, stdout) => {
+      for (const prefix of ["", "./"] as const) {
+        using dir = tempDir("tsconfig-paths-bare-target", files(prefix));
+        expect({ prefix, ...(await runFile(String(dir), "entry.js")) }).toEqual({
+          prefix,
+          stdout,
+          stderr: "",
+          exitCode: 0,
+        });
+      }
     },
   );
 
-  test.concurrent("targets of zero, one and two characters", async () => {
-    using dir = tempDir("tsconfig-paths-short-target", {
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: { paths: { "zz-root": [""], "zz-one": ["a"], "zz-two": ["ab"] } },
-      }),
-      "index.ts": `export default "index";`,
-      "a.ts": `export default "a";`,
-      "ab.ts": `export default "ab";`,
-      "entry.ts": `
-        import root from "zz-root";
-        import one from "zz-one";
-        import two from "zz-two";
-        console.log(root, one, two);
-      `,
-    });
+  // `bun build` matches an entry point that does not start with `./` against `paths` first.
+  test.concurrent("same file as the `./` spelling: an entry point of `bun build` under a catch-all key", async () => {
+    for (const prefix of ["", "./"] as const) {
+      using dir = tempDir("tsconfig-paths-bare-target-entry", {
+        "tsconfig.json": tsconfig({ "*": [`${prefix}zz-src/*`] }),
+        "index.js": `console.log("index");`,
+        "zz-src/index.js": `console.log("zz-src");`,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "build", "index.js");
 
-    expect(await run(String(dir), "entry.ts")).toEqual({ stdout: "index a ab", stderr: "", exitCode: 0 });
-  });
-
-  test.concurrent("a package of the same name loses to a project path that exists", async () => {
-    using dir = tempDir("tsconfig-paths-bare-target-package", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "zz-shared/*": ["zz-shared/*"] } } }),
-      "zz-shared/in-both.ts": `export default "project";`,
-      "node_modules/zz-shared/package.json": JSON.stringify({ name: "zz-shared", version: "1.0.0", type: "module" }),
-      "node_modules/zz-shared/in-both.js": `export default "package";`,
-      "node_modules/zz-shared/in-package.js": `export default "package";`,
-      "entry.ts": `
-        import inBoth from "zz-shared/in-both";
-        import inPackage from "zz-shared/in-package";
-        console.log(inBoth, inPackage);
-      `,
-    });
-
-    expect(await run(String(dir), "entry.ts")).toEqual({ stdout: "project package", stderr: "", exitCode: 0 });
+      const built = [...stdout.matchAll(/console\.log\("([\w-]+)"\)/g)].map(match => match[1]);
+      expect({ prefix, built, stderr, exitCode }).toEqual({ prefix, built: ["zz-src"], stderr: "", exitCode: 0 });
+    }
   });
 
   // As in tsc and esbuild, only the key with the longest prefix is tried.
   test.concurrent("the key with the longest prefix is the only one tried", async () => {
     using dir = tempDir("tsconfig-paths-bare-target-longest", {
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: { paths: { "@zz/*": ["./src/*"], "@zz/gen/*": ["gen/*"] } },
-      }),
-      "gen/in-gen.ts": `export default "gen";`,
-      "src/gen/in-src.ts": `export default "src";`,
-      "hit.ts": `
-        import where from "@zz/gen/in-gen";
-        console.log(where);
-      `,
-      "miss.ts": `
-        import where from "@zz/gen/in-src";
-        console.log(where);
-      `,
+      "tsconfig.json": tsconfig({ "@zz/*": ["./src/*"], "@zz/gen/*": ["gen/*"] }),
+      "gen/in-gen.js": `module.exports = "gen";`,
+      "src/gen/in-src.js": `module.exports = "src";`,
+      "hit.js": `console.log(require("@zz/gen/in-gen"));`,
+      "miss.js": `console.log(require("@zz/gen/in-src"));`,
     });
 
-    expect(await run(String(dir), "hit.ts")).toEqual({ stdout: "gen", stderr: "", exitCode: 0 });
-    const miss = await run(String(dir), "miss.ts");
+    expect(await runFile(String(dir), "hit.js")).toEqual({ stdout: "gen", stderr: "", exitCode: 0 });
+    const miss = await runFile(String(dir), "miss.js");
     expect(miss.stderr).toContain(`Cannot find module '@zz/gen/in-src'`);
     expect(miss.exitCode).toBe(1);
-  });
-
-  test.concurrent("a catch-all key that misses still resolves a package in node_modules", async () => {
-    using dir = tempDir("tsconfig-paths-bare-target-catch-all", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "*": ["types/*"] } } }),
-      "node_modules/zz-package/package.json": JSON.stringify({ name: "zz-package", version: "1.0.0", type: "module" }),
-      "node_modules/zz-package/index.js": `export default "package";`,
-      "entry.ts": `
-        import where from "zz-package";
-        console.log(where);
-      `,
-    });
-
-    expect(await run(String(dir), "entry.ts")).toEqual({ stdout: "package", stderr: "", exitCode: 0 });
   });
 });
 

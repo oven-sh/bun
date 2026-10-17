@@ -4814,6 +4814,9 @@ impl<'a> Resolver<'a> {
             ));
         }
 
+        // With no "baseUrl" in the `extends` chain, a target that does not start with
+        // "./" joins onto the implicit base URL too, as in tsc (`getPathsBasePath`).
+        // esbuild drops such a target.
         let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
 
         // The explicit base URL should take precedence over the implicit base URL

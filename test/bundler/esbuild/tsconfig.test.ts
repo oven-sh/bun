@@ -1,4 +1,4 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -231,9 +231,10 @@ describe("bundler", () => {
     },
   });
   // esbuild warns about every target below and drops it. Bun keeps a target that is
-  // not relative and joins it onto the tsconfig's folder, as tsc does. A warning
-  // fails this test.
+  // not relative and joins it onto the tsconfig's folder, as tsc does. With the CLI
+  // backend a warning fails the case.
   itBundled("tsconfig/BadPathsNoBaseURL", {
+    backend: "cli",
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
         import bad from "bad-alias"
@@ -927,9 +928,42 @@ describe("bundler", () => {
       `,
     },
     packages: "external",
+    onAfterApiBundle(build) {
+      expect(build.logs).toEqual([]);
+    },
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("the project's own file");
       api.expectFile("/out.js").not.toContain(`from "zz-components/Button"`);
+    },
+  });
+  // In esbuild this case warns and does not resolve: it drops a target that is not
+  // relative when no file of the chain sets "baseUrl". Bun joins it onto the folder
+  // of the file that declares "paths".
+  itBundled("tsconfig/NoBaseURLExtendsPaths", {
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import { foo } from "foo"
+        console.log(foo)
+      `,
+      "/Users/user/project/lib/foo.ts": `export let foo = "the folder of the file that extends"`,
+      "/Users/user/project/base/lib/foo.ts": `export let foo = "the folder of the file that declares paths"`,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "extends": "./base/defaults.json"
+        }
+      `,
+      "/Users/user/project/base/defaults.json": /* json */ `
+        {
+          "compilerOptions": {
+            "paths": {
+              "*": ["lib/*"]
+            }
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: "the folder of the file that declares paths",
     },
   });
   return;
@@ -1643,34 +1677,6 @@ describe("bundler", () => {
     unsupportedJSFeatures: "es2020",
     targetFromAPI: "TargetWasConfigured",
     /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Top-level await is not available in the configured target environment (es2020)
-  `, */
-  });
-  itBundled("tsconfig/NoBaseURLExtendsPaths", {
-    // GENERATED
-    files: {
-      "/Users/user/project/src/entry.ts": /* ts */ `
-        import { foo } from "foo"
-        console.log(foo)
-      `,
-      "/Users/user/project/lib/foo.ts": `export let foo = 123`,
-      "/Users/user/project/tsconfig.json": /* json */ `
-        {
-        "extends": "./base/defaults"
-      }
-      `,
-      "/Users/user/project/base/defaults.json": /* json */ `
-        {
-        "compilerOptions": {
-          "paths": {
-            "*": ["lib/*"]
-          }
-        }
-      }
-      `,
-    },
-    /* TODO FIX expectedScanLog: `Users/user/project/base/defaults.json: WARNING: Non-relative path "lib/*" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
-  Users/user/project/src/entry.ts: ERROR: Could not resolve "foo"
-  NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error.
   `, */
   });
   itBundled("tsconfig/BaseURLExtendsPaths", {

@@ -620,10 +620,6 @@ impl TSConfigJSON {
                                                 Err(_) => return Ok(None),
                                             };
                                             // errdefer allocator.free(str) — handled by Drop.
-                                            // A target that is not relative is kept with or without
-                                            // "baseUrl". Without one it joins onto `base_url_for_paths`,
-                                            // as in tsc (`getPathsBasePath`). esbuild drops it.
-                                            // `bun check` reports TS5090 for it.
                                             if Self::is_valid_tsconfig_path_pattern(
                                                 &str, log, source, item_loc,
                                             ) {

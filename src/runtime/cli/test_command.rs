@@ -1012,18 +1012,21 @@ fn react_compiler_filter(
         }
         let relative = bun_paths::resolve_path::relative(root, path);
         #[cfg(windows)]
-        let relative = &*relative
+        let with_slashes: Vec<u8> = relative
             .iter()
             .map(|&byte| if byte == b'\\' { b'/' } else { byte })
-            .collect::<Vec<u8>>();
+            .collect();
+        #[cfg(windows)]
+        let relative = with_slashes.as_slice();
         // A folder stands for all that is in it.
-        let matches = |pattern: &Box<[u8]>| {
+        let matches = |pattern: &[u8]| {
             relative
-                .strip_prefix(&**pattern)
+                .strip_prefix(pattern)
                 .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
                 || bun_glob::r#match(pattern, relative).matches()
         };
-        (include.is_empty() || include.iter().any(matches)) && !exclude.iter().any(matches)
+        (include.is_empty() || include.iter().any(|pattern| matches(pattern)))
+            && !exclude.iter().any(|pattern| matches(pattern))
     }))
 }
 

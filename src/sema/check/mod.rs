@@ -761,7 +761,7 @@ impl<'s> Program<'s> {
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             reduced_unions: Default::default(),
-            union_indexes: Default::default(),
+            union_members: Default::default(),
             never_in_progress_from: Vec::new(),
             reverse_mapped_inferences_from: Vec::new(),
             defaults_in_progress: Vec::new(),
@@ -1476,7 +1476,7 @@ pub struct Checker<'p, 's> {
     /// `resolvedReducedType` of a union, once the answer for every member is final.
     reduced_unions: FxHashMap<TypeId, TypeId>,
     /// See `union_property`.
-    union_indexes: union_property::UnionIndexes<'p>,
+    union_members: union_property::UnionMembers<'p>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.

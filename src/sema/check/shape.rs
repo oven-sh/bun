@@ -165,6 +165,16 @@ impl<'s> Resolved<'s> {
         self.position(name).map(|at| &self.shape.props[at])
     }
 
+    /// `prop`, where most names asked for are missing: the filter is asked first.
+    #[inline]
+    pub(super) fn prop_past_filter(&self, name: Atom) -> Option<&Prop<'s>> {
+        let n = name.0 as usize;
+        if self.name_filter[n / 64 % 4] & 1 << (n % 64) == 0 {
+            return None;
+        }
+        self.prop(name)
+    }
+
     /// The position of `prop(name)` among the properties.
     #[inline]
     fn position(&self, name: Atom) -> Option<usize> {
@@ -1140,6 +1150,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// The members of `ty`, if something has asked for them (`ObjectFlagsMembersResolved`).
     /// Resolves nothing.
     pub(super) fn resolved_members(&self, ty: TypeId) -> Option<Members<'p>> {
+        let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];
+        if recent.ty == ty {
+            return recent.resolved.map(|resolved| Members {
+                resolved,
+                mapper: recent.mapper,
+            });
+        }
         let known = self.p.members.get(&self.task, &ty)?;
         Some(Members {
             resolved: self.p.shapes.at(&self.task, known.shape),
@@ -7759,7 +7776,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The part of `getPropertyOfTypeEx(ty, ..)` that does not depend on the name.
-    #[inline]
+    #[inline(always)]
     pub(super) fn property_holder(&mut self, ty: TypeId) -> PropertyHolder<'p> {
         let apparent = self.reduced_apparent_type(ty);
         if self.is_union(apparent) {
@@ -7771,8 +7788,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The rest of `getPropertyOfTypeEx`.
-    #[inline]
+    /// The rest of `getPropertyOfTypeEx`. Both halves are inlined so that `get_property_of_type_ex`, which every property access
+    /// goes through, doesn't pass a `PropertyHolder` through memory.
+    #[inline(always)]
     pub(super) fn property_of_holder(
         &mut self,
         holder: PropertyHolder<'p>,

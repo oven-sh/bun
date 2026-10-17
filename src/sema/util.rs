@@ -102,7 +102,7 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
-/// A set of positions in a list, one bit for each. Two sets that are combined are about lists of the same length. Up to
+/// A set of positions in a list, one bit for each. Two sets that are compared are about lists of the same length. Up to
 /// 128 positions take no allocation.
 #[derive(Clone, Default)]
 pub(crate) struct PositionSet(SmallVec<[u64; 2]>);
@@ -139,32 +139,6 @@ impl PositionSet {
     #[inline]
     pub(crate) fn insert(&mut self, position: usize) {
         self.0[position / 64] |= 1 << (position % 64);
-    }
-
-    #[inline]
-    pub(crate) fn remove(&mut self, position: usize) {
-        self.0[position / 64] &= !(1 << (position % 64));
-    }
-
-    #[inline]
-    pub(crate) fn contains(&self, position: usize) -> bool {
-        self.0[position / 64] & 1 << (position % 64) != 0
-    }
-
-    /// Adds what is in `other`.
-    #[inline]
-    pub(crate) fn extend(&mut self, other: &PositionSet) {
-        for (word, other) in self.0.iter_mut().zip(&other.0) {
-            *word |= other;
-        }
-    }
-
-    /// Adds what is in `other` and not in `excluded`.
-    #[inline]
-    pub(crate) fn extend_except(&mut self, other: &PositionSet, excluded: &PositionSet) {
-        for ((word, other), excluded) in self.0.iter_mut().zip(&other.0).zip(&excluded.0) {
-            *word |= other & !excluded;
-        }
     }
 
     /// The words of the set without what is in `excluded`, each with its index.

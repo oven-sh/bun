@@ -5,9 +5,10 @@ import { linesOf, tsc } from "./differential";
 
 afterAll(endChildren);
 
-// To make a property of a short union, `bun check` asks every member for the name. For a union of 8 members or more it
-// keeps an index: for each name the set of members that have it, 64 to a word, and up to 128 without an allocation. So
-// each program here is checked with unions on both sides of those sizes, and the size must not change what is reported.
+// To make a property of a short union, `bun check` asks every member for the name. In a union of 8 members or more it
+// keeps what it has found out about a member that it meets again. In one of 128 or more it comes to visit only the members
+// that have the name, with sets of members that have 64 to a word, and up to 128 without an allocation. So each program
+// here is checked with unions on both sides of such sizes, and the size must not change what is reported.
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -586,23 +587,240 @@ export {};
 (22,9): error TS2322: Type 'string' is not assignable to type 'never'.
 `,
   },
+  "one property after the other of the same union": {
+    sizes: [7, 8, 65, 127, 128, 129, 200],
+    program: count => `
+type Closed = ${each(count, i => (i === 3 ? `{ tag: 0; ${each(12, k => `s${k}: "three"`, "; ")} }` : `{ tag: ${i % 3}; own${i}: ${i % 3} }`))};
+type Open = ${each(count, i => (i === 3 ? `{ ${each(12, k => `s${k}: "three"`, "; ")}; [key: string]: "three" | "other" }` : `{ tag: ${i % 3}; own${i}: ${i % 3}; [key: string]: ${i % 3} | "index" }`))};
+declare const closed: Closed;
+declare const open: Open;
+${each(12, k => `closed.s${k};`, "\n")}
+closed.own5;
+closed.own3;
+closed.nothing;
+const tag: 0 = closed.tag;
+${each(12, k => `const s${k}: never = open.s${k};`, "\n")}
+const own5: never = open.own5;
+const nothing: never = open.nothing;
+open.s11 = "index";
+open.own5 = "index";
+export {};
+`,
+    errors: `
+(6,8): error TS2339: Property 's0' does not exist on type 'Closed'.
+  Property 's0' does not exist on type '{ tag: 0; own0: 0; }'.
+(7,8): error TS2339: Property 's1' does not exist on type 'Closed'.
+  Property 's1' does not exist on type '{ tag: 0; own0: 0; }'.
+(8,8): error TS2339: Property 's2' does not exist on type 'Closed'.
+  Property 's2' does not exist on type '{ tag: 0; own0: 0; }'.
+(9,8): error TS2339: Property 's3' does not exist on type 'Closed'.
+  Property 's3' does not exist on type '{ tag: 0; own0: 0; }'.
+(10,8): error TS2339: Property 's4' does not exist on type 'Closed'.
+  Property 's4' does not exist on type '{ tag: 0; own0: 0; }'.
+(11,8): error TS2339: Property 's5' does not exist on type 'Closed'.
+  Property 's5' does not exist on type '{ tag: 0; own0: 0; }'.
+(12,8): error TS2339: Property 's6' does not exist on type 'Closed'.
+  Property 's6' does not exist on type '{ tag: 0; own0: 0; }'.
+(13,8): error TS2339: Property 's7' does not exist on type 'Closed'.
+  Property 's7' does not exist on type '{ tag: 0; own0: 0; }'.
+(14,8): error TS2339: Property 's8' does not exist on type 'Closed'.
+  Property 's8' does not exist on type '{ tag: 0; own0: 0; }'.
+(15,8): error TS2339: Property 's9' does not exist on type 'Closed'.
+  Property 's9' does not exist on type '{ tag: 0; own0: 0; }'.
+(16,8): error TS2339: Property 's10' does not exist on type 'Closed'.
+  Property 's10' does not exist on type '{ tag: 0; own0: 0; }'.
+(17,8): error TS2339: Property 's11' does not exist on type 'Closed'.
+  Property 's11' does not exist on type '{ tag: 0; own0: 0; }'.
+(18,8): error TS2339: Property 'own5' does not exist on type 'Closed'.
+  Property 'own5' does not exist on type '{ tag: 0; own0: 0; }'.
+(19,8): error TS2339: Property 'own3' does not exist on type 'Closed'.
+  Property 'own3' does not exist on type '{ tag: 0; own0: 0; }'.
+(20,8): error TS2339: Property 'nothing' does not exist on type 'Closed'.
+  Property 'nothing' does not exist on type '{ tag: 0; own0: 0; }'.
+(21,7): error TS2322: Type '0 | 1 | 2' is not assignable to type '0'.
+  Type '1' is not assignable to type '0'.
+(22,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(23,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(24,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(25,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(26,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(27,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(28,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(29,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(30,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(31,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(32,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(33,7): error TS2322: Type '"index" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(34,7): error TS2322: Type '"index" | "other" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+(35,7): error TS2322: Type '"index" | "other" | "three" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"index"' is not assignable to type 'never'.
+`,
+  },
+  "unions that have members in common": {
+    sizes: [7, 8, 65, 127, 128, 129, 200],
+    program: count => `
+type Closed = ${each(count, i => `{ tag: ${i}; group: ${i % 3}; own${i}: ${i}; some${i % 2}: 1 }`)};
+type Open = ${each(count, i => (i === 5 ? `{ group: 2; own5: "five"; [key: string]: 2 | "five" | "six" }` : `{ group: ${i % 3}; own${i}: ${i % 3}; [key: string]: ${i % 3} | "index" }`))};
+function narrowed(closed: Closed, open: Open) {
+  // @ts-expect-error
+  closed.own1; closed.own2; closed.own4; closed.own5; closed.own6; closed.nothing;
+  const all = [open.own1, open.own2, open.own4, open.own5, open.own6, open.nothing];
+  const before: never = open.own5;
+  if (closed.group !== 0 && open.group !== 0) {
+    // @ts-expect-error
+    closed.own5; closed.some0; closed.own4; closed.nothing; closed.own7;
+    const some: never = closed.tag === 1 ? closed.some1 : closed.group;
+    const own5: never = open.own5;
+    const own4: never = open.own4;
+    const nothing: never = open.nothing;
+    if (closed.group !== 1 && open.group !== 1) {
+      // @ts-expect-error
+      closed.own6;
+      const own5: never = open.own5;
+      const own6: never = open.own6;
+      const nothing: never = open.nothing;
+      const group: never = closed.group;
+    }
+  }
+  if (closed.tag === 5 || closed.tag === 2) {
+    // @ts-expect-error
+    closed.own5;
+    const some: never = closed.tag === 5 ? closed.some1 : closed.some0;
+  }
+  const after: never = open.own5;
+}
+declare const rest: Exclude<Closed, { group: 0 }> | { tag: "extra"; own5: "extra" };
+declare const others: Exclude<Open, { group: 1 }> | { own5: "extra"; [key: string]: "extra" };
+// @ts-expect-error
+rest.own5; rest.own6; rest.own1; rest.nothing; rest.some0;
+const group: never = rest.tag === "extra" ? rest.own5 : rest.group;
+const own5: never = others.own5;
+const own4: never = others.own4;
+const nothing: never = others.nothing;
+export {};
+`,
+    errors: `
+(8,9): error TS2322: Type '"five" | "index" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(12,11): error TS2322: Type '1 | 2' is not assignable to type 'never'.
+  Type '1' is not assignable to type 'never'.
+(13,11): error TS2322: Type '"five" | "index" | 1 | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(14,11): error TS2322: Type '"five" | "index" | "six" | 1 | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(15,11): error TS2322: Type '"five" | "index" | "six" | 1 | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(19,13): error TS2322: Type '"five" | "index" | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(20,13): error TS2322: Type '"five" | "index" | "six" | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(21,13): error TS2322: Type '"five" | "index" | "six" | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(22,13): error TS2322: Type '2' is not assignable to type 'never'.
+(28,11): error TS2322: Type '1' is not assignable to type 'never'.
+(30,9): error TS2322: Type '"five" | "index" | 0 | 1 | 2' is not assignable to type 'never'.
+  Type '"five"' is not assignable to type 'never'.
+(36,7): error TS2322: Type '"extra" | 1 | 2' is not assignable to type 'never'.
+  Type '"extra"' is not assignable to type 'never'.
+(37,7): error TS2322: Type '"extra" | "five" | "index" | 0 | 2' is not assignable to type 'never'.
+  Type '"extra"' is not assignable to type 'never'.
+(38,7): error TS2322: Type '"extra" | "five" | "index" | "six" | 0 | 2' is not assignable to type 'never'.
+  Type '"extra"' is not assignable to type 'never'.
+(39,7): error TS2322: Type '"extra" | "five" | "index" | "six" | 0 | 2' is not assignable to type 'never'.
+  Type '"extra"' is not assignable to type 'never'.
+`,
+  },
+  "a member that is being resolved while the union is asked": {
+    sizes: [7, 8, 65, 127, 128, 129, 200],
+    program: count => `
+type Plain = ${each(count - 1, i => `{ kind: "k${i}"; x: ${i % 3}; own${i}: ${i} }`)};
+interface Left { kind: "both"; x: WithBoth["x"]; left: 1 }
+interface Right { kind: "both"; x: WithBoth["x"] | 9; right: WithBoth["own2"] }
+type WithBoth = (Left & Right) | Plain;
+interface Base<T> { base: T; x: 7 }
+interface Derived extends Base<WithDerived["x"]> { kind: "derived"; derived: WithDerived["own1"] }
+type WithDerived = Derived | Plain;
+declare const withBoth: WithBoth;
+declare const withDerived: WithDerived;
+const x: never = withBoth.x;
+withBoth.own1;
+withBoth.own2;
+withBoth.left;
+const kind: 0 = withBoth.kind === "both" ? withBoth.right : 0;
+const again: never = withBoth.x;
+withDerived.kind;
+withDerived.own1;
+withDerived.own2;
+withDerived.base;
+const base: never = withDerived.kind === "derived" ? withDerived.base : (null! as never);
+const derived: never = withDerived.kind === "derived" ? withDerived.derived : (null! as never);
+export {};
+`,
+    errors: `
+(3,32): error TS2502: 'x' is referenced directly or indirectly in its own type annotation.
+(4,33): error TS2502: 'x' is referenced directly or indirectly in its own type annotation.
+(4,71): error TS2339: Property 'own2' does not exist on type 'WithBoth'.
+(7,11): error TS2310: Type 'Derived' recursively references itself as a base type.
+(7,44): error TS2339: Property 'x' does not exist on type 'WithDerived'.
+(7,90): error TS2339: Property 'own1' does not exist on type 'WithDerived'.
+(11,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(12,10): error TS2339: Property 'own1' does not exist on type 'WithBoth'.
+  Property 'own1' does not exist on type '{ kind: "k0"; x: 0; own0: 0; }'.
+(13,10): error TS2339: Property 'own2' does not exist on type 'WithBoth'.
+  Property 'own2' does not exist on type '{ kind: "k0"; x: 0; own0: 0; }'.
+(14,10): error TS2339: Property 'left' does not exist on type 'WithBoth'.
+  Property 'left' does not exist on type '{ kind: "k0"; x: 0; own0: 0; }'.
+(16,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(18,13): error TS2339: Property 'own1' does not exist on type 'WithDerived'.
+  Property 'own1' does not exist on type 'Derived'.
+(19,13): error TS2339: Property 'own2' does not exist on type 'WithDerived'.
+  Property 'own2' does not exist on type 'Derived'.
+(20,13): error TS2339: Property 'base' does not exist on type 'WithDerived'.
+  Property 'base' does not exist on type '{ kind: "k0"; x: 0; own0: 0; }'.
+(21,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(22,7): error TS2322: Type 'any' is not assignable to type 'never'.
+`,
+  },
 };
+
+// `program` with one more line at the top, which asks each of its unions for 12 names that no member has. After that,
+// `bun check` has kept all that it ever keeps about a union and its members.
+function afterOtherNames(program: string) {
+  const aliases = Array.from(program.matchAll(/^type (\w+) =/gm), found => found[1]);
+  const reads = aliases.flatMap(alias => Array.from({ length: 12 }, (_, i) => `(null! as ${alias}).other${i}`));
+  return `// @ts-ignore\n[${reads.join(", ")}];${program}`;
+}
 
 test.concurrent.each(Object.keys(cases))("%s", async title => {
   const { sizes = [7, 8, 65, 130], program, errors } = cases[title];
   using dir = tempDir("bun-check-union", {
     "tsconfig.json": tsconfig,
-    ...Object.fromEntries(sizes.map(size => [`of${size}.ts`, program(size)])),
+    ...Object.fromEntries(sizes.map(size => [`first${size}.ts`, program(size)])),
+    ...Object.fromEntries(sizes.map(size => [`later${size}.ts`, afterOtherNames(program(size))])),
   });
-  const bySize: Record<string, string[]> = {};
-  let size = "";
+  const byFile: Record<string, string[]> = {};
+  let file = "";
   for (const line of await linesOf([bunExe(), "check"], String(dir), String(dir))) {
     // The lines that explain an error come after it, indented.
-    const error = /^of(\d+)\.ts(.*)$/.exec(line);
-    if (error) size = error[1];
-    (bySize[size] ??= []).push(error ? error[2] : line);
+    const error = /^((first|later)\d+)\.ts\((\d+)(.*)$/.exec(line);
+    if (error) file = error[1];
+    (byFile[file] ??= []).push(error ? `(${+error[3] - (error[2] === "later" ? 1 : 0)}${error[4]}` : line);
   }
-  expect(bySize).toEqual(Object.fromEntries(sizes.map(size => [size, errors.trim().split("\n")])));
+  const files = sizes.flatMap(size => [`first${size}`, `later${size}`]);
+  expect(byFile).toEqual(Object.fromEntries(files.map(it => [it, errors.trim().split("\n")])));
 });
 
 // One member of each kind among members that are plain object types, first or last, in a union of 7 and in a union of 8.

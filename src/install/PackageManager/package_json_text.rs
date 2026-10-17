@@ -527,7 +527,7 @@ impl<'a> Text<'a> {
         }
         let index = self.read(start)?;
         let container = self.containers[index];
-        self.looks_jsonc |= text[container.close..].contains(&b'/');
+        self.looks_jsonc |= strings::contains_char(&text[container.close..], b'/');
         let old = OldValue {
             at: start,
             end: container.close + 1,

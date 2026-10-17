@@ -185,7 +185,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" void Bun__setExitCode(void*, uint8_t);
-extern "C" void Bun__closeChildIPC(JSGlobalObject*);
+extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
@@ -3094,6 +3094,13 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
     }
 }
 
+// node sets process.channel to null when the channel disconnects: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L924-L929
+static void clearProcessChannel(Zig::GlobalObject* global)
+{
+    auto& vm = JSC::getVM(global);
+    global->processObject()->putDirect(vm, Identifier::fromString(vm, "channel"_s), jsNull(), 0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto global = uncheckedDowncast<GlobalObject>(globalObject);
@@ -3103,7 +3110,9 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    Bun__closeChildIPC(globalObject);
+    // node keeps process.channel until a disconnect that waits for a sent handle's ack has closed the channel.
+    if (Bun__closeChildIPC(globalObject))
+        clearProcessChannel(global);
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -4981,6 +4990,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
+    clearProcessChannel(global);
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
     auto ident = Identifier::fromString(vm, "disconnect"_s);

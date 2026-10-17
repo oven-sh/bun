@@ -3955,6 +3955,130 @@ describe.concurrent("binaries", () => {
     expect(join(binDir, "map-bin-2")).toBeValidBin(join("..", "dep-with-map-bins", "map-bin-2"));
   });
 
+  test.each(["hoisted", "isolated"])(
+    "bins that the newly installed version of a package lacks are unlinked (%s)",
+    async linker => {
+      const { packageDir, packageJson, env } = await setupTest();
+      // map-bin 1.0.2 has two bins, map-bin 1.0.1 has neither the bins nor their file.
+      for (const [version, bins] of [
+        ["1.0.2", ["map-bin", "map_bin", "what-bin"]],
+        ["1.0.1", ["what-bin"]],
+      ] as const) {
+        await write(
+          packageJson,
+          JSON.stringify({ name: "foo", dependencies: { "map-bin": version, "what-bin": "1.0.0" } }),
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins([...bins]);
+        expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
+      }
+    },
+  );
+
+  // Version 2 drops the bin `legacy-tool` and keeps the file of it. The names are in the order of
+  // a sorted listing, also with `.bunx` and `.exe` after them.
+  const toolVersions = [
+    ["1.0.0", { "legacy-tool": "a.js", tool: "a.js" }],
+    ["2.0.0", { tool: "b.js" }],
+  ] as const;
+  const writeToolTarballs = (dir: string) =>
+    Promise.all(
+      toolVersions.map(([version, bin]) =>
+        Bun.Archive.write(
+          join(dir, `tool-${version}.tgz`),
+          {
+            "package/package.json": JSON.stringify({ name: "tool", version, bin }),
+            "package/a.js": "#!/usr/bin/env node\n",
+            "package/b.js": "#!/usr/bin/env node\n",
+          },
+          { compress: "gzip" },
+        ),
+      ),
+    );
+
+  test.each([
+    ["hoisted", "with", ""],
+    ["hoisted", "without", ""],
+    ["hoisted", "with", "--force"],
+    ["isolated", "with", ""],
+    ["isolated", "without", ""],
+    ["isolated", "with", "--force"],
+  ])(
+    "a bin that the newly installed version no longer declares is unlinked (%s, %s the lockfile of the old version) %s",
+    async (linker, lockfile, flag) => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await writeToolTarballs(packageDir);
+      const binsOf = async (...importer: string[]) => {
+        const binDir = join(packageDir, ...importer, "node_modules", ".bin");
+        return existsSync(binDir) ? await readdirSorted(binDir) : [];
+      };
+
+      for (const [version, bin] of toolVersions) {
+        await Promise.all([
+          write(
+            packageJson,
+            JSON.stringify({
+              name: "foo",
+              workspaces: ["app"],
+              dependencies: { tool: `file:./tool-${version}.tgz`, "what-bin": "1.0.0" },
+            }),
+          ),
+          write(
+            join(packageDir, "app", "package.json"),
+            JSON.stringify({ name: "app", dependencies: { tool: `file:../tool-${version}.tgz` } }),
+          ),
+          lockfile === "without" && rm(join(packageDir, "bun.lockb"), { force: true }),
+        ]);
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker, ...(flag ? [flag] : [])],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(await binsOf()).toHaveBins([...Object.keys(bin), "what-bin"]);
+        // Another path to the tarball is another package, so the hoisted linker gives the member a copy too.
+        expect(await binsOf("app")).toHaveBins(Object.keys(bin));
+        expect(join(packageDir, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "tool", bin.tool));
+        expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
+      }
+    },
+  );
+
+  test.skipIf(isWindows).each(["hoisted", "isolated"])(
+    "a link in .bin that bun did not make, into a package that is not replaced, stays (%s)",
+    async linker => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "what-bin": "1.0.0" } }));
+      const own = join(packageDir, "node_modules", ".bin", "my-what-bin");
+
+      for (const args of [["install"], ["add", "no-deps@1.0.0"]]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args, "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect({ args, exitCode }).toEqual({ args, exitCode: 0 });
+        if (args[0] === "install") await symlink(join("..", "what-bin", "what-bin.js"), own);
+      }
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["my-what-bin", "what-bin"]);
+    },
+  );
+
   describe("existing destinations in the global bin dir", () => {
     // What a bin named `name` occupies in a bin dir: the symlink itself on POSIX, the `.exe` half
     // of the `.exe` + `.bunx` shim pair on Windows.
@@ -4043,6 +4167,41 @@ describe.concurrent("binaries", () => {
       expect(await readdirSorted(binDir)).toEqual([binEntry("map-bin-1")]);
       expect(await file(join(binDir, binEntry("map-bin-1"))).text()).toBe("not a bin of dep-with-map-bins");
       expect(await exists(join(globalDir, "node_modules", "dep-with-map-bins"))).toBeFalse();
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("a bin that the newly installed version no longer declares is unlinked", async () => {
+      const { packageDir, env } = await setupTest();
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([writeToolTarballs(packageDir), write(join(binDir, "not-a-bin.txt"), "stays")]);
+
+      for (const [version, bin] of toolVersions) {
+        const { err, exitCode } = await runGlobal(packageDir, env, "add", join(packageDir, `tool-${version}.tgz`));
+        expect(err).not.toContain("error:");
+        expect((await readdirSorted(binDir)).filter(name => name !== "not-a-bin.txt")).toHaveBins(Object.keys(bin));
+        expect(join(binDir, "tool")).toBeValidBin(linkTarget("tool", bin.tool));
+        expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
+      }
+      expect(await file(join(binDir, "not-a-bin.txt")).text()).toBe("stays");
+    });
+
+    test.skipIf(isWindows)("a link that bun did not make, into a package that is not replaced, stays", async () => {
+      const { packageDir, env } = await setupTest();
+      const own = join(packageDir, "global-bin-dir", "my-what-bin");
+
+      let result = await runGlobal(packageDir, env, "add", "what-bin@1.0.0");
+      expect(result.err).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
+      await symlink(linkTarget("what-bin", "what-bin.js"), own);
+
+      result = await runGlobal(packageDir, env, "add", "dep-with-file-bin");
+      expect(result.err).not.toContain("error:");
+      expect(await readdirSorted(join(packageDir, "global-bin-dir"))).toEqual([
+        "dep-with-file-bin",
+        "my-what-bin",
+        "what-bin",
+      ]);
+      expect(await readlink(own)).toBe(linkTarget("what-bin", "what-bin.js"));
       expect(result.exitCode).toBe(0);
     });
 

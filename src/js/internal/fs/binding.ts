@@ -83,6 +83,18 @@ interface FsBinding
   extends Pick<NodeFS, SyncMethod | "Dirent" | "Stats">, Pick<NodeFSPromises, PathPromiseMethod>, Promisified {
   cp(src: string, dest: string, recursive: boolean, errorOnExist: boolean, force: boolean, mode: number): Promise<void>;
   cpSync(src: string, dest: string, recursive: boolean, errorOnExist: boolean, force: boolean, mode: number): void;
+  // `fs.Dir` on its native stream. A batch ends with `null` when the directory has no more entries.
+  opendirSync(path: import("node:fs").PathLike, encoding?: string, recursive?: boolean): $ZigGeneratedClasses.DirStream;
+  opendirCb(
+    callback: (err: any, stream?: $ZigGeneratedClasses.DirStream) => void,
+    path: import("node:fs").PathLike,
+    encoding?: string,
+    recursive?: boolean,
+  ): void;
+  dirRead(stream: $ZigGeneratedClasses.DirStream, limit: number): Promise<(import("node:fs").Dirent | null)[]>;
+  dirReadSync(stream: $ZigGeneratedClasses.DirStream, limit: number): (import("node:fs").Dirent | null)[];
+  dirClose(stream: $ZigGeneratedClasses.DirStream): Promise<void>;
+  dirCloseSync(stream: $ZigGeneratedClasses.DirStream): void;
   read(
     fd: number,
     buffer: NodeJS.ArrayBufferView,
@@ -112,12 +124,13 @@ interface FsBinding
   writev(fd: number, buffers: readonly NodeJS.ArrayBufferView[], position?: number | null): Promise<number>;
 }
 
-// `xCb(callback, ...args)`: the promise arm's arguments after the callback. `fs.cp` is a JS chain, so no `cpCb`.
+// `xCb(callback, ...args)`: the promise arm's arguments after the callback. No `cpCb` (`fs.cp` is a JS chain), and none for `fs.Dir`'s read and close.
 type FsCallbackArm<T> = {
-  [K in Exclude<keyof T & string, "cp"> as T[K] extends (...args: any[]) => Promise<any> ? `${K}Cb` : never]: (
-    callback: (err: any, value?: any) => void,
-    ...args: any[]
-  ) => void;
+  [
+    K in Exclude<keyof T & string, "cp" | "dirRead" | "dirClose"> as T[K] extends (...args: any[]) => Promise<any>
+      ? `${K}Cb`
+      : never
+  ]: (callback: (err: any, value?: any) => void, ...args: any[]) => void;
 };
 
 export default $rust("node_fs_binding.rs", "createBinding") as FsBinding & FsCallbackArm<FsBinding>;

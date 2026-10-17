@@ -65,7 +65,9 @@ declare module "bun" {
     readonly "~standard": {
       readonly version: 1;
       readonly vendor: "bun";
-      readonly validate: (value: unknown) => { readonly value: T; readonly issues?: undefined } | { readonly issues: readonly ValidationIssue[] };
+      readonly validate: (
+        value: unknown,
+      ) => { readonly value: T; readonly issues?: undefined } | { readonly issues: readonly ValidationIssue[] };
       readonly types?: { readonly input: unknown; readonly output: T };
     };
   }
@@ -94,7 +96,9 @@ declare module "bun" {
   /** `string & Pattern<"^[a-z]+$">`: the source of a regular expression that the string must match. */
   type Pattern<S extends string> = { readonly "bun.pattern"?: S };
   /** `string & Format<"uuid">` */
-  type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = { readonly "bun.format"?: S };
+  type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = {
+    readonly "bun.format"?: S;
+  };
   /** `number & Min<1> & Message<"Order at least one">`: the message of the issues about this value. */
   type Message<S extends string> = { readonly "bun.message"?: S };
   /** `number & Default<8080>`: what stands in for `undefined` or a missing property. */

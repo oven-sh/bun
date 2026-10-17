@@ -123,8 +123,6 @@ function validatedLowercaseHeaderName(name) {
   return lowercased;
 }
 
-
-
 const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 
 // isCookieField performs a case-insensitive comparison of a provided string
@@ -218,7 +216,9 @@ type ServerResponseFields = import("internal/http").ServerResponseFields;
 // Every input is fixed for the life of the message, but setHeader and
 // appendHeader consult this once per header: compute once, cache in the
 // constructor-declared slot.
-const isLenientHeaderValidation = (OutgoingMessage.prototype._isLenientHeaderValidation = function (this: ServerResponseFields) {
+const isLenientHeaderValidation = (OutgoingMessage.prototype._isLenientHeaderValidation = function (
+  this: ServerResponseFields,
+) {
   const cached = this[kLenientValidation];
   if (cached != null) return cached;
 
@@ -721,7 +721,11 @@ OutgoingMessage.prototype.setHeader = function setHeader(this: ServerResponseFie
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
   const field = validatedLowercaseHeaderName(name);
-  validateHeaderValueLenient(name, value, isPlainResponse(this) ? isLenientHeaderValidation.$call(this) : this._isLenientHeaderValidation());
+  validateHeaderValueLenient(
+    name,
+    value,
+    isPlainResponse(this) ? isLenientHeaderValidation.$call(this) : this._isLenientHeaderValidation(),
+  );
 
   let headers = this[kOutHeaders];
   if (headers === null) this[kOutHeaders] = headers = { __proto__: null };

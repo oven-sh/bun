@@ -28,7 +28,9 @@ fn main() {
         );
     }
     let bytes = fs::read(&archive).expect("builtin_sources.bin can be read");
-    let files = bytes.get(..4).map_or(0, |n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize);
+    let files = bytes
+        .get(..4)
+        .map_or(0, |n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize);
     let written_for = bytes
         .get(4..)
         .unwrap_or_default()
@@ -38,9 +40,10 @@ fn main() {
         .find_map(|name| name.strip_prefix(b"table-"))
         .and_then(|hash| String::from_utf8(hash.to_vec()).ok());
     let table = repo.join("src/aot/builtins_generated.rs");
-    let current = fs::read_to_string(&table)
-        .ok()
-        .and_then(|text| text.split_once("BUILTINS_HASH: u32 = 0x").and_then(|(_, rest)| rest.get(..8).map(str::to_owned)));
+    let current = fs::read_to_string(&table).ok().and_then(|text| {
+        text.split_once("BUILTINS_HASH: u32 = 0x")
+            .and_then(|(_, rest)| rest.get(..8).map(str::to_owned))
+    });
     if current.is_none() || written_for != current {
         panic!(
             "{} was written for the table of built-ins {}, and src/aot/builtins_generated.rs has {} — run `bun bd` again",

@@ -2,7 +2,10 @@ use super::FieldKey;
 use super::flows::LayoutUsage;
 use crate::bind::{Decl, Parent, PatParent, SymbolId};
 use crate::check::Checker;
-use crate::hir::{Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, MemberKind, PatKind, PropKind, StmtId, StmtKind, VarDeclId};
+use crate::hir::{
+    Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind,
+    MemberKind, PatKind, PropKind, StmtId, StmtKind, VarDeclId,
+};
 use crate::program::FileId;
 use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet};
@@ -16,7 +19,10 @@ pub(crate) struct Creations<T = TypeId> {
 
 impl<T> Default for Creations<T> {
     fn default() -> Creations<T> {
-        Creations { points: FxHashMap::default(), set: FxHashMap::default() }
+        Creations {
+            points: FxHashMap::default(),
+            set: FxHashMap::default(),
+        }
     }
 }
 
@@ -30,7 +36,10 @@ impl<T: Copy + Eq + Hash> Creations<T> {
         }
     }
 
-    pub(super) fn renamed<U: Copy + Eq + Hash>(self, rename: &mut impl FnMut(T) -> Option<U>) -> Creations<U> {
+    pub(super) fn renamed<U: Copy + Eq + Hash>(
+        self,
+        rename: &mut impl FnMut(T) -> Option<U>,
+    ) -> Creations<U> {
         let mut renamed = Creations::default();
         for ((layout, by_constructor), count) in self.points {
             if let Some(layout) = rename(layout) {
@@ -39,7 +48,10 @@ impl<T: Copy + Eq + Hash> Creations<T> {
         }
         for ((layout, by_constructor, name), count) in self.set {
             if let Some(layout) = rename(layout) {
-                *renamed.set.entry((layout, by_constructor, name)).or_default() += count;
+                *renamed
+                    .set
+                    .entry((layout, by_constructor, name))
+                    .or_default() += count;
             }
         }
         renamed
@@ -49,8 +61,20 @@ impl<T: Copy + Eq + Hash> Creations<T> {
 impl Creations<TypeId> {
     pub(super) fn by_layout_index(&self, index_of: &FxHashMap<TypeId, u32>) -> IndexedCreations {
         IndexedCreations {
-            points: self.points.iter().filter_map(|(&(layout, by_constructor), &count)| Some((*index_of.get(&layout)?, by_constructor, count))).collect(),
-            set: self.set.iter().filter_map(|(&(layout, by_constructor, name), &count)| Some((*index_of.get(&layout)?, by_constructor, name, count))).collect(),
+            points: self
+                .points
+                .iter()
+                .filter_map(|(&(layout, by_constructor), &count)| {
+                    Some((*index_of.get(&layout)?, by_constructor, count))
+                })
+                .collect(),
+            set: self
+                .set
+                .iter()
+                .filter_map(|(&(layout, by_constructor, name), &count)| {
+                    Some((*index_of.get(&layout)?, by_constructor, name, count))
+                })
+                .collect(),
         }
     }
 }
@@ -64,17 +88,26 @@ impl IndexedCreations {
     pub(super) fn apply(self, views: &mut [LayoutUsage]) {
         let layout_count = views.len() as u32;
         let mut points = vec![[0u32; 2]; views.len()];
-        for (view, by_constructor, count) in self.points.into_iter().filter(|of| of.0 < layout_count) {
+        for (view, by_constructor, count) in
+            self.points.into_iter().filter(|of| of.0 < layout_count)
+        {
             points[view as usize][usize::from(by_constructor)] = count;
         }
-        for (view, by_constructor, name, on_every_path) in self.set.into_iter().filter(|of| of.0 < layout_count) {
+        for (view, by_constructor, name, on_every_path) in
+            self.set.into_iter().filter(|of| of.0 < layout_count)
+        {
             let layout_entry = points[view as usize];
             if by_constructor == (layout_entry[0] == 0) {
-                views[view as usize].set_at_creation.push((name, on_every_path == layout_entry[usize::from(by_constructor)]));
+                views[view as usize].set_at_creation.push((
+                    name,
+                    on_every_path == layout_entry[usize::from(by_constructor)],
+                ));
             }
         }
         for reach in views.iter_mut() {
-            reach.set_at_creation.sort_unstable_by_key(|field| field.0.order());
+            reach
+                .set_at_creation
+                .sort_unstable_by_key(|field| field.0.order());
         }
     }
 }
@@ -114,7 +147,10 @@ impl Fresh {
     }
 
     fn either(self, mut other: Fresh) -> Fresh {
-        let mut both = Fresh { types: self.types, ..Fresh::default() };
+        let mut both = Fresh {
+            types: self.types,
+            ..Fresh::default()
+        };
         for ty in other.types {
             if !both.types.contains(&ty) {
                 both.types.push(ty);
@@ -123,12 +159,18 @@ impl Fresh {
         for &name in &self.always {
             both.set(name, other.always.contains(&name));
         }
-        for &name in other.always.iter().chain(&self.sometimes).chain(&other.sometimes) {
+        for &name in other
+            .always
+            .iter()
+            .chain(&self.sometimes)
+            .chain(&other.sometimes)
+        {
             both.set(name, false);
         }
         for (name, part) in self.parts {
             if let Some(at) = other.parts.iter().position(|of_other| of_other.0 == name) {
-                both.parts.push((name, part.either(other.parts.swap_remove(at).1)));
+                both.parts
+                    .push((name, part.either(other.parts.swap_remove(at).1)));
             }
         }
         both
@@ -162,14 +204,16 @@ pub(super) struct State {
 const MAX_SIBLINGS_WALKED_UNCONDITIONALLY: usize = 64;
 
 fn unwrapped(hir: &File, mut e: ExprId) -> ExprId {
-    while let ExprKind::As { expr, .. } | ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. } = hir[e].kind {
+    while let ExprKind::As { expr, .. }
+    | ExprKind::NonNull(expr)
+    | ExprKind::Satisfies { expr, .. } = hir[e].kind
+    {
         e = expr;
     }
     e
 }
 
 impl<'p, 's> Checker<'p, 's> {
-
     pub fn record_creations_in(&mut self, file: FileId, func: FnId) {
         let notes = self.creation_notes_for(file);
         let from = notes.partition_point(|note| note.0.0 < func.0);
@@ -191,12 +235,21 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn add_creation_note(&mut self, point: &Point) {
         let recorded = self.recorded_creations();
-        *recorded.points.entry((point.ty, point.by_constructor)).or_default() += 1;
+        *recorded
+            .points
+            .entry((point.ty, point.by_constructor))
+            .or_default() += 1;
         for &name in &point.always {
-            *recorded.set.entry((point.ty, point.by_constructor, name)).or_default() += 1;
+            *recorded
+                .set
+                .entry((point.ty, point.by_constructor, name))
+                .or_default() += 1;
         }
         for &name in &point.sometimes {
-            recorded.set.entry((point.ty, point.by_constructor, name)).or_default();
+            recorded
+                .set
+                .entry((point.ty, point.by_constructor, name))
+                .or_default();
         }
     }
 
@@ -214,15 +267,19 @@ impl<'p, 's> Checker<'p, 's> {
     fn find_creation_notes_for(&mut self, file: FileId) -> Vec<(FnId, Point)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut notes = Vec::new();
-        if self.is_untyped_file(file) || matches!(hir.kind, FileKind::Declaration | FileKind::Json) {
+        if self.is_untyped_file(file) || matches!(hir.kind, FileKind::Declaration | FileKind::Json)
+        {
             return notes;
         }
         let index = self.file_exprs_by_kind(file);
         let mut followed: FxHashSet<ExprId> = FxHashSet::default();
         for (func, f) in hir.fns.iter().enumerate() {
             let func = FnId(func as u32);
-            let has_this = matches!(f.kind, FnKind::Decl | FnKind::Expr) && f.this_ty(hir).is_some();
-            let FnBody::Block(body) = f.body else { continue };
+            let has_this =
+                matches!(f.kind, FnKind::Decl | FnKind::Expr) && f.this_ty(hir).is_some();
+            let FnBody::Block(body) = f.body else {
+                continue;
+            };
             if !has_this && f.kind != FnKind::Constructor {
                 continue;
             }
@@ -237,27 +294,61 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for (d, declaration) in hir.var_decls.iter().enumerate() {
             let d = VarDeclId(d as u32);
-            if declaration.init.is_none() || !matches!(hir[unwrapped(hir, declaration.init)].kind, ExprKind::New(_) | ExprKind::Object(_) | ExprKind::Call(_)) {
+            if declaration.init.is_none()
+                || !matches!(
+                    hir[unwrapped(hir, declaration.init)].kind,
+                    ExprKind::New(_) | ExprKind::Object(_) | ExprKind::Call(_)
+                )
+            {
                 continue;
             }
-            let Some(fresh) = self.fresh_in_local(file, d, &mut followed) else { continue };
-            let func = self.enclosing_fn(file, Parent::VarInit(d)).unwrap_or(FnId::NONE);
+            let Some(fresh) = self.fresh_in_local(file, d, &mut followed) else {
+                continue;
+            };
+            let func = self
+                .enclosing_fn(file, Parent::VarInit(d))
+                .unwrap_or(FnId::NONE);
             let symbol = bound.pat_symbol[declaration.pat.idx()];
             if func.is_none() || !self.is_returned_by_factory(file, func, symbol) {
                 add_points(&fresh, false, func, &mut notes);
             }
         }
         for &e in index.of(ExprTag::Assign) {
-            let ExprKind::Assign { op: None, target, value } = hir[e].kind else { continue };
-            let (ExprKind::Ident(_), Parent::Stmt(stmt)) = (hir[target].kind, bound.expr_parent[e.idx()]) else { continue };
+            let ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } = hir[e].kind
+            else {
+                continue;
+            };
+            let (ExprKind::Ident(_), Parent::Stmt(stmt)) =
+                (hir[target].kind, bound.expr_parent[e.idx()])
+            else {
+                continue;
+            };
             if stmt.is_none() || !matches!(hir[stmt].kind, StmtKind::Expr(_)) {
                 continue;
             }
-            let Some(mut fresh) = self.fresh_from(file, value) else { continue };
+            let Some(mut fresh) = self.fresh_from(file, value) else {
+                continue;
+            };
             followed.insert(unwrapped(hir, value));
             let rest = self.statements_after(file, stmt);
-            self.follow(file, &rest, Root::Local(bound.expr_symbol[target.idx()]), true, &mut fresh, &mut followed);
-            add_points(&fresh, false, self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE), &mut notes);
+            self.follow(
+                file,
+                &rest,
+                Root::Local(bound.expr_symbol[target.idx()]),
+                true,
+                &mut fresh,
+                &mut followed,
+            );
+            add_points(
+                &fresh,
+                false,
+                self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE),
+                &mut notes,
+            );
         }
         for tag in [ExprTag::New, ExprTag::Object, ExprTag::Call] {
             for &e in index.of(tag) {
@@ -271,15 +362,29 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut outer = e;
                 while let Parent::Expr(parent) = bound.expr_parent[outer.idx()]
                     && parent.is_some()
-                    && matches!(hir[parent].kind, ExprKind::As { .. } | ExprKind::NonNull(_) | ExprKind::Satisfies { .. })
+                    && matches!(
+                        hir[parent].kind,
+                        ExprKind::As { .. } | ExprKind::NonNull(_) | ExprKind::Satisfies { .. }
+                    )
                 {
                     outer = parent;
                 }
                 let goes_on = match bound.expr_parent[outer.idx()] {
-                    Parent::Prop(prop) => hir[prop].kind == PropKind::Init && bound.prop_owner[prop.idx()].is_some() && matches!(hir[bound.prop_owner[prop.idx()]].kind, ExprKind::Object(_)),
+                    Parent::Prop(prop) => {
+                        hir[prop].kind == PropKind::Init
+                            && bound.prop_owner[prop.idx()].is_some()
+                            && matches!(hir[bound.prop_owner[prop.idx()]].kind, ExprKind::Object(_))
+                    }
                     Parent::MemberInit(_) => true,
-                    Parent::FnBody(_) => func.is_some() && self.factory_result(file, func).is_some(),
-                    Parent::Stmt(stmt) => stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Return(_)) && func.is_some() && self.factory_result(file, func).is_some(),
+                    Parent::FnBody(_) => {
+                        func.is_some() && self.factory_result(file, func).is_some()
+                    }
+                    Parent::Stmt(stmt) => {
+                        stmt.is_some()
+                            && matches!(hir[stmt].kind, StmtKind::Return(_))
+                            && func.is_some()
+                            && self.factory_result(file, func).is_some()
+                    }
                     _ => false,
                 };
                 if !goes_on && let Some(fresh) = self.fresh_from(file, outer) {
@@ -312,13 +417,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let hir = self.hir(file);
         let mut fresh = match hir[e].kind {
-            ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. } => return self.fresh_from(file, expr),
+            ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. } => {
+                return self.fresh_from(file, expr);
+            }
             ExprKind::As { expr, .. } => self.fresh_from(file, expr)?,
             ExprKind::Object(props) => {
                 let mut fresh = Fresh::default();
                 let mut written: FxHashSet<FieldKey> = FxHashSet::default();
                 for p in props.iter() {
-                    let Some(name) = self.field_key(file, hir[p].key) else { continue };
+                    let Some(name) = self.field_key(file, hir[p].key) else {
+                        continue;
+                    };
                     if hir[p].kind == PropKind::Spread {
                         continue;
                     }
@@ -375,7 +484,12 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.aot.creation.constructed.get(&(file, class)) {
             return known.clone();
         }
-        if self.aot.creation.classes_in_progress.contains(&(file, class)) {
+        if self
+            .aot
+            .creation
+            .classes_in_progress
+            .contains(&(file, class))
+        {
             return Rc::default();
         }
         self.aot.creation.classes_in_progress.push((file, class));
@@ -389,8 +503,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for m in hir[class].members.iter() {
             let member = &hir[m];
-            let Some(name) = self.field_key(file, member.key) else { continue };
-            if member.kind != MemberKind::Property || member.flags.contains(Flags::STATIC) || member.init.is_none() {
+            let Some(name) = self.field_key(file, member.key) else {
+                continue;
+            };
+            if member.kind != MemberKind::Property
+                || member.flags.contains(Flags::STATIC)
+                || member.init.is_none()
+            {
                 continue;
             }
             fresh.set(name, true);
@@ -412,7 +531,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.aot.creation.classes_in_progress.pop();
         let fresh = Rc::new(fresh);
-        self.aot.creation.constructed.insert((file, class), fresh.clone());
+        self.aot
+            .creation
+            .constructed
+            .insert((file, class), fresh.clone());
         fresh
     }
 
@@ -420,7 +542,12 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.aot.creation.constructor_effects.get(&(file, func)) {
             return known.clone();
         }
-        if self.aot.creation.functions_in_progress.contains(&(file, func)) {
+        if self
+            .aot
+            .creation
+            .functions_in_progress
+            .contains(&(file, func))
+        {
             return Rc::default();
         }
         self.aot.creation.functions_in_progress.push((file, func));
@@ -428,11 +555,21 @@ impl<'p, 's> Checker<'p, 's> {
         let mut fresh = Fresh::default();
         if let FnBody::Block(body) = hir[func].body {
             let body: Vec<StmtId> = hir.ids(body).collect();
-            self.follow(file, &body, Root::This, true, &mut fresh, &mut FxHashSet::default());
+            self.follow(
+                file,
+                &body,
+                Root::This,
+                true,
+                &mut fresh,
+                &mut FxHashSet::default(),
+            );
         }
         self.aot.creation.functions_in_progress.pop();
         let fresh = Rc::new(fresh);
-        self.aot.creation.constructor_effects.insert((file, func), fresh.clone());
+        self.aot
+            .creation
+            .constructor_effects
+            .insert((file, func), fresh.clone());
         fresh
     }
 
@@ -440,13 +577,21 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.aot.creation.returned.get(&(file, func)) {
             return known.clone();
         }
-        if self.aot.creation.functions_in_progress.contains(&(file, func)) {
+        if self
+            .aot
+            .creation
+            .functions_in_progress
+            .contains(&(file, func))
+        {
             return None;
         }
         self.aot.creation.functions_in_progress.push((file, func));
         let found = self.find_fresh_returned_by(file, func).map(Rc::new);
         self.aot.creation.functions_in_progress.pop();
-        self.aot.creation.returned.insert((file, func), found.clone());
+        self.aot
+            .creation
+            .returned
+            .insert((file, func), found.clone());
         found
     }
 
@@ -466,7 +611,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_fresh_returned_by(&mut self, file: FileId, func: FnId) -> Option<Fresh> {
         let hir = self.hir(file);
-        if self.is_untyped_file(file) || hir.kind == FileKind::Declaration || hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
+        if self.is_untyped_file(file)
+            || hir.kind == FileKind::Declaration
+            || hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+        {
             return None;
         }
         let mut found: Option<Fresh> = None;
@@ -486,7 +634,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn fresh_returned(&mut self, file: FileId, func: FnId, value: ExprId) -> Option<Fresh> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[value].kind {
-            ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. } => self.fresh_returned(file, func, expr),
+            ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. } => {
+                self.fresh_returned(file, func, expr)
+            }
             ExprKind::As { expr, .. } => {
                 let mut fresh = self.fresh_returned(file, func, expr)?;
                 let ty = self.type_of_expr(file, value);
@@ -495,10 +645,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::Ident(_) => {
                 let symbol = bound.expr_symbol[value.idx()];
-                let &Decl::Var(pat) = bound.symbols.get(symbol.idx())?.decls.iter().next()? else { return None };
-                let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return None };
-                let is_never_reassigned = bound.assignments_to(symbol).is_empty() && !self.is_stored_through_casts(file, symbol);
-                if !is_never_reassigned || self.enclosing_fn(file, Parent::VarInit(d)) != Some(func) {
+                let &Decl::Var(pat) = bound.symbols.get(symbol.idx())?.decls.iter().next()? else {
+                    return None;
+                };
+                let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
+                    return None;
+                };
+                let is_never_reassigned = bound.assignments_to(symbol).is_empty()
+                    && !self.is_stored_through_casts(file, symbol);
+                if !is_never_reassigned || self.enclosing_fn(file, Parent::VarInit(d)) != Some(func)
+                {
                     return None;
                 }
                 self.fresh_in_local(file, d, &mut FxHashSet::default())
@@ -510,13 +666,24 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_returned_by_factory(&mut self, file: FileId, func: FnId, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_returned = self.returned_values(file, func).into_iter().any(|value| {
-            let value = if value.is_some() { unwrapped(hir, value) } else { value };
-            value.is_some() && matches!(hir[value].kind, ExprKind::Ident(_)) && bound.expr_symbol[value.idx()] == symbol
+            let value = if value.is_some() {
+                unwrapped(hir, value)
+            } else {
+                value
+            };
+            value.is_some()
+                && matches!(hir[value].kind, ExprKind::Ident(_))
+                && bound.expr_symbol[value.idx()] == symbol
         });
         is_returned && self.factory_result(file, func).is_some()
     }
 
-    fn fresh_in_local(&mut self, file: FileId, d: VarDeclId, followed: &mut FxHashSet<ExprId>) -> Option<Fresh> {
+    fn fresh_in_local(
+        &mut self,
+        file: FileId,
+        d: VarDeclId,
+        followed: &mut FxHashSet<ExprId>,
+    ) -> Option<Fresh> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let declaration = &hir[d];
         if declaration.init.is_none() || !matches!(hir[declaration.pat].kind, PatKind::Ident(_)) {
@@ -528,7 +695,10 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self.type_of_symbol(self.files().sym(file, symbol));
         self.add_static_type(&mut fresh, declared);
         let stmt = bound.var_stmt[d.idx()];
-        if stmt.is_some() && (self.sibling_count(file, stmt) <= MAX_SIBLINGS_WALKED_UNCONDITIONALLY || self.property_store_roots(file).contains(&symbol)) {
+        if stmt.is_some()
+            && (self.sibling_count(file, stmt) <= MAX_SIBLINGS_WALKED_UNCONDITIONALLY
+                || self.property_store_roots(file).contains(&symbol))
+        {
             let rest = self.statements_after(file, stmt);
             self.follow(file, &rest, Root::Local(symbol), true, &mut fresh, followed);
         }
@@ -544,11 +714,24 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut roots = FxHashSet::default();
         for e in hir.exprs.iter() {
-            let ExprKind::Assign { target, .. } = e.kind else { continue };
-            let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[unwrapped(hir, target)].kind else { continue };
+            let ExprKind::Assign { target, .. } = e.kind else {
+                continue;
+            };
+            let ExprKind::Dot {
+                obj,
+                chain: Chain::No,
+                ..
+            } = hir[unwrapped(hir, target)].kind
+            else {
+                continue;
+            };
             let obj = unwrapped(hir, obj);
             let root = match hir[obj].kind {
-                ExprKind::Dot { obj: holder, chain: Chain::No, .. } => unwrapped(hir, holder),
+                ExprKind::Dot {
+                    obj: holder,
+                    chain: Chain::No,
+                    ..
+                } => unwrapped(hir, holder),
                 _ => obj,
             };
             if matches!(hir[root].kind, ExprKind::Ident(_)) {
@@ -590,10 +773,21 @@ impl<'p, 's> Checker<'p, 's> {
             Parent::File => hir.body,
             _ => return Vec::new(),
         };
-        hir.ids(block).skip_while(|&other| other != stmt).skip(1).collect()
+        hir.ids(block)
+            .skip_while(|&other| other != stmt)
+            .skip(1)
+            .collect()
     }
 
-    fn follow(&mut self, file: FileId, stmts: &[StmtId], root: Root, is_on_every_path: bool, fresh: &mut Fresh, followed: &mut FxHashSet<ExprId>) -> bool {
+    fn follow(
+        &mut self,
+        file: FileId,
+        stmts: &[StmtId],
+        root: Root,
+        is_on_every_path: bool,
+        fresh: &mut Fresh,
+        followed: &mut FxHashSet<ExprId>,
+    ) -> bool {
         let hir = self.hir(file);
         for &stmt in stmts {
             let nested: [StmtId; 3] = match hir[stmt].kind {
@@ -612,10 +806,18 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 StmtKind::Return(_) | StmtKind::Throw(_) if is_on_every_path => return false,
                 StmtKind::If { yes, no, .. } => [yes, no, StmtId::NONE],
-                StmtKind::For { body, .. } | StmtKind::ForIn { body, .. } | StmtKind::ForOf { body, .. } | StmtKind::While { body, .. } | StmtKind::DoWhile { body, .. } | StmtKind::Labeled { body, .. } => {
-                    [body, StmtId::NONE, StmtId::NONE]
-                }
-                StmtKind::Try { block, handler, finalizer, .. } => [block, handler, finalizer],
+                StmtKind::For { body, .. }
+                | StmtKind::ForIn { body, .. }
+                | StmtKind::ForOf { body, .. }
+                | StmtKind::While { body, .. }
+                | StmtKind::DoWhile { body, .. }
+                | StmtKind::Labeled { body, .. } => [body, StmtId::NONE, StmtId::NONE],
+                StmtKind::Try {
+                    block,
+                    handler,
+                    finalizer,
+                    ..
+                } => [block, handler, finalizer],
                 _ => continue,
             };
             for part in nested.into_iter().filter(|part| part.is_some()) {
@@ -630,16 +832,30 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_root(&self, file: FileId, e: ExprId, root: Root) -> bool {
         match (self.hir(file)[e].kind, root) {
             (ExprKind::This, Root::This) => true,
-            (ExprKind::Ident(_), Root::Local(symbol)) => self.bound(file).expr_symbol[e.idx()] == symbol,
+            (ExprKind::Ident(_), Root::Local(symbol)) => {
+                self.bound(file).expr_symbol[e.idx()] == symbol
+            }
             _ => false,
         }
     }
 
-    fn follow_store(&mut self, file: FileId, e: ExprId, root: Root, is_on_every_path: bool, fresh: &mut Fresh, followed: &mut FxHashSet<ExprId>) -> bool {
+    fn follow_store(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        root: Root,
+        is_on_every_path: bool,
+        fresh: &mut Fresh,
+        followed: &mut FxHashSet<ExprId>,
+    ) -> bool {
         let hir = self.hir(file);
-        let ExprKind::Assign { op, target, value } = hir[e].kind else { return true };
+        let ExprKind::Assign { op, target, value } = hir[e].kind else {
+            return true;
+        };
         let stored = unwrapped(hir, value);
-        if matches!(hir[stored].kind, ExprKind::Assign { .. }) && !self.follow_store(file, stored, root, is_on_every_path, fresh, followed) {
+        if matches!(hir[stored].kind, ExprKind::Assign { .. })
+            && !self.follow_store(file, stored, root, is_on_every_path, fresh, followed)
+        {
             return false;
         }
         let target = unwrapped(hir, target);
@@ -647,8 +863,17 @@ impl<'p, 's> Checker<'p, 's> {
             return !self.is_root(file, target, root);
         }
         let (obj, name) = match hir[target].kind {
-            ExprKind::Dot { obj, name, chain: Chain::No, .. } => (obj, FieldKey::Name(name)),
-            ExprKind::Index { obj, index, chain: Chain::No } => match self.constant_symbol_named_by(file, index) {
+            ExprKind::Dot {
+                obj,
+                name,
+                chain: Chain::No,
+                ..
+            } => (obj, FieldKey::Name(name)),
+            ExprKind::Index {
+                obj,
+                index,
+                chain: Chain::No,
+            } => match self.constant_symbol_named_by(file, index) {
                 Some(symbol) => (obj, FieldKey::Symbol(symbol)),
                 None => return true,
             },
@@ -665,9 +890,17 @@ impl<'p, 's> Checker<'p, 's> {
                 followed.insert(unwrapped(hir, value));
                 fresh.parts.push((name, part));
             }
-        } else if let ExprKind::Dot { obj: holder, name: find_stored_values, chain: Chain::No, .. } = hir[obj].kind
+        } else if let ExprKind::Dot {
+            obj: holder,
+            name: find_stored_values,
+            chain: Chain::No,
+            ..
+        } = hir[obj].kind
             && self.is_root(file, unwrapped(hir, holder), root)
-            && let Some(part) = fresh.parts.iter_mut().find(|part| part.0 == FieldKey::Name(find_stored_values))
+            && let Some(part) = fresh
+                .parts
+                .iter_mut()
+                .find(|part| part.0 == FieldKey::Name(find_stored_values))
         {
             part.1.set(name, is_on_every_path);
         }
@@ -677,7 +910,15 @@ impl<'p, 's> Checker<'p, 's> {
 
 fn add_points(fresh: &Fresh, by_constructor: bool, func: FnId, notes: &mut Vec<(FnId, Point)>) {
     for &ty in &fresh.types {
-        notes.push((func, Point { ty, by_constructor, always: fresh.always.clone(), sometimes: fresh.sometimes.clone() }));
+        notes.push((
+            func,
+            Point {
+                ty,
+                by_constructor,
+                always: fresh.always.clone(),
+                sometimes: fresh.sometimes.clone(),
+            },
+        ));
     }
     for (_, part) in &fresh.parts {
         add_points(part, by_constructor, func, notes);

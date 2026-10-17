@@ -78,9 +78,21 @@ pub fn rule_findings_as_json(report: &Report, cwd: &[u8]) -> Vec<String> {
     };
     let place = |d: &Diagnostic| match d.path.is_empty() {
         true => String::new(),
-        false => format!("\"file\":{},\"line\":{},\"column\":{},", quoted(&get_relative_path_from_directory(cwd, &d.path, report.is_case_sensitive)), d.line, d.column),
+        false => format!(
+            "\"file\":{},\"line\":{},\"column\":{},",
+            quoted(&get_relative_path_from_directory(
+                cwd,
+                &d.path,
+                report.is_case_sensitive
+            )),
+            d.line,
+            d.column
+        ),
     };
-    let findings = report.diagnostics.iter().filter_map(|d| Some((Rule::of_code(d.code)?, d)));
+    let findings = report
+        .diagnostics
+        .iter()
+        .filter_map(|d| Some((Rule::of_code(d.code)?, d)));
     findings
         .map(|(rule, d)| {
             let suffix = format!(" [{}]", rule.name());
@@ -168,7 +180,11 @@ pub fn metadata_of(d: &Diagnostic) -> bun_ast::Metadata {
 
 /// `d` as a message of Bun's own log, with the related information as its notes.
 fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
-    let related = d.related.iter().take(if Rule::of_code(d.code).is_some() { usize::MAX } else { MAX_RELATED });
+    let related = d.related.iter().take(if Rule::of_code(d.code).is_some() {
+        usize::MAX
+    } else {
+        MAX_RELATED
+    });
     bun_ast::Msg {
         kind: match d.category {
             Category::Error => bun_ast::Kind::Err,
@@ -319,7 +335,14 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     }
     if Rule::of_code(d.code).is_some() {
         for related in &d.related {
-            let _ = writeln!(out, "  {}({},{}): {}", relative_path(&related.path, style.cwd, style), related.line, related.column, related.text.as_bstr());
+            let _ = writeln!(
+                out,
+                "  {}({},{}): {}",
+                relative_path(&related.path, style.cwd, style),
+                related.line,
+                related.column,
+                related.text.as_bstr()
+            );
         }
     }
 }
@@ -706,7 +729,17 @@ pub fn bun_types_hint(report: &Report) -> Option<(usize, &'static [u8])> {
     if names.any(|name| name == b"@types/bun") {
         return None;
     }
-    let last = report.diagnostics.iter().rposition(is_about_bun_types).or_else(|| report.diagnostics.len().checked_sub(1).filter(|_| report.is_missing_bun_members))?;
+    let last = report
+        .diagnostics
+        .iter()
+        .rposition(is_about_bun_types)
+        .or_else(|| {
+            report
+                .diagnostics
+                .len()
+                .checked_sub(1)
+                .filter(|_| report.is_missing_bun_members)
+        })?;
     let note: &'static [u8] = if report.has_bun_types_installed {
         b"Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: \"types\": [\"bun\"]"
     } else {
@@ -846,9 +879,17 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         let untyped = match report.files_compiled_untyped {
             0 => BString::default(),
             n => {
-                let first = report.diagnostics.iter().find(|it| matches!(it.code, 100009..=100011));
+                let first = report
+                    .diagnostics
+                    .iter()
+                    .find(|it| matches!(it.code, 100009..=100011));
                 let why = first.map_or(BString::default(), |first| match first.related.first() {
-                    Some(error) => alloc_print!(": {} TS{}: {}", first.text.as_bstr(), error.code, error.text.as_bstr()),
+                    Some(error) => alloc_print!(
+                        ": {} TS{}: {}",
+                        first.text.as_bstr(),
+                        error.code,
+                        error.text.as_bstr()
+                    ),
                     None => alloc_print!(": {}", first.text.as_bstr()),
                 });
                 alloc_print!(", {} compiled untyped{}", plural(n, b"file", b"files"), why)

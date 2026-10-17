@@ -1247,16 +1247,28 @@ pub(super) fn jsx_namespace(
 
 /// What an emitter calls to create an element, or passes as the tag of a fragment: `React.createElement` and `React.Fragment` unless
 /// a pragma or an option says otherwise.
-pub(super) fn classic_jsx_entity(files: &Files, atoms: Atoms<'_, '_>, hir: &hir::File, is_fragment_tag: bool) -> Vec<Atom> {
+pub(super) fn classic_jsx_entity(
+    files: &Files,
+    atoms: Atoms<'_, '_>,
+    hir: &hir::File,
+    is_fragment_tag: bool,
+) -> Vec<Atom> {
     if !is_fragment_tag {
         return jsx_factory_entity(files, atoms, hir, true);
     }
     let pragma = hir.jsx_pragmas.fragment_factory;
-    let text = if pragma.is_some() { atoms.bytes(pragma) } else { &files.options.jsx_fragment_factory };
+    let text = if pragma.is_some() {
+        atoms.bytes(pragma)
+    } else {
+        &files.options.jsx_fragment_factory
+    };
     if let Some(entity) = parse_isolated_entity_name(atoms, text) {
         return entity;
     }
-    vec![jsx_factory_entity(files, atoms, hir, false)[0], atoms.intern(b"Fragment")]
+    vec![
+        jsx_factory_entity(files, atoms, hir, false)[0],
+        atoms.intern(b"Fragment"),
+    ]
 }
 
 /// `getJsxFactoryEntity`, returned as its identifiers from left to right. `is_local`:

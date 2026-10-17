@@ -313,8 +313,12 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         let (obj, at_index) = match self.hir(file)[e].kind {
-            ExprKind::Index { obj, index, .. } => (obj, self.span_of_parenthesized_expr(file, index)),
-            ExprKind::Dot { obj, name_pos, .. } => (obj, (file, name_pos, self.hir(file)[e].end - 1)),
+            ExprKind::Index { obj, index, .. } => {
+                (obj, self.span_of_parenthesized_expr(file, index))
+            }
+            ExprKind::Dot { obj, name_pos, .. } => {
+                (obj, (file, name_pos, self.hir(file)[e].end - 1))
+            }
             _ => return,
         };
         let at_access = self.place_inside_parentheses(file, e);

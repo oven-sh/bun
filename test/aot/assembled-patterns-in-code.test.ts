@@ -23,7 +23,23 @@ describe.skipIf(isWindows || !!unsupported)("compile/aot/assembled-patterns-in-c
   test("the constants of a run of characters do not spell a source that only the running program spells", async () => {
     await slot(async () => {
       const executable = join(folder, "compiled");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "--minify", "--no-compile-function-source", "./entry.ts", "--outfile", executable], folder, bunEnv));
+      built(
+        await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            "--minify",
+            "--no-compile-function-source",
+            "./entry.ts",
+            "--outfile",
+            executable,
+          ],
+          folder,
+          bunEnv,
+        ),
+      );
       const run = await spawned([executable], folder, bunEnv);
       const bytes = readFileSync(executable);
       rmSync(executable);

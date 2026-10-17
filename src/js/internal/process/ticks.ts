@@ -203,12 +203,18 @@ function nextTick(cb: unknown, ...args: unknown[]) {
 
 let uncachedProcessChecks = 0;
 function checkProcess(): boolean {
-  if (nextTickQueue === undefined && (globalThis.process.nextTick === undefined || nextTickQueue === undefined)) return false;
+  if (nextTickQueue === undefined && (globalThis.process.nextTick === undefined || nextTickQueue === undefined))
+    return false;
   if (!isStarted) start();
   if (process.nextTick !== nextTick || process._exiting) return false;
   if (IS_BUN_AOT && uncachedProcessChecks < 100) {
     const hasExiting = Object.prototype.hasOwnProperty.$call(process, "_exiting");
-    if (!($watchProperty(process, "nextTick") && (!hasExiting || $watchProperty(process, "_exiting")) && $setCheckedStructure(process, 12))) uncachedProcessChecks++;
+    if (!(
+      $watchProperty(process, "nextTick") &&
+      (!hasExiting || $watchProperty(process, "_exiting")) &&
+      $setCheckedStructure(process, 12)
+    ))
+      uncachedProcessChecks++;
   }
   return true;
 }

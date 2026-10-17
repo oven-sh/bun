@@ -22,21 +22,21 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 function preallocatedEvents(): Record<string | symbol, unknown> {
   return {
-      close: undefined,
-      error: undefined,
-      prefinish: undefined,
-      finish: undefined,
-      drain: undefined,
-      data: undefined,
-      end: undefined,
-      readable: undefined,
-      // Skip uncommon events...
-      // pause: undefined,
-      // resume: undefined,
-      // pipe: undefined,
-      // unpipe: undefined,
-      // [destroyImpl.kConstruct]: undefined,
-      // [destroyImpl.kDestroy]: undefined,
+    close: undefined,
+    error: undefined,
+    prefinish: undefined,
+    finish: undefined,
+    drain: undefined,
+    data: undefined,
+    end: undefined,
+    readable: undefined,
+    // Skip uncommon events...
+    // pause: undefined,
+    // resume: undefined,
+    // pipe: undefined,
+    // unpipe: undefined,
+    // [destroyImpl.kConstruct]: undefined,
+    // [destroyImpl.kDestroy]: undefined,
   };
 }
 

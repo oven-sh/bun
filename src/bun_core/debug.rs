@@ -349,7 +349,8 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
 /// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
 #[cfg(windows)]
-static KEEPS_FRAME_POINTER_CHAIN: std::sync::OnceLock<fn(usize) -> bool> = std::sync::OnceLock::new();
+static KEEPS_FRAME_POINTER_CHAIN: std::sync::OnceLock<fn(usize) -> bool> =
+    std::sync::OnceLock::new();
 
 #[cfg(windows)]
 pub fn set_keeps_frame_pointer_chain(is_such_code: fn(usize) -> bool) {
@@ -391,7 +392,10 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             let rf = unsafe {
                 ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
             };
-            let keeps_frame_pointer_chain = rf.is_null() && KEEPS_FRAME_POINTER_CHAIN.get().is_some_and(|is_such_code| is_such_code(control_pc as usize));
+            let keeps_frame_pointer_chain = rf.is_null()
+                && KEEPS_FRAME_POINTER_CHAIN
+                    .get()
+                    .is_some_and(|is_such_code| is_such_code(control_pc as usize));
             if keeps_frame_pointer_chain {
                 #[cfg(target_arch = "x86_64")]
                 let frame = ctx.Rbp;
@@ -401,7 +405,8 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                     break;
                 }
                 // SAFETY: `frame` is 16-byte aligned, so both words lie in the one page that is_valid_memory found committed and readable.
-                let (caller_frame, return_address) = unsafe { (*(frame as *const u64), *(frame as *const u64).add(1)) };
+                let (caller_frame, return_address) =
+                    unsafe { (*(frame as *const u64), *(frame as *const u64).add(1)) };
                 #[cfg(target_arch = "x86_64")]
                 {
                     ctx.Rip = return_address;

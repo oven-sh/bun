@@ -1,9 +1,9 @@
 // `Bun.validate<T>()` and `import { validate } from "bun"` are the same function to the compiler, also where no types of Bun are
 // installed: the only declarations of Bun's are those that the compiler brings along.
 import { expect } from "bun:test";
-import { test } from "../supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "../supported";
 
 const program = `
 import { parse, safeValidate, schema, validate } from "bun";

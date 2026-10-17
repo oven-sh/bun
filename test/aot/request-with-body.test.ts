@@ -139,13 +139,30 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("aot-request-with-a-body", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), bunEnv);
-    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
+    expect({
+      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({ stderr: [], exitCode: 0 });
     const plain = await run([bunExe(), "run", "main.cjs"], String(dir), bunEnv);
     const compiled = await run([executable], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
     expect(plain.stdout.split("\n").filter(line => line.startsWith("== ")).length).toBe(128);
-    expect(scene(plain.stdout, "none | data, paused at the first chunk | 300000 | 1")).toEqual(["req resume", "data", "req pause", "paused true", "resumes", "req end", "bytes 300000", "req close", "at last true,true,true,true,false"]);
+    expect(scene(plain.stdout, "none | data, paused at the first chunk | 300000 | 1")).toEqual([
+      "req resume",
+      "data",
+      "req pause",
+      "paused true",
+      "resumes",
+      "req end",
+      "bytes 300000",
+      "req close",
+      "at last true,true,true,true,false",
+    ]);
     expect(scene(plain.stdout, "net.Socket.prototype.resume | data | 2 | 1")).toContain("net resume");
     expect(scene(plain.stdout, "Duplex.prototype.resume | data | 2 | 1")).toContain("stream resume");
     expect(scene(plain.stdout, "resume of the connection | data | 2 | 1")).toContain("socket.resume");

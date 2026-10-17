@@ -1,10 +1,10 @@
 // The pages about --aot show commands and what they print. Each command that is directly followed by its output is run
 // here. Every line of the output on the page has to be printed, in that order; a page may leave lines out.
 import { describe, expect, test } from "bun:test";
-import { unsupported } from "../aot/run-programs";
 import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { unsupported } from "../aot/run-programs";
 
 const compiles = !unsupported;
 

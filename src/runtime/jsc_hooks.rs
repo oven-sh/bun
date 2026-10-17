@@ -3161,7 +3161,9 @@ fn transpile_source_code_of_any_provenance(
                     print_result?;
                     // SAFETY: per fn contract: the printer is live, and the borrows taken for
                     // printing have ended.
-                    crate::cli::aot_audit::end_file(unsafe { (*(*extra).source_code_printer).ctx.get_written() });
+                    crate::cli::aot_audit::end_file(unsafe {
+                        (*(*extra).source_code_printer).ctx.get_written()
+                    });
                 }
 
                 // `module_info.asDeserialized()`: finalize the printer-filled
@@ -4069,13 +4071,15 @@ unsafe fn get_loader_and_virtual_source<'a>(
             None => return Err(crate::Error::BlobNotFound),
         }
     } else if virtual_source.is_none()
-        && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_module_source(path.text))
+        && let Some(file) = bun_standalone_graph::Graph::get_ref()
+            .and_then(|graph| graph.find_module_source(path.text))
         && !bun_sys::exists(path.text)
     {
         // What an executable that runs in place holds for this path is the module's text, where the disk has no such file: a JSON
         // module is read when it is required, and read again after it is evicted from require.cache, as `bun run` reads it.
         // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
-        let path_text: &'static [u8] = unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
+        let path_text: &'static [u8] =
+            unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
         *virtual_source_to_use = Some(bun_ast::Source {
             path: bun_paths::fs::Path::init(path_text),
             contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
@@ -4891,20 +4895,42 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     let uid = extract_owner_uid();
     let mut folder = Fs::RealFS::tmpdir_path().to_vec();
     folder.extend_from_slice(format!("/.bun-{uid}-{hash:x}").as_bytes());
-    let _ = std::fs::DirBuilder::new().mode(0o700).create(as_path(&folder));
+    let _ = std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(as_path(&folder));
     // `symlink_metadata`: a planted link is not followed.
-    let is_ours = std::fs::symlink_metadata(as_path(&folder)).is_ok_and(|it| it.is_dir() && it.uid() == uid && it.mode() & 0o077 == 0);
+    let is_ours = std::fs::symlink_metadata(as_path(&folder))
+        .is_ok_and(|it| it.is_dir() && it.uid() == uid && it.mode() & 0o077 == 0);
     if !is_ours {
         return None;
     }
     for (path, contents) in files {
         let to = as_path(&[&folder[..], path].concat());
-        if std::fs::symlink_metadata(&to).is_ok_and(|it| it.is_file() && it.len() == contents.len() as u64) {
+        if std::fs::symlink_metadata(&to)
+            .is_ok_and(|it| it.is_file() && it.len() == contents.len() as u64)
+        {
             continue;
         }
-        std::fs::DirBuilder::new().mode(0o700).recursive(true).create(to.parent()?).ok()?;
-        let scratch = as_path(&[&folder[..], path, format!(".{}", std::process::id()).as_bytes()].concat());
-        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&scratch).ok()?;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .recursive(true)
+            .create(to.parent()?)
+            .ok()?;
+        let scratch = as_path(
+            &[
+                &folder[..],
+                path,
+                format!(".{}", std::process::id()).as_bytes(),
+            ]
+            .concat(),
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&scratch)
+            .ok()?;
         file.write_all(contents).ok()?;
         drop(file);
         std::fs::rename(&scratch, &to).ok()?;

@@ -23,25 +23,21 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function forEach(callback /*, thisArg */)
-{
-    "use strict";
+export function forEach(callback /*, thisArg */) {
+  "use strict";
 
-    if (!$isMap(this))
-        throw new TypeError("Map operation called on non-Map object");
+  if (!$isMap(this)) throw new TypeError("Map operation called on non-Map object");
 
-    if (!$isCallable(callback))
-        throw new TypeError("Map.prototype.forEach callback must be a function");
+  if (!$isCallable(callback)) throw new TypeError("Map.prototype.forEach callback must be a function");
 
-    var thisArg = $argument(1);
-    var storage = $mapStorage(this);
-    var entry = 0;
+  var thisArg = $argument(1);
+  var storage = $mapStorage(this);
+  var entry = 0;
 
-    do {
-        storage = $mapIterationNext(storage, entry);
-        if (storage == $orderedHashTableSentinel)
-            return;
-        entry = $mapIterationEntry(storage) + 1;
-        callback.$call(thisArg, $mapIterationEntryValue(storage), $mapIterationEntryKey(storage), this);
-    } while (true);
+  do {
+    storage = $mapIterationNext(storage, entry);
+    if (storage == $orderedHashTableSentinel) return;
+    entry = $mapIterationEntry(storage) + 1;
+    callback.$call(thisArg, $mapIterationEntryValue(storage), $mapIterationEntryKey(storage), this);
+  } while (true);
 }

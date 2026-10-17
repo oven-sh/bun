@@ -11,7 +11,11 @@ async function linesSeen(cwd: string, aot: boolean) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { seen: stdout.split("\n").filter(line => line.startsWith("see:")), passed: stderr.includes(" 1 pass"), exitCode };
+  return {
+    seen: stdout.split("\n").filter(line => line.startsWith("see:")),
+    passed: stderr.includes(" 1 pass"),
+    exitCode,
+  };
 }
 
 const real = `
@@ -27,7 +31,10 @@ const constants: Record<string, [declaration: string, read: string]> = {
   "an object literal that holds an imported object": [`export const made = { x: X };`, `made.x.a`],
   "an object literal that holds an imported string": [`export const made = { key: KEY };`, `made.key`],
   "an array literal that holds an imported class": [`export const made = [Real];`, `new made[0]().name()`],
-  "a Map keyed by an imported string": [`export const made = new Map<string, number>([[KEY, 1]]);`, `[...made.keys()].join()`],
+  "a Map keyed by an imported string": [
+    `export const made = new Map<string, number>([[KEY, 1]]);`,
+    `[...made.keys()].join()`,
+  ],
   "a frozen object literal": [`export const made = Object.freeze({ key: KEY });`, `made.key`],
   "what a function makes of an imported string": [
     `function wrap(key: string) { return { key }; }\nexport const made = wrap(KEY);`,
@@ -55,7 +62,10 @@ for (const [name, [declaration, read]] of Object.entries(constants)) {
     };
     using expectedDir = tempDir("test-aot-lazy", files);
     using actualDir = tempDir("test-aot-lazy", files);
-    const [expected, actual] = await Promise.all([linesSeen(String(expectedDir), false), linesSeen(String(actualDir), true)]);
+    const [expected, actual] = await Promise.all([
+      linesSeen(String(expectedDir), false),
+      linesSeen(String(actualDir), true),
+    ]);
     expect(actual).toEqual(expected);
     expect(actual.seen).toHaveLength(1);
     expect(actual.seen[0]).not.toContain("mocked");
@@ -77,7 +87,10 @@ for (const [name, [declaration, read]] of Object.entries(constants)) {
     };
     using expectedDir = tempDir("test-aot-lazy", files);
     using actualDir = tempDir("test-aot-lazy", files);
-    const [expected, actual] = await Promise.all([linesSeen(String(expectedDir), false), linesSeen(String(actualDir), true)]);
+    const [expected, actual] = await Promise.all([
+      linesSeen(String(expectedDir), false),
+      linesSeen(String(actualDir), true),
+    ]);
     expect(actual).toEqual(expected);
     expect(actual.seen).toHaveLength(1);
     expect(actual.passed).toBe(true);
@@ -100,7 +113,10 @@ test.skipIf(isWindows).concurrent("a table of functions is made before a spy on 
   };
   using expectedDir = tempDir("test-aot-lazy", files);
   using actualDir = tempDir("test-aot-lazy", files);
-  const [expected, actual] = await Promise.all([linesSeen(String(expectedDir), false), linesSeen(String(actualDir), true)]);
+  const [expected, actual] = await Promise.all([
+    linesSeen(String(expectedDir), false),
+    linesSeen(String(actualDir), true),
+  ]);
   expect(actual).toEqual(expected);
   expect(actual.seen).toEqual(["see: real spied 1"]);
 });
@@ -122,7 +138,10 @@ test.skipIf(isWindows).concurrent("two constants of one module are made at one t
   };
   using expectedDir = tempDir("test-aot-lazy", files);
   using actualDir = tempDir("test-aot-lazy", files);
-  const [expected, actual] = await Promise.all([linesSeen(String(expectedDir), false), linesSeen(String(actualDir), true)]);
+  const [expected, actual] = await Promise.all([
+    linesSeen(String(expectedDir), false),
+    linesSeen(String(actualDir), true),
+  ]);
   expect(actual).toEqual(expected);
   expect(actual.seen).toEqual(["see: real real"]);
 });

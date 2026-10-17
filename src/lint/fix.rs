@@ -157,7 +157,11 @@ fn has_tag_about_the_file(content: &[u8]) -> bool {
         let name = rest.get(..len).unwrap_or_default();
         from = start + len;
         let before = at.checked_sub(1).and_then(|it| content.get(it));
-        if (TAGS.contains(&name) || name.starts_with(b"jsx"))
+        // `@jsxImportSource`, `@jest-environment`, `@vitest-environment`
+        let is_pragma = [&b"jsx"[..], b"jest-", b"vitest-"]
+            .iter()
+            .any(|it| name.starts_with(it));
+        if (TAGS.contains(&name) || is_pragma)
             && before.is_none_or(|byte| ends_a_word(byte) || matches!(byte, b'/'))
             && content.get(from).is_none_or(ends_a_word)
         {
@@ -285,7 +289,7 @@ impl<'a> Fixer<'a> {
                 && is_line
                 && end.is_some_and(|end| file.line_of(end) + 1 == file.line_of(comment.start()));
             if !is_about_the_file(&comment) {
-                if is_about_what_follows(&comment) {
+                if is_about_the_next_line(&comment) {
                     break;
                 }
                 if !goes_on {

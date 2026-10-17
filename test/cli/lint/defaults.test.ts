@@ -2616,6 +2616,10 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       "license-and-directive.ts": [license, `${suppressed}console.log(Math.abs("1"));\n`],
       "directive-above-license.ts": ["", `${suppressed}// Copyright 2026 Someone\nconsole.log(Math.abs("1"));\n`],
       "module-doc.ts": [moduleDoc, "/** Starts at one. */\nconst count = 1;\n"],
+      "jest-environment.ts": ["/**\n * @jest-environment jsdom\n */\n", "// starts at one\nconst count = 1;\n"],
+      "doc-above-nocheck.ts": ["/** Counts. */\n// @ts-nocheck\n", "// starts at one\nconst count = 1;\n"],
+      "doc-above-reference.ts": ['/** Counts. */\n/// <reference lib="dom" />\n', "const count = 1;\n"],
+      "doc-above-license.ts": [`/** Counts. */\n${license}\n`, "/** Starts at one. */\nconst count = 1;\n"],
       "byte-order-mark.ts": ["\ufeff", "// starts at one\nconst count = 1;\n"],
     };
 

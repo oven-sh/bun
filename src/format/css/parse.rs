@@ -293,9 +293,16 @@ impl<'a> Context<'a> {
     }
 
     /// The text of `range` as the file has it, trimmed. The copy of a Less file that gets parsed has a blank in place of every
-    /// `*`, `"` and `'` between a `//` and the end of its line, whether or not the `//` starts a comment. Such a blank at the
-    /// end of a value or a comment falls outside `range`.
+    /// `*`, `"` and `'` between a `//` and the end of its line, whether or not the `//` starts a comment. Such a blank at
+    /// either end of a value falls outside `range`.
     pub(crate) fn written(&self, range: Range) -> &'a [u8] {
+        let before = self.text.get(..range.start as usize).unwrap_or_default();
+        let blanks = before.iter().rev().take_while(|it| **it == b' ').count();
+        self.written_from(Range::new(range.start - blanks as u32, range.end))
+    }
+
+    /// [`written`](Self::written) for a `range` that starts where its text does, like that of a `//` comment.
+    fn written_from(&self, range: Range) -> &'a [u8] {
         let behind = self.text.get(range.end as usize..);
         let Some(behind) = behind.filter(|_| !self.is_original_text) else {
             return strings::trim_js_whitespace(self.of(range));
@@ -340,7 +347,7 @@ impl<'a> Context<'a> {
             return None;
         }
         let at = line_comment_at_end(text)?;
-        let comment = self.written(Range::new(start + at as u32, start + text.len() as u32));
+        let comment = self.written_from(Range::new(start + at as u32, start + text.len() as u32));
         comment.starts_with(b"//").then_some((&text[..at], comment))
     }
 

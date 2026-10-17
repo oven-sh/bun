@@ -3940,6 +3940,22 @@ describe.concurrent("bun fmt", () => {
         expect(asOxfmt.exitCode).toBe(0);
       });
 
+      test.each(['"see" https://b.example.com', "'see' https://b.example.com", "*see* https://b.example.com"])(
+        "after another one with a `//` on the same line: %j",
+        async value => {
+          const files = { "a.less": `a { --a: https://a.example.com; --b: ${value}; }\n` };
+          const after = { "a.less": `a {\n  --a: https://a.example.com;\n  --b: ${value};\n}\n` };
+          for (const flags of [[], ["--flavor=oxfmt"]]) {
+            const result = await format(files, flags, { reads: ["a.less"] });
+            expect(result.files).toEqual(after);
+            expect(result.exitCode).toBe(0);
+            const again = await format(after, flags, { reads: ["a.less"] });
+            expect(again.files).toEqual(after);
+            expect(again.exitCode).toBe(0);
+          }
+        },
+      );
+
       // oxfmt 0.72.0 prints `http:; //y "// z";`.
       test("more than values, in Less and the flavor of oxfmt", async () => {
         const files = { "a.less": 'a {\n  --x: http://y "// z";\n}\n' };

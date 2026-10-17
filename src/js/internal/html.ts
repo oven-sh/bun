@@ -379,22 +379,36 @@ yourself with Bun.serve().
           printInitialMessage(false);
           break;
 
-        case "o\n":
+        case "o\n": {
           const url = server.url.toString();
+          let cmd: string[];
 
           if (process.platform === "darwin") {
             // TODO: copy the AppleScript from create-react-app or Vite.
-            Bun.spawn(["open", url]).exited.catch(() => {});
+            cmd = ["open", url];
           } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
+            // `start` is a cmd.exe builtin, not a program, so this launch always fails (#26231).
+            cmd = ["start", url];
           } else if (process.platform === "android") {
-            Bun.spawn(["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]).exited.catch(
-              () => {},
-            );
+            cmd = ["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url];
           } else {
-            Bun.spawn(["xdg-open", url]).exited.catch(() => {});
+            cmd = ["xdg-open", url];
+          }
+
+          // Bun.spawn throws synchronously when it cannot launch the opener.
+          try {
+            Bun.spawn(cmd);
+          } catch (error: any) {
+            // `enableANSIColors` is also true when only stdout has colours, and these lines go to stderr.
+            const [errorLabel, noteLabel] =
+              enableANSIColors && process.stderr.isTTY
+                ? ["\x1b[31merror\x1b[0m\x1b[2m:\x1b[0m", "\x1b[34mnote\x1b[0m\x1b[2m:\x1b[0m"]
+                : ["error:", "note:"];
+            console.error(`${errorLabel} ${error?.message || error}`);
+            console.error(`${noteLabel} Open ${url} in your browser`);
           }
           break;
+        }
 
         case "h\n":
           console.clear();

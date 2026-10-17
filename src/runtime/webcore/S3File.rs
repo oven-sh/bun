@@ -159,8 +159,8 @@ pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     let error_message = "Expected a S3 or path to presign";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
-    let (mut blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
-    get_presign_url_from(&mut blob, global, options)
+    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    get_presign_url_from(&blob, global, options)
 }
 
 #[bun_jsc::host_fn]
@@ -374,7 +374,7 @@ impl S3BlobStatTask {
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> JsResult<()> {
-        // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
+        // SAFETY: `this` is the box `start` leaked with heap::into_raw; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
@@ -405,7 +405,7 @@ impl S3BlobStatTask {
     }
 
     fn on_s3_size_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
-        // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
+        // SAFETY: `this` is the box `start` leaked with heap::into_raw; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
@@ -430,7 +430,7 @@ impl S3BlobStatTask {
     }
 
     fn on_s3_stat_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
-        // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
+        // SAFETY: `this` is the box `start` leaked with heap::into_raw; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
@@ -541,7 +541,7 @@ fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Me
 }
 
 pub(crate) fn get_presign_url_from(
-    this: &mut Blob,
+    this: &Blob,
     global: &JSGlobalObject,
     extra_options: Option<JSValue>,
 ) -> JsResult<JSValue> {
@@ -646,7 +646,7 @@ fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
 }
 
 fn get_presign_url(
-    this: &mut Blob,
+    this: &Blob,
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -718,8 +718,9 @@ pub(crate) mod exports {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
-        let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
+        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe. Shared: the
+        // option getters are user JS that can reach this same Blob.
+        let (this, global, callframe) = unsafe { (&*this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
     }
 
@@ -731,7 +732,7 @@ pub(crate) mod exports {
         callframe: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
-        let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
+        let (this, global, callframe) = unsafe { (&*this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || super::get_stat(this, global, callframe))
     }
 }

@@ -44,7 +44,7 @@ function buildTarball(pkgJson: object) {
 // Regression test for https://github.com/oven-sh/bun/issues/31652
 //
 // `bun install -g @openai/codex` (and similar) aborted with
-// `error: Invalid dependency name ""`. The trigger is an *optional* dependency
+// `error: invalid dependency name ""`. The trigger is an *optional* dependency
 // declared with an empty key (`"optionalDependencies": { "": "..." }`) whose
 // target does not resolve on the current platform. An optional dependency that
 // fails to resolve keeps its empty name (the resolved-package name is never
@@ -113,13 +113,11 @@ test("install does not abort on an unresolved optional dependency with an empty 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The empty-name optional dependency must not abort the install.
-  expect(stderr).not.toContain('Invalid dependency name ""');
+  expect(stderr).not.toContain('invalid dependency name ""');
   // The requested package must still be installed.
   expect(await Bun.file(join(String(dir), "node_modules", "top", "package.json")).exists()).toBe(true);
-  // The dependency is left out with a warning, and the registry is not asked for it.
-  expect(stderr).toContain(
-    'warn: Skipped a dependency of top@1.0.0 that names no package ("1.0.0" in "optionalDependencies")',
-  );
+  // The dependency is left out, which only --verbose mentions, and the registry is not asked for it.
+  expect(stderr).not.toContain("warn:");
   expect(emptyNameManifestRequested).toBe(false);
   // Assert the exit code last for a more useful message if a behavioral check fails.
   expect(exitCode).toBe(0);

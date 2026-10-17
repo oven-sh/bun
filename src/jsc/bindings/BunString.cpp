@@ -107,7 +107,7 @@ static void assertStaticStringIsNotCommon(EncodedSlice slice)
 {
     if (Zig::isTaggedUTF16Ptr(slice.ptr))
         return;
-    std::span<const Latin1Character> literal { Zig::untag(slice.ptr), slice.len };
+    std::span<const Latin1Character> literal { byteCast<Latin1Character>(Zig::untag(slice.ptr)), slice.len };
     ASSERT_WITH_MESSAGE(!CommonStrings::isCommonStringLiteral(literal),
         "\"%.*s\" is in BunCommonStrings.h: use global.common_strings() instead of String::static_(..).to_js()",
         static_cast<int>(literal.size()), reinterpret_cast<const char*>(literal.data()));

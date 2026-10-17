@@ -230,6 +230,8 @@ pub(crate) struct QuicEndpoint {
 
     processing: Cell<bool>,
     followup_due: Cell<bool>,
+    /// A send failed with ENOBUFS. The next `process` pass sends the waiting packets again.
+    retry_unsent: Cell<bool>,
     sessions: JsCell<Vec<*mut QuicSession>>,
     pub(super) server_local_tp: JsCell<lsquic::NqTransportParams>,
     pub(super) client_local_tp: JsCell<lsquic::NqTransportParams>,
@@ -244,6 +246,8 @@ pub(crate) struct QuicEndpoint {
     block_list_allow: Cell<bool>,
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
     pending_endpoint_close: Cell<bool>,
+    /// What the deferred `onEndpointClose` reports.
+    close_context: Cell<u8>,
     /// Intrusive node on the loop's node:quic driver list; linked only while
     /// this endpoint holds a socket. `us_nq_loop_flush_if_pending` runs the
     /// process pass once per loop turn when `pending` is set.
@@ -395,8 +399,16 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     }
     this.schedule_process();
 }
-extern "C" fn on_close(_socket: *mut uws::udp::Socket) {}
-extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int, _is_errqueue: c_int) {}
+extern "C" fn on_close(socket: *mut uws::udp::Socket) {
+    let user = uws::udp::Socket::opaque_mut(socket).user();
+    if user.is_null() {
+        return;
+    }
+    // SAFETY: `user` is the QuicEndpoint that owns this socket. It closes the
+    // socket in `release_native` before it is freed, so it is alive here.
+    let this = unsafe { &*user.cast::<QuicEndpoint>() };
+    this.on_socket_closed(socket);
+}
 
 thread_local! {
     /// A server may advertise another local endpoint's address as its
@@ -420,6 +432,30 @@ fn registry_find_by_addr(addr: &StoredAddr, not: *const QuicEndpoint) -> Option<
             theirs.decode().map(|(f, p, ip)| (f, p, ip.to_vec())) == want
         })
     })
+}
+
+/// Whether an unsent datagram stops the batch. Sets errno for lsquic. Twin: `us_quic_packets_out`.
+#[cold]
+#[inline(never)]
+fn unsent_stops_batch(this: &QuicEndpoint, rv: c_int) -> bool {
+    let e = bun_core::ffi::errno_ptr();
+    if rv < 0 {
+        // SAFETY: `errno_ptr()` is this thread's errno slot.
+        match unsafe { *e } {
+            // The interface queue is full, and no poll reports when it has room: try again in 1 ms.
+            libc::ENOBUFS => {
+                this.retry_unsent.set(true);
+                this.followup_due.set(true);
+            }
+            // lsquic retires the packet (ci_packet_too_large).
+            libc::EMSGSIZE => return true,
+            // The kernel refused this datagram. It counts as sent, so lsquic sees a lost packet.
+            _ => return false,
+        }
+    }
+    // SAFETY: as above.
+    unsafe { *e = libc::EAGAIN };
+    true
 }
 
 /// Header byte 0 bit 7 (RFC 8999 sec 5.1): 1 = long header, 0 = short.
@@ -713,7 +749,8 @@ lsquic_callback! {
         n: c_uint,
     ) -> c_int = 0; {
         let Some(socket) = this.socket.get() else {
-            return 0;
+            // uSockets closed the socket (`on_socket_closed`), so the batch counts as sent.
+            return n as c_int;
         };
         let my_addr = this.local_addr.get();
         // SAFETY: pure constant query.
@@ -789,17 +826,7 @@ lsquic_callback! {
                 &[total],
                 &[dest.as_ptr().cast()],
             );
-            if rv < 1 {
-                // SAFETY: `errno_ptr()` is this thread's errno slot.
-                unsafe {
-                    let e = bun_core::ffi::errno_ptr();
-                    // EMSGSIZE has to survive: it is how lsquic learns to drop
-                    // an oversized packet and feed DPLPMTUD (ci_packet_too_large).
-                    // Anything else it cannot act on becomes backpressure.
-                    if *e != libc::EAGAIN && *e != libc::EWOULDBLOCK && *e != libc::EMSGSIZE {
-                        *e = libc::EAGAIN;
-                    }
-                }
+            if rv < 1 && unsent_stops_batch(this, rv) {
                 break;
             }
             this.add_stat(IDX_STATS_PACKETS_SENT, 1);
@@ -1147,6 +1174,7 @@ impl QuicEndpoint {
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
+            retry_unsent: Cell::new(false),
             sessions: JsCell::new(Vec::new()),
             server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
@@ -1162,6 +1190,7 @@ impl QuicEndpoint {
                 EventLoopTimerTag::QuicEndpoint,
             )),
             pending_endpoint_close: Cell::new(false),
+            close_context: Cell::new(CLOSECONTEXT_CLOSE),
             nq_driver: JsCell::new(UsNqDriver::default()),
             nq_registered: Cell::new(false),
             defer_closes: Cell::new(false),
@@ -1373,7 +1402,7 @@ impl QuicEndpoint {
             on_data,
             on_drain,
             on_close,
-            on_recv_error,
+            None,
             cfg.host.as_ptr().cast(),
             cfg.port,
             0,
@@ -1463,8 +1492,13 @@ impl QuicEndpoint {
             }
         }
         bun_boringssl_sys::ERR_clear_error();
+        let retry_unsent = self.retry_unsent.replace(false);
         for engine in [self.server_engine.get(), self.client_engine.get()] {
             if !engine.is_null() {
+                if retry_unsent {
+                    // SAFETY: engine is live while the endpoint is.
+                    unsafe { lsquic::lsquic_engine_send_unsent_packets(engine) };
+                }
                 // SAFETY: engine is live while the endpoint is.
                 unsafe { lsquic::lsquic_engine_process_conns(engine) };
             }
@@ -1530,9 +1564,10 @@ impl QuicEndpoint {
         self.sweep_provisional();
         self.rearm_timer();
         self.update_keepalive();
+        // With no socket, the conns that an engine still holds can send nothing.
         if self.closing.get()
             && self.sessions.get().is_empty()
-            && self.engine_conn_count() == 0
+            && (self.engine_conn_count() == 0 || self.socket.get().is_none())
             && !self.closed.get()
         {
             self.finish_close();
@@ -1647,7 +1682,7 @@ impl QuicEndpoint {
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
         if this_ref.pending_endpoint_close.replace(false) {
-            this_ref.deliver_endpoint_close(global, CLOSECONTEXT_CLOSE, 0);
+            this_ref.deliver_endpoint_close(global, this_ref.close_context.get(), 0);
             return;
         }
         this_ref.process(global);
@@ -2116,6 +2151,28 @@ impl QuicEndpoint {
         });
         self.write_stat(IDX_STATS_DESTROYED_AT, now_ns());
         true
+    }
+
+    /// uSockets closed the socket on a receive error: Node's `Endpoint::Destroy(RECEIVE_FAILURE)`.
+    fn on_socket_closed(&self, socket: *mut uws::udp::Socket) {
+        // `release_native` takes the handle before it closes the socket.
+        if self.socket.get() != Some(socket) {
+            return;
+        }
+        self.socket.set(None);
+        self.close_context.set(CLOSECONTEXT_RECEIVE_FAILURE);
+        self.closing.set(true);
+        self.with_state(|s| {
+            s.closing = 1;
+            s.listening = 0;
+        });
+        for session in self.sessions.get().clone() {
+            if let Some(session) = self.live_session(session) {
+                session.close_silently();
+            }
+        }
+        // `process` delivers each session's close to JS, then `finish_close`.
+        self.schedule_process();
     }
 
     fn finish_close(&self) {

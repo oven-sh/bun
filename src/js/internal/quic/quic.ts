@@ -4470,8 +4470,14 @@ class QuicEndpoint {
     return this.#inner.stats;
   }
 
+  // The native side also starts a close: a receive error ends the endpoint.
+  get #isClosing() {
+    const inner = this.#inner;
+    return inner.isPendingClose || inner.state.isClosing === true;
+  }
+
   get #isClosedOrClosing() {
-    return this.destroyed || this.#inner.isPendingClose;
+    return this.destroyed || this.#isClosing;
   }
 
   /**
@@ -4687,7 +4693,7 @@ class QuicEndpoint {
    */
   get closing() {
     assertIsQuicEndpoint(this);
-    return this.#inner.isPendingClose;
+    return this.#isClosing;
   }
 
   /** @type {boolean} */
@@ -4846,7 +4852,7 @@ class QuicEndpoint {
   [kRemoveSession](session) {
     const inner = this.#inner;
     inner.sessions.delete(session);
-    if (inner.sessions.size !== 0 || inner.listening || this.destroyed || inner.isPendingClose) {
+    if (inner.sessions.size !== 0 || inner.listening || this.destroyed || this.#isClosing) {
       return;
     }
     // Node parity: idle endpoints are unref'd, not destroyed — see test-quic-endpoint-idle-timeout.
@@ -4873,14 +4879,14 @@ class QuicEndpoint {
       depth: options.depth == null ? null : options.depth - 1,
     };
 
-    const { address, busy, isPendingClose: closing, listening, sessions, stats, state } = this.#inner;
+    const { address, busy, listening, sessions, stats, state } = this.#inner;
 
     return `QuicEndpoint ${inspect(
       {
         address,
         busy,
         closed: this.closed,
-        closing,
+        closing: this.#isClosing,
         destroyed: this.destroyed,
         listening,
         sessions,

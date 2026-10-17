@@ -118,7 +118,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
     }
 }
 
-fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
+pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
     if !current_bundle.requests.first.is_null() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
@@ -129,8 +129,7 @@ fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
         // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
         // initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
-        req.abort();
-        req.deref_();
+        req.abort_and_deref();
     }
 }
 

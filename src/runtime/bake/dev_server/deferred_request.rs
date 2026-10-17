@@ -61,6 +61,12 @@ impl DeferredRequest {
         }
     }
 
+    /// Ends the response first: until then uWS holds an abort callback that points at this node.
+    pub(super) fn abort_and_deref(&mut self) {
+        self.abort();
+        self.deref_();
+    }
+
     pub(crate) fn weak_ref(&mut self) {
         debug_assert!(!self.weakly_referenced_by_requestcontext);
         self.weakly_referenced_by_requestcontext = true;

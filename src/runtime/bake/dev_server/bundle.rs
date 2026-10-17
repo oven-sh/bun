@@ -261,8 +261,7 @@ impl DevServer {
             // `data` was initialized by `defer_request`.
             unsafe {
                 let d = (*item).data.assume_init_mut();
-                d.abort();
-                d.deref_();
+                d.abort_and_deref();
             }
         }
         self.next_bundle.route_queue.clear_retaining_capacity();

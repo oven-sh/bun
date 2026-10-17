@@ -3486,8 +3486,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     callback = undefined;
   }
 
-  // Node's write_() drops the chunk of a destroyed response before _implicitHeader(), and end() goes on
-  // with the head unsent: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
+  // Node's write_() drops the chunk of a destroyed response before _implicitHeader(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
   const droppedChunk = !!chunk && this.destroyed && !this.finished;
   const rawChunk = chunk;
   if (droppedChunk) chunk = undefined;
@@ -3550,10 +3549,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
-    // The head still counts as sent (Node's _implicitHeader() runs before _writeRaw() sees the dead socket),
-    // except when the chunk of a destroyed response was dropped above and no writeHead() came before.
-    // Both flags are set here, as on the normal end() path below, so headersSent and the _header gates
-    // of OutgoingMessage (setHeader, removeHeader) agree.
+    // Node's _implicitHeader() ran unless the chunk was dropped above, so the head counts as sent like on the normal path below.
     if (!droppedChunk || headerState !== NodeHTTPHeaderState.none) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       this._header = " ";

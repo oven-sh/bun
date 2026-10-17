@@ -1346,13 +1346,13 @@ fn timer_min_delay_ms() -> u32 {
 /// For `AbortSignal::Timeout`, like `timer_min_delay_ms`.
 fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
     let all = timer_all();
+    if all.is_null() {
+        return bun_core::TimespecMockMode::ForceRealTime;
+    }
     // SAFETY: `all` is the live per-thread `All`; leaf hook, field read only.
-    if !all.is_null()
-        && unsafe { (*all).fake_timers.abort_signal_timeout_clock() } == crate::timer::Clock::Fake
-    {
-        bun_core::TimespecMockMode::AllowMockedTime
-    } else {
-        bun_core::TimespecMockMode::ForceRealTime
+    match unsafe { (*all).fake_timers.abort_signal_timeout_clock() } {
+        crate::timer::Clock::Fake => bun_core::TimespecMockMode::AllowMockedTime,
+        crate::timer::Clock::Real => bun_core::TimespecMockMode::ForceRealTime,
     }
 }
 

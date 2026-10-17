@@ -2930,6 +2930,104 @@ describe("Glob.match", () => {
       }
     });
   });
+
+  // How many bytes of the path the long alternative takes.
+  const widths = [32, 62, 63, 64, 65, 66, 100, 127, 128, 129, 200];
+
+  // `{X,zz}` matches a path exactly when `X` or `zz` does, however much of the path `X` takes and however often the `Glob` is asked.
+  test.each(widths)("a group with `?` or a class in an alternative that takes %d bytes", width => {
+    const text = Buffer.alloc(width - 2, "a").toString();
+    const [path, other] = [text + "bc", text + "bd"];
+    const plain = "lib/" + Buffer.alloc(width - 7, "a").toString() + ".ts";
+    const cases: [pattern: string, path: string, expected: boolean][] = [
+      [`{src/[ab].ts,${plain}}`, plain, true],
+      [`{${plain},src/[ab].ts}`, plain, true],
+      [`{src/[ab].ts,${plain}}`, "src/a.ts", true],
+      [`{src/[ab].ts,${plain}}`, plain + "x", false],
+    ];
+    for (const long of [text + "?c", text + "[bc]c"]) {
+      cases.push(
+        [`{${long},zz}`, path, true],
+        [`{${long},zz}`, other, false],
+        [`{${long},zz}`, "zz", true],
+        [`{zz,${long}}`, path, true],
+        [`{${long.slice(1)},${long}}`, path, true],
+        [`src/{${long},zz}.js`, `src/${path}.js`, true],
+        [`src/{${long},zz}.js`, `src/${other}.js`, false],
+        [`{${long},zz}/x`, `${path}/x`, true],
+        [`{${long},zz}*`, `${path}.js`, true],
+        [`{${long.slice(1)},${long}}e`, `${path}e`, true],
+        [`{a{${long.slice(1)},q},zz}`, path, true],
+        [`{{a,b}{a,b}${long.slice(2)},zz}`, path, true],
+        [`{${long.slice(0, -1)},${long}}c`, `${path}c`, true],
+        [`!{${long},zz}`, path, false],
+        [`!{${long},zz}`, other, true],
+        [`{a,b}{${long},zz}`, `a${path}`, true],
+        [`{${long},zz}[!x]`, `${path}y`, true],
+      );
+    }
+    const wrong = cases.filter(([pattern, path, expected]) => {
+      const glob = new Glob(pattern);
+      return Array.from({ length: 40 }, () => glob.match(path)).some(answer => answer !== expected);
+    });
+    expect(wrong).toEqual([]);
+  });
+
+  // For these patterns a debug build checks each answer against a second way to match, and panics if the two differ.
+  test("a group with `?` or a class in a long alternative, after `**/`, `*/` or `?` and as `@(a|b)` or `?(a)`", async () => {
+    const script = `
+      const wrong = [];
+      for (const width of ${JSON.stringify(widths)}) {
+        const text = Buffer.alloc(width - 2, "a").toString();
+        const [path, other] = [text + "bc", text + "bd"];
+        for (const long of [text + "?c", text + "[bc]c"]) {
+          for (const [pattern, asked, expected] of [
+            ["**/{" + long + ",zz}", path, true],
+            ["**/{" + long + ",zz}", "x/y/" + path, true],
+            ["**/{" + long + ",zz}", "x/y/" + other, false],
+            ["**/{" + long + ",zz}", "x/zz", true],
+            ["**/{" + long + ",zz}/*.ts", "x/" + path + "/a.ts", true],
+            ["**/{" + long + ",zz}/*.ts", "x/" + other + "/a.ts", false],
+            ["*/{" + long + ",zz}", "x/" + path, true],
+            ["?{" + long + ",zz}", "x" + path, true],
+            ["@(" + long + "|zz)", path, true],
+            ["@(" + long + "|zz)", other, false],
+            ["?(" + long + ")", path, true],
+            ["?(" + long + ")", "", true],
+          ]) {
+            const glob = new Bun.Glob(pattern);
+            const answers = Array.from({ length: 40 }, () => glob.match(asked));
+            if (answers.some(answer => answer !== expected)) wrong.push([pattern, asked]);
+          }
+        }
+      }
+      console.log(JSON.stringify(wrong));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: exitCode === 0 ? "" : stderr }).toEqual({ stdout: "[]\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("scan finds a name of 64 bytes that a group with `?` or a class matches", async () => {
+    const text = Buffer.alloc(62, "a").toString();
+    using dir = tempDir("glob-long-alternative", {
+      [text + "bc"]: "",
+      [text + "bd"]: "",
+      "zz": "",
+      [`src/${text}bc.js`]: "",
+      [`src/${text}bd.js`]: "",
+    });
+    const cwd = String(dir);
+    const scan = (pattern: string) =>
+      Array.from(new Glob(pattern).scanSync({ cwd }), name => name.replaceAll("\\", "/")).sort();
+    expect(scan(`{${text}?c,zz}`)).toEqual([text + "bc", "zz"]);
+    expect(scan(`{${text}[bc]c,zz}`)).toEqual([text + "bc", "zz"]);
+    expect(scan(`src/{${text}?c,zz}.js`)).toEqual([`src/${text}bc.js`]);
+    expect(scan(`**/{${text}?c,zz}.js`)).toEqual([`src/${text}bc.js`]);
+    const found = await Array.fromAsync(new Glob(`{${text}?c,zz}`).scan({ cwd }));
+    expect(found.sort()).toEqual([text + "bc", "zz"]);
+  });
 });
 
 describe("a Glob outlives the string that it was made from", () => {

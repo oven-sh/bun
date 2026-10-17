@@ -325,7 +325,9 @@ pub(super) enum SessionEvent {
         count: u32,
         acked: bool,
     },
-    EarlyDataFailed,
+    EarlyDataFailed {
+        early: Vec<*mut super::stream::QuicStream>,
+    },
     /// HTTP/3 ORIGIN frame payload (RFC 9412).
     Origin(Vec<u8>),
     /// Version Negotiation packet (RFC 8999 sec 6).
@@ -738,20 +740,16 @@ impl QuicSession {
             queue.with_mut(VecDeque::pop_back);
         }
     }
-    /// Takes back every request of one direction that lsquic has not served yet.
-    fn drop_pending_local(&self, uni: bool) {
-        let n = self.pending_local(uni).with_mut(|q| {
+    /// At a GOAWAY lsquic drops its delayed bidi requests, anonymously, and keeps the uni ones.
+    fn drop_pending_requests_on_goaway(&self) {
+        let n = self.pending_local_bidi.with_mut(|q| {
             let n = q.len();
             q.clear();
             n
         });
         if n != 0 {
-            self.cancel_delayed_requests(uni, n);
+            self.cancel_delayed_requests(false, n);
         }
-    }
-    /// At a GOAWAY lsquic drops its delayed bidi requests, anonymously, and keeps the uni ones.
-    fn drop_pending_requests_on_goaway(&self) {
-        self.drop_pending_local(false);
     }
     /// Not valid inside `on_new_stream`: lsquic updates its count after that callback returns.
     fn debug_assert_pending_paired(&self) {
@@ -1315,7 +1313,7 @@ impl QuicSession {
                     );
                 }
             }
-            SessionEvent::EarlyDataFailed => {
+            SessionEvent::EarlyDataFailed { early } => {
                 // Node parity: their `closed` promises reject with an
                 // application error.
                 let code = self.with_state(|s| {
@@ -1325,8 +1323,7 @@ impl QuicSession {
                         1
                     }
                 });
-                let streams: Vec<*mut super::stream::QuicStream> = self.streams.get().clone();
-                for sp in streams {
+                for sp in early {
                     if let Some(stream) = self.live_stream(sp) {
                         stream.cancel_early_rejected(code);
                     }
@@ -1507,7 +1504,7 @@ impl QuicSession {
                 // no onStreamClose -- but it still has to leave `streams`
                 // and drop its self-root, or it lives until teardown.
                 if stream.is_announce_suppressed() {
-                    self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                    self.remove_stream(stream_ptr);
                     stream.release_close_root();
                     return Ok(());
                 }
@@ -1534,9 +1531,9 @@ impl QuicSession {
                 let Some(stream) = self.live_stream(stream_ptr) else {
                     return Ok(());
                 };
-                self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                self.remove_stream(stream_ptr);
                 // Nothing else reaches this stream now, so drop the
-                // self-root; `stream` stays valid because the retain above
+                // self-root; `stream` stays valid because `remove_stream` above
                 // only dropped a pointer.
                 stream.release_close_root();
             }
@@ -1869,9 +1866,6 @@ impl QuicSession {
         if self.destroyed.replace(true) {
             return;
         }
-        for uni in [false, true] {
-            self.drop_pending_local(uni);
-        }
         let streams = self.streams.with_mut(core::mem::take);
         // Each `teardown` can run user JS that destroys a later entry and
         // lets GC free its Box mid-loop; the taken Vec is not a GC root, so
@@ -1888,6 +1882,8 @@ impl QuicSession {
             // SAFETY: rooted by `_roots` above; teardown is idempotent.
             unsafe { (*qs).teardown(_global) };
         }
+        self.pending_local_bidi.with_mut(VecDeque::clear);
+        self.pending_local_uni.with_mut(VecDeque::clear);
         let conn = self.conn.replace(null_mut());
         if !conn.is_null() {
             // SAFETY: `conn` is live until lsquic frees it inside
@@ -2656,7 +2652,13 @@ lsquic_callback! {
         // Front of the queue: lsquic resets the early streams before this
         // callback, so their clean closes are already queued and would settle
         // `closed` before the rejection node delivers could land.
-        session.events.with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed));
+        let streams = session.streams.get();
+        // SAFETY: registered pointers are live (`live_stream`).
+        let bound = streams.iter().filter(|&&s| unsafe { !(*s).is_pending() });
+        let early = bound.copied().collect();
+        session
+            .events
+            .with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed { early }));
         session.schedule_process();
     }
 

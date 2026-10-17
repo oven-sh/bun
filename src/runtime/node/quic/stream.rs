@@ -363,6 +363,10 @@ impl QuicStream {
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
     }
+    /// True until lsquic opens the stream.
+    pub(super) fn is_pending(&self) -> bool {
+        self.with_state(|s| s.pending != 0)
+    }
 
     pub(super) fn stream_id(&self) -> i64 {
         self.with_state(|s| s.id)
@@ -1014,8 +1018,8 @@ pub(super) unsafe extern "C" fn on_new_stream(
     let is_local = (id & 1 == 0) != session.is_server();
     if is_local {
         if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
-            // SAFETY: a queued wrapper holds its strong self-root. `teardown`
-            // takes it out of the queue (`remove_stream`) before the downgrade.
+            // SAFETY: a queued wrapper holds its strong self-root: each
+            // downgrade follows a `remove_stream`, which takes it out of the queue.
             unsafe { (*qs).bind_raw(s) };
             session.push_event(SessionEvent::StreamReady {
                 stream: qs,

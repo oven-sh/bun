@@ -12,7 +12,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
-import { env as withoutAgent, tsc } from "./differential";
+import { tsc, env as withoutAgent } from "./differential";
 
 afterAll(endChildren);
 

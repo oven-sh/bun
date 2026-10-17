@@ -106,8 +106,7 @@ AbortSignal::~AbortSignal()
 {
     releaseSourceObserverCounts();
 
-    // A listener reaches its signal through its linked algorithm, and the listeners outlive this
-    // signal: those of other targets, and those of this signal itself until ~EventTarget().
+    // The listeners outlive this signal, and a linked algorithm refers to its signal: unlink them.
     while (!m_listenerAlgorithms.isEmpty())
         m_listenerAlgorithms.begin()->remove();
 
@@ -195,7 +194,6 @@ void AbortSignal::runAbortSteps()
 
     // 1. For each algorithm of signal's abort algorithms: run algorithm.
     //    2. Empty signal's abort algorithms.
-    // Not a loop over the list: run() frees its node, and nothing is added to an aborted signal.
     while (!m_listenerAlgorithms.isEmpty()) {
         auto& algorithm = *m_listenerAlgorithms.begin();
         removeAlgorithm(algorithm);

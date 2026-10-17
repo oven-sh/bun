@@ -206,8 +206,7 @@ private:
 
     // addEventListener()'s { signal }, in registration order. Each listener owns its node.
     SentinelLinkedList<EventListenerAbortAlgorithm, BasicRawSentinelNode<EventListenerAbortAlgorithm>> m_listenerAlgorithms;
-    // pipeTo()'s { signal }. The signal owns these: the GC thread visits their weak JS
-    // callbacks via visitAbortAlgorithms().
+    // pipeTo()'s { signal }. Owned here, so that the GC thread can visit their weak JS callbacks (visitAbortAlgorithms()).
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
     AbortSignalSet m_sourceSignals;

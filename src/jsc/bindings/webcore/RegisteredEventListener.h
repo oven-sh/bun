@@ -37,10 +37,7 @@ class EventTarget;
 class RegisteredEventListener;
 class WeakPtrImplWithEventTargetData;
 
-// The abort algorithm of a listener that was added with { signal }: remove the listener from its
-// target (https://dom.spec.whatwg.org/#add-an-event-listener, step 6). The listener owns it and
-// the signal links it, so the listener takes it off the signal without a search.
-// Linked ⇒ the signal is alive: ~AbortSignal unlinks what is left.
+// The abort algorithm of a { signal } listener. The listener owns it and the signal links it: linked ⇒ the signal is alive.
 class EventListenerAbortAlgorithm final : public BasicRawSentinelNode<EventListenerAbortAlgorithm> {
     WTF_MAKE_TZONE_ALLOCATED(EventListenerAbortAlgorithm);
     WTF_MAKE_NONCOPYABLE(EventListenerAbortAlgorithm);
@@ -95,9 +92,7 @@ public:
 
     void markAsRemoved();
 
-    // EventTarget::addEventListener()'s { signal }: the signal removes this listener from `target`
-    // when it aborts. Removed any other way (removeEventListener, { once } firing,
-    // removeAllEventListeners), the listener takes its algorithm off the signal in markAsRemoved().
+    // addEventListener()'s { signal }: when the signal aborts, it removes this listener from `target`.
     void removeOnAbort(AbortSignal&, EventTarget& target, const AtomString& eventType);
 
 private:

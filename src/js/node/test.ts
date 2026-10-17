@@ -425,7 +425,7 @@ function reportCancelledFile(
     column: 1,
     file: absolute,
   };
-  const error = makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
+  const error = new TestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
   const details = { __proto__: null, duration_ms: 0, type: "test", error };
   reporter.enqueue({ __proto__: null, ...fileNode });
   reporter.dequeue({ __proto__: null, ...fileNode });
@@ -568,7 +568,7 @@ async function runOneFile(
     }
 
     if (fileFailed) {
-      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+      error = new TestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
     } else {
       reporter.summary({
         __proto__: null,
@@ -1401,14 +1401,6 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
 // -----------------------------------------------------------------------------
 // Test plan
 // -----------------------------------------------------------------------------
-
-// The errors of the parent side of run(): a file that was cancelled or that exited with a failure.
-function makeTestFailure(message: string, failureType: string) {
-  const error = new Error(message);
-  (error as { code?: string }).code = "ERR_TEST_FAILURE";
-  (error as { failureType?: string }).failureType = failureType;
-  return error;
-}
 
 let inspect: ((value: unknown, opts?: object) => string) | undefined;
 const isError = Error.isError;

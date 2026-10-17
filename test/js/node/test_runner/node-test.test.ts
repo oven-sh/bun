@@ -213,8 +213,8 @@ describe("node:test", () => {
 
   test("should fail the parent when a t.test() that fulfills plan({wait}) throws", async () => {
     const { exitCode, stderr } = await runTests(["24-plan-wait-late-subtest.js"]);
-    // The error message from makeTestFailure — must not be satisfied by the
-    // fixture's own source lines echoed in the failure context.
+    // The message of the subtestsFailed error. The fixture's own source lines,
+    // echoed in the failure context, must not satisfy this.
     expect(stderr).toContain("error: 1 subtest failed");
     expect(stderr).toContain("boom");
     expect({ exitCode, stderr }).toMatchObject({
@@ -544,6 +544,64 @@ describe.concurrent("context.error", () => {
         "throws a symbol | ERR_TEST_FAILURE | testCodeFailure | Symbol(a symbol) | true | Error: Symbol(a symbol)",
       );
     }, 30_000);
+
+    // The parent of run() makes the error of a file that exits with a failure, and of a file that it cancels.
+    async function fileErrorsOn(exe: string, cases: ("fails" | "cancelled")[]) {
+      using dir = tempDir("node-test-error-run-file", {
+        "throws-at-load.js": `require("node:test"); throw new Error("thrown at load");`,
+        "run.js": `
+          const { run } = require("node:test");
+          const file = require("node:path").join(__dirname, "throws-at-load.js");
+          (async () => {
+            const seen = [];
+            for (const which of process.argv.slice(2)) {
+              const signal = which === "cancelled" ? AbortSignal.abort() : undefined;
+              for await (const { type, data } of run({ files: [file], signal })) {
+                if (type !== "test:fail") continue;
+                const { error } = data.details;
+                const ownCause = Object.prototype.hasOwnProperty.call(error, "cause");
+                const causeIsMessage = error.cause === error.message;
+                seen.push({ code: error.code, failureType: error.failureType, ownCause, causeIsMessage });
+              }
+            }
+            console.log("SEEN " + JSON.stringify(seen));
+          })();
+        `,
+      });
+      await using proc = spawn({
+        cmd: [exe, join(String(dir), "run.js"), ...cases],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = stdout.split("\n").find(line => line.startsWith("SEEN "));
+      return { seen: line === undefined ? [] : JSON.parse(line.slice("SEEN ".length)), stderr, exitCode };
+    }
+
+    test("a file that fails or that is cancelled has its message as the cause", async () => {
+      const { seen, stderr, exitCode } = await fileErrorsOn(bunExe(), ["fails", "cancelled"]);
+      expect({ seen, stderr, exitCode }).toEqual({
+        seen: [
+          { code: "ERR_TEST_FAILURE", failureType: "testCodeFailure", ownCause: true, causeIsMessage: true },
+          { code: "ERR_TEST_FAILURE", failureType: "cancelledByParent", ownCause: true, causeIsMessage: true },
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    }, 30_000);
+
+    test.skipIf(!referenceNode)(
+      "a file that fails has its message as the cause on node",
+      async () => {
+        const { seen, exitCode } = await fileErrorsOn(referenceNode!, ["fails"]);
+        expect({ seen, exitCode }).toEqual({
+          seen: [{ code: "ERR_TEST_FAILURE", failureType: "testCodeFailure", ownCause: true, causeIsMessage: true }],
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
   });
 });
 

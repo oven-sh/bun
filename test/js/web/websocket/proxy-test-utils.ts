@@ -282,23 +282,26 @@ export function forwardRecordsTogether(count: number, firstType?: number) {
       holding = true;
     },
     onTargetData(chunk: Buffer, forward: (bytes: Buffer) => void) {
-      let bytes = chunk;
-      if (held !== null) {
-        held = Buffer.concat([held, chunk]);
-        const { types, trailing } = tlsRecords(held);
-        const first = firstType === undefined ? 0 : types.indexOf(firstType);
-        if (first === -1) {
-          bytes = held.subarray(0, held.length - trailing);
-          held = held.subarray(bytes.length);
-          if (bytes.length === 0) return;
-        } else {
-          if (types.length - first < count) return;
-          bytes = held;
-          held = null;
-        }
+      const write = (bytes: Buffer) => {
+        if (bytes.length === 0) return;
+        if (holding) forwarded.push(tlsRecords(bytes));
+        forward(bytes);
+      };
+      if (held === null) return write(chunk);
+
+      held = Buffer.concat([held, chunk]);
+      const { types, trailing } = tlsRecords(held);
+      const records = held.subarray(0, held.length - trailing);
+      const partialRecord = held.subarray(records.length);
+      const first = firstType === undefined ? 0 : types.indexOf(firstType);
+      if (first === -1) {
+        held = partialRecord;
+        write(records);
+      } else if (types.length - first >= count) {
+        held = null;
+        write(records);
+        write(partialRecord);
       }
-      if (holding) forwarded.push(tlsRecords(bytes));
-      forward(bytes);
     },
   };
 }

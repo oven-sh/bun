@@ -1450,15 +1450,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         // `this` while enqueue_encoded_bytes/send_buffer_out still run.
         let _guard = RefPtr::from_this(this);
 
-        if !this.can_send() || op > 0xF {
+        if this.close_sent.get() || op > 0xF {
             return;
         }
 
-        this.send_frame(
-            Copy::Bytes(slice),
-            slice.len(),
-            FrameKind::from_ffi(op, flags, !this.options.is_server),
-        );
+        let kind = FrameKind::from_ffi(op, flags, !this.options.is_server);
+        if !this.has_tcp() {
+            return this.queue_unsendable(Copy::Bytes(slice), kind);
+        }
+        this.send_frame(Copy::Bytes(slice), slice.len(), kind);
+    }
+
+    /// The connection is gone, and `finish` runs once what had arrived is parsed. What a listener
+    /// sends until then stays in the queue, so `bufferedAmount` counts it as unsent.
+    fn queue_unsendable(&self, bytes: Copy<'_>, kind: FrameKind) {
+        self.send_data(bytes, false, kind);
     }
 
     /// An inline frame skips the send queue and the compressor.
@@ -1505,13 +1511,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         // See write_binary_data() — tunnel.write() can re-enter finish().
         let _guard = RefPtr::from_this(this);
 
-        if !this.can_send() {
+        if this.close_sent.get() {
             return;
         }
 
         // Note: 0 is valid
 
         let kind = FrameKind::from_ffi(op, flags, !this.options.is_server);
+        let whole = if str.is_16bit() {
+            Copy::Utf16(str.utf16_slice())
+        } else {
+            Copy::Latin1(str.slice())
+        };
+        if !this.has_tcp() {
+            return this.queue_unsendable(whole, kind);
+        }
 
         // fast path: small frame, no backpressure, attempt to send without allocating
         if !str.is_16bit() && str.len < STACK_FRAME_SIZE {
@@ -1529,15 +1543,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        this.send_data(
-            if str.is_16bit() {
-                Copy::Utf16(str.utf16_slice())
-            } else {
-                Copy::Latin1(str.slice())
-            },
-            !this.has_backpressure(),
-            kind,
-        );
+        this.send_data(whole, !this.has_backpressure(), kind);
     }
 
     /// `code` 1005 ("no status received") sends a Close frame with an empty payload.

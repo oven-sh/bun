@@ -908,6 +908,15 @@ describe.concurrent("wss://: a corrupt TLS record right behind the messages", ()
       expect(ws.bufferedAmount).toBe(2 + 4 + "never sent".length);
     });
 
+    test("the answers of a paused client to the messages it gets at the end stay in bufferedAmount", async () => {
+      await using origin = await startOriginWithCorruptRecord(route, messages);
+      const ws = connect(origin);
+      ws.addEventListener("open", () => ws.pause());
+      ws.addEventListener("message", () => ws.send("never sent"));
+      expect(await clientEvents(ws)).toEqual([...messages, ...failure, { code: 1006, reason: "", wasClean: false }]);
+      expect(ws.bufferedAmount).toBe(messages.length * (2 + 4 + "never sent".length));
+    });
+
     test("the peer's Close frame in front of it decides the close code", async () => {
       const close = encodeFrame(OP.close, closePayload(4001, "why"));
       await using origin = await startOriginWithCorruptRecord(route, [...messages, close]);

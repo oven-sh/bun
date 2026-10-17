@@ -11,11 +11,13 @@ import {
   createInflater,
   createPeer,
   detached,
+  encodeFrame,
   Frame,
   implementations,
   invalidData,
   MiB,
   nextEvent,
+  OP,
   openClient,
   overflowSize,
   type RawSocket,
@@ -966,6 +968,27 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
         expect(await conn.remainingFrames()).toEqual([]);
       },
     );
+
+    test("after a reset, in the 'message' events of a paused socket: calls back with an Error", async () => {
+      const buffered = Buffer.concat([encodeFrame(OP.text, "one"), encodeFrame(OP.text, "two")]);
+      await using client = await connectClient(
+        implementation,
+        { perMessageDeflate: false },
+        { afterUpgrade: buffered },
+      );
+      const { ws } = client;
+      const events: unknown[] = [];
+      ws.on("open", () => {
+        ws.pause();
+        client.peer.connections[0].reset();
+      });
+      ws.on("message", data => {
+        events.push(String(data));
+        ws.send("abcd", error => events.push(error instanceof Error));
+      });
+      await client.closed;
+      expect(events).toEqual(["one", "two", true, true]);
+    });
 
     test("after a failed connection", async () => {
       const ws = new WebSocket("ws://127.0.0.1:" + (await closedPort()));

@@ -2392,7 +2392,7 @@ function extractAgentOptions(agent: Agent): {
         headers = new Headers(headers);
         for (const name of setByAgent) headers.delete(name);
       } else {
-        const kept: HttpHeaders = { __proto__: null };
+        const kept: HttpHeaders = { __proto__: null as never };
         for (const name of Object.keys(headers)) {
           if (!setByAgent.includes(name.toLowerCase())) kept[name] = headers[name];
         }

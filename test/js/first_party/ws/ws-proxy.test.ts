@@ -460,7 +460,7 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
   });
 
   // "direct" is the reference.
-  describe.concurrent.each(["direct", "http"] as const)(
+  describe.concurrent.each(["direct", "http", "https"] as const)(
     "a corrupt TLS record right behind messages that came with the 101 (%s)",
     route => {
       const messages = ["m0", "m1", "m2"];
@@ -493,6 +493,20 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
         expect({ events: await wsEvents(ws), sent: await sent.promise }).toEqual({
           events: [...messages, { close: [1006, Buffer.alloc(0)] }],
           sent: expect.objectContaining({ code: "ERR_STREAM_DESTROYED" }),
+        });
+      });
+
+      test("a paused client gets the messages at the end, and the callbacks of its answers get an error", async () => {
+        await using origin = await startOriginWithCorruptRecord(route, messages);
+        const ws = connect(origin);
+        const answers: unknown[] = [];
+        ws.on("open", () => ws.pause());
+        ws.on("message", () =>
+          ws.send("never sent", (error?: NodeJS.ErrnoException | null) => answers.push(error?.code)),
+        );
+        expect({ events: await wsEvents(ws), answers }).toEqual({
+          events: [...messages, { close: [1006, Buffer.alloc(0)] }],
+          answers: messages.map(() => "ERR_STREAM_DESTROYED"),
         });
       });
     },

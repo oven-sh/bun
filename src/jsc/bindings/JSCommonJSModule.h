@@ -92,7 +92,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
+    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn, bool skipIsolationCache = false);
     void evaluate(Zig::GlobalObject* globalObject, Ref<JSC::SourceProvider>&& sourceProvider, bool ignoreESModuleAnnotation);
     void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
     inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
@@ -171,7 +171,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSModuleGraph* graph,
     JSC::JSString* specifierValue,
     ResolvedSource& source,
-    bool isBuiltIn);
+    bool isBuiltIn,
+    bool skipIsolationCache = false);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,

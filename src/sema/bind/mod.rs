@@ -846,7 +846,7 @@ struct Loop {
 /// again while the first pass over that body is still on the stack. Nested loops stack up the same way, so a node inside
 /// three loops can be on the stack four times. The bound is the longest path without back edges, plus one body length
 /// for each level of loop nesting.
-fn measure_flow(flow: &[Flow], edges: &[FlowId]) -> (u32, bool) {
+fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, bool) {
     // Longest backward path from each node, ignoring back edges. A back edge points to a higher index, and so does `NONE`.
     let mut below = vec![0u32; flow.len()];
     let (mut loops, mut reduced): (Vec<Loop>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
@@ -877,7 +877,8 @@ fn measure_flow(flow: &[Flow], edges: &[FlowId]) -> (u32, bool) {
             it.body = (it.body).max(below[back.idx()].saturating_sub(below[it.label as usize]));
         }
     }
-    let depends_on_order = has_loop_types_that_depend_on_order(flow, edges, &loops, reduced);
+    let depends_on_order =
+        has_loop_types_that_depend_on_order(flow, edges, shared, &loops, reduced);
     // For each loop label, the most depth that following its back edge can add.
     let mut deeper_from: Vec<(u32, u32)> = Vec::new();
     let mut open: Vec<Loop> = Vec::new();
@@ -919,61 +920,159 @@ fn measure_flow(flow: &[Flow], edges: &[FlowId]) -> (u32, bool) {
     (deepest, depends_on_order)
 }
 
+/// One `finally` block that control can fall out of, as `has_loop_types_that_depend_on_order` sees it.
+struct FinallyBlock {
+    /// The label at the start of the block. It counts as part of the block.
+    label: u32,
+    /// The first node after the block.
+    behind: u32,
+    /// Index + 1 of the `finally` block around this one, or 0.
+    parent: u32,
+    /// How many `Flow::Reduce` nodes the block has: one for each of leaving it normally, by `return` and by an exception.
+    reduces: u32,
+    /// The lowest and highest node outside the block that follows a node inside it without going through a `Reduce`.
+    left_for: Option<(u32, u32)>,
+    is_in_loop: bool,
+    /// Some node in the block has several successors, so a walk caches its type.
+    has_shared_node: bool,
+}
+
 /// Computes `BoundIn::has_loop_types_that_depend_on_order`. `loops` is sorted by label. `reduced` holds the label and the
 /// index of each `Flow::Reduce`.
+///
+/// What a walk sees inside a `finally` block depends on how it got there: each `Reduce` node limits the block's
+/// antecedents in its own way, and a jump out of the block does not limit them at all. That view can end up in the type
+/// cached for a loop in three ways:
+/// 1. The loop is inside the block.
+/// 2. The block is inside the loop and something leaves it without a `Reduce`. A walk that came through a `Reduce` follows
+///    the back edge into the block again, and the limit is still on.
+/// 3. The block has two ways out and a node whose type the walk caches. The walk enters the block one way, caches the
+///    type, and reuses it when it enters the other way, on behalf of a loop that comes after the block or is around it.
 fn has_loop_types_that_depend_on_order(
     flow: &[Flow],
     edges: &[FlowId],
+    shared: &[u64],
     loops: &[Loop],
     mut reduced: Vec<(u32, u32)>,
 ) -> bool {
-    // Each `finally` block as a range: from the label at its start to the first node after it.
+    if reduced.is_empty() {
+        return false;
+    }
     reduced.shared_sort_unstable();
-    reduced.dedup_by_key(|it| it.0);
-    let mut blocks = reduced.iter().peekable();
-    let mut blocks_in_loops: Vec<(u32, u32)> = Vec::new();
+    let mut blocks: Vec<FinallyBlock> = Vec::new();
+    for (label, reduce) in reduced {
+        match blocks.last_mut() {
+            Some(last) if last.label == label => last.reduces += 1,
+            _ => blocks.push(FinallyBlock {
+                label,
+                behind: reduce,
+                parent: 0,
+                reduces: 1,
+                left_for: None,
+                is_in_loop: false,
+                has_shared_node: false,
+            }),
+        }
+    }
+    let mut next = blocks.iter_mut().peekable();
     let (mut end_of_loops, mut end_of_blocks) = (0, 0);
     for it in loops {
-        while let Some(&block) = blocks.next_if(|block| block.0 < it.label) {
-            if block.0 <= end_of_loops {
-                blocks_in_loops.push(block);
-            }
-            end_of_blocks = end_of_blocks.max(block.1);
+        while let Some(block) = next.next_if(|block| block.label < it.label) {
+            block.is_in_loop = block.label <= end_of_loops;
+            end_of_blocks = end_of_blocks.max(block.behind);
         }
         if it.label < end_of_blocks {
             return true;
         }
         end_of_loops = end_of_loops.max(it.end);
     }
-    blocks_in_loops.extend(blocks.filter(|block| block.0 <= end_of_loops));
-    if blocks_in_loops.is_empty() {
-        return false;
+    for block in next {
+        block.is_in_loop = block.label <= end_of_loops;
     }
-    // `block_of[i]`: index + 1 of the innermost block that contains node `i`, or 0. The block's own label counts as inside:
-    // in `finally { if (f()) break; }` the condition makes no flow node, so the edge out of the block starts at the label.
+    // `block_of[i]`: index + 1 of the innermost block that contains node `i`, or 0.
     let mut block_of = vec![0u32; flow.len()];
     let (mut open, mut next): (Vec<u32>, u32) = (Vec::new(), 0);
     for (i, block) in (0..).zip(&mut block_of) {
-        while (open.last()).is_some_and(|&it| blocks_in_loops[it as usize].1 <= i) {
+        while (open.last()).is_some_and(|&it| blocks[it as usize].behind <= i) {
             open.pop();
         }
-        if (blocks_in_loops.get(next as usize)).is_some_and(|it| it.0 == i) {
+        if let Some(it) = blocks.get_mut(next as usize)
+            && it.label == i
+        {
+            it.parent = open.last().map_or(0, |it| it + 1);
             open.push(next);
             next += 1;
         }
-        *block = open.last().map_or(0, |it| it + 1);
-    }
-    let leaves_block = |from: &FlowId, to: u32| match block_of.get(from.idx()) {
-        None | Some(0) => false,
-        Some(&block) => {
-            let (label, behind) = blocks_in_loops[block as usize - 1];
-            to <= label || behind <= to
+        if let Some(&it) = open.last() {
+            *block = it + 1;
+            let word = shared.get(i as usize / 64).copied().unwrap_or(0);
+            blocks[it as usize].has_shared_node |= word >> (i % 64) & 1 != 0;
         }
+    }
+    // Look at every kind of node, not only labels. The binder drops a label that has a single antecedent, so after
+    // `for (;;) { try {} finally { if (a) break; } }` the next statement follows a node inside the block directly.
+    for (node, i) in flow.iter().zip(0..) {
+        for from in node.antecedents(edges) {
+            let Some(block) = block_of.get(from.idx()).filter(|&&block| block != 0) else {
+                continue;
+            };
+            let block = &mut blocks[*block as usize - 1];
+            if (block.label..block.behind).contains(&i)
+                || matches!(node, Flow::Reduce { label, .. } if label.0 == block.label)
+            {
+                continue;
+            }
+            let (lowest, highest) = block.left_for.unwrap_or((i, i));
+            block.left_for = Some((lowest.min(i), highest.max(i)));
+        }
+    }
+    // Inner blocks come after the blocks around them. What leaves an inner block may leave the outer one too.
+    for i in (0..blocks.len()).rev() {
+        let (parent, left_for, has_shared_node) = (
+            blocks[i].parent,
+            blocks[i].left_for,
+            blocks[i].has_shared_node,
+        );
+        if left_for.is_some() && blocks[i].is_in_loop {
+            return true;
+        }
+        let Some(parent) = blocks.get_mut((parent as usize).wrapping_sub(1)) else {
+            continue;
+        };
+        parent.has_shared_node |= has_shared_node;
+        for to in left_for.into_iter().flat_map(|it| [it.0, it.1]) {
+            if to <= parent.label || parent.behind <= to {
+                let (lowest, highest) = parent.left_for.unwrap_or((to, to));
+                parent.left_for = Some((lowest.min(to), highest.max(to)));
+            }
+        }
+    }
+    // `is_mixed[i]`: a walk can enter block `i`, or a block around it, in two ways and reuse a cached type there.
+    let mut is_mixed = vec![false; blocks.len()];
+    for i in 0..blocks.len() {
+        let it = &blocks[i];
+        let ways_out = it.reduces + u32::from(it.left_for.is_some());
+        is_mixed[i] = ways_out > 1 && it.has_shared_node;
+        if is_mixed[i] && it.is_in_loop {
+            return true;
+        }
+        is_mixed[i] |= it.parent != 0 && is_mixed[it.parent as usize - 1];
+    }
+    let Some(first) = is_mixed.iter().position(|&it| it) else {
+        return false;
     };
-    flow.iter().zip(0..).any(|(node, i)| {
-        matches!(node, Flow::Label { .. } | Flow::Loop { .. })
-            && (node.antecedents(edges).iter()).any(|from| leaves_block(from, i))
-    })
+    // Is there a loop from which a walk gets back to such a block?
+    let first = blocks[first].label as usize;
+    let mut leads_to_block = vec![false; flow.len() - first];
+    for (i, node) in flow.iter().enumerate().skip(first) {
+        let mut before = node.antecedents(edges).iter();
+        leads_to_block[i - first] = (block_of[i] != 0 && is_mixed[block_of[i] as usize - 1])
+            || before.any(|it| (first..i).contains(&it.idx()) && leads_to_block[it.idx() - first]);
+        if leads_to_block[i - first] && matches!(node, Flow::Loop { .. }) {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1223,8 +1322,8 @@ pub struct BoundIn<S: Storage> {
     pub flow_depth: u32,
     /// TypeScript caches the type of a reference at a loop label, from whichever walk gets there first. A walk that starts
     /// after a `finally` block sees fewer antecedents for that block than other walks do. If such a walk can fill the cache,
-    /// the cached type depends on which reference was checked first. That is possible if the loop is inside the block, or
-    /// if the block is inside the loop and something jumps or throws out of it.
+    /// the cached type depends on which reference was checked first. `has_loop_types_that_depend_on_order`, the function,
+    /// lists the ways that can happen.
     pub has_loop_types_that_depend_on_order: bool,
     /// From here on: only from [`bind_for_lint_in`], empty otherwise.
     ///

@@ -593,10 +593,8 @@ try {
 }
 export { x };
 `;
-    const blockInLoop = (before: string, jump: string, after: string) => `declare function c(): boolean;
-declare const d: boolean;
-declare function mayThrow(): void;
-let x: string | undefined = undefined;
+    const declarations = "declare function c(): boolean;\ndeclare const d: boolean;\ndeclare function mayThrow(): void;\n";
+    const blockInLoop = (before: string, jump: string, after: string) => `${declarations}let x: string | undefined = undefined;
 while (c()) {
   if (x) {}
   ${before}
@@ -633,6 +631,70 @@ export {};
           args: typed,
         })),
       ),
+      // The jump is the only way to reach `mayThrow()`, so the binder makes no label in front of it: the call follows a flow
+      // node inside the `finally` block directly.
+      ...["if (c()) ", "if (d) "].flatMap(condition =>
+        (
+          [
+            ["for (;;) {", "break", "}", 0],
+            ["while (true) {", "break", "}", 1],
+            ["do {", "break", "} while (true);", 1],
+            ["(() => {", "return", "throw 0; })();", 0],
+          ] as const
+        ).map(([before, jump, after, constantConditions]) => ({
+          ...common,
+          name: `a \`finally\` block in a loop, where \`${condition}${jump}\` is the only way out of \`${before}\`: no false report before the block`,
+          file: "a.ts",
+          text: () => blockInLoop(before, condition + jump, `${after}\n  mayThrow();`),
+          args: typed,
+          // The rule reports `true` as a loop condition.
+          reports: constantConditions ? { "@typescript-eslint/no-unnecessary-condition": constantConditions } : {},
+          exitCode: constantConditions ? 1 : 0,
+        })),
+      ),
+      // No loop around the block in these two. A walk from the last line enters the block twice, in two different ways, and the
+      // second time it reuses a type it cached the first time. The second time is on behalf of the loop.
+      {
+        ...common,
+        name: "a `finally` block that an exception can leave, and a loop in the `catch` around it: no false report in the loop",
+        file: "a.ts",
+        text: () => `${declarations}let x: string | undefined = undefined;
+try {
+  try {
+    if (c()) { x = "s"; mayThrow(); x = undefined; }
+  } finally {
+    if (d) {}
+  }
+} catch {
+  for (;;) { if (x) {} if (d) break; }
+}
+x && mayThrow();
+export {};
+`,
+        args: typed,
+      },
+      {
+        ...common,
+        name: "a `finally` block left by `break`, and a loop after it: no false report in the loop",
+        file: "a.ts",
+        text: () => `${declarations}let x: string | number | undefined = 0;
+block: {
+  try {
+    x = "s";
+  } finally {
+    if (d) break block;
+  }
+  for (;;) { if (x) {} else { break; } }
+}
+x && mayThrow();
+export {};
+`,
+        rules: { "typescript/no-floating-promises": "error", "typescript/strict-boolean-expressions": "error" },
+        args: typed,
+        // Only the last line: `x` is a string in the loop.
+        reports: { "@typescript-eslint/strict-boolean-expressions": 1 },
+        exitCode: 1,
+      },
       // They are checked all the same, and nothing is reported about the types in them.
       ...flags.map(flag => ({
         ...common,

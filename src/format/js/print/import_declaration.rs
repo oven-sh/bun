@@ -132,12 +132,6 @@ struct FormatSpecifier<'a, T> {
     node: AstNodes<'a>,
 }
 
-impl<T: Spanned> Spanned for FormatSpecifier<'_, T> {
-    fn span(&self) -> Span {
-        self.specifier.span()
-    }
-}
-
 impl<'a, T: Format<'a>> Format<'a> for FormatSpecifier<'a, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if !f.is_quiet()

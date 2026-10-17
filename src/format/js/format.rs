@@ -530,13 +530,6 @@ impl<'a> Format<'a> for FormatExpr<'a> {
     }
 }
 
-impl Spanned for FormatExpr<'_> {
-    #[inline]
-    fn span(&self) -> Span {
-        self.expr.span()
-    }
-}
-
 impl<'a> Format<'a> for Expr<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {

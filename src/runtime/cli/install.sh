@@ -332,10 +332,11 @@ bash)
 
     # A login shell (ssh, tty) reads ~/.bash_profile instead of ~/.bashrc. The
     # distro skeleton ~/.bash_profile sources ~/.bashrc. A hand-written one
-    # that does not gets the block too.
+    # that does not gets the block too. The pattern matches a `. ~/.bashrc` or
+    # `source ~/.bashrc` command outside a comment.
     bash_profile=$HOME/.bash_profile
     if [[ $set_manually = false && $bash_config = "$HOME/.bashrc" && -w $bash_profile ]] &&
-        ! grep -q bashrc "$bash_profile"; then
+        ! grep -Eq '^[^#]*(\.|source)[[:space:]]+[^#]*bashrc' "$bash_profile"; then
         if append_shell_config "$bash_profile" "${commands[@]}"; then
             info "Added \"$tilde_bin_dir\" to \$PATH in \"$(tildify "$bash_profile")\" for login shells"
         fi

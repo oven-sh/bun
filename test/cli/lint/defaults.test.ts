@@ -2611,8 +2611,9 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       "nocheck.ts": ["// @ts-nocheck\n", "// starts at one\nconst count = 1;\n"],
       "reference.ts": ['/// <reference lib="dom" />\n', "// starts at one\nconst count = 1;\n"],
       "hashbang.ts": ["#!/usr/bin/env bun\n", "// starts at one\nconst count = 1;\n"],
-      "license.ts": [`${license}\n`, "// starts at one\nconst count = 1;\n"],
+      "license.ts": [`${license}\n`, "/* starts at one */\nconst count = 1;\n"],
       "license-without-an-empty-line.ts": [license, "const count = 1;\n"],
+      "license-with-an-empty-line-in-it.ts": [`${license}\n// IT IS PROVIDED "AS IS".\n`, "const count = 1;\n"],
       "license-and-directive.ts": [license, `${suppressed}console.log(Math.abs("1"));\n`],
       "directive-above-license.ts": ["", `${suppressed}// Copyright 2026 Someone\nconsole.log(Math.abs("1"));\n`],
       "module-doc.ts": [moduleDoc, "/** Starts at one. */\nconst count = 1;\n"],
@@ -2621,13 +2622,41 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       "doc-above-reference.ts": ['/** Counts. */\n/// <reference lib="dom" />\n', "const count = 1;\n"],
       "doc-above-license.ts": [`/** Counts. */\n${license}\n`, "/** Starts at one. */\nconst count = 1;\n"],
       "byte-order-mark.ts": ["\ufeff", "// starts at one\nconst count = 1;\n"],
+      // An empty line separates what is about the file from what is about the first statement.
+      "header.ts": ["// Counts things.\n// Nothing else.\n\n", "const count = 1;\n"],
+      "header-in-a-block.ts": ["/**\n * Counts things.\n */\n\n", "// starts at one\nconst count = 1;\n"],
+      "header-and-doc.ts": ["// Counts things.\n\n", "/** Starts at one. */\nconst count = 1;\n"],
+      "header-in-two-parts.ts": ["// Counts things.\n\n// Nothing else.\n\n", "// starts at one\nconst count = 1;\n"],
+      "header-without-an-empty-line.ts": ["", "// Counts things.\n// Nothing else.\nconst count = 1;\n"],
+      "header-below-use-strict.ts": ['"use strict";\n// Counts things.\n\n', "// starts at one\nconst count = 1;\n"],
+      "header-below-hashbang.ts": ["#!/usr/bin/env bun\n// Counts things.\n\n", "// starts at one\nconst count = 1;\n"],
+      "header-and-directive.ts": ["// Counts things.\n\n", `${suppressed}console.log(Math.abs("1"));\n`],
+      "disable-in-the-middle.ts": [
+        "// Counts things.\n/* eslint-disable @typescript-eslint/no-unused-vars */\n",
+        "// starts at one\nconst count = 1;\n",
+      ],
+      // What is about the next line is about it across an empty line, and so is what is below it.
+      "directive-and-empty-line.ts": ["", `${suppressed}\nconsole.log(Math.abs("1"));\n`],
+      "directive-above-header.ts": ["", `${suppressed}// Counts things.\n\nconsole.log(Math.abs("1"));\n`],
+      "triple-slash-directive.ts": ["", `/${suppressed}\nconsole.log(Math.abs("1"));\n`],
+      "coverage.ts": ["", "/* v8 ignore next -- @preserve */\n\nconst count = 1;\n"],
+      "no-side-effects.ts": ["", "/* @__NO_SIDE_EFFECTS__ */\n\nfunction one() {\n  return 1;\n}\n"],
+      "deno.ts": ["// deno-lint-ignore-file no-console\n", "// deno-lint-ignore no-unused-vars\n\nconst count = 1;\n"],
     };
+    // The same with the line breaks of Windows.
+    for (const name of ["directive.ts", "use-strict.ts", "license.ts", "header.ts", "header-in-two-parts.ts"]) {
+      heads[`crlf-${name}`] = heads[name];
+    }
+    const withLineBreaksOf = (name: string, text: string) =>
+      name.startsWith("crlf-") ? text.replaceAll("\n", "\r\n") : text;
 
     test("import/first: below what stays first, above the comments of the first statement", async () => {
       const a = 'import { a } from "./a";\n';
       const cases = Object.entries(heads).map(([name, [head, first]]) => [
         name,
-        [`${head}${first}${a}console.log(a);\n`, `${head}${a}${first}console.log(a);\n`],
+        [`${head}${first}${a}console.log(a);\n`, `${head}${a}${first}console.log(a);\n`].map(it =>
+          withLineBreaksOf(name, it),
+        ),
       ]);
       await expectFixed("import/first", {
         ...Object.fromEntries(cases),
@@ -2648,9 +2677,22 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     ])("%s: below what stays first, above the comments of the first statement", async (rule, statement) => {
       const cases = Object.entries(heads).map(([name, [head, first]]) => [
         name.replace(".ts", ".test.ts"),
-        [`${head}${first}test("a", () => {});\n`, `${head}${statement}${first}test("a", () => {});\n`],
+        [`${head}${first}test("a", () => {});\n`, `${head}${statement}${first}test("a", () => {});\n`].map(it =>
+          withLineBreaksOf(name, it),
+        ),
       ]);
       await expectFixed(rule, Object.fromEntries(cases));
+    });
+
+    test.each([
+      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
+      ["jest/prefer-importing-jest-globals", "import { test } from '@jest/globals';\n"],
+    ])("%s: in a file that starts with comments and imports", async (rule, statement) => {
+      const rest = 'import { a } from "./a";\ntest("a", () => a);\n';
+      await expectFixed(rule, {
+        "header.test.ts": [`// Tests a.\n\n${rest}`, `// Tests a.\n\n${statement}${rest}`],
+        "header-without-an-empty-line.test.ts": [`// Tests a.\n${rest}`, `${statement}// Tests a.\n${rest}`],
+      });
     });
 
     test("import/first: a comment beside a statement stays beside it", async () => {

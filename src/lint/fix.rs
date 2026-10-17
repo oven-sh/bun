@@ -198,26 +198,59 @@ fn is_about_the_file(comment: &Token) -> bool {
         || text.get(2) == Some(&b'!')
         || match_directives_pattern(content)
             .is_some_and(|it| it.starts_with("eslint") && !it.ends_with("line"))
-        || [&b"oxlint-disable"[..], b"oxlint-enable", b"biome-ignore-all"]
-            .into_iter()
-            .any(starts_with_word)
+        || [
+            &b"oxlint-disable"[..],
+            b"oxlint-enable",
+            b"biome-ignore-all",
+            b"deno-lint-ignore-file",
+            b"deno-fmt-ignore-file",
+            b"dprint-ignore-file",
+        ]
+        .into_iter()
+        .any(starts_with_word)
         || starts_license(content)
         || has_tag_about_the_file(content)
 }
 
-/// Whether `comment` is about the line after it: `// @ts-expect-error`, `// eslint-disable-next-line`, ..
+/// Whether `comment` is about the line, the statement or the expression after it, for a tool that reads it: a compiler, a linter,
+/// a formatter, a coverage tool or a bundler.
 fn is_about_the_next_line(comment: &Token) -> bool {
-    const DIRECTIVES: [&[u8]; 6] = [
+    const DIRECTIVES: [&[u8]; 22] = [
         b"@ts-expect-error",
         b"@ts-ignore",
+        // `$FlowFixMe`, `$FlowIgnore`, `$FlowExpectedError`, `$FlowIssue`
+        b"$Flow",
         b"eslint-disable-next-line",
         b"oxlint-disable-next-line",
+        b"tslint:disable-next-line",
         b"biome-ignore",
+        b"deno-lint-ignore",
+        b"deno-fmt-ignore",
+        b"dprint-ignore",
         b"prettier-ignore",
+        b"oxfmt-ignore",
+        b"istanbul ignore next",
+        b"istanbul ignore if",
+        b"istanbul ignore else",
+        b"c8 ignore next",
+        b"v8 ignore next",
+        b"v8 ignore if",
+        b"v8 ignore else",
+        b"node:coverage ignore next",
+        // `#__PURE__`, `@__NO_SIDE_EFFECTS__`
+        b"#__",
+        b"@__",
     ];
-    let content = comment.text().get(2..).unwrap_or_default();
-    let content = content.trim_ascii_start();
-    DIRECTIVES.iter().any(|it| content.starts_with(it))
+    // TypeScript also reads `/// @ts-ignore` and `/** @ts-ignore */`.
+    let is_before_content = |byte: &&u8| matches!(byte, b'/' | b'*') || byte.is_ascii_whitespace();
+    let text = comment.text();
+    let start = text.iter().take_while(is_before_content).count();
+    let content = text.get(start..).unwrap_or_default();
+    // `biome-ignore-all` and `deno-lint-ignore-file` are about the file.
+    let is_at_start = |directive: &&[u8]| {
+        (content.strip_prefix(*directive)).is_some_and(|rest| rest.first() != Some(&b'-'))
+    };
+    DIRECTIVES.iter().any(is_at_start)
 }
 
 /// Whether tools take `comment` to be about the code after it: the line after it, or what a `/** @type {A} */` documents.
@@ -274,31 +307,28 @@ impl<'a> Fixer<'a> {
         }
     }
 
-    /// Where what has to stay first in the file ends: the `#!` line, the comments about the file like `// @ts-nocheck` or a license,
-    /// and directives like `"use strict"` with the comments beside them. `None` if the file has none of these.
+    /// Where what has to stay first in the file ends: the `#!` line, directives like `"use strict"` with the comments beside them,
+    /// the comments about the file like `// @ts-nocheck` or a license, and the comments that an empty line separates from the
+    /// first statement, which TypeScript calls detached. Each with all comments above it. Only the comments that touch the first
+    /// statement are about that. `None` if the file has none of these.
     fn end_of_head(self) -> Option<u32> {
         let file = self.file;
         let directives = (file.body().iter()).take_while(|it| it.directive().is_some());
         let mut end = (directives.last()).map(|it| self.end_with_comments_beside(it.span().end));
         let start_of_text = if file.has_bom() { 3 } else { 0 };
-        // A license in `//` lines goes on to the last of them.
+        // A license in `//` lines goes on to the last of them, whether it has empty lines or not.
         let mut is_in_license = false;
         for comment in file.comments_after(Span::empty(end.unwrap_or(start_of_text))) {
-            let is_line = comment.kind() == TokenKind::Line;
-            let goes_on = is_in_license
-                && is_line
-                && end.is_some_and(|end| file.line_of(end) + 1 == file.line_of(comment.start()));
-            if !is_about_the_file(&comment) {
-                if is_about_the_next_line(&comment) {
-                    break;
-                }
-                if !goes_on {
-                    is_in_license = false;
-                    continue;
-                }
+            if is_about_the_next_line(&comment) {
+                break;
             }
-            end = Some(comment.end());
-            is_in_license = is_line && (goes_on || starts_license(comment.value().trim_ascii()));
+            is_in_license = comment.kind() == TokenKind::Line
+                && (is_in_license || starts_license(comment.value().trim_ascii()));
+            let next = self.skip_white_space(comment.end());
+            let is_detached = file.line_of(next) > file.line_of(comment.end()) + 1;
+            if is_in_license || is_detached || is_about_the_file(&comment) {
+                end = Some(comment.end());
+            }
         }
         end
     }
@@ -317,19 +347,25 @@ impl<'a> Fixer<'a> {
     /// Puts `statement`, which is a whole line without its line break, [before the other statements](Self::start_of_first_statement)
     /// of the file.
     pub fn insert_first_statement(self, statement: &[u8]) -> Fix {
+        let text = self.file.text();
+        let first_line = strings::index_of_char_usize(text, b'\n').and_then(|at| text.get(..at));
+        let line_break: &[u8] = match first_line {
+            Some([.., b'\r']) => b"\r\n",
+            _ => b"\n",
+        };
         let Some(after) = self.end_of_head() else {
-            let start_of_text = if self.file.has_bom() { 3 } else { 0 };
-            return self.insert_before(Span::empty(start_of_text), [statement, b"\n"].concat());
+            let start_of_text = Span::empty(if self.file.has_bom() { 3 } else { 0 });
+            return self.insert_before(start_of_text, [statement, line_break].concat());
         };
         let blank = Span::new(after, self.skip_white_space(after));
         match strings::last_index_of_char(self.file.slice(blank), b'\n') {
             // The same text either way. This is the edit that oxlint makes, and its help quotes it.
             Some(0) | None => {
-                self.insert_after(Span::empty(after), [&b"\n"[..], statement].concat())
+                self.insert_after(Span::empty(after), [line_break, statement].concat())
             }
             Some(at) => {
                 let line = Span::empty(after + at as u32 + 1);
-                self.insert_before(line, [statement, b"\n"].concat())
+                self.insert_before(line, [statement, line_break].concat())
             }
         }
     }

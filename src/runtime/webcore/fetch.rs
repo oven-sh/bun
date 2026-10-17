@@ -1631,13 +1631,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         sf.content_size = sf.remain;
                     }
                     body.detach();
+
+                    // sendfile(2) reads a length of 0 as "until end of file" on macOS and FreeBSD.
+                    if sf.remain == 0 {
+                        opened_fd.close();
+                        break 'prepare_body;
+                    }
+
                     body = HTTPRequestBody::Sendfile(sf);
 
                     break 'prepare_body;
                 }
             }
 
-            // The sendfile path above moves `opened_fd` into `SendFile` (which
+            // The sendfile path above closes `opened_fd` or moves it into `SendFile` (which
             // owns its lifecycle and breaks out of `'prepare_body`). On this
             // read-file path we are the sole owner of the fresh fd: `read_file`
             // is handed it as an `Fd` and never takes ownership. Wrap it in an

@@ -249,42 +249,61 @@ describe("BackPressure buffer", () => {
     expect(hash.digest("hex")).toBe(expectedHash);
   });
 
-  // A growth of the buffer keeps room behind the bytes it was asked for, so a
-  // short frame sent behind a large unsent one fits. Without that room the
-  // buffer grows a second time and copies the large frame.
-  // estimateShallowMemoryUsageOf reports the buffer's capacity.
-  it.skipIf(isWindows)("a short frame behind a large unsent frame keeps the buffer where it is", async () => {
-    const SIZE = 4 * 1024 * 1024;
-    const opened = Promise.withResolvers<import("bun").ServerWebSocket<unknown>>();
-    await using server = Bun.serve({
-      port: 0,
-      fetch(req, s) {
-        if (s.upgrade(req)) return;
-        return new Response("no", { status: 500 });
-      },
-      websocket: {
-        backpressureLimit: SIZE * 4,
-        idleTimeout: 0,
-        open(ws) {
-          opened.resolve(ws);
+  // A growth of the buffer keeps room behind the bytes it was asked for, so the
+  // framing that follows a queued frame (a ping, a close, a short frame) fits.
+  // Without that room those few bytes grow the buffer again and copy the frame,
+  // or move it when some of it drained. estimateShallowMemoryUsageOf reports
+  // the buffer's capacity, and the three rows are the three ways a frame gets
+  // into the buffer.
+  describe.each([
+    { name: "ws", secure: false, subscribed: false },
+    { name: "wss", secure: true, subscribed: false },
+    { name: "ws, subscribed", secure: false, subscribed: true },
+  ])("$name", ({ secure, subscribed }) => {
+    it("a growth keeps room behind a queued frame", async () => {
+      const SIZE = 4 * 1024 * 1024;
+      const FRAME = 10 + SIZE; // a 64-bit length header
+      const TAIL_ROOM = 12; // BackPressure::TAIL_ROOM
+      const payload = Buffer.alloc(SIZE);
+      const opened = Promise.withResolvers<import("bun").ServerWebSocket<unknown>>();
+      await using server = Bun.serve({
+        port: 0,
+        ...(secure ? { tls: cert } : {}),
+        fetch(req, s) {
+          if (s.upgrade(req)) return;
+          return new Response("no", { status: 500 });
         },
-        message() {},
-      },
-    });
+        websocket: {
+          backpressureLimit: SIZE * 32,
+          idleTimeout: 0,
+          open(ws) {
+            opened.resolve(ws);
+          },
+          message() {},
+        },
+      });
 
-    const { sock } = await pausedClient(server.port!);
-    const ws = await opened.promise;
-    setSocketOptions(ws, 1, SEND_BUFFER);
-    // Both sends run here, outside a websocket handler, so neither is corked.
-    ws.sendBinary(patternBuffer(SIZE, 0x1234));
-    const queued = ws.getBufferedAmount();
-    const capacityBefore = estimateShallowMemoryUsageOf(ws);
-    ws.send("x");
-    const capacityAfter = estimateShallowMemoryUsageOf(ws);
-    sock.destroy();
-    expect({ queuedAtLeastHalf: queued > SIZE / 2, capacityGrew: capacityAfter > capacityBefore }).toEqual({
-      queuedAtLeastHalf: true,
-      capacityGrew: false,
+      const { sock } = await pausedClient(server.port!, secure);
+      const ws = await opened.promise;
+      setSocketOptions(ws, 1, SEND_BUFFER);
+      if (subscribed) ws.subscribe("topic");
+      // Nothing is queued yet, so this is the socket without its buffer.
+      const idle = estimateShallowMemoryUsageOf(ws);
+      // The sends run here, outside a websocket handler, so none is corked.
+      // Winsock can take the first frames whole: send until one stays queued.
+      let sends = 0;
+      do ws.sendBinary(payload);
+      while (ws.getBufferedAmount() === 0 && ++sends < 16);
+      const queued = ws.getBufferedAmount();
+      const capacity = estimateShallowMemoryUsageOf(ws) - idle;
+      sock.destroy();
+      // Plain ws appends what the socket did not take to an empty buffer. The
+      // other two put the whole frame in the buffer and flush its front.
+      const room = capacity - (secure || subscribed ? FRAME : queued);
+      expect({ queued: queued > 0, roomForFraming: room >= TAIL_ROOM }).toEqual({
+        queued: true,
+        roomForFraming: true,
+      });
     });
   });
 });

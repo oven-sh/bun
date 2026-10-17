@@ -814,6 +814,67 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
 });
 
 describe("streaming", () => {
+  // A chunk that the socket does not take whole goes into the uWS backpressure
+  // queue, and its CRLF goes right behind it. If the queue grew to fit the
+  // chunk exactly, those 2 bytes grow it a second time and copy the chunk, so
+  // the server holds the chunk twice. The client reads normally here.
+  // VmHWM is Linux only, and the test reads the peak of a child of its own.
+  it.skipIf(!isLinux)("a large chunk is queued once, not copied again for its CRLF", async () => {
+    const CHUNK_SIZE = 32 * 1024 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        const CHUNK_SIZE = ${CHUNK_SIZE};
+        const peakBytes = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
+        // VmHWM never falls, so an earlier peak would hide the copy. Writing
+        // 5 to clear_refs sets it back to what is resident now.
+        const resetPeak = () => fs.writeFileSync("/proc/self/clear_refs", "5");
+        // Zero pages are not resident, so the peak counts the copies only.
+        const chunk = Buffer.alloc(CHUNK_SIZE);
+        let baseline = 0;
+        const server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            if (new URL(req.url).pathname === "/peak") {
+              return Response.json({ ratio: Math.round(((peakBytes() - baseline) / CHUNK_SIZE) * 100) / 100 });
+            }
+            resetPeak();
+            baseline = peakBytes();
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  controller.write(chunk);
+                  await controller.end();
+                },
+              }),
+            );
+          },
+        });
+        console.log(server.url.href);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { value } = await proc.stdout.getReader().read();
+    const url = new TextDecoder().decode(value).trim();
+
+    const body = await fetch(url).then(response => response.arrayBuffer());
+    const { ratio } = await fetch(url + "peak").then(response => response.json());
+    // Measured with the fix: 1.01 to 1.04 on a release build. Without it:
+    // 1.91 to 1.98. The sanitizer allocator adds slack to both.
+    expect({ bytes: body.byteLength, peakUnderBound: ratio < (isASAN || isDebug ? 1.5 : 1.3), ratio }).toEqual({
+      bytes: CHUNK_SIZE,
+      peakUnderBound: true,
+      ratio: expect.any(Number),
+    });
+  });
+
   describe("error handler", () => {
     // The body source fails before any byte is written. The Response's status
     // and headers are already committed to uWS, so error() cannot replace them

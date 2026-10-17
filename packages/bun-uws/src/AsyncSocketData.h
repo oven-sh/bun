@@ -113,8 +113,7 @@ private:
 
     /* Ensure [tail, tail+n) is writable. Prefers compacting into the drained
      * head gap over growing so steady-state producer/consumer never reallocs.
-     * A growth asks for TAIL_ROOM more than it needs and keeps whatever the
-     * allocator gave on top of that. */
+     * A growth asks for TAIL_ROOM more than the append needs. */
     void ensureTailRoom(size_t n) {
         /* tail + n and live + n cannot wrap past this; cap * 2 wrapping is
          * harmless because live + n then wins the max(). */
@@ -130,8 +129,7 @@ private:
         }
 
         if (live + n > SIZE_MAX - TAIL_ROOM) std::abort();
-        size_t need = live + n + TAIL_ROOM;
-        size_t newCap = std::max(std::max(cap * 2, need), MIN_CAPACITY);
+        size_t newCap = std::max(std::max(cap * 2, live + n + TAIL_ROOM), MIN_CAPACITY);
         char *nb;
         if (head == 0) {
             /* mi_realloc may extend in place. */
@@ -146,10 +144,7 @@ private:
             tail = live;
         }
         buf = nb;
-        /* A doubled or minimum-size request already sits on an allocator block
-         * boundary. A request of exactly what this append needs does not, and
-         * the rest of its block is room this buffer has paid for. */
-        cap = newCap == need ? us_usable_size(nb, newCap) : newCap;
+        cap = newCap;
     }
 
     void release() {

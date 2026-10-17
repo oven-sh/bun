@@ -577,7 +577,7 @@ describe("bundler", () => {
     for (const minify of [false, true]) {
       const suffix = `${backend === "api" ? "Api" : ""}${minify ? "Minified" : ""}`;
       const minifyOptions = { minifySyntax: minify, minifyIdentifiers: minify, minifyWhitespace: minify };
-      // The export stays: an import statement cannot stand in for an exported declaration.
+      // An exported declaration becomes an export of the namespace.
       itBundled(`cjs2esm/UnwrappedRequireExported${suffix}`, {
         files: {
           "/entry.ts": /* ts */ `
@@ -600,6 +600,39 @@ describe("bundler", () => {
         ...minifyOptions,
         run: {
           stdout: "react react react 1 sched 2 other react",
+        },
+      });
+      // A variable that leaves its file in an export clause. The importer
+      // reads the value that the variable holds at that time.
+      itBundled(`cjs2esm/UnwrappedRequireInExportClause${suffix}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import held, { kept, rebound, sched, read, set } from "./lib.js";
+            console.log(kept.react, held.other, rebound.react, sched.sched, read());
+            set({ react: "r2" }, { sched: "s2" });
+            console.log(rebound.react, sched.sched, read(), held.react);
+          `,
+          "/lib.js": /* js */ `
+            const kept = require("react");
+            const held = require("react");
+            let rebound = require("react");
+            let sched = require("scheduler");
+            export function set(a, b) {
+              rebound = a;
+              sched = b;
+            }
+            export function read() {
+              return rebound.react + "," + sched.sched;
+            }
+            export { kept, rebound, sched };
+            export default held;
+          `,
+          ...unwrapListPackages,
+        },
+        backend,
+        ...minifyOptions,
+        run: {
+          stdout: "react other react sched react,sched\nr2 s2 r2,s2 react",
         },
       });
       // A later write makes the variable hold another value. The package's
@@ -818,27 +851,29 @@ describe("bundler", () => {
       stdout: "default,sched sched\nTypeError",
     },
   });
-  // As on main: a write to a property of a variable that can still become the
-  // namespace is a build error.
+  // A variable that is assigned later is never the namespace: a write to a
+  // property of it above the assignment is an ordinary write.
   itBundled("cjs2esm/UnwrappedRequirePropertyWriteBeforeRebind", {
     files: {
       "/entry.js": /* js */ `
         let a = require("react");
         a.extra = 1;
+        console.log(a.react, a.extra);
         a = { react: "a2" };
         console.log(a.react, a.extra);
       `,
       ...unwrapListPackages,
     },
-    bundleErrors: { "/entry.js": ['Cannot assign to import "extra"'] },
+    run: {
+      stdout: "react 1\na2 undefined",
+    },
   });
   for (const minify of [false, true]) {
     const suffix = minify ? "Minified" : "";
     const minifyOptions = { minifySyntax: minify, minifyIdentifiers: minify, minifyWhitespace: minify };
-    // A read that the bundler visits after the write is a read of a property
-    // of what the variable holds: a getter runs, a call has the `this` that is
-    // written, and a read of `null` throws. For a read that it visits before
-    // the write, see `knownGap` in unwrapped-require-matrix.ts.
+    // A read of a rebound variable reads a property of what the variable
+    // holds: a getter runs, a call has the `this` that is written, and a read
+    // of `null` throws.
     itBundled(`cjs2esm/UnwrappedRequireReboundReadsTheVariable${suffix}`, {
       files: {
         "/entry.js": /* js */ `
@@ -880,7 +915,7 @@ describe("bundler", () => {
     });
     // Each read here is visited before the write, and reads a property of an
     // export (`x.a.b`). The declaration of the variable stays for the read,
-    // also when the write never runs.
+    // also when the write never runs, or when the build removes it.
     itBundled(`cjs2esm/UnwrappedRequireReboundAfterReads${suffix}`, {
       files: {
         "/entry.js": /* js */ `
@@ -942,40 +977,126 @@ describe("bundler", () => {
       },
     });
   }
-  // A write in a branch that the build removes never runs: the variable is
-  // the namespace, and the exports that nothing reads are gone.
-  itBundled("cjs2esm/UnwrappedRequireWriteInRemovedBranch", {
+  // An importer of the exported namespace reads the exports of the package
+  // directly, as it does for `const C = require("react"); export { C };`.
+  itBundled("cjs2esm/UnwrappedRequireExportedAndImported", {
     files: {
-      "/entry.js": /* js */ `
-        let a = require("react");
-        if (process.env.NODE_ENV !== "production") a = { react: "dev" };
-        let b = require("react");
-        process.env.NODE_ENV === "production" || (b = { other: "dev" });
-        function fn() {
-          let c = require("react-is");
-          if (process.env.NODE_ENV !== "production") {
-            [c] = [{ is: "dev" }];
-            c &&= null;
-            for (c of []) {
-            }
-            c++;
-          }
-          return process.env.NODE_ENV === "production" ? c.is : (c = "dev");
+      "/entry.ts": /* ts */ `
+        import { C, read } from "./lib";
+        console.log(C.other, read());
+      `,
+      "/lib.ts": /* ts */ `
+        export const C = require("react");
+        export function read() {
+          return C.react;
         }
-        console.log(a.react, b.other, fn());
       `,
       ...unwrapListPackages,
     },
-    define: { "process.env.NODE_ENV": '"production"' },
     dce: true,
     dceKeepMarkerCount: false,
-    onAfterBundle(api) {
-      const code = api.readFile("out.js");
-      expect(code).not.toContain("exports_react");
-      expect(code).toContain("console.log($react, $other, fn());");
+    run: {
+      stdout: "other react",
+    },
+  });
+  // Nothing imports the exported namespace: the exports of the package that
+  // nothing reads are gone, as they are for a declaration with no `export`.
+  itBundled("cjs2esm/UnwrappedRequireExportedNotImported", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { read } from "./lib";
+        console.log(read());
+      `,
+      "/lib.ts": /* ts */ `
+        export const C = require("react");
+        export import I = require("react-is");
+        export function read() {
+          return C.react + " " + I.is;
+        }
+      `,
+      ...unwrapListPackages,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: "react is",
+    },
+  });
+  // Every form of a write makes the variable stay a variable.
+  itBundled("cjs2esm/UnwrappedRequireReboundForms", {
+    files: {
+      "/entry.js": /* js */ `
+        let a = require("react");
+        a += "";
+        let b = require("react");
+        --b;
+        let c = require("react");
+        for (c in { key: 1 }) {
+        }
+        let d = require("react");
+        [...d] = [1, 2];
+        let e = require("react");
+        ({ ...e } = { rest: 1 });
+        let f = require("react");
+        [f = 5] = [];
+        let g = require("react");
+        ({ g = 6 } = {});
+        let h = require("react");
+        h **= 2;
+        let i = require("react");
+        i ??= 1;
+        let j = require("react");
+        j >>>= 0;
+        let k = require("react");
+        ++k;
+        console.log(typeof a, b, c, d.length, e.rest, f, g, h, i.react, j, k);
+      `,
+      ...unwrapListPackages,
     },
     run: {
-      stdout: "react other is",
+      stdout: "string NaN key 2 1 5 6 NaN react 0 NaN",
+    },
+  });
+  // Each write is above the declaration: the bundler has visited it when it
+  // decides about the declaration.
+  itBundled("cjs2esm/UnwrappedRequireReboundFormsAbove", {
+    files: {
+      "/entry.js": /* js */ `
+        function above() {
+          a += "";
+          --b;
+          for (c in { key: 1 }) {
+          }
+          [...d] = [1, 2];
+          ({ ...e } = { rest: 1 });
+          [f = 5] = [];
+          ({ g = 6 } = {});
+          h ??= 1;
+          for (i of ["of"]) {
+          }
+          j--;
+          [k] = [3];
+          ({ l } = { l: 4 });
+        }
+        let a = require("react");
+        let b = require("react");
+        let c = require("react");
+        let d = require("react");
+        let e = require("react");
+        let f = require("react");
+        let g = require("react");
+        let h = require("react");
+        let i = require("react");
+        let j = require("react");
+        let k = require("react");
+        let l = require("react");
+        above();
+        console.log(typeof a, b, c, d.length, e.rest, f, g, h.react, i, j, k, l);
+      `,
+      ...unwrapListPackages,
+    },
+    run: {
+      stdout: "string NaN key 2 1 5 6 react of NaN 3 4",
     },
   });
   // The CommonJS output of rolldown for `import * as react from "react"`.
@@ -1093,6 +1214,18 @@ describe("bundler", () => {
           function j() {}
         }
         console.log("j", typeof j, j.react);
+
+        // The only reads are through the second declaration.
+        var k = require("react");
+        {
+          var k;
+          console.log("k", k.react);
+        }
+        var l = require("scheduler");
+        {
+          var l;
+          console.log("l", l.sched);
+        }
       `,
       ...unwrapListPackages,
     },
@@ -1111,6 +1244,8 @@ describe("bundler", () => {
         "h react",
         "i react function undefined react object react",
         "j function undefined",
+        "k react",
+        "l sched",
       ].join("\n"),
     },
   });
@@ -1324,8 +1459,8 @@ describe("bundler", () => {
     },
   });
   // In that layout the module's statements are one list. A body without
-  // braces is another list in the same scope: the variables of the module are
-  // not settled at its end, and its own `var` stays where it is.
+  // braces is another list in the same scope: its own `var` stays where it
+  // is, and the variables of the module beside it become the namespace.
   for (const layout of ["BesideTopLevelUsing", "WithoutTreeShaking"] as const) {
     itBundled(`cjs2esm/UnwrappedRequireInBodyWithoutBraces${layout}`, {
       files: {
@@ -1516,7 +1651,9 @@ describe("bundler", () => {
             const f = (require("react"), param);
             return e.is + " " + e.react + " " + f.react;
           }
-          console.log(a.react, a.is, b.react, c.react, c.is, d.react, fn({ react: "param" }));
+          // The argument holds another require() and folds to a string.
+          var g = require(void require("scheduler") ? "nope" : "react-is");
+          console.log(a.react, a.is, b.react, c.react, c.is, d.react, fn({ react: "param" }), g.is, g.sched);
         `,
         ...unwrapListPackages,
       },
@@ -1524,10 +1661,129 @@ describe("bundler", () => {
       minifyIdentifiers: minify,
       minifyWhitespace: minify,
       run: {
-        stdout: "react undefined local react undefined local is undefined param",
+        stdout: "react undefined local react undefined local is undefined param is undefined",
       },
     });
   }
+  // With `minifySyntax` the argument of the outer require() folds to a string.
+  itBundled("cjs2esm/UnwrappedRequireOfAFoldedCommaMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        var a = require((require("react-is"), "react"));
+        console.log(a.react, a.is);
+      `,
+      ...unwrapListPackages,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "react undefined",
+    },
+  });
+  // `arguments` is a variable of every function: a `var` of that name is no new variable.
+  itBundled("cjs2esm/UnwrappedRequireNamedArguments", {
+    files: {
+      "/entry.js": /* js */ `
+        function fn() {
+          var a = require("react");
+          var arguments = require("react");
+          return a.react + arguments.react;
+        }
+        console.log(fn());
+      `,
+      ...unwrapListPackages,
+    },
+    bundleErrors: {
+      "/entry.js": [
+        'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  // A `var` beside a top-level function of its name: the file loads, as on main.
+  itBundled("cjs2esm/UnwrappedRequireBesideTopLevelFunctionOfItsName", {
+    files: {
+      "/entry.js": /* js */ `
+        var a = require("react");
+        function a() {}
+        console.log("loaded");
+      `,
+      ...unwrapListPackages,
+    },
+    run: {
+      stdout: "loaded",
+    },
+  });
+  // A classic JSX element calls its factory as a method of the variable.
+  itBundled("cjs2esm/UnwrappedRequireReboundJsxFactory", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./never-written.jsx";
+        import "./written-later.jsx";
+      `,
+      "/never-written.jsx": /* jsx */ `
+        /** @jsxRuntime classic */
+        /** @jsx S.createElement */
+        let S = require("scheduler");
+        function Above() {
+          return <div />;
+        }
+        function neverCalled() {
+          S = null;
+        }
+        console.log(Above());
+      `,
+      "/written-later.jsx": /* jsx */ `
+        /** @jsxRuntime classic */
+        /** @jsx R.createElement */
+        let R = require("scheduler");
+        function Above() {
+          return <span />;
+        }
+        R = {
+          createElement(type) {
+            return (this === R ? "new this" : "new nothis") + ":" + type;
+          },
+        };
+        console.log(Above());
+      `,
+      "/node_modules/scheduler/package.json": /* json */ `
+        { "name": "scheduler", "version": "0.25.0", "main": "index.js" }
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        "use strict";
+        module.exports = {
+          createElement(type) {
+            return (this === undefined ? "nothis" : "this") + ":" + type;
+          },
+        };
+      `,
+    },
+    run: {
+      stdout: "this:div\nnew this:span",
+    },
+  });
+  // In a `case` list after a jump, the declaration never runs.
+  itBundled("cjs2esm/UnwrappedRequireInSwitchAfterJump", {
+    files: {
+      "/entry.js": /* js */ `
+        function fn(n) {
+          switch (n) {
+            case 0:
+              return 1;
+              const R = require("react");
+              console.log(R.other);
+          }
+        }
+        console.log(fn(0));
+      `,
+      ...unwrapListPackages,
+    },
+    minifySyntax: true,
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: "1",
+    },
+  });
   for (const minify of [false, true]) {
     // Only `x = require("pkg")` as written can become the namespace. An
     // initializer that folds to the `require()` is a variable, as on main: a
@@ -1558,9 +1814,8 @@ describe("bundler", () => {
         stdout: "react 1 b2 2 d2 react",
       },
     });
-    // The statements of a \`switch\` are in the lists of its cases. A variable
-    // of one case is settled after the last case: a later case can read it or
-    // write it.
+    // The statements of a \`switch\` are in the lists of its cases. A later
+    // case can read or write a variable that an earlier case declares.
     itBundled(`cjs2esm/UnwrappedRequireInSwitch${minify ? "Minified" : ""}`, {
       files: {
         "/entry.js": /* js */ `
@@ -1720,7 +1975,7 @@ describe("bundler", () => {
           useEffect(() => {});
           return props.on ? lib.version : typeof lib.useEffect;
         }
-        // A variable of the module that the components read, while it can still become the namespace.
+        // A variable of the module that the components read.
         function ModuleAlias(props) {
           useEffect(() => {});
           return props.on ? React.version : Object.keys(React).length;
@@ -1775,11 +2030,7 @@ describe("bundler", () => {
         ...["Direct", "AsValue", "InBlock", "Rebound", "ReboundAfterRead", "ReboundAfterReadInClosure"],
         ...["InArray", "CheckInClosure", "DefaultParameter", "ModuleAlias", "ModuleRebound", "NoRequire"],
       ];
-      expect(names.filter(name => !isCompiled(name))).toEqual([
-        "ReboundAfterRead",
-        "ReboundAfterReadInClosure",
-        "DefaultParameter",
-      ]);
+      expect(names.filter(name => !isCompiled(name))).toEqual(["DefaultParameter"]);
       expect(code).toContain("return props.on ? $version : typeof $version;");
     },
     run: {
@@ -1872,30 +2123,61 @@ describe("bundler", () => {
       stdout: "start",
     },
   });
+  // A direct `eval` in the file does not make that import a value.
+  itBundled("cjs2esm/UnwrappedRequireUnusedImportEqualsBesideEval", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import Types = require("react");
+        const value: Types.Kind = "start";
+        console.log(value, eval("1"));
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        console.log("DROP_REACT loaded");
+        exports.react = "react";
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: "start 1",
+    },
+  });
+  // TypeScript parses the arrow function of this conditional twice. The write in it counts once.
+  itBundled("cjs2esm/UnwrappedRequireReboundInSpeculativeParse", {
+    files: {
+      "/entry.ts": /* ts */ `
+        let a = require("react");
+        let b = require("react");
+        const T = 0;
+        const setA = (globalThis as any).never ? (T) : T => (a = { react: "a2" } as any);
+        const setB = (globalThis as any).never ? (T) : T => (\\u0062 = { react: "b2" } as any);
+        console.log(a.react, b.react);
+        setA(0);
+        setB(0);
+        console.log(a.react, b.react);
+      `,
+      ...unwrapListPackages,
+    },
+    run: {
+      stdout: "react react\na2 b2",
+    },
+  });
   // TypeScript removes an import that nothing reads. A `const x = require()`
-  // is a call: the module loads. A read that is visited before the
-  // declaration counts as a read.
+  // is a call: the module loads.
   itBundled("cjs2esm/UnwrappedRequireTypeScript", {
     files: {
       "/entry.ts": /* ts */ `
-        function early() {
-          return a;
-        }
-        class Early {
-          get value() {
-            return b.react;
-          }
-        }
-        const lazy = () => c.is;
         const a = require("react");
-        const b = require("react");
         import c = require("react-is");
         const unused = require("scheduler");
         function fn() {
           const unusedInFunction = require("react-dom");
         }
         fn();
-        console.log(Object.keys(early()).join(","), new Early().value, lazy(), (globalThis as any).loaded);
+        console.log(Object.keys(a).join(","), c.is, (globalThis as any).loaded);
       `,
       ...unwrapListPackages,
       "/node_modules/scheduler/index.js": /* js */ `
@@ -1911,12 +2193,12 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "react,other,unused react is scheduler react-dom",
+      stdout: "react,other,unused is scheduler react-dom",
     },
   });
   // Declaration kind x rebind x read x scope x visit order, each compared with
   // the unbundled run (unwrapped-require-matrix.ts). A debug or sanitizer
-  // build is too slow for the 28,152 cells: it runs 216 of them.
+  // build is too slow for the 37,162 cells: it runs 280 of them.
   const matrixRuns: [string, Options, number][] =
     isDebug || isASAN
       ? [
@@ -1929,13 +2211,14 @@ describe("bundler", () => {
               reads: ["oneLevel", "twoLevelCall", "commaCall", "stmt"],
               scopes: ["top", "fn", "fnBlock"],
             },
-            216,
+            280,
           ],
         ]
       : [
           ["WriteFirst", { orders: ["writeFirst"] }, 10132],
           ["ReadInEarlierFn", { orders: ["readInEarlierFn"] }, 9010],
           ["HoistedWriter", { orders: ["hoistedWriter"] }, 9010],
+          ["WriterAbove", { orders: ["writerAbove"] }, 9010],
         ];
   test.concurrent.each(matrixRuns)(
     "cjs2esm/UnwrappedRequireMatrix%s",

@@ -26,25 +26,24 @@ const packages: Record<string, string> = {
   "node_modules/scheduler/index.js": `"use strict"; module.exports = { v: "sched", w: "w", fn: ${fn}, a: { b: "sab", c: function () { return "sac:" + this.b; } } };`,
 };
 
-// `kinds`: the declaration kinds the rebind is valid for (default: var, let). `writes`: the rebind runs and stores
-// another value.
-type Rebind = { code: (x: string, out: string) => string; kinds?: string[]; eval?: boolean; writes?: boolean };
+// `kinds`: the declaration kinds the rebind is valid for (default: var, let).
+type Rebind = { code: (x: string, out: string) => string; kinds?: string[]; eval?: boolean };
 // `mk(out)` is the value a rebind stores. Its getter `g` logs a read that is a statement, and its `fn` tells
 // `x.fn()` from `(0, x.fn)()`.
 const rebinds: Record<string, Rebind> = {
   none: { code: () => ``, kinds: ["var", "let", "const"] },
-  assign: { code: (x, out) => `${x} = mk(${out});`, writes: true },
-  closure: { code: (x, out) => `(function () { ${x} = mk(${out}); })();`, writes: true },
-  arrayPattern: { code: (x, out) => `[${x}] = [mk(${out})];`, writes: true },
-  objectPattern: { code: (x, out) => `({ a: ${x} } = { a: mk(${out}) });`, writes: true },
-  forOf: { code: (x, out) => `for (${x} of [mk(${out})]) {}`, writes: true },
-  logical: { code: (x, out) => `${x} &&= mk(${out});`, writes: true },
-  // A write that never runs: the variable still holds the namespace.
+  assign: { code: (x, out) => `${x} = mk(${out});` },
+  closure: { code: (x, out) => `(function () { ${x} = mk(${out}); })();` },
+  arrayPattern: { code: (x, out) => `[${x}] = [mk(${out})];` },
+  objectPattern: { code: (x, out) => `({ a: ${x} } = { a: mk(${out}) });` },
+  forOf: { code: (x, out) => `for (${x} of [mk(${out})]) {}` },
+  logical: { code: (x, out) => `${x} &&= mk(${out});` },
+  // A write that never runs: the variable still holds the value of the `require()`.
   neverFn: { code: (x, out) => `function never_${x}() { ${x} = mk(${out}); }` },
   neverArrow: { code: (x, out) => `var never_${x} = () => { ${x} = mk(${out}); };` },
   deadFalse: { code: (x, out) => `if (false) { ${x} = mk(${out}); }` },
   neverBranch: { code: (x, out) => `if (${out}.length > 99) { ${x} = mk(${out}); }` },
-  evalWrite: { code: (x, out) => `eval("${x} = mk(${out})");`, eval: true, writes: true },
+  evalWrite: { code: (x, out) => `eval("${x} = mk(${out})");`, eval: true },
   evalRead: { code: (x, out) => `${out}.push(eval("${x}.v"));`, eval: true, kinds: ["var", "let", "const"] },
 };
 
@@ -88,6 +87,8 @@ const orders: Record<string, (decl: string, rebind: string, read: string, id: st
   // The bundler visits the read before the rebind.
   readInEarlierFn: (decl, rebind, read, id) => `${decl} function rd${id}() { ${read} } ${rebind} rd${id}();`,
   hoistedWriter: (decl, rebind, read, id) => `${decl} wr${id}(); ${read} function wr${id}() { ${rebind} }`,
+  // The bundler visits the rebind before the declaration.
+  writerAbove: (decl, rebind, read, id) => `function wa${id}() { ${rebind} } ${decl} wa${id}(); ${read}`,
 };
 
 export type Options = {
@@ -104,20 +105,12 @@ type Cell = { name: string; pkg: string; kind: string; rebind: string; read: str
 // A `var` in one of these is declared by the function, so the bundler never takes it for the namespace.
 const blockScopes = ["topBlock", "fnBlock", "elseIf", "loopBody", "switchCase"];
 
-// The cells whose bundle is known to differ from the unbundled run.
+// The cells whose bundle is known to differ from the unbundled run. As on main, and not about a rebind: `minify`
+// drops the `(0, ...)` of a call through a variable that became the namespace of a package that stays a wrapper.
+// The call gets the namespace as `this`.
 export function knownGap(cell: Cell, minified: boolean): boolean {
-  // As on main, and not about a rebind: `minify` drops the `(0, ...)` of a call through a variable that became the
-  // namespace of a package that stays a wrapper. The call gets the namespace as `this`. A write in a branch that
-  // the build removes leaves the variable the namespace.
-  const becomesNamespace = cell.rebind === "none" || cell.rebind === "deadFalse";
-  if (cell.pkg === "scheduler" && becomesNamespace && cell.read === "commaCall") {
-    return minified && !(cell.kind === "var" && blockScopes.includes(cell.scope));
-  }
-  // A read that the bundler visits before the rebind is an import item by then. It prints as the property read that
-  // was written, but a read whose value is unused is removed when it is a statement of the module: the getter of
-  // the new value does not run.
-  const isStatementOfModule = cell.read === "stmt" && cell.scope === "top" && cell.order === "hoistedWriter";
-  return isStatementOfModule && !!rebinds[cell.rebind].writes;
+  const isNamespace = cell.rebind === "none" && !(cell.kind === "var" && blockScopes.includes(cell.scope));
+  return minified && isNamespace && cell.pkg === "scheduler" && cell.read === "commaCall";
 }
 
 const cellsPerBundle = 1000;
@@ -150,7 +143,7 @@ export function generate(options: Options = {}): { files: Record<string, string>
         for (const read of options.reads ?? Object.keys(reads)) {
           for (const scope of options.scopes ?? ["top", ...Object.keys(scopes)]) {
             for (const order of options.orders ?? Object.keys(orders)) {
-              // Without a rebind the three orders are one program.
+              // Without a rebind the orders are one program.
               if (rebindName === "none" && order !== "writeFirst") continue;
               const isTop = scope === "top" || scope === "topBlock";
               // A direct eval at the top level makes the whole file a `__commonJS` wrapper.

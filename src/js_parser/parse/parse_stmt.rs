@@ -605,6 +605,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if !matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
                                 bad_async_range = None;
                             }
+                            // `for (x of y)` and `for (x in y)` assign `x` on every iteration.
+                            if p.lexer.token == T::TIn || p.lexer.is_contextual_keyword(b"of") {
+                                p.note_assign_target(expr);
+                            }
                             init_ = Some(p.s(
                                 S::SExpr {
                                     value: expr,

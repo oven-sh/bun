@@ -1322,7 +1322,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
-                value = Some(p.parse_expr(Level::Comma)?);
+                let initializer = p.parse_expr(Level::Comma)?;
+                p.note_require_local(local, initializer);
+                value = Some(initializer);
             }
 
             decls.push(G::Decl {

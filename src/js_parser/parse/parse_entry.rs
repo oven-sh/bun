@@ -1054,7 +1054,7 @@ impl<'a> Parser<'a> {
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
         // nested scope.
-        if p.module_is_one_part() {
+        if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
         } else {
@@ -1207,10 +1207,6 @@ impl<'a> Parser<'a> {
         }
 
         visit_tracer.end();
-
-        if !p.require_aliases.is_empty() {
-            p.settle_top_level_require_aliases(&mut parts);
-        }
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {

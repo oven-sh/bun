@@ -387,6 +387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let list_loc = p.parse_call_args()?;
         let loc = left.loc;
         let target = *left;
+        p.note_direct_eval(target);
         *left = p.new_expr(
             E::Call {
                 target,
@@ -511,6 +512,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let value = *left;
+        p.note_assign_target(value);
         *left = p.new_expr(
             E::Unary {
                 op: OpCode::UnPostDec,
@@ -530,6 +532,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let value = *left;
+        p.note_assign_target(value);
         *left = p.new_expr(
             E::Unary {
                 op: OpCode::UnPostInc,
@@ -590,6 +593,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -628,6 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -685,6 +690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -704,6 +710,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -742,6 +749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -780,6 +788,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1002,6 +1011,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1044,6 +1054,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1090,6 +1101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1128,6 +1140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1182,6 +1195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1242,6 +1256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1280,6 +1295,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1318,6 +1334,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1356,6 +1373,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1375,6 +1393,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
+        p.note_assign_target(prev);
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {

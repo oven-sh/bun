@@ -134,9 +134,6 @@ bitflags::bitflags! {
 
         /// The parser linked another declaration of this variable to this symbol.
         const HAS_REDECLARATION = 1 << 8;
-
-        /// An import item that prints as `x.name`, where `x` is a variable and not an import namespace.
-        const PROPERTY_OF_VARIABLE = 1 << 9;
     }
 }
 
@@ -166,7 +163,6 @@ symbol_flag_accessors! {
     called_as_method, set_called_as_method => CALLED_AS_METHOD;
     call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
     has_redeclaration, set_has_redeclaration => HAS_REDECLARATION;
-    property_of_variable, set_property_of_variable => PROPERTY_OF_VARIABLE;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);

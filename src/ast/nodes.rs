@@ -942,6 +942,10 @@ impl DeclaredSymbolList {
         self.entries.clear_retaining_capacity();
     }
 
+    pub fn pop(&mut self) -> Option<DeclaredSymbol> {
+        self.entries.pop()
+    }
+
     // `deinit` → Drop on MultiArrayList; no explicit body needed.
 
     pub fn init_capacity(

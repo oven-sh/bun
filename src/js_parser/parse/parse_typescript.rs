@@ -165,6 +165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 T::TOpenParen => {
                     let args = p.parse_call_args()?;
+                    p.note_direct_eval(expr);
                     expr = p.new_expr(
                         E::Call {
                             target: expr,

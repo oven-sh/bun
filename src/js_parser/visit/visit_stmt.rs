@@ -1138,10 +1138,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
 
         // visit_decls returns the surviving decl count; truncate `data.decls.len` to it.
+        let export_stmts = data.is_export.then_some(&mut *stmts);
         let new_len = if !(data.is_export && p.options.features.replace_exports.entries.len() > 0) {
-            p.visit_decls::<false>(data.decls.slice_mut(), data.kind, data.is_export)
+            p.visit_decls::<false>(data.decls.slice_mut(), data.kind, data.origin, export_stmts)
         } else {
-            p.visit_decls::<true>(data.decls.slice_mut(), data.kind, data.is_export)
+            p.visit_decls::<true>(data.decls.slice_mut(), data.kind, data.origin, export_stmts)
         };
         // Drop the whole statement when every decl was
         // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.
@@ -2156,19 +2157,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases[i].body = list_to_stmts(_stmts);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
-
-            // The statements of the scope are in the lists of every `case`.
-            if p.require_aliases
-                .last()
-                .is_some_and(|alias| alias.scope == p.current_scope)
-            {
-                for case in cases.iter_mut() {
-                    let mut body = stmts_to_list(p.arena, case.body);
-                    p.confirm_require_aliases_in(&mut body);
-                    case.body = list_to_stmts(body);
-                }
-                p.revoke_waiting_require_aliases();
-            }
 
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {

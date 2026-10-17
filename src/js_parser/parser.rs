@@ -459,17 +459,6 @@ pub struct DeferredImportNamespace {
     pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
-/// `var x = require("pkg")` whose `require()` became `import * as ns`: `x` becomes `ns` if its scope never rebinds it.
-#[derive(Clone, Copy)]
-pub struct RequireAlias {
-    pub(crate) local: Ref,
-    /// `ns`. Each `x.a` that became an import item is also recorded as a use of it, to take back from `x`.
-    pub(crate) namespace: Ref,
-    /// Index into `imports_to_convert_from_require`.
-    pub(crate) import: u32,
-    pub(crate) scope: bun_ast::StoreRef<bun_ast::Scope>,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SkipTypeParameterResult {
     DidNotSkipAnything,
@@ -1019,6 +1008,8 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     }
 }
 
+// Padded to four bytes: rustc passes three as an `i24`, and each visitor then masks the byte above it.
+#[repr(align(4))]
 #[derive(Clone, Copy, Default)]
 pub struct ExprIn {
     /// This tells us if there are optional chain expressions (EDot, EIndex, or

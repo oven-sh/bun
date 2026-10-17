@@ -24,10 +24,9 @@ use crate::{
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
-    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RequireAlias, RuntimeImports,
-    ScopeOrder, ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef,
-    ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
-    statement_cares_about_scope,
+    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
+    ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
+    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -337,8 +336,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// Used with unwrap_commonjs_packages
     pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
-    /// Innermost scope last, sorted by symbol. `settle_require_aliases` pops the entries of a scope.
-    pub(crate) require_aliases: Vec<RequireAlias>,
+    /// Each local the parse pass saw declared as `x = require("pkg")`, and whether it then saw `x` assigned.
+    pub(crate) require_locals: HashMap<Ref, bool>,
     pub(crate) imports_to_convert_from_dynamic_import: List<'a, DeferredImportNamespace>,
     pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
     /// User-declared locals holding an `import()` / `require()` namespace
@@ -488,8 +487,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
-    /// A read in that function prints the symbol of one of its locals (`revoke_require_alias`): the body stays.
-    pub(crate) react_compiler_must_keep_body: bool,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -1766,272 +1763,206 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// True when `binding = value` is an `x = require("pkg")` that now waits in `require_aliases`.
+    /// `x = require("pkg")`, whose `require()` is now `import * as namespace`: true makes `x` that namespace.
     #[cold]
-    pub(crate) fn note_require_alias(
+    pub(crate) fn fold_require_declarator(
         &mut self,
-        binding: Binding,
-        value: Expr,
+        local: Ref,
+        namespace: Ref,
         kind: S::Kind,
-        is_export: bool,
-        import: usize,
+        origin: S::LocalOrigin,
+        export_stmts: Option<&mut BumpVec<'a, Stmt>>,
+        loc: bun_ast::Loc,
     ) -> bool {
-        let (js_ast::binding::Data::BIdentifier(binding), js_ast::ExprData::EIdentifier(value)) =
-            (binding.data, value.data)
-        else {
-            return false;
-        };
-        let alias = RequireAlias {
-            local: binding.r#ref,
-            namespace: value.ref_,
-            import: u32::try_from(import).expect("int cast"),
-            scope: self.current_scope,
-        };
-        // A `let` or `const` is declared by its block. A `var` in a block is not.
-        let is_declared_by_scope = alias.scope.kind_stops_hoisting()
-            || (alias.scope.kind == js_ast::scope::Kind::Block && kind != S::Kind::KVar);
-        if is_export
-            // `using` disposes its value when the block ends: the declaration stays.
-            || kind.is_using()
-            // The value is that namespace, not another identifier the initializer left: `x = (require("a"), y)`.
-            || self.imports_to_convert_from_require[import].namespace.ref_ != alias.namespace
-            || !is_declared_by_scope
-            // The body of a statement without braces is in no list that `settle_require_aliases` reads.
-            || self.single_stmt_body_scope == Some(alias.scope)
-            // Another declaration of the variable can initialize it again.
-            || self.symbols[alias.local.inner_index() as usize].shares_variable()
-        {
+        let import = self.imports_to_convert_from_require.len() - 1;
+        debug_assert!(self.imports_to_convert_from_require[import].namespace.ref_ == namespace);
+        let is_import_equals = origin.is_ts_import_equals();
+        if !self.require_local_is_namespace(local, kind, export_stmts.is_some(), is_import_equals) {
             return false;
         }
-        // `require_alias_of` searches by local: a variable with one declaration is declared in visit order.
-        debug_assert!(
-            self.require_aliases
-                .last()
-                .is_none_or(|last| last.local.inner_index() < alias.local.inner_index())
-        );
+        self.imports_to_convert_from_require[import].namespace.ref_ = local;
         self.import_items_for_namespace
-            .insert(alias.local, ImportItemForNamespaceMap::default());
-        self.require_aliases.push(alias);
+            .insert(local, ImportItemForNamespaceMap::default());
+        // An import nothing reads is a type to TypeScript and is removed. A `require()` call runs.
+        if TYPESCRIPT && !is_import_equals {
+            self.ts_use_counts[local.inner_index() as usize] += 1;
+        }
+        if let Some(stmts) = export_stmts {
+            // What is left of the statement is `export { local }`: it uses `local`, which the import declares now.
+            self.ignore_usage(namespace);
+            self.record_usage(local);
+            let declared = self.declared_symbols.pop();
+            debug_assert!(declared.is_some_and(|declared| declared.ref_ == local));
+            let items = core::slice::from_mut(self.arena.alloc(js_ast::ClauseItem {
+                name: LocRef { loc, ref_: local },
+                alias: self.symbols[local.inner_index() as usize].original_name,
+                alias_loc: loc,
+                ..Default::default()
+            }));
+            stmts.push(self.s(
+                S::ExportClause {
+                    items: bun_ast::StoreSlice::new_mut(items),
+                    is_single_line: true,
+                },
+                loc,
+            ));
+        }
         true
     }
 
-    /// The alias of `local` that waits in `require_aliases`.
-    pub(crate) fn require_alias_of(&self, local: Ref) -> Option<RequireAlias> {
-        let at = self
-            .require_aliases
-            .binary_search_by_key(&local.inner_index(), |alias| alias.local.inner_index())
-            .ok()?;
-        Some(self.require_aliases[at])
+    /// False when something can rebind the `local` of `local = require("pkg")`: it stays a variable.
+    fn require_local_is_namespace(
+        &mut self,
+        local: Ref,
+        kind: S::Kind,
+        is_export: bool,
+        is_import_equals: bool,
+    ) -> bool {
+        let scope = self.current_scope;
+        let symbol = &self.symbols[local.inner_index() as usize];
+        // `using` disposes its value when the block ends. `arguments` keeps its name.
+        if kind.is_using() || symbol.must_not_be_renamed() {
+            return false;
+        }
+        // A `let` or `const` is declared by its block. A `var` in a block, or as a body without braces, is not.
+        let is_declared_by_scope = scope.kind_stops_hoisting()
+            || (scope.kind == js_ast::scope::Kind::Block && kind != S::Kind::KVar);
+        if !is_declared_by_scope || self.single_stmt_body_scope == Some(scope) {
+            return false;
+        }
+        // An export of a TypeScript namespace, or one that server components wrap, is not an export clause.
+        if is_export
+            && (self.enclosing_namespace_arg_ref.is_some()
+                || self.options.features.server_components.wraps_exports())
+        {
+            return false;
+        }
+        // TypeScript rejects a write to `import x = require()`.
+        if is_import_equals {
+            return true;
+        }
+        if symbol.shares_variable() {
+            // `var x` beside a top-level `function x` prints both declarations, which an ES module rejects.
+            return scope == self.module_scope && self.has_top_level_function_merged_with_var;
+        }
+        // The visit pass is at `local` now: it has seen each assignment and each direct `eval` above it.
+        let is_assigned =
+            symbol.has_been_assigned_to() || self.require_locals.get(&local) != Some(&false);
+        !(is_assigned
+            || scope.contains_direct_eval
+            || scope.parsed_direct_eval
+            || scope.contains_with)
     }
 
-    /// `require_alias_of` by `RequireAlias::namespace`. Each alias mints its own, so they are sorted too.
-    fn require_alias_of_namespace(&self, namespace: Ref) -> Option<RequireAlias> {
-        let at = self
-            .require_aliases
-            .binary_search_by_key(&namespace.inner_index(), |alias| {
-                alias.namespace.inner_index()
-            })
-            .ok()?;
-        Some(self.require_aliases[at])
-    }
-
-    /// Nothing visited so far can rebind the local. Final once the scope that declares it is visited.
-    pub(crate) fn require_alias_holds(&self, alias: &RequireAlias) -> bool {
-        let symbol = &self.symbols[alias.local.inner_index() as usize];
-        !symbol.has_been_assigned_to()
-            && !symbol.must_not_be_renamed()
-            && !alias.scope.contains_direct_eval
-    }
-
-    fn require_alias_is_confirmed(&self, alias: &RequireAlias) -> bool {
-        self.imports_to_convert_from_require[alias.import as usize]
-            .namespace
-            .ref_
-            == alias.local
-    }
-
-    /// The local becomes the namespace of the `import * as` statement. The caller removes its declarator.
-    fn confirm_require_alias(&mut self, alias: &RequireAlias, is_import_equals: bool) {
-        self.imports_to_convert_from_require[alias.import as usize]
-            .namespace
-            .ref_ = alias.local;
-        // An import nothing reads is a type to TypeScript and is removed. A `require()` call runs.
-        if TYPESCRIPT && !is_import_equals {
-            self.ts_use_counts[alias.local.inner_index() as usize] += 1;
+    /// Notes `local = require("pkg")` in the parse pass, when `transpose_require` can turn that call into an import.
+    #[inline]
+    pub(crate) fn note_require_local(&mut self, local: Binding, value: Expr) {
+        if self.should_unwrap_common_js_to_esm()
+            && let js_ast::ExprData::ECall(call) = value.data
+            && let js_ast::b::B::BIdentifier(id) = local.data
+            && call.args.len_u32() == 1
+        {
+            self.note_require_local_call(id.r#ref, call.target, call.args.slice()[0]);
         }
     }
 
-    /// The local stays a variable that holds the namespace: each folded `local.a` prints as written.
-    fn revoke_require_alias(&mut self, alias: &RequireAlias) {
-        let Some(items) = self.import_items_for_namespace.remove(&alias.local) else {
-            return;
+    #[cold]
+    #[inline(never)]
+    fn note_require_local_call(&mut self, local: Ref, target: Expr, specifier: Expr) {
+        let is_require = match target.data {
+            js_ast::ExprData::EIdentifier(target) => {
+                self.load_name_from_ref(target.ref_) == b"require"
+            }
+            js_ast::ExprData::EDot(target) => target.name == b"require",
+            _ => false,
         };
-        let import_record_index =
-            self.imports_to_convert_from_require[alias.import as usize].import_record_id;
-        // Each folded read prints the symbol of the local, which the React Compiler would declare again.
-        self.react_compiler_must_keep_body |= items.count() > 0;
-        for (name, item) in items.keys().iter().zip(items.values()) {
-            let symbol = &mut self.symbols[item.ref_.inner_index() as usize];
-            symbol.set_property_of_variable(true);
-            symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                namespace_ref: alias.local,
-                alias: js_ast::StoreStr::new(self.arena.alloc_slice_copy(name)),
-                import_record_index,
-                was_originally_property_access: true,
-            }));
+        // The visit pass can fold a specifier that is not a string yet to one.
+        let may_become_import = is_require
+            && match specifier.data {
+                js_ast::ExprData::EString(mut specifier) => {
+                    specifier.resolve_rope_if_needed(self.arena);
+                    let path = fs::Path::init(specifier.string(self.arena).expect("unreachable"));
+                    self.unwrap_all_requires
+                        || path_package_name(&path).is_some_and(|package| {
+                            self.options.features.should_unwrap_require(package)
+                        })
+                }
+                _ => true,
+            };
+        if may_become_import {
+            self.require_locals.insert(local, false);
         }
     }
 
-    /// Settles the `require_aliases` of the current scope, whose statements are `stmts`.
-    #[cold]
-    pub(crate) fn settle_require_aliases(&mut self, stmts: &mut ListManaged<'a, Stmt>) {
-        self.confirm_require_aliases_in(stmts);
-        self.revoke_waiting_require_aliases();
+    /// After the first `note_require_local`, marks each such local that `target` assigns. A default in a pattern marks itself.
+    #[inline]
+    pub(crate) fn note_assign_target(&mut self, target: Expr) {
+        if !self.require_locals.is_empty() {
+            self.note_assigned_require_locals(target);
+        }
     }
 
-    /// A declarator of `stmts` whose local nothing rebinds goes: the local becomes the namespace.
     #[cold]
-    pub(crate) fn confirm_require_aliases_in(&mut self, stmts: &mut ListManaged<'a, Stmt>) {
-        let mut emptied_a_statement = false;
-        for stmt in stmts.iter() {
-            let js_ast::StmtData::SLocal(mut s_local) = stmt.data else {
-                continue;
-            };
-            let is_import_equals = s_local.origin.is_ts_import_equals();
-            s_local.decls.retain(|decl| {
-                let js_ast::binding::Data::BIdentifier(id) = decl.binding.data else {
-                    return true;
-                };
-                let Some(alias) = self.require_alias_of(id.r#ref) else {
-                    return true;
-                };
-                if !self.require_alias_holds(&alias) {
-                    return true;
+    #[inline(never)]
+    fn note_assigned_require_locals(&mut self, target: Expr) {
+        match target.data {
+            js_ast::ExprData::EIdentifier(id) => {
+                let name = self.load_name_from_ref(id.ref_);
+                let hash = Scope::get_member_hash(name);
+                let mut scope = Some(self.current_scope);
+                // A name that an inner scope declares below this assignment is not a member yet: this errs to "assigned".
+                while let Some(current) = scope {
+                    if let Some(member) = current.get_member_with_hash(name, hash) {
+                        if let Some(is_assigned) = self.require_locals.get_mut(&member.ref_) {
+                            *is_assigned = true;
+                        }
+                        break;
+                    }
+                    scope = current.parent;
                 }
-                self.confirm_require_alias(&alias, is_import_equals);
-                // The current part holds every use of `namespace`: the declarator, and one for each read.
-                let mut uses = self
-                    .existing_part_use(alias.namespace)
-                    .map_or(0, |use_| use_.count_estimate());
-                let mut reads = uses;
-                take_back_uses(&mut reads, 1);
-                self.forget_part_use(alias.namespace);
-                for (ref_, count) in [(alias.namespace, uses), (alias.local, reads)] {
-                    let symbol = &mut self.symbols[ref_.inner_index() as usize];
-                    take_back_uses(&mut symbol.use_count_estimate, count);
+            }
+            js_ast::ExprData::EArray(array) => {
+                for item in array.items.slice() {
+                    self.note_assigned_require_locals(*item);
                 }
-                if let Some(use_) = self.existing_part_use(alias.local) {
-                    uses = use_.count_estimate();
-                    take_back_uses(&mut uses, reads);
-                    use_.subtract(reads);
-                    if uses == 0 {
-                        self.forget_part_use(alias.local);
+            }
+            js_ast::ExprData::EObject(object) => {
+                for property in object.properties.slice() {
+                    if let Some(value) = property.value {
+                        self.note_assigned_require_locals(value);
                     }
                 }
-                false
-            });
-            emptied_a_statement |= s_local.decls.is_empty();
-        }
-        if emptied_a_statement {
-            stmts.retain(
-                |stmt| !matches!(stmt.data, js_ast::StmtData::SLocal(s_local) if s_local.decls.is_empty()),
-            );
+            }
+            js_ast::ExprData::ESpread(spread) => self.note_assigned_require_locals(spread.value),
+            _ => {}
         }
     }
 
-    /// What still waits in the current scope stays a variable: something rebinds it.
-    #[cold]
-    pub(crate) fn revoke_waiting_require_aliases(&mut self) {
-        let scope = self.current_scope;
-        let first = self
-            .require_aliases
-            .iter()
-            .rposition(|alias| alias.scope != scope)
-            .map_or(0, |at| at + 1);
-        for at in first..self.require_aliases.len() {
-            let alias = self.require_aliases[at];
-            if !self.require_alias_is_confirmed(&alias) {
-                self.revoke_require_alias(&alias);
-            }
+    /// After the first `note_require_local`: a call of the identifier `eval` can assign every variable its scope sees.
+    #[inline]
+    pub(crate) fn note_direct_eval(&mut self, target: Expr) {
+        if !self.require_locals.is_empty() {
+            self.note_direct_eval_below_require_local(target);
         }
-        self.require_aliases.truncate(first);
     }
 
-    /// `settle_require_aliases` for the module scope when each top-level statement is a part.
     #[cold]
-    pub(crate) fn settle_top_level_require_aliases(
-        &mut self,
-        parts: &mut ListManaged<'a, js_ast::Part>,
-    ) {
-        let mut confirmed_an_alias = false;
-        for part in parts.iter_mut() {
-            if let Some((local, is_import_equals)) = sole_declared_local(part)
-                && let Some(alias) = self.require_alias_of(local)
-                && self.require_alias_holds(&alias)
-            {
-                self.confirm_require_alias(&alias, is_import_equals);
-                // `append_part` keeps no part without statements. The local keeps its count: other parts use it.
-                self.subtract_symbol_uses(&part.symbol_uses);
-                part.stmts = bun_ast::StoreSlice::EMPTY;
-                confirmed_an_alias = true;
-            }
+    #[inline(never)]
+    fn note_direct_eval_below_require_local(&mut self, target: Expr) {
+        let js_ast::ExprData::EIdentifier(id) = target.data else {
+            return;
+        };
+        if self.load_name_from_ref(id.ref_) != b"eval" {
+            return;
         }
-        // What is left of a confirmed `namespace` is one use for each read, in the part that reads.
-        let mut reads_left: u32 = 0;
-        for at in 0..self.require_aliases.len() {
-            let alias = self.require_aliases[at];
-            if self.require_alias_is_confirmed(&alias) {
-                reads_left +=
-                    self.symbols[alias.namespace.inner_index() as usize].use_count_estimate;
-            } else {
-                self.revoke_require_alias(&alias);
-            }
-        }
-        if confirmed_an_alias {
-            parts.retain(|part| !part.stmts.is_empty());
-        }
-
-        for part in parts.iter_mut() {
-            if reads_left == 0 {
+        let mut scope = Some(self.current_scope);
+        while let Some(mut current) = scope {
+            if current.parsed_direct_eval {
                 break;
             }
-            let mut took_back_a_use = false;
-            for at in 0..part.symbol_uses.count() {
-                let used = part.symbol_uses.keys()[at];
-                let Some(alias) = self.require_alias_of_namespace(used) else {
-                    continue;
-                };
-                if !self.require_alias_is_confirmed(&alias) {
-                    continue;
-                }
-                let reads =
-                    core::mem::take(&mut part.symbol_uses.values_mut()[at]).count_estimate();
-                for ref_ in [alias.namespace, alias.local] {
-                    let symbol = &mut self.symbols[ref_.inner_index() as usize];
-                    take_back_uses(&mut symbol.use_count_estimate, reads);
-                }
-                if let Some(use_) = part.symbol_uses.get_mut(&alias.local) {
-                    debug_assert!(use_.count_estimate() >= reads);
-                    use_.subtract(reads);
-                }
-                take_back_uses(&mut reads_left, reads);
-                took_back_a_use = true;
-            }
-            if took_back_a_use {
-                part.symbol_uses.retain(|used, use_| {
-                    use_.count_estimate() != 0
-                        || (self.require_alias_of_namespace(*used).is_none()
-                            && self.require_alias_of(*used).is_none())
-                });
-            }
+            current.parsed_direct_eval = true;
+            scope = current.parent;
         }
-        self.require_aliases.clear();
-    }
-
-    /// Every statement of the module is in one part. If not, each is a part of its own.
-    #[inline]
-    pub(crate) fn module_is_one_part(&self) -> bool {
-        !self.options.tree_shaking || self.will_wrap_module_in_try_catch_for_using
     }
 
     #[inline]
@@ -2056,17 +1987,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
-        self.subtract_symbol_uses(&part.symbol_uses);
-        let symbols = self.symbols.as_mut_slice();
-        let declared_refs = part.declared_symbols.refs();
-        for declared in declared_refs {
-            symbols[declared.inner_index() as usize].use_count_estimate = 0;
-        }
-    }
-
-    fn subtract_symbol_uses(&mut self, symbol_uses: &SymbolUseMap) {
-        let symbol_use_refs = symbol_uses.keys();
-        let symbol_use_values = symbol_uses.values();
+        let symbol_use_refs = part.symbol_uses.keys();
+        let symbol_use_values = part.symbol_uses.values();
         let symbols = self.symbols.as_mut_slice();
 
         debug_assert_eq!(symbol_use_refs.len(), symbol_use_values.len());
@@ -2075,6 +1997,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 [r#ref.inner_index() as usize]
                 .use_count_estimate
                 .saturating_sub(prev.count_estimate());
+        }
+        let declared_refs = part.declared_symbols.refs();
+        for declared in declared_refs {
+            symbols[declared.inner_index() as usize].use_count_estimate = 0;
         }
     }
 
@@ -5680,12 +5606,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // body can write to `self.symbols` (disjoint allocation) while the
         // scope is read via `Deref`.
         let current_scope = self.current_scope_ref();
-        debug_assert!(
-            self.require_aliases
-                .last()
-                .is_none_or(|alias| alias.scope != current_scope),
-            "a require alias is settled before its scope ends"
-        );
         // We cannot rename anything inside a scope containing a direct eval() call
         if current_scope.contains_direct_eval {
             let mut iter = current_scope.members.iter();
@@ -6014,6 +5934,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// `var x = ns` of a `require()` that stayed a variable, where another symbol also declares `x` and can hold its uses.
+    #[inline(never)]
+    fn decl_holds_require_namespace_for_shared_variable(&self, decl: &js_ast::g::Decl) -> bool {
+        let (js_ast::b::B::BIdentifier(id), Some(value)) = (&decl.binding.data, &decl.value) else {
+            return false;
+        };
+        let js_ast::ExprData::EIdentifier(namespace) = value.data else {
+            return false;
+        };
+        self.symbols[id.r#ref.inner_index() as usize].shares_variable()
+            && self
+                .imports_to_convert_from_require
+                .iter()
+                .any(|import| import.namespace.ref_ == namespace.ref_)
+    }
+
     /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
     fn decl_binding_can_be_removed_if_unused_without_dce_check(
         &mut self,
@@ -6177,6 +6113,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     for decl in st.decls.slice() {
+                        if self.decl_holds_require_namespace_for_shared_variable(decl) {
+                            return false;
+                        }
                         if !self.decl_binding_can_be_removed_if_unused_without_dce_check(decl) {
                             return false;
                         }
@@ -10138,7 +10077,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             declared_symbols: Default::default(),
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
-            require_aliases: Vec::new(),
+            require_locals: HashMap::default(),
             imports_to_convert_from_dynamic_import: BumpVec::new_in(arena),
             dynamic_import_aliases: Default::default(),
             dynamic_import_namespace_locals: Default::default(),
@@ -10170,7 +10109,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
-            react_compiler_must_keep_body: false,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),
@@ -10727,27 +10665,4 @@ fn record_destructured_aliases(
         .expect("oom");
     }
     Some(rest_ref)
-}
-
-/// Takes `count` uses back from `total`. A debug build fails when `require_aliases` counted fewer than that.
-fn take_back_uses(total: &mut u32, count: u32) {
-    debug_assert!(*total >= count, "{count} uses taken back from {total}");
-    *total = total.saturating_sub(count);
-}
-
-/// The local that `part` declares when it is one `var x = value` statement.
-fn sole_declared_local(part: &js_ast::Part) -> Option<(Ref, bool)> {
-    let [stmt] = part.stmts.slice() else {
-        return None;
-    };
-    let js_ast::StmtData::SLocal(s_local) = stmt.data else {
-        return None;
-    };
-    let [decl] = s_local.decls.as_slice() else {
-        return None;
-    };
-    let js_ast::binding::Data::BIdentifier(id) = decl.binding.data else {
-        return None;
-    };
-    Some((id.r#ref, s_local.origin.is_ts_import_equals()))
 }

@@ -277,8 +277,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         decls: &mut [G::Decl],
         kind: LocalKind,
-        is_export: bool,
+        origin: S::LocalOrigin,
+        mut export_stmts: Option<&mut BumpVec<'a, Stmt>>,
     ) -> usize {
+        let is_export = export_stmts.is_some();
         let was_const = kind == LocalKind::KConst;
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
@@ -391,20 +393,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                // `transpose_require` turned a `require()` in the initializer into an import.
+                // `transpose_require` turned the `require()` that is the initializer into an import.
                 if prev_require_to_convert_count < self.imports_to_convert_from_require.len()
                     && is_call_as_written
-                    && self.note_require_alias(
-                        decl.binding,
-                        val,
+                    && let BData::BIdentifier(id) = decl.binding.data
+                    && let ExprData::EIdentifier(namespace) = val.data
+                    && self.fold_require_declarator(
+                        id.r#ref,
+                        namespace.ref_,
                         kind,
-                        is_export,
-                        prev_require_to_convert_count,
+                        origin,
+                        export_stmts.as_deref_mut(),
+                        decl.binding.loc,
                     )
                 {
-                    // Kept as written until `settle_require_aliases`.
-                    decls.swap(j, i - 1);
-                    j += 1;
                     continue 'outer;
                 }
 
@@ -1748,17 +1750,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = old_is_control_flow_dead;
         }
 
-        // `stmts` are all the statements of the scope: no `case`, no body without braces, no part of the module.
-        if p.require_aliases
-            .last()
-            .is_some_and(|alias| alias.scope == p.current_scope)
-            && kind != StmtsKind::SwitchStmt
-            && p.single_stmt_body_scope != Some(p.current_scope)
-            && (p.current_scope != p.module_scope || p.module_is_one_part())
-        {
-            p.settle_require_aliases(stmts);
-        }
-
         // Lower using declarations
         if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;
@@ -1782,7 +1773,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(pending) = rc_pending
             && p.react_compiler_may_replace_body
-            && !p.react_compiler_must_keep_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending
@@ -1968,8 +1958,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // fail if something with side effects is in between the declaration
                     // and the usage.
                     if symbol.use_count_estimate == 1
-                        // In a `case` list, a `require()` variable still waits for the cases after this one.
-                        && p.require_alias_of(id).is_none()
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just

@@ -358,6 +358,9 @@ pub struct Scope {
     // Set on a "with" scope and every scope that encloses it, for compute_reserved_names_for_scope.
     pub contains_with: bool,
 
+    // The parse pass sets this for a direct `eval` below an `x = require()`, before the visit pass sets `contains_direct_eval`.
+    pub parsed_direct_eval: bool,
+
     // This is to help forbid "arguments" inside class body scopes
     pub forbid_arguments: bool,
 
@@ -391,6 +394,7 @@ impl Scope {
         label_stmt_is_loop: false,
         contains_direct_eval: false,
         contains_with: false,
+        parsed_direct_eval: false,
         forbid_arguments: false,
         strict_mode: StrictModeKind::SloppyMode,
         is_after_const_local_prefix: false,

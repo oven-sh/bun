@@ -2613,15 +2613,6 @@ pub(crate) mod __gated_printer {
             );
         }
 
-        /// `(0, x.fn)()` in the source, where the read of `x.fn` became an import item and prints as `x.fn` again.
-        fn is_variable_property_called_without_this(&self, target: Expr) -> bool {
-            let ExprData::EImportIdentifier(item) = target.data else {
-                return false;
-            };
-            let symbol = self.symbols().get_const(self.symbols().follow(item.ref_));
-            symbol.is_some_and(|symbol| symbol.property_of_variable() && !symbol.called_as_method())
-        }
-
         pub(crate) fn is_unbound_eval_identifier(&self, value: Expr) -> bool {
             match &value.data {
                 ExprData::EIdentifier(ident) => {
@@ -3487,7 +3478,7 @@ pub(crate) mod __gated_printer {
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
-                    if is_unbound_eval || self.is_variable_property_called_without_this(e.target) {
+                    if is_unbound_eval {
                         self.print(b"(0,");
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
@@ -4575,6 +4566,15 @@ pub(crate) mod __gated_printer {
             namespace: &G::NamespaceAlias,
         ) {
             self.print_symbol(namespace.namespace_ref);
+
+            // In the case of code like this:
+            // module.exports = require("foo")
+            // if "foo" is bundled
+            // then we access it as the namespace symbol itself
+            // that means the namespace alias is empty
+            if namespace.alias.is_empty() {
+                return;
+            }
 
             if lexer::is_identifier(namespace.alias.slice()) {
                 self.print(b".");

@@ -367,24 +367,8 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
 // For values that are provably not thenables (undefined, internal arrays/objects we
 // created): fulfill directly instead of running the observable resolve machinery.
 StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, JSReadableStream* stream)
-    : m_vm(globalObject->vm())
+    : AsyncContextScope(globalObject, stream->m_asyncContext.get())
 {
-    JSValue snapshot = stream->m_asyncContext.get();
-    if (!snapshot || snapshot.isUndefinedOrNull())
-        return;
-    auto* asyncContextData = globalObject->m_asyncContextData.get();
-    JSValue current = asyncContextData->getInternalField(0);
-    m_asyncContextData = asyncContextData;
-    m_previous = current;
-    if (snapshot == current)
-        return;
-    asyncContextData->putInternalField(m_vm, 0, snapshot);
-}
-
-StreamAsyncContextScope::~StreamAsyncContextScope()
-{
-    if (m_asyncContextData)
-        m_asyncContextData->putInternalField(m_vm, 0, m_previous);
 }
 
 // obj.name(args...) with obj as |this|; the EMPTY value if `name` is not callable.
@@ -419,14 +403,7 @@ JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSOb
         ASSERT(callData.type != JSC::CallData::Type::None);
         JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (!result.isObject()) [[likely]]
-            return nullptr;
-        // A vanilla JSPromise with an unpatched .then needs no wrapper: callers use
-        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
-        // thenable adoption is unobservable. Subclasses / patched .then fall through.
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
-            return resultPromise;
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+        RELEASE_AND_RETURN(scope, promiseResolvedWithFast(globalObject, result));
     });
 }
 
@@ -455,6 +432,16 @@ JSPromise* promiseResolvedWith(JSGlobalObject* globalObject, JSValue value)
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
     promise->resolve(globalObject, vm, value);
     return promise;
+}
+
+JSPromise* promiseResolvedWithFast(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isObject()) [[likely]]
+        return nullptr;
+    // A vanilla JSPromise with an unpatched .then takes internal reactions as it is; a subclass or a patched .then is adopted.
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(value); promise && promise->isThenFastAndNonObservable())
+        return promise;
+    return promiseResolvedWith(globalObject, value);
 }
 
 JSPromise* promiseRejectedWith(JSGlobalObject* globalObject, JSValue reason)

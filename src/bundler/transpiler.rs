@@ -563,7 +563,7 @@ impl<'a> Transpiler<'a> {
 
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
-    /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
+    /// rather than `Clone`. Called after `init_transpiler` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
@@ -613,7 +613,7 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json() {
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
@@ -674,8 +674,8 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
-                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
+                    merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 
                 // Copy the listing's basenames out under `entries_mutex`,
@@ -1025,8 +1025,8 @@ fn resolver_bundle_options_subset(
                 .zip(f.built_in_modules.values().iter())
             {
                 let rv = match v {
-                    B::Import(p) => R::Import(p.clone()),
-                    B::Code(c) => R::Code(c.clone()),
+                    B::Import(p) => R::Import(p.as_ref().into()),
+                    B::Code(c) => R::Code(c.as_ref().into()),
                 };
                 m.put(k, rv).expect("oom");
             }
@@ -1053,6 +1053,7 @@ fn resolver_bundle_options_subset(
         preserve_symlinks: src.preserve_symlinks,
         rewrite_jest_for_tests: src.rewrite_jest_for_tests,
         tsconfig_override: src.tsconfig_override.clone(),
+        tsconfig_override_json: None,
         production: src.production,
         force_node_env: src.force_node_env,
         // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
@@ -1463,6 +1464,7 @@ impl<'a> Transpiler<'a> {
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
+                    keep_directives: false,
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,

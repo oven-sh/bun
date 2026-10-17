@@ -86,7 +86,7 @@ test("TextDecoder - ISO-2022-JP encoding", () => {
 // escape mode, GB18030 first/second/third) across chunk boundaries so that
 // concatenating the streamed results equals a single whole decode.
 describe("TextDecoder - streaming across chunk boundaries", () => {
-  function streamingDecode(encoding: string, bytes: readonly number[], split: readonly number[]): string {
+  function streamingDecode(encoding: Bun.Encoding, bytes: readonly number[], split: readonly number[]): string {
     const d = new TextDecoder(encoding);
     let out = "";
     let off = 0;
@@ -98,7 +98,7 @@ describe("TextDecoder - streaming across chunk boundaries", () => {
     return out;
   }
 
-  const cases: Array<[encoding: string, bytes: number[], expected: string, splits: number[][]]> = [
+  const cases: Array<[encoding: Bun.Encoding, bytes: number[], expected: string, splits: number[][]]> = [
     ["big5", [0xa4, 0x40], "一", [[1, 1]]],
     ["shift_jis", [0x88, 0xea], "一", [[1, 1]]],
     ["gbk", [0xd2, 0xbb], "一", [[1, 1]]],
@@ -154,7 +154,7 @@ describe("TextDecoder - streaming across chunk boundaries", () => {
   // https://encoding.spec.whatwg.org/#dom-textdecoder-decode: a chunk with no
   // bytes gives the decoder nothing to process, so a pending lead byte must
   // survive it, whether the trail byte or the end of the stream comes next.
-  test.each([
+  test.each<[Bun.Encoding, number[], number[], string]>([
     ["big5", [0xa4], [0x40], "一"],
     ["shift_jis", [0x88], [0xea], "一"],
     ["euc-kr", [0xec], [0xe9], "一"],
@@ -192,7 +192,7 @@ describe("TextDecoder - streaming across chunk boundaries", () => {
 describe("TextDecoder - fatal mode", () => {
   const INVALID = "ERR_ENCODING_INVALID_ENCODED_DATA";
 
-  test.each([
+  test.each<[Bun.Encoding, number[], string]>([
     // A lead byte followed by a byte that is not a valid trail; the ASCII
     // byte is decoded on its own afterwards.
     ["shift_jis", [0x82, 0x20], "\uFFFD "],
@@ -217,7 +217,7 @@ describe("TextDecoder - fatal mode", () => {
     expect(new TextDecoder(encoding).decode(input)).toBe(replaced);
   });
 
-  test.each([
+  test.each<[Bun.Encoding, number[]]>([
     ["shift_jis", [0x82]],
     ["big5", [0xa4]],
     ["gb18030", [0x81, 0x30, 0x81]],
@@ -253,7 +253,7 @@ describe("TextDecoder - fatal mode", () => {
   // A fatal error inside a stream discards what the decoder had pending (a
   // lead byte, the ISO-2022-JP mode); the stream's next {stream: true} chunk
   // decodes from a fresh decoder, as in Firefox.
-  test.each([
+  test.each<[Bun.Encoding, number[], number[], string]>([
     // ESC $ B enters two-byte mode, in which a bare LF is an error. Had the
     // mode survived the throw, "AB" would decode as the pair 0x41 0x42 (U+758E).
     ["iso-2022-jp", [0x1b, 0x24, 0x42, 0x30, 0x0a], [0x41, 0x42], "AB"],
@@ -271,7 +271,7 @@ describe("TextDecoder - fatal mode", () => {
 // match https://encoding.spec.whatwg.org/ exactly. Expectations verified
 // against encoding_rs (Firefox's Encoding Standard implementation).
 describe("TextDecoder - error recovery", () => {
-  const codePoints = (encoding: string, bytes: number[]) =>
+  const codePoints = (encoding: Bun.Encoding, bytes: number[]) =>
     Array.from(new TextDecoder(encoding).decode(new Uint8Array(bytes)), c => c.codePointAt(0));
 
   // https://encoding.spec.whatwg.org/#euc-jp-decoder step 5.3 clears the jis0212

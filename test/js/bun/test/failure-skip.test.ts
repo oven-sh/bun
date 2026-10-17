@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-async function testFailureSkip(failurePoints: string[]): Promise<string[]> {
+async function testFailureSkip(failurePoints: string[]): Promise<string> {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/failure-skip.fixture.ts"],
     stdout: "pipe",

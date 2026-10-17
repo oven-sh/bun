@@ -220,7 +220,11 @@ impl<T: RefCounted> RefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        assert!(self.raw_count.get() == 0);
+        debug_assert_eq!(
+            self.raw_count.get(),
+            0,
+            "destructor ran with refs outstanding"
+        );
     }
 
     fn assert_single_threaded(&self) {
@@ -382,7 +386,11 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        assert!(self.raw_count.load(Ordering::SeqCst) == 0);
+        debug_assert_eq!(
+            self.raw_count.load(Ordering::SeqCst),
+            0,
+            "destructor ran with refs outstanding"
+        );
     }
 
     #[inline]
@@ -919,6 +927,26 @@ mod tests {
             drop(bun_core::heap::take(s));
         }
         assert_eq!(drops(), before + 1);
+    }
+
+    // ── assert_no_refs ────────────────────────────────────────────────────
+
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "destructor ran with refs outstanding")
+    )]
+    fn ref_count_assert_no_refs_is_debug_only() {
+        RefCount::<Thing>::init().assert_no_refs();
+    }
+
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "destructor ran with refs outstanding")
+    )]
+    fn thread_safe_ref_count_assert_no_refs_is_debug_only() {
+        ThreadSafeRefCount::<Shared>::init().assert_no_refs();
     }
 
     // ── CellRefCounted ────────────────────────────────────────────────────

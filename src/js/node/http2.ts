@@ -2064,6 +2064,8 @@ enum StreamState {
   NativeErrored = 1 << 9, // 1000000000 = 512
   // A client request made with waitForTrailers. The native side keeps that flag for the request.
   RequestWaitsForTrailers = 1 << 10, // 10000000000 = 1024
+  // A write waits for 'ready', which comes one tick after the stream gets its id. It is not on the wire yet.
+  WriteHeldUntilReady = 1 << 11, // 100000000000 = 2048
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2259,7 +2261,8 @@ function endErroredStream(stream: Http2Stream) {
   // The native side drops a closed stream at the next read, and writeStream throws on an id it dropped.
   if ((status & (StreamState.EndStreamSent | StreamState.NativeErrored)) !== 0) return;
   // Pending trailers carry END_STREAM themselves. So does a write held until 'ready'.
-  if (stream[bunHTTP2WaitForTrailers] || (status & StreamState.RequestWaitsForTrailers) !== 0 || stream.pending) return;
+  if ((status & (StreamState.RequestWaitsForTrailers | StreamState.WriteHeldUntilReady)) !== 0) return;
+  if (stream[bunHTTP2WaitForTrailers]) return;
   const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
   // A pending reset must not follow a clean end.
   if (!native || stream.rstCode) return;
@@ -2267,6 +2270,15 @@ function endErroredStream(stream: Http2Stream) {
   const settled = native.writeStream(stream.id, "", "ascii", true);
   native.flush();
   if (settled === 5) onEndStreamSettled(stream);
+}
+// The 'ready' listeners of a _write or _writev that found the stream without an id.
+function writeWhenReady(this: Http2Stream, chunk, encoding, callback) {
+  this[bunHTTP2StreamStatus] &= ~StreamState.WriteHeldUntilReady;
+  this._write(chunk, encoding, callback);
+}
+function writevWhenReady(this: Http2Stream, data, callback) {
+  this[bunHTTP2StreamStatus] &= ~StreamState.WriteHeldUntilReady;
+  this._writev(data, callback);
 }
 // An error cancels what the Writable owed the stream: _final, and the 'finish' or 'end' a native close waits for.
 function streamOnErrored(this: Http2Stream) {
@@ -2902,7 +2914,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   _writev(data, callback) {
     if (this.pending) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
-      this.once("ready", this._writev.bind(this, data, callback));
+      this[bunHTTP2StreamStatus] |= StreamState.WriteHeldUntilReady;
+      this.once("ready", writevWhenReady.bind(this, data, callback));
       return;
     }
     const writevPerf = this[kPerfState];
@@ -2964,7 +2977,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   _write(chunk, encoding, callback) {
     if (this.pending) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
-      this.once("ready", this._write.bind(this, chunk, encoding, callback));
+      this[bunHTTP2StreamStatus] |= StreamState.WriteHeldUntilReady;
+      this.once("ready", writeWhenReady.bind(this, chunk, encoding, callback));
       return;
     }
     const writePerf = this[kPerfState];

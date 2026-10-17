@@ -6347,6 +6347,43 @@ describe.concurrent("write() after end()", () => {
       expect([pending, events]).toEqual([true, lateWriteEvents]);
     });
 
+    it("client stream that gets its id before the late write's 'error'", async () => {
+      // Over a transport that is already connected, the request gets its id one tick before 'ready'
+      // dispatches the held write. The late write's 'error' falls in between, and the body must
+      // still reach the server.
+      const [clientSide, serverSide] = duplexPair();
+      const server = http2.createServer();
+      let client;
+      try {
+        const received = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+        server.on("stream", stream => {
+          let length = 0;
+          stream.on("error", received.reject);
+          stream.on("data", chunk => (length += chunk.length));
+          stream.on("end", () => {
+            received.resolve(length);
+            stream.respond({ ":status": 200 });
+            stream.end("ok");
+          });
+        });
+        server.emit("connection", serverSide);
+        client = http2.connect("http://localhost", { createConnection: () => clientSide });
+        client.on("error", closed.reject);
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        const pending = req.pending;
+        const late = record(req, closed);
+        req.resume();
+        req.write("body");
+        req.end();
+        req.write("late", late);
+        expect([pending, await received.promise, await closed.promise]).toEqual([true, 4, lateWriteEvents]);
+      } finally {
+        client?.close();
+        server.close();
+      }
+    });
+
     it("write blocked on flow control", async () => {
       const result = await serve((stream, late) => {
         stream.respond({ ":status": 200 });

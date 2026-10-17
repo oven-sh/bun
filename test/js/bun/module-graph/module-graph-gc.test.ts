@@ -782,7 +782,8 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
 });
 
 // The server is the graph's whose Bun.serve() took it over, or the host's: it keeps that graph, and no longer the first.
-test.concurrent.each([
+// (One at a time: only then does the runner end the --hot child of a test that timed out.)
+test.each([
   ["a second graph", `{"collected":{"first":true,"second":false},"answer":"second"}`],
   ["the host", `{"collected":{"first":true,"second":false},"answer":"the host"}`],
 ])(
@@ -800,8 +801,6 @@ test.concurrent.each([
     expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
   },
-  // Longer than the child's: a test that times out first leaves a --hot child that nothing ends.
-  60_000,
 );
 
 test("ModuleGraph GC: survives collecting continuously", async () => {
@@ -844,15 +843,13 @@ test("ModuleGraph GC: survives collecting continuously while graphs the host dro
       `
       const { join } = require("path");
       const dir = ${JSON.stringify(dir)};
-      const servers = [];
-      for (let i = 0; i < 3; i++) {
-        const control = { httpPort: 0, opened: undefined };
+      const ports = [];
+      for (const who of ["first", "second"]) {
         await (async () => {
-          const graph = new Bun.ModuleGraph({ globals: { control } });
-          const io = await graph.import(join(dir, "io.mjs"));
-          graph.run(() => io.serveAndForget("only static routes"));
+          const graph = new Bun.ModuleGraph();
+          const { serve } = await graph.import(join(dir, "serves-static-routes.mjs"));
+          ports.push(graph.run(() => serve(who)));
         })();
-        servers.push(control);
       }
       let collected = false;
       const registry = new FinalizationRegistry(() => { collected = true; });
@@ -863,9 +860,9 @@ test("ModuleGraph GC: survives collecting continuously while graphs the host dro
         await new Promise(resolve => setImmediate(resolve));
       }
       const answers = [];
-      for (const { httpPort } of servers) answers.push(await fetch("http://127.0.0.1:" + httpPort + "/").then(response => response.text(), () => "nobody"));
-      for (const { opened } of servers) opened.deref()?.stop(true);
+      for (const port of ports) answers.push(await fetch("http://127.0.0.1:" + port + "/").then(response => response.text(), () => "nobody"));
       console.log(JSON.stringify({ collected, answers }));
+      process.exit(0);
       `,
     ],
     env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
@@ -873,9 +870,9 @@ test("ModuleGraph GC: survives collecting continuously while graphs the host dro
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual({ collected: true, answers: ["static", "static", "static"] });
+  expect(JSON.parse(stdout)).toEqual({ collected: true, answers: ["first", "second"] });
   expect(exitCode).toBe(0);
-}, 60_000);
+});
 
 // The period puts a collection in the middle of the signal's abort steps, whatever came before.
 test.concurrent.each([2, 3, 4])(

@@ -34,6 +34,7 @@ use super::outline;
 use super::overflow;
 use super::position;
 use super::size;
+use super::svg;
 use super::text;
 use super::transform;
 use super::transition;
@@ -57,6 +58,11 @@ pub enum PropertyIdTag {
     BoxShadow,
     Opacity,
     Color,
+    Fill,
+    Stroke,
+    CaretColor,
+    Caret,
+    CaretShape,
     Display,
     Visibility,
     Width,
@@ -372,6 +378,11 @@ impl PropertyIdTag {
             PropertyIdTag::BoxShadow => b"box-shadow",
             PropertyIdTag::Opacity => b"opacity",
             PropertyIdTag::Color => b"color",
+            PropertyIdTag::Fill => b"fill",
+            PropertyIdTag::Stroke => b"stroke",
+            PropertyIdTag::CaretColor => b"caret-color",
+            PropertyIdTag::Caret => b"caret",
+            PropertyIdTag::CaretShape => b"caret-shape",
             PropertyIdTag::Display => b"display",
             PropertyIdTag::Visibility => b"visibility",
             PropertyIdTag::Width => b"width",
@@ -640,6 +651,11 @@ pub enum PropertyId {
     BoxShadow(VendorPrefix),
     Opacity,
     Color,
+    Fill,
+    Stroke,
+    CaretColor,
+    Caret,
+    CaretShape,
     Display,
     Visibility,
     Width,
@@ -925,6 +941,11 @@ impl PropertyId {
             PropertyId::BoxShadow(..) => PropertyIdTag::BoxShadow,
             PropertyId::Opacity => PropertyIdTag::Opacity,
             PropertyId::Color => PropertyIdTag::Color,
+            PropertyId::Fill => PropertyIdTag::Fill,
+            PropertyId::Stroke => PropertyIdTag::Stroke,
+            PropertyId::CaretColor => PropertyIdTag::CaretColor,
+            PropertyId::Caret => PropertyIdTag::Caret,
+            PropertyId::CaretShape => PropertyIdTag::CaretShape,
             PropertyId::Display => PropertyIdTag::Display,
             PropertyId::Visibility => PropertyIdTag::Visibility,
             PropertyId::Width => PropertyIdTag::Width,
@@ -1307,6 +1328,11 @@ impl PropertyId {
                 b"box-shadow" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxShadow),
                 b"opacity" => (VendorPrefix::NONE, |_| PropertyId::Opacity),
                 b"color" => (VendorPrefix::NONE, |_| PropertyId::Color),
+                b"fill" => (VendorPrefix::NONE, |_| PropertyId::Fill),
+                b"stroke" => (VendorPrefix::NONE, |_| PropertyId::Stroke),
+                b"caret-color" => (VendorPrefix::NONE, |_| PropertyId::CaretColor),
+                b"caret" => (VendorPrefix::NONE, |_| PropertyId::Caret),
+                b"caret-shape" => (VendorPrefix::NONE, |_| PropertyId::CaretShape),
                 b"display" => (VendorPrefix::NONE, |_| PropertyId::Display),
                 b"visibility" => (VendorPrefix::NONE, |_| PropertyId::Visibility),
                 b"width" => (VendorPrefix::NONE, |_| PropertyId::Width),
@@ -1593,6 +1619,11 @@ pub enum Property {
     BoxShadow((SmallList<box_shadow::BoxShadow, 1>, VendorPrefix)),
     Opacity(css::css_values::alpha::AlphaValue),
     Color(css::css_values::color::CssColor),
+    Fill(svg::SVGPaint),
+    Stroke(svg::SVGPaint),
+    CaretColor(ui::ColorOrAuto),
+    Caret(ui::Caret),
+    CaretShape(ui::CaretShape),
     Display(display::Display),
     Visibility(display::Visibility),
     Width(size::Size),
@@ -1910,6 +1941,11 @@ impl Property {
             Property::BoxShadow(v) => PropertyId::BoxShadow(v.1),
             Property::Opacity(..) => PropertyId::Opacity,
             Property::Color(..) => PropertyId::Color,
+            Property::Fill(..) => PropertyId::Fill,
+            Property::Stroke(..) => PropertyId::Stroke,
+            Property::CaretColor(..) => PropertyId::CaretColor,
+            Property::Caret(..) => PropertyId::Caret,
+            Property::CaretShape(..) => PropertyId::CaretShape,
             Property::Display(..) => PropertyId::Display,
             Property::Visibility(..) => PropertyId::Visibility,
             Property::Width(..) => PropertyId::Width,
@@ -2182,6 +2218,11 @@ impl Property {
             Property::BoxShadow(v) => css::generic::to_css(&v.0, dest),
             Property::Opacity(v) => css::generic::to_css(v, dest),
             Property::Color(v) => css::generic::to_css(v, dest),
+            Property::Fill(v) => css::generic::to_css(v, dest),
+            Property::Stroke(v) => css::generic::to_css(v, dest),
+            Property::CaretColor(v) => css::generic::to_css(v, dest),
+            Property::Caret(v) => css::generic::to_css(v, dest),
+            Property::CaretShape(v) => css::generic::to_css(v, dest),
             Property::Display(v) => css::generic::to_css(v, dest),
             Property::Visibility(v) => css::generic::to_css(v, dest),
             Property::Width(v) => css::generic::to_css(v, dest),
@@ -2526,6 +2567,31 @@ impl Property {
             PropertyId::Color => {
                 if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
                     return Ok(Property::Color(c));
+                }
+            }
+            PropertyId::Fill => {
+                if let Some(c) = parse_value::<svg::SVGPaint>(input, options) {
+                    return Ok(Property::Fill(c));
+                }
+            }
+            PropertyId::Stroke => {
+                if let Some(c) = parse_value::<svg::SVGPaint>(input, options) {
+                    return Ok(Property::Stroke(c));
+                }
+            }
+            PropertyId::CaretColor => {
+                if let Some(c) = parse_value::<ui::ColorOrAuto>(input, options) {
+                    return Ok(Property::CaretColor(c));
+                }
+            }
+            PropertyId::Caret => {
+                if let Some(c) = parse_value::<ui::Caret>(input, options) {
+                    return Ok(Property::Caret(c));
+                }
+            }
+            PropertyId::CaretShape => {
+                if let Some(c) = parse_value::<ui::CaretShape>(input, options) {
+                    return Ok(Property::CaretShape(c));
                 }
             }
             PropertyId::Display => {
@@ -3931,6 +3997,11 @@ impl Property {
             }
             Property::Opacity(v) => Property::Opacity(css::generic::deep_clone(v, arena)),
             Property::Color(v) => Property::Color(css::generic::deep_clone(v, arena)),
+            Property::Fill(v) => Property::Fill(css::generic::deep_clone(v, arena)),
+            Property::Stroke(v) => Property::Stroke(css::generic::deep_clone(v, arena)),
+            Property::CaretColor(v) => Property::CaretColor(css::generic::deep_clone(v, arena)),
+            Property::Caret(v) => Property::Caret(css::generic::deep_clone(v, arena)),
+            Property::CaretShape(v) => Property::CaretShape(css::generic::deep_clone(v, arena)),
             Property::Display(v) => Property::Display(css::generic::deep_clone(v, arena)),
             Property::Visibility(v) => Property::Visibility(css::generic::deep_clone(v, arena)),
             Property::Width(v) => Property::Width(css::generic::deep_clone(v, arena)),
@@ -4516,6 +4587,11 @@ impl Property {
             }
             (Property::Opacity(a), Property::Opacity(b)) => css::generic::eql(a, b),
             (Property::Color(a), Property::Color(b)) => css::generic::eql(a, b),
+            (Property::Fill(a), Property::Fill(b)) => css::generic::eql(a, b),
+            (Property::Stroke(a), Property::Stroke(b)) => css::generic::eql(a, b),
+            (Property::CaretColor(a), Property::CaretColor(b)) => css::generic::eql(a, b),
+            (Property::Caret(a), Property::Caret(b)) => css::generic::eql(a, b),
+            (Property::CaretShape(a), Property::CaretShape(b)) => css::generic::eql(a, b),
             (Property::Display(a), Property::Display(b)) => css::generic::eql(a, b),
             (Property::Visibility(a), Property::Visibility(b)) => css::generic::eql(a, b),
             (Property::Width(a), Property::Width(b)) => css::generic::eql(a, b),

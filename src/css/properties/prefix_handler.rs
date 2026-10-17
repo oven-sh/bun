@@ -9,13 +9,13 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub(crate) color: Option<usize>,
     pub(crate) text_shadow: Option<usize>,
+    pub(crate) fill: Option<usize>,
+    pub(crate) stroke: Option<usize>,
+    pub(crate) caret_color: Option<usize>,
+    pub(crate) caret: Option<usize>,
     // The remaining fallback fields are not implemented yet.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
-    // fill: Option<usize>,
-    // stroke: Option<usize>,
-    // caret_color: Option<usize>,
-    // caret: Option<usize>,
 }
 
 impl FallbackHandler {
@@ -43,6 +43,11 @@ impl FallbackHandler {
                 if let Property::$Variant(payload) = property {
                     let mut val = ($dc)(payload, arena);
 
+                    // Fallbacks are generated only when no earlier declaration of this
+                    // property exists, typed or unparsed (`var()`). An earlier one is the
+                    // author's own fallback: `color: var(--x); color: oklch(...)` keeps both,
+                    // and generating `color: #...` between them would override `var(--x)` in
+                    // every browser without `oklch()` (lightningcss#109 is that complaint).
                     if $self_field.is_none() {
                         // `has_fallbacks` is only consulted in the vendor-prefixed branch.
                         ($fb)(&mut val, arena, &context.targets, dest);
@@ -71,6 +76,27 @@ impl FallbackHandler {
         let this = &mut *self;
         let color = &mut this.color;
         let text_shadow = &mut this.text_shadow;
+        let fill = &mut this.fill;
+        let stroke = &mut this.stroke;
+        let caret_color = &mut this.caret_color;
+        let caret = &mut this.caret;
+
+        // `caret` sets `caret-color` and `caret-shape`, so they must keep their source
+        // order. Seeing one forgets where the other was tracked, so a later declaration
+        // of it is appended instead of written back ahead of the one in between:
+        // `caret-color: red; caret: auto; caret-color: blue` must stay blue.
+        let tag = match property {
+            Property::Caret(_) => Some(PropertyIdTag::Caret),
+            Property::CaretColor(_) => Some(PropertyIdTag::CaretColor),
+            Property::CaretShape(_) => Some(PropertyIdTag::CaretShape),
+            Property::Unparsed(val) => Some(val.property_id.tag()),
+            _ => None,
+        };
+        match tag {
+            Some(PropertyIdTag::Caret) => *caret_color = None,
+            Some(PropertyIdTag::CaretColor | PropertyIdTag::CaretShape) => *caret = None,
+            _ => {}
+        }
 
         // PropertyIdTag::Color has no vendor prefix.
         handle_unprefixed!(
@@ -108,6 +134,66 @@ impl FallbackHandler {
             is_compat = |v: &css::SmallList<css::css_properties::text::TextShadow, 1>, b| v
                 .is_compatible(b)
         );
+        // PropertyIdTag::Fill has no vendor prefix.
+        handle_unprefixed!(
+            fill,
+            Fill,
+            deep_clone = |v: &css::css_properties::svg::SVGPaint, a| v.deep_clone(a),
+            fallbacks = |v: &mut css::css_properties::svg::SVGPaint,
+                         a: &bun_alloc::Arena,
+                         t,
+                         d: &mut css::DeclarationList| {
+                for fb in v.get_fallbacks(a, t).to_owned_slice().into_vec() {
+                    d.push(Property::Fill(fb));
+                }
+            },
+            is_compat = |v: &css::css_properties::svg::SVGPaint, b| v.is_compatible(b)
+        );
+        // PropertyIdTag::Stroke has no vendor prefix.
+        handle_unprefixed!(
+            stroke,
+            Stroke,
+            deep_clone = |v: &css::css_properties::svg::SVGPaint, a| v.deep_clone(a),
+            fallbacks = |v: &mut css::css_properties::svg::SVGPaint,
+                         a: &bun_alloc::Arena,
+                         t,
+                         d: &mut css::DeclarationList| {
+                for fb in v.get_fallbacks(a, t).to_owned_slice().into_vec() {
+                    d.push(Property::Stroke(fb));
+                }
+            },
+            is_compat = |v: &css::css_properties::svg::SVGPaint, b| v.is_compatible(b)
+        );
+        // PropertyIdTag::CaretColor has no vendor prefix.
+        handle_unprefixed!(
+            caret_color,
+            CaretColor,
+            deep_clone = |v: &css::css_properties::ui::ColorOrAuto, a| v.deep_clone(a),
+            fallbacks = |v: &mut css::css_properties::ui::ColorOrAuto,
+                         a: &bun_alloc::Arena,
+                         t,
+                         d: &mut css::DeclarationList| {
+                for fb in v.get_fallbacks(a, t).to_owned_slice().into_vec() {
+                    d.push(Property::CaretColor(fb));
+                }
+            },
+            is_compat = |v: &css::css_properties::ui::ColorOrAuto, b| v.is_compatible(b)
+        );
+        // PropertyIdTag::Caret has no vendor prefix.
+        handle_unprefixed!(
+            caret,
+            Caret,
+            deep_clone = |v: &css::css_properties::ui::Caret, a| v.deep_clone(a),
+            fallbacks = |v: &mut css::css_properties::ui::Caret,
+                         a: &bun_alloc::Arena,
+                         t,
+                         d: &mut css::DeclarationList| {
+                for fb in v.get_fallbacks(a, t).to_owned_slice().into_vec() {
+                    d.push(Property::Caret(fb));
+                }
+            },
+            is_compat = |v: &css::css_properties::ui::Caret, b| v.is_compatible(b)
+        );
 
         if let Property::Unparsed(val) = property {
             let val: &UnparsedProperty = val;
@@ -123,6 +209,10 @@ impl FallbackHandler {
 
                 match_unparsed_unprefixed!(color, Color);
                 match_unparsed_unprefixed!(text_shadow, TextShadow);
+                match_unparsed_unprefixed!(fill, Fill);
+                match_unparsed_unprefixed!(stroke, Stroke);
+                match_unparsed_unprefixed!(caret_color, CaretColor);
+                match_unparsed_unprefixed!(caret, Caret);
                 // (no prefixed properties active yet — `match_unparsed_prefixed!` kept for
                 // when filter/backdrop_filter/etc. are re-enabled in this handler.)
 
@@ -150,5 +240,9 @@ impl FallbackHandler {
     ) {
         self.color = None;
         self.text_shadow = None;
+        self.fill = None;
+        self.stroke = None;
+        self.caret_color = None;
+        self.caret = None;
     }
 }

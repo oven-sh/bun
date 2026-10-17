@@ -1484,17 +1484,37 @@ test("a SyntaxError from import() of a file that only JavaScriptCore's parser re
     "bad.ts": `type A = number;\ninterface B { x: A }\n\n\nconst q: A = 1;\n"".test(/[a-0]/);\nexport {};\n`,
   });
   const file = join(String(dir), "bad.ts");
+  const pick = ({ line, column, sourceURL }) => ({ line, column, sourceURL });
   const error = await import(file).catch(e => e);
-  expect({ stack: error.stack.split("\n")[1], line: error.line, sourceURL: error.sourceURL }).toEqual({
+  expect({ ...pick(error), stack: error.stack.split("\n")[1] }).toEqual({
     stack: `    at <parse> (${file}:6)`,
     line: 6,
+    column: 0,
     sourceURL: file,
   });
+  expect(Bun.inspect(error)).toEndWith(`6 | "".test(/[a-0]/);
+    ^
+SyntaxError: Invalid regular expression: range out of order in character class
+      at <parse> (${file}:6:1)
+`);
 
   Error.prepareStackTrace = () => {
     throw new RangeError("from prepareStackTrace");
   };
   expect(await import(file + "?again").catch(e => e)).toBeInstanceOf(SyntaxError);
+  Error.prepareStackTrace = origPrepareStackTrace;
+
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  let withoutSource;
+  try {
+    new Function("\n\n a b");
+  } catch (e) {
+    withoutSource = e;
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+  expect(pick(withoutSource)).toEqual({ line: 5, column: 0, sourceURL: undefined });
 });
 
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {

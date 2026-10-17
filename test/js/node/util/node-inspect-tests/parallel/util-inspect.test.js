@@ -641,7 +641,7 @@ test("no assertion failures 2", () => {
     const err = new Error("foo");
     const err2 = new Error("foo\nbar");
     assert.strictEqual(util.inspect(err, { compact: true }), "[Error: foo]");
-    //assert(err.stack); //! skipped test, broken in bun
+    assert(err.stack);
     delete err.stack;
     assert(!err.stack);
     assert.strictEqual(util.inspect(err, { compact: true }), "[Error: foo]");

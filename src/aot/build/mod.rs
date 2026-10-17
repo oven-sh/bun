@@ -200,6 +200,12 @@ pub(crate) struct Sink {
     pub(crate) keeps_unconvertible_objects: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct BranchHint {
+    pub(crate) is_likely: bool,
+    pub(crate) pos: u32,
+}
+
 pub(crate) struct Fx {
     pub(crate) b: FuncBuilder,
     pub(crate) id: FuncId,
@@ -251,6 +257,7 @@ pub(crate) struct Fx {
     pub(crate) narrowed: Versioned<FxHashMap<V, Ty>>,
     pub(crate) sink: Option<Sink>,
     pub(crate) expected: FxHashMap<(BlockId, V, ir::Prediction), V>,
+    pub(crate) branch_hints: FxHashMap<V, BranchHint>,
     pub(crate) first_stores: Vec<FirstStore>,
     pub(crate) owes_initialize_without_stores: bool,
     pub(crate) is_storing_default: bool,
@@ -2818,6 +2825,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             narrowed: Versioned::default(),
             sink: None,
             expected: FxHashMap::default(),
+            branch_hints: FxHashMap::default(),
             first_stores: Vec::new(),
             owes_initialize_without_stores: false,
             is_storing_default: false,

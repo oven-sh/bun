@@ -4,7 +4,7 @@
 // IRT= 0 threeReceivers Branch .*: b[0-9]+\(v
 // IRT= 0 nested Branch .*: b[0-9]+\(v
 // IRT= 1 storeBetween Branch .*: b[0-9]+\(v
-// IRT= 2 label = (Add|Strcat)\b
+// IRT= 4 label = (Add|Strcat)\b
 interface Inner { v: number; w: number }
 interface Point { x: number; y: number; z: number; w: number; inner: Inner }
 function make(i: number): Point { return { x: i + 0.5, y: i + 1.5, z: i + 2.5, w: i + 3.5, inner: { v: i, w: i + 1 } } }

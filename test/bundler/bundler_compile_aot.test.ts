@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1510,7 +1510,7 @@ test("builds are reproducible", async () => {
   });
   const hashes = await Promise.all(
     Array.from({ length: 6 }, async (_, i) => {
-      const outfile = join(String(dir), String(i), "out");
+      const outfile = join(String(dir), String(i), "out.exe");
       await using build = Bun.spawn({
         cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
         env: bunEnv,
@@ -1523,7 +1523,7 @@ test("builds are reproducible", async () => {
     }),
   );
   expect(new Set(hashes).size).toBe(1);
-  await using proc = Bun.spawn({ cmd: [join(String(dir), "0", "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({ cmd: [join(String(dir), "0", "out.exe")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   expect([await proc.stdout.text(), await proc.exited]).toEqual(["3,6,9,12\n", 0]);
 });
 
@@ -1610,7 +1610,7 @@ test("run-time RegExps are never compiled, however hot: they run on a flat progr
   expect(exitCode).toBe(0);
 });
 
-test("crash reports symbolicate compiled frames", async () => {
+test.skipIf(isASAN)("crash reports symbolicate compiled frames", async () => {
   using dir = tempDir("compile-aot-crash", {
     "entry.ts": `
       const { crash_handler } = require("bun:internal-for-testing") as { crash_handler: { segfault(): void } };

@@ -14,6 +14,7 @@ const programs: { file: string; shapeOf: string; expected: string; differs: Mode
   { file: "constructor-of-a-generator-object.ts", shapeOf: "Elysia", expected: "a string\nan array\nsomething else: object\nsomething else: object\nsomething else: undefined\n", differs: [] },
   { file: "argument-bound-by-conditional-type-over-optional-member.ts", shapeOf: "the MCP SDK", expected: "true\n", differs: [] },
   { file: "conditional-bound-read-with-a-default.ts", shapeOf: "the MCP SDK", expected: '{"a":1}\n', differs: [] },
+  { file: "object-from-entries-returned-as-a-mapped-type.ts", shapeOf: "MikroORM", expected: "14 0 13\n", differs: ["bun build --compile --aot"] },
 ];
 
 async function run(cmd: string[], cwd: string) {

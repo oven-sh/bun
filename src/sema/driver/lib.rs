@@ -1563,8 +1563,8 @@ fn is_package_dir(files: &bun_sema::program::Files<'_>, directory: &[u8]) -> boo
     files.modules.iter().any(|module| package_of(files, module).is_some_and(|package| package.0 == directory))
 }
 
-fn is_missing_runtime_type_library(reported: &Diagnostic) -> bool {
-    reported.code == 2688 && reported.args.first().is_some_and(|name| [&b"bun-types"[..], b"bun", b"node"].contains(&&name[..]))
+fn is_missing_type_library(reported: &Diagnostic) -> bool {
+    reported.code == 2688
 }
 
 pub(crate) const PRELUDE_DIRECTORY: &[u8] = b"/.bun-aot-prelude/";
@@ -1604,6 +1604,10 @@ pub fn is_type_only_diagnostic(code: u32) -> bool {
             | 2343 | 2354 | 2441 | 2529 | 2725 | 2737 | 2791 | 2807 | 2823 | 2854 | 2865 | 2866
             | 4111..=4116 | 5097 | 6059 | 6133 | 6138 | 6192 | 6196 | 6198 | 6199 | 6205 | 7027..=7030 | 9007..=9039 | 18055..=18057 | 18060
     )
+}
+
+fn is_about_emitted_module_format(code: u32) -> bool {
+    matches!(code, 1309 | 1323 | 1324 | 1343 | 1378 | 1432 | 1470 | 1471 | 1479 | 1541..=1544 | 2823 | 2854)
 }
 
 fn is_stricter_than_ecmascript(hir: &bun_sema::hir::File<'_>, reported: &Diagnostic) -> bool {
@@ -2638,8 +2642,19 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 nearest.filter(|nearest| !projects.is_solution(disk, request, nearest))
             }
         };
-        let above_all = config_in(common_directory(on_disk().map(|path| dirname::<Posix>(path))));
-        let referenced_outputs = projects.outputs_of_referenced_projects(disk, request, owners.iter().flatten().chain(&above_all));
+        let mut directories: Vec<&[u8]> = on_disk().map(|path| dirname::<Posix>(path)).collect();
+        directories.shared_sort_unstable();
+        directories.dedup();
+        let mut above: Vec<Vec<u8>> = Vec::new();
+        for directory in directories {
+            let mut nearest = config_in(directory);
+            while let Some(config) = nearest.filter(|config| !above.contains(config)) {
+                let parent = ancestors(dirname::<Posix>(&config)).nth(1).filter(|_| explicit.is_none() && !ignores_config);
+                nearest = parent.and_then(|parent| config::find_config(disk, parent));
+                above.push(config);
+            }
+        }
+        let referenced_outputs = projects.outputs_of_referenced_projects(disk, request, owners.iter().flatten().chain(&above));
         let agreed_options = (owner.is_none() && owners.len() > 1).then(|| projects.options_that_all_agree_on(disk, request, &owners)).flatten();
         let of = OfProject {
             config: owner.as_deref(),
@@ -3178,7 +3193,7 @@ fn check_project_of(
             .collect();
         let by_name: FxHashSet<Vec<u8>> = (project.options.file_specs.iter()).map(|named| to_path(&named.1, is_case_sensitive).into_owned()).collect();
         let is_kept = |file: &Vec<u8>| is_declaration_file_name(file) || of_bundle.contains(&*to_path(file, is_case_sensitive)) || by_name.contains(&*to_path(file, is_case_sensitive));
-        let lists_files = !project.options.is_default_include_spec && !request.plan_options.early_parse_only;
+        let lists_files = !request.plan_options.early_parse_only;
         let others: Vec<&Vec<u8>> = project.files.iter().filter(|file| lists_files && !is_kept(file)).collect();
         // SAFETY: both places that put an `EarlyRun` into a request do so inside the closure of
         // `with_early_run`, where the scanned files are alive.
@@ -3255,8 +3270,10 @@ fn check_project_of(
         project.options.attaches_direct_eval_scopes = true;
         project.options.pops_every_type_resolution = true;
         project.options.tolerate_removed_options();
+        project.options.tolerate_output_options();
         project.options.uses_nearest_config_paths = request.project.is_none();
         project.options.emit_nothing();
+        project.options.allow_importing_ts_extensions = true;
         project.options.ignore_paths_for_host_modules(|specifier| {
             use bun_resolve_builtins::HardcodedModule::{Alias, Cfg};
             Alias::has(specifier, bun_ast::Target::Bun, Cfg::default())
@@ -3267,6 +3284,7 @@ fn check_project_of(
             project.options.libs = vec![b"esnext.full".to_vec()];
         }
         project.errors.retain(|error| !(error.is_about_options && project.options.is_removed_option_error(error.code)));
+        project.errors.retain(|error| !bun_sema::resolve::Options::is_about_output_option(error.code, error.args.first().map(|option| &option[..])));
         project.options.resolves_js_imports_as_code_only = !allows_js;
         project.options.allow_js = true;
         project.options.module_detection = bun_sema::resolve::ModuleDetection::Force;
@@ -3316,6 +3334,7 @@ fn check_project_of(
         std::thread::scope(|scope| {
             let scan = (!files_to_scan.is_empty()).then(|| {
                 scope.spawn(|| {
+                    bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Scan"));
                     let others: Vec<&Vec<u8>> = files_to_scan.iter().collect();
                     find_global_declarations(disk, &others, scanned_early, &for_each_on_scanning_threads)
                 })
@@ -3479,7 +3498,9 @@ fn find_global_declarations(disk: &host::Disk, others: &[&Vec<u8>], scanned_earl
         .collect();
     imported.shared_sort_unstable();
     imported.dedup_by(|a, b| a.0 == b.0);
-    let mut places: Vec<(&[u8], &[u8])> = imported.iter().map(|(name, at)| (dirname::<Posix>(others[*at]), &name[..])).collect();
+    let mut places: Vec<(&[u8], &[u8])> = (imported.iter())
+        .flat_map(|(name, at)| [&name[..], package_of_specifier(name)].map(|specifier| (dirname::<Posix>(others[*at]), specifier)))
+        .collect();
     places.shared_sort_unstable();
     places.dedup();
     let mut installed_above: Vec<(&[u8], Vec<Vec<u8>>)> = places.iter().map(|place| (place.0, Vec::new())).collect();
@@ -3515,13 +3536,17 @@ fn for_each_on_scanning_threads(count: usize, work: &(dyn Fn(usize) + Sync)) {
     let next = AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..SCANNING_THREADS.min(count) {
-            scope.spawn(|| {
-                while let at = next.fetch_add(1, Ordering::Relaxed)
-                    && at < count
-                {
-                    work(at);
-                }
-            });
+            std::thread::Builder::new()
+                .stack_size(STACK_OF_A_WORKER as usize)
+                .spawn_scoped(scope, || {
+                    bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Scan"));
+                    while let at = next.fetch_add(1, Ordering::Relaxed)
+                        && at < count
+                    {
+                        work(at);
+                    }
+                })
+                .expect("a thread");
         }
     });
 }
@@ -3570,7 +3595,7 @@ impl Strictness {
 
 impl GoverningOptions {
     fn of(options: &Options) -> GoverningOptions {
-        GoverningOptions { check_options: options.for_checking(), strictness: Strictness::of(options) }
+        GoverningOptions { check_options: CheckOptions { allow_importing_ts_extensions: true, ..options.for_checking() }, strictness: Strictness::of(options) }
     }
 }
 
@@ -5309,6 +5334,7 @@ fn check_named_files(
                         checker.begin_stack_budget();
                         if publishes_trial {
                             checker.begin_trial_task(run as u32, &is_on_trial);
+                            checker.withhold_expression_tables();
                         }
                         let mut tried = tried[run].lock();
                         for &i in runs[run] {
@@ -5329,7 +5355,7 @@ fn check_named_files(
                     let file = FileId(i as u32);
                     let found = program.finish_file(file, checked);
                     let is_restricted_to_fixed_set = modules[i].is_restricted_to_fixed_set();
-                    let mut counted: Vec<_> = found.iter().filter(|it| it.category == Category::Error && !is_type_only_diagnostic(it.code) && !(is_restricted_to_fixed_set && is_missing_host_declaration_code(it.code))).collect();
+                    let mut counted: Vec<_> = found.iter().filter(|it| it.category == Category::Error && !is_type_only_diagnostic(it.code) && !is_about_emitted_module_format(it.code) && !(is_restricted_to_fixed_set && is_missing_host_declaration_code(it.code))).collect();
                     if is_restricted_to_fixed_set && !counted.is_empty() {
                         let mut checker = program.checker();
                         checker.begin_stack_budget();
@@ -6382,7 +6408,7 @@ fn check_named_files(
         }
         if stops {
             report.diagnostics.extend(global_errors());
-            let tolerated = if request.is_one_program { report.diagnostics.iter().filter(|reported| is_missing_runtime_type_library(reported)).count() } else { 0 };
+            let tolerated = if request.is_one_program { report.diagnostics.iter().filter(|reported| is_missing_type_library(reported)).count() } else { 0 };
             if report.diagnostics.len() - tolerated > always_reported {
                 report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
@@ -6603,7 +6629,10 @@ fn check_named_files(
             if reported.category != Category::Error {
                 return true;
             }
-            if reported.code == 2578 || is_missing_runtime_type_library(reported) {
+            if is_about_emitted_module_format(reported.code) {
+                return false;
+            }
+            if reported.code == 2578 || is_missing_type_library(reported) {
                 reported.category = Category::Warning;
                 return true;
             }

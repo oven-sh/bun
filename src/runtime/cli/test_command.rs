@@ -2720,6 +2720,17 @@ impl TestCommand {
                 }
             }
         }
+        let refused = crate::cli::aot_audit::refused_changes();
+        if !refused.is_empty() {
+            pretty_error!(
+                "<yellow>{} change{} to locked built-ins<r> refused during this run, caught or not; code that goes on after one may have been left half done:\n",
+                refused.len(),
+                if refused.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+        }
         Output::flush();
 
         reporter.write_junit_report_if_needed();
@@ -2922,6 +2933,7 @@ impl TestCommand {
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
         let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
+        crate::cli::aot_audit::will_run_test_file(file_title);
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)

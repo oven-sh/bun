@@ -135,7 +135,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
       const said = build.stdout + build.stderr;
       expect(said).toContain("TS100009: 'react-reconciler' has 1 type errors");
       expect(said).toContain("TS2322: Type 'string' is not assignable to type 'number'.");
-      expect(said).toMatch(/compile +app +1 compiled untyped/);
+      expect(said).toMatch(/compile +app(\.exe)? +1 compiled untyped/);
       const { typed, untyped } = compiledOf(map, typedFile);
       expect(untyped.bytes).toBeGreaterThan(typed.bytes * 50);
       const compiled = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });

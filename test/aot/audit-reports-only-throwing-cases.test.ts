@@ -18,6 +18,24 @@ calls();
   expect(exitCode).toBe(0);
 });
 
+test.each(["--aot-audit", "--aot"])("a file in a folder is named with forward slashes, and so are the callers: %s", async flag => {
+  using dir = tempDir("aot-audit-folders", {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "types": [] } }`,
+    "src/deep/main.ts": `export {};
+function double(n: number): number { return n * 2; }
+const untyped: any = double;
+function calls(): void { try { untyped("x"); } catch {} }
+calls();
+`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "run", flag, "src/deep/main.ts"], cwd: String(dir), env: { ...bunEnv, BUN_AOT_TYPE_ERROR_LOG: "stderr" }, stdout: "pipe", stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const records = stderr.split("\n").filter(line => line.startsWith("[aot] type-error "));
+  expect(records.map(line => line.split(" ")[4])).toEqual(["src/deep/main.ts:2:1"]);
+  expect(records.map(line => line.replace(/^.*; from /, ""))).toEqual([expect.stringMatching(/^src\/deep\/main\.ts:4 < src\/deep\/main\.ts/)]);
+  expect(exitCode).toBe(0);
+});
+
 // A line of `--aot-audit` that says would-throw names a place where `bun run --aot` and the executable throw.
 test("Object.setPrototypeOf on records and on an instance", async () => {
   using dir = tempDir("audit-reports-only-throwing-cases", {

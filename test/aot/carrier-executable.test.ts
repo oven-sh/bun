@@ -37,7 +37,7 @@ test("builds with its own executable as the carrier", async () => {
 
 test("builds with a symlink to its own executable as the carrier", async () => {
   using dir = tempDir("aot-carrier-symlink", files);
-  const link = join(String(dir), "link-to-bun");
+  const link = join(String(dir), "link-to-bun.exe");
   symlinkSync(bunExe(), link);
   const built = await build(String(dir), link);
   expect(built.stderr).not.toContain("error");

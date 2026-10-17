@@ -181,7 +181,7 @@ struct ClassScope {
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn class_for_expr(&mut self, file: FileId, e: ExprId) -> Option<(FileId, ClassId)> {
-        let sym = self.binding_for_ident(file, e)?;
+        let sym = self.binding_for_ident(file, e).or_else(|| self.binding_for_namespace_member(file, e))?;
         let class = match self.value_declaration(sym)? {
             (file, Decl::Class(class)) => (file, class),
             (_, Decl::Var(_)) => self.c.class_for_const(sym)?,
@@ -193,6 +193,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn binding_for_ident(&mut self, file: FileId, e: ExprId) -> Option<Sym> {
         let ExprKind::Ident(name) = self.hir(file)[e.some()?].kind else { return None };
         self.ident_symbol(file, e, name)
+    }
+
+    fn binding_for_namespace_member(&mut self, file: FileId, e: ExprId) -> Option<Sym> {
+        let ExprKind::Dot { obj, name, chain: bun_sema::hir::Chain::No, .. } = self.hir(file)[e.some()?].kind else { return None };
+        self.namespace_member_in(file, obj, name)
     }
 
     pub(crate) fn instance_layout(&mut self, file: FileId, class: ClassId) -> Option<LayoutId> {

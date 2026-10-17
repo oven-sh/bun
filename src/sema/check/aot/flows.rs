@@ -95,6 +95,7 @@ struct NotedTables<T = TypeId> {
     guards: FxHashSet<(T, T)>,
     forced: FxHashSet<(T, T)>,
     unverified_overload_results: FxHashSet<(T, T)>,
+    assignable_casts: FxHashSet<(T, T)>,
     tests: FxHashSet<(T, T)>,
     trusted_into: FxHashMap<T, Place>,
     foreign: FxHashMap<T, (Option<T>, Place)>,
@@ -130,6 +131,7 @@ impl<T> Default for NotedTables<T> {
             guards: FxHashSet::default(),
             forced: FxHashSet::default(),
             unverified_overload_results: FxHashSet::default(),
+            assignable_casts: FxHashSet::default(),
             tests: FxHashSet::default(),
             trusted_into: FxHashMap::default(),
             foreign: FxHashMap::default(),
@@ -167,6 +169,7 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
         self.read_only_passed_on.extend(other.read_only_passed_on);
         self.forced.extend(other.forced);
         self.unverified_overload_results.extend(other.unverified_overload_results);
+        self.assignable_casts.extend(other.assignable_casts);
         self.tests.extend(other.tests);
         self.without_fixed_layout.extend(other.without_fixed_layout);
         for (at, times) in other.truncated {
@@ -279,6 +282,9 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
             NoteKind::UnverifiedOverloadResult => {
                 self.unverified_overload_results.insert((first, second));
             }
+            NoteKind::AssignableCast => {
+                self.assignable_casts.insert((first, second));
+            }
             NoteKind::Test => {
                 self.tests.insert((first, second));
             }
@@ -317,6 +323,7 @@ pub(super) enum NoteKind {
     Guard,
     Forced,
     UnverifiedOverloadResult,
+    AssignableCast,
     Test,
     Upcast,
     TrustedInto,
@@ -2537,6 +2544,30 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.flows.recorded.add_pairs_into(NoteKind::Forced, sources, target);
     }
 
+    pub fn record_assignable_casts(&mut self, source: TypeId, target: TypeId) {
+        if source == TypeId::UNRESOLVED || target == TypeId::UNRESOLVED || source == target {
+            return;
+        }
+        for part in self.parts(source).to_vec() {
+            if !self.declares_properties(part) {
+                continue;
+            }
+            let held_as = self.layout_defining_type(part);
+            if held_as == part {
+                continue;
+            }
+            for wider in self.parts(target).to_vec() {
+                if !self.declares_properties(wider) || self.is_instance_type(wider) {
+                    continue;
+                }
+                let view = self.layout_defining_type(wider);
+                if view != held_as && self.is_upcast_safe(part, wider) {
+                    self.aot.flows.recorded.add_pair(NoteKind::AssignableCast, held_as, view);
+                }
+            }
+        }
+    }
+
     pub fn record_unverified_overload_result(&mut self, sources: &[TypeId], target: TypeId) {
         self.aot.flows.recorded.add_pairs_into(NoteKind::UnverifiedOverloadResult, sources, target);
     }
@@ -2609,6 +2640,22 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         pairs
+    }
+
+    pub fn instantiated_and_declared_parameter(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return None };
+        let ExprKind::Call(call) = hir[parent].kind else { return None };
+        let index = hir.ids(hir[call].args).position(|argument| argument == e)?;
+        let resolved = self.resolved_signature(file, parent).sig?;
+        let (declared_in, func, _) = self.sig_decl(resolved)?;
+        if self.is_untyped_file(declared_in) || self.is_declaration_only(declared_in) || matches!(self.hir(declared_in)[func].body, crate::hir::FnBody::None) {
+            return None;
+        }
+        let written = self.sig_of_fn(declared_in, func);
+        let (instantiated, declared) = (self.sig_params(resolved), self.sig_params(written));
+        let (instantiated, declared) = (self.param_type_at(&instantiated, index)?, self.param_type_at(&declared, index)?);
+        (instantiated != declared && self.may_hold_objects(instantiated)).then_some((instantiated, declared))
     }
 
     fn is_generic_callback(&mut self, callback: TypeId) -> bool {
@@ -6730,22 +6777,90 @@ impl<'p, 's> Checker<'p, 's> {
         KindsDeclared { found: declaring.chunks(KindsDeclared::FILES_PER_CHECKER).map(|_| OnceLock::new()).collect(), declaring, next: AtomicUsize::new(0), namespaces: OnceLock::new(), publish_lock: RwLock::new(()) }
     }
 
-    fn namespaces_used_as_values(&self) -> Vec<Sym> {
+    fn namespaces_used_as_values(&mut self) -> Vec<Sym> {
         let files = self.files();
         let mut namespaces: Vec<Sym> = Vec::new();
-        for file in (0..files.modules.len() as u32).map(FileId) {
+        let mut bound_whole: FxHashSet<Sym> = FxHashSet::default();
+        let compiled = || (0..files.modules.len() as u32).map(FileId).filter(|&file| !matches!(self.hir(file).kind, FileKind::Declaration | FileKind::Json));
+        for file in compiled() {
             let hir = self.hir(file);
-            if matches!(hir.kind, FileKind::Declaration | FileKind::Json) {
-                continue;
-            }
             let named = hir.specifier_uses.iter().filter(|named| named.kind.is_dynamic() || named.kind == crate::hir::SpecifierKind::Require).map(|named| named.spec);
             let whole = hir.imports.iter().filter(|import| import.namespace.is_some()).map(|import| import.spec);
             let exported = hir.ids(hir.body).filter_map(|stmt| if let crate::hir::StmtKind::ExportStar { spec, alias, .. } = hir[stmt].kind { alias.is_some().then_some(spec) } else { None });
-            namespaces.extend(named.chain(whole).chain(exported).filter_map(|specifier| files.module_of_specifier(file, specifier)));
+            namespaces.extend(named.filter_map(|specifier| files.module_of_specifier(file, specifier)));
+            bound_whole.extend(whole.chain(exported).filter_map(|specifier| files.module_of_specifier(file, specifier)));
+        }
+        let is_read_by_binding = |module: Sym| files.decls_of(module).iter().all(|&(of, _)| !files.module(of).is_untyped() && !files.module(of).is_commonjs() && !self.is_declaration_only(of));
+        namespaces.extend(bound_whole.iter().copied().filter(|&module| !is_read_by_binding(module)));
+        bound_whole.retain(|&module| is_read_by_binding(module));
+        let compiled: Vec<FileId> = compiled().collect();
+        for file in compiled {
+            let (hir, bound) = (self.hir(file), self.bound(file));
+            let mut standing_for: FxHashMap<SymbolId, Sym> = FxHashMap::default();
+            for (id, _) in bound.symbols.iter().enumerate().filter(|(_, symbol)| symbol.flags.contains(SymFlags::ALIAS)) {
+                if let Some(module) = files.resolve_alias(files.sym(file, SymbolId(id as u32))).filter(|module| bound_whole.contains(module)) {
+                    standing_for.insert(SymbolId(id as u32), module);
+                }
+            }
+            if standing_for.is_empty() {
+                continue;
+            }
+            for (index, node) in hir.exprs.iter().enumerate() {
+                if matches!(node.kind, ExprKind::Ident(_))
+                    && let Some(&module) = standing_for.get(&bound.expr_symbol[index])
+                    && let Some(used) = self.namespace_used_as_value_at(file, ExprId(index as u32), module, &bound_whole)
+                {
+                    namespaces.push(used);
+                }
+            }
+        }
+        let mut reached: FxHashSet<Sym> = namespaces.iter().copied().collect();
+        let mut at = 0;
+        while at < namespaces.len() {
+            let held: Vec<Sym> = files.exports_of_module(namespaces[at]).iter().filter_map(|export| files.resolve_alias(export.1)).filter(|held| bound_whole.contains(held) && reached.insert(*held)).collect();
+            namespaces.extend(held);
+            at += 1;
         }
         namespaces.sort_unstable();
         namespaces.dedup();
         namespaces
+    }
+
+    fn namespace_used_as_value_at(&mut self, file: FileId, mut e: ExprId, mut module: Sym, bound_whole: &FxHashSet<Sym>) -> Option<Sym> {
+        let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
+        loop {
+            let Parent::Expr(read) = bound.expr_parent[e.idx()] else { return Some(module) };
+            let ExprKind::Dot { obj, name, .. } = hir[read].kind else { return Some(module) };
+            if obj != e {
+                return Some(module);
+            }
+            let member = files.module_export(module, name).and_then(|member| files.resolve_alias(member))?;
+            if bound_whole.contains(&member) {
+                (e, module) = (read, member);
+                continue;
+            }
+            if files.flags(member).contains(SymFlags::VALUE_MODULE) {
+                return Some(module);
+            }
+            let mut top = read;
+            while let Parent::Expr(around) = bound.expr_parent[top.idx()]
+                && matches!(hir[around].kind, ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::NonNull(_))
+            {
+                top = around;
+            }
+            let is_called = matches!(bound.expr_parent[top.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == top));
+            if !is_called {
+                return None;
+            }
+            let declared: Vec<(FileId, Decl)> = files.decls_of(member).to_vec();
+            let mut looks_at_this = declared.iter().any(|&(of, decl)| matches!(decl, Decl::Fn(func) if self.inspects_this(of, func)));
+            if let Some((of, initializer)) = self.initializer_of_const(member)
+                && let ExprKind::Fn(func) = self.hir(of)[initializer].kind
+            {
+                looks_at_this |= self.hir(of)[func].kind != crate::hir::FnKind::Arrow && self.inspects_this(of, func);
+            }
+            return looks_at_this.then_some(module);
+        }
     }
 
     fn kinds_declared_in(&mut self, slice: &[FileId]) -> Vec<(Sym, Option<bool>, bool)> {
@@ -7475,8 +7590,40 @@ impl<'p, 's> Checker<'p, 's> {
         forced.sort_unstable();
         let mut unverified_overload_results: Vec<(u32, u32)> = recorded.unverified_overload_results.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         unverified_overload_results.sort_unstable();
+        let mut assignable_casts: Vec<(u32, u32)> = recorded.assignable_casts.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
+        assignable_casts.sort_unstable();
         let mut tests: Vec<(u32, u32)> = recorded.tests.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         tests.sort_unstable();
+        let mut views_by_declaration: FxHashMap<(Option<Sym>, Option<(FileId, TypeNodeId)>), Vec<u32>> = FxHashMap::default();
+        for (index, &view) in views.iter().enumerate() {
+            if self.is_instance_type(view) || self.is_coercion_result_type(view) {
+                continue;
+            }
+            let declaration = match *self.data(view) {
+                TypeData::Ref { target, .. } => (Some(target), None),
+                TypeData::Anon { origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node), .. } => (None, Some((file, node))),
+                _ => match self.alias_symbol_of_type(view) {
+                    Some(alias) => (Some(alias), None),
+                    None => continue,
+                },
+            };
+            let declared_in = match declaration {
+                (Some(named), _) => named.file,
+                (None, Some((file, _))) => file,
+                (None, None) => continue,
+            };
+            if !self.is_declaration_only(declared_in) {
+                views_by_declaration.entry(declaration).or_default().push(index as u32);
+            }
+        }
+        let mut instantiations: Vec<Vec<u32>> = views_by_declaration.into_values().filter(|group| group.len() > 1).collect();
+        instantiations.sort_unstable();
+        let mut declaration_of = vec![u32::MAX; views.len()];
+        for (declaration, group) in instantiations.iter().enumerate() {
+            for &view in group {
+                declaration_of[view as usize] = declaration as u32;
+            }
+        }
         let altered: [MutatedTypes; 2] = [0, 1].map(|mutation: usize| {
             let besides: FxHashSet<TypeId> = mutated_types[mutation].iter().copied().filter(|ty| !index_of.contains_key(ty)).collect();
             let extra_targets = recorded.upcasts.keys().chain(&recorded.casts).chain(&recorded.tests).filter(|edge| besides.contains(&edge.1)).filter_map(|edge| index_of.get(&edge.0).copied());
@@ -7512,7 +7659,10 @@ impl<'p, 's> Checker<'p, 's> {
             guards,
             forced,
             unverified_overload_results,
+            assignable_casts,
             tests,
+            instantiations,
+            declaration_of,
             vouched,
             untyped_inflow_sites,
             untyped_inflow_pairs,

@@ -186,7 +186,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             | Op::ElemSet { .. }
             | Op::IterClose(_)
             | Op::IterCloseForThrow(_)
-            | Op::Poll => known.undefined,
+            | Op::Poll
+            | Op::UnlikelyHint => known.undefined,
             Op::FreeGet { .. }
             | Op::ElemGet { .. }
             | Op::ToKey(_)
@@ -338,6 +339,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.c.is_external_data_prediction(declared) {
             let expected = self.out.tys.intern(Declared { prims: primitives.prims & !prim::NULLISH, ..primitives });
             fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(expected));
+            return value;
+        }
+        let written = self.ty_of(declared);
+        let written = self.out.tys.get(written);
+        if written.prims & !prim::NULLISH == prim::STRING && !written.has_objects() && primitives.prims & !(prim::NULLISH | prim::STRING) != 0 {
+            fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(self.known.string));
             return value;
         }
         let primitives = self.out.tys.intern(primitives);
@@ -499,6 +506,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         self.record_cast(have, to, why);
+        self.c.record_assignable_casts(have.checked, want.checked);
         if why == CoerceReason::Cast && matches!(fx.b.func.op(value), Some(Op::NewObject)) {
             self.record_defined_field_casts(fx, value, to);
         }
@@ -1324,6 +1332,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             let declared = Ty { id: self.ty_of(declared), checked: declared };
             self.record_cast(declared, want, CoerceReason::Flow);
+            if self.c.callee_returns_any(fx.file, e) {
+                let result = Ty { id: want, checked: self.c.type_of_expr(fx.file, e) };
+                self.record_untyped_inflow(result);
+                self.record_any_inflow(result);
+            }
             if let Some(implemented) = self.c.overload_implementation_result(fx.file, e) {
                 let implemented = self.ty_of(implemented);
                 let mut sources = self.layout_types_in(declared.id);
@@ -1601,8 +1614,28 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn branch(&mut self, fx: &mut Fx, cond: V, then: crate::id::BlockId, otherwise: crate::id::BlockId) {
         let boolean = Ty::from_id(self.known.boolean);
         let have = Ty::from_id(self.ty(fx, cond));
+        let hint = fx.branch_hints.get(&cond).copied().or_else(|| match fx.b.func.op(cond) {
+            Some(&Op::IsNullish(tested) | &Op::Not(tested)) => fx.branch_hints.get(&tested).map(|hint| super::BranchHint { is_likely: !hint.is_likely, ..*hint }),
+            _ => None,
+        });
         let cond = if self.is_within(have, boolean) { cond } else { self.emit(fx, Op::Truthy(cond)) };
-        fx.b.branch(cond, then, otherwise);
+        let Some(hint) = hint else { return fx.b.branch(cond, then, otherwise) };
+        let unlikely = fx.b.new_block();
+        if hint.is_likely {
+            fx.b.branch(cond, then, unlikely);
+        } else {
+            fx.b.branch(cond, unlikely, otherwise);
+        }
+        self.jump_from_unlikely_block(fx, unlikely, hint, then, otherwise);
+    }
+
+    pub(crate) fn jump_from_unlikely_block(&mut self, fx: &mut Fx, unlikely: crate::id::BlockId, hint: super::BranchHint, then: crate::id::BlockId, otherwise: crate::id::BlockId) {
+        fx.b.seal(unlikely);
+        fx.b.switch_to(unlikely);
+        let outer = std::mem::replace(&mut fx.b.pos, hint.pos);
+        self.emit(fx, Op::UnlikelyHint);
+        fx.b.pos = outer;
+        fx.b.jump(if hint.is_likely { otherwise } else { then });
     }
 
     pub(crate) fn terminate_with_return(&mut self, fx: &mut Fx, value: V) {

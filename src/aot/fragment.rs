@@ -391,6 +391,7 @@ pub fn for_each_op_id(op: &mut Op, ids: &mut impl Ids) {
         | Op::Caught
         | Op::CaughtException
         | Op::Poll
+        | Op::UnlikelyHint
         | Op::Operation { .. }
         | Op::Yield(_)
         | Op::ResumeMode

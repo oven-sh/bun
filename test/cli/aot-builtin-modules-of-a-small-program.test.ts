@@ -32,7 +32,7 @@ test("tests of module.parent and module.hot do not bring every built-in module i
   using dir = tempDir("builtin-modules-of-a-small-program", all);
   const sizes: Record<string, number> = {};
   await Promise.all(Object.keys(all).map(entry => slot(async () => {
-    const outfile = join(String(dir), entry + ".out");
+    const outfile = join(String(dir), entry + ".exe");
     await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
     expect({ entry, stderr, exitCode }).toEqual({ entry, stderr: expect.not.stringContaining("error"), exitCode: 0 });

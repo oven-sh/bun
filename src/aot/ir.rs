@@ -661,6 +661,7 @@ pub enum Op {
     Caught,
     CaughtException,
     Poll,
+    UnlikelyHint,
     Operation { which: Operation, args: Args },
     Yield(V),
     ResumeMode,
@@ -885,6 +886,7 @@ impl Op {
             | Op::Caught
             | Op::CaughtException
             | Op::Poll
+            | Op::UnlikelyHint
             | Op::ResumeMode
             | Op::ExternalModule(_) => {}
             Op::GlobalSet(_, a)

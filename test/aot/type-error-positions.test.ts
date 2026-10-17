@@ -119,7 +119,7 @@ const besideWhatAConstantCuts = [
   "if (typeof Bun !== \"undefined\") console.log(BAD);",
   "if (process.env.NODE_ENV !== \"production\") console.log(BAD);",
   "if (process.env.NODE_ENV === \"production\") { console.log(0); } else { console.log(BAD); }",
-  "if (process.platform !== \"win32\") console.log(BAD);",
+  `if (process.platform !== "${process.platform === "win32" ? "linux" : "win32"}") console.log(BAD);`,
   "if (true) { function g() { return BAD; } console.log(g()); }",
   "function f() { return g(); function g() { return BAD; } } console.log(f());",
   "function f() { if (false) { return 0; } return BAD; } console.log(f());",

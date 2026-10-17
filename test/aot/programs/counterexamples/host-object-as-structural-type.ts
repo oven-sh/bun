@@ -7,4 +7,4 @@ async function f(local: boolean, p: string) {
   const s = local ? await mine(p) : await stat(p)
   return s.isDirectory()
 }
-console.log(await f(false, '/tmp'), await f(true, '/tmp'))
+console.log(await f(false, '.'), await f(true, '.'))

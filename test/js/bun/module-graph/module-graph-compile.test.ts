@@ -280,8 +280,8 @@ for (const [index, combo] of combos.entries()) {
     });
 
     const isAot = combo.args.includes("--aot");
-    // TODO(aot): three differences of compiled code, each a bug: import.meta.url of a chunk that the host itself imports is the executable's;
-    // import() in a graph that has been disposed of still resolves; import() in direct eval goes through the host's loader.
+    // TODO(aot): two differences of compiled code, each a bug: import() in a graph that has been disposed of still resolves;
+    // import() in direct eval goes through the host's loader.
     const testButForAot = isAot ? test.failing : test;
 
     test("build", () => {
@@ -298,7 +298,7 @@ for (const [index, combo] of combos.entries()) {
       });
     });
 
-    testButForAot("several instances of an embedded module: isolation, identity, host unaffected", async () => {
+    test("several instances of an embedded module: isolation, identity, host unaffected", async () => {
       expect(await run("instances")).toEqual({
         parsed: {
           host1: instanceRun(null, 1, 1, 1),
@@ -408,7 +408,7 @@ for (const [index, combo] of combos.entries()) {
       });
     });
 
-    testButForAot("a module on disk next to the executable loads into graphs and imports embedded code by URL", async () => {
+    test("a module on disk next to the executable loads into graphs and imports embedded code by URL", async () => {
       expect(await run("external")).toEqual({
         parsed: {
           out: [

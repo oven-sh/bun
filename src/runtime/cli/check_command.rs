@@ -1153,12 +1153,19 @@ impl TypedPackages {
                 (true, Some(second)) => first.len() + 1 + second.len(),
                 _ => first.len(),
             };
-            let (directory, name) = (&path[..at + length], &path[at..at + length]);
+            let declared = path[at..at + length].strip_prefix(b"@types").map(|declared| &declared[1..]);
+            let name = match declared.map(|declared| (declared, bun_core::strings::index_of(declared, b"__"))) {
+                Some((declared, Some(scope))) => [&b"@"[..], &declared[..scope], &[std::path::MAIN_SEPARATOR as u8][..], &declared[scope + 2..]].concat(),
+                Some((declared, None)) => declared.to_vec(),
+                None => path[at..at + length].to_vec(),
+            };
+            let directory = [&path[..at], &name[..]].concat();
+            let (directory, name) = (&directory[..], &name[..]);
             if self.visited.iter().any(|visited| visited == directory) {
                 continue;
             }
             self.visited.push(directory.to_vec());
-            let (files, said) = bun_sema_driver::typed_packages::typed_package(cwd, &[], directory, name);
+            let (files, said) = bun_sema_driver::typed_packages::typed_package_under_any_defines(cwd, directory, name);
             self.said.extend(said.map(|said| format!("{}: {said}", if files.is_empty() { "warn" } else { "note" })));
             self.laid.extend(files);
         }

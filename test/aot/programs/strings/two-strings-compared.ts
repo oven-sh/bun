@@ -5,6 +5,9 @@
 // CALLS+ same StringsAreEqual
 // CALLS+ different StringsAreEqual
 // CALLS+ branched StringsAreEqual
+// CALLS- same FlatStringsAreEqual
+// CALLS- different FlatStringsAreEqual
+// CALLS- branched FlatStringsAreEqual
 // CALLS+ counted FlatStringsAreEqual
 // CALLS- sameCharacters StringsAreEqual
 const print = (s: string) => console.log(s);

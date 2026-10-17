@@ -627,6 +627,20 @@ fn method_resolved_in(program: &Program, layout: LayoutId, name: StrId) -> Optio
     (field.single_function.is_some() && is_fact(field.single_function_flags)).then_some(field.single_function)
 }
 
+fn methods_of_members(program: &Program, receiver: TyId, name: StrId) -> SmallVec<[FuncId; 2]> {
+    let mut found: SmallVec<[FuncId; 2]> = SmallVec::new();
+    let Some(view) = (if receiver.is_some() { program.tys.get(receiver).single_layout() } else { None }) else { return found };
+    let looked_at = &program.layouts[view.idx()];
+    for &member in looked_at.members.iter().chain(looked_at.members.is_empty().then_some(&view)) {
+        if let Some(function) = method_resolved_in(program, member, name)
+            && !found.contains(&function)
+        {
+            found.push(function);
+        }
+    }
+    found
+}
+
 pub(super) fn functions_called<'a>(program: &Program, func: &'a Func, v: V) -> Option<(SmallVec<[FuncId; 2]>, &'a [V])> {
     let is_fact = |flags: u8| flags & (single_function_flags::IS_PROVEN | single_function_flags::OR_NULLISH) != 0;
     let found_by = |obj: V, name: StrId| -> Option<SmallVec<[FuncId; 2]>> {
@@ -1149,6 +1163,13 @@ impl Report<'_> {
                                 _ => None,
                             };
                             if let Some((obj, name, handed)) = by_name {
+                                for callee in methods_of_members(program, func.ty(obj), name) {
+                                    if returns_yielded_value(callee) {
+                                        self.edges.push((nodes.result(callee.idx()), node(v)));
+                                    } else if fulfills_a_promise(callee) {
+                                        self.edges.extend(awaits_of.get(&v).into_iter().flatten().map(|&awaited| (nodes.result(callee.idx()), awaited)));
+                                    }
+                                }
                                 if may_reach_program_code(program, func, v) {
                                     for &method in self.methods_by_name.get(&name).into_iter().flatten() {
                                         let called = &program.funcs[method.idx()];

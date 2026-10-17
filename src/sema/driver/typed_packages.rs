@@ -15,6 +15,14 @@ pub type Files = Vec<(Box<[u8]>, Box<[u8]>, bool)>;
 pub type Defines = [(Box<[u8]>, Box<[u8]>)];
 
 pub fn typed_package(root: &[u8], defines: &Defines, directory: &[u8], name: &[u8]) -> (Files, Option<Box<str>>) {
+    typed_package_under(root, Some(defines), directory, name)
+}
+
+pub fn typed_package_under_any_defines(root: &[u8], directory: &[u8], name: &[u8]) -> (Files, Option<Box<str>>) {
+    typed_package_under(root, None, directory, name)
+}
+
+fn typed_package_under(root: &[u8], defines: Option<&Defines>, directory: &[u8], name: &[u8]) -> (Files, Option<Box<str>>) {
     let root = match root {
         [before @ .., last] if !before.is_empty() && is_separator(*last) => before,
         _ => root,
@@ -253,7 +261,7 @@ fn verify_typed_against(directory: &[u8], path: &[u8], wanted: &[u8]) -> Result<
     }
 }
 
-fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name: &[u8], depth: usize) -> Result<(Files, Vec<u8>), String> {
+fn files_of(root: &[u8], defines: Option<&Defines>, home: &[u8], directory: &[u8], name: &[u8], depth: usize) -> Result<(Files, Vec<u8>), String> {
     let manifest = read_json(&join(&[home, MANIFEST])).ok_or("its sound.json is not JSON")?;
     let ships_typescript_with_js_extension = manifest.get(b"sound") == Some(&Json::Number(2.0));
     if !ships_typescript_with_js_extension && manifest.get(b"sound") != Some(&Json::Number(1.0)) {
@@ -269,6 +277,7 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
         return Err(format!("it is for version {}, and {} is installed (install the typed version for {}, or remove this one)", BStr::new(&text_of(&manifest, b"version")), BStr::new(&found), BStr::new(&found)));
     }
     for (key, wanted) in entries(&manifest, "when")? {
+        let Some(defines) = defines else { continue };
         let defined = defines.iter().find(|define| &*define.0 == key).and_then(|define| parse(&define.1));
         if defined != Some(Json::String(wanted.to_vec())) {
             return Err(format!("it is for a build that defines {} as \"{}\" (pass --define '{}=\"{}\"')", BStr::new(key), BStr::new(wanted), BStr::new(key), BStr::new(wanted)));

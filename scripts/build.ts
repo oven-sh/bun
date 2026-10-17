@@ -436,6 +436,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   buildType: "string",
   mode: "string",
   lto: "boolean",
+  islands: "boolean",
   pgoGenerate: "string",
   pgoUse: "string",
   asan: "boolean",

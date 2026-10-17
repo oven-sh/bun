@@ -6,7 +6,7 @@ a value: a static method: returned; rejected TypeError
 a value: an arrow in a field: returned; rejected TypeError
 a value: a literal's method: returned; rejected TypeError
 a value: one that awaits first: returned; rejected TypeError
-a value: one of two parameters: returned; rejected TypeError
+a value: one of two parameters: returned; fulfilled null
 a value: A GENERATOR: THREW TO THE CALLER TypeError
 a value: AN ASYNC GENERATOR: THREW TO THE CALLER TypeError
 a value: A PLAIN FUNCTION: THREW TO THE CALLER TypeError

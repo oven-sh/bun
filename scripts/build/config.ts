@@ -115,6 +115,7 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  islands: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
@@ -349,6 +350,7 @@ export interface PartialConfig {
   buildType?: BuildType;
   mode?: Mode;
   lto?: boolean;
+  islands?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
   asan?: boolean;
@@ -1286,6 +1288,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: "full",
     lto,
+    islands: (partial.islands ?? false) && (linux || darwinCross) && release && !asan,
     pgoGenerate,
     pgoUse,
     asan,
@@ -1668,6 +1671,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
+  if (cfg.islands) features.push("islands");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");

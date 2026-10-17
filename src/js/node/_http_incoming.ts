@@ -89,7 +89,7 @@ function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
 
 /* Abstract base class for ServerRequest and ClientResponse. */
 function IncomingMessage(socket) {
-  const isFromNativeServer = socket === kHandle;
+  const isFromNativeServer = $likely(socket === kHandle);
   let handle = null;
   let hasNoBody = false;
   if (isFromNativeServer) {

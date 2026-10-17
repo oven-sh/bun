@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { describe, test } from "./supported";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 
 // `import { name } from "node:fs"` where the built-in module has no such export is a SyntaxError when the module is linked,
@@ -42,6 +42,15 @@ const fine: [entry: string, text: string, output: string][] = [
   ["bun.mjs", `import { noSuchExport } from "bun";\nconsole.log("ran", typeof noSuchExport);\n`, "ran undefined\n"],
 ];
 
+const absentOnWindows: [entry: string, text: string, message: string, output: string][] = [
+  ["process-getuid.mjs", `import { getuid } from "node:process";\nconsole.log("ran", typeof getuid);\n`, "Export named 'getuid' not found in module 'node:process'.", "ran function\n"],
+  ["constants-sigusr1.mjs", `import { SIGUSR1 } from "node:constants";\nconsole.log("ran", typeof SIGUSR1);\n`, "Export named 'SIGUSR1' not found in module 'node:constants'.", "ran number\n"],
+];
+for (const [entry, text, message, output] of absentOnWindows) {
+  if (isWindows) missing.push([entry, text, message]);
+  else fine.push([entry, text, output]);
+}
+
 describe.each(modes)("bun %s", mode => {
   test.concurrent.each(missing)("a missing export of a built-in module is a SyntaxError: %s", async (entry, text, message) => {
     using dir = tempDir("missing-builtin-export", { [entry]: text });
@@ -73,7 +82,11 @@ test("every name in src/aot/builtin-export-names.txt is exported", async () => {
     const namespace = await import(specifier);
     for (const name of names) if (!(name in namespace)) absent.push(specifier + " " + name);
   }
-  expect(absent).toEqual([]);
+  const takenLines = readFileSync(join(import.meta.dir, "../../src/aot/builtin-export-names-absent-on-windows.txt"), "utf8").trimEnd().split("\n");
+  const taken = takenLines.flatMap(line => line.split(" ").slice(1).map(name => line.split(" ")[0] + " " + name));
+  expect(absent).toEqual(isWindows ? taken : []);
+  const all = new Set(lines.flatMap(line => line.split(" ").slice(1).map(name => line.split(" ")[0] + " " + name)));
+  expect(taken.filter(name => !all.has(name))).toEqual([]);
   expect(lines.length).toBeGreaterThan(70);
   // The compiler finds a module, and a name, by binary search.
   expect(lines.map(line => line.split(" ")[0])).toEqual(lines.map(line => line.split(" ")[0]).sort());

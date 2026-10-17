@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
-function testEachProgram(folder: string, part: number, parts: number, needsTheDisk: Record<string, string>, given: Record<string, string[]> = {}, prepare: string[][] = []) {
+function testEachProgram(folder: string, part: number, parts: number, needsTheDisk: Record<string, string>, given: Record<string, string[]> = {}, prepare: string[][] = [], withoutExceptionValidation: string[] = []) {
   const programs = readdirSync(join(import.meta.dir, folder))
     .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.startsWith("fake_") && !file.startsWith("lib_"))
     .map(file => file.slice(0, -".ts".length))
@@ -51,12 +51,13 @@ function testEachProgram(folder: string, part: number, parts: number, needsTheDi
       test(
         program,
         async () => {
-          const plain = await run([bunExe(), "run", `./${program}.ts`]);
+          const env = withoutExceptionValidation.includes(program) ? { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined } : bunEnv;
+          const plain = await run([bunExe(), "run", `./${program}.ts`], env);
           expect(plain.stdout).toContain("\nDONE");
           const executable = join(String(dir), program);
           const built = await run([bunExe(), "build", "--compile", "--aot", "--compile-in-place", `./${program}.ts`, ...(given[program] ?? []), "--outfile", executable]);
           expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
-          const compiled = await run([executable]);
+          const compiled = await run([executable], env);
           expect({ stdout: steady(compiled.stdout), exitCode: compiled.exitCode, stderr: compiled.exitCode === plain.exitCode ? "" : compiled.stderr }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" });
           if (program in needsTheDisk) return;
 
@@ -64,7 +65,7 @@ function testEachProgram(folder: string, part: number, parts: number, needsTheDi
           renameSync(project, movedAway);
           mkdirSync(project);
           try {
-            const alone = await run([executable]);
+            const alone = await run([executable], env);
             expect({ stdout: steady(alone.stdout), exitCode: alone.exitCode, stderr: alone.exitCode === plain.exitCode ? "" : alone.stderr }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" });
           } finally {
             rmSync(project, { recursive: true, force: true });
@@ -95,6 +96,8 @@ export const testPrograms = (part: number, parts: number) =>
       typeorm_given: ["--asset", "node_modules/sql.js/dist/sql-wasm.wasm"],
       pino: ["node_modules/thread-stream/lib/worker.js", "node_modules/pino/lib/worker.js", "node_modules/pino/file.js"],
     },
+    [],
+    ["argon2"],
   );
 
 export const testMorePrograms = () => testEachProgram("more-programs", 0, 1, {}, {}, [["node_modules/prisma/build/index.js", "generate", "--schema", "prisma/schema.prisma"]]);

@@ -23,7 +23,7 @@ async function compileAndRun(source: string) {
     await using proc = Bun.spawn({
       cmd: withoutCoreDump([join(cwd, "app")]),
       cwd,
-      env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: crashIfInterpreterIsUsed, BUN_ENABLE_CRASH_REPORTING: "0" },
+      env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: crashIfInterpreterIsUsed, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });

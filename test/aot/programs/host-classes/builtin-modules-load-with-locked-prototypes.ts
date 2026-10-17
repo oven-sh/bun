@@ -15,7 +15,7 @@ const lines: string[] = [];
 const say = (label: string, value: unknown) => lines.push(label + ": " + JSON.stringify(value));
 say("node:quic", Object.keys(quic).sort());
 say("node:buffer", [buffer.Blob === Blob, buffer.File === File, typeof buffer.resolveObjectURL]);
-say("node:url", [url.URL === URL, url.URLSearchParams === URLSearchParams, url.fileURLToPath(new URL("file:///a/b")), url.urlToHttpOptions(new URL("http://user@example.com:81/a?b=c")).path]);
+say("node:url", [url.URL === URL, url.URLSearchParams === URLSearchParams, url.fileURLToPath(new URL("file:///C:/a/b")), url.urlToHttpOptions(new URL("http://user@example.com:81/a?b=c")).path]);
 say("node:http", [typeof http.request, typeof http.createServer]);
 say("node:zlib, node:worker_threads, node:perf_hooks", [typeof zlib.gzipSync, typeof workerThreads.Worker, typeof performanceHooks.performance.now]);
 say("node-fetch", [

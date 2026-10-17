@@ -578,6 +578,8 @@ Every file is type-checked with the `tsconfig.json` nearest to it, the same one 
 - `include` and `exclude` do not decide which `tsconfig.json` applies. A test file that a package's `tsconfig.json` excludes from its build is still checked with that file's options.
 - If the nearest `tsconfig.json` has `references`, a file that it does not include itself uses the first referenced project that includes it.
 - A file with no `tsconfig.json` above it uses the one of the working directory, or Bun's defaults if there is none.
+- An import goes by the `paths` and `baseUrl` of the nearest `tsconfig.json`. If its `paths` have no pattern for the name, the next `tsconfig.json` further up is asked, so an `import type` can use an alias that only the root of a monorepo defines. A `tsconfig.json` that is not above the file has no say.
+- If a `tsconfig.json` above an entry point has `references`, the sources of those projects stand in for build output that is not there yet.
 - Files in `node_modules` use the options of the entry points.
 - `--tsconfig-override` applies one file to everything.
 
@@ -588,7 +590,7 @@ Some options cannot differ between the files of one program:
 | Options | What the program uses |
 | --- | --- |
 | `strictNullChecks`, `exactOptionalPropertyTypes`, `strictFunctionTypes`, `strictBindCallApply`, `strictBuiltinIteratorReturn` | On if the `tsconfig.json` of any of your TypeScript files turns it on. If a file whose own `tsconfig.json` leaves one off has type errors, they do not stop the build: Bun prints a warning and compiles that file without its types, which is slower but behaves the same. |
-| `lib`, `types`, global declarations in files that a `tsconfig.json` includes, `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them. If there is none, or it only has `references`, each option is what all of them say, and Bun's default where they differ. |
+| `lib`, `types`, global declarations in files that a `tsconfig.json` includes (one without `include` includes every file below it, as it does for `tsc`), `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them. If there is none, or it only has `references`, each option is what all of them say, and Bun's default where they differ. |
 
 To list every place where your program would behave differently, without stopping at the first one, use [`bun --aot-audit`](/bundler/aot-adoption).
 

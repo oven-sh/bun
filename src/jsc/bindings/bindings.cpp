@@ -133,6 +133,7 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
+#include "HTTPParsers.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
 
@@ -2710,6 +2711,52 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
     headers->setInternalHeaders(WTF::move(map));
     return headers;
 }
+extern "C" WebCore::FetchHeaders* Request__fetchHeadersOrParsedRequest(void* request, void** parsedRequest);
+extern "C" WebCore::FetchHeaders* Request__ensureFetchHeaders(void* request, JSC::JSGlobalObject*);
+
+extern "C" JSC::EncodedJSValue Request__getHeader(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedRequest, JSC::EncodedJSValue encodedName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* request = dynamicDowncast<WebCore::JSRequest>(JSC::JSValue::decode(encodedRequest).asCell());
+    RELEASE_ASSERT(request);
+    WebCore::FetchHeaders* headers = nullptr;
+    if (JSC::JSValue existing = request->m_headers.get()) {
+        if (!existing.isCell() || existing.asCell()->structure() != defaultGlobalObject(globalObject)->domStructure(WebCore::DOMStructureSlot::JSFetchHeaders))
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        headers = &uncheckedDowncast<WebCore::JSFetchHeaders>(existing.asCell())->wrapped();
+    }
+    auto* nameString = JSC::JSValue::decode(encodedName).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    const auto ownedName = nameString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    StringView name = ownedName;
+    void* parsedRequest = nullptr;
+    if (!headers)
+        headers = Request__fetchHeadersOrParsedRequest(request->wrapped(), &parsedRequest);
+    if (auto* parsed = static_cast<uWS::HttpRequest*>(parsedRequest)) {
+        std::optional<std::string_view> found;
+        bool isRepeated = false;
+        for (const auto& [key, value] : *parsed) {
+            if (key.length() != name.length() || !equalIgnoringASCIICase(StringView(std::span { reinterpret_cast<const Latin1Character*>(key.data()), key.length() }), name))
+                continue;
+            isRepeated = found.has_value();
+            if (isRepeated)
+                break;
+            found = value;
+        }
+        if (found && !isRepeated && !found->empty())
+            return JSC::JSValue::encode(JSC::jsString(vm, String(std::span { reinterpret_cast<const Latin1Character*>(found->data()), found->length() })));
+        if (!found && WebCore::isValidHTTPToken(name))
+            return JSC::JSValue::encode(JSC::jsNull());
+    }
+    if (!headers) {
+        headers = Request__ensureFetchHeaders(request->wrapped(), globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(WebCore::toJS<WebCore::IDLNullable<WebCore::IDLDOMString>>(*globalObject, scope, headers->get(name))));
+}
+
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
 {
     auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);

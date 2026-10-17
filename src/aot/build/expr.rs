@@ -1770,10 +1770,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn namespace_member(&mut self, fx: &Fx, obj: ExprId, name: Atom) -> Option<Sym> {
-        if let Some(module) = self.asserted_module_namespace(fx, obj) {
+        self.namespace_member_in(fx.file, obj, name)
+    }
+
+    pub(crate) fn namespace_member_in(&mut self, file: FileId, obj: ExprId, name: Atom) -> Option<Sym> {
+        if let Some(module) = self.asserted_module_namespace_in(file, obj) {
             return self.exported_binding(module.file, name).filter(|&member| self.has_value_at_runtime(member));
         }
-        let sym = self.namespace_for_expr(fx, obj)?;
+        let sym = self.namespace_for_expr_in(file, obj)?;
         if matches!(self.value_declaration(sym), Some((_, Decl::File))) {
             return self.exported_binding(sym.file, name);
         }
@@ -1782,11 +1786,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn asserted_module_namespace(&mut self, fx: &Fx, obj: ExprId) -> Option<Sym> {
-        let named = self.skip_assertions(fx, obj);
+        self.asserted_module_namespace_in(fx.file, obj)
+    }
+
+    fn asserted_module_namespace_in(&mut self, file: FileId, obj: ExprId) -> Option<Sym> {
+        let named = crate::positions::skip_assertions(self.hir(file), obj);
         if named == obj {
             return None;
         }
-        let sym = self.namespace_for_expr(fx, named)?;
+        let sym = self.namespace_for_expr_in(file, named)?;
         matches!(self.value_declaration(sym), Some((_, Decl::File))).then_some(sym)
     }
 
@@ -1797,11 +1805,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn namespace_for_expr(&mut self, fx: &Fx, e: ExprId) -> Option<Sym> {
-        let sym = match self.hir(fx.file)[e].kind {
+        self.namespace_for_expr_in(fx.file, e)
+    }
+
+    fn namespace_for_expr_in(&mut self, file: FileId, e: ExprId) -> Option<Sym> {
+        let sym = match self.hir(file)[e].kind {
             ExprKind::Ident(name) => {
-                self.ident_symbol(fx.file, e, name)?
+                self.ident_symbol(file, e, name)?
             }
-            ExprKind::Dot { obj, name, chain: Chain::No, .. } => self.namespace_member(fx, obj, name)?,
+            ExprKind::Dot { obj, name, chain: Chain::No, .. } => self.namespace_member_in(file, obj, name)?,
             _ => return None,
         };
         let is_file = matches!(self.value_declaration(sym), Some((_, Decl::File)));
@@ -3852,6 +3864,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if matches!(hir[c.callee].kind, ExprKind::Super) {
             return self.super_call(fx, c.args, pos);
         }
+        if let Some((operand, hint)) = self.branch_hint(fx, e, call) {
+            let value = self.expr_inheriting_sink(fx, operand, e);
+            fx.branch_hints.insert(value, hint);
+            return value;
+        }
         if let Some(value) = self.exports_expression(fx, e) {
             return value;
         }
@@ -4338,6 +4355,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn emit_call(&mut self, fx: &mut Fx, callee: V, this: V, args: IdList<ExprId>) -> V {
         let primitives = if self.shared.constants.logs_type_errors { PrimitiveArgs::LoggedAtCall } else { PrimitiveArgs::Reject };
+        let hir = self.hir(fx.file);
+        if fx.is_typed && !hir.ids(args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_) | ExprKind::Missing)) {
+            for argument in hir.ids(args) {
+                if let Some((instantiated, declared)) = self.c.instantiated_and_declared_parameter(fx.file, argument) {
+                    self.record_type_flow(instantiated, declared);
+                }
+            }
+        }
         match self.emit_arguments(fx, args, primitives) {
             Some(args) if self.shared.validation_helpers() == Some(fx.file) => {
                 let operands: Vec<V> = [callee, this].into_iter().chain(args).collect();
@@ -4830,6 +4855,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let operand = hir.ids(hir[call].args).next().unwrap_or(ExprId::NONE);
                 self.branch_with_boolean_result(fx, operand, false, then, otherwise, retained)
             }
+            ExprKind::Call(call) if self.branch_hint(fx, e, call).is_some() => {
+                let Some((operand, hint)) = self.branch_hint(fx, e, call) else { return };
+                let unlikely = fx.b.new_block();
+                if hint.is_likely {
+                    self.branch_with_result(fx, operand, then, unlikely, retained);
+                } else {
+                    self.branch_with_result(fx, operand, unlikely, otherwise, retained);
+                }
+                self.jump_from_unlikely_block(fx, unlikely, hint, then, otherwise)
+            }
             ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Instantiation { expr, .. } => self.branch_with_result(fx, expr, then, otherwise, retained),
             ExprKind::Binary { op: hir::BinOp::Comma, left, right } => {
                 self.expr_comma_left(fx, left);
@@ -5048,6 +5083,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::Call(call) => hir[call].chain != Chain::No,
             _ => false,
         }
+    }
+
+    fn branch_hint(&mut self, fx: &Fx, e: ExprId, call: CallId) -> Option<(ExprId, super::BranchHint)> {
+        if !self.is_builtin_file(fx.file) && !self.shared.is_prelude(fx.file) {
+            return None;
+        }
+        let hir = self.hir(fx.file);
+        let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return None };
+        let Some(Intrinsic::Expect(is_likely)) = resolve_intrinsic(self.c.atoms().bytes(name).strip_prefix(b"$")?, Position::Call) else { return None };
+        if let Some(found) = self.ident_binding(fx.file, hir[call].callee, name) {
+            let found = self.value_symbol(found);
+            if !self.is_ambient(found) {
+                return None;
+            }
+        }
+        let mut args = hir.ids(hir[call].args);
+        let (Some(operand), None) = (args.next(), args.next()) else { return None };
+        if hir[call].chain != Chain::No || matches!(hir[operand].kind, ExprKind::Spread(_) | ExprKind::Missing) {
+            return None;
+        }
+        Some((operand, super::BranchHint { is_likely, pos: hir[e].pos }))
     }
 
     fn boolean_call_operand(&mut self, fx: &Fx, call: CallId) -> Option<ExprId> {

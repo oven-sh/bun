@@ -150,6 +150,7 @@ iteratorHelperFieldUnderlyingIterator	Value
 iteratorZip	Call
 kResistStopPropagation	Member
 keys	Member
+likely	Call
 linkTimeConstant	Value
 loadEsmIntoCjs	Call
 makeAbortError	Call
@@ -221,6 +222,7 @@ toPropertyKey	Call
 typedArrayFromFast	Call
 typedArrayLength	Call
 undefined	Value	hardened
+unlikely	Call
 values	Member
 visibility	Value
 webStreamClosedPromise	Call

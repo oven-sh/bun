@@ -17,4 +17,4 @@ function row(name: string, f: () => unknown) {
   catch (e) { console.log(name + ": " + (e instanceof TypeError ? "TypeError" : "other " + e)) }
 }
 row("made by the program", () => handle(made))
-row("what lacks a required member is refused", () => { const held: any = JSON.parse('{"id":1,"at":0.5,"size":2.5,"weight":3.5}'); return handle(held) })
+row("what lacks a required member", () => { const held: any = JSON.parse('{"id":1,"at":0.5,"size":2.5,"weight":3.5}'); return handle(held) })

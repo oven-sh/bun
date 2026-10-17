@@ -31,6 +31,7 @@ pub(crate) enum Intrinsic {
     Int(i64),
     Bool(bool),
     Double(f64),
+    Expect(bool),
     /// `f.$call(this, ..arguments)`: `Op::Call`. No property is read.
     Call,
     /// `f.$apply(this, list)`: `Operation Apply(f, this, list)`.
@@ -223,6 +224,7 @@ const ROWS: &[(&[u8], Position, Intrinsic)] = &[
     (b"iteratorZip", Position::Call, Intrinsic::LinkedFunction),
     (b"kResistStopPropagation", Position::Member, Intrinsic::PrivateName),
     (b"keys", Position::Member, Intrinsic::PrivateName),
+    (b"likely", Position::Call, Intrinsic::Expect(true)),
     (b"linkTimeConstant", Position::Value, Intrinsic::Directive),
     (b"loadEsmIntoCjs", Position::Call, Intrinsic::PrivateGlobal),
     (b"makeAbortError", Position::Call, Intrinsic::PrivateGlobal),
@@ -294,6 +296,7 @@ const ROWS: &[(&[u8], Position, Intrinsic)] = &[
     (b"typedArrayFromFast", Position::Call, Intrinsic::LinkTimeConstant(28)),
     (b"typedArrayLength", Position::Call, Intrinsic::LinkTimeConstant(29)),
     (b"undefined", Position::Value, Intrinsic::Undefined),
+    (b"unlikely", Position::Call, Intrinsic::Expect(false)),
     (b"values", Position::Member, Intrinsic::PrivateName),
     (b"visibility", Position::Value, Intrinsic::Directive),
     (b"webStreamClosedPromise", Position::Call, Intrinsic::PrivateGlobal),

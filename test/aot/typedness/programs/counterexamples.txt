@@ -136,7 +136,7 @@ minus-zero-index: 1 layouts, 0 given, 0 open, places 25 of 34, reads 8 of 9
 minus-zero-key: 2 layouts, 0 given, 0 open, places 58 of 67, reads 5 of 18
 module-in-forwarded-literal: 3 layouts, 0 given, 3 open, places 33 of 58, reads 2 of 11
 named-store-into-count-record: 0 layouts, 0 given, 0 open, places 4 of 12, reads 2 of 3
-named-tail-call-vs-declared-method: 1 layouts, 0 given, 2 open, places 8 of 17, reads 1 of 5
+named-tail-call-vs-declared-method: 1 layouts, 0 given, 1 open, places 8 of 17, reads 1 of 5
 namespace-import-as-record-type: 1 layouts, 0 given, 1 open, places 6 of 19, reads 3 of 4
 namespace-in-literal-for-interface: 0 layouts, 5 given, 1 open, places 7 of 26, reads 0 of 13
 namespace-in-literal-generic-function: 3 layouts, 0 given, 3 open, places 33 of 47, reads 4 of 11

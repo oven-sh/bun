@@ -16,7 +16,6 @@ const eagerTierUp = {
   BUN_JSC_thresholdForJITAfterWarmUp: "10",
   BUN_JSC_thresholdForJITSoon: "10",
   BUN_JSC_thresholdForOptimizeAfterWarmUp: "20",
-  BUN_JSC_thresholdForOptimizeAfterLongWarmUp: "20",
   BUN_JSC_thresholdForOptimizeSoon: "20",
   BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "60",
   BUN_JSC_thresholdForFTLOptimizeSoon: "60",

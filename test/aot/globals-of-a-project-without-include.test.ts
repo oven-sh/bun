@@ -1,0 +1,41 @@
+import { expect } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
+
+const tsconfig = JSON.stringify({ compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [], strict: true } });
+
+async function run(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { said: stdout + stderr, exitCode };
+}
+
+const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
+const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+
+const project = {
+  "tsconfig.json": tsconfig,
+  "src/global.ts": `declare global {\n  var SETTING: number | undefined;\n}\nexport {};\n`,
+  "src/uses.ts": `export function setting(): number {\n  return globalThis.SETTING ?? 0;\n}\n`,
+  "test/uses.test.ts": `import { expect, test } from "bun:test";\nimport { setting } from "../src/uses";\ntest("uses", () => {\n  expect(setting()).toBe(0);\n});\n`,
+  "test/imports.test.ts": `import { expect, test } from "bun:test";\nimport "../src/global";\ntest("imports", () => {\n  expect(globalThis.SETTING).toBeUndefined();\n});\n`,
+};
+
+test("a tsconfig.json without `include` takes every file below it: what one of them declares globally is declared, with and without a neighbor that imports it", async () => {
+  using dir = tempDir("globals-without-include", project);
+  const alone = await run(String(dir), "test", "--aot", "./test/uses.test.ts");
+  expect(errors(alone.said)).toEqual([]);
+  expect(passed(alone.said)).toEqual(["uses"]);
+  const together = await run(String(dir), "test", "--aot");
+  expect(errors(together.said)).toEqual([]);
+  expect(passed(together.said)).toEqual(["imports", "uses"]);
+  const checked = await run(String(dir), "check", "--aot", "src/uses.ts");
+  expect(errors(checked.said)).toEqual([]);
+}, 60_000);
+
+test("a file that `exclude` takes out declares nothing", async () => {
+  using dir = tempDir("globals-without-include", { ...project, "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), exclude: ["src/global.ts"] }) });
+  const { said, exitCode } = await run(String(dir), "test", "--aot", "./test/uses.test.ts");
+  expect(errors(said)).toEqual(["src/uses.ts:2 TS7017"]);
+  expect(exitCode).toBe(1);
+});

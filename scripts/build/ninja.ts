@@ -47,6 +47,7 @@ const ruleVars = {
   cxx: ["cxxflags"],
   cxx_pch: ["cxxflags", "pch_file", "pch_header"],
   link: ["ldflags", "lazy"],
+  link_with_islands: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],

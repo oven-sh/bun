@@ -256,6 +256,7 @@ pub(super) struct State {
     produced: ByExpression<TypeId>,
     reads: ByExpression<Option<ReferenceRead>>,
     variable_reads: FxHashMap<Sym, Option<VariableRead>>,
+    string_proof_steps: u32,
     redefinitions: Option<Rc<[Redefinition]>>,
     proxy_type_parameters: Option<Rc<[TypeId]>>,
 }
@@ -907,6 +908,11 @@ impl<'p, 's> Checker<'p, 's> {
         if follows_assignments && matches!(hir[d].kind, VarKind::Let | VarKind::Var) && self.receives_prediction(sym) {
             return TypeId::UNKNOWN;
         }
+        let declared = if follows_assignments && matches!(hir[d].kind, VarKind::Let | VarKind::Var) && self.is_assigned_a_sum_that_may_be_a_number(file, sym, declared) {
+            self.union(&[declared, TypeId::NUMBER])
+        } else {
+            declared
+        };
         if self.has_propagated_type(file, hir[d].init) {
             return declared;
         }
@@ -1091,6 +1097,18 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn returned_forced_cast_operand(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         const MAX_CALLS: u32 = 4;
         self.forced_cast_operand_through_calls(file, e, MAX_CALLS)
+    }
+
+    pub fn callee_returns_any(&mut self, file: FileId, e: ExprId) -> bool {
+        let Some((of, func, _)) = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)) else { return false };
+        let Some((of, func)) = self.implementation_for(of, func) else { return false };
+        if self.is_untyped_file(of) || !self.is_compiled(of) {
+            return false;
+        }
+        self.returned_values(of, func).into_iter().filter(|returned| returned.is_some()).any(|returned| {
+            let produced = self.type_of_expr(of, returned);
+            self.is_any_like(produced)
+        })
     }
 
     fn forced_cast_operand_through_calls(&mut self, file: FileId, e: ExprId, calls_left: u32) -> Option<TypeId> {
@@ -4861,12 +4879,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn operator_result_type(&mut self, file: FileId, e: ExprId, operands: &[ExprId], may_concatenate: bool) -> TypeId {
         let own = self.type_of_expr(file, e);
-        let checked: Vec<(TypeId, bool)> = operands.iter().map(|&operand| self.checked_type_of(file, operand)).collect();
-        let held: Vec<TypeId> = checked.iter().map(|&(held, _)| held).collect();
-        let may_add_undefined = may_concatenate
-            && checked.iter().any(|&(_, may_be_undefined)| may_be_undefined)
-            && self.some_type(own, |c, part| c.is_string_like(part))
-            && !checked.iter().any(|&(held, may_be_undefined)| !may_be_undefined && !self.is_uninformative(held) && self.every_type(held, |c, part| c.is_string_like(part)));
+        let held: Vec<TypeId> = operands.iter().map(|&operand| self.checked_type_of(file, operand).0).collect();
+        let steps_of_asker = std::mem::take(&mut self.aot.storage.string_proof_steps);
+        let may_add_undefined = may_concatenate && self.some_type(own, |c, part| c.is_string_like(part)) && !operands.iter().any(|&operand| self.is_certainly_a_string(file, operand, &mut Vec::new()));
+        self.aot.storage.string_proof_steps = steps_of_asker;
         let own = if may_add_undefined { self.union(&[own, TypeId::NUMBER]) } else { own };
         if operands.iter().zip(&held).all(|(&operand, &held)| !self.is_uninformative(held) && (held == self.type_of_expr(file, operand) || self.is_asserted_as_operand(file, operand, held))) {
             return own;
@@ -4882,6 +4898,126 @@ impl<'p, 's> Checker<'p, 's> {
             parts.push(TypeId::BIGINT);
         }
         self.union(&parts)
+    }
+
+    fn is_certainly_a_string(&mut self, file: FileId, e: ExprId, assumed: &mut Vec<Sym>) -> bool {
+        self.aot.storage.string_proof_steps += 1;
+        if self.aot.storage.string_proof_steps > 100 {
+            return false;
+        }
+        if let Some(produced) = self.files().result_operand(file, e) {
+            return self.is_certainly_a_string(file, produced, assumed);
+        }
+        let kinds = self.result_kinds_of(file, e);
+        if kinds != super::kind::NOTHING && kinds & !super::kind::STRING == 0 {
+            return true;
+        }
+        match self.hir(file)[e].kind {
+            ExprKind::String(_) | ExprKind::Template { .. } | ExprKind::Unary { op: UnOp::Typeof, .. } => true,
+            ExprKind::As { expr, .. }
+            | ExprKind::Satisfies { expr, .. }
+            | ExprKind::AsConst(expr)
+            | ExprKind::NonNull(expr)
+            | ExprKind::Binary { op: BinOp::Comma, right: expr, .. }
+            | ExprKind::Assign { op: None, value: expr, .. } => self.is_certainly_a_string(file, expr, assumed),
+            ExprKind::Binary { op: BinOp::Add, left, right } | ExprKind::Assign { op: Some(BinOp::Add), target: left, value: right } => {
+                self.is_certainly_a_string(file, left, assumed) || self.is_certainly_a_string(file, right, assumed)
+            }
+            ExprKind::Cond { yes: left, no: right, .. } | ExprKind::Binary { op: BinOp::And, left, right } => {
+                self.is_certainly_a_string(file, left, assumed) && self.is_certainly_a_string(file, right, assumed)
+            }
+            ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, right } | ExprKind::Assign { op: Some(BinOp::Or | BinOp::Nullish), target: left, value: right } => {
+                if !self.is_certainly_a_string(file, right, assumed) {
+                    return false;
+                }
+                if self.is_certainly_a_string(file, left, assumed) {
+                    return true;
+                }
+                let held = self.checked_type_of(file, left).0;
+                !self.is_uninformative(held) && self.every_type(held, |c, part| c.is_string_like(part) || c.is_nullish(part))
+            }
+            ExprKind::Ident(name) => {
+                let Some(sym) = self.resolved_symbol_for(file, e, name) else { return false };
+                if assumed.contains(&sym) {
+                    return true;
+                }
+                if assumed.len() == 8 || self.starts_undefined(sym) {
+                    return false;
+                }
+                let Some((values, computed)) = self.stored_expressions(sym) else { return false };
+                if values.is_empty() && computed.is_empty() {
+                    return false;
+                }
+                assumed.push(sym);
+                let is_certain = values.into_iter().chain(computed).all(|stored| self.is_certainly_a_string(sym.file, stored, assumed));
+                assumed.pop();
+                is_certain
+            }
+            ExprKind::Call(call) => self.calls_builtin_that_returns_a_string(file, e, call) || self.calls_function_that_returns_strings(file, call, assumed),
+            _ => false,
+        }
+    }
+
+    fn calls_function_that_returns_strings(&mut self, file: FileId, call: CallId, assumed: &mut Vec<Sym>) -> bool {
+        let (callee, chain) = (self.hir(file)[call].callee, self.hir(file)[call].chain);
+        let ExprKind::Ident(name) = self.hir(file)[callee].kind else { return false };
+        let Some(named) = self.resolved_symbol_for(file, callee, name).filter(|_| chain == Chain::No) else { return false };
+        let Some(sym) = (if self.files().flags(named).contains(SymFlags::ALIAS) { self.files().resolve_alias(named) } else { Some(named) }) else { return false };
+        if assumed.contains(&sym) {
+            return true;
+        }
+        let (hir, bound) = (self.hir(sym.file), self.bound(sym.file));
+        let Some(symbol) = bound.symbols.get(sym.id.idx()) else { return false };
+        if assumed.len() == 8 || symbol.flags.intersects(SymFlags::MERGED | SymFlags::ASSIGNED) || !bound.assignments_to(sym.id).is_empty() || self.has_direct_eval(sym.file) {
+            return false;
+        }
+        let mut bodies = symbol.decls.iter().filter_map(|decl| match *decl {
+            Decl::Fn(func) if !matches!(hir[func].body, FnBody::None) => Some(Some(func)),
+            Decl::Fn(_) => None,
+            _ => Some(None),
+        });
+        let (Some(Some(func)), None) = (bodies.next(), bodies.next()) else { return false };
+        if hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) || matches!(hir[func].body, FnBody::Block(_)) && bound.fns[func.idx()].end != crate::bind::UNREACHABLE {
+            return false;
+        }
+        let returned = self.returned_values(sym.file, func);
+        assumed.push(sym);
+        let is_certain = !returned.is_empty() && returned.into_iter().all(|value| value.is_some() && self.is_certainly_a_string(sym.file, value, assumed));
+        assumed.pop();
+        is_certain
+    }
+
+    fn calls_builtin_that_returns_a_string(&mut self, file: FileId, e: ExprId, call: CallId) -> bool {
+        let (callee, chain) = (self.hir(file)[call].callee, self.hir(file)[call].chain);
+        let Some(sig) = self.resolved_signature(file, e).sig.filter(|_| chain == Chain::No) else { return false };
+        let Some((declared_in, _, _)) = self.sig_decl(sig) else { return false };
+        if !self.files().module(declared_in).is_lib || self.sig_return(sig) != TypeId::STRING {
+            return false;
+        }
+        match self.hir(file)[callee].kind {
+            ExprKind::Ident(name) => name == crate::atom::known::String,
+            ExprKind::Dot { obj, chain: Chain::No, .. } => {
+                let receiver = self.checked_type_of(file, obj).0;
+                !self.is_uninformative(receiver) && (self.is_array_or_tuple(receiver) || self.every_type(receiver, |c, part| c.is_string_like(part) || c.is_number_like(part)))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_assigned_a_sum_that_may_be_a_number(&mut self, file: FileId, sym: Sym, declared: TypeId) -> bool {
+        if !self.every_type(declared, |c, part| c.is_string_like(part) || c.is_nullish(part)) {
+            return false;
+        }
+        let targets: Vec<ExprId> = self.bound(file).assignments_to(sym.id).iter().map(|assignment| assignment.1).collect();
+        for target in targets {
+            if let Some(super::integers::Store::Value(stored) | super::integers::Store::Computed(stored)) = self.target_store(file, target) {
+                let produced = self.result_type_of(file, stored);
+                if self.some_type(produced, |_, part| part == TypeId::NUMBER) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn may_be_nullish_after_cast(&mut self, file: FileId, e: ExprId) -> bool {

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "../supported";
-import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, nodeExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -21,6 +21,7 @@ interface Framework {
 const frameworks = {
   "next": {
     build: ["node_modules/next/dist/bin/next", "build"],
+    isBuiltByNode: isASAN,
     binaryFiles: {
       "public/picture.png":
         "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAABEUlEQVR42u3PAUYlAABAwU9RFEVRFEVRFEVRFMXGRlEURVEURVEURdGjaClaiqIoiqIoiqIoiqIoiqIoiqIoiqKoI3SBNzeYQOCb4E9C3wl/JfKZ6Edi74m/JfGa5EtSz0k/JfOY7ENy98nfpXCbok2K1yldpXyZykWq56mdpX6axkmax2kdpX2EziG6B+nthz4GevjXxXAH/9sYa2GiiakGZuqYq2GhiqUKVspYK2HjL1t/2ClgL4+DHI6yOMngLI2LFK6SuEngLo6HGJ6ieIngLYyPEL6CCBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGfgv8AOiR8VoP+egrAAAAAElFTkSuQmCC",

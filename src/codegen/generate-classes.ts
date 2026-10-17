@@ -2392,6 +2392,8 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
             JSC::AOT::Typed::didCreateHostClassStructure(globalObject, index, init.structure);
             if (index == GeneratedLazyClassJSResponse)
                 JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::responseHostClass, init.structure);
+            if (index == GeneratedLazyClassJSRequest)
+                JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::requestHostClass, init.structure);
             if (index == GeneratedLazyClassJSRequest || index == GeneratedLazyClassJSResponse || index == GeneratedLazyClassJSBlob)
                 globalObject->lockHostClassPrototype(init.prototype);
             if (index == GeneratedLazyClassJSResponse)

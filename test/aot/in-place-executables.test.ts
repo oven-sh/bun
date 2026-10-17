@@ -116,7 +116,7 @@ console.log(import.meta.require(path.join(folder, "..", name)).kept, (await impo
   const app = join(String(dir), "app");
   const plain = await run(app, [bunExe(), "run", "./server/start.mjs"]);
   expect(plain).toEqual({
-    stdout: `true true index.html,scripts,scripts/app.js\ntrue 39 <script src="/scripts/app.js"></script> console.log(window.location)\n{ "kept":   "as it is written" } false true\n200\nwritten\nas it is written as it is written\n`,
+    stdout: `true true index.html,scripts,${join("scripts", "app.js")}\ntrue 39 <script src="/scripts/app.js"></script> console.log(window.location)\n{ "kept":   "as it is written" } false true\n200\nwritten\nas it is written as it is written\n`,
     stderr: "",
     exitCode: 0,
   });
@@ -239,7 +239,7 @@ for (const name of ["a-library", "@a-scope/library"]) {
   const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
   expect(plain).toEqual({
     stdout:
-      "the library the scoped library\nnode_modules/a-library/package.json 1.2.3 1.2.3 true\nnode_modules/@a-scope/library/package.json 4.5.6 4.5.6 true\n",
+      `the library the scoped library\n${join("node_modules", "a-library", "package.json")} 1.2.3 1.2.3 true\n${join("node_modules", "@a-scope", "library", "package.json")} 4.5.6 4.5.6 true\n`,
     stderr: "",
     exitCode: 0,
   });

@@ -72,7 +72,7 @@ parentPort!.postMessage("done");
 };
 
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }

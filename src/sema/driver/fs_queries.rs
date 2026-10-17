@@ -118,13 +118,17 @@ pub fn changed_answers(queries: &[FsQuery], hash: Hash, threads: usize) -> Vec<u
     std::thread::scope(|scope| {
         for (number, part) in queries.chunks(share).enumerate() {
             let found = &found;
-            scope.spawn(move || {
-                for (at, query) in part.iter().enumerate() {
-                    if crate::host::current_answer(query.kind, &query.path, hash) != query.answer {
-                        found.lock().push(number * share + at);
+            std::thread::Builder::new()
+                .stack_size(crate::STACK_OF_A_WORKER as usize)
+                .spawn_scoped(scope, move || {
+                    bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Revalidate"));
+                    for (at, query) in part.iter().enumerate() {
+                        if crate::host::current_answer(query.kind, &query.path, hash) != query.answer {
+                            found.lock().push(number * share + at);
+                        }
                     }
-                }
-            });
+                })
+                .expect("a thread");
         }
     });
     let mut found = std::mem::take(&mut *found.lock());

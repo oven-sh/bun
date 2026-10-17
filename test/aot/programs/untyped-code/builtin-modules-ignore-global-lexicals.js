@@ -30,7 +30,8 @@ tell("events", () => {
 });
 tell("os", () => typeof require("node:os").hostname());
 tell("path", () => require("node:path").resolve("x").length > 1);
-tell("child_process", () => require("node:child_process").spawnSync("/bin/echo", ["hi"]).stdout.toString().trim());
+const echo = require("node:os").platform() === "win32" ? ["cmd.exe", ["/c", "echo hi"]] : ["/bin/echo", ["hi"]];
+tell("child_process", () => require("node:child_process").spawnSync(echo[0], echo[1]).stdout.toString().trim());
 tell("timers", () => {
   cancel(require("node:timers").setTimeout(() => {}, 1));
   return "set";

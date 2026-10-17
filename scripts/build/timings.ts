@@ -830,6 +830,7 @@ const ruleLane: Record<RuleName, Lane> = {
   dsymutil: "link and checks",
   duplicate_symbols: "link and checks",
   link: "link and checks",
+  link_with_islands: "link and checks",
   shim_verify: "link and checks",
   smoke_test: "link and checks",
   strip: "link and checks",

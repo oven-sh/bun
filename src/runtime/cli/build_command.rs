@@ -1257,6 +1257,11 @@ impl BuildCommand {
                     bun_core::pretty!("  <r><yellow>{} compiled untyped<r>", compiled_untyped);
                 }
 
+                let bytes_left_out = bun_standalone_module_graph::StandaloneModuleGraph::bytes_left_out();
+                if bytes_left_out > 0 {
+                    bun_core::pretty!("  <r><d>{:.1} MB of the runtime left out<r>", bytes_left_out as f64 / 1e6);
+                }
+
                 if is_cross_compile {
                     bun_core::pretty!(" <r><d>{}<r>\n", compile_target);
                 } else {

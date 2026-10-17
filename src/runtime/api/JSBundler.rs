@@ -374,6 +374,14 @@ pub(crate) mod js_bundler {
                 this.executable_path.append_slice_exact(slice.slice())?;
             }
 
+            if let Some(trim_runtime) =
+                object.get_own(global_this, &BunString::static_("trimRuntime"))?
+            {
+                bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(
+                    trim_runtime.to_boolean(),
+                );
+            }
+
             if let Some(windows) = object.get_own_truthy(global_this, "windows")? {
                 if !windows.is_object() {
                     return Err(global_this

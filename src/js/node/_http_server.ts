@@ -165,7 +165,7 @@ function setCloseCallback(self, callback) {
 }
 
 function assignSocketInternal(self, socket) {
-  if (socket._httpMessage) {
+  if ($unlikely(socket._httpMessage)) {
     throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = self;

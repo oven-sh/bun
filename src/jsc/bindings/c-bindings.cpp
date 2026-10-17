@@ -826,6 +826,7 @@ extern "C" void bun_initialize_process()
     }
 
     _setmode(2, _O_BINARY);
+    _set_fmode(_O_BINARY);
 
     // add ctrl+c handler on windows
     Bun__setCTRLHandler(1);
@@ -1202,6 +1203,31 @@ struct BlobHeader {
     uint8_t data[];
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
+
+#if !OS(WINDOWS)
+
+extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
+
+extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
+{
+    const char* description = Bun__trimmedFeatures;
+    for (uint32_t feature = door & 15; feature--;)
+        description += strlen(description) + 1;
+    static constexpr char before[] = "error: this executable was built without ";
+    static constexpr char after[] = ", and the program has just asked for it. That is a bug in bun build --compile: please report it, with this number: ";
+    char digits[8];
+    size_t count = 0;
+    for (uint32_t number = door >> 4; number || !count; number /= 10)
+        digits[sizeof(digits) - ++count] = static_cast<char>('0' + number % 10);
+    (void)!write(STDERR_FILENO, before, sizeof(before) - 1);
+    (void)!write(STDERR_FILENO, description, strlen(description));
+    (void)!write(STDERR_FILENO, after, sizeof(after) - 1);
+    (void)!write(STDERR_FILENO, digits + sizeof(digits) - count, count);
+    (void)!write(STDERR_FILENO, "\n", 1);
+    _exit(70);
+}
+
+#endif
 
 #if OS(DARWIN)
 

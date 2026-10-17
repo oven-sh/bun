@@ -1,3 +1,0 @@
-null as string, + 1: TypeError
-undefined as string, + 1: TypeError
-after

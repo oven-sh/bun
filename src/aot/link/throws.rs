@@ -1394,7 +1394,7 @@ impl<'a> Flow<'a> {
             &Op::PropHas { obj, name } if self.builtin_holder(index, obj).is_some_and(|holder| holder.has_property(self.program.strs.get(name))) => (self.common.yes, 0),
             &Op::PropHas { obj, name } if self.builtin_holder(index, obj).is_some_and(|holder| !holder.has_property(self.program.strs.get(name)) && holder.known_read_result(self.program.strs.get(name)).is_some()) => (self.common.no, 0),
             Op::Relational { .. } | Op::LooseEq { .. } | Op::InstanceOf { .. } | Op::IsInstance { .. } | Op::PropHas { .. } | Op::PropDelete { .. } | Op::ElemHas { .. } | Op::ElemDelete { .. } | Op::IterHas { .. } => (self.common.boolean, 0),
-            Op::FreeSet { .. } | Op::PropSet { .. } | Op::ElemSet { .. } | Op::IterClose(_) | Op::IterCloseForThrow(_) | Op::Poll => (self.common.undefined, 0),
+            Op::FreeSet { .. } | Op::PropSet { .. } | Op::ElemSet { .. } | Op::IterClose(_) | Op::IterCloseForThrow(_) | Op::Poll | Op::UnlikelyHint => (self.common.undefined, 0),
             &Op::FreeGet { name, .. } => match self.program.strs.get(name) {
                 b"undefined" => (self.common.undefined, 0),
                 b"NaN" | b"Infinity" => (self.common.number, 0),

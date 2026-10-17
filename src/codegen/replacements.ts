@@ -10,6 +10,7 @@ export const replacements: ReplacementRule[] = [
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
+  { from: /\b__intrinsic__(?:un)?likely\(/g, toRaw: "(" },
 ];
 
 let error_i = 0;

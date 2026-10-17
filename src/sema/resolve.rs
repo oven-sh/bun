@@ -550,6 +550,7 @@ impl Options {
             every_named_root_is_own,
             loads_augmented_modules,
             relative_imports_need_no_extension,
+            emits_nothing,
             specified_use_define_for_class_fields,
         } = self;
         let _ = write!(
@@ -606,7 +607,7 @@ impl Options {
         );
         let _ = write!(
             key,
-            "{uses_engine_arithmetic:?} {uses_ecmascript_bindings:?} {undefined_properties_have_no_declaration:?} {pops_every_type_resolution:?} {resolves_js_imports_as_code_only:?} {code_roots:?} {every_named_root_is_own:?} {loads_augmented_modules:?} {relative_imports_need_no_extension:?} {specified_use_define_for_class_fields:?} "
+            "{uses_engine_arithmetic:?} {uses_ecmascript_bindings:?} {undefined_properties_have_no_declaration:?} {pops_every_type_resolution:?} {resolves_js_imports_as_code_only:?} {code_roots:?} {every_named_root_is_own:?} {loads_augmented_modules:?} {relative_imports_need_no_extension:?} {emits_nothing:?} {specified_use_define_for_class_fields:?} "
         );
     }
 
@@ -1021,6 +1022,7 @@ pub struct Options {
     pub every_named_root_is_own: bool,
     pub loads_augmented_modules: bool,
     pub relative_imports_need_no_extension: bool,
+    pub emits_nothing: bool,
     /// The root files from this one on are the files of a bundle. An import is resolved here for its types, and by the bundler for the
     /// code that runs, often to another file: `@types/react/index.d.ts` and `react/index.js`. Those of them that the program does not
     /// have anyway are loaded for whoever compiles it, see `Module::is_code_only`. `None`: there are none.
@@ -1537,6 +1539,7 @@ impl Options {
 
     /// For a program that is compiled: no declaration file comes of it, so what one could not say is no error.
     pub fn emit_nothing(&mut self) {
+        self.emits_nothing = true;
         self.composite = false;
         self.emits_declarations = false;
         self.isolated_declarations = false;
@@ -1558,6 +1561,29 @@ impl Options {
         let mut errors = std::mem::take(&mut self.errors);
         errors.retain(|&code| !self.is_removed_option_error(code));
         self.errors = errors;
+    }
+
+    pub fn is_about_output_option(code: u32, option: Option<&[u8]>) -> bool {
+        const OF_OUTPUT: [&[u8]; 13] = [
+            b"composite", b"declaration", b"declarationDir", b"declarationMap", b"emitDeclarationOnly", b"incremental", b"inlineSourceMap",
+            b"inlineSources", b"mapRoot", b"outFile", b"sourceMap", b"sourceRoot", b"tsBuildInfoFile",
+        ];
+        const OF_OUTPUT_ONCE: [&[u8]; 6] = [b"charset", b"importsNotUsedAsValues", b"noImplicitUseStrict", b"out", b"prepend", b"preserveValueImports"];
+        match code {
+            5051 | 5052 | 5053 | 5069 => option.is_some_and(|option| OF_OUTPUT.contains(&option)),
+            5023 => option.is_some_and(|option| OF_OUTPUT_ONCE.contains(&option)),
+            _ => false,
+        }
+    }
+
+    pub fn tolerate_output_options(&mut self) {
+        let is_about_output = |problem: &crate::verify::Problem| Self::is_about_output_option(problem.code, problem.args.first().map(|option| &option[..]));
+        for problem in self.problems.iter().filter(|problem| is_about_output(problem)) {
+            if let Some(at) = self.errors.iter().position(|&code| code == problem.code) {
+                self.errors.remove(at);
+            }
+        }
+        self.problems.retain(|problem| !is_about_output(problem));
     }
 
     /// For a program that is compiled. A specifier that names a module of the host is that module when the program runs, whatever
@@ -3375,9 +3401,15 @@ impl<'h> Resolver<'h> {
             return Some(real(found));
         }
         // `tryLoadModuleUsingBaseUrl`
-        let base_urls = match is_relative(spec) {
-            true => [&[][..], &[][..]],
-            false => [self.nearest_config_paths(from_dir).map_or(&[][..], |other| &other.base_url[..]), &self.options.base_url[..]],
+        let base_urls: Vec<&[u8]> = match (is_relative(spec), self.goes_by_configs_above(from_dir)) {
+            (true, _) => Vec::new(),
+            (false, false) => vec![&self.options.base_url[..]],
+            (false, true) => (self.configs_above(from_dir))
+                .filter_map(|config| match self.is_config_of_program(config) {
+                    true => Some(&self.options.base_url[..]),
+                    false => self.paths_of_config(config).map(|other| &other.base_url[..]),
+                })
+                .collect(),
         };
         for base_url in base_urls.into_iter().filter(|base_url| !base_url.is_empty()) {
             let candidate = resolve_path(base_url, spec);
@@ -3754,9 +3786,33 @@ impl<'h> Resolver<'h> {
     /// `tryLoadModuleUsingPathsIfEligible`: `tryLoadModuleUsingPaths` with `compilerOptions.paths`.
     fn through_paths(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
         let own_base = if self.options.paths_base_dir.is_empty() { &self.options.base_dir } else { &self.options.paths_base_dir };
-        self.nearest_config_paths(from_dir)
-            .and_then(|other| self.resolve_through_paths(&other.paths, &other.base_dir, spec, look))
-            .or_else(|| self.resolve_through_paths(&self.options.paths, own_base, spec, look))
+        if !self.goes_by_configs_above(from_dir) {
+            return self.resolve_through_paths(&self.options.paths, own_base, spec, look);
+        }
+        let (paths, base) = self.configs_above(from_dir).find_map(|config| {
+            let (paths, base) = match self.is_config_of_program(config) {
+                true => (&self.options.paths, own_base),
+                false => self.paths_of_config(config).map(|other| (&other.paths, &other.base_dir))?,
+            };
+            best_pattern(paths.iter(), spec).map(|_| (paths, base))
+        })?;
+        self.resolve_through_paths(paths, base, spec, look)
+    }
+
+    fn is_config_of_program(&self, config: &[u8]) -> bool {
+        dirname::<Posix>(config) == &self.options.base_dir[..]
+    }
+
+    fn goes_by_configs_above(&self, from_dir: &[u8]) -> bool {
+        self.options.uses_nearest_config_paths && !strings::contains(from_dir, b"/node_modules/")
+    }
+
+    fn configs_above<'a>(&'a self, from_dir: &[u8]) -> impl Iterator<Item = &'h [u8]> + 'a {
+        std::iter::successors(self.governing_config(from_dir), |config| {
+            let folder = dirname::<Posix>(config);
+            let parent = dirname::<Posix>(folder);
+            (parent != folder && !parent.is_empty()).then(|| self.governing_config(parent)).flatten()
+        })
     }
 
     fn resolve_through_paths(&self, paths: &Paths, base: &[u8], spec: &[u8], look: Look) -> Option<Vec<u8>> {
@@ -3793,11 +3849,7 @@ impl<'h> Resolver<'h> {
         *self.config_by_folder.insert_ref(self.keep(folder), found)
     }
 
-    fn nearest_config_paths(&self, from_dir: &[u8]) -> Option<&ConfigPaths> {
-        if !self.options.uses_nearest_config_paths || strings::contains(from_dir, b"/node_modules/") {
-            return None;
-        }
-        let config = self.governing_config(from_dir).filter(|config| dirname::<Posix>(config) != &self.options.base_dir[..])?;
+    fn paths_of_config(&self, config: &'h [u8]) -> Option<&ConfigPaths> {
         if let Some(known) = self.paths_by_config.get_ref(config) {
             return known.as_ref();
         }

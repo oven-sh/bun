@@ -33,6 +33,6 @@ constructed through any, argument left out: TypeError
 constructed through any, null: TypeError
 captured variable: TypeError
 variable in a loop: no error 2,NaN,3,
-null as string, + 1: TypeError
-undefined as string, + 1: TypeError
-null as string, + null as string: TypeError
+null as string, + 1: no error 1
+undefined as string, + 1: no error NaN
+null as string, + null as string: no error 0

@@ -26,7 +26,7 @@ test.each([[["--compile-in-place"]], [[]]])("a relative name of 100,000 letters 
   using dir = tempDir("aot-names-longer-than-a-path", files);
   const app = join(String(dir), "app");
   const plain = await run(app, [bunExe(), "run", "./main.ts"]);
-  expect({ exitCode: plain.exitCode, lines: plain.stdout.split("\n").length }).toEqual({ exitCode: 0, lines: 5 });
+  expect({ exitCode: plain.exitCode, lines: plain.stdout.split("\n").filter(line => /^(require|import|resolve|Worker):/.test(line)).length }).toEqual({ exitCode: 0, lines: 4 });
   const built = await run(app, [bunExe(), "build", "--compile", "--aot", ...flags, "./main.ts", "--outfile", "../built.exe"]);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   expect(await run(app, ["../built.exe"])).toEqual(plain);

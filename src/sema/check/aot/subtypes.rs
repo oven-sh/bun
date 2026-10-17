@@ -204,7 +204,10 @@ pub(super) struct Gathered {
     pub guards: Vec<(u32, u32)>,
     pub forced: Vec<(u32, u32)>,
     pub unverified_overload_results: Vec<(u32, u32)>,
+    pub assignable_casts: Vec<(u32, u32)>,
     pub tests: Vec<(u32, u32)>,
+    pub instantiations: Vec<Vec<u32>>,
+    pub declaration_of: Vec<u32>,
     pub vouched: Vec<(u32, Place)>,
     pub untyped_inflow_sites: Vec<(u32, Place)>,
     pub untyped_inflow_pairs: Vec<(u32, u32)>,
@@ -277,6 +280,7 @@ pub struct Subtypes {
     is_reachable_from_untyped: Vec<bool>,
     escaped_layout_types: Option<Vec<u32>>,
     relaxes_if_rejected: FxHashSet<(u32, u32)>,
+    shared_by_instantiations: FxHashSet<(u32, u32)>,
     acceptance_reasons: FxHashMap<(u32, u32), UntypedReason>,
     distinguished_from: Vec<Vec<u32>>,
     pairs: Vec<Pair>,
@@ -479,6 +483,7 @@ impl Subtypes {
             is_reachable_from_untyped: vec![false; nodes],
             escaped_layout_types: None,
             relaxes_if_rejected: FxHashSet::default(),
+            shared_by_instantiations: FxHashSet::default(),
             acceptance_reasons: FxHashMap::default(),
             distinguished_from: Vec::new(),
             pairs: Vec::new(),
@@ -1051,8 +1056,21 @@ impl Subtypes {
             self.queue.push_back(view);
         }
         if member >= self.nodes {
+            if member != self.logging_untyped_node() {
+                let kept = if member == self.nodes { self.other_layout_record_node() } else { member };
+                let casts = &self.gathered.assignable_casts;
+                for &(_, wider) in &casts[casts.partition_point(|cast| cast.0 < view)..casts.partition_point(|cast| cast.0 <= view)] {
+                    self.met.push((kept, view, wider, false));
+                }
+            }
             if member != self.other_layout_record_node() && !std::mem::replace(&mut self.is_accepting[view as usize], true) {
                 self.newly_accepting.push(view);
+            }
+            let declaration = self.gathered.declaration_of[view as usize];
+            if declaration != NONE && member != self.nodes && member != self.logging_untyped_node() && self.shared_by_instantiations.insert((declaration, member)) {
+                for &other in self.gathered.instantiations[declaration as usize].iter().filter(|&&other| other != view) {
+                    self.met.push((member, view, other, false));
+                }
             }
             return;
         }

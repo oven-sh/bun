@@ -2686,6 +2686,31 @@ impl std::io::Write for ChangedBlocksWriter<'_> {
     }
 }
 
+static TRIMS_RUNTIME: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+pub fn set_trims_runtime(trims_runtime: bool) {
+    TRIMS_RUNTIME.store(trims_runtime, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn trims_runtime() -> bool {
+    TRIMS_RUNTIME.load(core::sync::atomic::Ordering::Relaxed)
+        || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_TRIM_RUNTIME::get().unwrap_or(false)
+}
+
+static BYTES_LEFT_OUT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn bytes_left_out() -> usize {
+    BYTES_LEFT_OUT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+fn trim_runtime(executable: Vec<u8>, has_aot_image: bool) -> Result<Vec<u8>, bun_exe_islands::Error> {
+    let features: &[&[u8]] = if has_aot_image { &[b"tools", b"jit"] } else { &[b"tools"] };
+    let whole = executable.len();
+    let trimmed = bun_exe_islands::without(executable, features)?;
+    BYTES_LEFT_OUT.store(whole - trimmed.len(), core::sync::atomic::Ordering::Relaxed);
+    Ok(trimmed)
+}
+
 #[cfg(target_os = "linux")]
 static EARLY_TEMPLATE_COPY: bun_threading::Guarded<Option<(Vec<u8>, std::thread::JoinHandle<Option<Fd>>)>> = bun_threading::Guarded::new(None);
 
@@ -3195,6 +3220,15 @@ pub(crate) fn inject<'a>(
     };
     let _ = (&mut zname_owned, &mut zname);
 
+    if trims_runtime() && !matches!(target.os, CompileTargetOs::Mac | CompileTargetOs::Linux | CompileTargetOs::Freebsd) {
+        bun_core::pretty_errorln!(
+            "--compile-trim-runtime: nothing can be left out of this Bun: {}",
+            bun_exe_islands::Error::UnrecognizedExecutable
+        );
+        cleanup(zname, cloned_executable_fd);
+        return None;
+    }
+
     match target.os {
         CompileTargetOs::Mac => {
             #[cfg(not(windows))]
@@ -3212,7 +3246,20 @@ pub(crate) fn inject<'a>(
                     }
                 },
             };
-            let initialized = bun_macho::MachoFile::init(mapped_template.as_deref().unwrap_or(&input_bytes), bytes.len());
+            let trimmed = if trims_runtime() {
+                let template = mapped_template.as_deref().unwrap_or(&input_bytes).to_vec();
+                match trim_runtime(template, has_aot_image) {
+                    Ok(trimmed) => Some(trimmed),
+                    Err(e) => {
+                        bun_core::pretty_errorln!("--compile-trim-runtime: nothing can be left out of this Bun: {}", e);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                }
+            } else {
+                None
+            };
+            let initialized = bun_macho::MachoFile::init(trimmed.as_deref().or(mapped_template.as_deref()).unwrap_or(&input_bytes), bytes.len());
             #[cfg(not(windows))]
             if let Some(mapped_template) = mapped_template {
                 let _ = Syscall::munmap(mapped_template.as_mut_ptr(), mapped_template.len());
@@ -3342,6 +3389,16 @@ pub(crate) fn inject<'a>(
             #[cfg(not(windows))]
             let mut from_mapping: Option<Vec<u8>> = None;
             #[cfg(not(windows))]
+            if trims_runtime()
+                && let Some(original) = mapped_executable.take()
+            {
+                from_mapping = Some(original.to_vec());
+                let _ = Syscall::munmap(original.as_mut_ptr(), original.len());
+                if let Some(already_written) = template_contents.take() {
+                    let _ = Syscall::munmap(already_written.as_mut_ptr(), already_written.len());
+                }
+            }
+            #[cfg(not(windows))]
             if let Some(original) = mapped_executable.take() {
                 let (pointer, length) = (original.as_mut_ptr(), original.len());
                 let written = write_elf_in_pieces(&mut *original, bytes, cloned_executable_fd, template_contents.as_deref());
@@ -3378,6 +3435,19 @@ pub(crate) fn inject<'a>(
                     cleanup(zname, cloned_executable_fd);
                     return None;
                 }
+            };
+
+            let input_bytes = if trims_runtime() {
+                match trim_runtime(input_bytes, has_aot_image) {
+                    Ok(trimmed) => trimmed,
+                    Err(e) => {
+                        bun_core::pretty_errorln!("--compile-trim-runtime: nothing can be left out of this Bun: {}", e);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                }
+            } else {
+                input_bytes
             };
 
             let mut elf_file = match bun_elf::ElfFile::init(input_bytes) {

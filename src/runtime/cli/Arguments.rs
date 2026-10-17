@@ -499,6 +499,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
+            "--compile-trim-runtime           Leave the parts of Bun that no compiled program can reach out of the executable (requires --compile)"
+        ),
+        parse_param!(
             "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
@@ -2669,6 +2672,14 @@ fn parse_build_command_options(
         if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") && !args.flag(b"--compile-run") && !minifies_identifiers {
             bun_core::note!("--sourcemap has no effect with --aot: stack traces from compiled code already show the original file, line and column, and any source map that is written is empty");
         }
+    }
+
+    if args.flag(b"--compile-trim-runtime") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-trim-runtime requires --compile", ());
+            Global::crash();
+        }
+        bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(true);
     }
 
     if let Some(path) = args.option(b"--compile-executable-path") {

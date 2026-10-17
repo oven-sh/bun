@@ -55,6 +55,8 @@ static LAST_REQUEST_MS: AtomicU64 = AtomicU64::new(0);
 static PUBLIC_DECLARATIONS: Guarded<Vec<(Vec<u8>, u64, Vec<u8>)>> = Guarded::new(Vec::new());
 static STARTS_IMMEDIATELY: AtomicBool = AtomicBool::new(false);
 static HAS_BUILD_BLOCKING_ERROR: AtomicBool = AtomicBool::new(false);
+static RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
+static REFUSED_CHANGES: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
 #[cfg(unix)]
 const STOPS: &[u8] = b"what stops a build\0";
 
@@ -115,6 +117,15 @@ fn print_note(text: &str) {
     unsafe { libc::write(2, line.as_ptr().cast(), line.len() as _) };
 }
 
+#[cfg(unix)]
+const LOG_FILE_FLAGS: i32 = libc::O_CLOEXEC;
+#[cfg(unix)]
+const LOG_FILE_MODE: i32 = 0o644;
+#[cfg(windows)]
+const LOG_FILE_FLAGS: i32 = libc::O_BINARY | libc::O_NOINHERIT;
+#[cfg(windows)]
+const LOG_FILE_MODE: i32 = libc::S_IREAD | libc::S_IWRITE;
+
 fn log() -> (i32, bool) {
     static LOG: std::sync::OnceLock<(i32, bool)> = std::sync::OnceLock::new();
     *LOG.get_or_init(|| {
@@ -130,14 +141,11 @@ fn log() -> (i32, bool) {
             None => (2, false),
             Some(to) if to == c"stderr" => (2, false),
             Some(to) if to == c"off" => (-1, false),
-            #[cfg(unix)]
             // SAFETY: `path` is NUL-terminated.
-            Some(path) => match unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT | libc::O_CLOEXEC, 0o644) } {
+            Some(path) => match unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT | LOG_FILE_FLAGS, LOG_FILE_MODE) } {
                 -1 => (2, false),
                 opened => (opened, true),
             },
-            #[cfg(not(unix))]
-            Some(_) => (2, false),
         };
         (descriptor, said(c"BUN_AOT_TYPE_ERROR_LOG_FORMAT").map_or(is_file, |format| format == c"json"))
     })
@@ -1342,7 +1350,8 @@ extern "C" fn Bun__AOTAudit__waitForWholeProgramAnalysis() -> u32 {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOTAudit__installFor(global: *mut bun_jsc::JSGlobalObject) {
-    let cwd = crate::cli::check_command::working_directory();
+    let mut cwd = crate::cli::check_command::working_directory();
+    cwd.push(bun_paths::SEP);
     // SAFETY: `global` is the caller's live global object. C++ copies both texts during the call.
     unsafe { Bun__AOTAudit__install(global, HELPER.as_ptr(), HELPER.len(), cwd.as_ptr(), cwd.len()) };
 }
@@ -1407,6 +1416,14 @@ pub(crate) fn enforce() {
     bun_ast::audited::keep_directives();
 }
 
+pub(crate) fn will_run_test_file(title: &[u8]) {
+    *RUNNING_TEST_FILE.lock() = title.to_vec();
+}
+
+pub(crate) fn refused_changes() -> Vec<Vec<u8>> {
+    REFUSED_CHANGES.lock().clone()
+}
+
 pub(crate) fn is_enforcing() -> bool {
     IS_ENFORCING.load(Ordering::Acquire)
 }
@@ -1435,12 +1452,22 @@ pub(crate) extern "C" fn Bun__AOTAudit__writeRejectedChange(
     let kind = core::str::from_utf8(unsafe { core::slice::from_raw_parts(kind, kind_len) }).unwrap_or_default();
     let cwd = crate::cli::check_command::working_directory();
     let path = source_url.to_owned_slice();
-    let shown = path.strip_prefix(&cwd[..]).and_then(|rest| rest.strip_prefix(b"/")).unwrap_or(&path);
+    let inside = path.strip_prefix(&cwd[..]).and_then(|rest| rest.strip_prefix(&[bun_paths::SEP]));
+    let inside = inside.map(|inside| bun_core::strings::replace_owned(inside, &[bun_paths::SEP], b"/"));
+    let shown = inside.as_deref().unwrap_or(&path);
     let function_name = function_name.to_owned_slice();
     let function_name: &[u8] = if function_name.is_empty() { b"<anonymous>" } else { &function_name };
     let (line, column) = (line.max(0) as usize, column.max(0) as usize);
-    let id = bun_aot::audit::id_of(shown, line, column, kind, 0);
     let message = message.to_owned_slice();
+    if kind == "refused-change" {
+        let refusal = format!("{}, at {}:{line}:{column}, while {} ran", bstr::BStr::new(&message), bstr::BStr::new(shown), bstr::BStr::new(&RUNNING_TEST_FILE.lock()[..])).into_bytes();
+        let mut refused = REFUSED_CHANGES.lock();
+        if !refused.contains(&refusal) {
+            refused.push(refusal);
+        }
+        return;
+    }
+    let id = bun_aot::audit::id_of(shown, line, column, kind, 0);
     let record = if log().1 {
         let quoted = |text: &[u8]| bun_aot::audit::quoted_text(text);
         format!(

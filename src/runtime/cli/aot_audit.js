@@ -22,6 +22,7 @@
   const stringIndexOf = String.prototype.indexOf;
   const stringLastIndexOf = String.prototype.lastIndexOf;
   const stringIncludes = String.prototype.includes;
+  const separator = workingDirectory[workingDirectory.length - 1];
   const arrayIterator = Array.prototype[Symbol.iterator];
   const iterator = Symbol.iterator;
   const hasInstance = Function.prototype[Symbol.hasInstance];
@@ -339,10 +340,14 @@
       const line = lines[i];
       const open = apply(stringLastIndexOf, line, ["("]);
       let place = open >= 0 ? apply(stringSlice, line, [open + 1, -1]) : apply(stringSlice, line, [apply(stringIndexOf, line, ["at "]) + 3]);
-      if (!apply(stringIncludes, place, ["/"])) continue;
+      if (!apply(stringIncludes, place, ["/"]) && !apply(stringIncludes, place, [separator])) continue;
       if (frames++ === 0) continue;
       place = apply(stringSlice, place, [0, apply(stringLastIndexOf, place, [":"])]);
-      if (apply(stringStartsWith, place, [workingDirectory + "/"])) place = apply(stringSlice, place, [workingDirectory.length + 1]);
+      if (apply(stringStartsWith, place, [workingDirectory])) {
+        const names = apply(stringSplit, apply(stringSlice, place, [workingDirectory.length]), [separator]);
+        place = names[0];
+        for (let at = 1; at < names.length; at++) place += "/" + names[at];
+      }
       found += (found ? " < " : "") + place;
     }
     return found;

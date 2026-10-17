@@ -4447,10 +4447,12 @@ fn output_path_errors(
         if specified.is_empty() {
             common = common_directory_of(&paths, &options.current_directory, is_case_sensitive);
         } else {
-            explained.extend(explain(6059, specified, &|module, _| {
-                !contains_path(specified, module.file_name(), COMPARE_PATHS_CASE_SENSITIVE)
-                    && is_own(module)
-            }));
+            if !options.emits_nothing {
+                explained.extend(explain(6059, specified, &|module, _| {
+                    !contains_path(specified, module.file_name(), COMPARE_PATHS_CASE_SENSITIVE)
+                        && is_own(module)
+                }));
+            }
             common = Some(specified.to_vec());
         }
         if common.is_none() && !options.out_dir.is_empty() {
@@ -5598,7 +5600,7 @@ impl<'s> Files<'s> {
         for (module, &depth) in modules.iter_mut().flatten().zip(&depths) {
             module.is_from_external_library = depth > 0;
         }
-        let named_roots = options.own_roots.filter(|_| options.every_named_root_is_own).unwrap_or(usize::MAX)..options.code_roots.unwrap_or(usize::MAX);
+        let named_roots = if options.every_named_root_is_own { 0 } else { usize::MAX }..options.code_roots.unwrap_or(usize::MAX);
         let own_packages: Vec<Atom> = (starts[libs_end..roots_end].iter().zip(&root_of_start).enumerate())
             .filter_map(|(at, (start, &root))| Some((at, root, modules[start.idx()].as_ref()?)))
             .filter(|&(at, root, module)| at == 0 || named_roots.contains(&(root as usize)) && module.hir.kind != FileKind::Declaration)

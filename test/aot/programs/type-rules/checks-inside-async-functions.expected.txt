@@ -74,7 +74,7 @@ takesList nothing threw TypeError: Cannot read properties of undefined (reading 
 takesHolder nothing threw TypeError: Cannot read properties of undefined (reading 'held')
 takesFunction nothing threw TypeError: undefined is not a function
 takesTwo text nothing threw TypeError: Cannot read properties of undefined (reading 'length')
-takesTwo nothing list threw TypeError: expected string, got number NaN (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+takesTwo nothing list NaN
 aheadOfTheAwait nothing threw TypeError: Cannot read properties of undefined (reading 'length')
 behindTheAwait nothing threw TypeError: Cannot read properties of undefined (reading 'length')
 listBehindTheAwait nothing threw TypeError: Cannot read properties of undefined (reading 'length')

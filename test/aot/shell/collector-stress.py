@@ -18,6 +18,7 @@ Prints one line per program that is `same` as it is and not the same under stres
     a program that runs out of time under stress; their number is printed
     the programs in collector-stress-known.txt: they count calls into the runtime or cells of the heap, and a collection empties
     the caches that keep those numbers low
+Not run as part of `all`: the programs in collector-stress-slow.txt, which always run out of time
 """
 import os, stat, subprocess, sys, tempfile
 
@@ -42,11 +43,14 @@ if __name__ == "__main__":
     young = "--young" in arguments
     if young:
         arguments.remove("--young")
+    part, parts = 1, 1
     if "--part" in arguments:
         at = arguments.index("--part")
         part, parts = map(int, arguments[at + 1].split("/"))
         del arguments[at:at + 2]
-        arguments[arguments.index("all"):] = quick.all_programs()[part - 1::parts]
+    if "all" in arguments:
+        slow = {line.split()[0] for line in open(HERE + "/collector-stress-slow.txt") if not line.startswith("#") and ("young" if young else "full") in line.split(None, 1)[1]}
+        arguments[arguments.index("all"):] = [name for name in quick.all_programs() if name not in slow][part - 1::parts]
     if not arguments or "JSC" not in os.environ:
         sys.exit(__doc__)
     known = {line.split()[0] for line in open(HERE + "/collector-stress-known.txt") if line.strip() and not line.startswith("#")}

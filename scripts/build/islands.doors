@@ -1,0 +1,15 @@
+feature tools the Bun command line, the type checker, the linter, the formatter and the ahead-of-time compiler
+feature jit the just-in-time compilers
+door tools exit ^bun_runtime::cli::command::(exec_\w+|bun_info|bun_create|bun_getcompletes|which|tag_print_help)$
+door tools return ^Bun__AOT__hasCompiler$
+door tools return ^JSC::installImageCompiler\(\)$
+door tools exit ^__bun_runtime_start_early_analysis$
+door tools exit ^__bun_runtime_analyze_early_sources$
+door tools exit ^bun_runtime::cli::check_command::(analyze_for_build|check_for_bun_build|declarations_for_bun_build|sound_declarations_for_build|sound_files_for_build)$
+door tools exit ^bun_sema_driver::typed_packages::typed_package$
+door tools exit ^bun_runtime::cli::aot::why_cannot_be_carried$
+door tools exit ^Bun__AOTAudit__installFor$
+door tools exit ^<bun_runtime::cli::run_command::RunCommand>::check_main$
+door tools exit ^bun_runtime::cli::aot_audit::prepare$
+door tools exit ^Bun__BytecodeLinkEncoder__setTypedProgram$
+door jit return ^Bun__installCompilers$

@@ -27,4 +27,6 @@ On Linux every step except `fetch` runs in `jail.sh`: its own user, mount, proce
 
 `untyped-company.test.ts` holds one small program in the shape of Elysia, built four times: alone, with one more typed module, with that module under `// @ts-nocheck`, and with it as a `.js` file. The executable should do the same in all four. It does not yet: the untyped module takes a type check off a typed handler in another module, so those two are `test.failing`.
 
+`class-reexported-as-a-type.test.ts` holds one small program in the shape of h3, twice: a package re-exports an interface, or a class, only as a type, and the program lists the exports of a module that passes it on. With the class the executable throws while it makes that list, so that one is `test.failing`.
+
 `real-apps.test.ts` runs all steps for every project when `AOT_REAL_APPS` names a work folder (`AOT_REAL_APPS_ONLY` is a regular expression of names). It fails on a difference from TypeScript, on a build that `--aot` refuses for a reason other than a type error, and on a death by signal. It takes hours and about 40 GB, so it is skipped otherwise.

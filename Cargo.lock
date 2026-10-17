@@ -586,6 +586,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_exe_islands"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+]
+
+[[package]]
 name = "bun_format"
 version = "0.0.0"
 dependencies = [
@@ -1895,6 +1902,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_exe_format",
+ "bun_exe_islands",
  "bun_http",
  "bun_libarchive",
  "bun_opaque",

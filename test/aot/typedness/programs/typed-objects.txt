@@ -476,7 +476,7 @@ untyped-stores-into-typed-fields: 4 layouts, 0 given, 0 open, places 81 of 98, r
 untyped-subclass-fields: 2 layouts, 6 given, 2 open, places 30 of 64, reads 0 of 19
 untyped-subclass-methods: 2 layouts, 2 given, 2 open, places 46 of 84, reads 4 of 43
 untyped-subclass-prototype-changes-later: 1 layouts, 0 given, 2 open, places 40 of 79, reads 4 of 29
-value-into-union-of-twenty: 25 layouts, 0 given, 2 open, places 55 of 63, reads 48 of 52
+value-into-union-of-twenty: 25 layouts, 0 given, 3 open, places 55 of 63, reads 48 of 52
 value-kinds-from-any: 4 layouts, 14 given, 4 open, places 25 of 106, reads 12 of 35
 values-outside-literal-and-enum-types: 0 layouts, 8 given, 1 open, places 20 of 74, reads 11 of 35
 weak-map-chains-survive-marking: 3 layouts, 0 given, 0 open, places 56 of 71, reads 17 of 26

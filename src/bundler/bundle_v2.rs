@@ -9158,7 +9158,9 @@ pub mod bv2_impl {
                         continue;
                     }
                     if let Some(text) = text {
-                        self.laid.map.put(&with_query, text.into_boxed_slice()).expect("oom");
+                        let mut key = with_query.clone();
+                        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut key);
+                        self.laid.map.put(&key, text.into_boxed_slice()).expect("oom");
                     }
                     // SAFETY: the arena outlives the bundle pass.
                     path.text = unsafe { interned_slice(self.arena().alloc_slice_copy(&with_query)) };

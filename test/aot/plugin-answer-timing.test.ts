@@ -128,6 +128,15 @@ const cases: Record<string, { files: Record<string, string>; prints: string; exp
     },
     prints: "1.50\n",
   },
+  "a deeply nested file outside the bundle that may declare a module": {
+    files: {
+      "main.ts": `import { answer } from "./lib"; const n: number = answer; console.log(n);`,
+      "lib.ts": `export const answer: string = "on disk";`,
+      "nested.ts": `declare module "nothing" {}\nexport const nested = ${"[".repeat(100_000)}${"]".repeat(100_000)};`,
+      "plugin.ts": `import { delayed } from "./delayed"; export default { name: "p", setup(b: any) { b.onLoad({ filter: /lib\\.ts$/ }, () => delayed({ contents: "export const answer: number = 42;", loader: "ts" })); } };`,
+    },
+    prints: "42\n",
+  },
   "an answer that waits for every other module": {
     files: {
       "main.ts": `import { count } from "./count"; import { one } from "./one"; console.log(count, one);`,

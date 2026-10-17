@@ -1,6 +1,8 @@
 // `slice`, `substring`, `substr` and the `trim` methods inside and outside loops, on every internal representation of a string.
 // CALLS+ slicedL Substring(;|$)
 // CALLS- slicedL operationAOTTypedSubstring
+// CALLS+ slicedH Substring(;|$)
+// CALLS- slicedH operationAOTTypedSubstring
 // CALLS+ trimmed StringTrim(;|$)
 // CALLS+ trimmedStart StringTrimStart(;|$)
 // CALLS+ trimmedEnd StringTrimEnd(;|$)
@@ -57,6 +59,10 @@ const f: any = { recorded, sliced, slicedFrom, slicedOne, slicedLast, substringe
 const unseen: any = new Function("f", "return (...args) => f(...args)");
 for (const name of Object.keys(f)) f[name] = unseen(f[name]);
 const g: any = { slicedL, substringedL, substredL, trimmedL, trimmedStartL, trimmedEndL };
+export function slicedH(s: string, a: number, b: number, n: number): string { let r = ""; try { for (let k = 0; k < n; k++) r = s.slice(a, b); } catch (e) { r = "caught"; } return r; }
+export function substringedH(s: string, a: number, b: number, n: number): string { let r = ""; for (let k = 0; k < n; k++) { try { r = s.substring(a, b); } catch (e) { r = "caught"; } } return r; }
+export function slicedThenThrown(s: string, a: number, b: number): string { let r = "none"; try { for (let k = 0; k < 3; k++) { r = s.slice(a, b); if (k === 1) throw new Error(r); } } catch (e) { return r + "|" + (e as Error).message; } return r; }
+const handled: any = { slicedH, substringedH, slicedThenThrown };
 const wide = (s: string): string => ("日" + s).slice(1);
 const rope = (s: string): string => s.length < 2 ? s : s.slice(0, s.length >> 1) + s.slice(s.length >> 1);
 const deepRope = (s: string): string => { let out = ""; for (const c of s) out = out + c; return out; };
@@ -84,4 +90,5 @@ print([f.slicedInLoop(["abcd", "x", "", wide("abcd"), rope("abcd")]), f.trimmedI
 print([" ab ", "", "x", rope("  abcd  ")].map(s => JSON.stringify(f.recorded(s))).join());
 { const held: string[] = []; const base = fresh("0123456789abcdefghijklmnopqrstuvwxyz"); for (let i = 0; i < 100000; i++) held.push(i & 1 ? f.sliced(base, i % 30, i % 30 + 2 + i % 5) : f.trimmed(" " + base.slice(i % 20, i % 20 + 3 + i % 7) + i + " ")); let h = 0; for (const s of held) for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0; print(held.length + " " + h); }
 { let compared = 0, differ = 0; for (const [, make] of kinds) { for (const text of ["", "a", "ab", "abcdef", "café au lait", "日本語の", "a😀b"]) for (const a of places) for (const b of places) { compared += 3; if (f.sliced(make(text), a, b) !== g.slicedL(make(text), a, b, 1)) differ++; if (f.substringed(make(text), a, b) !== g.substringedL(make(text), a, b, 1)) differ++; if (f.substred(make(text), a, b) !== g.substredL(make(text), a, b, 1)) differ++; } for (const w of spaces) for (const v of spaces) for (const core of ["", "x", "x y", "é", "日"]) { compared += 3; const t = w + core + v; if (f.trimmed(make(t)) !== g.trimmedL(make(t), 1)) differ++; if (f.trimmedStart(make(t)) !== g.trimmedStartL(make(t), 1)) differ++; if (f.trimmedEnd(make(t)) !== g.trimmedEndL(make(t), 1)) differ++; } } print("the stubs against the code in place: " + compared + " compared, " + differ + " differ"); }
-(globalThis as any).kept = [slicedL, substringedL, substredL, trimmedL, trimmedStartL, trimmedEndL, recorded, sliced, slicedFrom, slicedOne, slicedLast, substringed, substred, slicedUntyped, trimmed, trimmedStart, trimmedEnd, trimmedUntyped, slicedInLoop, trimmedInLoop]; console.log("number");
+{ let compared = 0, differ = 0; for (const [, make] of kinds) { for (const text of ["", "a", "ab", "abcdef", "café au lait", "日本語の", "a😀b"]) for (const a of places) for (const b of places) { compared += 3; const expected = f.sliced(make(text), a, b); if (expected !== handled.slicedH(make(text), a, b, 2)) differ++; if (f.substringed(make(text), a, b) !== handled.substringedH(make(text), a, b, 2)) differ++; if (expected + "|" + expected !== handled.slicedThenThrown(make(text), a, b)) differ++; } } print("under a handler: " + compared + " compared, " + differ + " differ"); }
+(globalThis as any).kept = [slicedH, substringedH, slicedThenThrown, slicedL, substringedL, substredL, trimmedL, trimmedStartL, trimmedEndL, recorded, sliced, slicedFrom, slicedOne, slicedLast, substringed, substred, slicedUntyped, trimmed, trimmedStart, trimmedEnd, trimmedUntyped, slicedInLoop, trimmedInLoop]; console.log("number");

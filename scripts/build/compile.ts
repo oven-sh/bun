@@ -193,6 +193,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
   });
+  if (cfg.islands) {
+    assert(cfg.cxxfilt !== undefined, "islands need llvm-cxxfilt");
+    n.rule("link_with_islands", {
+      command: `${cfg.jsRuntime} ${q(islandsScript(cfg))} ${q(islandsDoors(cfg))} ${q(cfg.cxxfilt)} $out.islands -- ${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
+      description: "link $out with islands",
+      rspfile: "$out.rsp",
+      rspfile_content: "$in_newline",
+    });
+  }
 
   // ─── Static library archive ───
   n.rule("ar", {
@@ -473,7 +482,11 @@ export interface LinkOpts {
   linkerMapOutputs?: string[];
   /** Checks to run on the executable whenever it is linked (ninja validations): stamp paths of edges emitted elsewhere. */
   validations?: string[];
+  islands?: boolean;
 }
+
+const islandsScript = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.ts");
+const islandsDoors = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.doors");
 
 /**
  * Link an executable. Returns absolute path to output (with cfg.exeSuffix
@@ -506,7 +519,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 
   const node: BuildNode = {
     outputs: [absOut],
-    rule: "link",
+    rule: opts.islands && cfg.islands ? "link_with_islands" : "link",
     inputs,
     vars,
   };
@@ -516,6 +529,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
     ...(opts.implicitInputs ?? []),
+    ...(opts.islands && cfg.islands ? [islandsScript(cfg), islandsDoors(cfg)] : []),
     ...lazyInputs,
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)

@@ -3849,6 +3849,10 @@ declare module "bun" {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;
+    /**
+     * Leave the parts of Bun that no compiled program can reach out of the executable.
+     */
+    trimRuntime?: boolean;
     outfile?: string;
     /**
      * Files or directories to embed into the executable under their original

@@ -32,7 +32,7 @@ exports[`writes a date as ISO 8601 text 1`] = `
 "typed, function: 348.95 instructions (the runtime 305.30, kernel 36.05, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedDateToISOString 2, module 0.60), 298 bytes
 typed, module level: 345.35 instructions (the runtime 305.30, module 33.05, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedDateToISOString 2), 1546 bytes
 untyped, function: 381.85 instructions (the runtime 305.30, kernel 54.95, stub GetLengthByName 14, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedDateToISOString 2, module 0.60), 644 bytes
-untyped, module level: 376.10 instructions (the runtime 305.30, module 63.80, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedDateToISOString 2), 2164 bytes"
+untyped, module level: 336.07 instructions (the runtime 265.27, module 63.80, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedDateToISOString 2), 2160 bytes"
 `;
 
 exports[`writes a date with toLocaleDateString, a constant locale and constant options 1`] = `
@@ -112,7 +112,7 @@ exports[`turns a literal of a string and two numbers, written in the call itself
 "typed, function: 531.65 instructions (the runtime 412.55, kernel 71.15, elsewhere 21.35, stub PlainOperationWithInstance 10, stub PlainOperation 8, stub PlainOperation to operationAOTTypedJSONAppendInteger 2, stub PlainOperation to operationAOTTypedJSONAppendNumber 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONFinish 2, module 0.60), 659 bytes
 typed, module level: 530 instructions (the runtime 412.55, module 70.10, elsewhere 21.35, stub PlainOperationWithInstance 10, stub PlainOperation 8, stub PlainOperation to operationAOTTypedJSONAppendInteger 2, stub PlainOperation to operationAOTTypedJSONAppendNumber 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONFinish 2), 2192 bytes
 untyped, function: 650.60 instructions (the runtime 478.15, kernel 111.50, elsewhere 21.35, stub ColdPlainOperationWithoutFPRs 13, stub PlainOperationWithInstance 10, stub PlainOperation 6, stub PlainOperation to operationAOTTypedJSONAppendInteger 3, stub ColdPlainOperationWithoutFPRs to operationAOTTypedJSONAppendValue with arguments 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendValue 2, stub PlainOperationWithInstance to operationAOTTypedJSONFinish 2, stub ColdPlainOperationWithoutFPRs to operationAOTTypedJSONAppendValue 1, module 0.60), 1038 bytes
-untyped, module level: 608 instructions (the runtime 432.15, module 115.50, elsewhere 21.35, stub ColdPlainOperationWithoutFPRs 13, stub PlainOperationWithInstance 10, stub PlainOperation 6, stub PlainOperation to operationAOTTypedJSONAppendInteger 3, stub ColdPlainOperationWithoutFPRs to operationAOTTypedJSONAppendValue with arguments 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONFinish 2, stub ColdPlainOperationWithoutFPRs to operationAOTTypedJSONAppendValue 1), 2773 bytes"
+untyped, module level: 608 instructions (the runtime 432.15, module 115.50, elsewhere 21.35, stub ColdPlainOperationWithoutFPRs 13, stub PlainOperationWithInstance 10, stub PlainOperation 6, stub PlainOperation to operationAOTTypedJSONAppendInteger 3, stub ColdPlainOperationWithoutFPRs to operationAOTTypedJSONAppendValue with arguments 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONFinish 2, stub ColdPlainOperationWithoutFPRs to operationAOTTypedJSONAppendValue 1), 2769 bytes"
 `;
 
 exports[`calls a method of an instance that was given an undeclared property under a key, through a parameter of type any 1`] = `
@@ -138,7 +138,7 @@ untyped, module level: 413.20 instructions (the runtime 315.27, module 69.55, st
 
 exports[`copies parsed objects with a spread that replaces one number, then reads three fields of every copy 1`] = `
 "typed, function: 231.53 instructions (kernel 100.83, stub FrontEndTypedCloneObjectAs 93.71, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, the runtime 7.66, stub NewArrayUnderConstructionWithContiguous 2.87, stub OperationValueWithInstance to operationAOTTypedCloneObjectAs 2, elsewhere 0.34, module 0.12), 1745 bytes
-typed, module level: 234.61 instructions (module 103.79, stub FrontEndTypedCloneObjectAs 93.71, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, the runtime 7.84, stub NewArrayUnderConstructionWithContiguous 2.87, stub OperationValueWithInstance to operationAOTTypedCloneObjectAs 2, elsewhere 0.34, stub CoerceToType with arguments 0.05), 2848 bytes
+typed, module level: 233.75 instructions (module 103.83, stub FrontEndTypedCloneObjectAs 93.71, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, the runtime 7, stub NewArrayUnderConstructionWithContiguous 2.87, stub OperationValueWithInstance to operationAOTTypedCloneObjectAs 2, elsewhere 0.34), 3182 bytes
 untyped, function: 265.68 instructions (kernel 128.90, stub FrontEndTypedCloneObjectAndExtend 69, stub DefineByNameWithDirectColumn 17, stub GetLengthByName 14, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRDI 10, stub Add 8, stub NewArrayUnderConstructionWithContiguous 2.87, stub OperationValueWithInstance to operationAOTTypedCloneObjectAndExtend 2, module 0.12, the runtime -0.21), 2136 bytes
 untyped, module level: 273.51 instructions (module 106.85, stub FrontEndTypedCloneObjectAndExtend 69, stub GetByNameWithDirectColumnWithReceiverInRBX 30, stub DefineByNameWithDirectColumn 17, stub GetLengthByName 14, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInR15 10, stub Add 8, stub NewArrayUnderConstructionWithContiguous 2.87, stub OperationValueWithInstance to operationAOTTypedCloneObjectAndExtend 2, the runtime -0.21), 2789 bytes"
 `;
@@ -192,9 +192,9 @@ untyped, module level: 13.28 instructions (module 13.28), 2768 bytes"
 
 exports[`scans a string by charCodeAt to the closing quote, with a test for an escape and one for control characters 1`] = `
 "typed, function: 12.29 instructions (kernel 12.17, module 0.12), 295 bytes
-typed, module level: 12.08 instructions (module 12.08), 1878 bytes
+typed, module level: 12.08 instructions (module 12.08), 2016 bytes
 untyped, function: 16.33 instructions (kernel 16.21, module 0.12), 713 bytes
-untyped, module level: 13.14 instructions (module 13.14), 2275 bytes"
+untyped, module level: 13.14 instructions (module 13.14), 2398 bytes"
 `;
 
 exports[`sorts a copy of an array of numbers with a comparator in a small function 1`] = `
@@ -207,15 +207,15 @@ untyped, module level: 248.28 instructions (module 238.22, stub NewArrayUnderCon
 exports[`sorts a copy of an array of records by a numeric key in a small function 1`] = `
 "typed, function: 208.50 instructions (kernel 198.25, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, module 0.19), 3900 bytes
 typed, module level: 208.13 instructions (module 198.06, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 5459 bytes
-untyped, function: 421.17 instructions (kernel 301.61, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 82.66, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 25.94, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, module 0.19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.16), 9182 bytes
+untyped, function: 421.17 instructions (kernel 301.61, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 82.66, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 25.94, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, module 0.19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.16), 9122 bytes
 untyped, module level: 420.92 instructions (module 301.55, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 82.66, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 25.94, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.16), 11184 bytes"
 `;
 
 exports[`joins two strings 1`] = `
 "typed, function: 72.82 instructions (kernel 81.22, module 0.12, stub ColdOperationValue to operationAOTTypedConcat -0.01, stub ColdOperationValue to operationAOTTypedConcat with arguments -0.01, elsewhere -0.28, stub ColdOperationValue -0.30, the runtime -7.92), 689 bytes
-typed, module level: 72.74 instructions (module 81.22, stub ColdOperationValue to operationAOTTypedConcat -0.01, stub ColdOperationValue to operationAOTTypedConcat with arguments -0.01, elsewhere -0.28, stub ColdOperationValue -0.30, the runtime -7.88), 2284 bytes
+typed, module level: 73.28 instructions (module 81.23, stub ColdOperationValue to operationAOTTypedConcat -0.01, stub ColdOperationValue to operationAOTTypedConcat with arguments -0.01, elsewhere -0.28, stub ColdOperationValue -0.30, the runtime -7.34), 2437 bytes
 untyped, function: 124.45 instructions (kernel 66.39, stub Add 52, stub GetLengthByName 14, module 0.12, stub ValueAddWithFastPath -0.13, stub HelperAddStrings -0.26, elsewhere -0.28, the runtime -7.39), 710 bytes
-untyped, module level: 104.67 instructions (module 112.39, stub ColdOperationValueWithoutFPRs to operationAOTTypedConcat -0.01, stub ColdOperationValueWithoutFPRs to operationAOTTypedConcat with arguments -0.01, stub ColdOperationValueWithoutFPRs -0.14, elsewhere -0.28, the runtime -7.29), 2744 bytes"
+untyped, module level: 105.32 instructions (module 112.39, stub ColdOperationValueWithoutFPRs to operationAOTTypedConcat -0.01, stub ColdOperationValueWithoutFPRs to operationAOTTypedConcat with arguments -0.01, stub ColdOperationValueWithoutFPRs -0.14, elsewhere -0.28, the runtime -6.63), 2811 bytes"
 `;
 
 exports[`throws a new Error in a function that only a loop calls and catches it in the loop 1`] = `
@@ -286,7 +286,7 @@ untyped, module level: 5.59 instructions (module 5.59), 1958 bytes"
 
 exports[`validates an order of ten items with safeValidate<T>(); unknown keys are refused at every level 1`] = `
 "typed, function: 4324.78 instructions (validate 2788, kernel 561.60, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 300, stub AllocateTypedObject 200.60, the runtime 120.80, elsewhere 106.03, stub NewEmptyArrayWithCapacity 68.67, stub RegExpTestWithFastPath 65, stub GetByNameWithDirectColumnWithReceiverInRBX 60, stub GetLengthByName 26, stub NewEmptyArrayAtSite 11.47, stub GreaterEq 8, stub LessEq 8, module 0.60), 1953 bytes
-typed, module level: 4312.63 instructions (validate 2788, module 547.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 300, stub AllocateTypedObject 200.60, the runtime 123.10, elsewhere 106.03, stub NewEmptyArrayWithCapacity 68.67, stub RegExpTestWithFastPath 65, stub GetByNameWithDirectColumnWithReceiverInRBX 30, stub GetLengthByName 26, stub GetByNameWithDirectColumnWithReceiverInR15 20, stub NewEmptyArrayAtSite 11.47, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub GreaterEq 8, stub LessEq 8), 3576 bytes"
+typed, module level: 4310.33 instructions (validate 2788, module 547.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 300, stub AllocateTypedObject 200.60, the runtime 120.80, elsewhere 106.03, stub NewEmptyArrayWithCapacity 68.67, stub RegExpTestWithFastPath 65, stub GetByNameWithDirectColumnWithReceiverInRBX 30, stub GetLengthByName 26, stub GetByNameWithDirectColumnWithReceiverInR15 20, stub NewEmptyArrayAtSite 11.47, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub GreaterEq 8, stub LessEq 8), 3572 bytes"
 `;
 
 exports[`appends the ASCII characters of a string to a Uint8Array, under a test 1`] = `

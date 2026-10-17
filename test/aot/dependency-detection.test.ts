@@ -179,6 +179,30 @@ test.each([
   expect(checked.said).toContain(`"shapes" 1.0.0 is compiled from its typed version in .sound/shapes`);
 }, 120_000);
 
+test.each([
+  ["for a build with a define", { "process.env.NODE_ENV": "production" }, "index.d.ts"],
+  ["of a package whose declarations are in @types", {}, "../@types/shapes/index.d.ts"],
+])("bun check --aot reads a typed version %s", async (_, when, declarations) => {
+  const javascript = `export function area(side) { return side * side; }\n`;
+  using dir = tempDir("aot-dependency-typed-version", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [] } }),
+    "main.ts": `import { area } from "shapes";\nconsole.log(area(2));\n`,
+    "node_modules/shapes/package.json": JSON.stringify({ name: "shapes", version: "1.0.0", type: "module", main: "index.js" }),
+    "node_modules/shapes/index.js": javascript,
+    [`node_modules/shapes/${declarations}`]: `export declare function area(side: number): number;\n`,
+    ".sound/shapes/sound.json": JSON.stringify({ sound: 1, name: "shapes", version: "1.0.0", when, basis: {}, lay: { "index.js": createHash("sha256").update(javascript).digest("hex"), "index.sound.ts": "new" }, needs: [] }),
+    ".sound/shapes/lay/index.js": `export * from "./index.sound.ts";\n`,
+    ".sound/shapes/lay/index.sound.ts": `export function area(side: number): number { const wrong: number = "x"; return side * side; }\n`,
+  });
+  const errors = (said: string) => [...new Set([...said.matchAll(/\berror:? (TS\d+)/g)].map(match => match[1]))].sort();
+  await using building = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", join(String(dir), "out"), ...Object.entries(when).map(([name, value]) => `--define=${name}=${JSON.stringify(value)}`)], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [built] = await Promise.all([building.stderr.text(), building.exited]);
+  const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
+  expect({ build: errors(built), check: errors(checked.said) }).toEqual({ build: ["TS100021"], check: ["TS100021"] });
+  expect(checked.exitCode).toBe(1);
+}, 120_000);
+
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
   using dir = tempDir("aot-dependency-decorated", {
     "package.json": JSON.stringify({ name: "app" }),

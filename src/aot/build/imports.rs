@@ -73,9 +73,17 @@ pub(crate) fn is_builtin_specifier(specifier: &[u8]) -> bool {
 
 fn known_builtin_exports(specifier: &[u8]) -> Option<(&'static [u8], &'static [&'static [u8]])> {
     static TABLE: std::sync::OnceLock<Vec<(&'static [u8], Vec<&'static [u8]>)>> = std::sync::OnceLock::new();
-    let table = TABLE.get_or_init(|| {
-        let lines = bun_core::strings::split(include_str!("../builtin-export-names.txt").as_bytes(), b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+    let listed = |list: &'static str| -> Vec<(&'static [u8], Vec<&'static [u8]>)> {
+        let lines = bun_core::strings::split(list.as_bytes(), b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
         lines.filter_map(|line| bun_core::strings::split_once_char(line, b' ')).map(|(module, names)| (module, bun_core::strings::split(names, b" ").collect())).collect()
+    };
+    let table = TABLE.get_or_init(|| {
+        let mut table = listed(include_str!("../builtin-export-names.txt"));
+        let absent = if cfg!(windows) { listed(include_str!("../builtin-export-names-absent-on-windows.txt")) } else { Vec::new() };
+        for (module, absent) in absent {
+            table.iter_mut().filter(|known| known.0 == module).for_each(|known| known.1.retain(|name| !absent.contains(name)));
+        }
+        table
     });
     let find = |name: &[u8]| table.binary_search_by_key(&name, |module| module.0).ok();
     let found = find(specifier).or_else(|| find(&[&b"node:"[..], specifier].concat()))?;
@@ -656,9 +664,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn export_source(&self, file: FileId, name: Atom) -> ImportSource {
         match self.resolve_module_export(file, name, &mut vec![file]) {
+            ImportSource::Declaration(exported) if self.is_exported_only_as_a_type(exported) => ImportSource::Unknown,
             ImportSource::Declaration(exported) if self.is_import(exported) => self.import_source(exported),
             source => source,
         }
+    }
+
+    fn is_exported_only_as_a_type(&self, exported: Sym) -> bool {
+        self.files.flags(exported).contains(SymFlags::ALIAS)
+            && self.files.symbol_flags(exported).intersects(SymFlags::VALUE)
+            && !self.files.symbol_flags_ex(exported, true, false).intersects(SymFlags::VALUE)
     }
 
     fn resolve_module_export(&self, file: FileId, name: Atom, seen: &mut Vec<FileId>) -> ImportSource {
@@ -797,7 +812,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn add_exported_names(&self, file: FileId, is_exported_whole: bool, names: &mut Vec<Atom>, added: &mut FxHashSet<Atom>, seen: &mut Vec<FileId>) {
         let mut add = |name: Atom, exported: Sym, is_exported_whole: bool| {
             let flags = self.files.symbol_flags(exported);
-            if (flags.intersects(SymFlags::VALUE) || self.is_js_only_export(exported))
+            if (flags.intersects(SymFlags::VALUE) && !self.is_exported_only_as_a_type(exported) || self.is_js_only_export(exported))
                 && name != known::export_equals
                 && !(is_exported_whole && name == known::default)
                 && added.insert(name)

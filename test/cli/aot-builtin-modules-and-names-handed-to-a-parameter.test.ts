@@ -16,10 +16,10 @@ async function built(entry: string, text: string) {
   using dir = tempDir("names-handed-to-a-parameter", { [entry]: text });
   const cwd = String(dir);
   const plain = await run([bunExe(), "run", `./${entry}`], cwd, bunEnv);
-  const build = await run([bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", "made"], cwd, bunEnv);
+  const build = await run([bunExe(), "build", "--compile", "--aot", `./${entry}`, "--outfile", "made.exe"], cwd, bunEnv);
   expect({ entry, exitCode: build.exitCode }).toEqual({ entry, exitCode: 0 });
-  const made = await run([join(cwd, "made")], cwd, wire);
-  return { size: statSync(join(cwd, "made")).size, stdout: made.stdout, exitCode: made.exitCode, plain: plain.stdout };
+  const made = await run([join(cwd, "made.exe")], cwd, wire);
+  return { size: statSync(join(cwd, "made.exe")).size, stdout: made.stdout, exitCode: made.exitCode, plain: plain.stdout };
 }
 
 const known: Record<string, string> = {

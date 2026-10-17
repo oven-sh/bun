@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // "Cannot find module 'x'" names the file that asked for it, in the message or in its "Require stack:". Under `bun run --aot` a
@@ -51,7 +51,7 @@ test("bun run --aot names the same file as bun run", async () => {
   using dir = tempDir("module-not-found", files);
   const plain = await spawned([bunExe(), "run", "main.mjs"], String(dir));
   const aot = await spawned([bunExe(), "run", "--debug-aot", "main.mjs"], String(dir));
-  expect(plain.stdout).toContain("require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - <cwd>/lib/deep/asks.cjs");
+  expect(plain.stdout).toContain("require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - " + join("<cwd>", "lib", "deep", "asks.cjs"));
   expect(aot.stdout).toBe(plain.stdout);
   expect(aot.exitCode).toBe(0);
 });
@@ -69,9 +69,10 @@ test("bun build --compile --aot names the executable, as bun build --compile doe
   // The bundle replaces a literal `require` that it could not resolve by code that throws a plain Error without a code.
   const isComparable = (line: string) => !line.startsWith("require(literal");
   expect(outputs[1].filter(isComparable)).toEqual(outputs[0].filter(isComparable));
+  const program = isWindows ? "B:\\~BUN\\root\\program" : "/$bunfs/root/program";
   expect(outputs[1].filter(line => !isComparable(line))).toEqual([
-    "require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - /$bunfs/root/program | /$bunfs/root/program",
-    "require(literal file): ResolveMessage | MODULE_NOT_FOUND | Cannot find module './no-such-file.js' ~ Require stack: ~ - /$bunfs/root/program | /$bunfs/root/program",
+    `require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - ${program} | ${program}`,
+    `require(literal file): ResolveMessage | MODULE_NOT_FOUND | Cannot find module './no-such-file.js' ~ Require stack: ~ - ${program} | ${program}`,
   ]);
 });
 

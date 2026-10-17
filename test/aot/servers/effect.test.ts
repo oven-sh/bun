@@ -1,6 +1,7 @@
 // Opt-in test. ./effect is an HTTP API written with Effect (HttpApi, services in layers, Schema for every body, typed errors
 // that become status codes, concurrent effects, a stream), and ./effect/plain.ts answers the same routes by hand on Bun.serve.
-// Both are built with `bun build --compile --aot` and sent the requests of `effectRoutes` in ./answers.ts.
+// Both are built with `bun build --compile --aot` and sent the requests of `effectRoutes` in ./answers.ts. The Effect server is
+// built twice: from the JavaScript that the Effect packages ship, and from the TypeScript sources that they ship beside it.
 //
 //   every route        the status, the Content-Type and the exact body: once, then a few thousand times over keep-alive
 //                      connections, with the GC running continuously, and with a GC every few allocations that scribbles over
@@ -13,7 +14,7 @@
 //
 // See ./servers.test.ts for AOT_SERVERS. ./measure/measure.py measures the same servers: `--servers effect`.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, rmSync } from "fs";
+import { cpSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
@@ -37,14 +38,30 @@ if (!isRequested) console.error("SKIPPED: test/aot/servers/effect.test.ts: it in
 
 describe.skipIf(!isRequested || !!unsupported)("compile/aot/servers/effect", () => {
   const folder = String(tempDir("aot-servers-effect", {}));
-  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  const sourcesFolder = String(tempDir("aot-servers-effect-sources", {}));
+  afterAll(() => {
+    rmSync(folder, { recursive: true, force: true });
+    rmSync(sourcesFolder, { recursive: true, force: true });
+  });
 
   beforeAll(async () => {
     cpSync(join(import.meta.dir, "effect"), folder, { recursive: true });
     await installPackages(folder);
+    cpSync(join(import.meta.dir, "effect"), sourcesFolder, { recursive: true });
+    mkdirSync(join(sourcesFolder, "node_modules"));
+    for (const name of readdirSync(join(folder, "node_modules"))) {
+      const [installed, own] = [join(folder, "node_modules", name), join(sourcesFolder, "node_modules", name)];
+      if (name === "effect" || name === "@effect") cpSync(installed, own, { recursive: true, dereference: true });
+      else symlinkSync(realpathSync(installed), own);
+    }
+    expect((await spawned([bunExe(), "resolve-to-sources.ts"], sourcesFolder, bunEnv)).exitCode).toBe(0);
   }, 300_000);
 
-  describe.each(["bun", "plain"])("%s.ts", name => {
+  describe.each([
+    ["bun.ts", "bun", folder],
+    ["plain.ts", "plain", folder],
+    ["bun.ts, Effect from its TypeScript sources", "bun", sourcesFolder],
+  ])("%s", (_, name, folder) => {
     const executable = join(folder, `${name}-compiled${isWindows ? ".exe" : ""}`);
     const startCompiled = (env: Record<string, string> = {}) => startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
 

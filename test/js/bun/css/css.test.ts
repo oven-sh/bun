@@ -7997,11 +7997,19 @@ describe("css tests", () => {
       ".foo { @container scroll-state(stuck: top) { color: red } }",
       ".foo{@container scroll-state(stuck:top){&{color:red}}}",
     );
+    // An unknown feature name is kept as written, as in @media and size queries.
+    minify_test(
+      "@container scroll-state(width: 100px) { .foo { color: red } }",
+      "@container scroll-state(width:100px){.foo{color:red}}",
+    );
 
     // Query functions belong to the condition they appear in. scroll-state()
     // does not nest, style() does not take scroll-state(), and @media takes
     // neither.
     test.each([
+      ["@container scroll-state() {}", "Invalid media query"],
+      ["@container scroll-state(stuck: 100px) {}", "Invalid media query"],
+      ["@container scroll-state(stuck > top) {}", "Invalid media query"],
       ["@container scroll-state(scroll-state(scrollable: top)) {}", "Invalid media query"],
       ["@container style(scroll-state(scrollable: top)) {}", "Unexpected token: scroll-state("],
       ["@container scroll-state(style(--a: 1)) {}", "Invalid media query"],

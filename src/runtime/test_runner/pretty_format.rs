@@ -482,14 +482,7 @@ impl Tag {
                 return Ok(TagResult { tag: Tag::Class, cell: js_type });
             }
 
-            return Ok(TagResult {
-                // TODO: we print InternalFunction as Object because we have a lot of
-                // callable namespaces and printing the contents of it is better than [Function: namespace]
-                // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
-                // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
-                tag: if js_type == JSType::InternalFunction { Tag::Object } else { Tag::Function },
-                cell: js_type,
-            });
+            return Ok(TagResult { tag: Tag::Function, cell: js_type });
         }
 
         if js_type == JSType::GlobalProxy {

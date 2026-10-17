@@ -1071,7 +1071,7 @@ mod _async_tasks {
         ) -> Option<JsResult<JSValue>> {
             // Only the directory that `NodeFS::rm` refuses without `recursive` has this errno and tag.
             (!self.recursive && err.get_errno() == E::EISDIR && err.syscall == sys::Tag::rm)
-                .then(|| rm_is_directory_error(global, &err.path))
+                .then(|| rm_is_directory_error(global, &self.path))
         }
     }
     impl_fs_argument!(
@@ -9550,24 +9550,29 @@ fn rm_target_is_directory(path: &ZStr, unlink_errno: E) -> bool {
 }
 
 /// Node's ERR_FS_EISDIR for `rm`, with the properties `fsEisdirError` in `internal/fs/cp-sync.ts` sets.
-fn rm_is_directory_error(global: &JSGlobalObject, path: &[u8]) -> JsResult<JSValue> {
+fn rm_is_directory_error(global: &JSGlobalObject, target: &PathLike) -> JsResult<JSValue> {
     let error = global
         .err(
             bun_jsc::ErrorCode::ERR_FS_EISDIR,
             format_args!(
                 "Path is a directory: rm returned EISDIR (is a directory) {}",
-                ::bstr::BStr::new(path)
+                ::bstr::BStr::new(target.slice())
             ),
         )
         .to_js();
     let text = |text: &'static str| BunString::static_(text).to_js(global);
-    let path = bun_jsc::bun_string_jsc::create_utf8_for_js(global, path)?;
+    let path = bun_jsc::bun_string_jsc::create_utf8_for_js(global, target.slice())?;
     let syscall = text("rm")?;
     let errno = JSValue::js_number_from_int32(SystemErrno::EISDIR as i32);
     let info = JSValue::create_empty_object(global, 5);
     info.put(global, b"code", text("EISDIR")?);
     info.put(global, b"message", text("is a directory")?);
-    info.put(global, b"path", path);
+    // Node's `info` keeps the caller's Buffer. Only `error.path` is its string.
+    let info_path = match target {
+        PathLike::Buffer(buffer) => buffer.value,
+        _ => path,
+    };
+    info.put(global, b"path", info_path);
     info.put(global, b"syscall", syscall);
     info.put(global, b"errno", errno);
     error.put(global, b"name", text("SystemError")?);

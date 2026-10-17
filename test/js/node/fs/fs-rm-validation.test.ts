@@ -362,11 +362,17 @@ describe("rm without `recursive`", () => {
 
   test("reports the path of a Buffer or a file: URL as a string", async () => {
     const expected = isDirectoryError(dir);
-    assert.deepStrictEqual(await outcomes(Buffer.from(dir), undefined, ...isDirectoryErrorKeys), {
+    const buffer = Buffer.from(dir);
+    assert.deepStrictEqual(await outcomes(buffer, undefined, ...isDirectoryErrorKeys), {
       callback: expected,
       promise: expected,
       sync: expected,
     });
+    // `info` keeps the Buffer itself.
+    const picked = await outcomes(buffer, undefined, "info");
+    for (const form of ["callback", "promise", "sync"] as const) {
+      assert.strictEqual((picked[form] as any)?.info.path, buffer, form);
+    }
 
     // Node's rmSync() builds the error before it converts the URL, so its `path` is the href.
     const { callback, promise, sync } = await outcomes(pathToFileURL(dir), undefined, ...isDirectoryErrorKeys);
@@ -444,6 +450,12 @@ describe("rmdir with `recursive`", () => {
   const rmdir = fs.rmdir as Function;
   const rmdirSync = fs.rmdirSync as Function;
   const rmdirPromise = fs.promises.rmdir as Function;
+  // Node v24 replaces `force` before it checks the options of a recursive rmdir, so `force` has no row here.
+  const invalidRecursiveOptions = invalidOptions.flatMap(([label, invalid, expected]) => {
+    if (typeof invalid !== "object" || invalid === null || "force" in invalid) return [];
+    const options = { recursive: true, ...invalid };
+    return options.recursive ? [[label, options, expected] as const] : [];
+  });
 
   test("fs.rmdir() throws for an invalid path and does not call the callback", async () => {
     const { calls, callback } = recorder();
@@ -460,10 +472,8 @@ describe("rmdir with `recursive`", () => {
 
   test("fs.rmdir() throws for invalid options and does not call the callback", async () => {
     const { calls, callback } = recorder();
-    for (const [label, invalid, expected] of invalidOptions) {
-      if (typeof invalid !== "object" || invalid === null) continue;
-      const options = { recursive: true, ...invalid };
-      if (!options.recursive) continue;
+    assert.notStrictEqual(invalidRecursiveOptions.length, 0);
+    for (const [label, options, expected] of invalidRecursiveOptions) {
       for (const target of [missing, dir]) {
         assert.throws(
           () => rmdir(target, options, callback),
@@ -483,10 +493,7 @@ describe("rmdir with `recursive`", () => {
       await assert.rejects(rmdirPromise(invalid, { recursive: true }), expected, `fs.promises.rmdir(${label})`);
       assert.throws(() => rmdirSync(invalid, { recursive: true }), expected, `fs.rmdirSync(${label})`);
     }
-    for (const [label, invalid, expected] of invalidOptions) {
-      if (typeof invalid !== "object" || invalid === null) continue;
-      const options = { recursive: true, ...invalid };
-      if (!options.recursive) continue;
+    for (const [label, options, expected] of invalidRecursiveOptions) {
       const error = isBun ? expected : unsupported;
       await assert.rejects(rmdirPromise(dir, options), error, `fs.promises.rmdir(dir, ${label})`);
       assert.throws(() => rmdirSync(dir, options), error, `fs.rmdirSync(dir, ${label})`);

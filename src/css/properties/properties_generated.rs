@@ -24,6 +24,7 @@ use super::border;
 use super::border_image;
 use super::border_radius;
 use super::box_shadow;
+use super::effects;
 use super::css_modules;
 use super::display;
 use super::flex;
@@ -55,6 +56,8 @@ pub enum PropertyIdTag {
     BackgroundOrigin,
     Background,
     BoxShadow,
+    Filter,
+    BackdropFilter,
     Opacity,
     Color,
     Display,
@@ -309,6 +312,8 @@ impl PropertyIdTag {
         Some(match self {
             T::BackgroundClip => PrefixFeature::BackgroundClip,
             T::BoxShadow => PrefixFeature::BoxShadow,
+            T::Filter => PrefixFeature::Filter,
+            T::BackdropFilter => PrefixFeature::BackdropFilter,
             T::BoxSizing => PrefixFeature::BoxSizing,
             T::TextOverflow => PrefixFeature::TextOverflow,
             T::BorderTopLeftRadius => PrefixFeature::BorderTopLeftRadius,
@@ -370,6 +375,8 @@ impl PropertyIdTag {
             PropertyIdTag::BackgroundOrigin => b"background-origin",
             PropertyIdTag::Background => b"background",
             PropertyIdTag::BoxShadow => b"box-shadow",
+            PropertyIdTag::Filter => b"filter",
+            PropertyIdTag::BackdropFilter => b"backdrop-filter",
             PropertyIdTag::Opacity => b"opacity",
             PropertyIdTag::Color => b"color",
             PropertyIdTag::Display => b"display",
@@ -638,6 +645,8 @@ pub enum PropertyId {
     BackgroundOrigin,
     Background,
     BoxShadow(VendorPrefix),
+    Filter(VendorPrefix),
+    BackdropFilter(VendorPrefix),
     Opacity,
     Color,
     Display,
@@ -887,7 +896,7 @@ pub enum PropertyId {
 // `CustomPropertyName`) and all unit variants it returns `true` on tag match
 // alone. A derived `PartialEq` would compare the `CustomPropertyName` bytes,
 // diverging from the duplicate-detection semantics in `rules/style.rs`.
-// `prefix()` already returns the `VendorPrefix` payload for the 65 prefixed
+// `prefix()` already returns the `VendorPrefix` payload for the 67 prefixed
 // variants and `VendorPrefix::empty()` for every other variant (including
 // `Custom`/`All`/`Unparsed`), so `tag` + `prefix` equality is exactly that.
 impl PartialEq for PropertyId {
@@ -923,6 +932,8 @@ impl PropertyId {
             PropertyId::BackgroundOrigin => PropertyIdTag::BackgroundOrigin,
             PropertyId::Background => PropertyIdTag::Background,
             PropertyId::BoxShadow(..) => PropertyIdTag::BoxShadow,
+            PropertyId::Filter(..) => PropertyIdTag::Filter,
+            PropertyId::BackdropFilter(..) => PropertyIdTag::BackdropFilter,
             PropertyId::Opacity => PropertyIdTag::Opacity,
             PropertyId::Color => PropertyIdTag::Color,
             PropertyId::Display => PropertyIdTag::Display,
@@ -1179,12 +1190,14 @@ impl PropertyId {
     }
 
     /// Mutable reference to the stored vendor-prefix slot, if this variant
-    /// carries one. The 65 prefixed `PropertyId` variants share a single
+    /// carries one. The 67 prefixed `PropertyId` variants share a single
     /// or-pattern arm; everything else returns `None`.
     pub(crate) fn prefix_slot_mut(&mut self) -> Option<&mut VendorPrefix> {
         match self {
             PropertyId::BackgroundClip(p)
             | PropertyId::BoxShadow(p)
+            | PropertyId::Filter(p)
+            | PropertyId::BackdropFilter(p)
             | PropertyId::BoxSizing(p)
             | PropertyId::TextOverflow(p)
             | PropertyId::BorderTopLeftRadius(p)
@@ -1305,6 +1318,8 @@ impl PropertyId {
                 b"background-origin" => (VendorPrefix::NONE, |_| PropertyId::BackgroundOrigin),
                 b"background" => (VendorPrefix::NONE, |_| PropertyId::Background),
                 b"box-shadow" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxShadow),
+                b"filter" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::Filter),
+                b"backdrop-filter" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::BackdropFilter),
                 b"opacity" => (VendorPrefix::NONE, |_| PropertyId::Opacity),
                 b"color" => (VendorPrefix::NONE, |_| PropertyId::Color),
                 b"display" => (VendorPrefix::NONE, |_| PropertyId::Display),
@@ -1591,6 +1606,8 @@ pub enum Property {
     BackgroundOrigin(SmallList<background::BackgroundOrigin, 1>),
     Background(SmallList<background::Background, 1>),
     BoxShadow((SmallList<box_shadow::BoxShadow, 1>, VendorPrefix)),
+    Filter((effects::FilterList, VendorPrefix)),
+    BackdropFilter((effects::FilterList, VendorPrefix)),
     Opacity(css::css_values::alpha::AlphaValue),
     Color(css::css_values::color::CssColor),
     Display(display::Display),
@@ -1908,6 +1925,8 @@ impl Property {
             Property::BackgroundOrigin(..) => PropertyId::BackgroundOrigin,
             Property::Background(..) => PropertyId::Background,
             Property::BoxShadow(v) => PropertyId::BoxShadow(v.1),
+            Property::Filter(v) => PropertyId::Filter(v.1),
+            Property::BackdropFilter(v) => PropertyId::BackdropFilter(v.1),
             Property::Opacity(..) => PropertyId::Opacity,
             Property::Color(..) => PropertyId::Color,
             Property::Display(..) => PropertyId::Display,
@@ -2180,6 +2199,8 @@ impl Property {
             Property::BackgroundOrigin(v) => css::generic::to_css(v, dest),
             Property::Background(v) => css::generic::to_css(v, dest),
             Property::BoxShadow(v) => css::generic::to_css(&v.0, dest),
+            Property::Filter(v) => css::generic::to_css(&v.0, dest),
+            Property::BackdropFilter(v) => css::generic::to_css(&v.0, dest),
             Property::Opacity(v) => css::generic::to_css(v, dest),
             Property::Color(v) => css::generic::to_css(v, dest),
             Property::Display(v) => css::generic::to_css(v, dest),
@@ -2516,6 +2537,16 @@ impl Property {
                 if let Some(c) = parse_value::<SmallList<box_shadow::BoxShadow, 1>>(input, options)
                 {
                     return Ok(Property::BoxShadow((c, pre)));
+                }
+            }
+            PropertyId::Filter(pre) => {
+                if let Some(c) = parse_value::<effects::FilterList>(input, options) {
+                    return Ok(Property::Filter((c, pre)));
+                }
+            }
+            PropertyId::BackdropFilter(pre) => {
+                if let Some(c) = parse_value::<effects::FilterList>(input, options) {
+                    return Ok(Property::BackdropFilter((c, pre)));
                 }
             }
             PropertyId::Opacity => {
@@ -3929,6 +3960,10 @@ impl Property {
             Property::BoxShadow(v) => {
                 Property::BoxShadow((css::generic::deep_clone(&v.0, arena), v.1))
             }
+            Property::Filter(v) => Property::Filter((css::generic::deep_clone(&v.0, arena), v.1)),
+            Property::BackdropFilter(v) => {
+                Property::BackdropFilter((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::Opacity(v) => Property::Opacity(css::generic::deep_clone(v, arena)),
             Property::Color(v) => Property::Color(css::generic::deep_clone(v, arena)),
             Property::Display(v) => Property::Display(css::generic::deep_clone(v, arena)),
@@ -4512,6 +4547,12 @@ impl Property {
             }
             (Property::Background(a), Property::Background(b)) => css::generic::eql(a, b),
             (Property::BoxShadow(a), Property::BoxShadow(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::Filter(a), Property::Filter(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::BackdropFilter(a), Property::BackdropFilter(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::Opacity(a), Property::Opacity(b)) => css::generic::eql(a, b),

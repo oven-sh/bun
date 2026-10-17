@@ -68,16 +68,18 @@ pub(crate) trait S3Ext {
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
+    /// By value: reading the options runs user JS, which can take the store
+    /// out of the Blob that a borrow would point into.
     fn unlink(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
     /// See `unlink`.
     fn list_objects(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
@@ -270,7 +272,7 @@ impl S3Ext for S3 {
 
     fn unlink(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -324,7 +326,7 @@ impl S3Ext for S3 {
             Wrapper::resolve,
             bun_core::heap::into_raw(Wrapper::new(Wrapper {
                 promise,
-                store: store.clone(),
+                store,
                 global: bun_ptr::BackRef::new(cx.global()),
             }))
             .cast::<c_void>(),
@@ -336,7 +338,7 @@ impl S3Ext for S3 {
 
     fn list_objects(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
@@ -407,7 +409,7 @@ impl S3Ext for S3 {
         // `Drop` after the async callback.
         let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
             promise,
-            store: store.clone(),
+            store,
             resolved_list_options: options,
             global: bun_ptr::BackRef::new(cx.global()),
         }));

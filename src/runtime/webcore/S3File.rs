@@ -172,11 +172,12 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     let error_message = "Expected a S3 or path to delete";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
-    let store = blob.store.get().as_ref().unwrap();
-    store
-        .data
-        .as_s3()
-        .unlink(store, &global.js_thread_of_caller(callframe), options)
+    let store = blob.store.get().as_ref().unwrap().clone();
+    store.data.as_s3().unlink(
+        store.clone(),
+        &global.js_thread_of_caller(callframe),
+        options,
+    )
 }
 
 #[bun_jsc::host_fn]
@@ -463,76 +464,73 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+    /// The HEAD request behind `exists()`, `size()` and `stat()`. A file whose
+    /// store user JS took away rejects instead of reaching the S3 data.
+    fn start(
+        cx: &bun_jsc::JsThread<'_>,
+        blob: &Blob,
+        verb: &str,
+        callback: fn(s3::S3StatResult, *mut core::ffi::c_void) -> JsResult<()>,
+    ) -> JsResult<JSValue> {
+        let store = match s3_store(blob, cx.global(), verb) {
+            Ok(store) => store,
+            Err(err) => {
+                return Ok(bun_jsc::JSPromise::rejected_promise_with_caught_exception(
+                    cx.global(),
+                    err,
+                )?
+                .to_js());
+            }
+        };
+        // The task adopts the reference, and `s3_store` reads through it.
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(cx.global()),
-            store: blob.store.get().as_ref().unwrap().clone(),
+            store,
             global: bun_ptr::BackRef::new(cx.global()),
         });
         // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
         // callback below. Scoped shared access.
-        let promise = unsafe { (*this).promise.value() };
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
+        let task = unsafe { &*this };
+        let (promise, s3_store) = (task.promise.value(), task.store.data.as_s3());
         s3::stat(
-            credentials,
+            s3_store.get_credentials(),
             cx.context(),
-            path,
-            S3BlobStatTask::on_s3_exists_resolved,
+            s3_store.path(),
+            callback,
             this.cast::<core::ffi::c_void>(),
             s3_store.request_payer,
         )?;
         Ok(promise)
+    }
+
+    pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+        Self::start(cx, blob, "exists", S3BlobStatTask::on_s3_exists_resolved)
     }
 
     pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
-            store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(cx.global()),
-        });
-        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
-        // callback below. Scoped shared access.
-        let promise = unsafe { (*this).promise.value() };
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
-        s3::stat(
-            credentials,
-            cx.context(),
-            path,
-            S3BlobStatTask::on_s3_stat_resolved,
-            this.cast::<core::ffi::c_void>(),
-            s3_store.request_payer,
-        )?;
-        Ok(promise)
+        Self::start(cx, blob, "stat", S3BlobStatTask::on_s3_stat_resolved)
     }
 
     pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
-            store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(cx.global()),
-        });
-        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
-        // callback below. Scoped shared access.
-        let promise = unsafe { (*this).promise.value() };
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
-        s3::stat(
-            credentials,
-            cx.context(),
-            path,
-            S3BlobStatTask::on_s3_size_resolved,
-            this.cast::<core::ffi::c_void>(),
-            s3_store.request_payer,
-        )?;
-        Ok(promise)
+        Self::start(cx, blob, "size", S3BlobStatTask::on_s3_size_resolved)
     }
 
     // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
+}
+
+/// An owned reference to the S3 store of `blob`, for `verb`. Every S3 method
+/// takes one before it reads its options: those getters are user JS, and user
+/// JS can take the store out of the Blob (`new Response([file])`).
+fn s3_store(blob: &Blob, global: &JSGlobalObject, verb: &str) -> JsResult<RefPtr<Store>> {
+    match blob.store().cloned() {
+        Some(store) if matches!(store.data, blob::store::Data::S3(_)) => Ok(store),
+        _ => Err(global
+            .err(
+                bun_jsc::ErrorCode::INVALID_THIS,
+                format_args!("{verb} is only possible for s3:// files"),
+            )
+            .throw()),
+    }
 }
 
 // `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
@@ -547,19 +545,11 @@ pub(crate) fn get_presign_url_from(
     global: &JSGlobalObject,
     extra_options: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    if !this.is_s3() {
-        return Err(global
-            .err(
-                bun_jsc::ErrorCode::INVALID_THIS,
-                format_args!("presign is only possible for s3:// files"),
-            )
-            .throw());
-    }
-
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
 
-    let s3 = this.store.get().as_ref().unwrap().data.as_s3();
+    let store = s3_store(this, global, "presign")?;
+    let s3 = store.data.as_s3();
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options
     // is provided (via `getCredentialsWithOptions` below).

@@ -1321,10 +1321,10 @@ impl BlobExt for Blob {
 
         validate_writable_blob(global_this, self)?;
 
-        let store = self.store().expect("infallible: store present");
+        let store = self.store().expect("infallible: store present").clone();
         match &store.data {
             store::Data::S3(s3) => s3.unlink(
-                store,
+                store.clone(),
                 &global_this.js_thread_of_caller(callframe),
                 args.next_eat(),
             ),

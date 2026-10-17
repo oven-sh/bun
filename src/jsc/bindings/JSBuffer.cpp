@@ -295,7 +295,7 @@ static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject,
     return result;
 }
 
-// Takes a whole number from 0 up, stored as an int32 or as a double. The ToIndex() of the Uint8Array constructor gives the same number.
+// Takes a whole number from 0 up, stored as an int32 or as a double: ToIndex() of it is the number. isAnyInt() with asAnyInt() is the same test with more instructions for an int32.
 static ALWAYS_INLINE bool tryGetAsIndex(JSC::JSValue value, size_t& index)
 {
     if (value.isUInt32()) [[likely]] {
@@ -4041,7 +4041,7 @@ static NEVER_INLINE JSC::EncodedJSValue constructBufferFromObject(JSC::JSGlobalO
     if (isJSArray(object))
         return constructBufferFromArray(throwScope, lexicalGlobalObject, uncheckedDowncast<JSC::JSArray>(object));
 
-    // Node's reads of `length`, `buffer`, `type` and `data` run no code for this object, so they need no generic lookup.
+    // The valueOf() step above must come first. After it, Node's reads of `length`, `buffer`, `type` and `data` run no code for this object.
     if (auto* data = dataOfJSONForm(vm, object))
         return constructBufferFromArray(throwScope, lexicalGlobalObject, data);
 

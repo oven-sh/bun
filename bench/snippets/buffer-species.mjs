@@ -13,7 +13,9 @@ const growable = new SharedArrayBuffer(64, { maxByteLength: 128 });
 // The same numbers, stored as doubles.
 const [two, eight, ninetySix] = new Float64Array([2, 8, 96]);
 
-const buffer8 = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
+const array8 = [1, 2, 3, 4, 5, 6, 7, 8];
+const uint8Array100 = new Uint8Array(100);
+const buffer8 = Buffer.from(array8);
 const overResizable = Buffer.from(resizable);
 
 const viewOfFixed = new Uint8Array(arrayBuffer, 8, 16);
@@ -36,6 +38,12 @@ group("new Buffer[Symbol.species](arrayBuffer, byteOffset, length)", () => {
   bench("new FastBuffer(growable SharedArrayBuffer, 2, 8)", () => new FastBuffer(growable, 2, 8));
   bench("new FastBuffer(8)", () => new FastBuffer(8));
   bench("new FastBuffer(8), number stored as a double", () => new FastBuffer(eight));
+});
+
+group("new Buffer[Symbol.species](not a length, not an ArrayBuffer)", () => {
+  bench("new FastBuffer()", () => new FastBuffer());
+  bench("new FastBuffer(int32[8])", () => new FastBuffer(array8));
+  bench("new FastBuffer(Uint8Array(100))", () => new FastBuffer(uint8Array100));
 });
 
 group("TypedArray methods of a Buffer", () => {

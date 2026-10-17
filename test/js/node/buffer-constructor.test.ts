@@ -711,6 +711,8 @@ describe("Buffer[Symbol.species]", () => {
       () => [detachedArrayBuffer(), 0, 0],
       () => [detachedArrayBuffer(), double(0), double(0)],
       () => [-1],
+      () => [double(-1)],
+      () => [-(2 ** 31) - 1],
       () => [2 ** 53],
       () => [arrayBuffer(), 9],
       () => [arrayBuffer(), 0, 9],
@@ -798,6 +800,22 @@ describe("a valueOf() that every value of a kind reaches", () => {
       results["an array with 200 named properties calls a valueOf() that it gains"] = [before, during, all(() => array)];
     }
 
+    {
+      // Node calls valueOf() before it reads type and data.
+      const json = () => ({ type: "Buffer", data: [1, 2] });
+      const original = Object.prototype.valueOf;
+      const rows = [all(json)];
+      for (const answer of ["hi", [7, 8], 5]) {
+        Object.prototype.valueOf = function () { return this.type === "Buffer" ? answer : this; };
+        rows.push(all(json));
+      }
+      Object.defineProperty(Object.prototype, "valueOf", { get: () => original, set() {}, configurable: true });
+      rows.push(all(json));
+      Object.defineProperty(Object.prototype, "valueOf", { value: original, writable: true, configurable: true });
+      rows.push(all(json));
+      results["a Buffer that went through JSON calls a replaced Object.prototype.valueOf first"] = rows;
+    }
+
     for (const prototype of [Array.prototype, Object.prototype]) {
       const name = prototype === Array.prototype ? "Array.prototype" : "Object.prototype";
       const original = Object.getOwnPropertyDescriptor(prototype, "valueOf");
@@ -872,6 +890,14 @@ describe("a valueOf() that every value of a kind reaches", () => {
       "0102,0102,0102",
     ],
     "an array with 200 named properties calls a valueOf() that it gains": unchanged,
+    "a Buffer that went through JSON calls a replaced Object.prototype.valueOf first": [
+      "0102,0102,0102",
+      "6869,6869,6869",
+      "0708,0708,0708",
+      "0102,0102,0102",
+      "0102,0102,0102",
+      "0102,0102,0102",
+    ],
     "an array calls a valueOf() that is put on Array.prototype": unchanged,
     "an array calls a valueOf() that is put on Object.prototype": unchanged,
     "a String object calls a replaced String.prototype.valueOf": ["6869,6869,6869", "796f,796f,796f", "6869,6869,6869"],
@@ -893,14 +919,32 @@ describe("a view that only valueOf() returned", () => {
   // with it, unless the conversion still needs the view at that time.
   const script = `
     const expected = Buffer.alloc(4096, 7);
-    let wrong = 0;
-    for (let i = 0; i < 4; i++) {
-      for (const View of [Uint8Array, Uint8ClampedArray, Uint16Array]) {
-        const fresh = { valueOf() { return new View(4096).fill(7); } };
-        for (const call of forms) if (!call(fresh).equals(expected)) wrong++;
-      }
+    const views = [Uint8Array, Uint8ClampedArray, Uint16Array];
+    // One canary for each conversion. valueOf() drops it as it returns. A canary that is gone when the conversion
+    // returns was collected inside the conversion.
+    const canaries = [];
+    const refs = [];
+    for (let i = 0; i < 4 * views.length * forms.length; i++) {
+      canaries.push({});
+      refs.push(new WeakRef(canaries[i]));
     }
-    console.log(JSON.stringify({ wrong }));
+    // A WeakRef keeps its target until the job that made it ends.
+    setImmediate(() => {
+      let wrong = 0;
+      let next = 0;
+      const collectedInside = { Uint8Array: 0, Uint8ClampedArray: 0, Uint16Array: 0 };
+      for (let i = 0; i < 4; i++) {
+        for (const View of views) {
+          const fresh = { valueOf() { const view = new View(4096).fill(7); canaries[next] = 0; return view; } };
+          for (const call of forms) {
+            const buffer = call(fresh);
+            if (refs[next++].deref() === undefined) collectedInside[View.name]++;
+            if (!buffer.equals(expected)) wrong++;
+          }
+        }
+      }
+      console.log(JSON.stringify({ wrong, collectedInside }));
+    });
   `;
 
   const env: NodeJS.ProcessEnv = {};
@@ -912,17 +956,22 @@ describe("a view that only valueOf() returned", () => {
     // symbolize=0: a report with symbols takes longer than the test has.
     env.ASAN_OPTIONS = [process.env.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
   }
+  // The option makes JavaScriptCore collect at every Nth allocation that leaves its fast path. That puts a collection
+  // inside some of the conversions. With no option, no collection starts inside a conversion of this script. Which
+  // conversions get one depends on N and on the build, so the script runs with two values of N.
+  const runs = [4, 7].map(period => runChild(script, { ...env, BUN_JSC_slowPathAllocsBetweenGCs: String(period) }));
 
-  // The option makes JavaScriptCore collect at every Nth allocation that leaves its fast path. With no option, no
-  // collection starts inside a conversion of this script. Which conversions get one depends on the build, so the
-  // script runs with two values of N.
-  for (const period of [7, 8]) {
-    const result = runChild(script, { ...env, BUN_JSC_slowPathAllocsBetweenGCs: String(period) });
-
-    test(`is copied before a collection ends it (one collection for each ${period} slow allocations)`, async () => {
-      assert.deepStrictEqual(await result, { results: { wrong: 0 }, stderr: "", code: 0 });
-    });
-  }
+  test("is copied before a collection ends it", async () => {
+    let collectedInside = 0;
+    for (const run of runs) {
+      const { results, stderr, code } = (await run) as { results: any; stderr: string; code: unknown };
+      assert.deepStrictEqual({ wrong: results.wrong, stderr, code }, { wrong: 0, stderr: "", code: 0 });
+      // The conversions of these two kinds of view copy the bytes with memcpy.
+      collectedInside += results.collectedInside.Uint8Array + results.collectedInside.Uint8ClampedArray;
+    }
+    // Node.js has no such option. In Bun the checks above say nothing unless a collection ran inside a conversion.
+    if (typeof Bun !== "undefined") assert.ok(collectedInside > 0);
+  });
 });
 
 describe("Stream._uint8ArrayToBuffer", () => {

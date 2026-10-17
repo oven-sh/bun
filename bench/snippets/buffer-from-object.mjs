@@ -8,6 +8,14 @@ const json128 = json(128);
 const json1024 = json(1024);
 const json4096 = json(4096);
 
+// The same `type` and `data`, in an object that is not the plain two-property form.
+const jsonWithProperty = Object.assign(json(8), { extra: 1 });
+const jsonClassInstance = new (class {
+  type = "Buffer";
+  data = [7, 7, 7, 7, 7, 7, 7, 7];
+})();
+const jsonNullPrototype = Object.assign(Object.create(null), json(8));
+
 const stringObject = new String("short string");
 const valueOfString = {
   valueOf() {
@@ -45,6 +53,9 @@ group("Buffer.from({ type: 'Buffer', data })", () => {
   bench("Buffer.from(json[128])", () => Buffer.from(json128));
   bench("Buffer.from(json[1024])", () => Buffer.from(json1024));
   bench("Buffer.from(json[4096])", () => Buffer.from(json4096));
+  bench("Buffer.from(json[8] with another property)", () => Buffer.from(jsonWithProperty));
+  bench("Buffer.from(instance of a class with type and data)", () => Buffer.from(jsonClassInstance));
+  bench("Buffer.from(json[8] with a null prototype)", () => Buffer.from(jsonNullPrototype));
 });
 
 group("Buffer.from(object that converts to a string)", () => {

@@ -1466,6 +1466,24 @@ impl<'a> AnsiRenderer<'a> {
         } else {
             &src
         };
+        let mut without_leading_tabs = OutputBuffer {
+            list: Vec::new(),
+            oom: false,
+        };
+        let body: &[u8] = if strings::contains_char(body, b'\t') {
+            for (index, line) in strings::split(body, b"\n").enumerate() {
+                if index > 0 {
+                    without_leading_tabs.write_byte(b'\n');
+                }
+                let blanks = leading_blanks(line);
+                write_indentation(&mut without_leading_tabs, 0, &line[..blanks]);
+                without_leading_tabs.write(&line[blanks..]);
+            }
+            self.out.oom |= without_leading_tabs.oom;
+            &without_leading_tabs.list
+        } else {
+            body
+        };
 
         let top_border: &[u8] = if self.theme.colors {
             "┌─ ".as_bytes()
@@ -1525,24 +1543,11 @@ impl<'a> AnsiRenderer<'a> {
 
         // Highlight body for JS/TS/JSX/TSX; otherwise print as-is.
         let is_js = is_js_lang(self.code_lang);
-        let has_tab = strings::contains_char(body, b'\t');
-        let mut without_leading_tabs = OutputBuffer {
-            list: Vec::new(),
-            oom: false,
-        };
         let mut line_start: usize = 0;
         let mut i: usize = 0;
         while i <= body.len() {
             if i == body.len() || body[i] == b'\n' {
-                let mut line = &body[line_start..i];
-                if has_tab {
-                    let blanks = leading_blanks(line);
-                    without_leading_tabs.list.clear();
-                    write_indentation(&mut without_leading_tabs, 0, &line[..blanks]);
-                    without_leading_tabs.write(&line[blanks..]);
-                    self.out.oom |= without_leading_tabs.oom;
-                    line = &without_leading_tabs.list;
-                }
+                let line = &body[line_start..i];
                 self.write_indent();
                 if self.theme.colors {
                     self.out.write(ansi_b::DIM);

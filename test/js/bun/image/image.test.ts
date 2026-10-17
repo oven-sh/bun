@@ -653,8 +653,8 @@ describe("Bun.Image", () => {
     });
 
     test("indexed PNG preserves iCCP — quantise doesn't convert colour space", async () => {
-      // Palette entries are still in the source colour space after median
-      // cut (the quantizer operates on raw RGB numbers), so the iCCP must
+      // Palette entries are still in the source colour space after the
+      // quantizer (it operates on raw RGB numbers), so the iCCP must
       // travel with the indexed PNG or the palette gets reinterpreted as
       // sRGB. PNG spec §11.3.3.3 explicitly allows iCCP on colour-type 3.
       const src = pngWithIccp(cornersPng, fakeProfile);
@@ -1270,8 +1270,8 @@ describe("Bun.Image", () => {
     });
 
     test("png({palette:true}) emits indexed PNG that round-trips colours", async () => {
-      // 2×2 with 4 distinct, well-separated colours — median-cut at 4 slots
-      // is exact when input has ≤ slots distinct values with equal counts.
+      // 2×2 with 4 distinct, well-separated colours: an image with at most
+      // `colors` distinct colours keeps every pixel.
       const four = makePng(2, 2, (x, y) => [x ? 255 : 0, y ? 255 : 0, x === y ? 255 : 0, 255]);
       const out = await new Bun.Image(four).png({ palette: true, colors: 4 }).bytes();
       // Colour-type byte lives at IHDR[+9] = file offset 25.

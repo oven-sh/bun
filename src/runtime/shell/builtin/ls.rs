@@ -33,8 +33,6 @@ pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
     pub(crate) task_count: AtomicUsize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: usize,
-    pub(crate) output_done: usize,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly — see mkdir.rs `Exec::output_queue` for rationale.
@@ -94,8 +92,6 @@ impl Ls {
                     err: None,
                     task_count: AtomicUsize::new(task_count),
                     tasks_done: 0,
-                    output_waiting: 0,
-                    output_done: 0,
                     output_queue: std::collections::VecDeque::new(),
                 });
 
@@ -152,7 +148,7 @@ impl Ls {
                         unreachable!()
                     };
                     exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
-                        && exec.output_done >= exec.output_waiting
+                        && exec.output_queue.is_empty()
                 };
                 if done {
                     let exit_code: ExitCode = {
@@ -281,9 +277,6 @@ impl OutputTaskVTable for Ls {
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
@@ -300,20 +293,12 @@ impl OutputTaskVTable for Ls {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
@@ -329,11 +314,6 @@ impl OutputTaskVTable for Ls {
         let buf = output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
     }
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)

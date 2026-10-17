@@ -25,8 +25,6 @@ pub(crate) struct ExecState {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_done: usize,
-    pub(crate) output_waiting: usize,
     /// Index into argv where filepath args start.
     pub(crate) args_start: usize,
     pub(crate) err: Option<bun_sys::Error>,
@@ -63,8 +61,6 @@ impl Touch {
             started: false,
             tasks_count: 0,
             tasks_done: 0,
-            output_done: 0,
-            output_waiting: 0,
             args_start,
             err: None,
             output_queue: std::collections::VecDeque::new(),
@@ -81,9 +77,7 @@ impl Touch {
             State::Idle => panic!("Invalid state"),
             State::Exec(exec) => {
                 if exec.started {
-                    if exec.tasks_done >= exec.tasks_count
-                        && exec.output_done >= exec.output_waiting
-                    {
+                    if exec.tasks_done >= exec.tasks_count && exec.output_queue.is_empty() {
                         let code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
                         exec.err = None;
                         Action::Done(code)
@@ -173,9 +167,6 @@ impl OutputTaskVTable for Touch {
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
@@ -192,20 +183,12 @@ impl OutputTaskVTable for Touch {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
@@ -221,11 +204,6 @@ impl OutputTaskVTable for Touch {
         let buf = output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
     }
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)

@@ -131,7 +131,7 @@ describe.concurrent("install.sh shell config", () => {
 
   test.skipIf(!pathDir || isMacOS)("bash: a hand-written ~/.bash_profile gets the block for login shells", async () => {
     using home = tempDir("install-sh-home", {
-      ".bash_profile": "export EDITOR=vi\n",
+      ".bash_profile": "# this profile does not source ~/.bashrc\nexport EDITOR=vi\n",
       ".bashrc": 'PS1="$ "\n',
     });
     const h = String(home);

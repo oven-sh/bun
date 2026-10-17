@@ -149,6 +149,8 @@ nativePluginRules = ["@typescript-eslint", "import"]
 
 ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules don't get types.
 
+`nativePluginRules` picks which version of a plugin runs. It doesn't turn rules on or off. To do that, see [`lint.rules`](/runtime/bunfig#lint-rules).
+
 ## `prettier/prettier`
 
 `prettier/prettier` from [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is native. It compares each file with the output of [`bun fmt`](/format) and never starts Prettier.
@@ -190,4 +192,5 @@ export default [
 - **Plugins run on several threads.** Each thread imports the plugin, so module-level state is per thread, not per run.
 - **A renamed built-in plugin runs in JavaScript.** For example, `@antfu/eslint-config` registers `@typescript-eslint` as `ts`.
 - **A rule that throws ends the run** with exit code `2`. With an oxlint config, Bun reports the error for that file and continues.
+- **A report at `loc: { line: 0, column: 0 }` is at `1:1`.** `/* eslint-disable */` at the start of the file disables it, except with an ESLint or oxlint config, where neither tool lets a comment disable it. With an ESLint config, the `stylish`, `json`, and `unix` formats print `0:1`, like ESLint. With an oxlint config, a `loc` outside the file that oxlint rejects makes the rule throw, as it does in oxlint.
 - **Type-aware rules skip files that have a processor.**

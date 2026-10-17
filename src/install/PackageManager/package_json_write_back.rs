@@ -179,7 +179,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                             bun_core::fmt::quote(name),
                         ),
                     );
-                    bun_core::note!("add one of them");
+                    bun_core::note!("add only one of them");
                     Global::crash();
                 }
                 let declared_list = DependencyGroup::prop_for_behavior(declared.behavior);
@@ -221,9 +221,18 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     }
 }
 
-/// Phase 1, before bun.lock is saved. True when `overrides` got other values (a `$name` follows).
+/// How the version strings that `edit_after_resolve` wrote to package.json changed the lockfile.
+#[derive(Default)]
+pub(crate) struct Synced {
+    /// A dependency that had resolved to a registry package now has a version range that matches a
+    /// workspace, so it was resolved to that workspace instead.
+    pub(crate) links: bool,
+}
+
+/// Phase 1, before bun.lock is saved: puts the resolved versions into the in-memory copies of the
+/// edited package.json files, which `flush` writes later, and into the lockfile.
 #[inline]
-pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<bool> {
+pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<Synced> {
     if manager.pending_filtered_write.is_none()
         && manager.update_target_workspaces.is_none()
         && !manager
@@ -231,13 +240,13 @@ pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<
             .iter()
             .any(|e| e.received_requests)
     {
-        return Ok(false);
+        return Ok(Synced::default());
     }
     edit_after_resolve_slow(manager)
 }
 
 #[inline(never)]
-fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<bool> {
+fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<Synced> {
     let mut edited: Vec<EditedPackageJson> = core::mem::take(&mut manager.edited_package_jsons);
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
     let exact = manager.options.enable.exact_versions();
@@ -438,11 +447,12 @@ fn parse_edited(
     Ok(parsed)
 }
 
-/// So that the next install's differ sees no change. True when `overrides` differed.
+/// Copies the edited package.json files' dependency versions, overrides and catalogs into the
+/// lockfile, so that the next install finds no difference between the two.
 fn sync_lockfile(
     manager: &mut PackageManager,
     edited: &[EditedPackageJson],
-) -> crate::Result<bool> {
+) -> crate::Result<Synced> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
     let parsed = match parse_edited(manager, &mut scratch, edited) {
         Ok(parsed) => parsed,
@@ -474,6 +484,7 @@ fn sync_lockfile(
     if overrides_changed && !manager.options.log_level.is_silent() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     }
+    let mut links = false;
     for (i, pkg) in &parsed {
         let target_id = target_ids[*i];
         if target_id == invalid_package_id {
@@ -554,6 +565,9 @@ fn sync_lockfile(
             *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
         }
         builder.clamp();
+        for &(ti, _) in &changed {
+            links |= manager.lockfile.bind_workspace_link(row.off + ti as u32);
+        }
     }
     // `steer_used_catalogs_to_latest` ran, also when the root is not edited.
     if manager.options.do_.contains(Do::UPDATE_TO_LATEST)
@@ -576,7 +590,7 @@ fn sync_lockfile(
         *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
         builder.clamp();
     }
-    Ok(overrides_changed)
+    Ok(Synced { links })
 }
 
 fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {

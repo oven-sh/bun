@@ -5337,12 +5337,12 @@ declare module "bun" {
      * Byte offset into the file where the mapping starts.
      * @default 0
      */
-    offset?: number;
+    offset?: number | bigint;
     /**
      * Maximum number of bytes to map. Clamped to the file size
      * (minus `offset`). Defaults to mapping the rest of the file.
      */
-    size?: number;
+    size?: number | bigint;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -9233,7 +9233,7 @@ declare module "bun" {
    *
    * Like `readline()`, but without the IO.
    */
-  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
+  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number | bigint): number;
 
   interface GlobScanOptions {
     /**
@@ -10657,6 +10657,8 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+    /** Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name */
+    unresolved?: string[];
     bin?: string | Record<string, string>;
     binDir?: string;
   };
@@ -10669,6 +10671,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    hasInstallScript?: true;
     bundled?: true;
   };
 

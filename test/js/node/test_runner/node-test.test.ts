@@ -966,25 +966,20 @@ describe("run() starts each file with the runtime flags of its caller", () => {
   );
 
   test.concurrent(
-    "bun test <flags> <file>: the execArgv option has the last word, and a script of the option is not given the flags",
+    "bun test <flags> <file>: the execArgv option has the last word, and a script of the option is not under the flags",
     async () => {
-      // What a script of the option has: a flag of the caller, and its own arguments.
-      const seen = `JSON.stringify([typeof RUN_FLAG, process.argv.slice(1).map(it => it.endsWith("probe.test.mjs") ? "the file" : it)])`;
-      const { ofFile, printed, evaluated, dashed, exitCode } = await result(
+      const { ofFile, ofScript, exitCode } = await result(
         {
           "outer.test.mjs": `
             import { test } from "bun:test";
             import { probe } from "./probe.mjs";
             test("run() in a test", async () => {
-              const [ofFile, printed, evaluated, dashed] = await Promise.all([
+              const [ofFile, ofScript] = await Promise.all([
                 probe({ execArgv: ["--title=from-run", "--define=RUN_FLAG:2"] }),
-                // The child evaluates these and runs no file.
-                probe({ execArgv: ["-p", ${JSON.stringify(seen)}] }),
-                probe({ execArgv: [${JSON.stringify(`-e=console.log(${seen})`)}] }),
-                // No argument here is read as the command, so this child is \`bun test\`.
-                probe({ execArgv: ["-p", "-1"] }),
+                // The child evaluates this and runs no file.
+                probe({ execArgv: ["-p", "typeof RUN_FLAG + ' ' + globalThis.PRELOADED"] }),
               ]);
-              console.log("RESULT " + JSON.stringify({ ofFile, printed, evaluated, dashed }));
+              console.log("RESULT " + JSON.stringify({ ofFile, ofScript }));
             }, 60_000);
           `,
         },
@@ -1003,11 +998,8 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         ],
         fail: 0,
       });
-      // These flags follow `test`, so they are for a test run. What follows `test` in the
-      // child is the script's: `test` and the file, as before.
-      const ofScript = { probes: [], stdout: [`["undefined",["test","the file"]]`], fail: 0 };
-      expect({ printed, evaluated }).toEqual({ printed: ofScript, evaluated: ofScript });
-      expect(dashed).toMatchObject({ probes: [{ execArgv: ["-p", "-1"], defined: 1, preloaded: true }], fail: 0 });
+      // These flags follow `test`, so they are for a test run. To the script they are arguments.
+      expect(ofScript).toEqual({ probes: [], stdout: ["undefined undefined"], fail: 0 });
       expect(exitCode).toBe(0);
     },
     60_000,

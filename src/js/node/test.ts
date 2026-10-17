@@ -469,26 +469,19 @@ async function runOneFile(
   fileFlags ??= $newRustFunction("jest.rs", "jsNodeTestFileFlags", 1) as FileFlags;
   let [beforeTest, afterTest] = fileFlags(opts.cwd as string);
   const execArgv = opts.execArgv as string[];
-  let isTestRun = true;
   let choosesCAStore = false;
-  for (let i = 0; i < execArgv.length; i++) {
-    const arg = execArgv[i];
-    // As Command::which(): an argument that is not `-…`, or that is `-e…`, is the command in place of `test`.
-    isTestRun &&= arg[0] === "-" && arg[1] !== "e";
-    choosesCAStore ||= isCAStoreFlag(arg);
-  }
+  for (let i = 0; i < execArgv.length; i++) choosesCAStore ||= isCAStoreFlag(execArgv[i]);
   // Bun takes one CA store flag, so the one of the option is the child's.
   if (choosesCAStore) {
     beforeTest = withoutCAStoreFlags(beforeTest);
     afterTest = withoutCAStoreFlags(afterTest);
   }
-  // The flags that follow `test` are for a test run, not for a child that evaluates a script (-e, -p).
-  if (!isTestRun) afterTest = [];
   // Node's getRunArgs. After flags that follow `test`, execArgv is given again to have the last word.
   const args = [
     process.execPath,
     ...beforeTest,
     ...execArgv,
+    // If execArgv makes the child evaluate a script (-e, -p), the rest is the script's arguments.
     "test",
     ...afterTest,
     absolute,

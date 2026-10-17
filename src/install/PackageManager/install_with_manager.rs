@@ -2384,8 +2384,8 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .collect()
 }
 
-/// Whether `row` resolves to a version that the rule allows that yarn applies to it, or, if yarn
-/// applies none, the range that `row` declares.
+/// Returns true if yarn would accept the locked version of `row`: it satisfies the `resolutions`
+/// rule that yarn applies to `row`, or `row`'s own range if yarn applies no rule to it.
 fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependency = &lockfile.buffers.dependencies[row as usize];
@@ -2393,7 +2393,7 @@ fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: Packa
         version.try_npm().is_some_and(|npm| {
             let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
             npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
-                // As in `rows_outside_overrides`: these resolve to `latest`, also to a prerelease.
+                // `*` and an empty range resolve to `latest`, which can be a prerelease.
                 && (npm.version.is_empty()
                     || crate::npm::is_any_version_range(version.literal.slice(buf))
                     || npm.version.satisfies(resolved.version, buf, buf))
@@ -2413,8 +2413,9 @@ fn reresolve_rows_outside_overrides(
     root: &mut lockfile::Package,
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
-    // yarn applies a `resolutions` key that has a range only to a dependency declared with exactly
-    // that range, so a migrated yarn.lock has versions that follow that reading of the rules.
+    // yarn applies `"x@^1.0.0"` in `resolutions` only to dependencies declared as exactly `^1.0.0`.
+    // Bun also applies it to overlapping ranges like `^1.1.0`. Rows that follow yarn's rule are
+    // accepted too, so that a lockfile migrated from yarn.lock is not rejected.
     if manager.lockfile.overrides.has_scoped()
         && overrides_field(manager, root_package_json_path)
             == lockfile::override_map::Field::Resolutions

@@ -726,7 +726,7 @@ pub(crate) fn effective_version(
     version_under(lockfile, dep, applied_override(lockfile, dep_id, dep))
 }
 
-/// `effective_version` with the rule that yarn applies. See `OverrideMap::lookup_as_yarn`.
+/// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::lookup_as_yarn`).
 pub(crate) fn effective_version_as_yarn(
     lockfile: &Lockfile,
     dep_id: DependencyID,

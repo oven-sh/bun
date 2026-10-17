@@ -70,12 +70,12 @@ fn is_npm_alias(version: &dependency::Version) -> bool {
     version.tag == VersionTag::Npm && version.npm().is_alias
 }
 
-/// Which ranges a rule keyed `name@<range>` selects.
+/// How the range in a `name@<range>` key is compared with the range that a dependency declares.
 #[derive(Clone, Copy)]
 enum Selects {
-    /// Every range that overlaps with the key's, as in npm and pnpm.
+    /// The key matches if the two ranges overlap. npm and pnpm do this.
     Overlapping,
-    /// Only the key's own range, compared as text, as in yarn.
+    /// The key matches only if the two ranges are the same text. yarn does this.
     SameRange,
 }
 
@@ -233,8 +233,8 @@ impl OverrideMap {
         self.lookup_declared(lockfile, dependency_id, name_hash, declared)
     }
 
-    /// The rule that yarn applies: a key with a range only selects a dependency that declares the
-    /// same range.
+    /// Like `lookup`, but a `name@<range>` key only matches a dependency that declares exactly that
+    /// range, as in yarn.
     pub(crate) fn lookup_as_yarn(
         &self,
         lockfile: &Lockfile,

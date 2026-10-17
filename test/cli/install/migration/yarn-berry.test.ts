@@ -556,9 +556,9 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  // yarn compares the range in the key with the range that a dependent declares as text. The root's
-  // ^1.1.0 overlaps with ^1.0.0 and is another range, so yarn.lock has its own version for it.
-  test.concurrent("a name@range resolution leaves the other ranges of that name as yarn.lock has them", async () => {
+  // yarn applies `no-deps@npm:^1.0.0` only to dependencies declared as exactly `^1.0.0`. The root
+  // asks for `^1.1.0`, so yarn.lock keeps 1.1.0 for it.
+  test.concurrent("a name@range resolution only applies to dependencies that declare exactly that range", async () => {
     const { packageDir: dir } = await testRegistry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -614,8 +614,8 @@ describe("yarn berry migration", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `*` overlaps with every range. It resolves to `latest`, here a prerelease, which no range accepts.
-  test.concurrent("a name@range resolution leaves a * on that name at the prerelease that is latest", async () => {
+  // yarn does not apply the key to `*`, so yarn.lock has `latest` for it. Here `latest` is a prerelease.
+  test.concurrent("a name@range resolution does not apply to a dependency declared as *", async () => {
     const { packageDir: dir } = await testRegistry.createTestDir({
       files: {
         "package.json": JSON.stringify({
@@ -649,7 +649,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  describe("a bun.lock row that the resolution for its range does not allow", () => {
+  describe("name@range rules and a bun.lock edited by hand", () => {
     const npmEntry = (version: string) => [
       `version: ${version}`,
       `resolution: "no-deps@npm:${version}"`,
@@ -665,7 +665,7 @@ describe("yarn berry migration", () => {
       expect(exitCode).toBe(0);
     }
 
-    /** Puts no-deps@1.1.0, which every range below allows, where bun.lock has no-deps@`version`. */
+    /** Replaces no-deps@`version` in bun.lock with no-deps@1.1.0, which is inside every range used below. */
     async function lockAt110(dir: string, version: string) {
       const { packageDir: scratch } = await testRegistry.createTestDir({
         files: { "package.json": JSON.stringify({ name: "scratch", dependencies: { "no-deps": "1.1.0" } }) },
@@ -684,8 +684,8 @@ describe("yarn berry migration", () => {
       expect(exitCode).toBe(1);
     }
 
-    // Both keys overlap with the root's ^1.0.1. yarn goes by the key that has that range.
-    test.concurrent("next to a key with another range that overlaps", async () => {
+    // Both keys overlap with the root's `^1.0.1`. yarn uses the key whose range is exactly `^1.0.1`.
+    test.concurrent("of two keys that overlap, the one with the declared range is enforced", async () => {
       const { packageDir: dir } = await testRegistry.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
@@ -725,50 +725,56 @@ describe("yarn berry migration", () => {
       await expectFrozenInstallToFail(dir, "1.0.1");
     });
 
-    // `npm:^1.0.0` and `^1.0.0` are one range to yarn.
-    test.concurrent.each(["npm:^1.0.0", "^1.0.0"])("declared as %s", async range => {
-      const { packageDir: dir } = await testRegistry.createTestDir({
-        files: {
-          "package.json": JSON.stringify({
-            name: "range-resolution",
-            dependencies: { "no-deps": range },
-            resolutions: { "no-deps@npm:^1.0.0": "1.0.0" },
-          }),
-        },
-      });
-      await expectToPass(dir, "install", "--lockfile-only");
-      expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
-      await expectFrozenInstall(dir);
-
-      await lockAt110(dir, "1.0.0");
-      await expectFrozenInstallToFail(dir, "1.0.0");
-    });
-
-    // ^1.1.0 overlaps with the key's ^1.0.0 and is another range. npm and pnpm apply the rule to it, yarn does not.
-    test.concurrent.each(["overrides", "resolutions"])("in %s, with another range that overlaps", async field => {
-      const { packageDir: dir } = await testRegistry.createTestDir({
-        files: {
-          "package.json": JSON.stringify({
-            name: "range-rule",
-            dependencies: { "no-deps": "^1.1.0" },
-            [field]: { "no-deps@^1.0.0": "1.0.0" },
-          }),
-        },
-      });
-      await expectToPass(dir, "install", "--lockfile-only");
-      expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
-      await lockAt110(dir, "1.0.0");
-
-      if (field === "resolutions") {
+    // yarn treats `npm:^1.0.0` and `^1.0.0` as the same range.
+    test.concurrent.each(["npm:^1.0.0", "^1.0.0"])(
+      "the key is enforced for a dependency declared as %s",
+      async range => {
+        const { packageDir: dir } = await testRegistry.createTestDir({
+          files: {
+            "package.json": JSON.stringify({
+              name: "range-resolution",
+              dependencies: { "no-deps": range },
+              resolutions: { "no-deps@npm:^1.0.0": "1.0.0" },
+            }),
+          },
+        });
+        await expectToPass(dir, "install", "--lockfile-only");
+        expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
         await expectFrozenInstall(dir);
-      } else {
-        await expectFrozenInstallToFail(dir, "1.0.0", field);
-      }
-      await expectToPass(dir, "install", "--lockfile-only");
-      expect(lockedVersions(await bunLockOf(dir))).toEqual([
-        field === "resolutions" ? "no-deps@1.1.0" : "no-deps@1.0.0",
-      ]);
-    });
+
+        await lockAt110(dir, "1.0.0");
+        await expectFrozenInstallToFail(dir, "1.0.0");
+      },
+    );
+
+    // `^1.1.0` overlaps with the key's `^1.0.0` but is not the same range. npm and pnpm apply the rule, yarn does not.
+    test.concurrent.each(["overrides", "resolutions"])(
+      "a key in %s and a declared range that only overlaps",
+      async field => {
+        const { packageDir: dir } = await testRegistry.createTestDir({
+          files: {
+            "package.json": JSON.stringify({
+              name: "range-rule",
+              dependencies: { "no-deps": "^1.1.0" },
+              [field]: { "no-deps@^1.0.0": "1.0.0" },
+            }),
+          },
+        });
+        await expectToPass(dir, "install", "--lockfile-only");
+        expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
+        await lockAt110(dir, "1.0.0");
+
+        if (field === "resolutions") {
+          await expectFrozenInstall(dir);
+        } else {
+          await expectFrozenInstallToFail(dir, "1.0.0", field);
+        }
+        await expectToPass(dir, "install", "--lockfile-only");
+        expect(lockedVersions(await bunLockOf(dir))).toEqual([
+          field === "resolutions" ? "no-deps@1.1.0" : "no-deps@1.0.0",
+        ]);
+      },
+    );
   });
 
   test.concurrent("a parent/name resolution only rebinds that parent's edge", async () => {

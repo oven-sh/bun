@@ -137,8 +137,7 @@ struct State {
 /// A rule that has [asked for types](Host::has_asked_for_types).
 struct AskedForTypes {
     rule: Arc<Rule>,
-    /// Whether it asked on a file that does not want types, where `parserServices.program` is null as
-    /// typescript-eslint's parser gives it without a project. Such a rule asks on every file.
+    /// It asked on a file that does not want types, where `program` is null: it asks on every file.
     without_types: bool,
 }
 
@@ -240,12 +239,9 @@ impl<'e> Host<'e> {
         Host { type_aware, ..self }
     }
 
-    /// Whether the configuration of `file` asks for types, which typescript-eslint's parser then gives to a rule
-    /// as `parserServices.program`. A rule in JavaScript gets none here. On such a file `program` throws what
-    /// `getParserServices` of `@typescript-eslint/utils` throws, instead of being null as the parser gives it
-    /// without a project, so that a rule that reads it does not report what ESLint does not. Not with
-    /// `--no-type-aware`, which skips the rules that need types. Not with `--type-aware` alone: without a project
-    /// ESLint has no program either, and the rule reports what ESLint reports.
+    /// Whether the configuration of `file` asks for types, which typescript-eslint's parser gives a rule as
+    /// `parserServices.program` and a rule in JavaScript does not get here: `program` throws there. Not with
+    /// `--no-type-aware`. Not with `--type-aware` alone: without a project ESLint has no program either.
     pub fn wants_types_of(&self, file: &File) -> bool {
         self.type_aware != Some(false) && file.language().wants_types
     }
@@ -341,9 +337,8 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript, so that it does not run
-    /// on a file that [wants them](Host::wants_types_of). A rule that asked on a file without them asks on every
-    /// file, and runs on no more.
+    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript: it does not run on a file
+    /// that [wants them](Host::wants_types_of), nor on any file if it asked on one that does not.
     pub fn has_asked_for_types(&self, rule: &Arc<Rule>, wants_types: bool) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
             && (self.state.lock().asked_for_types.iter())
@@ -370,9 +365,8 @@ impl<'e> Host<'e> {
         true
     }
 
-    /// The rules that [have asked for types](Host::has_asked_for_types), by their names, and whether each ran on
-    /// no more file. The others ran on the files that do not want types. A rule that two configuration files load
-    /// is one rule here.
+    /// The rules that [have asked for types](Host::has_asked_for_types), by their names, once each, and whether
+    /// each ran on no more file. The others ran on the files that do not want types.
     pub fn rules_that_asked_for_types(&self) -> Vec<(Arc<Rule>, bool)> {
         let mut rules: Vec<(Arc<Rule>, bool)> = (self.state.lock().asked_for_types.iter())
             .map(|it| (Arc::clone(&it.rule), it.without_types))

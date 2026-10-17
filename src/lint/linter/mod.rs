@@ -727,8 +727,7 @@ impl<S: RuleSet> Linter<S> {
             let wants_types = host.wants_types_of(file);
             // Once more for each rule that asks for types.
             loop {
-                // What a rule that does not run would have reported cannot be told. Another thread may have found
-                // out since the last round.
+                // What a rule that does not run would have reported cannot be told. Another thread may know since.
                 running_js.retain(|it| {
                     let has_asked = host.has_asked_for_types(&it.configured.rule, wants_types);
                     if has_asked {

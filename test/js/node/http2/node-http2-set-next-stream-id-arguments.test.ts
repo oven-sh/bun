@@ -54,6 +54,6 @@ test(
       exitCode: 0,
     });
   },
-  // A debug build needs about 3 s to load node:http2, which is near the default timeout.
+  // On a slow machine, a debug build takes most of the default timeout to load node:http2.
   isDebug ? 30_000 : undefined,
 );

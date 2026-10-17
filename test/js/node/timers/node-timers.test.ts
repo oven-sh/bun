@@ -392,10 +392,10 @@ describe("_repeat", () => {
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "1 0\n", exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1 0\n", stderr: "", exitCode: 0 });
   });
 
   it.each(["ref'd", "unref'd"])("no timer stays armed after a self-clear by id (%s timeout)", kind => {

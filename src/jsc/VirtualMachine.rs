@@ -5095,7 +5095,7 @@ impl VirtualMachine {
 
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
-    pub(crate) fn _resolve(
+    fn _resolve(
         &mut self,
         ret: &mut ResolveFunctionResult,
         specifier: &[u8],
@@ -5112,6 +5112,7 @@ impl VirtualMachine {
         // note). Erase to `'static` to seat the result paths without threading
         // a lifetime parameter through the VM.
         let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
+        debug_assert!(!ModuleLoader::is_builtin(specifier));
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
@@ -5129,14 +5130,6 @@ impl VirtualMachine {
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
             ret.path = self.dupe_resolved_path(specifier);
-            return Ok(());
-        }
-        if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
-            specifier,
-            bun_ast::Target::Bun,
-            Default::default(),
-        ) {
-            ret.path = result.path.as_bytes();
             return Ok(());
         }
         if self.module_loader.eval_source.is_some()
@@ -5162,6 +5155,10 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        // `path?v=2` names no module, as in Node: what the cut leaves is the builtin's name, not a package's.
+        if !query_string.is_empty() && ModuleLoader::is_builtin(normalized_specifier) {
+            return Err(crate::CrateError::ModuleNotFound);
+        }
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {

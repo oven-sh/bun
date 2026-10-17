@@ -184,7 +184,6 @@ pub(crate) fn run_as_coordinator(
         files_done: 0,
         spawned_count: 0,
         live_workers: 0,
-        crashed_files: Vec::new(),
         aborted: None,
         stop_reason: None,
         last_printed_dot: false,
@@ -749,6 +748,7 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 /// codes), which the coordinator prints verbatim so output matches serial, and,
 /// when the coordinator asked for it (`--reporter`), the structured result it
 /// replays into its own reporters.
+#[inline(always)] // with two callers this and `encode_test_case` would leave the per-test path
 pub(crate) fn worker_emit_test_done(
     file_idx: u32,
     formatted_line: &[u8],
@@ -772,6 +772,7 @@ pub(crate) fn worker_emit_test_done(
     cmds.send(wf.finish());
 }
 
+#[inline(always)]
 fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
     wf.u32(t.status as u32);
     wf.u32(t.assertions);

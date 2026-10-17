@@ -1876,9 +1876,18 @@ mod tests {
     #[test]
     fn href_without_auth_keeps_the_leading_slashes_and_ends_in_one() {
         let href = |url: &[u8]| URL::parse(url).href_without_auth();
-        assert_eq!(&*href(b"http://u:p@localhost:3000"), b"http://localhost:3000/");
-        assert_eq!(&*href(b"http://u:p@localhost:3000//"), b"http://localhost:3000/");
-        assert_eq!(&*href(b"http://u:p@localhost:3000/npm"), b"http://localhost:3000/npm/");
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000"),
+            b"http://localhost:3000/"
+        );
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000//"),
+            b"http://localhost:3000/"
+        );
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000/npm"),
+            b"http://localhost:3000/npm/"
+        );
         assert_eq!(
             &*href(b"http://u:p@localhost:3000//npm/"),
             b"http://localhost:3000//npm/"
@@ -1890,7 +1899,10 @@ mod tests {
         let host = |url: &[u8]| URL::parse_s3_endpoint(url).unwrap().host_with_path;
         assert_eq!(&*host(b"https://s3.example.com/"), b"s3.example.com");
         assert_eq!(&*host(b"https://s3.example.com//"), b"s3.example.com");
-        assert_eq!(&*host(b"https://s3.example.com/prefix//"), b"s3.example.com/prefix");
+        assert_eq!(
+            &*host(b"https://s3.example.com/prefix//"),
+            b"s3.example.com/prefix"
+        );
     }
 
     #[test]

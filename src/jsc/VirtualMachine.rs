@@ -131,6 +131,26 @@ impl Default for InitOptions {
     }
 }
 
+/// What the VM runs as the program.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MainEntryPoint {
+    /// The user's file, through the `bun:main` wrapper.
+    File,
+    /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
+    Html,
+    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory.
+    Bake,
+}
+
+/// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
+/// `Bun::BuiltinEntryPoint` in `BuiltinEntryPoint.cpp`.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum BuiltinEntryPoint {
+    Html = 0,
+    Bake = 1,
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -153,7 +173,7 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
-    pub main_is_html_entrypoint: bool,
+    pub main_entry_point: MainEntryPoint,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -771,7 +791,9 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+        if !vm.transpiler.options.disable_transpilation
+            && vm.main_entry_point == MainEntryPoint::File
+        {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
             bun_core::StringView::borrow_utf8(vm.main())
@@ -3103,7 +3125,10 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
-    safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    safe fn Bun__loadBuiltinEntryPoint(
+        global: &JSGlobalObject,
+        entry_point: BuiltinEntryPoint,
+    ) -> *mut JSInternalPromise;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3209,6 +3234,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
+            addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
@@ -3488,7 +3514,7 @@ impl VirtualMachine {
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
 
-        if !self.main_is_html_entrypoint {
+        if self.main_entry_point == MainEntryPoint::File {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
                 if !(hooks.generate_entry_point)(self, watch, entry_path) {
@@ -3557,19 +3583,24 @@ impl VirtualMachine {
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
-            let promise = if !self.main_is_html_entrypoint {
-                let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?
-            } else {
+            let builtin = match self.main_entry_point {
+                MainEntryPoint::File => None,
+                MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
+                MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
+            };
+            let promise = if let Some(builtin) = builtin {
                 let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
-                    Bun__loadHTMLEntryPoint(global_ref)
+                    Bun__loadBuiltinEntryPoint(global_ref, builtin)
                 })?;
                 if p.is_null() {
                     return Err(crate::CrateError::JSError);
                 }
                 p
+            } else {
+                let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
+                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
+                    .map(NonNull::as_ptr)
+                    .ok_or(crate::CrateError::JSError)?
             };
 
             self.set_pending_internal_promise(Some(promise));

@@ -15,7 +15,7 @@ use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
+use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
@@ -95,6 +95,15 @@ pub(crate) struct ConfigureEnvOptions {
 }
 
 pub(crate) struct RunCommand;
+
+/// What `RunCommand::boot_main` starts the VM with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BootMain {
+    /// The file at the entry path. An `.html` file is served by `src/js/internal/html.ts`.
+    File,
+    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory.
+    Bake,
+}
 
 impl RunCommand {
     /// `bun run --help` body.
@@ -957,6 +966,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
+        Self::boot_main(ctx, entry_path, loader, BootMain::File)
+    }
+
+    fn boot_main(
+        ctx: &mut ContextData,
+        entry_path: Box<[u8]>,
+        loader: Option<Loader>,
+        main: BootMain,
+    ) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -983,6 +1001,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
         if is_checked
             && !watches
+            && main == BootMain::File
             && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
         {
             Global::exit(1);
@@ -1136,9 +1155,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         );
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        vm.main_is_html_entrypoint = loader
-            .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
-            == Loader::Html;
+        vm.main_entry_point = match main {
+            BootMain::Bake => MainEntryPoint::Bake,
+            BootMain::File
+                if loader
+                    .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
+                    == Loader::Html =>
+            {
+                MainEntryPoint::Html
+            }
+            BootMain::File => MainEntryPoint::File,
+        };
 
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
@@ -2699,6 +2726,34 @@ impl RunCommand {
 
         // ── failure ─────────────────────────────────────────────────────────
         if ctx.runtime_options.if_present {
+            return Ok(true);
+        }
+
+        // `bun bake` in a project with no `bake` script, file or binary of its own.
+        if target_name == b"bake" && bun_core::FeatureFlags::bake() {
+            let cwd = match bun_sys::getcwd_alloc() {
+                Ok(cwd) => cwd,
+                Err(err) => {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to read the working directory: {}",
+                        err
+                    );
+                    Global::exit(1);
+                }
+            };
+            let entry_path: Box<[u8]> =
+                paths::resolve_path::join_abs_string::<paths::platform::Auto>(
+                    cwd.as_bytes(),
+                    &[b"bake"],
+                )
+                .into();
+            Global::configure_allocator(core::Global::AllocatorConfiguration {
+                long_running: true,
+                ..Default::default()
+            });
+            if let Err(err) = Self::boot_main(ctx, entry_path, None, BootMain::Bake) {
+                Self::boot_failed_exit(ctx, b"bake", &err);
+            }
             return Ok(true);
         }
 

@@ -645,11 +645,21 @@ it.concurrent.each([
 );
 
 // After its own close_notify the client cannot answer the request. That is the end of the client's own close, not an
-// error, and no second 'secureConnect'.
-it.concurrent.each(["TCP", "a Duplex"])(
-  "a request for a renegotiation after the client's own end() is not an 'error' over %s",
-  async transport => {
-    const { socket, raw } = connectOver(transport, afterEndPort, { ca: tls.cert });
+// error, and no second 'secureConnect'. With an untrusted chain the session keeps the verify error of its handshake:
+// that error is not the result of a second handshake.
+it.concurrent.each([
+  { transport: "TCP", trusted: true },
+  { transport: "a Duplex", trusted: true },
+  { transport: "TCP", trusted: false },
+  { transport: "a Duplex", trusted: false },
+] as const)(
+  "a request for a renegotiation after the client's own end() is not an 'error' over $transport (trusted chain: $trusted)",
+  async ({ transport, trusted }) => {
+    const { socket, raw } = connectOver(
+      transport,
+      afterEndPort,
+      trusted ? { ca: tls.cert } : { rejectUnauthorized: false },
+    );
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
     socket.on("secureConnect", () => {
@@ -664,7 +674,7 @@ it.concurrent.each(["TCP", "a Duplex"])(
     socket.resume();
     try {
       await closed.promise;
-      expect(events).toEqual(["secureConnect authorized=true", "close hadError=false"]);
+      expect(events).toEqual([`secureConnect authorized=${trusted}`, "close hadError=false"]);
     } finally {
       socket.destroy();
       raw?.destroy();

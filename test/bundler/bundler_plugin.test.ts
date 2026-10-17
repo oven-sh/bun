@@ -1040,6 +1040,34 @@ describe("bundler", () => {
     },
   });
 
+  // The hash in an asset's output name is computed from the bytes the plugin returned, not from the
+  // file on disk, so it has to match the hash of an asset that has those same bytes on disk.
+  itBundled("plugin/FileLoaderHashComesFromPluginContents", {
+    files: {
+      "index.js": /* js */ `
+        import fromPlugin from "./image.png";
+        import fromDisk from "./copy.txt";
+        console.log(fromPlugin, fromDisk);
+      `,
+      "image.png": "png data on disk",
+      "copy.txt": "contents returned by the plugin",
+    },
+    entryPoints: ["./index.js"],
+    outdir: "/out",
+    loader: { ".txt": "file" },
+    plugins(build) {
+      build.onLoad({ filter: /\.png$/ }, () => ({ loader: "file", contents: "contents returned by the plugin" }));
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.js");
+      const fromPlugin = /"\.\/image-([a-z0-9]+)\.png"/;
+      const fromDisk = /"\.\/copy-([a-z0-9]+)\.txt"/;
+      expect(js).toMatch(fromPlugin);
+      expect(js).toMatch(fromDisk);
+      expect(fromPlugin.exec(js)![1]).toBe(fromDisk.exec(js)![1]);
+    },
+  });
+
   itBundled("plugin/OnEndBasic", ({ root }) => {
     let onEndCalled = false;
 

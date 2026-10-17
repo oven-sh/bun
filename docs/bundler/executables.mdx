@@ -522,7 +522,7 @@ This mode finds most of what changes under `--aot`, but it does not match the ex
 
 A `--preload` script is compiled with your program.
 
-Every file is type-checked with the `tsconfig.json` nearest to it, the same one Bun uses for that file's `paths`, JSX and decorators. This holds for `bun build --compile --aot`, `bun run --aot`, `bun test --aot` and `bun check --aot`. In a monorepo each package keeps its own compiler options, also when another package or a test imports it, and neither the order nor the names of your entry points or test files change what is reported.
+Every file is type-checked with the `tsconfig.json` nearest to it, the same one Bun uses for that file's `paths`. This holds for `bun build --compile --aot`, `bun run --aot`, `bun test --aot` and `bun check --aot`. In a monorepo each package keeps its own compiler options, also when another package or a test imports it, and neither the order nor the names of your entry points or test files change what is reported.
 
 - `include` and `exclude` do not decide which `tsconfig.json` applies. A test file that a package's `tsconfig.json` excludes from its build is still checked with that file's options.
 - If the nearest `tsconfig.json` has `references`, a file that it does not include itself uses the first referenced project that includes it.
@@ -530,12 +530,14 @@ Every file is type-checked with the `tsconfig.json` nearest to it, the same one 
 - Files in `node_modules` use the options of the entry points.
 - `--tsconfig-override` applies one file to everything.
 
+The options that change the code Bun generates are read exactly as they are without `--aot`: `jsx`, `jsxFactory`, `jsxFragmentFactory`, `jsxImportSource`, `experimentalDecorators`, `emitDecoratorMetadata` and `useDefineForClassFields`. `bun build --compile --aot` takes them from the `tsconfig.json` nearest to each file. `bun run --aot` and `bun test --aot` take them from the `tsconfig.json` in the working directory, for every file. A `@jsx`, `@jsxFrag`, `@jsxRuntime` or `@jsxImportSource` comment counts wherever it stands in the file.
+
 Some options cannot differ between the files of one program:
 
 | Options | What the program uses |
 | --- | --- |
 | `strictNullChecks`, `exactOptionalPropertyTypes`, `strictFunctionTypes`, `strictBindCallApply`, `strictBuiltinIteratorReturn` | On if the `tsconfig.json` of any of your TypeScript files turns it on. If a file whose own `tsconfig.json` leaves one off has type errors, they do not stop the build: Bun prints a warning and compiles that file without its types, which is slower but behaves the same. |
-| `lib`, `types`, global declarations in files that a `tsconfig.json` includes, `module`, `moduleResolution`, `jsx`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them, or else Bun's defaults. |
+| `lib`, `types`, global declarations in files that a `tsconfig.json` includes, `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them, or else Bun's defaults. |
 
 To list every place where your program would behave differently, without stopping at the first one, use [`bun --aot-audit`](/bundler/aot-adoption).
 

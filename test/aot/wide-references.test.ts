@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump } from "./run-programs";
 
 const program = `
 class Item { constructor(public n: number, public before: Item | null, public far: Item | null, public label: string) {} }
@@ -41,11 +42,11 @@ test("a program that outgrows the range of 32-bit references says which option l
   expect(plain.exitCode).toBe(0);
 
   expect(await run([narrow], cwd, bunEnv)).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
-  const full = await run([narrow], cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "64" });
+  const full = await run(withoutCoreDump([narrow]), cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "64" });
   expect(full.exitCode).not.toBe(0);
   expect(full.stdout).not.toContain(plain.stdout);
   expect(full.stderr).toContain("Compiled with useAOTWideReferences=1 it has no such limit.");
-  const none = await run([narrow], cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "0" });
+  const none = await run(withoutCoreDump([narrow]), cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "0" });
   expect(none.exitCode).not.toBe(0);
   expect(none.stderr).toContain("Compile it with useAOTWideReferences=1 to run it without the cage.");
 

@@ -3933,6 +3933,18 @@ declare module "bun" {
      */
     aotTypeErrors?: "throw" | "log";
     /**
+     * With `aot`: `x as T` and `x!` check nothing, as in TypeScript.
+     *
+     * By default an executable built with `aot` checks the value at a cast and at `!`, and throws a
+     * `TypeError` if it does not match. With this option the value goes on as it is, as it does
+     * without `aot`.
+     *
+     * Equivalent CLI flag: `--aot-unchecked-casts`
+     *
+     * @default false
+     */
+    aotUncheckedCasts?: boolean;
+    /**
      * With `aot`: reports to add to the `logs` of the build, at level `"verbose"`.
      *
      * - `"throws"`: every type check that can fail when the program runs, where the value comes from and how to fix it

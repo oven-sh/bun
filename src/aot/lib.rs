@@ -61,6 +61,24 @@ pub fn original_path(path: &[u8]) -> &[u8] {
     path.strip_suffix(REQUIRED_AGAIN_SUFFIX).unwrap_or(path)
 }
 
+pub fn runtime_path(path: &[u8]) -> Vec<u8> {
+    let native = match path {
+        [b'/', b'\\', b'\\', ..] => &path[1..],
+        _ => bun_sema::resolve::typescript_path(path),
+    };
+    if !cfg!(windows) || native.len() == path.len() {
+        return path.to_vec();
+    }
+    native.iter().map(|&byte| if byte == b'/' { b'\\' } else { byte }).collect()
+}
+
+pub fn runtime_folder(runtime_path: &[u8]) -> &[u8] {
+    let is_native = cfg!(windows) && !runtime_path.starts_with(b"/");
+    let end = bun_core::strings::last_index_of_char(runtime_path, if is_native { b'\\' } else { b'/' }).unwrap_or(0);
+    let is_root_of_drive = is_native && end == 2;
+    &runtime_path[..(end + is_root_of_drive as usize).max(1).min(runtime_path.len())]
+}
+
 const REQUIRED_AGAIN_PROLOGUE: &[u8] = b"module.exports = function (exports, require, module, __filename, __dirname) {";
 const REQUIRED_AGAIN_EPILOGUE: &[u8] = b"\n}";
 pub const REQUIRED_AGAIN_PROLOGUE_LEN: u32 = REQUIRED_AGAIN_PROLOGUE.len() as u32;
@@ -92,6 +110,7 @@ pub struct Constants {
     pub minifies_identifiers: bool,
     pub function_sources: Option<Box<dyn Fn() -> FunctionSources + Send + Sync>>,
     pub logs_type_errors: bool,
+    pub leaves_casts_unchecked: bool,
     pub records_spans: bool,
     pub has_preloads: bool,
 }

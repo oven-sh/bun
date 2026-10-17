@@ -18,7 +18,7 @@ use bun_sema::json::Json;
 use bun_sema::program::{Builtin, Module};
 use bun_sema::resolve::{
     Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors,
-    hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
+    hash_without_case, inside, is_declaration_file_name, is_javascript_file, is_same_path, join, root_length,
     to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::Arena;
@@ -468,6 +468,8 @@ pub struct Disk {
     pub(crate) file_jsx_options: Vec<(Vec<u8>, FileJsxOptions)>,
     pub(crate) file_class_options: Vec<(Vec<u8>, ClassOptions)>,
     pub(crate) is_without_bundler: bool,
+    pub(crate) lowers_like_the_runtime: bool,
+    lowering_of_every_file: OnceLock<Option<(FileJsxOptions, ClassOptions)>>,
     pub(crate) import_constants: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
     pub(crate) build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
     pub(crate) early_paths: Option<bun_threading::Guarded<std::sync::mpsc::Receiver<(Vec<u8>, Option<&'static [u8]>)>>>,
@@ -483,6 +485,35 @@ pub struct Disk {
     pub(crate) wait_for_deferred_sources: bun_threading::Guarded<Option<WaitForDeferredSources>>,
     deferred: OnceLock<InstalledSources>,
     pub(crate) abandoned: bun_threading::Guarded<Option<Abandoned>>,
+}
+
+pub(crate) fn lowering_in(options: &bun_sema::resolve::Options) -> (FileJsxOptions, ClassOptions) {
+    let or = |said: &[u8], otherwise: &[u8]| if said.is_empty() { otherwise.to_vec() } else { said.to_vec() };
+    let jsx = FileJsxOptions {
+        is_classic: options.jsx == bun_sema::resolve::JsxEmit::React,
+        factory: or(&options.jsx_factory, b"React.createElement"),
+        fragment: or(&options.jsx_fragment_factory, b"React.Fragment"),
+        import_source: options.jsx_import_source.clone(),
+        overrides_pragmas: false,
+    };
+    let classes = ClassOptions {
+        use_define_for_class_fields: options.specified_use_define_for_class_fields.unwrap_or(true),
+        experimental_decorators: options.experimental_decorators,
+        emit_decorator_metadata: options.emit_decorator_metadata,
+    };
+    (jsx, classes)
+}
+
+fn say_as_pragmas<'s>(pragmas: &mut hir::JsxPragmas, of_file: &FileJsxOptions, atoms: &Interner<'s>) {
+    if of_file.overrides_pragmas {
+        *pragmas = Default::default();
+    }
+    pragmas.classic.get_or_insert(of_file.is_classic);
+    for (pragma, said) in [(&mut pragmas.factory, &of_file.factory), (&mut pragmas.fragment_factory, &of_file.fragment), (&mut pragmas.import_source, &of_file.import_source)] {
+        if pragma.is_none() && !said.is_empty() {
+            *pragma = atoms.intern(said);
+        }
+    }
 }
 
 struct InstalledSources {
@@ -556,7 +587,7 @@ pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 /// `@jsxImportSource`. What the file does say itself goes before this.
 pub use bun_sema::resolve::ClassOptions;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct FileJsxOptions {
     pub is_classic: bool,
     pub factory: Vec<u8>,
@@ -576,6 +607,7 @@ pub struct Provided {
     pub file_jsx_options: Vec<(Vec<u8>, FileJsxOptions)>,
     pub file_class_options: Vec<(Vec<u8>, ClassOptions)>,
     pub is_without_bundler: bool,
+    pub lowers_like_the_runtime: bool,
     pub import_constants: Vec<((Vec<u8>, Vec<u8>), Vec<u8>)>,
     pub build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
     pub early_paths: Option<std::sync::mpsc::Receiver<(Vec<u8>, Option<&'static [u8]>)>>,
@@ -601,6 +633,7 @@ impl Provided {
             file_jsx_options: self.file_jsx_options.clone(),
             file_class_options: self.file_class_options.clone(),
             is_without_bundler: self.is_without_bundler,
+            lowers_like_the_runtime: self.lowers_like_the_runtime,
             import_constants: self.import_constants.clone(),
             build_constants: self.build_constants.clone(),
             without_builtin_modules: self.without_builtin_modules,
@@ -970,6 +1003,8 @@ impl Disk {
             file_jsx_options: Vec::new(),
             file_class_options: Vec::new(),
             is_without_bundler: false,
+            lowers_like_the_runtime: false,
+            lowering_of_every_file: OnceLock::new(),
             import_constants: FxHashMap::default(),
             build_constants: None,
             early_paths: None,
@@ -985,6 +1020,16 @@ impl Disk {
             deferred: OnceLock::new(),
             abandoned: bun_threading::Guarded::new(None),
         }
+    }
+
+    pub(crate) fn lower_every_file_as(&self, of_the_working_directory: (FileJsxOptions, ClassOptions), of_the_program: &bun_sema::resolve::Options) {
+        let differs = of_the_working_directory != lowering_in(of_the_program);
+        let _ = self.lowering_of_every_file.set(differs.then_some(of_the_working_directory));
+    }
+
+    fn lowering_of(&self, path: &[u8]) -> Option<&(FileJsxOptions, ClassOptions)> {
+        let of_every_file = self.lowering_of_every_file.get()?.as_ref()?;
+        (!is_declaration_file_name(path) && !is_bundled(path) && !contains(path, crate::PRELUDE_DIRECTORY)).then_some(of_every_file)
     }
 
     pub(crate) fn install_deferred_sources(&self, cwd: &[u8], sources: DeferredSources) {
@@ -2294,15 +2339,11 @@ impl Host for Disk {
             && let key = to_path(path, self.case_sensitive)
             && let Some((_, of_file)) = self.file_jsx_options.iter().chain(deferred_jsx_options).find(|it| it.0 == *key)
         {
-            let pragmas = &mut file.jsx_pragmas;
-            if of_file.overrides_pragmas {
-                *pragmas = Default::default();
-            }
-            pragmas.classic.get_or_insert(of_file.is_classic);
-            for (pragma, said) in [(&mut pragmas.factory, &of_file.factory), (&mut pragmas.fragment_factory, &of_file.fragment), (&mut pragmas.import_source, &of_file.import_source)] {
-                if pragma.is_none() && !said.is_empty() {
-                    *pragma = atoms.intern(said);
-                }
+            say_as_pragmas(&mut file.jsx_pragmas, of_file, atoms);
+        } else if self.is_without_bundler && !file.jsx.is_empty() {
+            bun_sema_parser::read_jsx_pragmas_of_every_comment(&mut file, text, atoms);
+            if let Some(of_every_file) = self.lowering_of(path) {
+                say_as_pragmas(&mut file.jsx_pragmas, &of_every_file.0, atoms);
             }
         }
         file
@@ -2326,12 +2367,12 @@ impl Host for Disk {
     }
     fn uses_default_parse_settings(&self, path: &[u8]) -> bool {
         let deferred = self.deferred.get().map_or(&[][..], |deferred| &deferred.file_jsx_options[..]);
-        (self.file_jsx_options.is_empty() && deferred.is_empty() || !self.file_jsx_options.iter().chain(deferred).any(|it| it.0 == *to_path(path, self.case_sensitive))) && self.class_options(path).is_none()
+        (self.file_jsx_options.is_empty() && deferred.is_empty() || !self.file_jsx_options.iter().chain(deferred).any(|it| it.0 == *to_path(path, self.case_sensitive))) && self.class_options(path).is_none() && !self.is_without_bundler
     }
     fn class_options(&self, path: &[u8]) -> Option<ClassOptions> {
         let deferred = self.deferred.get().map_or(&[][..], |deferred| &deferred.file_class_options[..]);
         if self.file_class_options.is_empty() && deferred.is_empty() {
-            return None;
+            return self.lowering_of(path).filter(|_| !is_javascript_file(self, path)).map(|of_every_file| of_every_file.1);
         }
         let key = to_path(path, self.case_sensitive);
         self.file_class_options.iter().chain(deferred).find(|it| it.0 == *key).map(|it| it.1)
@@ -2344,6 +2385,9 @@ impl Host for Disk {
         if self.shares.lock().is_none() {
             self.caches.drop_those_of_the_parser();
         }
+    }
+    fn is_without_bundler(&self) -> bool {
+        self.is_without_bundler
     }
     fn build_constants(&self) -> Option<Arc<bun_sema::fold::BuildConstants>> {
         self.build_constants.clone().or_else(|| self.deferred.get()?.build_constants.clone())

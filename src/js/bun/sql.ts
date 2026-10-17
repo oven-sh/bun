@@ -5,7 +5,7 @@ import type { DatabaseAdapter, TransactionCommands } from "internal/sql/shared";
 type Query = import("internal/sql/query").Query<any, any>;
 type Adapter = DatabaseAdapter<any, any, any>;
 type Pool = Adapter | (Adapter & Pick<InstanceType<typeof PostgresAdapter>, "listen">);
-type QueryHandle = BaseQueryHandle<any>;
+type QueryHandle = any;
 type QueryHandler = (query: Query, handle: QueryHandle) => void;
 type TransactionCallback = (sql: Bun.SQL) => unknown;
 type CloseOptions = { timeout?: number };
@@ -21,7 +21,7 @@ const {
   Query,
   SQLQueryFlags,
   onQuerySettled,
-  symbols: { _flags, _strings, _waiter, _copy },
+  stateOf,
 } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
@@ -181,7 +181,7 @@ function onFileRead(this: Target, query: Query, text: string) {
 }
 
 function readFileThenDispatch(this: Target, query: Query) {
-  Bun.file(query[_strings] as string)
+  Bun.file(stateOf(query).strings as string)
     .text()
     .$then(onFileRead.bind(this, query), rejectQuery.bind(query));
 }
@@ -207,7 +207,7 @@ function onQueryConnected(
   err: Error | null,
   pooledConnection: PooledConnection | null,
 ) {
-  query[_waiter] = null;
+  stateOf(query).waiter = null;
   if (err) {
     return query.reject(err);
   }
@@ -217,7 +217,7 @@ function onQueryConnected(
 
 function dispatchToPool(this: Client, query: Query, handle: QueryHandle) {
   const pool = this.pool;
-  pool.connect((query[_waiter] = onQueryConnected.bind(pool, query, handle)));
+  pool.connect((stateOf(query).waiter = onQueryConnected.bind(pool, query, handle)));
 }
 
 function refusal(scope: Scope): Error {
@@ -316,7 +316,7 @@ function shut(scope: Scope) {
 /// `reason`: of a close() that takes the connection away. cancel() then only stops the work on the server.
 function cancelRunning(scope: Scope, reason?: Error) {
   for (const query of scope.running) {
-    if (!(query[_flags] & SQLQueryFlags.internal)) {
+    if (!(stateOf(query).flags & SQLQueryFlags.internal)) {
       if (reason !== undefined) {
         query.reject(reason);
       }
@@ -333,8 +333,8 @@ const kindNames = ["reservation", "transaction", "savepoint"];
 /// A COPY stream that is open when its scope ends would hold the connection for ever. Returns the queries it told so.
 function abandonCopies(scope: Scope, ended: Scope, copies: Query[] = []) {
   for (const query of scope.running) {
-    if (query[_flags] & SQLQueryFlags.copy) {
-      query[_copy].abandon(`the ${kindNames[ended.kind]} ended before the COPY stream did`);
+    if (stateOf(query).flags & SQLQueryFlags.copy) {
+      stateOf(query).copy.abandon(`the ${kindNames[ended.kind]} ended before the COPY stream did`);
       copies.push(query);
     }
   }

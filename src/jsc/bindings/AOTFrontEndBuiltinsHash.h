@@ -2,4 +2,4 @@
 
 #pragma once
 
-#define BUN_AOT_FRONT_END_BUILTINS_HASH 0xcb0f2cbeu
+#define BUN_AOT_FRONT_END_BUILTINS_HASH 0x4ee2068eu

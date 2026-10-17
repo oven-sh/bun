@@ -8,7 +8,7 @@ import { join } from "path";
 
 const compiles = !unsupported;
 
-type Example = { line: number; commands: string; printed: string };
+type Example = { line: number; commands: string; printed: string; filesAbove: Record<string, string> };
 
 // Bun itself and what it has built. Nothing that needs the network.
 const isRunHere = (command: string) => /^(bun (?!add |install|x |create |upgrade)|\.\/)/.test(command);
@@ -28,7 +28,7 @@ function examplesOf(page: string) {
     if (/^[\w./-]+\.\w+$/.test(name)) files[name] = text;
     if (language === "bash") commands = { text: text.trim(), line: page.slice(0, block.index).split("\n").length };
     if (language === "bash" && !text.trim().split("\n").every(isRunHere)) commands = undefined;
-    if (language === "txt" && commands) examples.push({ line: commands.line, commands: commands.text, printed: text });
+    if (language === "txt" && commands) examples.push({ line: commands.line, commands: commands.text, printed: text, filesAbove: { ...files } });
     if (language === "txt") commands = undefined;
     end = block.index + block[0].length;
   }
@@ -50,8 +50,8 @@ describe.skipIf(!compiles).each(["aot-adoption.mdx", "aot-debugging.mdx"])("docs
   });
 
   const titled = examples.map(it => [`line ${it.line}: ${it.commands.replaceAll("\n", "; ")}`, it] as const);
-  test.concurrent.each(titled)("%s", async (_, { commands, printed }) => {
-    using dir = tempDirWithBunTypes("aot-docs", files);
+  test.concurrent.each(titled)("%s", async (_, { commands, printed, filesAbove }) => {
+    using dir = tempDirWithBunTypes("aot-docs", { ...files, ...filesAbove });
     const cwd = realpathSync(String(dir));
     mkdirSync(join(cwd, ".bin"));
     symlinkSync(bunExe(), join(cwd, ".bin", "bun"));

@@ -214,6 +214,14 @@ describe("bun build --dts: the typed JavaScript", () => {
       ],
     ],
     [
+      "lazy-modules",
+      [
+        "type Parsed = string | number;\nvar init_parse = __esm(() => {\n  isHex = /^0x[0-9a-f]+$/i;",
+        "coerce = (text: string): Parsed => isHex.test(text) || isDecimal.test(text) ? Number(text) : text",
+        "interface Options {\n  fallback?: Parsed;\n}",
+      ],
+    ],
+    [
       "merged-exports",
       [
         "type Kind2 = (typeof exports_kinds_2)[keyof typeof exports_kinds_2];",

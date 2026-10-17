@@ -3504,6 +3504,7 @@ pub mod bv2_impl {
                 explain_to_log: self.transpiler.options.aot_explain_to_log,
                 rules: &self.transpiler.options.aot_rules,
                 logs_type_errors: self.transpiler.options.aot_logs_type_errors,
+                leaves_casts_unchecked: self.transpiler.options.aot_leaves_casts_unchecked,
                 early_analysis,
                 early_sources,
             };

@@ -1,4 +1,9 @@
 // The array that exec() or match() returns is not made where the program only tests it for null and reads groups at constant indices, index, input and the length.
+// CALLS- parsed RegExpExec
+// CALLS+ parsed RegExpFind
+// CALLS- truthy RegExpExec
+// CALLS- inLoop RegExpExec
+// CALLS- properties RegExpExec
 // CALLS+ returned RegExpExec
 // CALLS+ handedOn RegExpExec
 // CALLS+ byVariable RegExpExec
@@ -6,10 +11,14 @@
 // CALLS+ named RegExpExec
 // CALLS+ comparedWithObject RegExpExec
 // CALLS+ destructured RegExpExec
+// CALLS- viaMatch StringMatchRegExp
+// CALLS+ viaMatch RegExpFind
 // CALLS+ globalMatch StringMatchRegExp
 // CALLS+ matchOfGivenPattern StringMatchRegExp
 // CALLS+ matchOfPatternUsedTwice StringMatchRegExp
 // CALLS+ matchReturned StringMatchRegExp
+// CALLS+ untypedResult RegExpExec
+// CALLS+ untypedMatch StringMatchRegExp
 let guard = 0;
 function parsed(line: string): string {
   if (guard > 1e9) return parsed(line + "x");
@@ -87,6 +96,9 @@ function globalMatch(line: string): string { if (guard > 1e9) return globalMatch
 function matchOfGivenPattern(line: string, re: RegExp): string { if (guard > 1e9) return matchOfGivenPattern(line + "x", re); const m = line.match(re); return m ? m[0] + m.length : "null"; }
 function matchOfPatternUsedTwice(line: string): string { if (guard > 1e9) return matchOfPatternUsedTwice(line + "x"); const re = /(\w)/; (re as { exec: unknown }).exec = () => null; const m = line.match(re); return m ? m[0] : "null"; }
 function matchReturned(line: string): RegExpMatchArray | null { if (guard > 1e9) return matchReturned(line + "x"); const m = line.match(/(\w)(\w)/); if (m && m[1] === "~") guard++; return m; }
+function untypedResult(line: string): string { if (guard > 1e9) return untypedResult(line + "x"); const m: any = /(\w)(\d)?/.exec(line); if (m === null) return "null"; return m[0] + m[1] + m[2] + m.index; }
+function untypedMatch(line: string): string { if (guard > 1e9) return untypedMatch(line + "x"); const re: any = /(\w)(\d)?/; const m: any = line.match(re); return m == null ? "null" : m[1] + m[2]; }
+function untypedThrows(line: string): string { const m: any = /q(\d)/.exec(line); try { return m[1] + m.index; } catch (e) { return e instanceof TypeError ? "TypeError" : "other"; } }
 function* between(line: string): Generator<string> { const m = /(\w)(\w)/.exec(line); if (!m) return; yield m[1]; /zz/.exec("zz"); yield m[2]; yield String(m.index); }
 async function later(line: string): Promise<string> { const m = /(\w)-(\w)/.exec(line); if (!m) return "null"; const a = m[1]; await null; /(q)/.exec("q"); return a + m[2] + m.index; }
 const lines = ["12-ok", "7-no-5", "zz", "", "a=b", "key=", "?", "abcc", "xbz", "b", "1,22;333,", "日本12-ok", "é=è", "99", "q7", "ab", "aabab", "12-ok-034", "a-b"];
@@ -95,7 +107,7 @@ for (const line of lines) {
   const rope = line + "-" + line.length;
   const part = ("<<" + line + ">>").slice(2, -2);
   for (const subject of [line, rope, part]) {
-    out += JSON.stringify(subject) + " " + [parsed(subject), truthy(subject), inLoop(subject), properties(subject), twice(subject, "xy" + subject), sticky(subject), thrown(subject), frozenLastIndex(subject), objectLastIndex(subject), JSON.stringify(returned(subject)), handedOn(subject), byVariable(subject, 2), written(subject), named(subject), comparedWithObject(subject), destructured(subject), namedButByIndex(subject), viaMatch(subject), stickyMatch(subject), globalMatch(subject), matchOfGivenPattern(subject, /b+/), matchOfGivenPattern(subject, /\d/g), matchOfPatternUsedTwice(subject), JSON.stringify(matchReturned(subject)), [...between(subject)].join("_")].join(" # ") + "\n";
+    out += JSON.stringify(subject) + " " + [parsed(subject), truthy(subject), inLoop(subject), properties(subject), twice(subject, "xy" + subject), sticky(subject), thrown(subject), frozenLastIndex(subject), objectLastIndex(subject), JSON.stringify(returned(subject)), handedOn(subject), byVariable(subject, 2), written(subject), named(subject), comparedWithObject(subject), destructured(subject), namedButByIndex(subject), viaMatch(subject), stickyMatch(subject), globalMatch(subject), matchOfGivenPattern(subject, /b+/), matchOfGivenPattern(subject, /\d/g), matchOfPatternUsedTwice(subject), JSON.stringify(matchReturned(subject)), untypedResult(subject), untypedMatch(subject), untypedThrows(subject), [...between(subject)].join("_")].join(" # ") + "\n";
   }
 }
 let big = "";

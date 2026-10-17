@@ -116,6 +116,7 @@ pub(super) struct Shared {
     modules: OnceLock<ModuleGraph>,
     lazy_modules: OnceLock<FxHashSet<FileId>>,
     logs_type_errors: OnceLock<bool>,
+    leaves_casts_unchecked: OnceLock<bool>,
     marked_pure: OnceLock<FxHashMap<FileId, Vec<u32>>>,
     replaced: OnceLock<[FxHashSet<Vec<u8>>; 2]>,
     evaluates_before_importers_cache: ByFile<bool>,
@@ -5374,6 +5375,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn logs_type_errors(&self) -> bool {
         self.p.aot.storage.logs_type_errors.get().copied().unwrap_or(false)
+    }
+
+    pub fn set_leaves_casts_unchecked(&self, leaves: bool) {
+        self.p.aot.storage.leaves_casts_unchecked.get_or_init(|| leaves);
+    }
+
+    pub fn leaves_casts_unchecked(&self) -> bool {
+        self.p.aot.storage.leaves_casts_unchecked.get().copied().unwrap_or(false)
     }
 
     pub fn set_lazy_modules(&self, modules: &FxHashSet<FileId>) {

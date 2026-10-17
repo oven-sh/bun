@@ -122,7 +122,7 @@ def one(program):
     flags = ["--allowJs", "--resolveJsonModule", "--no-builtin-modules"]
     if compiler_options.get("strict"):
         flags.append("--strict")
-    flags += [flag for flag in options.get("build", []) if flag.startswith("--aot-type-errors=")]
+    flags += [flag for flag in options.get("build", []) if flag.startswith("--aot-type-errors=") or flag == "--aot-unchecked-casts"]
     _, said = run([SEMA, "cli" if os.path.basename(SEMA).startswith("bun-sema") else "check", source, *flags, "--aot", "--aot-out=" + ir], cwd, 60)
     if not os.path.isfile(ir):
         return "NO IR: " + " | ".join(said.strip().split("\n")[:2])[:200]

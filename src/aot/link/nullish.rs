@@ -812,6 +812,7 @@ struct Report<'a> {
     edges: Vec<(u32, u32)>,
     origins: Vec<(u32, u8)>,
     connected: FxHashSet<(LayoutId, u32)>,
+    untyped_object_edges: Vec<(u32, u32)>,
     function_flows: FunctionValueFlows,
     methods_by_name: &'a FxHashMap<StrId, Vec<FuncId>>,
     static_methods_by_constructor: &'a FxHashMap<FuncId, Vec<(StrId, FuncId)>>,
@@ -988,6 +989,7 @@ impl Report<'_> {
                             for &stored in stored {
                                 flows.uses.push(Use { value: stored, from: node(V::new(stored as usize)), to: node(v), block: at, jump: NO_JUMP });
                             }
+                            self.untyped_object_edges.push((node(value), node(v)));
                             continue;
                         }
                         propagate(&mut flows, value, node(v));
@@ -1480,7 +1482,7 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
             }
         }
         let static_methods_by_constructor = &static_methods_by_constructor;
-        let report = || Report { program, nodes: &nodes, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), function_flows: FunctionValueFlows::default(), methods_by_name, static_methods_by_constructor, fields_by_name, definite_fields: FxHashMap::default(), functions_found: FxHashMap::default() };
+        let report = || Report { program, nodes: &nodes, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), untyped_object_edges: Vec::new(), function_flows: FunctionValueFlows::default(), methods_by_name, static_methods_by_constructor, fields_by_name, definite_fields: FxHashMap::default(), functions_found: FxHashMap::default() };
         let mut slices: Vec<(usize, Report<'_>, NullishEdges)> = (0..program.funcs.len()).step_by(FUNCTIONS_PER_TASK).map(|first| (first, report(), NullishEdges::default())).collect();
         let mut state = vec![0u32; nodes.count as usize];
         let mut state_left = &mut state[..nodes.results as usize];
@@ -1501,6 +1503,7 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
                 state[(node - nodes.values[*first]) as usize] |= node_state::LEAKS;
             }
             found.edges.extend(report.edges.drain(..).map(|(from, to)| (from, to, NULLISH | UNTYPED_OBJECT)));
+            found.edges.extend(report.untyped_object_edges.drain(..).map(|(from, to)| (from, to, UNTYPED_OBJECT)));
             found.edges.extend(report.function_flows.moves.drain(..).map(|(from, to)| (from, to, 0)));
             found.origins.append(&mut report.origins);
         });

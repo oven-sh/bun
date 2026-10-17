@@ -78,6 +78,22 @@ test("the application's own read of a member of globalThis that its lib does not
   expect(exitCode).not.toBe(0);
 }, 120_000);
 
+test("a type error in a file of a package that the program takes only types from leaves the package typed", async () => {
+  using dir = tempDir("aot-dependency-types-only", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict(),
+    "main.ts": `import { half, type Client } from "ships-typescript";\nconst client: Client = { name: "a" };\nconsole.log(half(4), client.name);\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/index.ts": `export type { Client } from "./client";\nexport function half(n: number): number { return n / 2; }\n`,
+    "node_modules/ships-typescript/client.ts": `import { nameOf } from "./utils";\nexport interface Client { name: string }\nexport function connect(): Client { return { name: nameOf(1) }; }\n`,
+    "node_modules/ships-typescript/utils.ts": `export function nameOf(id: number): string { const wrong: string = id; return wrong; }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("TS100009");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "2 a\n" });
+}, 120_000);
+
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
   using dir = tempDir("aot-dependency-decorated", {
     "package.json": JSON.stringify({ name: "app" }),

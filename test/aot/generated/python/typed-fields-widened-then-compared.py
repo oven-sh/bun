@@ -23,7 +23,7 @@ WIDER = {"lit": ["string", "unknown", "string | undefined", "string | number"], 
          "nulllit": ["string | null", "unknown"], "str": ["unknown", "string | undefined", "string | number"], "num": ["unknown", "number | undefined", "number | string"], "int": ["number", "unknown", "number | undefined"],
          "optnum": ["unknown", "number | undefined | null"], "bool": ["unknown", "boolean | undefined", "boolean | number"], "yes": ["boolean | undefined", "unknown"], "big": ["unknown", "bigint | undefined"],
          "mixed": ["unknown", "string | number | boolean"], "color": ["string", "unknown"], "level": ["number", "unknown"]}
-out = ['enum Color { Red = "red", Blue = "blue" }', 'enum Level { Low = 1, High = 2 }',
+out = ['declare const console: { log(...values: unknown[]): void };', 'enum Color { Red = "red", Blue = "blue" }', 'enum Level { Low = 1, High = 2 }',
        'function show(value: unknown): string { return typeof value === "bigint" ? value + "n" : Object.is(value, -0) ? "-0" : String(value); }']
 for name, ty, values, constants in FIELDS:
     out.append("interface H_%s { pad: string; held: %s }" % (name, ty))

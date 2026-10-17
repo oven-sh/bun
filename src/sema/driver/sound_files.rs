@@ -1992,8 +1992,12 @@ impl<'a> Transfer<'_, 'a, '_> {
             if matches!(function.kind, FnKind::Decl | FnKind::Expr) {
                 insertions.add(open + 1, Order::Slot, if function.params.is_empty() { b"this: any".to_vec() } else { b"this: any, ".to_vec() });
             }
-            for parameter in function.params.iter().map(|parameter| &output_file[parameter]) {
-                let annotation: &[u8] = if parameter.flags.contains(Flags::REST) { b": any[]" } else { b": any" };
+            let parameters: Vec<&Param> = function.params.iter().map(|parameter| &output_file[parameter]).collect();
+            let may_be_left_out = |parameter: &&Param| parameter.flags.contains(Flags::REST) || parameter.default.is_some() || matches!(output_file[parameter.pat].kind, PatKind::Ident(_));
+            let required = parameters.iter().rposition(|parameter| !may_be_left_out(parameter)).map_or(0, |last| last + 1);
+            for (place, parameter) in parameters.iter().enumerate() {
+                let is_optional = place >= required && parameter.default.is_none();
+                let annotation: &[u8] = if parameter.flags.contains(Flags::REST) { b": any[]" } else if is_optional { b"?: any" } else { b": any" };
                 insertions.add(output_file[parameter.pat].end, Order::Slot, annotation.to_vec());
             }
         }
@@ -2212,6 +2216,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
             }
         }
+        let top_level: Vec<u32> = output_file.ids(output_file.body).map(|id| output_file[id].start).collect();
         let exported_names: FxHashSet<&[u8]> = output_file.export_specs.iter().map(|specifier| output.word(specifier.pos)).collect();
         let imported_names: FxHashSet<&[u8]> = (output_file.import_specs.iter().map(|specifier| specifier.pos))
             .chain(output_file.imports.iter().filter(|import| import.default.is_some()).map(|import| import.default_pos))
@@ -2312,6 +2317,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     let text = if is_ignored { [&b"// @ts-ignore\n"[..], &text].concat() } else { text };
                     let text = documentation.map_or(text.clone(), |documentation| [documentation, b"\n", &text].concat());
                     let next = statements[place..].iter().map(|&next| &file[next]).find_map(anchor_of);
+                    let next = next.map(|next| if depth == 0 { top_level[top_level.partition_point(|&start| start <= next).saturating_sub(1)] } else { next });
                     match next {
                         Some(next) => insertions.add_line_before(javascript, next, &text),
                         None if depth == 0 => self.hoisted.extend_from_slice(&[&text[..], b"\n"].concat()),

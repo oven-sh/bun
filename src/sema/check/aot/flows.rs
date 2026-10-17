@@ -3632,7 +3632,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn add_inspected_casts(&mut self, file: FileId, out: &mut Vec<InspectedCast>) {
         let hir = self.hir(file);
-        let casts = self.file_exprs_by_kind(file).of(ExprTag::As).iter().filter_map(|&cast| match hir[cast].kind {
+        let leaves_casts_unchecked = self.leaves_casts_unchecked();
+        let casts = self.file_exprs_by_kind(file).of(ExprTag::As).iter().filter(|_| !leaves_casts_unchecked).filter_map(|&cast| match hir[cast].kind {
             ExprKind::As { expr, ty } => Some((ty, expr, Some(cast))),
             _ => None,
         });
@@ -4467,12 +4468,13 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let by_kind = self.file_exprs_by_kind(file);
         let mut pending: Vec<ExprId> = Vec::new();
+        let leaves_casts_unchecked = self.leaves_casts_unchecked();
         for &call in by_kind.of(ExprTag::Call) {
             if self.is_external_data_source(file, call) {
                 pending.push(call);
             }
         }
-        for &cast in by_kind.of(ExprTag::As) {
+        for &cast in by_kind.of(ExprTag::As).iter().filter(|_| !leaves_casts_unchecked) {
             if let ExprKind::As { expr, ty } = hir[cast].kind {
                 let written = self.type_from_node(file, ty);
                 let target = if written.is_any() || written == TypeId::UNKNOWN {
@@ -4495,6 +4497,10 @@ impl<'p, 's> Checker<'p, 's> {
                 match bound.expr_parent[produced.idx()] {
                     Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                         ExprKind::As { ty, .. } => {
+                            let written = self.type_from_node(file, ty);
+                            if leaves_casts_unchecked && !written.is_any() && written != TypeId::UNKNOWN {
+                                break true;
+                            }
                             let target = self.type_from_node(file, ty);
                             self.note_external_cause(target, ExternalCause::UsedAs { at: Place { file, pos: hir[produced].pos } }, None);
                             out.push(target);

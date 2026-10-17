@@ -80,6 +80,9 @@ pub struct ClassOptions {
 }
 
 pub trait Host: Sync {
+    fn is_without_bundler(&self) -> bool {
+        false
+    }
     fn build_constants(&self) -> Option<std::sync::Arc<crate::fold::BuildConstants>> {
         None
     }

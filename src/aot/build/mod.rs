@@ -373,6 +373,7 @@ impl<'a> Shared<'a> {
         };
         let mut c = program.checker();
         c.set_logs_type_errors(constants.logs_type_errors);
+        c.set_leaves_casts_unchecked(constants.leaves_casts_unchecked);
         c.set_declaration_only_files(shared.bundle.iter().flat_map(|bundle| bundle.declaring()));
         if !constants.ignores_dce_annotations && constants.source_path_to_url.is_none() {
             let marked = (0..program.files.modules.len() as u32).map(FileId).map(|file| (file, shared.calls_marked_pure[file.idx()].get_or_init(|| comments::calls_marked_pure(c.hir(file)))));

@@ -818,6 +818,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::As { expr, ty } => {
                 let checked = self.c.type_from_node(fx.file, ty);
                 let to = Ty { id: self.ty_of(checked), checked };
+                if self.is_cast_left_unchecked(fx, expr, checked, to.id) {
+                    let value = self.expr(fx, expr);
+                    return self.apply_assertions(fx, e, value, false);
+                }
                 let mut source = expr;
                 while let ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } = self.hir(fx.file)[source].kind {
                     source = inner;
@@ -862,6 +866,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 let to = self.non_null_ty(fx, e);
                 let text = self.reference_text(fx, expr);
+                if self.shared.constants.leaves_casts_unchecked {
+                    return self.expr_into(fx, expr, to, CoerceReason::Store);
+                }
                 let held = self.expr_into(fx, expr, to, CoerceReason::NonNull(text));
                 let own = self.ty(fx, held);
                 let is_literally_nullish = match hir[self.skip_assertions(fx, expr)].kind {
@@ -2150,6 +2157,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    fn is_cast_left_unchecked(&mut self, fx: &Fx, operand: ExprId, checked: TypeId, to: TyId) -> bool {
+        if !self.shared.constants.leaves_casts_unchecked || to.is_none() || to == self.out.tys.anything {
+            return false;
+        }
+        let written = self.c.type_of_expr(fx.file, operand);
+        self.c.is_untyped(written) || !self.c.is_provably_assignable(written, checked)
+    }
+
     fn apply_assertions(&mut self, fx: &mut Fx, e: ExprId, value: V, all: bool) -> V {
         let (ExprKind::As { expr, .. } | ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. }) = self.hir(fx.file)[e].kind else { return value };
         let value = if all { self.apply_assertions(fx, expr, value, all) } else { value };
@@ -2158,7 +2173,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.narrowed.remove(&value);
                 let (checked, known) = (self.c.type_from_node(fx.file, ty), self.c.result_type_of(fx.file, e));
                 let named = self.ty_of(checked);
-                if self.is_forced_cast_to_builtin(fx, e, checked, named) {
+                if self.is_forced_cast_to_builtin(fx, e, checked, named) || self.is_cast_left_unchecked(fx, expr, checked, named) {
                     let forced = self.emit(fx, Op::Coerce { value, to: named, why: CoerceReason::Forced });
                     fx.checked.insert(forced, checked);
                     return forced;
@@ -2211,7 +2226,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::NonNull(_) => {
                 let to = self.non_null_ty(fx, e);
                 let text = self.reference_text(fx, expr);
-                self.coerce_at(fx, expr, value, to, CoerceReason::NonNull(text))
+                let why = if self.shared.constants.leaves_casts_unchecked { CoerceReason::Store } else { CoerceReason::NonNull(text) };
+                self.coerce_at(fx, expr, value, to, why)
             }
             _ => value,
         }

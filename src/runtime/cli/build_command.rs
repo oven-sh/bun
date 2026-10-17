@@ -223,6 +223,7 @@ impl BuildCommand {
                 explain_to_log: false,
                 rules: &[],
                 logs_type_errors: false,
+                leaves_casts_unchecked: false,
                 early_analysis: None,
                 early_sources: None,
                 release_asts: &mut || {},
@@ -365,6 +366,7 @@ impl BuildCommand {
         this_transpiler.options.aot_explain = ctx.bundler_options.aot_explain.clone();
         this_transpiler.options.aot_rules = ctx.bundler_options.aot_rules.clone();
         this_transpiler.options.aot_logs_type_errors = ctx.bundler_options.aot_logs_type_errors;
+        this_transpiler.options.aot_leaves_casts_unchecked = ctx.bundler_options.aot_leaves_casts_unchecked;
         this_transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_run {
             bun_standalone_module_graph::StandaloneModuleGraph::start_copying_template(

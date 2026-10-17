@@ -40,3 +40,11 @@ interface Cell<T> { value: T; readonly set: (next: T) => void }
 function cell<T>(value: T): Cell<T> { return { value, set(next) { this.value = next; } }; }
 const writtenCell: Cell<number> = { value: 1, set: next => {} };
 say("one signature, nothing unverified", () => { const count = cell(0); count.set(41); return count.value + 1 + writtenCell.value; });
+
+interface Rule<T, M extends string | undefined> { value: T; readonly message: M; readonly set: (next: T) => void }
+function rule<T>(value: T): Rule<T, undefined>;
+function rule<T, const M extends string | undefined>(value: T, message: M): Rule<T, M>;
+function rule(value: unknown, message?: string): Rule<unknown, string | undefined> { return { value, message, set(next) { this.value = next; } }; }
+const writtenRule: Rule<number, undefined> = { value: 1, message: undefined, set: next => {} };
+say("the overload promises undefined where the implementation says string or undefined", () => { const count = rule(0); count.set(41); return count.value + 1 + " " + count.message + " " + writtenRule.value; });
+say("the overload promises a literal where the implementation says string or undefined", () => { const count = rule(0, "m"); count.set(41); return count.value + 1 + count.message; });

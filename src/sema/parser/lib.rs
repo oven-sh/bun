@@ -22,6 +22,7 @@ mod token;
 
 pub use names::FileAtoms;
 pub use parser::keyword_suggestion;
+pub use pragmas::read_jsx_pragmas_of_every_comment;
 
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;

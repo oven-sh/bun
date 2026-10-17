@@ -1,10 +1,11 @@
+// @ts-check
 import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = Array;
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values, _flags },
+  stateOf,
 } = require("internal/sql/query");
 
 type ArrayType =
@@ -407,15 +408,15 @@ class QueryBuilder {
   }
 
   fragment(query: QueryType<any, any>) {
-    const strings = query[_strings];
-    const values = query[_values];
+    const strings = stateOf(query).strings;
+    const values = stateOf(query).values;
     if (typeof strings !== "string") {
       if (!$isArray(strings)) {
         throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
       }
       return this.template(strings, values);
     }
-    const flags = query[_flags];
+    const flags = stateOf(query).flags;
     if (flags & SQLQueryFlags.notTagged) {
       this.text += this.identifier(strings);
       return;

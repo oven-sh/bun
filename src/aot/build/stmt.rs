@@ -1894,6 +1894,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     return;
                 }
                 let sym = self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(fx.file, id));
+                if let Some((of, class)) = self.c.class_required_from_runtime_module(fx.file, pat) {
+                    let expected = self.class_object(fx, of, class);
+                    let is_same = self.emit(fx, Op::StrictEq { a: value, b: expected });
+                    let (same, different) = (fx.b.new_block(), fx.b.new_block());
+                    self.branch(fx, is_same, same, different);
+                    fx.b.seal(same);
+                    fx.b.seal(different);
+                    fx.b.switch_to(different);
+                    self.throw_error(fx, b"TypeError", b"A class exported by a runtime module was replaced");
+                    fx.b.switch_to(same);
+                }
                 let value = self.predict_binding(fx, value, pat);
                 self.initialize_sym(fx, sym, value, hir[pat].pos);
             }

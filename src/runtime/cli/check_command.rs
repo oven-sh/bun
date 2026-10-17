@@ -1298,6 +1298,7 @@ fn analyze_sources<'c, 'i, 'l>(
             explain_to_log,
             rules,
             logs_type_errors,
+            leaves_casts_unchecked,
             early_analysis: _,
             early_sources: _,
             release_asts,
@@ -1356,6 +1357,7 @@ fn analyze_sources<'c, 'i, 'l>(
         deferred.already_read = preloaded_sources;
         let mut constants = bun_aot::Constants {
             logs_type_errors,
+            leaves_casts_unchecked,
             records_spans: false,
             has_preloads: false,
             source_path_to_url: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
@@ -1819,6 +1821,7 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
         explain_to_log: _,
         rules: _,
         logs_type_errors: _,
+        leaves_casts_unchecked: _,
         early_analysis: _,
         early_sources: _,
         release_asts: _,
@@ -2168,6 +2171,7 @@ pub(crate) fn audit_before(
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
         is_without_bundler: true,
+        lowers_like_the_runtime: true,
         ..Default::default()
     };
     let mut code: Vec<Vec<u8>> = Vec::new();

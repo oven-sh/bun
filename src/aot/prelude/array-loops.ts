@@ -19,6 +19,7 @@ declare function $putContiguousIndex(out: unknown[], k: number, value: unknown):
 declare function $growNewArray(out: unknown[], n: number): void;
 declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
 declare function $isPlainArrayLike(x: unknown): boolean;
+declare function $trySortByKey<T>(a: unknown[], name: unknown, flags: number): T[] | null;
 
 function isCallable(f: unknown): boolean {
     return typeof f === "function";
@@ -1186,6 +1187,18 @@ export function Array$toSorted<T>(a: T[], f: unknown): T[] {
         }
         for (let k = count; k < n; k++) $putContiguousIndex(from, k, undefined);
         return $truncateNewArray<T>(from, n);
+}
+
+export function Array$sortByKey<T>(a: T[], f: unknown, name: unknown, flags: number): T[] {
+    const sorted: T[] | null = $trySortByKey<T>(a, name, flags);
+    if (sorted !== null) return sorted;
+    return (a as any).sort(f, undefined);
+}
+
+export function Array$toSortedByKey<T>(a: T[], f: unknown, name: unknown, flags: number): T[] {
+    const sorted: T[] | null = $trySortByKey<T>(a, name, flags | 2);
+    if (sorted !== null) return sorted;
+    return (a as any).toSorted(f, undefined);
 }
 
 export function Array$from<T, U>(items: unknown, f: unknown, thisArg: unknown): U[] {

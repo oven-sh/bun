@@ -1,3 +1,4 @@
+// @ts-check
 import type { NativeCreateConnection, NativeCreateQuery } from "./pool";
 import type { Query } from "./query";
 import type { ArrayType, SQLStatementDescription, TransactionCommands } from "./shared";
@@ -15,7 +16,8 @@ const {
   tryOtherPassword,
 } = require("internal/sql/pool");
 const {
-  symbols: { _results, _handle, _copy },
+  QueryState,
+  stateOf,
 } = require("internal/sql/query");
 
 const { PostgresError } = require("internal/sql/errors");
@@ -192,12 +194,12 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType |
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, is_last, statement) {
     if (is_last) {
-      query.resolve(query[_results]);
+      query.resolve(stateOf(query).results);
       return;
     }
     $assert(result instanceof SQLResultArray, "Invalid result array");
     // prepare for next query
-    query[_handle].setPendingValue(new SQLResultArray());
+    stateOf(query).handle.setPendingValue(new SQLResultArray());
 
     count ||= 0;
     if (typeof commandTag === "string") {
@@ -211,7 +213,7 @@ initPostgres(
     }
 
     result.count = count;
-    SQLResultArray.describe(result, query[_handle], statement);
+    SQLResultArray.describe(result, stateOf(query).handle, statement);
     addResult(query, result);
   },
   onRejectQuery,
@@ -386,11 +388,8 @@ function invoke<T>(callback: (arg?: T) => void, arg?: T) {
 class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;
-  [_results] = null;
-  [_handle]: $ZigGeneratedClasses.PostgresSQLQuery;
-
   constructor(handle: $ZigGeneratedClasses.PostgresSQLQuery) {
-    this[_handle] = handle;
+    QueryState.attach(this, handle);
   }
 
   static run(conn: ListenHandle, sql: string): Promise<void> {
@@ -703,7 +702,7 @@ class CopySource {
 
   constructor(query: Query<any, any>) {
     this.query = query;
-    query[_copy] = this;
+    stateOf(query).copy = this;
   }
 
   attach(handle: CopyHandle) {
@@ -778,7 +777,7 @@ class CopySink {
 
   constructor(query: Query<any, any>) {
     this.query = query;
-    query[_copy] = this;
+    stateOf(query).copy = this;
   }
 
   attach(handle: CopyHandle) {

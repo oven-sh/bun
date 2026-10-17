@@ -813,7 +813,7 @@ impl Subtypes {
     }
 
     fn may_satisfy_unverified_overload_result(&self, member: u32, from: u32, to: u32) -> bool {
-        member < self.nodes && self.gathered.unverified_overload_results.binary_search(&(from, to)).is_ok() && may_be_assignable_to(&self.gathered.facts[member as usize], &self.gathered.facts[to as usize])
+        member == from && self.gathered.unverified_overload_results.binary_search(&(from, to)).is_ok() && may_match_by_constants(&self.gathered.facts[member as usize], &self.gathered.facts[to as usize])
     }
 
     fn accepts_untyped(&self, view: u32) -> bool {

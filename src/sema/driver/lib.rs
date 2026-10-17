@@ -1567,7 +1567,7 @@ fn is_missing_runtime_type_library(reported: &Diagnostic) -> bool {
     reported.code == 2688 && reported.args.first().is_some_and(|name| [&b"bun-types"[..], b"bun", b"node"].contains(&&name[..]))
 }
 
-const PRELUDE_DIRECTORY: &[u8] = b"/.bun-aot-prelude/";
+pub(crate) const PRELUDE_DIRECTORY: &[u8] = b"/.bun-aot-prelude/";
 
 fn invalidation_key<'a>(files: &'a bun_sema::program::Files<'_>, module: &'a bun_sema::program::Module<'_>) -> (&'a [u8], &'a [u8]) {
     package_of(files, module).unwrap_or((module.path.text, module.file_name()))
@@ -1958,6 +1958,7 @@ fn check_provided_once<R>(
     let file_class_options = paths_of(&disk, provided.file_class_options.iter().map(|(path, _)| path.as_slice()).collect());
     disk.file_class_options = file_class_options.into_iter().zip(provided.file_class_options.into_iter().map(|(_, of_file)| of_file)).collect();
     disk.is_without_bundler = provided.is_without_bundler;
+    disk.lowers_like_the_runtime = provided.lowers_like_the_runtime;
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -3311,6 +3312,17 @@ fn check_project_of(
         };
         let governing_options: &dyn Fn(&[u8]) -> Option<GoverningOptions> = &governing_options;
         let governs_each_file = request.is_one_program && request.project.is_none() && tristate(request.compiler_options, b"ignoreConfig") != Some(true);
+        if governs_each_file && disk.lowers_like_the_runtime {
+            let in_the_working_directory = [&b"tsconfig.json"[..], b"jsconfig.json"].into_iter().map(|name| join(&cwd, name)).find(|config| disk.is_file(config));
+            let of_the_working_directory = match &in_the_working_directory {
+                Some(config) if Some(&config[..]) == of.config => None,
+                Some(config) => projects.lock().load(disk, request, config).map(|loaded| host::lowering_in(&loaded.options)),
+                None => Some(host::lowering_in(&project_without_config(disk, request, &cwd, &[]).options)),
+            };
+            if let Some(of_the_working_directory) = of_the_working_directory {
+                disk.lower_every_file_as(of_the_working_directory, &project.options);
+            }
+        }
             let is_elsewhere = (of.elsewhere).map(|elsewhere| |path: &[u8]| elsewhere.contains(path));
             check_named_files(
                 disk,
@@ -3819,6 +3831,9 @@ impl Host for WithOutputs<'_> {
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
+    }
+    fn is_without_bundler(&self) -> bool {
+        self.disk.is_without_bundler()
     }
     fn build_constants(&self) -> Option<Arc<bun_sema::fold::BuildConstants>> {
         self.disk.build_constants()
@@ -5110,7 +5125,7 @@ fn check_named_files(
         }
         to_check.retain(|file| {
             let is_typed_dependency = matches!(modules[file.idx()].hir.kind, FileKind::Ts | FileKind::Tsx) && modules[file.idx()].is_dependency;
-            is_left_out[file.idx()] |= is_typed_dependency;
+            is_left_out[file.idx()] |= is_typed_dependency && host.is_without_bundler();
             !is_typed_dependency
         });
         let entry_points: Vec<Vec<u8>> = request.paths.iter().map(|path| host::from_argument(&cwd, path)).collect();

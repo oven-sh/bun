@@ -2652,7 +2652,7 @@ fn make_line_tables(checked: &Checked<'_>, shown_from: &[u8], shows_whole_paths:
         };
         *shown = match builtin {
             Some(module) => module.name.to_vec(),
-            None if shows_whole_paths || checked.files.module(file).file_name().starts_with(bun_builtin_syntax::VIRTUAL_ROOT) => crate::original_path(checked.files.module(file).file_name()).to_vec(),
+            None if shows_whole_paths || checked.files.module(file).file_name().starts_with(bun_builtin_syntax::VIRTUAL_ROOT) => crate::runtime_path(crate::original_path(checked.files.module(file).file_name())),
             None => get_relative_path_from_directory(shown_from, checked.files.module(file).file_name(), checked.files.is_case_sensitive),
         };
     });

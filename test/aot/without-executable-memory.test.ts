@@ -21,13 +21,14 @@ const libc = dlopen("libc.so.6", {
 const load = 0x20, jumpIfEqual = 0x15, jumpIfAnyBitSet = 0x45, answer = 0x06;
 const allow = 0x7fff0000, permissionDenied = process.argv[3] === "refuse" ? 0x00050000 | 13 : 0x80000000;
 const systemCall = 0, architecture = 4, protection = 32, flags = 40;
+const [thisArchitecture, mmap, mprotect, pkeyMprotect] = process.arch === "arm64" ? [0xc00000b7, 222, 226, 288] : [0xc000003e, 9, 10, 329];
 const instructions = [
-  [load, 0, 0, architecture], [jumpIfEqual, 1, 0, 0xc000003e], [answer, 0, 0, allow],
+  [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
   [load, 0, 0, systemCall],
-  [jumpIfEqual, 0, 5, 9],
+  [jumpIfEqual, 0, 5, mmap],
   [load, 0, 0, protection], [jumpIfAnyBitSet, 0, 8, 4],
   [load, 0, 0, flags], [jumpIfAnyBitSet, 0, 6, 0x20], [answer, 0, 0, permissionDenied],
-  [jumpIfEqual, 1, 0, 10], [jumpIfEqual, 0, 3, 329],
+  [jumpIfEqual, 1, 0, mprotect], [jumpIfEqual, 0, 3, pkeyMprotect],
   [load, 0, 0, protection], [jumpIfAnyBitSet, 0, 1, 4], [answer, 0, 0, permissionDenied],
   [answer, 0, 0, allow],
 ];

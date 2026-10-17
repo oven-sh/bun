@@ -6,7 +6,7 @@ use crate::hir::{
     BinOp, CallId, Chain, ClassId, EnumMemberId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId, ImportEqualsTarget, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
     VarKind,
 };
-use crate::program::{FileId, Sym};
+use crate::program::{Builtin, FileId, LoadedBy, Sym};
 use crate::types::{Origin, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use super::OnceLock;
@@ -986,9 +986,52 @@ impl<'p, 's> Checker<'p, 's> {
             .map(|m| m.func)
     }
 
+    pub fn class_required_from_runtime_module(&self, file: FileId, pat: PatId) -> Option<(FileId, ClassId)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let PatParent::Prop(outer, prop) = bound.pat_parent[pat.idx()] else { return None };
+        let PatParent::Var(d) = bound.pat_parent[outer.idx()] else { return None };
+        let declaration = &hir[d];
+        if declaration.kind != VarKind::Const || declaration.pat != outer || declaration.init.is_none() || hir[prop].is_rest || hir[prop].default.is_some() {
+            return None;
+        }
+        let name = match (hir[prop].key, hir[pat].kind) {
+            (PropKey::Name(name), _) | (PropKey::None, PatKind::Ident(name)) => name,
+            _ => return None,
+        };
+        let required = self.required_builtin_module(file, skip_assertions(hir, declaration.init))?;
+        if !matches!(self.files.module(required).builtin, Some(Builtin::Module(_, LoadedBy::RuntimeModulesOnly | LoadedBy::RuntimeModulesBehindLoader))) {
+            return None;
+        }
+        let exported = self.files().module_export(self.files().file_symbol(required), known::default)?;
+        let literal = self.files().decls_of(exported).iter().copied().find_map(|(of, decl)| match decl {
+            Decl::ExportExpr(stmt) if of == required => match self.hir(of)[stmt].kind {
+                StmtKind::ExportDefault(value) => Some(value),
+                _ => None,
+            },
+            _ => None,
+        })?;
+        let exporting = self.hir(required);
+        let ExprKind::Object(props) = exporting[literal].kind else { return None };
+        if props.iter().any(|p| !matches!(exporting[p].key, PropKey::Name(_)) || !matches!(exporting[p].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method)) {
+            return None;
+        }
+        let mut named = props.iter().filter(|&p| matches!(exporting[p].key, PropKey::Name(key) if key == name));
+        let (property, None) = (named.next()?, named.next()) else { return None };
+        let value = exporting[property].value;
+        if !matches!(exporting[value].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        let local = self.bound(required).expr_symbol[value.idx()].some()?;
+        let class = self.class_for_variable(self.files().sym(required, local))?;
+        matches!(self.bound(class.0).class_owner[class.1.idx()], ClassOwner::Stmt(_)).then_some(class)
+    }
+
     pub fn class_for_const(&self, sym: Sym) -> Option<(FileId, ClassId)> {
         let (file, Decl::Var(pat)) = self.files.value_declaration(sym)? else { return None };
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if matches!(bound.pat_parent[pat.idx()], PatParent::Prop(..)) {
+            return self.class_required_from_runtime_module(file, pat);
+        }
         let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return None };
         let declaration = &hir[d];
         if declaration.kind != VarKind::Const || declaration.flags.contains(Flags::AMBIENT) || declaration.ty.is_some() || declaration.init.is_none() {

@@ -1,9 +1,9 @@
 //! The pragmas in the comments before the first token: `/// <reference .. />`, `// @ts-check` and
 //! `// @ts-nocheck`, `/* @jsx h */` and similar.
 
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::{
-    Diagnostic, DiagnosticKind, FileBuilder, FileKind, JsxPragmas, ReferenceKind, ResolutionMode,
+    Diagnostic, DiagnosticKind, File, FileBuilder, FileKind, JsxPragmas, ReferenceKind, ResolutionMode,
 };
 
 /// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the comments before the first
@@ -32,6 +32,14 @@ pub(crate) fn process_pragmas_into_fields(
         }
     }
     true
+}
+
+pub fn read_jsx_pragmas_of_every_comment<'s>(file: &mut File<'s>, text: &[u8], atoms: &Interner<'s>) {
+    let mut pragmas = JsxPragmas::default();
+    for comment in file.comments.iter() {
+        multi_line_pragmas(&text[comment.pos as usize..comment.end as usize], &mut |name| atoms.intern(name), &mut pragmas);
+    }
+    file.jsx_pragmas = pragmas;
 }
 
 /// `extractPragmas` for the `//` comment `text` at `comment_pos`, followed by

@@ -151,11 +151,11 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
     }
 }
 
-const BUILD_FLAGS: [&[u8]; 9] = [b"--aot", b"--aot-allow", b"--aot-baseline", b"--aot-deny", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors", b"--aot-update-baseline", b"--aot-warn"];
+const BUILD_FLAGS: [&[u8]; 10] = [b"--aot", b"--aot-allow", b"--aot-baseline", b"--aot-deny", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors", b"--aot-unchecked-casts", b"--aot-update-baseline", b"--aot-warn"];
 const RUN_FLAGS: [&[u8]; 4] = [b"--aot", b"--aot-audit", b"--aot-huge-heap", b"--aot-type-errors"];
 const RUN_INTERNAL_FLAGS: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
 const SHARED_INTERNAL_FLAGS: [&[u8]; 1] = [b"--aot-crash-if-interpreter-is-used"];
-pub(crate) const COMPILE_OPTIONS: [&[u8]; 3] = [b"aot", b"aotExplain", b"aotTypeErrors"];
+pub(crate) const COMPILE_OPTIONS: [&[u8]; 4] = [b"aot", b"aotExplain", b"aotTypeErrors", b"aotUncheckedCasts"];
 pub(crate) const COMPILE_INTERNAL_OPTIONS: [&[u8]; 1] = [b"aotCrashIfInterpreterIsUsed"];
 
 pub(crate) const RULE_PARAMS: &[bun_clap::Param<bun_clap::Help>] = &[

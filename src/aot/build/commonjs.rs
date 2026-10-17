@@ -460,12 +460,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let is_free = |this: &mut Self, e: ExprId| matches!(hir[e].kind, ExprKind::Ident(name) if this.is_unbound_in(file, e, name));
         let path = self.files.module(file).file_name();
         let slash = bun_core::strings::last_index_of_char(path, b'/')?;
+        let seen = crate::runtime_path(path);
+        let seen_folder = || crate::runtime_folder(&seen).to_vec();
         match hir[e].kind {
-            ExprKind::Ident(_) if is_free(self, e) => Some(Constant::String(if named(self, e, b"__filename") { path.to_vec() } else { path[..slash.max(1)].to_vec() })),
+            ExprKind::Ident(_) if is_free(self, e) => Some(Constant::String(if named(self, e, b"__filename") { seen.clone() } else { seen_folder() })),
             ExprKind::Dot { obj, name, chain: bun_sema::hir::Chain::No, .. } if self.is_commonjs(file) && is_free(self, obj) => match (self.c.atoms().bytes(name), self.shared.constants.source_path_to_url.is_some()) {
-                (b"filename", true) => Some(Constant::String(path.to_vec())),
-                (b"path", true) => Some(Constant::String(path[..slash.max(1)].to_vec())),
-                (b"id", true) if !self.shared.roots().contains(&file) => Some(Constant::String(path.to_vec())),
+                (b"filename", true) => Some(Constant::String(seen.clone())),
+                (b"path", true) => Some(Constant::String(seen_folder())),
+                (b"id", true) if !self.shared.roots().contains(&file) => Some(Constant::String(seen.clone())),
                 (b"id", true) => None,
                 (b"id" | b"path", _) => Some(Constant::String(bun_sema::resolve::get_relative_path_from_directory(&self.shared.constants.root, path, self.files.is_case_sensitive))),
                 (b"filename", _) => Some(Constant::String(path[slash + 1..].to_vec())),
@@ -1606,9 +1608,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
             let module = this.module_global(file, "module");
             let module = this.emit(fx, Op::GlobalGet(module));
-            let path = this.files.module(file).file_name().to_vec();
-            let slash = bun_core::strings::last_index_of_char(&path, b'/').unwrap_or(0);
-            let (filename, dirname) = (this.out.strs.intern(&path), this.out.strs.intern(&path[..slash.max(1).min(path.len())]));
+            let path = crate::runtime_path(this.files.module(file).file_name());
+            let (filename, dirname) = (this.out.strs.intern(&path), this.out.strs.intern(crate::runtime_folder(&path)));
             let (filename, dirname) = (this.emit(fx, Op::Str(filename)), this.emit(fx, Op::Str(dirname)));
             let all = this.emit_throwing(fx, Op::NewArray([exports, require, module, filename, dirname].into_iter().collect()));
             this.operation(fx, Operation::CreateArguments, &[all])
@@ -1647,9 +1648,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let path = crate::original_path(self.files.module(file).file_name());
         let slash = bun_core::strings::last_index_of_char(path, b'/')?;
         Some(match name {
-            b"dir" | b"dirname" => path[..slash.max(1)].to_vec(),
+            b"dir" | b"dirname" => crate::runtime_folder(&crate::runtime_path(path)).to_vec(),
             b"file" => path[slash + 1..].to_vec(),
-            b"path" | b"filename" => path.to_vec(),
+            b"path" | b"filename" => crate::runtime_path(path),
             b"url" => file_url(path),
             _ => return None,
         })
@@ -1809,8 +1810,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.expr_for_effect(fx, obj);
         }
         let path = self.files.module(fx.file).file_name();
-        let slash = bun_core::strings::last_index_of_char(path, b'/')?;
-        let (folder, paths, resolve) = (self.out.strs.intern(&path[..slash.max(1)]), self.out.strs.intern(b"paths"), self.out.strs.intern(b"resolve"));
+        bun_core::strings::last_index_of_char(path, b'/')?;
+        let (folder, paths, resolve) = (self.out.strs.intern(crate::runtime_folder(&crate::runtime_path(path))), self.out.strs.intern(b"paths"), self.out.strs.intern(b"resolve"));
         let require = self.operation(fx, Operation::GetRequireFunction, &[]);
         let specifier = self.str(specifier);
         let specifier = self.emit(fx, Op::Str(specifier));

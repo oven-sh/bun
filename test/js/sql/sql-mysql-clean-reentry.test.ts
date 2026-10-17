@@ -68,8 +68,8 @@ test.skipIf(!isDebug && !isASAN)(
         })
       );
       for (const q of queries) {
-        const handleSym = Object.getOwnPropertySymbols(q).find(s => s.description === "handle");
-        const handle = q[handleSym];
+        const stateSym = Object.getOwnPropertySymbols(q).find(s => s.description === "state");
+        const handle = q[stateSym].handle;
         protoRun ??= Object.getPrototypeOf(handle).run;
         Object.defineProperty(handle, "run", {
           configurable: true,

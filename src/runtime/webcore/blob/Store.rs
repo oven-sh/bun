@@ -91,6 +91,7 @@ pub(crate) trait S3Ext {
         &self,
         store: &RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
+        content_type: Option<&[u8]>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
     /// CompleteMultipartUpload. Resolves `undefined`. See `unlink`.
@@ -457,6 +458,7 @@ impl S3Ext for S3 {
         &self,
         store: &RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
+        content_type: Option<&[u8]>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         struct Wrapper {
@@ -512,7 +514,7 @@ impl S3Ext for S3 {
             cx.context(),
             self.path(),
             multipart_ops::CreateMultipartOptions {
-                content_type: aws_options.content_type.as_deref(),
+                content_type,
                 content_disposition: aws_options.content_disposition.as_deref(),
                 content_encoding: aws_options.content_encoding.as_deref(),
                 acl: aws_options.acl,

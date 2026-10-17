@@ -1,8 +1,5 @@
-//! The requests of an S3 multipart upload (CreateMultipartUpload,
-//! CompleteMultipartUpload, AbortMultipartUpload) and the upload id they
-//! share. The writer (`MultiPartUpload`) and `S3Client.createMultipartUpload`
-//! / `completeMultipartUpload` / `abortMultipartUpload` send the same bytes
-//! through this module.
+//! CreateMultipartUpload, CompleteMultipartUpload and AbortMultipartUpload,
+//! shared by the writer (`MultiPartUpload`) and `S3Client`.
 
 use core::ffi::c_void;
 use std::io::Write as _;
@@ -20,74 +17,66 @@ use crate::webcore::s3::simple_request::{
 };
 use crate::webcore::s3::xml_response;
 
-/// The id S3 gives a multipart upload, as the `<UploadId>` text of the
-/// CreateMultipartUpload response. Stored raw. Each query string it goes into
-/// percent-encodes it.
+/// The `<UploadId>` of a CreateMultipartUpload response, raw and percent-encoded.
 #[derive(Default)]
-pub(crate) struct UploadId(Box<[u8]>);
+pub(crate) struct UploadId {
+    raw: Box<[u8]>,
+    encoded: Box<[u8]>,
+}
 
 /// Room for `?partNumber=10000&uploadId=<encoded id>&x-id=UploadPart`.
-pub(crate) const QUERY_BUFFER_LEN: usize = UploadId::MAX_LEN * 3 + 64;
+pub(crate) const QUERY_BUFFER_LEN: usize = UploadId::MAX_ENCODED_LEN + 64;
 
 impl UploadId {
-    pub(crate) const MAX_LEN: usize = 2000;
+    /// Of the percent-encoded id: each query built around it fits the
+    /// signer's buffers.
+    pub(crate) const MAX_ENCODED_LEN: usize = 2000;
 
-    /// Accepts an id that is printable ASCII without `&`, `#` or `?`, up to
-    /// [`Self::MAX_LEN`] bytes. That is every id S3 and the S3-compatible
-    /// stores issue, and nothing that ends or splits a query value.
-    pub(crate) fn parse(bytes: &[u8]) -> Option<UploadId> {
-        let valid = !bytes.is_empty()
-            && bytes.len() <= Self::MAX_LEN
-            && bytes
-                .iter()
-                .all(|&b| b.is_ascii_graphic() && !matches!(b, b'&' | b'#' | b'?'));
-        valid.then(|| UploadId(Box::from(bytes)))
+    /// Printable ASCII, up to [`Self::MAX_ENCODED_LEN`] bytes once encoded.
+    pub(crate) fn parse(raw: &[u8]) -> Option<UploadId> {
+        if raw.is_empty() || !raw.iter().all(u8::is_ascii_graphic) {
+            return None;
+        }
+        let mut buf = [0u8; Self::MAX_ENCODED_LEN];
+        let encoded = encode_uri_component::<true>(raw, &mut buf).ok()?;
+        Some(UploadId {
+            raw: Box::from(raw),
+            encoded: Box::from(encoded),
+        })
     }
 
     pub(crate) fn as_raw(&self) -> &[u8] {
-        &self.0
+        &self.raw
     }
 
-    /// `?uploadId=<encoded>`: the query of CompleteMultipartUpload and
-    /// AbortMultipartUpload.
+    /// `?uploadId=<encoded>`.
     pub(crate) fn query<'b>(&self, buf: &'b mut [u8; QUERY_BUFFER_LEN]) -> &'b [u8] {
-        let mut encoded = [0u8; Self::MAX_LEN * 3];
-        let encoded = self.encode(&mut encoded);
-        buf_print(buf, format_args!("?uploadId={}", BStr::new(encoded)))
+        buf_print(buf, format_args!("?uploadId={}", BStr::new(&self.encoded)))
             .expect("QUERY_BUFFER_LEN fits an encoded upload id")
     }
 
-    /// `?partNumber=N&uploadId=<encoded>[&x-id=UploadPart]`: the query of
-    /// UploadPart. The names are in byte order, as the header-signed
-    /// canonical request requires.
+    /// `?partNumber=N&uploadId=<encoded>[&x-id=UploadPart]`, names in byte order.
     pub(crate) fn part_query<'b>(
         &self,
         buf: &'b mut [u8; QUERY_BUFFER_LEN],
         part_number: u16,
         x_id: bool,
     ) -> &'b [u8] {
-        let mut encoded = [0u8; Self::MAX_LEN * 3];
-        let encoded = self.encode(&mut encoded);
         let x_id = if x_id { "&x-id=UploadPart" } else { "" };
         buf_print(
             buf,
             format_args!(
                 "?partNumber={}&uploadId={}{}",
                 part_number,
-                BStr::new(encoded),
+                BStr::new(&self.encoded),
                 x_id
             ),
         )
         .expect("QUERY_BUFFER_LEN fits an encoded upload id")
     }
-
-    fn encode<'b>(&self, buf: &'b mut [u8; Self::MAX_LEN * 3]) -> &'b [u8] {
-        encode_uri_component::<true>(&self.0, buf).expect("3 bytes per input byte fit")
-    }
 }
 
-/// The `<UploadId>` of an `<InitiateMultipartUploadResult>` document, if the
-/// body is one and the id is one [`UploadId::parse`] accepts.
+/// The `<UploadId>` of an `<InitiateMultipartUploadResult>` body.
 pub(crate) fn parse_initiate_result(body: &[u8]) -> Option<UploadId> {
     xml_response::parse(body, |root| {
         (root.name == b"InitiateMultipartUploadResult")
@@ -107,8 +96,7 @@ pub(crate) struct UploadPartResult {
 
 pub(crate) const MAX_PART_NUMBER: u16 = 10_000;
 
-/// The body of CompleteMultipartUpload. Sorts `parts` by part number in
-/// place, as S3 requires them in ascending order.
+/// The body of CompleteMultipartUpload. Sorts `parts` by part number in place.
 pub(crate) fn complete_body(parts: &mut [UploadPartResult]) -> Vec<u8> {
     index_sort::sort_slice_by(parts, |a, b| a.number.cmp(&b.number));
     let mut body = Vec::with_capacity(128 + parts.len() * 96);
@@ -125,8 +113,7 @@ pub(crate) fn complete_body(parts: &mut [UploadPartResult]) -> Vec<u8> {
     body
 }
 
-/// Appends `text` as XML character data: `&`, `<` and `>` become entities.
-/// Quotes stay as they are, so an ordinary etag (`"hex"`) goes out verbatim.
+/// XML character data: only `&`, `<` and `>` become entities.
 fn append_xml_text(body: &mut Vec<u8>, text: &[u8]) {
     for &byte in text {
         match byte {
@@ -151,8 +138,7 @@ pub(crate) struct CreateMultipartOptions<'a> {
     pub(crate) proxy_url: Option<&'a [u8]>,
 }
 
-/// `POST /key?uploads=`. The callback gets the response body: read the id
-/// with [`parse_initiate_result`].
+/// `POST /key?uploads=`. Read the id from the body with [`parse_initiate_result`].
 pub(crate) fn create_multipart_upload(
     credentials: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -183,8 +169,7 @@ pub(crate) fn create_multipart_upload(
     )
 }
 
-/// `POST /key?uploadId=<id>` with the body of [`complete_body`]. The callback
-/// is told about an `<Error>` document on a 200 as a failure.
+/// `POST /key?uploadId=<id>` with the body of [`complete_body`].
 pub(crate) fn complete_multipart_upload(
     credentials: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,

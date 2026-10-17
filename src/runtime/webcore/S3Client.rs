@@ -371,8 +371,22 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
-        let Some(path) = PathLike::from_js(global, &mut args)? else {
-            return Err(match missing_path {
+        let path = Self::path_from_args(global, &mut args, verb, missing_path)?;
+        let options = args.next_eat();
+        Ok((self.construct_blob(global, path, options)?, options))
+    }
+
+    /// Eats the path argument. `verb` completes the "Expected a path to
+    /// {verb}" error message.
+    fn path_from_args(
+        global: &JSGlobalObject,
+        args: &mut bun_jsc::call_frame::ArgumentsSlice,
+        verb: &str,
+        missing_path: MissingPathError,
+    ) -> JsResult<PathLike<'static>> {
+        match PathLike::from_js(global, args)? {
+            Some(path) => Ok(path),
+            None => Err(match missing_path {
                 MissingPathError::MissingOrInvalid if args.len() != 0 => {
                     global.throw_invalid_arguments(format_args!("Expected a path to {verb}"))
                 }
@@ -382,10 +396,8 @@ impl S3Client {
                         format_args!("Expected a path to {verb}"),
                     )
                     .throw(),
-            });
-        };
-        let options = args.next_eat();
-        Ok((self.construct_blob(global, path, options)?, options))
+            }),
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -594,6 +606,7 @@ impl S3Client {
         store.data.as_s3().create_multipart_upload(
             store,
             &global.js_thread_of_caller(callframe),
+            blob.content_type_or_mime_type(),
             options,
         )
     }
@@ -607,11 +620,12 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
-        let Some(path) = PathLike::from_js(global, &mut args)? else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Expected a path to complete a multipart upload for"
-            )));
-        };
+        let path = Self::path_from_args(
+            global,
+            &mut args,
+            "complete a multipart upload for",
+            MissingPathError::MissingOrInvalid,
+        )?;
         let upload_id = S3File::upload_id_from_js(global, args.next_eat(), b"uploadId")?;
         let mut parts = S3File::parts_from_js(global, args.next_eat())?;
         let options = args.next_eat();
@@ -635,11 +649,12 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
-        let Some(path) = PathLike::from_js(global, &mut args)? else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Expected a path to abort a multipart upload for"
-            )));
-        };
+        let path = Self::path_from_args(
+            global,
+            &mut args,
+            "abort a multipart upload for",
+            MissingPathError::MissingOrInvalid,
+        )?;
         let upload_id = S3File::upload_id_from_js(global, args.next_eat(), b"uploadId")?;
         let options = args.next_eat();
         let blob = ptr.construct_blob(global, path, options)?;

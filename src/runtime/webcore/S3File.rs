@@ -197,6 +197,7 @@ pub(crate) fn create_multipart_upload(
     store.data.as_s3().create_multipart_upload(
         store,
         &global.js_thread_of_caller(callframe),
+        blob.content_type_or_mime_type(),
         options,
     )
 }
@@ -247,23 +248,29 @@ pub(crate) fn abort_multipart_upload(
     )
 }
 
-/// An `uploadId` argument or option: the id that CreateMultipartUpload
-/// returned.
+/// An `uploadId` argument or option.
 pub(crate) fn upload_id_from_js(
     global: &JSGlobalObject,
     value: Option<JSValue>,
     name: &[u8],
 ) -> JsResult<UploadId> {
-    let value = value.unwrap_or(JSValue::UNDEFINED);
+    let Some(value) = value.filter(|value| !value.is_undefined()) else {
+        return Err(global
+            .err(
+                bun_jsc::ErrorCode::MISSING_ARGS,
+                format_args!("Expected the uploadId of the multipart upload"),
+            )
+            .throw());
+    };
     if !value.is_string() {
         return Err(global.throw_invalid_argument_type_value(name, b"string", value));
     }
     let utf8 = value.to_utf8(global)?;
     UploadId::parse(&utf8).ok_or_else(|| {
         global.throw_invalid_arguments(format_args!(
-            "{} must be 1 to {} printable ASCII characters without '&', '#' or '?'",
+            "{} must be printable ASCII, at most {} bytes once percent-encoded",
             BStr::new(name),
-            UploadId::MAX_LEN
+            UploadId::MAX_ENCODED_LEN
         ))
     })
 }
@@ -290,13 +297,19 @@ pub(crate) fn part_number_from_js(
     Ok(number)
 }
 
-/// The `parts` argument of `completeMultipartUpload`: an array of
-/// `{ partNumber, etag }`, one per uploaded part, each part number once.
+/// The `parts` argument of `completeMultipartUpload`, sorted by part number.
 pub(crate) fn parts_from_js(
     global: &JSGlobalObject,
     value: Option<JSValue>,
 ) -> JsResult<Vec<UploadPartResult>> {
-    let value = value.unwrap_or(JSValue::UNDEFINED);
+    let Some(value) = value.filter(|value| !value.is_undefined()) else {
+        return Err(global
+            .err(
+                bun_jsc::ErrorCode::MISSING_ARGS,
+                format_args!("Expected the parts of the multipart upload"),
+            )
+            .throw());
+    };
     if !value.is_array() {
         return Err(global.throw_invalid_argument_type_value(b"parts", b"array", value));
     }

@@ -520,6 +520,33 @@ it("chrome: scroll dispatches wheel event", async () => {
   expect(y).toBeGreaterThan(0);
 });
 
+// Chrome drops an Input.dispatchMouseEvent{mouseWheel} that is in flight when
+// the main frame commits another document, and never replies to it: about
+// every other round here. scroll() resolves at the commit instead, and the
+// commit comes before the load that resolves navigate(), so every round has
+// settled by then and the Misc slot is free for the click at the end.
+it("chrome: scroll() in flight across a navigation settles and frees its slot", async () => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response("<body style='height:3000px'></body>", { headers: { "content-type": "text/html" } }),
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(base);
+  for (let i = 0; i < 6; i++) {
+    let state = "pending";
+    const scrolled = view.scroll(0, 100).then(
+      () => (state = "resolved"),
+      e => (state = "rejected: " + e.message),
+    );
+    await view.navigate(base + "?" + i);
+    expect(state).toBe("resolved");
+    await scrolled;
+  }
+  await view.click(5, 5);
+});
+
 it("chrome: url getter reflects committed URL", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   const url = html("<body>test</body>");

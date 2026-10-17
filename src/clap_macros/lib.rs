@@ -265,14 +265,14 @@ fn byte_str_b(s: &[u8]) -> LitByteStr {
     LitByteStr::new(s, Span::call_site())
 }
 
-/// 1:1 port of `bun_core::output::pretty_fmt_runtime` — rewrites Bun's `<tag>`
+/// Port of `bun_core::output::pretty_fmt_runtime` — rewrites Bun's `<tag>`
 /// colour markup to ANSI escape sequences when `is_enabled`, or strips it when
 /// not. Run here at macro-expansion time with `is_enabled = false` so each param
 /// description's tag-stripped form (`Help::msg_plain`) is a `const` byte literal
 /// in rodata. The ANSI form is *not* baked in — it is rare (only `bun --help` on
 /// a colour TTY) and would otherwise roughly triple the help-string rodata, so
 /// `bun_clap::pretty_help_desc` derives it from `Help::msg` on demand instead.
-fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
+fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Result<Vec<u8>, String> {
     use bun_output_tags::{RESET, color_for_bytes};
     let mut out: Vec<u8> = Vec::with_capacity(fmt.len() * 2);
     let mut i = 0usize;
@@ -320,12 +320,10 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     is_reset = true;
                     ""
                 } else {
-                    // Unknown tag: `pretty_fmt_runtime` (the path this replaces)
-                    // drops it silently. Match
-                    // the lenient runtime behaviour — a compile error would be
-                    // stricter than what shipped, and param specs don't carry
-                    // unknown tags anyway.
-                    ""
+                    return Err(format!(
+                        "`<{}>` in the help text is not a colour tag and would be dropped from --help; write `\\\\<` and `\\\\>` for literal angle brackets",
+                        name.escape_ascii()
+                    ));
                 };
                 if is_enabled {
                     out.extend_from_slice(if is_reset {
@@ -341,15 +339,15 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
             }
         }
     }
-    out
+    Ok(out)
 }
 
-fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
+fn emit_param(krate: &Path, p: &Param) -> Result<TokenStream2, String> {
     let msg = byte_str(&p.id.msg);
     // Precompute only the tag-stripped form (the non-TTY help path needs it ready
     // without a TTY check); the ANSI form is derived lazily from `msg` by
     // `bun_clap::pretty_help_desc`, so it stays out of rodata.
-    let msg_plain = byte_str_b(&pretty_rewrite(p.id.msg.as_bytes(), false));
+    let msg_plain = byte_str_b(&pretty_rewrite(p.id.msg.as_bytes(), false)?);
     let value = byte_str(&p.id.value);
 
     let short = match p.names.short {
@@ -385,7 +383,7 @@ fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
         Values::OneOptional => quote! { #krate::Values::OneOptional },
     };
 
-    quote! {
+    Ok(quote! {
         #krate::Param::<#krate::Help> {
             id: #krate::Help {
                 msg: #msg,
@@ -399,7 +397,7 @@ fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
             },
             takes_value: #takes_value,
         }
-    }
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,17 +420,21 @@ impl Parse for ParseParamInput {
     }
 }
 
+/// One param spec literal → const `Param<Help>` literal, or a compile error at the literal.
+fn expand_param(krate: &Path, lit: &LitStr, macro_name: &str) -> syn::Result<TokenStream2> {
+    let line = lit.value();
+    let error = |msg: &str| syn::Error::new(lit.span(), format!("{macro_name}: {msg}"));
+    let param = parse_param(line.as_bytes()).map_err(|e| error(e.msg()))?;
+    emit_param(krate, &param).map_err(|msg| error(&msg))
+}
+
 /// `__parse_param_impl!($crate, "…")` → const `Param<Help>` literal.
 #[proc_macro]
 pub fn __parse_param_impl(input: TokenStream) -> TokenStream {
     let ParseParamInput { krate, lit } = parse_macro_input!(input as ParseParamInput);
-    let line = lit.value();
-    match parse_param(line.as_bytes()) {
-        Ok(p) => emit_param(&krate, &p).into(),
-        Err(e) => syn::Error::new(lit.span(), format!("parse_param!: {}", e.msg()))
-            .to_compile_error()
-            .into(),
-    }
+    expand_param(&krate, &lit, "parse_param!")
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
 }
 
 struct ParseParamsInput {
@@ -456,14 +458,9 @@ pub fn __parse_params_impl(input: TokenStream) -> TokenStream {
 
     let mut items = Vec::with_capacity(lits.len());
     for lit in &lits {
-        let line = lit.value();
-        match parse_param(line.as_bytes()) {
-            Ok(p) => items.push(emit_param(&krate, &p)),
-            Err(e) => {
-                return syn::Error::new(lit.span(), format!("parse_params!: {}", e.msg()))
-                    .to_compile_error()
-                    .into();
-            }
+        match expand_param(&krate, lit, "parse_params!") {
+            Ok(item) => items.push(item),
+            Err(e) => return e.to_compile_error().into(),
         }
     }
 

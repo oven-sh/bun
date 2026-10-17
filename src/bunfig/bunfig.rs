@@ -768,7 +768,7 @@ impl<'a> Parser<'a, '_> {
                             None => {
                                 self.add_error(
                                     auto_install_expr.loc,
-                                    b"Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"",
+                                    b"Invalid auto install setting, must be one of true, false, \"auto\", \"force\", \"fallback\", or \"disable\"",
                                 )?;
                                 return Ok(());
                             }
@@ -782,7 +782,7 @@ impl<'a> Parser<'a, '_> {
                     } else {
                         self.add_error(
                             auto_install_expr.loc,
-                            b"Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"",
+                            b"Invalid auto install setting, must be one of true, false, \"auto\", \"force\", \"fallback\", or \"disable\"",
                         )?;
                         return Ok(());
                     }
@@ -796,7 +796,7 @@ impl<'a> Parser<'a, '_> {
                     } else {
                         self.add_error(
                             prefer_expr.loc,
-                            b"Invalid prefer setting, must be one of online or offline",
+                            b"Invalid prefer setting, must be one of \"online\", \"offline\", or \"latest\"",
                         )?;
                     }
                 }

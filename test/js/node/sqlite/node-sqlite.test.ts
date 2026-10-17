@@ -1,6 +1,6 @@
 import { heapStats, jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import { totalmem } from "node:os";
@@ -3362,11 +3362,26 @@ describe.concurrent("a write statement that is left on its first row", () => {
 
   // The index is written at the commit, and that is the user's.
   describe.each([
-    ["BEGIN", "COMMIT"],
-    ["SAVEPOINT s", "RELEASE s"],
-  ])("inside the user's %s", (begin, commit) => {
+    ["BEGIN", "COMMIT", "cannot commit - no transaction is active"],
+    ["SAVEPOINT s", "RELEASE s", "no such savepoint: s"],
+  ])("inside the user's %s", (begin, commit, noTransaction) => {
     test("collected: it stays part of the transaction", async () => {
-      expect(
+      const kept = {
+        ...printed({
+          inTheCollection: 0,
+          inTransaction: true,
+          ended: "did not throw",
+          asked: true,
+          after: { rows: 2, found: 2, plain: 1 },
+        }),
+        file: { rows: 2, found: 2, check: "ok" },
+      };
+      // macOS loads the system's SQLite. With that of macOS 15 the end of the statement rolls the whole transaction back.
+      const rolledBack = {
+        ...printed({ inTheCollection: 0, inTransaction: false, ended: noTransaction, asked: true, after: nothing }),
+        file: { rows: 0, found: 0, check: "ok" },
+      };
+      expect(isMacOS ? [kept, rolledBack] : [kept]).toContainEqual(
         await inChild(
           `
           const db = open("fts5");
@@ -3377,15 +3392,12 @@ describe.concurrent("a write statement that is left on its first row", () => {
           collect();
           const inTheCollection = calls;
           const inTransaction = db.isTransaction;
-          db.exec("${commit}");
-          console.log(JSON.stringify({ inTheCollection, inTransaction, asked: calls > 0, after: committed() }));
+          const ended = thrownBy(() => db.exec("${commit}"));
+          console.log(JSON.stringify({ inTheCollection, inTransaction, ended, asked: calls > 0, after: committed() }));
         `,
           counts,
         ),
-      ).toEqual({
-        ...printed({ inTheCollection: 0, inTransaction: true, asked: true, after: { rows: 2, found: 2, plain: 1 } }),
-        file: { rows: 2, found: 2, check: "ok" },
-      });
+      );
     });
 
     test("collected with the DatabaseSync: the transaction is rolled back", async () => {

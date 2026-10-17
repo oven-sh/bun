@@ -3220,7 +3220,7 @@ exports.format = async text => "by Prettier";
         "my-package.json": unsorted,
         "package.json5": unsorted,
         "composer.json": unsorted,
-        "Package.json": unsorted,
+        "other/Package.json": unsorted,
         "d.js": "d  ;\n",
       };
       const after = {
@@ -3229,7 +3229,7 @@ exports.format = async text => "by Prettier";
         "my-package.json": '{ "version": "1", "name": "a" }\n',
         "package.json5": '{ version: "1", name: "a" }\n',
         "composer.json": onlyFormatted,
-        "Package.json": onlyFormatted,
+        "other/Package.json": onlyFormatted,
         "d.js": "d;\n",
       };
       for (const installed of [{}, packages]) {

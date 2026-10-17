@@ -8,7 +8,7 @@ import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
-import { Duplex } from "node:stream";
+import { Duplex, duplexPair } from "node:stream";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
@@ -5634,19 +5634,18 @@ describe("server names for a connection handed in with server.emit('connection')
     });
 
     describe("SNICallback", () => {
-      type Answer = (name: string, cb: (err: Error | null, ctx?: any) => void) => void;
+      type Answer = (this: TLSSocket, name: string, cb: (err: Error | null, ctx?: any) => void) => void;
       const tenant = tls.createSecureContext({ ...agent3, ca: ca2 });
       // The server's default name trusts clients of ca1, `tenant` trusts clients of ca2.
-      function serverWith(answer: Answer, calls: string[], handshakeTimeout?: number) {
+      function serverWith(answer: Answer, calls: string[]) {
         const server = createServer({
           ...agent2,
           ca: ca1,
           requestCert: true,
           rejectUnauthorized: true,
-          handshakeTimeout,
           SNICallback(name, cb) {
             calls.push(name);
-            answer(name, cb);
+            answer.call(this as unknown as TLSSocket, name, cb);
           },
         });
         // A server with an SNICallback never consults its addContext() entries.
@@ -5669,12 +5668,25 @@ describe("server names for a connection handed in with server.emit('connection')
           { cn: "agent3", authorized: true },
         ],
         [
+          "the native context of a SecureContext",
+          (_, cb) => cb(null, tenant.context),
+          agent3,
+          { cn: "agent3", authorized: true },
+        ],
+        [
           "nothing: the default context, not an addContext() entry",
           (_, cb) => cb(null, undefined),
           agent1,
           { cn: "agent2", authorized: true },
         ],
+        [
+          "nothing, later: the default context",
+          (_, cb) => void setImmediate(cb, null, undefined),
+          agent1,
+          { cn: "agent2", authorized: true },
+        ],
         ["false: the default context", (_, cb) => cb(null, false), agent1, { cn: "agent2", authorized: true }],
+        ["a number: the default context", (_, cb) => cb(null, 1), agent1, { cn: "agent2", authorized: true }],
         [
           "a wrapper of a value that is no object: the default context",
           (_, cb) => cb(null, { context: 5 }),
@@ -5685,6 +5697,14 @@ describe("server names for a connection handed in with server.emit('connection')
         [
           "an error, later",
           (name, cb) => void setImmediate(cb, new Error(`no ${name}`)),
+          agent1,
+          { cn: noHandshake, refused: "no entry.test" },
+        ],
+        [
+          "a throw",
+          name => {
+            throw new Error(`no ${name}`);
+          },
           agent1,
           { cn: noHandshake, refused: "no entry.test" },
         ],
@@ -5716,7 +5736,11 @@ describe("server names for a connection handed in with server.emit('connection')
 
       it("leaves the connection to handshakeTimeout when it never answers", async () => {
         const calls: string[] = [];
-        const server = serverWith(() => {}, calls, 100);
+        // The deadline of handshakeTimeout is the 'timeout' event of the socket. It comes here once the
+        // callback was asked, so the test waits for no time to pass.
+        const server = serverWith(function () {
+          setImmediate(() => this.emit("timeout"));
+        }, calls);
         expect(await connectThrough(server, door, { servername: "never.test", ...agent1 })).toEqual({
           cn: noHandshake,
           refused: "ERR_TLS_HANDSHAKE_TIMEOUT",
@@ -6034,6 +6058,150 @@ describe("server names for a connection handed in with server.emit('connection')
     });
   });
 
+  it.each(["TLSv1.2", "TLSv1.3"] as const)(
+    "over a Duplex, the server writes nothing before the answer, and nothing when the answer is an error (%s)",
+    async version => {
+      const [serverSide, clientSide] = duplexPair();
+      let wrote = 0;
+      const write = serverSide.write;
+      serverSide.write = function (this: Duplex, chunk: any, ...rest: any[]) {
+        wrote += chunk.length;
+        return Reflect.apply(write, this, [chunk, ...rest]);
+      } as typeof write;
+      let beforeAnswer: number | undefined;
+      const socket = new TLSSocket(serverSide, {
+        isServer: true,
+        ...agent2,
+        SNICallback(_name, cb) {
+          // Three turns of the event loop: a flight that the engine had ready would be out by now.
+          setImmediate(() =>
+            setImmediate(() =>
+              setImmediate(() => {
+                beforeAnswer = wrote;
+                cb(new Error("boom"));
+              }),
+            ),
+          );
+        },
+      });
+      const refused = once(socket, "error");
+      const client = connect({
+        socket: clientSide,
+        servername: "tenant.test",
+        rejectUnauthorized: false,
+        minVersion: version,
+        maxVersion: version,
+      });
+      try {
+        const outcome = await new Promise<string>(resolve => {
+          client.on("secureConnect", () => resolve("connected"));
+          client.on("error", err => resolve(String((err as NodeJS.ErrnoException).code)));
+        });
+        // The refusal reaches the listeners of the server side after the client sees the reset.
+        const server = beforeAnswer === undefined ? "not asked" : (await refused)[0].message;
+        expect({ beforeAnswer, afterRefusal: wrote, client: outcome, server }).toEqual({
+          beforeAnswer: 0,
+          afterRefusal: 0,
+          client: "ECONNRESET",
+          server: "boom",
+        });
+      } finally {
+        client.destroy();
+        socket.destroy();
+      }
+    },
+  );
+
+  it("over a Duplex, two handshakes that wait at once get their own answers", async () => {
+    type Answer = (err: Error | null, ctx?: tls.SecureContext) => void;
+    const pending = new Map<string, Answer>();
+    const bothAsked = Promise.withResolvers<void>();
+    const SNICallback = (name: string, cb: Answer) => {
+      pending.set(name, cb);
+      if (pending.size === 2) bothAsked.resolve();
+    };
+    const sockets: TLSSocket[] = [];
+    const clients = ["one.test", "two.test"].map(servername => {
+      const [serverSide, clientSide] = duplexPair();
+      const socket = new TLSSocket(serverSide, { isServer: true, ...agent2, SNICallback });
+      socket.on("error", () => {});
+      const client = connect({ socket: clientSide, servername, rejectUnauthorized: false });
+      sockets.push(socket, client);
+      return client;
+    });
+    try {
+      const connected = clients.map(client => once(client, "secureConnect"));
+      // A handshake that does not ask its callback completes with the default context.
+      await Promise.race([bothAsked.promise, Promise.all(connected)]);
+      pending.get("two.test")?.(null, tls.createSecureContext(agent3));
+      await connected[1];
+      pending.get("one.test")?.(null, tls.createSecureContext(agent1));
+      await connected[0];
+      expect(clients.map(client => client.getPeerCertificate().subject.CN)).toEqual(["agent1", "agent3"]);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  });
+
+  // In a process of its own: a count taken here would include what earlier tests left for the GC.
+  it("over a Duplex, no SecureContext is kept once the socket that it answered for is gone", async () => {
+    const script = `
+      const { sslCtxLiveCount } = require("bun:internal-for-testing");
+      const { duplexPair } = require("node:stream");
+      const tls = require("node:tls");
+      const [defaults, selected] = ${JSON.stringify([agent2, agent3])};
+      const before = sslCtxLiveCount();
+
+      // One handshake whose callback answers with a context of its own. Nothing of it outlives the call.
+      async function answered(when, id) {
+        const [serverSide, clientSide] = duplexPair();
+        const given = Promise.withResolvers();
+        let asked = false;
+        const socket = new tls.TLSSocket(serverSide, {
+          isServer: true,
+          ...defaults,
+          SNICallback(_, cb) {
+            asked = true;
+            const context = tls.createSecureContext({ ...selected, sessionTimeout: 7000 + id });
+            const answer = () => (cb(null, context), given.resolve());
+            if (when === "at once") answer();
+            else if (when === "later") setImmediate(answer);
+            else if (when === "after it destroyed the socket") (socket.destroy(), answer());
+            else setImmediate(() => (socket.destroy(), setImmediate(answer)));
+          },
+        });
+        socket.on("error", () => {});
+        const client = tls.connect({ socket: clientSide, servername: "tenant.test", rejectUnauthorized: false });
+        const outcome = await new Promise(resolve => {
+          client.on("secureConnect", () => resolve(client.getPeerCertificate().subject.CN));
+          client.on("error", err => resolve(err.code));
+        });
+        if (asked) await given.promise;
+        client.destroy();
+        socket.destroy();
+        return outcome;
+      }
+
+      const outcomes = [];
+      for (const when of ["at once", "later", "after it destroyed the socket", "after the socket is gone"]) {
+        outcomes.push(await answered(when, outcomes.length));
+      }
+      // Finalizers run on GC, so wait for the condition.
+      for (let i = 0; i < 10 && sslCtxLiveCount() !== before; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(JSON.stringify({ outcomes, left: sslCtxLiveCount() - before }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, result: JSON.parse(stdout || "null"), exitCode }).toEqual({
+      stderr: "",
+      result: { outcomes: ["agent3", "agent3", "ECONNRESET", "ECONNRESET"], left: 0 },
+      exitCode: 0,
+    });
+  });
+
   // A CONNECT proxy that ends TLS itself. This socket has no handle to adopt.
   it.each(["addContext", "SNICallback"])("%s over the socket of an http 'connect' event", async how => {
     const server = createServer(
@@ -6071,9 +6239,15 @@ describe("server names for a connection handed in with server.emit('connection')
     }
   });
 
-  it("addContext() over a TLS socket of another server (TLS in TLS)", async () => {
-    const inner = createServer({ ...agent2 }, socket => socket.end());
-    inner.addContext("tenant.test", { ...agent3 });
+  it.each(["addContext", "SNICallback"])("%s over a TLS socket of another server (TLS in TLS)", async how => {
+    const inner = createServer(
+      {
+        ...agent2,
+        SNICallback: how === "SNICallback" ? (_name, cb) => cb(null, tls.createSecureContext(agent3)) : undefined,
+      },
+      socket => socket.end(),
+    );
+    if (how === "addContext") inner.addContext("tenant.test", { ...agent3 });
     const outer = createServer({ ...agent1 }, socket => {
       socket.on("error", () => {});
       inner.emit("connection", socket);

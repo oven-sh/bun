@@ -38,6 +38,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
+#include <wtf/SentinelLinkedList.h>
 #include <wtf/WeakListHashSet.h>
 #include <wtf/WeakPtr.h>
 
@@ -115,9 +116,9 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
 
-    using Algorithm = Function<void(JSC::JSValue reason)>;
-    uint32_t addAlgorithm(Algorithm&&);
-    void removeAlgorithm(uint32_t);
+    // For EventListenerAbortAlgorithm, which links itself when it is made and unlinks itself.
+    void addAlgorithm(EventListenerAbortAlgorithm&);
+    void removeAlgorithm(EventListenerAbortAlgorithm&);
 
     template<typename Visitor> void visitAbortAlgorithms(Visitor&);
 
@@ -203,11 +204,9 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
 
-    Vector<std::pair<uint32_t, Algorithm>> m_algorithms;
-    // Kept separate from m_algorithms so the GC thread can visit the weak JS
-    // callbacks via visitAbortAlgorithms(). Erasing Ref<AbortAlgorithm> into
-    // an Algorithm lambda would hide it from the GC and reintroduce the
-    // Strong-ref cycle leak.
+    // addEventListener()'s { signal }, in registration order. Each listener owns its node.
+    SentinelLinkedList<EventListenerAbortAlgorithm, BasicRawSentinelNode<EventListenerAbortAlgorithm>> m_listenerAlgorithms;
+    // pipeTo()'s { signal }. Owned here, so that the GC thread can visit their weak JS callbacks (visitAbortAlgorithms()).
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
     AbortSignalSet m_sourceSignals;
@@ -218,7 +217,7 @@ private:
     Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
     std::atomic<uint32_t> pendingActivityCount { 0 };
     // Everything hasTimeoutObserver() cares about in one counter: abort event
-    // listeners (1 while any exist), pending activity, m_algorithms,
+    // listeners (1 while any exist), pending activity, m_listenerAlgorithms,
     // m_abortAlgorithms, dependent signals.
     std::atomic<uint32_t> m_timeoutObserverCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };

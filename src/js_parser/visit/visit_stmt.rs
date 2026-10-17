@@ -1695,7 +1695,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::While,
     ) -> Result<(), Error> {
-        p.visit_expr(&mut data.test);
+        p.visit_loop_head(&mut data.test);
         data.body = p.visit_loop_body(data.body);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
@@ -1721,7 +1721,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::DoWhile,
     ) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
-        p.visit_expr(&mut data.test);
+        p.visit_loop_head(&mut data.test);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
         stmts.push(*stmt);
@@ -1882,7 +1882,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if let Some(mut test) = data.test {
-            p.visit_expr(&mut test);
+            p.visit_loop_head(&mut test);
             data.test = Some(SideEffects::simplify_boolean(p, test));
 
             if let Some(result) = SideEffects::to_boolean(p, &data.test.unwrap().data) {
@@ -1893,7 +1893,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if let Some(update) = data.update.as_mut() {
-            p.visit_expr(update);
+            p.visit_loop_head(update);
         }
 
         data.body = p.visit_loop_body(data.body);

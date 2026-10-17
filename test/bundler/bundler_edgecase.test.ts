@@ -4189,8 +4189,8 @@ describe("bundler", () => {
     run: { file: "/check.js", stdout: `{"x":1} true` },
   });
 
-  // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
-  // accessor or `#private` next to each class. Every class needs its own.
+  // Standard decorator lowering declares `var _init` and `var _dec` next to each
+  // class. Every class needs its own.
   itBundled("edgecase/StandardDecoratorTemporariesPerClass", {
     files: {
       "/entry.js": /* js */ `
@@ -4276,8 +4276,7 @@ describe("bundler", () => {
     },
     run: { stdout: "f g" },
   });
-  // `recv.#m()` on a lowered private method captures the receiver in a `var _obj`
-  // inside the calling method.
+  // A call of a decorated `#private` method leaves a user binding named `_obj` alone.
   itBundled("edgecase/StandardDecoratorReceiverTemporaryVsUserBinding", {
     files: {
       "/entry.js": /* js */ `

@@ -220,6 +220,7 @@ var __defNormalProp = (obj, key, value) =>
 
 // ES decorator helpers
 export var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+// `__decorateElement` calls these for a `#private` member; `--no-bundle` output of an older Bun imports them.
 var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
 export var __privateIn = (member, obj) =>
   Object(obj) !== obj ? __typeError('Cannot use the "in" operator on this value') : member.has(obj);
@@ -274,7 +275,7 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
     k < 5 &&
       (k > 3 || !p) &&
       __getOwnPropDesc(
-        k < 4
+        k < 4 || !extra
           ? target
           : {
               get [name]() {
@@ -337,7 +338,7 @@ export var __esm = (fn, res, err) => () => {
   return res;
 };
 
-// This is used for JSX inlining with React.
+// A symbol for lowered code that cannot name `Symbol`: `$$typeof.constructor()` makes a new one.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);

@@ -926,6 +926,29 @@ impl ByteRangeMapping {
                 }
             }
 
+            // The mapping that covers `byte_offset` of the transpiled text.
+            let mut mapping_at = |byte_offset: usize| -> Option<bun_sourcemap::Mapping> {
+                let new_line_index = LineOffsetTable::find_index(
+                    line_starts,
+                    Loc {
+                        start: i32::try_from(byte_offset).expect("int cast"),
+                    },
+                )?;
+                let line_start_byte_offset = line_starts[new_line_index];
+                if (line_start_byte_offset as usize) >= byte_offset {
+                    return None;
+                }
+                let line =
+                    Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast"));
+                let column = Ordinal::from_zero_based(
+                    i32::try_from(byte_offset - line_start_byte_offset as usize).expect("int cast"),
+                );
+                match cur_.as_mut() {
+                    Some(cursor) => cursor.move_to(line, column),
+                    None => parsed_mapping.find_mapping(line, column),
+                }
+            };
+
             for function in function_blocks {
                 if function.end_offset < 0 || function.start_offset < 0 {
                     continue; // does not map to anything
@@ -938,55 +961,35 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
+                // A line of the map with no mapping of its own repeats the one before it.
+                let original = |point: &bun_sourcemap::Mapping| {
+                    (
+                        point.original.lines.zero_based(),
+                        point.original.columns.zero_based(),
+                    )
+                };
+                let before = match min.checked_sub(1) {
+                    Some(byte_offset) => mapping_at(byte_offset).as_ref().map(original),
+                    None => None,
+                };
+                let mut has_own_mapping = false;
+
                 for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
+                    let Some(point) = mapping_at(byte_offset) else {
                         continue;
                     };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
+                    if point.original.lines.zero_based() < 0 {
                         continue;
                     }
 
-                    let column_position =
-                        byte_offset.saturating_sub(line_start_byte_offset as usize);
-
-                    let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    };
-                    if let Some(point) = found {
-                        if point.original.lines.zero_based() < 0 {
-                            continue;
-                        }
-
-                        let line: u32 =
-                            u32::try_from(point.original.lines.zero_based()).expect("int cast");
-                        if line >= line_count {
-                            continue;
-                        }
-                        min_line = min_line.min(line);
-                        max_line = max_line.max(line);
+                    let line: u32 =
+                        u32::try_from(point.original.lines.zero_based()).expect("int cast");
+                    if line >= line_count {
+                        continue;
                     }
+                    has_own_mapping |= before != Some(original(&point));
+                    min_line = min_line.min(line);
+                    max_line = max_line.max(line);
                 }
 
                 // no sourcemaps? ignore it
@@ -995,6 +998,11 @@ impl ByteRangeMapping {
                 }
 
                 let did_fn_execute = function.execution_count > 0 || function.has_executed;
+
+                // A function that never ran and has no mapping of its own is not in the source.
+                if !did_fn_execute && !has_own_mapping {
+                    continue;
+                }
 
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.

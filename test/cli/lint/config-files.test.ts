@@ -4814,15 +4814,16 @@ describe.concurrent("whose configuration files count", () => {
     };
     const absolute = (dir: string) => [join(dir, "packages", "app", "src", "a.js")];
 
-    test.each<[cwd: string, args: string[], up: string, more?: Options["args"]]>([
-      [".", ["."], "packages/app/"],
-      [".", ["packages/app"], "packages/app/"],
-      [".", ["packages/app/src/a.js"], "packages/app/"],
+    // A row that is shorter than the parameter list gets `done` for the next parameter.
+    test.each<[cwd: string, args: string[], up: string, more: Options["args"]]>([
+      [".", ["."], "packages/app/", undefined],
+      [".", ["packages/app"], "packages/app/", undefined],
+      [".", ["packages/app/src/a.js"], "packages/app/", undefined],
       [".", [], "packages/app/", absolute],
-      ["packages", ["app"], "app/"],
-      ["packages/app", ["."], ""],
+      ["packages", ["app"], "app/", undefined],
+      ["packages/app", ["."], "", undefined],
       ["packages/app", [], "", absolute],
-      ["packages/app/src", ["a.js"], "../"],
+      ["packages/app/src", ["a.js"], "../", undefined],
     ])("the oxlint config wins in %s with %j", async (cwd, args, up, more) => {
       const { problems, stderr, exitCode } = await lint(files, args, { cwd, args: more });
       expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq"]);

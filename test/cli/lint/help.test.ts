@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir } from "harness";
-import { join } from "path";
+import { join, posix } from "path";
 
 const root = join(import.meta.dir, "../../..");
 
@@ -231,7 +231,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
 
   /** Runs `bun ...args` in the directory `cwd` of a project with `files`, which has `a.ts` too. */
   async function bun(files: Record<string, string>, args: string[], cwd = ".", more: More = {}) {
-    using dir = tempDir("bun-no-script", { ...files, [join(cwd, "a.ts")]: source });
+    using dir = tempDir("bun-no-script", { ...files, [posix.join(cwd, "a.ts")]: source });
     for (const name in files) if (files[name].startsWith("#!")) chmodSync(join(String(dir), name), 0o755);
     more.before?.(String(dir));
     await using proc = Bun.spawn({
@@ -543,8 +543,8 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       test.skipIf(command === "check").each(places)("%s: nothing is run", async (_, files, cwd) => {
         // What is asked after the package.json.
         const others = {
-          [join(cwd, `${command}.ts`)]: 'console.log("the file");',
-          [join(cwd, "node_modules/.bin", command)]: executable,
+          [posix.join(cwd, `${command}.ts`)]: 'console.log("the file");',
+          [posix.join(cwd, "node_modules/.bin", command)]: executable,
         };
         const result = await bun({ ...files, ...others }, command === "lint" ? ["lint", "--fix"] : ["fmt"], cwd);
         expect(result.stderr).toMatch(error);

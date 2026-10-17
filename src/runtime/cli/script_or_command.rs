@@ -265,7 +265,10 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
         None => working_directory(),
     };
     let nearest = nearest_package_json(&cwd);
-    let dir = (nearest.as_ref()).map_or(bun_core::strings::without_trailing_slash(&cwd), |it| it.0);
+    let dir = (nearest.as_ref()).map_or_else(
+        || bun_core::strings::without_trailing_slash(&cwd),
+        |it| it.0,
+    );
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
     if running
@@ -477,8 +480,8 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
     use std::io::Write;
     let key = b"BUN_INTERNAL_SCRIPTS_OF_COMMANDS";
     // As `runs` finds it, wherever in the package the script is started.
-    let dir =
-        nearest_package_json(dir).map_or(bun_core::strings::without_trailing_slash(dir), |it| it.0);
+    let dir = nearest_package_json(dir)
+        .map_or_else(|| bun_core::strings::without_trailing_slash(dir), |it| it.0);
     let mut running = env.get(key).unwrap_or_default().to_vec();
     let mut note = |command: &[u8], dir: &[u8]| {
         if !running_package_scripts(&running).any(|it| it == (command, dir)) {

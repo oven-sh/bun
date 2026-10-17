@@ -86,6 +86,12 @@ pub(crate) struct CssNode<'a> {
     pub(crate) variable: bool,
 }
 
+/// See `Context::split_line_comment`.
+struct BeforeLineComment<'a> {
+    head: &'a [u8],
+    comment: &'a [u8],
+}
+
 pub(crate) struct Context<'a> {
     /// What is parsed.
     pub(crate) text: &'a [u8],
@@ -339,7 +345,7 @@ impl<'a> Context<'a> {
         text: &'a [u8],
         start: u32,
         behind: &[u8],
-    ) -> Option<(&'a [u8], &'a [u8])> {
+    ) -> Option<BeforeLineComment<'a>> {
         if self.syntax == Syntax::Css
             || !strings::contains(text, b"//")
             || strings::index_of_any(behind, b"\n\r").is_none()
@@ -348,7 +354,10 @@ impl<'a> Context<'a> {
         }
         let at = line_comment_at_end(text)?;
         let comment = self.written_from(Range::new(start + at as u32, start + text.len() as u32));
-        comment.starts_with(b"//").then_some((&text[..at], comment))
+        let head = &text[..at];
+        comment
+            .starts_with(b"//")
+            .then_some(BeforeLineComment { head, comment })
     }
 
     /// Whether there is a `//` comment in `value`, of a custom property, which a `;` after it could end up in. To CSS
@@ -427,7 +436,7 @@ impl<'a> Context<'a> {
             // Prettier prints `.a() // b;` for `.a() // b⏎;`.
             let mut params = &node.raw_params[..];
             if let Cow::Borrowed(text) = node.raw_params
-                && let Some((head, comment)) =
+                && let Some(BeforeLineComment { head, comment }) =
                     self.split_line_comment(text, value_root_offset(node), self.of(raw.between))
             {
                 params = strings::trim_js_whitespace_end(head);
@@ -689,7 +698,7 @@ impl<'a> Context<'a> {
             let trimmed = strings::trim_js_whitespace_end(value);
             if !raw.has_block
                 && !is_custom_property
-                && let Some((head, comment)) =
+                && let Some(BeforeLineComment { head, comment }) =
                     self.split_line_comment(trimmed, root_offset, &value[trimmed.len()..])
                 && head.last().is_some_and(|it| !it.is_ascii_whitespace())
             {
@@ -830,7 +839,7 @@ impl<'a> Context<'a> {
         let is_right_behind = |head: &[u8]| !head.last().is_some_and(u8::is_ascii_whitespace);
         let mut params = params;
         if let Cow::Borrowed(text) = params
-            && let Some((head, comment)) =
+            && let Some(BeforeLineComment { head, comment }) =
                 self.split_line_comment(text, root_offset, self.of(raw.between))
             && match &*name.to_ascii_lowercase() {
                 b"media" | b"custom-media" => true,

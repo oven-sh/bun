@@ -151,14 +151,14 @@ fn joins_statements<'a>(file: &'a File<'a>, removed: Span) -> bool {
     else {
         return false;
     };
-    let follows_on_the_line = ast_utils::is_on_one_line(file, Span::new(removed.end, after.start()));
+    let follows_on_the_line = ast_utils::is_on_one_line(file, removed.between(after.span()));
     if follows_on_the_line && is_end_of_line_comment(file, removed.start) {
         return true;
     }
     if before.is(";") {
         return false;
     }
-    match follows_on_the_line && ast_utils::is_on_one_line(file, Span::new(before.end(), removed.start)) {
+    match follows_on_the_line && ast_utils::is_on_one_line(file, before.span().between(removed)) {
         // Code followed by an import on the same line ends without a `;` or a line break.
         true => !ast_utils::is_token_on_same_line(file, before, import),
         false => ast_utils::continues_statement(file, before, after),
@@ -213,7 +213,7 @@ impl<'a> ErrorInfo<'a> {
         let names_module = |it: Stmt| {
             matches!(it.tag(), StmtTag::ExportNamed | StmtTag::ExportStar) && it.module_specifier_span().is_some()
         };
-        let mut passed = file.body().iter().filter(|it| Span::new(insert_at, last.start).contains(it.span()));
+        let mut passed = file.body().iter().filter(|it| Span::empty(insert_at).between(*last).contains(it.span()));
         if passed.any(names_module) || removed.iter().any(|it| joins_statements(file, *it)) {
             return None;
         }
@@ -229,7 +229,7 @@ impl<'a> ErrorInfo<'a> {
                 insert_source_code.truncate(code_len);
                 insert_source_code.push(b'\n');
             }
-        } else if is_open && !starts_on_a_new_line(file.slice(Span::new(insert_at, first.start))) {
+        } else if is_open && !starts_on_a_new_line(file.slice(Span::empty(insert_at).between(*first))) {
             insert_source_code.push(b'\n');
         }
         let start_of_text = if file.has_bom() { 3 } else { 0 };

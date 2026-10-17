@@ -742,14 +742,14 @@ pub(crate) fn find_files_not_on_disk<'f>(
         !is_left_out(file)
             && patterns.iter().any(|pattern| {
                 let pattern = paths::from_native(pattern);
-                let path = paths::resolve(cwd, &pattern);
-                if paths::inside(&path, file).is_some() {
+                let resolved = paths::resolve(cwd, &pattern);
+                if paths::inside(&resolved, file).is_some() {
                     return true;
                 }
                 let base_path = paths::resolve(cwd, &bun_glob::scan::glob_parent(&pattern));
                 bun_glob::scan::is_glob(&pattern)
                     && paths::inside(&base_path, file).is_some_and(|relative| {
-                        Matcher::new(&paths::relative(&base_path, &path)).matches(relative)
+                        Matcher::new(&paths::relative(&base_path, &resolved)).matches(relative)
                     })
             })
     };
@@ -760,7 +760,7 @@ pub(crate) fn find_files_not_on_disk<'f>(
         if loader.lacks_file_of_eslint(&loaded) {
             return Err(config_file_missing(file));
         }
-        let is_ignored = (loader.ignore_files_at(directory, &loaded, || true)).is_none_or(|it| {
+        let is_ignored = (loader.ignore_files_at(directory, &loaded, &|| true)).is_none_or(|it| {
             it.is_ignored(file, false)
                 || paths::ancestors(directory).any(|above| it.is_ignored(above, true))
         });

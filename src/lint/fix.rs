@@ -291,7 +291,7 @@ impl<'a> Fixer<'a> {
     pub fn end_with_comments_beside(self, at: u32) -> u32 {
         let mut end = at;
         for comment in self.file.comments_after(Span::empty(at)) {
-            if !is_on_one_line(self.file, Span::new(end, comment.start())) {
+            if !is_on_one_line(self.file, Span::empty(end).between(comment.span())) {
                 break;
             }
             if is_about_what_follows(&comment) {

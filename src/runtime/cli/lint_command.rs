@@ -58,7 +58,7 @@ fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
             arg.strip_prefix(b"--config=")
                 .or_else(|| arg.strip_prefix(b"-c="))
         })
-        .last()
+        .next_back()
 }
 
 /// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory

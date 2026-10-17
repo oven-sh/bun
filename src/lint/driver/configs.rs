@@ -2911,7 +2911,7 @@ impl<'l> Loader<'l> {
         &self,
         directory: &[u8],
         loaded: &Loaded,
-        are_all_in_repositories: impl FnOnce() -> bool,
+        are_all_in_repositories: &dyn Fn() -> bool,
     ) -> Option<Files> {
         if !self.reads_ignore_files(loaded) {
             return Some(Files::default());

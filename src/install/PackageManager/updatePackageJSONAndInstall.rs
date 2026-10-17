@@ -1,7 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::VecExt;
 use core::fmt;
-use std::borrow::Cow;
 
 use bstr::BStr;
 
@@ -15,7 +14,6 @@ use super::add_catalog;
 use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry_root, store_entry};
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
-use super::package_json_text;
 use super::update_request::Array as UpdateRequestArray;
 use super::workspace_selection;
 use super::{
@@ -23,16 +21,21 @@ use super::{
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
-pub(crate) fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
-    let printed = match package_json_text::print(&entry.source.contents, root, entry.indentation) {
-        Ok(printed) => printed,
-        Err(e) => {
-            bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
-            Global::crash();
-        }
-    };
-    let old = core::mem::replace(&mut entry.source.contents, Cow::Owned(printed));
-    entry.stale_contents.push(old);
+/// [`MapEntry::save`] for a command that cannot go on without the new text.
+pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &mut bun_ast::Log) {
+    if let Err(err) = entry.save(root, log) {
+        let verb = if matches!(err, Error::JsPrinter(_)) {
+            "write"
+        } else {
+            "parse"
+        };
+        bun_core::pretty_errorln!(
+            "package.json failed to {} due to error {}",
+            verb,
+            err.name(),
+        );
+        Global::crash();
+    }
 }
 
 pub(super) fn remove_dependencies_from_package_json(
@@ -350,15 +353,14 @@ fn update_package_json_and_install_with_manager_with_updates(
     // The Smarter™ approach is you resolve ahead of time and write to disk once!
     // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
     // Concurrent network requests are faster than doing one and then waiting until the next batch
-    print_package_json_into_cache_entry(current_package_json, current_package_json_root);
-    // The edits above went into a promoted copy
-    // (`current_package_json_root`), so re-parse the
-    // printed source so the cached AST (consumed by `FolderResolver` for workspace
-    // members during `install_with_manager`) reflects the new dependency list.
-    if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name(),);
-        Global::crash();
-    }
+    // The edits above went into a promoted copy (`current_package_json_root`). The save makes
+    // the cached AST (consumed by `FolderResolver` for workspace members during
+    // `install_with_manager`) reflect the new dependency list.
+    save_entry(
+        current_package_json,
+        current_package_json_root,
+        manager.log_mut(),
+    );
 
     let received_requests = matches!(
         subcommand,

@@ -774,8 +774,6 @@ impl CreateCommand {
                         }
                         #[cfg(windows)]
                         pkg.seek_to(prev_file_pos)?;
-                        // The printer doesn't truncate, so we must do so manually
-                        let _ = bun_sys::ftruncate(pkg.handle(), 0);
 
                         bun_ast::initialize_store();
                     }
@@ -846,7 +844,7 @@ impl CreateCommand {
                 let parsed = match JSON::parse_package_json_utf8_with_opts(
                     JSON::JSONOptions {
                         guess_indentation: true,
-                        ..JSON::JSONOptions::DEFAULT
+                        ..JSON::PACKAGE_JSON_OPTS
                     },
                     &source,
                     log,

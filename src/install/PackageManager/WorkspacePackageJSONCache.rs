@@ -15,8 +15,10 @@ use bun_ast::Indentation;
 use bun_ast::{Log, Source};
 use bun_paths::is_absolute;
 
+use super::package_json_text;
 use crate::bun_json as json;
 use crate::initialize_store;
+use std::borrow::Cow;
 
 pub struct MapEntry {
     /// Nodes are in the process heap and never freed: a mimalloc heap per entry costs 30 KB.
@@ -29,17 +31,35 @@ pub struct MapEntry {
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
     /// Superseded `source.contents` buffers, pinned so cached `root` slices
-    /// stay valid; freed when the entry drops.
-    pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
+    /// stay valid; freed when the entry drops. The first one is the text as
+    /// the entry was loaded with: `save` writes every edit over that one.
+    pub stale_contents: Vec<Cow<'static, [u8]>>,
 }
 
 impl MapEntry {
-    /// Re-parse `self.source.contents` into `self.root`.
+    /// Makes `root` the tree of this entry, and its text the text that says it.
     ///
-    /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
-    /// writes the printed JSON back into `source.contents`. The caller then
-    /// invokes this to restore the invariant `root == parse(source)`.
-    pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
+    /// The text is written over the text as it was loaded, not over what an earlier save of
+    /// this run made of it: what one save changes and a later one changes back is then as the
+    /// file has it. The entry takes the tree that the parser reads the new text as, so that it
+    /// owns its nodes and their positions are positions in its text.
+    pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
+        let heap = bun_alloc::Arena::borrowing_default();
+        let loaded = self.stale_contents.first().unwrap_or(&self.source.contents);
+        let (text, read) =
+            package_json_text::print_and_read(loaded, root, self.indentation, &heap)?;
+        let old = core::mem::replace(&mut self.source.contents, Cow::Owned(text));
+        self.stale_contents.push(old);
+        match read {
+            Some(read) => {
+                self.root = json::clone_out_of_store(&read, &self.source, log, &heap)?;
+                Ok(())
+            }
+            None => self.reparse_root(log),
+        }
+    }
+
+    fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let heap = bun_alloc::Arena::borrowing_default();
         let parsed = parse_package_json(&self.source, log, &heap, false)?;
         self.root = json::clone_out_of_store(&parsed.root, &self.source, log, &heap)?;

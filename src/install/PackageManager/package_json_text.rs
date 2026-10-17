@@ -4,32 +4,71 @@
 //! alone is copied byte for byte: comments, blank lines, line endings, how a string or a number
 //! is spelled. Only a changed value, a new member and the commas around a member that was added
 //! or removed are printed.
+//!
+//! Nothing here reads the position of a node. The editors change nodes in place and put in
+//! nodes of other files, so a position does not say that a node is as the text has it. A member
+//! of the tree is the member of the text that has its key, and it is as written if the parser
+//! reads the token of the text as the value of the tree.
 
-use bun_ast::{Expr, ExprData, G, Indentation, IndentationCharacter, Source};
+use bun_ast::{Expr, ExprData, G, Indentation, IndentationCharacter, Log, Source};
 use bun_collections::index_sort;
 use bun_core::{MutableString, StackCheck, strings};
 use bun_js_printer as js_printer;
 
 use std::borrow::Cow;
 
-use crate::bun_json::scan;
+use crate::bun_json::scan::Scalar;
+use crate::bun_json::{self as json, scan};
 
 /// The text of a package.json that was `old`, now that its tree is `root`.
-///
-/// A text that `root` was not parsed from (an empty file, another root) is printed as a new file.
 pub fn print(old: &[u8], root: Expr, indentation: Indentation) -> js_printer::Result<Vec<u8>> {
+    let bump = bun_alloc::Arena::new();
+    Ok(print_and_read(old, root, indentation, &bump)?.0)
+}
+
+/// [`print`], and the tree that the parser reads the new text as.
+///
+/// The parser reads every text that is written over `old` before it is returned. A text that
+/// does not read as `root`, or that has a comment or a trailing comma when `old` has none, is
+/// not returned: that is a bug of this file, and no edit is lost to it. The whole file is then
+/// printed from `root`, as a file without a text is (an empty file, a root that was not parsed
+/// from `old`). That text has no tree: nothing has read it.
+pub(crate) fn print_and_read(
+    old: &[u8],
+    root: Expr,
+    indentation: Indentation,
+    bump: &bun_alloc::Arena,
+) -> js_printer::Result<(Vec<u8>, Option<Expr>)> {
     let mut text = Text::new(old, indentation);
-    match text.document(&root) {
+    let stack = text.stack;
+    let is_wrong = match text.document(&root) {
         Ok(()) => {
-            debug_assert!(
-                is_written(&text.out.list, &root, text.stack),
-                "package.json text does not say what its tree says"
-            );
-            Ok(text.out.list)
+            let new = text.out.list;
+            let is_jsonc = || read(old, json::JSONOptions::DEFAULT, bump).is_none();
+            if let Some(read) = read_as(&new, is_jsonc, bump)
+                && is_tree(&read, &root, stack)
+            {
+                return Ok((new, Some(read)));
+            }
+            debug_assert!(false, "package.json text does not say what its tree says");
+            true
         }
-        Err(Stop::Printer(err)) => Err(err),
-        Err(Stop::NotTheText) => print_new_file(old, root, indentation),
+        Err(Stop::Printer(err)) => return Err(err),
+        Err(Stop::NotTheText) => false,
+    };
+    // A text that `root` was parsed from, and that no edit has changed, says it as it is.
+    let same = old.to_vec();
+    if let Some(read) = read_as(&same, || true, bump)
+        && is_tree(&read, &root, stack)
+    {
+        return Ok((same, Some(read)));
     }
+    if is_wrong {
+        bun_core::warn!(
+            "Bun could not write this edit into the text of package.json, and printed the whole file again without its comments and formatting. This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues",
+        );
+    }
+    Ok((print_new_file(old, root, indentation)?, None))
 }
 
 fn print_new_file(old: &[u8], root: Expr, indentation: Indentation) -> js_printer::Result<Vec<u8>> {
@@ -48,6 +87,72 @@ fn print_new_file(old: &[u8], root: Expr, indentation: Indentation) -> js_printe
         },
     )?;
     Ok(writer.ctx.written_without_trailing_zero().to_vec())
+}
+
+/// The tree that the parser reads `text` as. Strict JSON first: a text with a comment or a
+/// trailing comma has a tree only if `is_jsonc` says that it may have them.
+fn read_as(text: &[u8], is_jsonc: impl FnOnce() -> bool, bump: &bun_alloc::Arena) -> Option<Expr> {
+    read(text, json::JSONOptions::DEFAULT, bump).or_else(|| {
+        if is_jsonc() {
+            read(text, json::PACKAGE_JSON_OPTS, bump)
+        } else {
+            None
+        }
+    })
+}
+
+fn read(text: &[u8], opts: json::JSONOptions, bump: &bun_alloc::Arena) -> Option<Expr> {
+    bun_ast::initialize_store();
+    let source = Source::init_path_string(b"package.json", text);
+    let opts = json::JSONOptions {
+        json_warn_duplicate_keys: false,
+        ..opts
+    };
+    json::parse_package_json_utf8_with_opts(opts, &source, &mut Log::init(), bump)
+        .ok()
+        .map(|parsed| parsed.root)
+}
+
+/// Whether `read`, a tree of the parser, is the tree `root`.
+fn is_tree(read: &Expr, root: &Expr, stack: StackCheck) -> bool {
+    if !stack.is_safe_to_recurse() {
+        return false;
+    }
+    let is_same = |read: &Option<Expr>, root: &Option<Expr>| match (read, root) {
+        (Some(read), Some(root)) => is_tree(read, root, stack),
+        _ => false,
+    };
+    match (&read.data, &root.data) {
+        (ExprData::EObject(read), ExprData::EObject(root)) => {
+            read.properties.len() == root.properties.len()
+                && read
+                    .properties
+                    .iter()
+                    .zip(root.properties.iter())
+                    .all(|(read, root)| {
+                        is_same(&read.key, &root.key) && is_same(&read.value, &root.value)
+                    })
+        }
+        (ExprData::EArray(read), ExprData::EArray(root)) => {
+            read.items.len() == root.items.len()
+                && read
+                    .items
+                    .iter()
+                    .zip(root.items.iter())
+                    .all(|(read, root)| is_tree(read, root, stack))
+        }
+        (ExprData::EString(read), ExprData::EString(root)) => {
+            read.next.is_none() && root.next.is_none() && read.eql_string(root)
+        }
+        (ExprData::ENumber(read), ExprData::ENumber(root)) => {
+            read.value().to_bits() == root.value().to_bits()
+        }
+        // The printer writes `null` for a number that JSON has no token for.
+        (ExprData::ENull(_), ExprData::ENumber(root)) => !root.value().is_finite(),
+        (ExprData::EBoolean(read), ExprData::EBoolean(root)) => read.value == root.value,
+        (ExprData::ENull(_), ExprData::ENull(_)) => true,
+        _ => false,
+    }
 }
 
 enum Stop {
@@ -159,11 +264,37 @@ impl<'e> Entries<'e> {
         }
     }
 
-    /// What pairs an entry with a member of the text: the key of a member, the text of a string item.
-    fn name(self, index: usize) -> Option<&'e [u8]> {
+    /// What pairs an entry with a member of the text.
+    fn name(self, index: usize) -> Option<Name<'e>> {
         match self {
-            Entries::Members(members) => string_of(members[index].key.as_ref()?),
-            Entries::Items { items, .. } => string_of(&items[index]),
+            Entries::Members(members) => string_of(members[index].key.as_ref()?).map(Name::String),
+            Entries::Items { items, .. } => match string_of(&items[index]) {
+                Some(string) => Some(Name::String(string)),
+                None => scalar_of_value(&items[index]).map(Name::Scalar),
+            },
+        }
+    }
+}
+
+/// What a member of the text and an entry of the tree have in common when they are the same
+/// one: the key of a member of an object. An item of an array has no key, so a string, a
+/// number, `true`, `false` and `null` are what they are. An object and an array in an array
+/// have no name.
+#[derive(Clone, Copy)]
+enum Name<'e> {
+    String(&'e [u8]),
+    Scalar(Scalar),
+}
+
+impl Name<'_> {
+    fn hash(self) -> u64 {
+        match self {
+            Name::String(string) => bun_wyhash::hash(string),
+            Name::Scalar(Scalar::Number(number)) => {
+                bun_wyhash::hash(&number.to_bits().to_ne_bytes())
+            }
+            Name::Scalar(Scalar::Boolean(boolean)) => u64::from(boolean),
+            Name::Scalar(Scalar::Null) => 2,
         }
     }
 }
@@ -177,7 +308,50 @@ fn string_of(value: &Expr) -> Option<&[u8]> {
     }
 }
 
-#[derive(PartialEq, Eq)]
+fn scalar_of_value(value: &Expr) -> Option<Scalar> {
+    match &value.data {
+        ExprData::ENumber(number) => Some(Scalar::Number(number.value())),
+        ExprData::EBoolean(boolean) => Some(Scalar::Boolean(boolean.value)),
+        ExprData::ENull(_) => Some(Scalar::Null),
+        _ => None,
+    }
+}
+
+/// What the parser reads a token that is not a string, an object or an array as.
+fn scalar_of(token: &[u8]) -> Option<Scalar> {
+    match token {
+        b"true" => return Some(Scalar::Boolean(true)),
+        b"false" => return Some(Scalar::Boolean(false)),
+        b"null" => return Some(Scalar::Null),
+        _ => {}
+    }
+    // Nine digits at most, without a zero before them, are that integer. Any other spelling
+    // is the parser's to read.
+    if token.len() <= 9
+        && token.iter().all(u8::is_ascii_digit)
+        && token
+            .first()
+            .is_some_and(|first| *first != b'0' || token.len() == 1)
+    {
+        let integer = token.iter().fold(0u32, |integer, digit| {
+            integer * 10 + u32::from(digit - b'0')
+        });
+        return Some(Scalar::Number(f64::from(integer)));
+    }
+    scan::scalar(token)
+}
+
+/// Whether the two are one value. `0` is not `-0`: the file says which one it has.
+fn is_scalar(written: Scalar, value: Scalar) -> bool {
+    match (written, value) {
+        (Scalar::Number(written), Scalar::Number(value)) => written.to_bits() == value.to_bits(),
+        (Scalar::Boolean(written), Scalar::Boolean(value)) => written == value,
+        (Scalar::Null, Scalar::Null) => true,
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Object,
     Array,
@@ -201,39 +375,6 @@ fn kind_of_value(value: &Expr) -> Kind {
         ExprData::EString(_) => Kind::String,
         _ => Kind::Scalar,
     }
-}
-
-/// The value of a number that is spelled the way JSON spells numbers.
-fn number_token(token: &[u8]) -> Option<f64> {
-    let digits = |from: usize| {
-        from + token[from..]
-            .iter()
-            .take_while(|byte| byte.is_ascii_digit())
-            .count()
-    };
-    let start = usize::from(token.first() == Some(&b'-'));
-    let mut at = digits(start);
-    if at == start || (token[start] == b'0' && at > start + 1) {
-        return None;
-    }
-    if token.get(at) == Some(&b'.') {
-        let fraction = at + 1;
-        at = digits(fraction);
-        if at == fraction {
-            return None;
-        }
-    }
-    if matches!(token.get(at), Some(b'e' | b'E')) {
-        let exponent = at + 1 + usize::from(matches!(token.get(at + 1), Some(b'+' | b'-')));
-        at = digits(exponent);
-        if at == exponent {
-            return None;
-        }
-    }
-    if at != token.len() {
-        return None;
-    }
-    core::str::from_utf8(token).ok()?.parse().ok()
 }
 
 fn has_line_break(text: &[u8]) -> bool {
@@ -459,12 +600,6 @@ impl<'a> Text<'a> {
             || (0..container.len).any(|index| self.member(container, index).ends_line)
     }
 
-    fn name_is(&mut self, container: &Container, index: usize, name: &[u8]) -> bool {
-        let text = self.text;
-        let member = &self.members[container.first + index];
-        self.string_token_is(&text[member.key..member.key_end], name)
-    }
-
     fn string_token_is(&mut self, token: &[u8], string: &[u8]) -> bool {
         if !matches!(token.first(), Some(b'"' | b'\'')) {
             return false;
@@ -479,37 +614,47 @@ impl<'a> Text<'a> {
 
     /// Whether `token` is how the old text spells `value`.
     fn is_token(&mut self, token: &[u8], value: &Expr) -> bool {
-        match &value.data {
-            ExprData::EString(_) => {
-                string_of(value).is_some_and(|string| self.string_token_is(token, string))
+        if let Some(string) = string_of(value) {
+            return self.string_token_is(token, string);
+        }
+        scalar_of_value(value).is_some_and(|value| {
+            kind_of_token(token[0]) == Kind::Scalar
+                && scalar_of(token).is_some_and(|written| is_scalar(written, value))
+        })
+    }
+
+    /// Whether the member `old` of the text has the name `name`.
+    fn is_named(&mut self, container: &Container, old: usize, name: Name<'_>) -> bool {
+        let text = self.text;
+        let member = self.member(container, old);
+        let token = &text[member.key..member.key_end];
+        match name {
+            Name::String(string) => self.string_token_is(token, string),
+            Name::Scalar(value) => {
+                kind_of_token(token[0]) == Kind::Scalar
+                    && scalar_of(token).is_some_and(|written| is_scalar(written, value))
             }
-            ExprData::ENumber(number) => number_token(token)
-                .is_some_and(|written| written.to_bits() == number.value().to_bits()),
-            ExprData::EBoolean(boolean) => {
-                token
-                    == if boolean.value {
-                        b"true".as_slice()
-                    } else {
-                        b"false"
-                    }
-            }
-            ExprData::ENull(_) => token == b"null",
-            _ => false,
         }
     }
 
-    /// Whether the tree has the members of the text, in the order of the text.
+    /// Whether the tree has the members of the text, each where the text has it. The values
+    /// of an object can be other values. What has no name in an array (an object, an array)
+    /// is what the text has there.
     fn has_same_members(&mut self, container: &Container, entries: Entries<'_>) -> bool {
         if entries.len() != container.len {
             return false;
         }
-        if let Entries::Members(_) = entries {
-            for index in 0..container.len {
-                let Some(name) = entries.name(index) else {
-                    return false;
-                };
-                if !self.name_is(container, index, name) {
-                    return false;
+        for index in 0..container.len {
+            match entries.name(index) {
+                Some(name) => {
+                    if !self.is_named(container, index, name) {
+                        return false;
+                    }
+                }
+                None => {
+                    if let Entries::Members(_) = entries {
+                        return false;
+                    }
                 }
             }
         }
@@ -523,8 +668,13 @@ impl<'a> Text<'a> {
         for index in 0..container.len {
             let member = self.member(container, index);
             let token = &text[member.key..member.key_end];
-            if let Some(name) = scan::string_value(token, &mut self.scratch) {
-                names.push((bun_wyhash::hash(name), index));
+            let name = match kind_of_token(token[0]) {
+                Kind::String => scan::string_value(token, &mut self.scratch).map(Name::String),
+                Kind::Scalar => scalar_of(token).map(Name::Scalar),
+                Kind::Object | Kind::Array => None,
+            };
+            if let Some(name) = name {
+                names.push((name.hash(), index));
             }
         }
         index_sort::sort_slice_unstable(&mut names);
@@ -534,41 +684,37 @@ impl<'a> Text<'a> {
     /// For each entry of the tree, the member of the text that it is, if it is one, and for each
     /// member of the text, whether the tree still has it.
     ///
-    /// A member is paired by its key and a string item by its text, the first with the first.
-    /// Other items are paired in order with an item of their kind.
+    /// An entry is the first member with its name that no entry before it is. What is then
+    /// left of an array is paired in order with an item of its kind: a number that changed, an
+    /// object and an array are the ones that the text has there.
     fn pair(
         &mut self,
         container: &Container,
         entries: Entries<'_>,
-    ) -> Step<(Vec<Option<usize>>, Vec<bool>)> {
+    ) -> (Vec<Option<usize>>, Vec<bool>) {
         let text = self.text;
         let old_len = container.len;
         let mut pairs: Vec<Option<usize>> = Vec::with_capacity(entries.len());
         let mut taken = vec![false; old_len];
+        // The member after the one that was paired last: where the entry is, if nothing moved.
         let mut next = 0;
-        // Made when the tree has a name where the text does not have it.
+        // Made when an entry is not where it is looked for first.
         let mut names: Option<Vec<(u64, usize)>> = None;
         for index in 0..entries.len() {
             let Some(name) = entries.name(index) else {
-                if let Entries::Members(_) = entries {
-                    return Err(Stop::NotTheText);
-                }
                 pairs.push(None);
                 continue;
             };
-            while next < old_len && taken[next] {
-                next += 1;
-            }
             let mut found = None;
-            if next < old_len && self.name_is(container, next, name) {
+            if next < old_len && !taken[next] && self.is_named(container, next, name) {
                 found = Some(next);
             } else {
                 let names = names.get_or_insert_with(|| self.names(container));
-                let hash = bun_wyhash::hash(name);
+                let hash = name.hash();
                 let mut at = names.partition_point(|&(other, _)| other < hash);
                 while at < names.len() && names[at].0 == hash {
                     let old = names[at].1;
-                    if !taken[old] && self.name_is(container, old, name) {
+                    if !taken[old] && self.is_named(container, old, name) {
                         found = Some(old);
                         break;
                     }
@@ -577,21 +723,22 @@ impl<'a> Text<'a> {
             }
             if let Some(old) = found {
                 taken[old] = true;
+                next = old + 1;
             }
             pairs.push(found);
         }
         if let Entries::Items { items, .. } = entries {
             let mut old = 0;
             for (index, item) in items.iter().enumerate() {
-                if pairs[index].is_some() || kind_of_value(item) == Kind::String {
+                let kind = kind_of_value(item);
+                if pairs[index].is_some() || kind == Kind::String {
                     continue;
                 }
                 while old < old_len {
                     let candidate = old;
                     old += 1;
                     if !taken[candidate]
-                        && kind_of_token(text[self.member(container, candidate).value])
-                            == kind_of_value(item)
+                        && kind_of_token(text[self.member(container, candidate).value]) == kind
                     {
                         taken[candidate] = true;
                         pairs[index] = Some(candidate);
@@ -600,7 +747,7 @@ impl<'a> Text<'a> {
                 }
             }
         }
-        Ok((pairs, taken))
+        (pairs, taken)
     }
 
     // ───── the new text ─────
@@ -714,29 +861,44 @@ impl<'a> Text<'a> {
             return Ok(());
         };
         if self.has_same_members(&container, entries) {
-            // What is as it is written is copied in one piece, up to the next value that is not.
-            let mut copied = container.open;
-            for index in 0..container.len {
-                let member = self.member(&container, index);
-                let value = entries.value(index)?;
-                if member.container.is_none()
-                    && self.is_token(&text[member.value..member.value_end], value)
-                {
-                    continue;
-                }
-                self.put(&text[copied..member.value]);
-                self.value(value, member.old_value())?;
-                copied = member.value_end;
-            }
-            self.put(&text[copied..=container.close]);
-            return Ok(());
+            return self.in_place(&container, entries);
         }
-        let (pairs, stays) = self.pair(&container, entries)?;
-        if self.has_lines(&container) {
+        let (pairs, stays) = self.pair(&container, entries);
+        // An array that has every item where the text has one: only values are other values.
+        let is_in_place = pairs.len() == container.len
+            && pairs
+                .iter()
+                .enumerate()
+                .all(|(index, pair)| *pair == Some(index));
+        if is_in_place {
+            self.in_place(&container, entries)
+        } else if self.has_lines(&container) {
             self.lines(&container, entries, &pairs, &stays)
         } else {
             self.lay_out(&container, entries, &pairs, self.line_indent(old.at))
         }
+    }
+
+    /// Writes a container that has each of its members where the text has it: the text as it
+    /// is, with the values that are not as written.
+    fn in_place(&mut self, container: &Container, entries: Entries<'_>) -> Step {
+        let text = self.text;
+        // What is as it is written is copied in one piece, up to the next value that is not.
+        let mut copied = container.open;
+        for index in 0..container.len {
+            let member = self.member(container, index);
+            let value = entries.value(index)?;
+            if member.container.is_none()
+                && self.is_token(&text[member.value..member.value_end], value)
+            {
+                continue;
+            }
+            self.put(&text[copied..member.value]);
+            self.value(value, member.old_value())?;
+            copied = member.value_end;
+        }
+        self.put(&text[copied..=container.close]);
+        Ok(())
     }
 
     /// Writes a container whose members are on lines of their own and which gained, lost or
@@ -859,19 +1021,33 @@ impl<'a> Text<'a> {
         Ok(())
     }
 
-    /// Writes the lines above a member that is removed, if a comment is on them.
+    /// Writes the lines above a member that is removed, if a comment is on them. A comment
+    /// that ends on the line of the member goes with the member.
     fn comment_lines_above(&mut self, member: &Member) {
         if !member.starts_line {
             return;
         }
         let text = self.text;
-        let above = &text[member.lead..member.key];
-        let Some(last_break) = strings::last_index_of_char(above, b'\n') else {
-            return;
-        };
-        let above = &above[..=last_break];
-        if strings::contains_char(above, b'/') {
-            self.put(above);
+        // Where the line of the member starts. A line break in a comment does not start it.
+        let mut line = member.lead;
+        let (mut has_comment, mut is_after_comment) = (false, false);
+        let mut at = member.lead;
+        while at < member.key {
+            match text[at] {
+                b'\n' | b'\r' => {
+                    at += 1 + usize::from(text[at] == b'\r' && text.get(at + 1) == Some(&b'\n'));
+                    line = at;
+                    has_comment |= is_after_comment;
+                }
+                b'/' => {
+                    at = scan::comment_end(text, at).unwrap_or(member.key);
+                    is_after_comment = true;
+                }
+                _ => at += 1,
+            }
+        }
+        if has_comment {
+            self.put(&text[member.lead..line]);
         }
     }
 
@@ -888,7 +1064,7 @@ impl<'a> Text<'a> {
             }
             return self.print(value, indent);
         };
-        let (pairs, _) = self.pair(&container, entries)?;
+        let (pairs, _) = self.pair(&container, entries);
         self.lay_out(&container, entries, &pairs, indent)
     }
 
@@ -916,9 +1092,13 @@ impl<'a> Text<'a> {
         };
         self.put(&text[container.open..=container.open]);
         if pairs.is_empty() {
-            self.comments(container.open + 1, container.close, Blank::Before);
-            if self.out.list.last() != Some(&text[container.open]) {
-                self.put(b" ");
+            // A member that goes takes the comments beside it. Only a container that was
+            // empty has comments of its own, and only blanks are around them.
+            if container.len == 0 {
+                self.comments(container.open + 1, container.close, Blank::Before);
+                if self.out.list.last() != Some(&text[container.open]) {
+                    self.put(b" ");
+                }
             }
             self.put(&text[container.close..=container.close]);
             return Ok(());
@@ -985,71 +1165,6 @@ enum Blank {
     After,
 }
 
-/// Whether `text` is a document that says what `root` says: same members, same order, same values.
-fn is_written(text: &[u8], root: &Expr, stack: StackCheck) -> bool {
-    let mut scratch = Vec::new();
-    scan::next_token(text, 0)
-        .is_some_and(|start| value_is_written(text, start, root, &mut scratch, stack).is_some())
-}
-
-/// The end of the value that starts at `at`, if it is `value`.
-fn value_is_written(
-    text: &[u8],
-    at: usize,
-    value: &Expr,
-    scratch: &mut Vec<u8>,
-    stack: StackCheck,
-) -> Option<usize> {
-    if !stack.is_safe_to_recurse() {
-        // Too deep to look into: taken as written.
-        return scan::value_end(text, at);
-    }
-    let Some(entries) = Entries::of(value, *text.get(at)?) else {
-        let end = scan::value_end(text, at)?;
-        let token = &text[at..end];
-        let is_value = match &value.data {
-            ExprData::EString(_) => scan::string_value(token, scratch) == Some(string_of(value)?),
-            ExprData::ENumber(number) => {
-                let number = number.value();
-                // The printer writes `null` for a number that JSON has no token for.
-                number_token(token) == Some(number) || (!number.is_finite() && token == b"null")
-            }
-            ExprData::EBoolean(boolean) => {
-                token
-                    == if boolean.value {
-                        b"true".as_slice()
-                    } else {
-                        b"false"
-                    }
-            }
-            ExprData::ENull(_) => token == b"null",
-            ExprData::EObject(_) | ExprData::EArray(_) => false,
-            // What JSON has no value for is written as the printer writes it.
-            _ => true,
-        };
-        return is_value.then_some(end);
-    };
-    let closing = if text[at] == b'{' { b'}' } else { b']' };
-    let mut at = scan::next_token(text, at + 1)?;
-    for index in 0..entries.len() {
-        if let Some(key) = entries.key(index) {
-            let key_end = scan::string_end(text, at)?;
-            if scan::string_value(&text[at..key_end], scratch) != Some(string_of(key)?) {
-                return None;
-            }
-            let colon = scan::next_token(text, key_end)?;
-            if text[colon] != b':' {
-                return None;
-            }
-            at = scan::next_token(text, colon + 1)?;
-        }
-        let end = value_is_written(text, at, entries.value(index).ok()?, scratch, stack)?;
-        at = scan::next_token(text, end)?;
-        if text[at] == b',' {
-            at = scan::next_token(text, at + 1)?;
-        } else if index + 1 != entries.len() {
-            return None;
-        }
-    }
-    (text[at] == closing).then_some(at + 1)
-}
+#[cfg(test)]
+#[path = "package_json_text_tests.rs"]
+mod tests;

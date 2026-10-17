@@ -19,8 +19,8 @@ use super::options::LogLevel;
 use super::package_json_editor::EditOptions;
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
-    package_json_entry_or_crash, print_package_json_into_cache_entry,
-    remove_dependencies_from_package_json, remove_leftover_node_modules,
+    package_json_entry_or_crash, remove_dependencies_from_package_json,
+    remove_leftover_node_modules, save_entry,
 };
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
@@ -261,12 +261,7 @@ pub(crate) fn store_entry(
     root: bun_ast::Expr,
 ) {
     let log = manager.log_mut();
-    let entry = fetch_entry(manager, target);
-    print_package_json_into_cache_entry(entry, root);
-    if let Err(err) = entry.reparse_root(log) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    save_entry(fetch_entry(manager, target), root, log);
 }
 
 pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {

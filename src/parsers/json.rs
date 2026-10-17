@@ -941,12 +941,26 @@ pub mod scan {
 
     /// End of the string token that starts at `start`.
     pub fn string_end(contents: &[u8], start: usize) -> Option<usize> {
-        super::skip_string_token(contents, start)
+        let quote = *contents.get(start)?;
+        if quote != b'"' && quote != b'\'' {
+            return None;
+        }
+        let mut p = start + 1;
+        loop {
+            p += strings::index_of_any(contents.get(p..)?, &[quote, b'\\'])?;
+            if contents[p] == quote {
+                return Some(p + 1);
+            }
+            p += 2;
+        }
     }
 
     /// End of the value (string, number, keyword, object or array) that starts at `start`.
     pub fn value_end(contents: &[u8], start: usize) -> Option<usize> {
-        super::skip_json_value(contents, start)
+        match *contents.get(start)? {
+            b'"' | b'\'' => string_end(contents, start),
+            _ => super::skip_json_value(contents, start),
+        }
     }
 
     /// End of the comment that starts at `start`. A `//` comment ends before its line terminator.
@@ -979,6 +993,30 @@ pub mod scan {
         scratch.clear();
         crate::json_stage2::decode_string_body(body, scratch).ok()?;
         Some(scratch)
+    }
+
+    /// A value that is not a string, an object or an array.
+    #[derive(Clone, Copy)]
+    pub enum Scalar {
+        Number(f64),
+        Boolean(bool),
+        Null,
+    }
+
+    /// What the parser reads the token `token` as. The parser itself reads it, so a spelling
+    /// that only it accepts (`0x10`, `.5`, `1_000`, `- 1`) has the value that it gives it.
+    #[cold]
+    pub fn scalar(token: &[u8]) -> Option<Scalar> {
+        use bun_ast::expr::Data;
+        let source = bun_ast::Source::init_path_string(b"", token);
+        let mut log = bun_ast::Log::init();
+        let parsed = super::parse_impl(&source, &mut log, super::PACKAGE_JSON_OPTS, true).ok()?;
+        match parsed.root.data {
+            Data::ENumber(number) => Some(Scalar::Number(number.value())),
+            Data::EBoolean(boolean) => Some(Scalar::Boolean(boolean.value)),
+            Data::ENull(_) => Some(Scalar::Null),
+            _ => None,
+        }
     }
 }
 

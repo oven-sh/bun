@@ -7842,6 +7842,42 @@ describe("css tests", () => {
     );
   });
 
+  // A grey has no hue. The mix takes the hue of the other color.
+  describe("color-mix() with a grey operand", () => {
+    minify_test(".foo { color: color-mix(in oklch, black, oklch(50% 0.2 120)) }", ".foo{color:oklch(25% .1 120)}");
+    minify_test(".foo { --x: color-mix(in lch, black, lch(50% 60 120)) }", ".foo{--x:lch(25% 30 120)}");
+    minify_test(
+      '@property --c { syntax: "<color>"; inherits: false; initial-value: color-mix(in oklch, white, oklch(50% 0.2 120)) }',
+      '@property --c{syntax:"<color>";inherits:false;initial-value:oklch(75% .1 120)}',
+    );
+    minify_test(
+      ".foo { background: linear-gradient(color-mix(in oklch, white, oklch(50% 0.2 120)), red) }",
+      ".foo{background:linear-gradient(oklch(75% .1 120),red)}",
+    );
+    minify_test(
+      ".foo { color: light-dark(color-mix(in oklch, white, oklch(50% 0.2 120)), color-mix(in oklch, black, oklch(50% 0.2 120))) }",
+      ".foo{color:light-dark(oklch(75% .1 120),oklch(25% .1 120))}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in lch, color-mix(in oklch, white, black), lch(50% 50 120)) }",
+      ".foo{color:lch(46% 25 120)}",
+    );
+  });
+
+  // Two colors with `none` in the same channel are equal, so shorthands and rules merge.
+  describe("a color with a missing channel equals itself", () => {
+    minify_test(
+      ".a { border: 1px solid color-mix(in oklch, #000, #fff 10%) }",
+      ".a{border:1px solid oklch(10% 0 none)}",
+    );
+    minify_test(
+      ".b { color: color-mix(in oklch, white, black) } .c { color: color-mix(in oklch, white, black) }",
+      ".b,.c{color:oklch(50% 0 none)}",
+    );
+    minify_test(".a { border: 1px solid oklch(10% 0 none) }", ".a{border:1px solid oklch(10% 0 none)}");
+    minify_test(".a { border: 1px solid rgb(0 0 0 / none) }", ".a{border:1px solid #0000}");
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");

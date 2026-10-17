@@ -218,10 +218,6 @@ macro_rules! impl_variant_dispatch {
             pub fn convert_to<T: FromAnyColorspace>(&self) -> T {
                 match *self { $( $Enum::$Var(v) => v.into(), )+ }
             }
-            #[inline]
-            pub fn payload_type_id(&self) -> core::any::TypeId {
-                match *self { $( $Enum::$Var(_) => core::any::TypeId::of::<$Payload>(), )+ }
-            }
             /// Stable per-enum ordinal — feeds `CssColor::hash`. Do NOT reorder rows.
             #[inline]
             pub fn ordinal(&self) -> u32 {
@@ -763,15 +759,12 @@ impl CssColor {
         method: HueInterpolationMethod,
     ) -> Option<CssColor>
     where
-        T: Colorspace
-            + ColorGamut
-            + Interpolate
-            + Into<OKLCH>
-            + From<OKLCH>
-            + Into<OKLAB>
-            + 'static,
+        T: Interpolate,
     {
-        if matches!(self, CssColor::CurrentColor) || matches!(other, CssColor::CurrentColor) {
+        // System colors cannot be converted to specific color spaces at parse time
+        if matches!(self, CssColor::CurrentColor | CssColor::System(_))
+            || matches!(other, CssColor::CurrentColor | CssColor::System(_))
+        {
             return None;
         }
 
@@ -801,47 +794,10 @@ impl CssColor {
             });
         }
 
-        fn check_converted<T: 'static>(color: &CssColor) -> Option<bool> {
-            use core::any::TypeId;
-            debug_assert!(!matches!(
-                color,
-                CssColor::LightDark { .. } | CssColor::CurrentColor
-            ));
-            match color {
-                CssColor::Rgba(_) => Some(TypeId::of::<T>() == TypeId::of::<RGBA>()),
-                CssColor::Lab(lab) => Some(TypeId::of::<T>() == lab.payload_type_id()),
-                CssColor::Predefined(pre) => Some(TypeId::of::<T>() == pre.payload_type_id()),
-                CssColor::Float(f) => Some(TypeId::of::<T>() == f.payload_type_id()),
-                // System colors cannot be converted to specific color spaces at parse time
-                CssColor::System(_) => None,
-                // We checked these above
-                CssColor::LightDark { .. } | CssColor::CurrentColor => unreachable!(),
-            }
-        }
-
-        let converted_first = check_converted::<T>(self)?;
-        let converted_second = check_converted::<T>(other)?;
-
         // https://drafts.csswg.org/css-color-5/#color-mix-result
+        // An operand stored as `T` is not converted (`From<T> for T`), so it is mixed as written.
         let mut first_color = T::try_from_css_color(self)?;
         let mut second_color = T::try_from_css_color(other)?;
-
-        if converted_first && !first_color.in_gamut() {
-            first_color = map_gamut(first_color);
-        }
-
-        if converted_second && !second_color.in_gamut() {
-            second_color = map_gamut(second_color);
-        }
-
-        // https://www.w3.org/TR/css-color-4/#powerless
-        if converted_first {
-            first_color.adjust_powerless_components();
-        }
-
-        if converted_second {
-            second_color.adjust_powerless_components();
-        }
 
         // https://drafts.csswg.org/css-color-4/#interpolation-missing
         first_color.fill_missing_components(&second_color);
@@ -1074,7 +1030,7 @@ pub trait ColorGamut: Sized + Copy {
 }
 
 /// Interpolation behavior — replaces DeriveInterpolate +
-/// RecangularPremultiply / PolarPremultiply + AdjustPowerless* mixins.
+/// RecangularPremultiply / PolarPremultiply mixins.
 pub trait Interpolate: Colorspace {
     fn fill_missing_components(&mut self, other: &Self) {
         let (oa, ob, oc, oalpha) = other.components();
@@ -1098,7 +1054,6 @@ pub trait Interpolate: Colorspace {
     fn premultiply(&mut self);
     fn unpremultiply(&mut self, alpha_multiplier: f32);
 
-    fn adjust_powerless_components(&mut self) {}
     fn adjust_hue(&mut self, _other: &mut Self, _method: HueInterpolationMethod) {}
 }
 
@@ -1113,6 +1068,12 @@ fn lerp_components<T: Colorspace>(this: &T, p1: f32, other: &T, p2: f32) -> (f32
         c1 * p1 + c2 * p2,
         al1 * p1 + al2 * p2,
     )
+}
+
+/// A missing channel (`none`, NaN) equals a missing channel.
+#[inline]
+fn channel_eq(a: f32, b: f32) -> bool {
+    a == b || (a.is_nan() && b.is_nan())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1536,16 +1497,25 @@ macro_rules! define_colorspace {
         types = ($ta:expr, $tb:expr, $tc:expr);
         gamut = $gamut:ident;
         premultiply = $pre:ident;
-        powerless = $pow:ident;
+        hue = $hue:ident;
         into_css = $into_css:expr;
     ) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq)]
+        #[derive(Debug, Clone, Copy)]
         pub struct $name {
             pub $a: f32,
             pub $b: f32,
             pub $c: f32,
             pub alpha: f32,
+        }
+
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                channel_eq(self.$a, other.$a)
+                    && channel_eq(self.$b, other.$b)
+                    && channel_eq(self.$c, other.$c)
+                    && channel_eq(self.alpha, other.alpha)
+            }
         }
 
         impl Colorspace for $name {
@@ -1568,7 +1538,7 @@ macro_rules! define_colorspace {
         }
 
         define_colorspace!(@gamut $gamut $name { $a, $b, $c });
-        define_colorspace!(@interp $pre $pow $name { $a, $b, $c });
+        define_colorspace!(@interp $pre $hue $name { $a, $b, $c });
     };
 
     // Gamut variants
@@ -1612,8 +1582,8 @@ macro_rules! define_colorspace {
     };
     (@gamut none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
-    // Interpolate / premultiply / powerless variants
-    (@interp rectangular $pow:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {
+    // Interpolate / premultiply / hue variants
+    (@interp rectangular $hue:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl Interpolate for $name {
             fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
                 let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
@@ -1635,10 +1605,10 @@ macro_rules! define_colorspace {
                     self.alpha *= alpha_multiplier;
                 }
             }
-            define_colorspace!(@powerless $pow $name { $a, $b, $c });
+            define_colorspace!(@hue $hue);
         }
     };
-    (@interp polar $pow:ident $name:ident { $h:ident, $a:ident, $b:ident }) => {
+    (@interp polar $hue:ident $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl Interpolate for $name {
             fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
                 let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
@@ -1659,61 +1629,13 @@ macro_rules! define_colorspace {
                     self.alpha *= alpha_multiplier;
                 }
             }
-            define_colorspace!(@powerless $pow $name { $h, $a, $b });
+            define_colorspace!(@hue $hue);
         }
     };
-    (@interp none $pow:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {};
+    (@interp none $hue:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
-    (@powerless none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
-    (@powerless lab $name:ident { $l:ident, $a:ident, $b:ident }) => {
-        fn adjust_powerless_components(&mut self) {
-            // If the lightness of a LAB color is 0%, both the a and b components are powerless.
-            if self.$l.abs() < f32::EPSILON {
-                self.$a = f32::NAN;
-                self.$b = f32::NAN;
-            }
-        }
-    };
-    (@powerless lch $name:ident { $l:ident, $c:ident, $h:ident }) => {
-        fn adjust_powerless_components(&mut self) {
-            // If the chroma of an LCH color is 0%, the hue component is powerless.
-            // If the lightness of an LCH color is 0%, both the hue and chroma components are powerless.
-            if self.$c.abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-            }
-            if self.$l.abs() < f32::EPSILON {
-                self.$c = f32::NAN;
-                self.$h = f32::NAN;
-            }
-        }
-        fn adjust_hue(&mut self, other: &mut Self, method: HueInterpolationMethod) {
-            method.interpolate(&mut self.$h, &mut other.$h);
-        }
-    };
-    (@powerless hsl $name:ident { $h:ident, $s:ident, $l:ident }) => {
-        fn adjust_powerless_components(&mut self) {
-            // If the saturation of an HSL color is 0%, then the hue component is powerless.
-            // If the lightness of an HSL color is 0% or 100%, both the saturation and hue components are powerless.
-            if self.$s.abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-            }
-            if self.$l.abs() < f32::EPSILON || (self.$l - 1.0).abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-                self.$s = f32::NAN;
-            }
-        }
-        fn adjust_hue(&mut self, other: &mut Self, method: HueInterpolationMethod) {
-            method.interpolate(&mut self.$h, &mut other.$h);
-        }
-    };
-    (@powerless hwb $name:ident { $h:ident, $w:ident, $b:ident }) => {
-        fn adjust_powerless_components(&mut self) {
-            // If white+black is equal to 100% (after normalization), it defines an achromatic color,
-            // i.e. some shade of gray, without any hint of the chosen hue. In this case, the hue component is powerless.
-            if (self.$w + self.$b - 1.0).abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-            }
-        }
+    (@hue none) => {};
+    (@hue $h:ident) => {
         fn adjust_hue(&mut self, other: &mut Self, method: HueInterpolationMethod) {
             method.interpolate(&mut self.$h, &mut other.$h);
         }
@@ -1730,7 +1652,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_NUM);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lab;
+    hue = none;
     into_css = |c: &LAB| CssColor::Lab(Box::new(LABColor::Lab(*c)));
 }
 
@@ -1740,7 +1662,7 @@ define_colorspace! {
     types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = rectangular;
-    powerless = none;
+    hue = none;
     into_css = |srgb: &SRGB| {
         // Serializes through 8-bit RGBA, matching upstream lightningcss
         // (`color(srgb, ...)` would be more precise but would change output).
@@ -1761,7 +1683,7 @@ define_colorspace! {
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
     premultiply = polar;
-    powerless = hsl;
+    hue = h;
     into_css = |c: &HSL| CssColor::Rgba(RGBA::from(*c));
 }
 
@@ -1771,7 +1693,7 @@ define_colorspace! {
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
     premultiply = polar;
-    powerless = hwb;
+    hue = h;
     into_css = |c: &HWB| CssColor::Rgba(RGBA::from(*c));
 }
 
@@ -1783,7 +1705,7 @@ define_colorspace! {
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = rectangular;
-    powerless = none;
+    hue = none;
     into_css = |c: &SRGBLinear| CssColor::Predefined(Box::new(PredefinedColor::SrgbLinear(*c)));
 }
 
@@ -1793,7 +1715,7 @@ define_colorspace! {
     types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = none;
-    powerless = none;
+    hue = none;
     into_css = |c: &P3| CssColor::Predefined(Box::new(PredefinedColor::DisplayP3(*c)));
 }
 
@@ -1803,7 +1725,7 @@ define_colorspace! {
     types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = none;
-    powerless = none;
+    hue = none;
     into_css = |c: &A98| CssColor::Predefined(Box::new(PredefinedColor::A98(*c)));
 }
 
@@ -1813,7 +1735,7 @@ define_colorspace! {
     types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = none;
-    powerless = none;
+    hue = none;
     into_css = |c: &ProPhoto| CssColor::Predefined(Box::new(PredefinedColor::Prophoto(*c)));
 }
 
@@ -1823,7 +1745,7 @@ define_colorspace! {
     types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = none;
-    powerless = none;
+    hue = none;
     into_css = |c: &Rec2020| CssColor::Predefined(Box::new(PredefinedColor::Rec2020(*c)));
 }
 
@@ -1833,7 +1755,7 @@ define_colorspace! {
     types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = none;
+    hue = none;
     into_css = |c: &XYZd50| CssColor::Predefined(Box::new(PredefinedColor::XyzD50(*c)));
 }
 
@@ -1843,7 +1765,7 @@ define_colorspace! {
     types = (CT_PCT, CT_PCT, CT_PCT);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = none;
+    hue = none;
     into_css = |c: &XYZd65| CssColor::Predefined(Box::new(PredefinedColor::XyzD65(*c)));
 }
 
@@ -1853,7 +1775,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lch;
+    hue = h;
     into_css = |c: &LCH| CssColor::Lab(Box::new(LABColor::Lch(*c)));
 }
 
@@ -1863,7 +1785,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_NUM);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lab;
+    hue = none;
     into_css = |c: &OKLAB| CssColor::Lab(Box::new(LABColor::Oklab(*c)));
 }
 
@@ -1873,7 +1795,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lch;
+    hue = h;
     into_css = |c: &OKLCH| CssColor::Lab(Box::new(LABColor::Oklch(*c)));
 }
 
@@ -2511,7 +2433,7 @@ impl HueInterpolationMethod {
                 let delta = *b - *a;
                 if 0.0 < delta && delta < 180.0 {
                     *a += 360.0;
-                } else if -180.0 < delta && delta < 0.0 {
+                } else if -180.0 < delta && delta <= 0.0 {
                     *b += 360.0;
                 }
             }
@@ -2539,15 +2461,27 @@ struct LchComponents {
     h: f32,
 }
 
-fn rectangular_to_polar(l: f32, a: f32, b: f32) -> LchComponents {
-    // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L375
+/// The "powerless hue ε" of each space: https://drafts.csswg.org/css-color-4/#powerless
+const LCH_POWERLESS_HUE_EPSILON: f32 = 0.0015;
+const OKLCH_POWERLESS_HUE_EPSILON: f32 = 0.000004;
+const HSL_POWERLESS_HUE_EPSILON: f32 = 0.00001; // a saturation of 0.001%
+const HWB_POWERLESS_HUE_EPSILON: f32 = 0.00001; // whiteness + blackness of 99.999%
+
+fn rectangular_to_polar(l: f32, a: f32, b: f32, powerless_hue_epsilon: f32) -> LchComponents {
+    // https://github.com/w3c/csswg-drafts/blob/50337328484f7fcdd9ab6fe9ded6011815b1707e/css-color-4/conversions.js#L362-L449
+    let c = (a.powi(2) + b.powi(2)).sqrt();
+    if c <= powerless_hue_epsilon {
+        return LchComponents {
+            l,
+            c: 0.0,
+            h: f32::NAN,
+        };
+    }
 
     let mut h = b.atan2(a) * 180.0 / core::f32::consts::PI;
     if h < 0.0 {
         h += 360.0;
     }
-
-    let c = (a.powi(2) + b.powi(2)).sqrt();
 
     h = h.rem_euclid(360.0);
     LchComponents { l, c, h }
@@ -2770,7 +2704,8 @@ impl From<HWB> for RGBA {
 impl From<LAB> for LCH {
     fn from(lab_: LAB) -> LCH {
         let lab = lab_.resolve_missing();
-        let LchComponents { l, c, h } = rectangular_to_polar(lab.l, lab.a, lab.b);
+        let LchComponents { l, c, h } =
+            rectangular_to_polar(lab.l, lab.a, lab.b, LCH_POWERLESS_HUE_EPSILON);
         LCH {
             l,
             c,
@@ -2850,7 +2785,10 @@ impl From<SRGB> for HSL {
         let l = (min + max) / 2.0;
         let d = max - min;
 
-        if d != 0.0 {
+        // A converted grey has rounding noise here. Near black and white it becomes any saturation.
+        const ACHROMATIC_NOISE_FLOOR: f32 = 0.000001;
+
+        if d > ACHROMATIC_NOISE_FLOOR {
             s = if l == 0.0 || l == 1.0 {
                 0.0
             } else {
@@ -2866,6 +2804,11 @@ impl From<SRGB> for HSL {
             }
 
             h *= 60.0;
+        }
+
+        if s <= HSL_POWERLESS_HUE_EPSILON {
+            h = f32::NAN;
+            s = 0.0;
         }
 
         HSL {
@@ -2886,7 +2829,11 @@ impl From<SRGB> for HWB {
         let w = r.min(g).min(b_);
         let b = 1.0 - r.max(g).max(b_);
         HWB {
-            h: hsl.h,
+            h: if w + b >= 1.0 - HWB_POWERLESS_HUE_EPSILON {
+                f32::NAN
+            } else {
+                hsl.h
+            },
             w,
             b,
             alpha: rgb.alpha,
@@ -3523,7 +3470,8 @@ impl From<LCH> for LAB {
 impl From<OKLAB> for OKLCH {
     fn from(labb: OKLAB) -> OKLCH {
         let lab = labb.resolve_missing();
-        let LchComponents { l, c, h } = rectangular_to_polar(lab.l, lab.a, lab.b);
+        let LchComponents { l, c, h } =
+            rectangular_to_polar(lab.l, lab.a, lab.b, OKLCH_POWERLESS_HUE_EPSILON);
         OKLCH {
             l,
             c,

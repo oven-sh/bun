@@ -2233,7 +2233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
-                        *e = p.transpose_require_resolve_known_string(first);
+                        *e = p.transpose_require_resolve_known_string(first, expr.loc);
                         return;
                     }
                     Data::EIf(..) => {

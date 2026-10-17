@@ -570,6 +570,10 @@ export const cases: Record<string, Case> = {
  1|} catch (e) {
  1|  caught(e, "require(");
  -|}
+ 1|require.resolve("node:fs");
+ 1|require.resolve(
+ -|  "node:fs",
+ -|);
 `,
   },
   // The path of a chunk is put in once its length is known, which moves what follows it on the line.

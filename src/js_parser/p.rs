@@ -1558,7 +1558,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         // The argument must be a string
         if matches!(arg.data, js_ast::ExprData::EString(_)) {
-            return self.transpose_require_resolve_known_string(arg);
+            return self.transpose_require_resolve_known_string(arg, require_resolve_ref.loc);
         }
 
         if self.options.warn_about_unbundled_modules {
@@ -1587,7 +1587,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub(crate) fn transpose_require_resolve_known_string(&mut self, arg: Expr) -> Expr {
+    pub(crate) fn transpose_require_resolve_known_string(
+        &mut self,
+        arg: Expr,
+        loc: bun_ast::Loc,
+    ) -> Expr {
         debug_assert!(matches!(arg.data, js_ast::ExprData::EString(_)));
 
         // Ignore calls to import() if the control flow is provably dead here.
@@ -1620,7 +1624,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_record_index,
                 // .leading_interior_comments = arg.getString().
             },
-            arg.loc,
+            loc,
         )
     }
 

@@ -6,6 +6,7 @@ import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -373,4 +374,144 @@ describe("headers queued before the handshake", () => {
     expect(await Promise.race([gotHeaders.promise, closed])).toBe("/queued");
     client.close();
   });
+});
+
+// `destroy()` sends STOP_SENDING and RESET_STREAM. The STOP_SENDING ends the
+// read side, which is the last thing lsquic waits for: with the response sent
+// and acked the stream is finished at once, and lsquic queues it to be freed
+// in the next service pass. The RESET_STREAM that follows must not go out.
+// Its packet keeps a pointer to the stream (lsquic_packet_out_add_stream, on
+// which lsquic asserts `!(stream_flags & STREAM_FINISHED)`), and the same
+// pass frees it, so the peer's ACK of that packet reads freed memory.
+describe("QuicStream.destroy on a stream lsquic has already finished", () => {
+  // The peer's FIN has to arrive behind a hole, or lsquic reaches the FIN
+  // while reading and ends the read side itself, one tick before the app
+  // can call destroy(). A UDP relay in front of the server drops the one
+  // packet that carries the body.
+  const script = String.raw`
+import { createPrivateKey } from "node:crypto";
+import { createSocket } from "node:dgram";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { connect, listen } from "node:quic";
+
+const keysDir = process.env.QUIC_KEYS_DIR;
+const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
+const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+const quiet = x => (x.closed?.catch?.(() => {}), x);
+const dec = new TextDecoder();
+const read = async s => {
+  let out = "";
+  try {
+    for await (const chunk of s) for (const b of [chunk].flat()) out += dec.decode(b);
+  } catch {}
+  return out;
+};
+
+let stuck = null;
+let nth = 0;
+const destroyed = Promise.withResolvers();
+
+const server = await listen(
+  session => {
+    quiet(session).onerror = () => {};
+    session.onstream = stream => {
+      quiet(stream);
+      stream.sendHeaders({ ":status": "200" });
+      stream.setBody(Buffer.from("answer"));
+      const i = nth++;
+      if (i === 0) {
+        stuck = stream; // never read: the peer's FIN stays behind the hole
+        return;
+      }
+      if (i > 1) return;
+      (async () => {
+        for await (const _ of stream) {
+          stuck.destroy();
+          destroyed.resolve();
+          break;
+        }
+      })();
+    };
+  },
+  {
+    alpn: ["h3"],
+    sni: { "*": { keys: [key], certs: [cert] } },
+    transportParams: { maxIdleTimeout: 5 },
+  },
+);
+
+const serverPort = server.address.port;
+const front = createSocket("udp4");
+await new Promise(r => front.bind(0, "127.0.0.1", r));
+const dropped = Promise.withResolvers();
+let up = null;
+let gap = false;
+front.on("message", (m, from) => {
+  up ??= createSocket("udp4").on("message", back => front.send(back, from.port, "127.0.0.1"));
+  if (gap && m.length > 400) {
+    dropped.resolve();
+    return;
+  }
+  up.send(m, serverPort, "127.0.0.1");
+});
+
+const client = await connect(
+  { address: "127.0.0.1", port: front.address().port },
+  {
+    alpn: "h3",
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    onerror() {},
+  },
+);
+await client.opened;
+
+const headers = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+
+// A is answered in full and then given up on.
+const a = quiet(await client.createBidirectionalStream({}));
+a.sendHeaders(headers);
+console.log("A:" + (await read(a)));
+
+// B carries the signal. Its round trip proves its headers reached the server
+// before the relay starts dropping.
+const b = quiet(await client.createBidirectionalStream({}));
+b.sendHeaders(headers);
+console.log("B:" + (await read(b)));
+
+// The body packet is dropped; the byte and the FIN behind it arrive.
+gap = true;
+a.writer.writeSync(new Uint8Array(1000).fill(0x41));
+await dropped.promise;
+a.writer.writeSync(new Uint8Array([0x42]));
+a.writer.endSync();
+b.writer.writeSync(new Uint8Array([0x43]));
+await destroyed.promise;
+
+// One more round trip, so the server ticks while the RESET_STREAM it must
+// not send would be going out.
+const c = quiet(await client.createBidirectionalStream({}));
+c.sendHeaders(headers);
+console.log("C:" + (await read(c)));
+process.exit(0);
+`;
+
+  test("answers on the same connection instead of resetting the freed stream", async () => {
+    using dir = tempDir("quic-destroy-finished", { "repro.mjs": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repro.mjs"],
+      env: { ...bunEnv, QUIC_KEYS_DIR: keysDir },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n").filter(Boolean), stderr: stderr.includes("Assertion") ? stderr : "" }).toEqual({
+      stdout: ["A:answer", "B:answer", "C:answer"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });

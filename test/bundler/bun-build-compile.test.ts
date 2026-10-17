@@ -12,6 +12,7 @@ import {
   isPosix,
   isWindows,
   tempDir,
+  unprivilegedSpawnOptions,
 } from "harness";
 import {
   chmodSync,
@@ -3136,4 +3137,168 @@ describe("Bun.build compile optimize", () => {
       expect(exitCode).toBe(0);
     });
   });
+});
+
+// A compiled executable writes an embedded `.node` or `.so` to the temp dir
+// before `dlopen(2)`. When that write fails, the error must name the temp
+// path and `BUN_TMPDIR`, not the virtual `/$bunfs/` path (#45166). A relative
+// `TMPDIR` resolves against the cwd (#45054).
+//
+// Not concurrent: `unprivilegedSpawnOptions` can chmod ancestor directories.
+const systemCC = isPosix ? (process.env.CC ?? Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang")) : null;
+describe.skipIf(!systemCC)("compiled binary with an embedded native library and a bad temp dir", () => {
+  const napiHeaders = join(import.meta.dir, "../../src/runtime/napi");
+  const soExt = isMacOS ? "dylib" : "so";
+  const HELLO_C = `
+#include <node_api.h>
+static napi_value Hello(napi_env env, napi_callback_info info) {
+  napi_value s;
+  napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &s);
+  return s;
+}
+NAPI_MODULE_INIT() {
+  napi_value fn;
+  napi_create_function(env, "hello", NAPI_AUTO_LENGTH, Hello, NULL, &fn);
+  napi_set_named_property(env, exports, "hello", fn);
+  return exports;
+}
+int hello42(void) { return 42; }
+`;
+
+  async function buildFixture(cwd: string, entry: string): Promise<string> {
+    {
+      await using proc = Bun.spawn({
+        cmd: [
+          systemCC!,
+          "-shared",
+          "-fPIC",
+          ...(isMacOS ? ["-undefined", "dynamic_lookup"] : []),
+          `-I${napiHeaders}`,
+          "-o",
+          "hello.node",
+          "hello.c",
+        ],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    cpSync(join(cwd, "hello.node"), join(cwd, `libhello.${soExt}`));
+    const out = join(cwd, "app");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--outfile", out, entry],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  // With PRINT_DLOPEN_ERROR set, the fixture prints the caught error's
+  // fields instead of letting it escape.
+  const printError = `
+    if (!process.env.PRINT_DLOPEN_ERROR) throw error;
+    console.log(JSON.stringify({ code: error.code, errno: error.errno, syscall: error.syscall, path: error.path }));`;
+  test.each([
+    [
+      "process.dlopen",
+      "node.js",
+      `try {
+         const addon = require("./hello.node");
+         console.log(addon.hello());
+       } catch (error) {${printError}}`,
+    ],
+    [
+      "bun:ffi dlopen",
+      "ffi.js",
+      `import { dlopen } from "bun:ffi";
+       import lib from "./libhello.${soExt}" with { type: "file" };
+       try {
+         const { symbols } = dlopen(lib, { hello42: { args: [], returns: "i32" } });
+         console.log(symbols.hello42() === 42 ? "hello" : "bad");
+       } catch (error) {${printError}}`,
+    ],
+  ])(
+    "%s reports the temp dir failure",
+    async (_name, entry, source) => {
+      using dir = tempDir("compile-addon-tmpdir", { "hello.c": HELLO_C, [entry]: source });
+      const cwd = String(dir);
+      const exe = await buildFixture(cwd, entry);
+      for (const name of ["rw", "rel", "efbig"]) mkdirSync(join(cwd, name));
+      mkdirSync(join(cwd, "ro"), { mode: 0o555 });
+      // Root ignores the mode bits, so the child runs as nobody under root.
+      using unprivileged = unprivilegedSpawnOptions(cwd);
+
+      async function run(tmpdir: string, cmd: string[] = [exe], extraEnv: Record<string, string> = {}) {
+        await using proc = Bun.spawn({
+          cmd,
+          cwd,
+          env: { ...bunEnv, BUN_TMPDIR: tmpdir, TMPDIR: tmpdir, ...extraEnv },
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+
+      const ok = { stdout: "hello\n", stderr: expect.any(String), exitCode: 0 };
+      expect(await run(join(cwd, "rw"))).toEqual(ok);
+      // A relative temp dir resolves against the cwd (#45054).
+      expect(await run("rel")).toEqual(ok);
+      expect(readdirSync(join(cwd, "rel")).length).toBe(1);
+
+      // The temp dir does not exist: opening it fails with ENOENT.
+      const missing = join(cwd, "missing");
+      const result = await run(missing);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("ERR_DLOPEN_FAILED");
+      expect(result.stderr).toContain("Failed to extract embedded library");
+      expect(result.stderr).toContain("ENOENT");
+      expect(result.stderr).toContain(missing);
+      expect(result.stderr).toContain("BUN_TMPDIR");
+      expect(result.stderr).not.toMatch(/cannot open shared object file|tried:/);
+      expect(result.exitCode).toBe(1);
+      // The error object carries the syscall fields, not only the message.
+      const caught = await run(missing, [exe], { PRINT_DLOPEN_ERROR: "1" });
+      expect(caught.exitCode).toBe(0);
+      expect(JSON.parse(caught.stdout)).toEqual({
+        code: "ERR_DLOPEN_FAILED",
+        errno: -2,
+        syscall: "open",
+        path: missing,
+      });
+
+      // The temp dir is not writable: creating the file fails with EACCES.
+      const readOnly = join(cwd, "ro");
+      const denied = await run(readOnly);
+      expect(denied.stdout).toBe("");
+      expect(denied.stderr).toContain("ERR_DLOPEN_FAILED");
+      expect(denied.stderr).toContain("EACCES");
+      expect(denied.stderr).toContain(`open '${readOnly}/`);
+      expect(denied.stderr).toContain("BUN_TMPDIR");
+      expect(denied.exitCode).toBe(1);
+
+      // The write fails: bun ignores SIGXFSZ, so a 512 byte file size limit
+      // makes write(2) return EFBIG. The scratch file is removed.
+      const efbig = join(cwd, "efbig");
+      const tooBig = await run(efbig, ["sh", "-c", 'ulimit -f 1; exec "$0"', exe]);
+      expect(tooBig.stdout).toBe("");
+      expect(tooBig.stderr).toContain("ERR_DLOPEN_FAILED");
+      expect(tooBig.stderr).toContain("EFBIG");
+      expect(tooBig.stderr).toContain(`write '${efbig}/`);
+      expect(tooBig.exitCode).toBe(1);
+      expect(readdirSync(efbig)).toEqual([]);
+    },
+    // `bun build --compile` on a debug+ASAN build takes tens of seconds.
+    180_000,
+  );
 });

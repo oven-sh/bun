@@ -1570,6 +1570,7 @@ pub enum ExprFlag {
     HasNonOptionalChainParent,
     ExprResultIsUnused,
     IsFollowedByOf,
+    IsDeleteTarget,
 }
 
 pub(crate) type ExprFlagSet = enumset::EnumSet<ExprFlag>;
@@ -3656,6 +3657,7 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::EDot(e) => {
                     let is_optional_chain = e.optional_chain == Some(js_ast::OptionalChain::Start);
+                    let is_delete_target = flags.contains(ExprFlag::IsDeleteTarget);
 
                     let mut wrap = false;
                     if e.optional_chain.is_none() {
@@ -3665,7 +3667,7 @@ pub(crate) mod __gated_printer {
                         if let Some(inlined) =
                             self.try_to_get_imported_enum_value(e.target, &e.name)
                         {
-                            self.print_inlined_enum(inlined, &e.name, level);
+                            self.print_inlined_enum(inlined, &e.name, level, is_delete_target);
                             return;
                         }
                         if e.is_import_property_use
@@ -3713,6 +3715,9 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EIndex(e) => {
+                    let is_delete_target = flags.contains(ExprFlag::IsDeleteTarget);
+                    flags.remove(ExprFlag::IsDeleteTarget);
+
                     let mut wrap = false;
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
@@ -3723,7 +3728,12 @@ pub(crate) mod __gated_printer {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
                                 {
-                                    self.print_inlined_enum(value, str.slice8(), level);
+                                    self.print_inlined_enum(
+                                        value,
+                                        str.slice8(),
+                                        level,
+                                        is_delete_target,
+                                    );
                                     return;
                                 }
                             }
@@ -4442,7 +4452,15 @@ pub(crate) mod __gated_printer {
                         self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
                         self.print(b")");
                     } else {
-                        self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
+                        let mut value_flags = ExprFlag::none();
+                        if e.op == Op::Code::UnDelete
+                            && e.flags.contains(
+                                E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                            )
+                        {
+                            value_flags.insert(ExprFlag::IsDeleteTarget);
+                        }
+                        self.print_expr(e.value, Level::Prefix.sub(1), value_flags);
                     }
                     }
 
@@ -6756,7 +6774,19 @@ pub(crate) mod __gated_printer {
             inlined: js_ast::InlinedEnumValueDecoded,
             comment: &[u8],
             level: Level,
+            is_delete_target: bool,
         ) {
+            // "delete NaN" / "delete Infinity" is a strict-mode SyntaxError
+            let wrap = is_delete_target
+                && matches!(inlined, js_ast::InlinedEnumValueDecoded::Number(n) if !n.is_finite());
+            let level = if wrap {
+                self.print(b"(0,");
+                self.print_space();
+                Level::Comma
+            } else {
+                level
+            };
+
             match inlined {
                 js_ast::InlinedEnumValueDecoded::Number(num) => self.print_number(num, level),
                 // TODO: extract printString
@@ -6781,6 +6811,10 @@ pub(crate) mod __gated_printer {
                     self.print(comment);
                     self.print(b" */");
                 }
+            }
+
+            if wrap {
+                self.print(b")");
             }
         }
 

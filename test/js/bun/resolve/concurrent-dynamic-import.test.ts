@@ -30,3 +30,39 @@ test("concurrent dynamic imports of the same module both resolve", async () => {
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });
+
+// The first import() fails at its fetch: the file does not parse. The file is fixed and imported again before that
+// failure has settled. The failure belongs to the first import() alone, so a later import() gets the module. JSON is
+// read on the calling thread, which fixes the order of the two fetches.
+test("an import() that failed to parse does not leave its error on the module a later import() loaded", async () => {
+  using dir = tempDir("concurrent-dyn-import-first-fails", {
+    "data.json": `{ "value": `,
+    "entry.mjs": `
+      import { writeFileSync } from "node:fs";
+      const path = import.meta.dir + "/data.json";
+      const settled = promise => promise.then(module => module.default.value, error => "rejected: " + error.name);
+
+      const first = settled(import(path));
+      writeFileSync(path, JSON.stringify({ value: 42 }));
+      const second = import(path);
+
+      console.log("first:", await first);
+      // Whether the second import() shares the first one's load is not what this tests.
+      await second.catch(() => {});
+      console.log("later:", await settled(import(path)));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "first: rejected: SyntaxError\nlater: 42\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

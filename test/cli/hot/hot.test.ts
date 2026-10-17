@@ -829,6 +829,67 @@ it(
   timeout,
 );
 
+it(
+  "should keep the module a hot reload loaded when the import() from before the reload rejects",
+  async () => {
+    using dir = tempDir("hot-reload-import-in-flight-throws", {
+      "a.mjs": `
+        import "./dependency.mjs";
+        export const evaluation = (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);
+        if (globalThis.throwWhileEvaluating) throw new Error("the module from before the reload threw");
+      `,
+      "dependency.mjs": `export {};`,
+      "entry.mjs": `
+        import { readFileSync, writeFileSync } from "node:fs";
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        if (globalThis.runs === 1) {
+          Bun.plugin({
+            name: "hold the dependency's load open until the reload",
+            setup(build) {
+              build.onLoad({ filter: /dependency\\.mjs$/ }, () => {
+                const loaded = { contents: "export {}", loader: "js" };
+                if (globalThis.dependencyMayLoad) return loaded;
+                const { promise, resolve } = Promise.withResolvers();
+                globalThis.dependencyMayLoad = () => resolve(loaded);
+                writeFileSync(import.meta.path, readFileSync(import.meta.path));
+                return promise;
+              });
+            },
+          });
+          globalThis.inFlight = import("./a.mjs");
+        } else {
+          const settled = promise => promise.then(module => "evaluation " + module.evaluation, error => "rejected: " + error.message);
+          try {
+            console.log("reloaded:", await settled(import("./a.mjs")));
+            globalThis.throwWhileEvaluating = true;
+            globalThis.dependencyMayLoad();
+            console.log("in flight:", await settled(globalThis.inFlight));
+            console.log("next:", await settled(import("./a.mjs")));
+            process.exit(0);
+          } catch (error) {
+            // --hot would keep the process alive after an uncaught error.
+            console.log("threw:", error);
+            process.exit(1);
+          }
+        }
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      "reloaded: evaluation 1\nin flight: rejected: the module from before the reload threw\nnext: evaluation 1\n",
+    );
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 it("holds the promise of the entry point itself, which it looks at on every tick", async () => {
   const source = (comment: string) => `
     globalThis.loads = (globalThis.loads ?? 0) + 1;

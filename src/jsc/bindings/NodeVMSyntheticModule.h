@@ -30,10 +30,16 @@ public:
     void createModuleRecord(JSGlobalObject* globalObject);
     void ensureModuleRecord(JSGlobalObject* globalObject);
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
-    JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue instantiate(JSGlobalObject* globalObject);
-    JSValue evaluate(JSGlobalObject* globalObject);
+    // The module's [[EvaluationSteps]]. JSC calls them through Bun__runSyntheticModuleEvaluationSteps() when
+    // Evaluate() reaches the module's record for the first time, as the root or through an import of it.
+    void runEvaluationSteps(JSGlobalObject* globalObject);
+    void errorEvaluationSteps(JSC::VM&, JSC::Exception*);
     void setExport(JSGlobalObject* globalObject, WTF::String exportName, JSValue value);
+
+    // A synthetic record has no status. The module keeps its own, and what its steps threw.
+    Status ownStatus() const { return m_status; }
+    JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -41,7 +47,9 @@ public:
 private:
     WriteBarrier<SyntheticModuleRecord> m_moduleRecord;
     WriteBarrier<Unknown> m_syntheticEvaluationSteps;
+    WriteBarrier<JSC::Exception> m_evaluationException;
     WTF::HashSet<String> m_exportNames;
+    Status m_status { Status::Unlinked };
 
     NodeVMSyntheticModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper, WTF::HashSet<String> exportNames, JSValue syntheticEvaluationSteps)
         : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)

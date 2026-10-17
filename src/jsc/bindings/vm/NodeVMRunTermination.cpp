@@ -2,6 +2,7 @@
 
 #include "BunClientData.h"
 #include "ErrorCode.h"
+#include "NodeVMModule.h"
 #include "SigintWatcher.h"
 
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -72,10 +73,15 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
             top.clearException();
     }
 
-    if (timedOut())
-        throwError(m_realm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, m_timeout->milliseconds(), "ms"_s));
-    else
-        throwError(m_realm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    JSObject* error = timedOut()
+        ? createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, m_timeout->milliseconds(), "ms"_s))
+        : createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    // The node:vm modules that the termination stopped get the error too. That can run a microtask checkpoint,
+    // and a stop of the VM that arrives in it wins.
+    NodeVMModule::errorModulesCutShort(vm, error);
+    if (scope.exception()) [[unlikely]]
+        return;
+    scope.throwException(m_realm, error);
 
     // A run this one is nested in may have been cut short as well by now (its own deadline); its request went
     // with ours, so make it again — after building the error above, which a pending trap would have cut short.
@@ -91,19 +97,6 @@ const NodeVMRunTermination* NodeVMRunTermination::enclosingRunCutShort() const
             return run;
     }
     return nullptr;
-}
-
-JSObject* NodeVMRunTermination::errorForEnclosingRunCutShort() const
-{
-    ASSERT(m_finished);
-    if (wasCutShort() || !m_vm.hasPendingTermination())
-        return nullptr;
-    const auto* run = enclosingRunCutShort();
-    if (!run)
-        return nullptr;
-    if (run->timedOut())
-        return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, run->m_timeout->milliseconds(), "ms"_s));
-    return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
 }
 
 } // namespace Bun

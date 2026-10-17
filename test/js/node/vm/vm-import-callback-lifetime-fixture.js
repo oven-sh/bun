@@ -1,5 +1,5 @@
-// Scenarios for vm-script-fetcher-leak.test.ts; prints one JSON line. Also runs on
-// node --expose-gc --experimental-vm-modules --no-compilation-cache.
+// Scenarios for vm-script-fetcher-leak.test.ts and vm-module-graph-evaluation-bun.test.ts; prints one JSON line.
+// Also runs on node --expose-gc --experimental-vm-modules --no-compilation-cache.
 const vm = require("node:vm");
 const { setImmediate: tick } = require("node:timers/promises");
 
@@ -51,6 +51,17 @@ async function outcome(seen, fn) {
   } catch (e) {
     return { result: e?.code ?? e?.message, referrer: seen?.referrer };
   }
+}
+
+// An initializeImportMeta callback and what it was called with.
+function makeInitializeImportMeta() {
+  const seen = { calls: 0, referrer: undefined };
+  const initializeImportMeta = (meta, referrer) => {
+    seen.calls++;
+    seen.referrer = kindOf(referrer);
+    meta.initialized = true;
+  };
+  return { initializeImportMeta, seen };
 }
 
 async function evaluated(module) {
@@ -146,6 +157,41 @@ const scenarios = {
     })();
     await collectGarbage();
     return outcome(seen, f);
+  },
+
+  // initializeImportMeta is called before the body of its module. Until then the code of the module keeps the
+  // callback, and the module that the callback gets, alive. A deferred module runs at the first read of its
+  // namespace (`import defer` is not in Node v26.3.0).
+  async "alive-importMetaDeferred"() {
+    const { touch, seen } = await (async () => {
+      const { initializeImportMeta, seen } = makeInitializeImportMeta();
+      const dep = new vm.SourceTextModule("export const value = import.meta.initialized", { initializeImportMeta });
+      const root = new vm.SourceTextModule('import defer * as dep from "dep"; export const touch = () => dep.value;');
+      await root.link(() => dep);
+      await root.evaluate();
+      return { touch: root.namespace.touch, seen };
+    })();
+    await collectGarbage();
+    return { before: seen.calls, result: touch(), ...seen };
+  },
+  // After the call, code of the module that is alive keeps neither the callback nor the module alive. Node keeps
+  // both.
+  async "freed-importMeta"() {
+    let finalized = 0;
+    const registry = new FinalizationRegistry(() => finalized++);
+    const build = async i => {
+      const initializeImportMeta = meta => void (meta.i = i);
+      const m = await evaluated(
+        new vm.SourceTextModule("export const f = () => import.meta.i; f();", { initializeImportMeta }),
+      );
+      registry.register(initializeImportMeta, undefined);
+      registry.register(m, undefined);
+      return m.namespace.f;
+    };
+    const kept = [];
+    for (let i = 0; i < N; i++) kept.push(await build(i));
+    await collect(() => finalized === 2 * N);
+    return { alive: 2 * N - finalized, last: kept[N - 1]() };
   },
 
   // One closure per Script run in a long-lived context, as a REPL does.

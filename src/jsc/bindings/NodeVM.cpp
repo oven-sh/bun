@@ -50,7 +50,11 @@
 #include "NodeValidator.h"
 
 #include "AsyncContextFrame.h"
+#include "JavaScriptCore/BuiltinNames.h"
 #include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSModuleEnvironment.h"
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
@@ -994,7 +998,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
         nullptr, // moduleLoaderCreateImportMetaProperties
-        nullptr, // moduleLoaderEvaluate
+        &moduleLoaderEvaluate,
         &promiseRejectionTrackerForNodeVM,
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
@@ -1144,15 +1148,35 @@ void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject
     m_sandbox.set(vm(), this, contextifiedObject);
 }
 
+NodeVMGlobalObject::ModuleCodeOnStack::ModuleCodeOnStack(JSGlobalObject* realm)
+    : m_context(dynamicDowncast<NodeVMGlobalObject>(realm))
+{
+    if (m_context && !m_context->hasOwnMicrotaskQueue())
+        m_context = nullptr;
+    if (m_context)
+        m_context->m_moduleCodeOnStack++;
+}
+
+NodeVMGlobalObject::ModuleCodeOnStack::~ModuleCodeOnStack()
+{
+    if (m_context)
+        m_context->m_moduleCodeOnStack--;
+}
+
 void NodeVMGlobalObject::drainOwnMicrotasks()
 {
     if (!m_contextOptions.ownMicrotaskQueue)
         return;
+    if (m_moduleCodeOnStack || microtaskQueue().isPerformingMicrotaskCheckpoint())
+        return;
 
     VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // Same drain mode as VM::drainMicrotasks so process.nextTick interop
     // (onEachMicrotaskTick) keeps working inside the checkpoint.
     microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
+    if (JSC::Exception* exception = scope.exception(); exception && vm.isTerminationException(exception)) [[unlikely]]
+        NodeVMModule::noteCheckpointCutShort(this);
 }
 
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -1695,6 +1719,66 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     else
         promise->reject(vm, createError(globalObject, message));
     return promise;
+}
+
+// Calls the `initializeImportMeta` option of the vm.SourceTextModule that `record` belongs to, if the module has
+// one, with the module's import.meta. JSC made that object at link. Node calls the option when the module's code
+// evaluates import.meta for the first time. This call comes before the module's body, once.
+static void initializeImportMeta(JSGlobalObject* globalObject, JSC::JSModuleRecord* record)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* fetcher = NodeVMScriptFetcher::of(record->sourceCode());
+    if (!fetcher)
+        return;
+    // The code keeps the module alive for this call, not longer.
+    JSValue module = fetcher->owner();
+    JSValue callback = fetcher->takeInitializeImportMeta();
+    if (callback.isUndefined())
+        return;
+
+    JSC::JSModuleEnvironment* environment = record->moduleEnvironmentMayBeNull();
+    if (!environment)
+        return;
+    // A module whose source has no import.meta has no such variable.
+    JSValue importMeta = environment->get(globalObject, vm.propertyNames->builtinNames().metaPrivateName());
+    RETURN_IF_EXCEPTION(scope, );
+    if (!importMeta.isObject())
+        return;
+
+    MarkedArgumentBuffer args;
+    args.append(importMeta);
+    args.append(module);
+    scope.release();
+    JSC::call(globalObject, callback, JSC::getCallData(callback), jsUndefined(), args);
+}
+
+JSValue NodeVM::evaluateModuleBody(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSValue key, JSC::JSModuleRecord* record, JSValue sentValue, JSValue resumeMode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue result;
+    {
+        NodeVMGlobalObject::ModuleCodeOnStack moduleCodeOnStack(record->realm());
+        initializeImportMeta(globalObject, record);
+        if (!scope.exception()) [[likely]]
+            result = moduleLoader->evaluateNonVirtual(globalObject, key, record, nullptr, sentValue, resumeMode);
+    }
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        if (vm.isTerminationException(exception))
+            NodeVMModule::noteBodyCutShort(vm);
+        return {};
+    }
+    return result;
+}
+
+JSValue NodeVMGlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher, JSValue sentValue, JSValue resumeMode)
+{
+    if (auto* record = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue)) [[likely]]
+        return NodeVM::evaluateModuleBody(globalObject, moduleLoader, key, record, sentValue, resumeMode);
+    return moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
 }
 
 JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred)

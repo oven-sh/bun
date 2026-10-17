@@ -31,12 +31,9 @@ public:
     // withdrawn and the ERR_SCRIPT_EXECUTION_* error thrown on `scope`. Otherwise nothing is touched and
     // whatever is pending — an ordinary exception, or a termination that is not this run's — is the
     // caller's to propagate. Either way the caller follows with RETURN_IF_EXCEPTION.
+    // A run that was cut short also gives its error to the node:vm modules that its termination stopped
+    // (NodeVMModule::errorModulesCutShort).
     void finish(JSC::ThrowScope&);
-
-    // After finish(): the run was unwound by the termination of a run it is nested in (that run's deadline
-    // fired or its SIGINT arrived while this one was on the stack). The termination is that run's and stays
-    // pending; a caller that keeps state past the unwind (a module mid-evaluation) records this error for it.
-    JSC::JSObject* errorForEnclosingRunCutShort() const;
 
     // SigintWatcher's signal thread, under its lock: record the SIGINT, then request m_vm's termination.
     JSC::VM& vm() const { return m_vm; }

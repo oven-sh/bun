@@ -51,6 +51,9 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue,
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
+// For a realm's moduleLoaderEvaluate hook: JSC is about to run, for the first time, the body of a module that
+// node:vm made. Calls the module's `initializeImportMeta` option, then runs the body.
+JSC::JSValue evaluateModuleBody(JSC::JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue sentValue, JSC::JSValue resumeMode);
 
 } // namespace NodeVM
 
@@ -147,7 +150,27 @@ public:
     bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
+    // No-op also inside a job of that queue, as in V8, and while a ModuleCodeOnStack is alive.
+    // A checkpoint that a termination unwinds is reported to NodeVMModule::noteCheckpointCutShort().
     void drainOwnMicrotasks();
+
+    // A module body, or an evaluateCallback, that the walk of an Evaluate() started is on the stack. A job that
+    // finishes a module while that walk has an importer of the module on its stack finds the importer in a
+    // state that module evaluation has no rule for: JSC asserts, and in Node the importer never runs. So a
+    // context with its own queue gets no checkpoint until the scope ends: the evaluate() that started the walk
+    // does it. Node does that checkpoint at once.
+    class ModuleCodeOnStack {
+        WTF_MAKE_NONCOPYABLE(ModuleCodeOnStack);
+        WTF_FORBID_HEAP_ALLOCATION;
+
+    public:
+        // `realm`: the realm of the module. Nothing to do unless it is a context with its own queue.
+        explicit ModuleCodeOnStack(JSC::JSGlobalObject* realm);
+        ~ModuleCodeOnStack();
+
+    private:
+        NodeVMGlobalObject* m_context;
+    };
     NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
     void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
@@ -160,6 +183,7 @@ public:
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
+    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSC::JSValue sentValue, JSC::JSValue resumeMode);
 
 private:
     // The contextified object that acts as the global proxy
@@ -168,6 +192,7 @@ private:
     WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
+    unsigned m_moduleCodeOnStack { 0 };
 
     NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
 };

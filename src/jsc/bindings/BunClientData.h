@@ -66,6 +66,7 @@ class DOMWrapperWorld;
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/RefPtr.h>
+#include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/WeakHashSet.h>
@@ -283,6 +284,19 @@ public:
     // filled on first use so each name is atomized once however many chunks
     // import or export it (BunAnalyzeTranspiledModule.cpp).
     Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
+
+    // The node:vm module code that a termination unwound, until the vm run that the termination belongs to
+    // gives its error to the modules (NodeVMModule::errorModulesCutShort).
+    struct NodeVMModulesCutShort {
+        // SyntheticModules: their evaluateCallback.
+        Vector<JSC::Strong<JSC::JSObject>> steps;
+        // Contexts with their own microtask queue: a checkpoint of that queue.
+        Vector<JSC::Strong<JSC::JSObject>> checkpoints;
+        // The body of a SourceTextModule that an Evaluate() started.
+        bool body { false };
+
+        bool isEmpty() const { return !body && steps.isEmpty() && checkpoints.isEmpty(); }
+    } nodeVMModulesCutShort;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted

@@ -90,7 +90,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper, initializeImportMeta));
 
     SourceOrigin sourceOrigin { {}, *fetcher };
 
@@ -110,7 +110,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
-        WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
+        WTF::move(sourceCode), moduleWrapper);
     ptr->finishCreation(vm);
 
     if (cachedData.isEmpty()) {
@@ -166,9 +166,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
-    JSModuleLoader* loader = moduleLoader(globalObject);
+    JSGlobalObject* realm = moduleRealm(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
+    ModuleAnalyzer analyzer(realm, realm->moduleLoader(), Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);
@@ -287,6 +287,31 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     return requestsArray;
 }
 
+NodeVMModule::Status NodeVMSourceTextModule::statusOfRecord() const
+{
+    JSModuleRecord* record = m_moduleRecord.get();
+    if (!record)
+        return Status::Unlinked;
+
+    using RecordStatus = JSC::CyclicModuleRecord::Status;
+    switch (record->status()) {
+    case RecordStatus::New:
+    case RecordStatus::Unlinked:
+    case RecordStatus::Linking:
+        return Status::Unlinked;
+    case RecordStatus::Linked:
+        return Status::Linked;
+    case RecordStatus::Evaluating:
+        return Status::Evaluating;
+    case RecordStatus::EvaluatingAsync:
+        // As in V8: a module that waits for a top-level await, its own or one of a module it imports, is "evaluated".
+        return Status::Evaluated;
+    case RecordStatus::Evaluated:
+        return record->evaluationError() ? Status::Errored : Status::Evaluated;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void NodeVMSourceTextModule::ensureModuleRecord(JSGlobalObject* globalObject)
 {
     if (!m_moduleRecord) {
@@ -312,10 +337,11 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         return {};
     }
 
-    if (m_status != Status::Unlinked) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
-        return {};
-    }
+    // The module is linked already when an importer's instantiate() came first. As in Node, this link() then
+    // changes nothing: ModuleWrap::Link stores the new modules, and V8 keeps the ones it instantiated with.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/module_wrap.cc#L649-L728
+    if (status() != Status::Unlinked)
+        return jsUndefined();
 
     JSModuleRecord* record = m_moduleRecord.get();
 
@@ -401,39 +427,18 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 // loadedModules() is empty, so getImportedModule() would dereference end() —
 // an assert in debug, a segfault in release. Pre-walk the graph the same way
 // and throw a catchable ERR_VM_MODULE_LINK_FAILURE (matching Node) instead.
-//
-// The walk is iterative (an explicit worklist) rather than recursive: a deep
-// linear import chain has graph depth proportional to its length, and we must
-// not add an unguarded native recursion that would overflow the stack before
-// record->link()'s own isSafeToRecurse() guard throws a catchable RangeError.
 static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpecifier)
 {
-    WTF::HashSet<AbstractModuleRecord*> visited;
-    WTF::Vector<AbstractModuleRecord*, 16> worklist;
-    worklist.append(root);
-
-    while (!worklist.isEmpty()) {
-        AbstractModuleRecord* record = worklist.takeLast();
-        if (!visited.add(record).isNewEntry)
-            continue;
-
-        const auto& loaded = record->loadedModules();
-        for (const auto& request : record->requestedModules()) {
-            if (AbstractModuleRecord* dependency = record->prelinkedRequestedModule(request)) {
-                worklist.append(dependency);
-                continue;
-            }
-            auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
-            if (iter == loaded.end()) {
-                missingSpecifier = request.m_specifier.string();
-                return false;
-            }
-            if (AbstractModuleRecord* dependency = iter->value.m_module.get())
-                worklist.append(dependency);
-        }
-    }
-
-    return true;
+    bool isLinked = true;
+    NodeVMModule::forEachRecordOfGraph(
+        root,
+        [](AbstractModuleRecord*) { return WTF::IterationStatus::Continue; },
+        [&](const AbstractModuleRecord::ModuleRequest& request) {
+            missingSpecifier = request.m_specifier.string();
+            isLinked = false;
+            return WTF::IterationStatus::Done;
+        });
+    return isLinked;
 }
 
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
@@ -449,6 +454,10 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, "module is not linked"_s);
         return {};
     }
+
+    // An importer's instantiate() linked this record already: Link() has nothing left to do.
+    if (status() != Status::Unlinked)
+        return jsUndefined();
 
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
@@ -474,8 +483,6 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
-    status(Status::Linked);
-    propagateLinked();
     return jsUndefined();
 }
 
@@ -512,34 +519,6 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     return m_cachedBytecodeBuffer.get();
 }
 
-void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
-{
-    if (!m_initializeImportMeta || !m_initializeImportMeta.get().isCallable()) {
-        return;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSModuleEnvironment* moduleEnvironment = m_moduleRecord->moduleEnvironmentMayBeNull();
-    ASSERT(moduleEnvironment != nullptr);
-
-    JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
-    scope.assertNoExceptionExceptTermination();
-    RETURN_IF_EXCEPTION(scope, );
-    if (!metaValue || !metaValue.isObject()) {
-        return;
-    }
-
-    CallData callData = JSC::getCallData(m_initializeImportMeta.get());
-
-    MarkedArgumentBuffer args;
-    args.append(metaValue);
-    args.append(m_moduleWrapper.get());
-
-    scope.release();
-    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
-}
-
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)
 {
     return NodeVMModulePrototype::create(vm, NodeVMModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
@@ -555,7 +534,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRecord);
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
-    visitor.append(vmModule->m_initializeImportMeta);
     NodeVMScriptFetcher::visitSource(visitor, vmModule->m_sourceCode);
 }
 

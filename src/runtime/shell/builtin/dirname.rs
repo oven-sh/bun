@@ -25,7 +25,7 @@ impl Dirname {
             return Self::fail(interp, cmd, b"usage: dirname string\n");
         }
 
-        let stdout_needs_io = bltn.stdout.needs_io();
+        let stdout_needs_io = interp.as_cmd(cmd).io.stdout.needs_io();
         let mut buf = Vec::new();
         for i in 0..argc {
             let path = bltn.arg_bytes(i);
@@ -40,7 +40,9 @@ impl Dirname {
             Self::state_mut(interp, cmd).buf = buf;
             let owned = Self::state_mut(interp, cmd).buf.clone();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
+            return interp
+                .as_cmd(cmd)
+                .io
                 .stdout
                 .enqueue(child, &owned, safeguard);
         }

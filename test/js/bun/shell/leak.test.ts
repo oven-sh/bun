@@ -171,6 +171,25 @@ describe.concurrent("fd leak", () => {
     memLeakTest(...args);
   });
 
+  // The shell opens the redirect target of a command that does not start, and
+  // writes its own message to it.
+  fdLeakTest(
+    "redirect_file_command_not_found",
+    () =>
+      TestBuilder.command`nosuch_cmd_zz 2> err.txt`
+        .exitCode(1)
+        .fileEquals("err.txt", "bun: command not found: nosuch_cmd_zz\n"),
+    200,
+  );
+  fdLeakTest(
+    "redirect_file_both_command_not_found",
+    () =>
+      TestBuilder.command`nosuch_cmd_zz &> err.txt`
+        .exitCode(1)
+        .fileEquals("err.txt", "bun: command not found: nosuch_cmd_zz\n"),
+    200,
+  );
+
   // Use text of this file so its big enough to cause a leak
   memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(128)}`, 100);
   memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(128)}`, 100);

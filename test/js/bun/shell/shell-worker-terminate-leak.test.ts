@@ -106,7 +106,7 @@ test.skipIf(!isASAN || isWindows)(
 test.skipIf(!isASAN || isWindows)(
   "worker.terminate() with a live Bun.$ file redirect does not leak the redirection fd",
   async () => {
-    // `> out.txt` opens a CowFd on the Cmd that only Cmd::deinit releases.
+    // `> out.txt` opens an fd that the Cmd owns.
     await runTerminateScenario(`
       const running = Bun.$\`sh -c "echo ok > flag.txt && exec sleep 100" > out.txt\`.nothrow();
       (async () => {
@@ -181,6 +181,60 @@ test.skipIf(!isASAN || isWindows)(
     `);
   },
   LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(!isLinux)(
+  "worker.terminate() with a live Bun.$ file redirect closes the redirection fd",
+  async () => {
+    // A leak checker does not see an fd that stays open, so read /proc.
+    using dir = tempDir("shell-worker-terminate-fd", {
+      "main.ts": `
+        import { readdirSync, readlinkSync } from "node:fs";
+        const holdsOut = () =>
+          readdirSync("/proc/self/fd").some(fd => {
+            try {
+              return readlinkSync("/proc/self/fd/" + fd).endsWith("/out.txt");
+            } catch {
+              return false;
+            }
+          });
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        const { promise, resolve, reject } = Promise.withResolvers();
+        worker.onmessage = resolve;
+        worker.onerror = e => reject(e.error ?? e.message);
+        await promise;
+        const before = holdsOut();
+        await worker.terminate();
+        const deadline = Date.now() + 20_000;
+        while (holdsOut() && Date.now() < deadline) await Bun.sleep(10);
+        console.log(JSON.stringify({ before, after: holdsOut() }));
+      `,
+      "worker.ts": `
+        const running = Bun.$\`sh -c "echo ok > flag.txt && exec sleep 100" > out.txt\`.nothrow();
+        (async () => {
+          await running;
+        })();
+        while (!(await Bun.file("flag.txt").exists())) {
+          await Bun.sleep(5);
+        }
+        postMessage("ok");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ before: true, after: false }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  60_000,
 );
 
 test.skipIf(!isLinux)(

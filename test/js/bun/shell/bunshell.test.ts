@@ -6,10 +6,11 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
+  isLinux,
   isPosix,
   isRoot,
   isWindows,
@@ -1967,6 +1968,364 @@ describe("deno_task", () => {
     TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} > /dev/null`
       .quiet()
       .runAsTest("bunception redirect /dev/null");
+
+    // The redirect of a command is performed before the command is searched
+    // for (POSIX 2.9.1). So the shell's own message about a command that does
+    // not start goes where the redirect sends stderr, and the target exists.
+    describe("a command that does not start", () => {
+      const notFound = "bun: command not found: nosuch_cmd_zz\n";
+
+      TestBuilder.command`nosuch_cmd_zz 2> err.txt`
+        .exitCode(1)
+        .fileEquals("err.txt", notFound)
+        .testMini()
+        .runAsTest("2> file");
+
+      TestBuilder.command`nosuch_cmd_zz 2>> err.txt`
+        .file("err.txt", "pre\n")
+        .exitCode(1)
+        .fileEquals("err.txt", "pre\n" + notFound)
+        .runAsTest("2>> file");
+
+      TestBuilder.command`nosuch_cmd_zz &> both.txt`
+        .exitCode(1)
+        .fileEquals("both.txt", notFound)
+        .testMini()
+        .runAsTest("&> file");
+
+      TestBuilder.command`nosuch_cmd_zz > out.txt`
+        .file("out.txt", "pre\n")
+        .exitCode(1)
+        .stderr(notFound)
+        .fileEquals("out.txt", "")
+        .runAsTest("> file makes the file empty");
+
+      TestBuilder.command`nosuch_cmd_zz 2>&1`.exitCode(1).stdout(notFound).testMini().runAsTest("2>&1");
+
+      // https://github.com/oven-sh/bun/issues/9099
+      TestBuilder.command`nosuch_cmd_zz 2>&1`.exitCode(1).stdout(notFound).quiet().runAsTest("2>&1 quiet");
+
+      TestBuilder.command`nosuch_cmd_zz 1>&2`.exitCode(1).stderr(notFound).testMini().runAsTest("1>&2");
+
+      TestBuilder.command`nosuch_cmd_zz 2>&1 | cat`.stdout(notFound).testMini().runAsTest("2>&1 into a pipe");
+
+      TestBuilder.command`echo "[$(nosuch_cmd_zz 2>&1)]"`
+        .stdout(`[${notFound.trimEnd()}]\n`)
+        .testMini()
+        .runAsTest("2>&1 in a command substitution");
+
+      TestBuilder.command`nosuch_cmd_zz 2> /dev/null || echo fallback`
+        .stdout("fallback\n")
+        .testMini()
+        .runAsTest("2> /dev/null");
+
+      TestBuilder.command`nosuch_a_zz 2> err.txt; nosuch_b_zz`
+        .exitCode(1)
+        .stderr("bun: command not found: nosuch_b_zz\n")
+        .fileEquals("err.txt", "bun: command not found: nosuch_a_zz\n")
+        .runAsTest("the redirect is for one command");
+
+      TestBuilder.command`./missing_path_zz 2> err.txt`
+        .exitCode(1)
+        .fileEquals("err.txt", "bun: command not found: ./missing_path_zz\n")
+        .runAsTest("a path that does not exist");
+
+      TestBuilder.command`$EMPTY_ZZ > made.txt`
+        .fileEquals("made.txt", "")
+        .testMini()
+        .runAsTest("no command name: the file is made");
+
+      TestBuilder.command`false && nosuch_cmd_zz 2> never.txt`
+        .ensureTempDir()
+        .exitCode(1)
+        .doesNotExist("never.txt")
+        .runAsTest("a command that is skipped makes no file");
+
+      // The message of each of these is compared with the same command and no redirect.
+      async function messageFollowsRedirect(dir: string, run: (redirect: { raw: string }) => ReturnType<typeof $>) {
+        const plain = await run({ raw: "" }).cwd(dir).quiet();
+        const redirected = await run({ raw: "2> err.txt" }).cwd(dir).quiet();
+        expect(plain.stderr.toString()).not.toBe("");
+        expect({
+          stdout: redirected.stdout.toString(),
+          stderr: redirected.stderr.toString(),
+          file: await Bun.file(join(dir, "err.txt")).text(),
+          exitCode: redirected.exitCode,
+        }).toEqual({ stdout: "", stderr: "", file: plain.stderr.toString(), exitCode: plain.exitCode });
+      }
+
+      test.skipIf(isWindows)("a file with no x bit", async () => {
+        using dir = tempDir("shell-redirect-noexec", { "noexec.sh": "#!/bin/sh\necho hi\n" });
+        chmodSync(join(String(dir), "noexec.sh"), 0o644);
+        await messageFollowsRedirect(String(dir), redirect => $`./noexec.sh ${redirect}`);
+      });
+
+      // The spawn fails after the redirect target was opened.
+      test.skipIf(isWindows)("a script with an interpreter that does not exist", async () => {
+        using dir = tempDir("shell-redirect-shebang", { "badinterp.sh": "#!/nonexistent_dir_zz/interp\necho hi\n" });
+        chmodSync(join(String(dir), "badinterp.sh"), 0o755);
+        await messageFollowsRedirect(String(dir), redirect => $`./badinterp.sh ${redirect}`);
+      });
+
+      test.skipIf(!isWindows)("a batch file that gets an argument with a cmd.exe special character", async () => {
+        using dir = tempDir("shell-redirect-batch", { "say.bat": "@echo ran> ran.txt\r\n" });
+        await messageFollowsRedirect(String(dir), redirect => $`./say.bat ${"a&b"} ${redirect}`);
+        expect(await Bun.file(join(String(dir), "ran.txt")).exists()).toBe(false);
+      });
+
+      test("2> ${buffer}", async () => {
+        const buffer = new Uint8Array(64);
+        const { stdout, stderr, exitCode } = await $`nosuch_cmd_zz 2> ${buffer}`.quiet();
+        expect({
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          buffer: Buffer.from(buffer).toString().replace(/\0+$/, ""),
+          exitCode,
+        }).toEqual({ stdout: "", stderr: "", buffer: notFound, exitCode: 1 });
+      });
+
+      test("2> ${Bun.file(fd)}", async () => {
+        using dir = tempDir("shell-redirect-fd", {});
+        const path = join(String(dir), "err.txt");
+        const fd = openSync(path, "w");
+        try {
+          const { stdout, stderr, exitCode } = await $`nosuch_cmd_zz 2> ${Bun.file(fd)}`.quiet();
+          expect({
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
+            file: readFileSync(path, "utf8"),
+            exitCode,
+          }).toEqual({ stdout: "", stderr: "", file: notFound, exitCode: 1 });
+          // The shell does not close the fd of the caller.
+          expect(fstatSync(fd).isFile()).toBe(true);
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      // bash is silent when it cannot write the message. The script continues.
+      test.skipIf(!isLinux)("a message that cannot be written to the target", async () => {
+        const { stdout, stderr, exitCode } = await $`nosuch_cmd_zz 2> /dev/full || echo fallback`.quiet();
+        expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+          stdout: "fallback\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      describe("a redirect that fails is reported, and the command is not searched for", () => {
+        // A builtin reports the same failure of the same redirect.
+        async function sameAsBuiltin(
+          run: (name: string) => ReturnType<typeof $>,
+          check: (stderr: string) => void = () => {},
+        ) {
+          using dir = tempDir("shell-redirect-fails", {});
+          const builtin = await run("echo").cwd(String(dir)).quiet();
+          const missing = await run("nosuch_cmd_zz").cwd(String(dir)).quiet();
+          check(builtin.stderr.toString());
+          expect({
+            stdout: missing.stdout.toString(),
+            stderr: missing.stderr.toString().replace("nosuch_cmd_zz", "echo"),
+            exitCode: missing.exitCode,
+          }).toEqual({ stdout: "", stderr: builtin.stderr.toString(), exitCode: 1 });
+        }
+
+        test("< file that does not exist", async () => {
+          await sameAsBuiltin(
+            name => $`${name} < missing_input_zz`,
+            stderr => expect(stderr).toContain("missing_input_zz"),
+          );
+        });
+
+        test("2> file in a directory that does not exist", async () => {
+          await sameAsBuiltin(
+            name => $`${name} 2> missing_dir_zz/err.txt`,
+            stderr => expect(stderr).toContain("missing_dir_zz/err.txt"),
+          );
+        });
+
+        test("> with no target", async () => {
+          await sameAsBuiltin(
+            name => $`${name} > $EMPTY_ZZ`,
+            stderr => expect(stderr).toBe("bun: ambiguous redirect: at `echo`\n"),
+          );
+        });
+
+        test("no command name", async () => {
+          using dir = tempDir("shell-redirect-fails", {});
+          const builtin = await $`echo < missing_input_zz`.cwd(String(dir)).quiet();
+          const { stdout, stderr, exitCode } = await $`$EMPTY_ZZ < missing_input_zz`.cwd(String(dir)).quiet();
+          expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+            stdout: "",
+            stderr: builtin.stderr.toString(),
+            exitCode: 1,
+          });
+        });
+
+        // An external command used to abort the process on a ReadableStream.
+        test("a JS object that a redirect cannot write to", async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
+              import { $ } from "bun";
+              const settle = async run => {
+                try {
+                  return "resolved " + (await run()).exitCode;
+                } catch (e) {
+                  return "rejected " + e.message;
+                }
+              };
+              const targets = {
+                stream: () => new ReadableStream(),
+                blob: () => new Blob(["x"]),
+                response: () => new Response(new Blob(["x"])),
+              };
+              const out = {};
+              for (const name of ["echo", process.execPath, "nosuch_cmd_zz"]) {
+                for (const [kind, target] of Object.entries(targets)) {
+                  (out[kind] ??= []).push(await settle(() => $\`\${name} --version > \${target()}\`.quiet()));
+                }
+              }
+              console.log(JSON.stringify(out));
+              `,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const builtin = "rejected Cannot redirect stdout/stderr to an immutable blob. Expected a file";
+          const external = "rejected Blobs are immutable, and cannot be used for stdout/stderr";
+          const rejected = expect.stringMatching(/^rejected /);
+          expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+            result: {
+              stream: [rejected, rejected, rejected],
+              blob: [builtin, external, external],
+              response: [builtin, external, external],
+            },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      });
+    });
+
+    // `2>&1` and `1>&2` of a command that runs, in each place that gives the
+    // command a different stdout and stderr.
+    describe("a command that runs", () => {
+      const lsError = "ls: nosuch_dir_zz: No such file or directory\n";
+      const both = "console.log('out'); console.error('err')";
+
+      TestBuilder.command`ls nosuch_dir_zz 2>&1`.exitCode(1).stdout(lsError).testMini().runAsTest("builtin 2>&1");
+      TestBuilder.command`ls nosuch_dir_zz 2>&1`.exitCode(1).stdout(lsError).quiet().runAsTest("builtin 2>&1 quiet");
+      TestBuilder.command`echo hi 1>&2`.stderr("hi\n").testMini().runAsTest("builtin 1>&2");
+      TestBuilder.command`echo hi 1>&2`.stderr("hi\n").quiet().runAsTest("builtin 1>&2 quiet");
+      TestBuilder.command`ls nosuch_dir_zz 2>&1 | cat`.stdout(lsError).testMini().runAsTest("builtin 2>&1 into a pipe");
+      TestBuilder.command`echo hi 1>&2 | cat`.stderr("hi\n").testMini().runAsTest("builtin 1>&2 away from a pipe");
+      TestBuilder.command`echo "[$(ls nosuch_dir_zz 2>&1)]"`
+        .stdout(`[${lsError.trimEnd()}]\n`)
+        .testMini()
+        .runAsTest("builtin 2>&1 in a command substitution");
+
+      TestBuilder.command`${BUN} -e ${both} 2>&1`.stdout("out\nerr\n").testMini().runAsTest("external 2>&1");
+      TestBuilder.command`${BUN} -e ${both} 1>&2`.stderr("out\nerr\n").testMini().runAsTest("external 1>&2");
+      TestBuilder.command`${BUN} -e ${both} 2>&1 | cat`
+        .stdout("out\nerr\n")
+        .testMini()
+        .runAsTest("external 2>&1 into a pipe");
+      TestBuilder.command`${BUN} -e ${both} 1>&2 | cat`
+        .stderr("out\nerr\n")
+        .testMini()
+        .runAsTest("external 1>&2 away from a pipe");
+      TestBuilder.command`echo "[$(${BUN} -e ${both} 2>&1)]"`
+        .stdout("[out\nerr]\n")
+        .testMini()
+        .runAsTest("external 2>&1 in a command substitution");
+
+      TestBuilder.command`ls nosuch_dir_zz 2>> err.txt`
+        .file("err.txt", "pre\n")
+        .exitCode(1)
+        .fileEquals("err.txt", "pre\n" + lsError)
+        .runAsTest("builtin 2>>");
+      TestBuilder.command`${BUN} -e ${both} 2>> err.txt`
+        .file("err.txt", "pre\n")
+        .stdout("out\n")
+        .fileEquals("err.txt", "pre\nerr\n")
+        .runAsTest("external 2>>");
+      TestBuilder.command`ls nosuch_dir_zz &> both.txt`
+        .exitCode(1)
+        .fileEquals("both.txt", lsError)
+        .testMini()
+        .runAsTest("builtin &> with output on stderr");
+      TestBuilder.command`echo hi &> both.txt`
+        .fileEquals("both.txt", "hi\n")
+        .testMini()
+        .runAsTest("builtin &> with output on stdout");
+      TestBuilder.command`${BUN} -e ${both} &> both.txt`
+        .fileEquals("both.txt", "out\nerr\n")
+        .testMini()
+        .runAsTest("external &>");
+
+      test.each([
+        ["external", (file: Blob) => $`${BUN} -e ${"console.log('hi')"} > ${file}`],
+        ["builtin", (file: Blob) => $`echo hi > ${file}`],
+      ] as const)("%s > Bun.file(fd)", async (_name, run) => {
+        using dir = tempDir("shell-redirect-fd", {});
+        const path = join(String(dir), "out.txt");
+        const fd = openSync(path, "w");
+        try {
+          const { stdout, stderr, exitCode } = await run(Bun.file(fd)).quiet();
+          expect({
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
+            file: readFileSync(path, "utf8"),
+            exitCode,
+          }).toEqual({ stdout: "", stderr: "", file: "hi\n", exitCode: 0 });
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      test("external &> Bun.file(fd) gets both streams", async () => {
+        using dir = tempDir("shell-redirect-fd", {});
+        const path = join(String(dir), "out.txt");
+        const fd = openSync(path, "w");
+        try {
+          const { stdout, stderr, exitCode } = await $`${BUN} -e ${both} &> ${Bun.file(fd)}`.quiet();
+          expect({
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
+            file: readFileSync(path, "utf8"),
+            exitCode,
+          }).toEqual({ stdout: "", stderr: "", file: "out\nerr\n", exitCode: 0 });
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      // A Response of a file is that file, like `> path`.
+      test.each([
+        ["external", (response: Response) => $`${BUN} -e ${"console.log('hi')"} > ${response}`],
+        ["builtin", (response: Response) => $`echo hi > ${response}`],
+      ] as const)("%s > Response(Bun.file(path))", async (_name, run) => {
+        using dir = tempDir("shell-redirect-response", { "out.txt": "0123456789\n" });
+        const path = join(String(dir), "out.txt");
+        const { stdout, stderr, exitCode } = await run(new Response(Bun.file(path))).quiet();
+        expect({
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          file: readFileSync(path, "utf8"),
+          exitCode,
+        }).toEqual({ stdout: "", stderr: "", file: "hi\n", exitCode: 0 });
+      });
+
+      TestBuilder.command`bun --version > $EMPTY_ZZ`
+        .exitCode(1)
+        .stderr("bun: ambiguous redirect: at `bun`\n")
+        .runAsTest("an ambiguous redirect names the command as typed");
+    });
   });
 
   describe("pwd", async () => {

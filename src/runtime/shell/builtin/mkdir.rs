@@ -192,7 +192,7 @@ impl OutputTaskVTable for Mkdir {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             // OutputTask has no `WriterTag` of its own (it is not directly
             // dispatchable as an IOWriter child), so the enqueue is tagged
             // `WriterTag::Builtin` and `child` is stashed on `output_queue`;
@@ -203,7 +203,9 @@ impl OutputTaskVTable for Mkdir {
             }
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             return Some(
-                Builtin::of_mut(interp, cmd)
+                interp
+                    .as_cmd(cmd)
+                    .io
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
@@ -227,7 +229,7 @@ impl OutputTaskVTable for Mkdir {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
             // See write_err — stash `child` so the chunk callback routes to
             // OutputTask::on_io_writer_chunk.
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -236,7 +238,9 @@ impl OutputTaskVTable for Mkdir {
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             let buf = output.slice().to_vec();
             return Some(
-                Builtin::of_mut(interp, cmd)
+                interp
+                    .as_cmd(cmd)
+                    .io
                     .stdout
                     .enqueue(childptr, &buf, safeguard),
             );

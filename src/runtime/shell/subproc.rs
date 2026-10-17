@@ -1348,8 +1348,8 @@ impl Readable {
                 *self = Readable::Closed;
                 fd.close();
             }
-            // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
-            // a CowFd redirect; the owner closes it.
+            // .fd is borrowed from the Cmd's stream (see `CmdOut::to_subproc_stdio`):
+            // the shell's IOWriter or the target of a redirect. The owner closes it.
             Readable::Fd => {
                 *self = Readable::Closed;
             }

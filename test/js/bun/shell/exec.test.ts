@@ -16,6 +16,18 @@ describe("bun exec", () => {
     .stderr("bun: command not found: sldkfjslkdjflksdjflj\n")
     .runAsTest("it works on command fail");
 
+  TestBuilder.command`${BUN} exec ${"sldkfjslkdjflksdjflj 2> err.txt"}`
+    .env(bunEnv)
+    .exitCode(1)
+    .fileEquals("err.txt", "bun: command not found: sldkfjslkdjflksdjflj\n")
+    .runAsTest("a command that fails to start follows 2> file");
+
+  TestBuilder.command`${BUN} exec ${"sldkfjslkdjflksdjflj 2>&1"}`
+    .env(bunEnv)
+    .exitCode(1)
+    .stdout("bun: command not found: sldkfjslkdjflksdjflj\n")
+    .runAsTest("a command that fails to start follows 2>&1");
+
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)
     .stdout(

@@ -32,10 +32,12 @@ impl Which {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
-            if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
                 Self::state_mut(interp, cmd).state = State::OneArg;
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                return Builtin::of_mut(interp, cmd)
+                return interp
+                    .as_cmd(cmd)
+                    .io
                     .stdout
                     .enqueue(child, b"\n", safeguard);
             }
@@ -43,7 +45,7 @@ impl Which {
             return Builtin::done(interp, cmd, 1);
         }
 
-        if Builtin::of(interp, cmd).stdout.needs_io().is_none() {
+        if interp.as_cmd(cmd).io.stdout.needs_io().is_none() {
             // Synchronous path: resolve every arg, write straight to the
             // captured buffer, then finish.
             let search = SearchEnv::load(interp, cmd);
@@ -114,8 +116,8 @@ impl Which {
                     *had_not_found = true;
                     *waiting_write = true;
                 }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
+                    return interp.as_cmd(cmd).io.stdout.enqueue_fmt(
                         child,
                         None,
                         format_args!("{} not found\n", bstr::BStr::new(&arg)),
@@ -138,8 +140,8 @@ impl Which {
                 {
                     *waiting_write = true;
                 }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
+                    return interp.as_cmd(cmd).io.stdout.enqueue_fmt(
                         child,
                         None,
                         format_args!("{}\n", bstr::BStr::new(&resolved)),

@@ -89,13 +89,11 @@ impl Echo {
         };
         Self::state_mut(interp, cmd).output = output;
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             let buf = Self::state_mut(interp, cmd).output.clone();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &buf, safeguard);
+            return interp.as_cmd(cmd).io.stdout.enqueue(child, &buf, safeguard);
         }
         let buf = Self::state_mut(interp, cmd).output.clone();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);

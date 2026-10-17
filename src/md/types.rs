@@ -264,11 +264,9 @@ pub struct VerbatimLine {
     pub beg: OFF,
     pub end: OFF,
     /// The columns of white space before `beg` that belong to the block.
-    /// `helpers::indentation_start` says where they are written.
     pub indent: u32,
 }
 
-// One for every line of every block is kept in `Parser::block_bytes`.
 const _: () = assert!(size_of::<VerbatimLine>() == 12);
 
 /// Container types: blockquote or list item.

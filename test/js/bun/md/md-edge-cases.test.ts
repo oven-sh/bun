@@ -2094,6 +2094,12 @@ describe("white space at the start of a line of code or HTML", () => {
       "<script>\nconst s = `\n\ttab`;\n</script>\n",
     ],
     [
+      "fenced code behind an empty list item that a blank line ends",
+      "> -\n>\n>   ~~~\n>   \tx\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>\tx\n</code></pre>\n</blockquote>\n",
+      "\tx\n",
+    ],
+    [
       "lines that end in CRLF",
       "```\r\n\tone\r\n```\r\n\r\n<div>\r\n\ttwo\r\n",
       "<pre><code>\tone\n</code></pre>\n<div>\n\ttwo\n",
@@ -2152,15 +2158,6 @@ describe("white space at the start of a line of code or HTML", () => {
     );
   });
 
-  test("columns that a line does not have are spaces", () => {
-    // md4c's "issue 6" counts 58 columns for the last line, which has 3 spaces. None of them is a marker.
-    const quotes = Buffer.alloc(60, ">").toString();
-    const html = Markdown.html(`${quotes} -\n${quotes}\n${quotes}   <div>\n`);
-    expect(html.replaceAll("<blockquote>\n", "").replaceAll("</blockquote>\n", "")).toBe(
-      `<ul>\n<li></li>\n</ul>\n<pre><code>${Buffer.alloc(58, " ").toString()}&lt;div&gt;\n</code></pre>\n`,
-    );
-  });
-
   test("a line is one text, behind the spaces that are left of a tab", () => {
     expect({
       spaces: textEvents("```\n        a\n```\n"),
@@ -2188,49 +2185,92 @@ describe("white space at the start of a line of code or HTML", () => {
     expect(seen).toEqual(["  ", " a", "\n"].slice(0, ["  ", " a", "\n"].indexOf(at) + 1));
   });
 
-  test("a text callback that writes over the document gets the columns that were counted as spaces", () => {
+  test("a text callback that writes over the document gets no text from before a line", () => {
     const document = Buffer.from("```\n\tone\n\ttwo\n  three\n```\n\n<div>\n\tfour\n</div>\n");
     const seen: string[] = [];
     const text = (text: string) => {
       if (seen.push(text) === 1) document.fill("x");
       return text;
     };
-    expect(Markdown.render(document, { text })).toBe("\tone\n    xxx\n  xxxxx\nxxxxx\n    xxxx\nxxxxxx\n");
-    expect(seen).toEqual([
-      ...["\tone", "\n", "    ", "xxx", "\n", "  ", "xxxxx", "\n"],
-      ...["xxxxx", "\n", "    ", "xxxx", "\n", "xxxxxx", "\n"],
-    ]);
+    expect(Markdown.render(document, { text })).toBe("\tone\nxxx\nxxxxx\nxxxxx\nxxxx\nxxxxxx\n");
+    expect(seen).toEqual(["\tone", "\n", "xxx", "\n", "xxxxx", "\n", "xxxxx", "\n", "xxxx", "\n", "xxxxxx", "\n"]);
   });
 
-  describe("ansi()", () => {
-    test("code keeps its tabs", () => {
+  // A terminal puts a tab at the next multiple of 8 columns from its left edge, wherever the code is drawn.
+  describe("ansi() shows a tab that a line starts with as spaces up to the next multiple of 4 columns", () => {
+    const words = (count: number) => Array(count).fill("word").join(" ");
+
+    test("in code", () => {
       expect(Markdown.ansi(cases[0][1], { colors: false, columns: 0 })).toBe(
-        "+- make\n| build:\n| \tcc -o app main.c\n| \t\techo two\n| x:\ty\n|     four blanks\n+-\n",
+        "+- make\n| build:\n|     cc -o app main.c\n|         echo two\n| x:\ty\n|     four blanks\n+-\n",
+      );
+      expect(Markdown.ansi("  ```js\n\tone\n   \t two\n  ```\n", { colors: true, columns: 0 })).toContain(
+        "\x1b[0m  one\n\x1b[2m│ \x1b[0m     two\n",
       );
     });
 
-    test.each([0, 80])("an HTML block keeps what its lines start with at %d columns", columns => {
+    test.each([0, 80])("in an HTML block at %d columns", columns => {
       expect(Markdown.ansi("<div>\n\tfoo\n  \tbar\n      baz\n</div>\n", { colors: false, columns })).toBe(
-        "<div>\n\tfoo\n  \tbar\n      baz\n</div>\n",
+        "<div>\n    foo\n    bar\n      baz\n</div>\n",
       );
-      expect(Markdown.ansi("  ```\n\tone\n  ```\n\n  <pre>\n\t  two\n", { colors: false, columns })).toBe(
-        "+-\n|   one\n+-\n  <pre>\n\t  two\n",
+      expect(Markdown.ansi("  <pre>\n\t  one\n \t\ttwo\n", { colors: false, columns })).toBe(
+        "  <pre>\n      one\n        two\n",
       );
     });
 
-    test("a line of an HTML block is dimmed once", () => {
+    test.each([
+      [0, false],
+      [0, true],
+      [80, false],
+      [80, true],
+    ])("in an HTML block in a block quote and in a list item at %d columns, colors: %p", (columns, colors) => {
+      const lines = (markdown: string) => Bun.stripANSI(Markdown.ansi(markdown, { colors, columns })).split("\n");
+      const bar = colors ? "│" : "|";
+      expect(lines("> <div>\n> \tfoo\n>\t\tbar\n>\t  baz\n").slice(1, 4)).toEqual([
+        `${bar}     foo`,
+        `${bar}     bar`,
+        `${bar}     baz`,
+      ]);
+      expect(lines("- <div>\n  \tfoo\n\tbar\n").slice(2, 4)).toEqual(["        foo", "      bar"]);
+    });
+
+    test("a line of an HTML block is dimmed once, and the rest of a split tab before it", () => {
       const dim = (text: string) => `\x1b[2m${text}\x1b[22m`;
       expect(Markdown.ansi("<div>\n    foo\n\tbar\n", { colors: true, columns: 0 })).toBe(
-        ["<div>", "\n", "    foo", "\n", "\tbar", "\n"].map(dim).join(""),
+        ["<div>", "\n", "    foo", "\n", "    bar", "\n"].map(dim).join(""),
       );
+      expect(Markdown.ansi(">\t<div>\n", { colors: true, columns: 0 })).toContain(dim("  ") + dim("<div>"));
     });
 
-    test("a tab at the start of a line of an HTML block goes to the next multiple of 8 columns", () => {
-      const words = (count: number) => Array(count).fill("word").join(" ");
-      expect(Markdown.ansi(`<div>\n\t${words(20)}\n  \t${words(7)}\n`, { colors: false, columns: 40 })).toBe(
-        `<div>\n\t${words(6)}\n${words(8)}\n${words(6)}\n  \t${words(6)}\nword\n`,
+    test("the blanks that a line of an HTML block starts with count for where it is wrapped", () => {
+      const markdown = `<div>\n\t${words(20)}\n  \t${words(7)}\n      ${words(8)}\n`;
+      expect(Markdown.ansi(markdown, { colors: false, columns: 40 })).toBe(
+        `<div>\n    ${words(7)}\n${words(8)}\n${words(5)}\n    ${words(7)}\n      ${words(7)}\nword\n`,
       );
     });
+  });
+});
+
+// md4c 60e8065c. The line is counted from the white space behind the markers of the block quotes, not from its start.
+describe("a line behind an empty list item that a blank line ends", () => {
+  const quotes = Buffer.alloc(60, ">").toString();
+  const inQuotes = (count: number, html: string) =>
+    "<blockquote>\n".repeat(count) + html + "</blockquote>\n".repeat(count);
+  test.each([
+    ["> -\n>\n>    b\n", inQuotes(1, "<ul>\n<li></li>\n</ul>\n<p>b</p>\n")],
+    ["> > -\n> >\n> >   b\n", inQuotes(2, "<ul>\n<li></li>\n</ul>\n<p>b</p>\n")],
+    ["> -\n>\n>   <div>\n", inQuotes(1, "<ul>\n<li></li>\n</ul>\n  <div>\n")],
+    [`${quotes} -\n${quotes}\n${quotes}   <div>\n`, inQuotes(60, "<ul>\n<li></li>\n</ul>\n  <div>\n")],
+    ["> -\n>\n>       code\n", inQuotes(1, "<ul>\n<li></li>\n</ul>\n<pre><code>  code\n</code></pre>\n")],
+    [">> -\n>>\n>>       code\n", inQuotes(2, "<ul>\n<li></li>\n</ul>\n<pre><code>  code\n</code></pre>\n")],
+    ["> -\n>\n>   ~~~\n>      x\n", inQuotes(1, "<ul>\n<li></li>\n</ul>\n<pre><code>   x\n</code></pre>\n")],
+    [
+      "- a\n\n  - b\n\n    -\n\n      c\n",
+      "<ul>\n<li>\n<p>a</p>\n<ul>\n<li>\n<p>b</p>\n<ul>\n<li></li>\n</ul>\n<p>c</p>\n</li>\n</ul>\n</li>\n</ul>\n",
+    ],
+    ["-\n\n  <div>\n", "<ul>\n<li></li>\n</ul>\n  <div>\n"],
+  ])("%j", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
   });
 });
 

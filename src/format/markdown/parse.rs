@@ -7,7 +7,7 @@
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::spans::{self, push_without_nul};
 use super::strings::{normalize_identifier, push_lowercase, unescape};
-use bun_md::helpers::{Reach, indentation_start};
+use bun_md::helpers::indentation_start;
 use bun_md::root::{Options, render_with_extensions};
 use bun_md::types::{
     BLOCK_CLOSED, BLOCK_DIRECTIVE, BLOCK_EXTENSION, BLOCK_FENCED_CODE, BLOCK_FOOTNOTE,
@@ -669,8 +669,8 @@ impl Builder<'_> {
     /// Where the `indent` columns of white space before `beg` start, and how many of them are the rest of a tab
     /// before that place.
     fn indentation_start(&self, beg: u32, indent: u32) -> (u32, u8) {
-        let (start, spaces) = indentation_start(self.text, beg, indent, Reach::Line);
-        (start, spaces.min(3) as u8)
+        let (start, spaces) = indentation_start(self.text, beg, indent);
+        (start, spaces as u8)
     }
 
     fn segment(&self, line: &VerbatimLine) -> Segment {

@@ -214,7 +214,8 @@ describe("bun <file.md>", () => {
     ).toMatchSnapshot();
   });
 
-  describe("lines of code and of an HTML block start with the white space that is written", () => {
+  // A tab at the start of such a line is shown as spaces up to the next multiple of 4 columns.
+  describe("a line of an HTML block starts with its white space, which is dimmed with it", () => {
     const source = "~~~make\nbuild:\n\tcc -o app main.c\n~~~\n\n<pre>\n\tfoo\n  \tbar\n    baz\n</pre>\n";
 
     test("with colors", async () => {
@@ -222,15 +223,15 @@ describe("bun <file.md>", () => {
       expect(await runMd(source)).toBe(
         "\x1b[2m┌─ \x1b[0m\x1b[2m\x1b[3mmake\x1b[0m\n" +
           "\x1b[2m│ \x1b[0mbuild:\n" +
-          "\x1b[2m│ \x1b[0m\tcc -o app main.c\n" +
+          "\x1b[2m│ \x1b[0m    cc -o app main.c\n" +
           "\x1b[2m└─\x1b[0m\n" +
-          ["<pre>", "\n", "\tfoo", "\n", "  \tbar", "\n", "    baz", "\n", "</pre>", "\n"].map(dim).join(""),
+          ["<pre>", "\n", "    foo", "\n", "    bar", "\n", "    baz", "\n", "</pre>", "\n"].map(dim).join(""),
       );
     });
 
     test("without colors", async () => {
       expect(await runMd(source, { NO_COLOR: "1", FORCE_COLOR: undefined })).toBe(
-        "+- make\n| build:\n| \tcc -o app main.c\n+-\n<pre>\n\tfoo\n  \tbar\n    baz\n</pre>\n",
+        "+- make\n| build:\n|     cc -o app main.c\n+-\n<pre>\n    foo\n    bar\n    baz\n</pre>\n",
       );
     });
   });

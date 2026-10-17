@@ -282,12 +282,7 @@ impl Parser<'_> {
                         && self.last_header_opens_list_item
                     {
                         n_parents -= 1;
-                        line.indent = total_indent;
-                        if n_parents > 0 {
-                            line.indent -= line
-                                .indent
-                                .min(self.containers[(n_parents - 1) as usize].contents_indent);
-                        }
+                        line.indent += self.containers[n_parents as usize].contents_indent;
                     }
                     self.last_list_item_starts_with_two_blank_lines = false;
                 }

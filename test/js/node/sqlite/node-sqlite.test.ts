@@ -166,6 +166,71 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test("binds an ArrayBuffer and a SharedArrayBuffer as a BLOB in every parameter position", () => {
+    // Node >= 26.8.0 (nodejs/node#62061) stores both as BLOB, next to
+    // ArrayBufferView. As the first positional argument they must not be
+    // read as a named-parameter bag, which binds nothing and shifts every
+    // later positional argument one slot to the left.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a, b)");
+    const ab = new Uint8Array([7, 8, 9]).buffer;
+    const sab = new SharedArrayBuffer(2);
+    new Uint8Array(sab).set([1, 2]);
+
+    // First positional argument, with a second argument after it.
+    db.prepare("INSERT INTO t VALUES (?, ?)").run(ab, "x");
+    // Later positional argument.
+    db.prepare("INSERT INTO t VALUES (?, ?)").run("y", sab);
+    // Named parameters.
+    db.prepare("INSERT INTO t VALUES ($a, $b)").run({ $a: ab, $b: sab });
+    // Bare named parameters.
+    const bare = db.prepare("INSERT INTO t VALUES ($a, $b)");
+    bare.setAllowBareNamedParameters(true);
+    bare.run({ a: sab, b: ab });
+
+    expect(db.prepare("SELECT a, b FROM t").all()).toEqual([
+      { a: new Uint8Array([7, 8, 9]), b: "x" },
+      { a: "y", b: new Uint8Array([1, 2]) },
+      { a: new Uint8Array([7, 8, 9]), b: new Uint8Array([1, 2]) },
+      { a: new Uint8Array([1, 2]), b: new Uint8Array([7, 8, 9]) },
+    ]);
+
+    // get(), all() and iterate() share the binding path of run().
+    const typeOf = db.prepare("SELECT typeof(?) AS t, typeof(?) AS u");
+    expect(typeOf.get(ab, sab)).toEqual({ t: "blob", u: "blob" });
+    expect(typeOf.all(sab, ab)).toEqual([{ t: "blob", u: "blob" }]);
+    expect([...typeOf.iterate(ab, ab)]).toEqual([{ t: "blob", u: "blob" }]);
+
+    // The tag store forwards its template values through the same path.
+    const tag = db.createTagStore();
+    expect(tag.get`SELECT typeof(${ab}) AS t`).toEqual({ t: "blob" });
+
+    // Node binds a zero-length or detached ArrayBuffer or SharedArrayBuffer as
+    // NULL (V8's ArrayBuffer::Data() is nullptr for both, and SQLite binds
+    // NULL for a null pointer). A zero-length or detached view stays a
+    // zero-length BLOB. Both as a first argument (not a named-parameter bag)
+    // and as a later one.
+    const detached = new ArrayBuffer(4);
+    structuredClone(detached, { transfer: [detached] });
+    expect(detached.byteLength).toBe(0);
+    expect(typeOf.get(new ArrayBuffer(0), detached)).toEqual({ t: "null", u: "null" });
+    expect(typeOf.get(new SharedArrayBuffer(0), new Uint8Array(0))).toEqual({ t: "null", u: "blob" });
+    expect(db.prepare("SELECT ?, typeof(?) AS t").get(detached, "x")).toEqual({ "?": null, t: "text" });
+
+    // User-defined functions return an ArrayBuffer or a SharedArrayBuffer as a BLOB.
+    db.function("ab", () => new Uint8Array([1, 2, 3]).buffer);
+    db.function("sab", () => sab);
+    db.function("empty", () => new ArrayBuffer(0));
+    expect(db.prepare("SELECT ab() AS v, typeof(sab()) AS t, typeof(empty()) AS e").get()).toEqual({
+      v: new Uint8Array([1, 2, 3]),
+      t: "blob",
+      e: "null",
+    });
+    db.aggregate("agg", { start: 0, step: (acc: number, _v: unknown) => acc + 1, result: () => ab } as any);
+    expect(db.prepare("SELECT agg(a) AS v FROM t").get()).toEqual({ v: new Uint8Array([7, 8, 9]) });
+    db.close();
+  });
+
   test("decodes non-UTF-8 TEXT with replacement characters, not empty strings", () => {
     // Regression: WTF::String::fromUTF8 returns null on invalid bytes and
     // jsString(null) becomes "". Matches bun:sqlite (#31514) and Node.

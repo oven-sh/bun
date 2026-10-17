@@ -51,6 +51,7 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #include "DOMIsoSubspaces.h"
 #include "DOMClientIsoSubspaces.h"
 #include "BunClientData.h"
+#include "Bindgen/IDLConvert.h"
 
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSCast.h>
@@ -396,6 +397,29 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, TopExceptionScope& 
     (void)outer;
 }
 
+// The bytes of a value node:sqlite stores as a BLOB: an ArrayBufferView, an
+// ArrayBuffer or a SharedArrayBuffer (Node's IsArrayBufferView() ||
+// IsArrayBuffer() || IsSharedArrayBuffer(), nodejs/node#62061). std::nullopt
+// for anything else.
+//
+// sqlite3_bind_blob64(nullptr, 0) and sqlite3_result_blob64(nullptr, 0) set
+// NULL, not an empty BLOB (sqlite3.c:bindText's `if(zData!=0)` guard). Node's
+// ArrayBufferViewContents (src/util-inl.h) gives a view with no backing store
+// non-null stack storage, so an empty or detached view is a zero-length BLOB.
+// For an ArrayBuffer it passes V8's ArrayBuffer::Data() through unchanged,
+// which is nullptr for a zero-length or detached buffer, so those bind NULL.
+// Both are reproduced here: the returned span's data pointer decides.
+static std::optional<std::span<const uint8_t>> sqliteBlobSpan(JSGlobalObject* globalObject, JSValue value)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return Bun::Bindgen::withNonNullData(view->span());
+    if (auto* buffer = JSC::toPossiblySharedArrayBuffer(getVM(globalObject), value)) {
+        auto bytes = buffer->span();
+        return bytes.empty() ? std::span<const uint8_t> {} : bytes;
+    }
+    return std::nullopt;
+}
+
 // Write a JS return value back into an sqlite3_context*. On type mismatch
 // this calls sqlite3_result_error with the same strings Node.js uses; the
 // outer step() will then surface that as ERR_SQLITE_ERROR.
@@ -419,13 +443,8 @@ static void jsValueToSqliteResult(JSGlobalObject* globalObject, sqlite3_context*
         // instead of narrowing it into `int` (a negative length is undefined
         // for the 32-bit bind/result API). Same in bindValue() below.
         sqlite3_result_text64(ctx, bytes.data(), bytes.size(), SQLITE_TRANSIENT, SQLITE_UTF8);
-    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        auto span = view->span();
-        // sqlite3_result_blob64(nullptr, 0) sets NULL, not an empty BLOB —
-        // Node binds a zero-length BLOB for a detached view (its
-        // ArrayBufferViewContents falls back to non-null stack storage), so
-        // hand SQLite a non-null sentinel when the vector is gone.
-        sqlite3_result_blob64(ctx, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT);
+    } else if (auto blob = sqliteBlobSpan(globalObject, value)) {
+        sqlite3_result_blob64(ctx, blob->data(), blob->size(), SQLITE_TRANSIENT);
     } else if (value.isBigInt()) {
         int64_t as_int = JSBigInt::toBigInt64(value);
         JSValue roundTrip = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, as_int);
@@ -2636,14 +2655,8 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
             return false;
         }
         r = sqlite3_bind_int64(m_stmt, index, iv);
-    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        auto span = view->span();
-        // sqlite3_bind_blob64(nullptr, 0) leaves the parameter as NULL (see
-        // sqlite3.c:bindText's `if(zData!=0)` guard). A detached view's
-        // span() is {nullptr, 0}; Node binds it as a zero-length BLOB (its
-        // ArrayBufferViewContents falls back to non-null stack storage), so
-        // hand SQLite a non-null sentinel when the vector is gone.
-        r = sqlite3_bind_blob64(m_stmt, index, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT);
+    } else if (auto blob = sqliteBlobSpan(globalObject, value)) {
+        r = sqlite3_bind_blob64(m_stmt, index, blob->data(), blob->size(), SQLITE_TRANSIENT);
     } else {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
             makeString("Provided value cannot be bound to SQLite parameter "_s, index, '.'));
@@ -2665,13 +2678,16 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
     size_t argc = callFrame->argumentCount();
     int paramCount = sqlite3_bind_parameter_count(m_stmt);
 
-    // Named parameters: Node treats any non-ArrayBufferView object in the
-    // first slot as a named-params bag (V8's IsObject() && !IsArrayBufferView()).
-    // Arrays are NOT special-cased — Node walks their own-enumerable keys
-    // ("0", "1", …) through the named-param path.
+    // Named parameters: Node treats any object in the first slot that is not
+    // a BLOB source as a named-params bag (V8's IsObject() &&
+    // !IsArrayBufferView() && !IsArrayBuffer() && !IsSharedArrayBuffer()).
+    // The same predicate as bindValue's BLOB arm, so a value bindValue stores
+    // as a BLOB is never read as an empty bag. Arrays are NOT special-cased:
+    // Node walks their own-enumerable keys ("0", "1", …) through the
+    // named-param path.
     if (argc > 0) {
         JSValue arg0 = callFrame->argument(0);
-        if (arg0.isObject() && !dynamicDowncast<JSArrayBufferView>(arg0)) {
+        if (arg0.isObject() && !sqliteBlobSpan(globalObject, arg0)) {
             JSObject* named = arg0.getObject();
             if (m_allowBareNamedParams && !m_bareNamedParams.has_value()) {
                 // Build into a local first so a mid-loop failure (conflicting

@@ -17,7 +17,6 @@ use bun_semver as Semver;
 use bun_url::URL;
 
 use crate::cli::pm_pkg_command::PmPkgCommand;
-use bun_core::fmt::buf_print_infallible as buf_print;
 
 fn string_of<'b>(object: &ast::Expr, bump: &'b Bump, key: &[u8]) -> Option<&'b [u8]> {
     object.get_string_cloned(bump, key).ok().flatten()
@@ -80,7 +79,7 @@ pub(crate) fn view(
                     manager.root_dir.has_comptime_query(b"package.json")
                 };
                 if !has_package_json {
-                    const NO_NAME: &str = "No package name was given and no package.json was found";
+                    const NO_NAME: &str = "no package name given and no package.json found";
                     if json_output {
                         print_json_error(NO_NAME, spec_, None);
                     } else {
@@ -114,16 +113,13 @@ pub(crate) fn view(
 
     let scope = manager.scope_for_package_name(name);
 
-    let mut url_buf = bun_paths::path_buffer_pool::get();
     // Always fetch the full registry manifest, not a specific version
-    let url = URL::parse(buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            bun_fmt::dependency_url(name),
-        ),
-    ));
+    let href = format!(
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
+    );
+    let url = URL::parse(href.as_bytes());
 
     let authorization = scope.authorization(&url);
     let mut pairs: Vec<(&[u8], &[u8])> = vec![(b"Accept", b"application/json")];
@@ -137,7 +133,7 @@ pub(crate) fn view(
     let mut req =
         manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match req.send_sync(&mut response_buf) {
+    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "view request failed to send", ());

@@ -454,7 +454,7 @@ describe.concurrent("git", () => {
     const { out, err, exitCode } = await create(String(dir), ["tmpl", "dest"], noIdentity);
 
     expect(err.split("\n").filter(line => /git|fatal|\*\*\*/i.test(line) && !line.includes("bun create"))).toEqual([
-      "note: git has no user.name and user.email, so the files are staged but not committed",
+      "note: git has no user.name and user.email, files staged but not committed",
       expect.stringMatching(/^\[.*\] git$/),
     ]);
     expect(out).toContain("A local git repository was created for you.");
@@ -536,9 +536,7 @@ describe.concurrent("when the nested `bun install` fails", () => {
     });
 
     expect(err).toMatch(new RegExp(`error: bun install failed in "[^"]*dest" \\(code: ${code}\\)`));
-    expect(err).toContain(
-      "note: the template files were written; run bun install in that directory once the error is fixed",
-    );
+    expect(err).toContain("note: template files were written. run bun install there once the error is fixed");
     expect(out).toContain("$ bun install");
     expect(out).not.toContain("installed automatically");
     expect(out).not.toContain("successfully");
@@ -631,6 +629,7 @@ describe.concurrent("local template into an existing directory", () => {
 
     const message = err.slice(err.indexOf("error:")).replaceAll("\\", "/");
     expect(message.split("\n").filter(Boolean).sort()).toEqual([
+      "  .gitignore",
       "  index.ts",
       "  sub/nested.ts",
       "To overwrite them, use --force",
@@ -662,17 +661,16 @@ describe.concurrent("local template into an existing directory", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("replaces README.md and .gitignore like a remote template", async () => {
+  it("replaces README.md like a remote template", async () => {
     using dir = tempDir("create-local-never-conflict", {
       "bun-create/tpl/README.md": "template",
-      "bun-create/tpl/.gitignore": "template",
       "proj/README.md": "mine",
       "proj/.gitignore": "mine",
     });
     const { err, exitCode } = await createInProj(String(dir));
 
     expect(err).not.toContain("error");
-    expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "template", "README.md": "template" });
+    expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "mine", "README.md": "template" });
     expect(exitCode).toBe(0);
   });
 
@@ -686,18 +684,6 @@ describe.concurrent("local template into an existing directory", () => {
 
     expect(err).not.toContain("error");
     expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "template", "keep.txt": "mine" });
-    expect(exitCode).toBe(0);
-  });
-
-  it("replaces .gitignore with the template's gitignore, as with its .gitignore", async () => {
-    using dir = tempDir("create-local-gitignore-replace", {
-      "bun-create/tpl/gitignore": "template",
-      "proj/.gitignore": "mine",
-    });
-    const { err, exitCode } = await createInProj(String(dir));
-
-    expect(err).not.toContain("error");
-    expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "template" });
     expect(exitCode).toBe(0);
   });
 
@@ -835,7 +821,7 @@ describe.concurrent("template given as a path", () => {
       "--force",
     ]);
 
-    expect(err).toContain("is inside the template");
+    expect(err).toContain("is inside template");
     expect(await tree(root)).toEqual(before);
     expect(exitCode).toBe(1);
   });
@@ -860,6 +846,23 @@ describe.concurrent("template given as a path", () => {
     expect(await tree(root)).toEqual(before);
     expect(exitCode).toBe(1);
   });
+
+  // A path on Windows holds more than a command line.
+  it.skipIf(!isPosix).each(["", "a/", "a@", "@a/", "./"])(
+    "refuses a template name longer than a path: %p and 5000 bytes",
+    async prefix => {
+      using dir = tempDir("create-long-template-name", { "home/.keep": "", "proj/keep.js": "mine" });
+      const root = String(dir);
+
+      const { err, exitCode } = await create(join(root, "proj"), [prefix + Buffer.alloc(5000, "x").toString()], {
+        HOME: join(root, "home"),
+        BUN_CREATE_DIR: undefined,
+      });
+
+      expect(err).toBe("error: template name too long\n");
+      expect(exitCode).toBe(1);
+    },
+  );
 });
 
 for (const [status, expected] of [
@@ -1006,6 +1009,66 @@ describe.concurrent("GitHub template", () => {
   });
 });
 
+describe.concurrent.each([
+  ["local", "."],
+  ["local", "proj"],
+  ["GitHub", "."],
+  ["GitHub", "proj"],
+])("the .gitignore after `bun create <%s template> %s`", (kind, dest) => {
+  /** `files` is what `proj` holds afterwards. With `mine`, it had a .gitignore of its own; else "proj" is new and "." is empty. */
+  async function createInProj(ignores: Record<string, string>, mine: boolean, ...args: string[]) {
+    const template = { "tpl.txt": "template", ...ignores };
+    using github = await serveGithub(template);
+    using dir = tempDir("create-gitignore", {
+      "bun-create/tpl": template,
+      ...(mine ? { "proj/.gitignore": "mine" } : dest === "." ? { "proj": {} } : {}),
+    });
+    const result = await create(
+      join(String(dir), dest === "." ? "proj" : "."),
+      [kind === "local" ? "tpl" : "dylan-conway/create-test", dest, "--no-git", ...args],
+      { ...github.env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    );
+    return { ...result, files: await tree(join(String(dir), "proj")) };
+  }
+  const dot = { ".gitignore": "dot" };
+  const plain = { "gitignore": "plain" };
+
+  const rows: [string, Record<string, string>, boolean, string[], string][] = [
+    ["is the template's .gitignore, not its gitignore", { ...dot, ...plain }, false, [], "dot"],
+    ["is the template's .gitignore, not its gitignore, with --force", { ...dot, ...plain }, false, ["--force"], "dot"],
+    ["stays the destination's when the template has a gitignore", plain, true, [], "mine"],
+    ["stays the destination's with --force when the template has neither", {}, true, ["--force"], "mine"],
+    ["is replaced by the template's gitignore with --force", plain, true, ["--force"], "plain"],
+    ["is replaced by the template's .gitignore with --force", dot, true, ["--force"], "dot"],
+    [
+      "is replaced by the template's .gitignore, not its gitignore, with --force",
+      { ...dot, ...plain },
+      true,
+      ["--force"],
+      "dot",
+    ],
+  ];
+  it.each(rows)("%s", async (_, ignores, mine, args, expected) => {
+    const { err, exitCode, files } = await createInProj(ignores, mine, ...args);
+
+    expect(err).not.toContain("error");
+    expect(files).toEqual({ ".gitignore": expected, "tpl.txt": "template" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("is in the way of the template's .gitignore", async () => {
+    const { err, exitCode, files } = await createInProj(dot, true);
+
+    expect(err.slice(err.indexOf("error:")).split("\n").filter(Boolean)).toEqual([
+      "error: The directory proj/ contains files that could conflict:",
+      "  .gitignore",
+      "To overwrite them, use --force",
+    ]);
+    expect(files).toEqual({ ".gitignore": "mine" });
+    expect(exitCode).toBe(1);
+  });
+});
+
 // Both kinds of template were written through a link in the destination, to wherever it leads.
 describe.concurrent.each(["local", "GitHub"])("a link in the destination of a %s template", kind => {
   const template = {
@@ -1091,6 +1154,27 @@ it.concurrent("should preserve package.json indentation from the template", asyn
   expect(exitCode).toBe(0);
 });
 
+// Windows copies from and to absolute paths, so a home directory like C:\Users\José is part of both.
+it.concurrent.each([
+  ["josé", "dest"],
+  ["日本語", "dest"],
+  ["ascii", "déstination"],
+])("copies a local template when the working directory is %s and the destination is %s", async (cwd, destination) => {
+  using dir = tempDir("create-non-ascii", {
+    [`${cwd}/bun-create/tpl/package.json`]: JSON.stringify({ name: "tpl", version: "1.0.0" }),
+    [`${cwd}/bun-create/tpl/src/index.js`]: "// index\n",
+    [`${cwd}/bun-create/tpl/src/résumé.js`]: "// résumé\n",
+  });
+  const root = join(String(dir), cwd);
+  const { err, exitCode } = await create(root, ["tpl", destination, "--no-install", "--no-git"]);
+
+  expect(err).not.toContain("failed to copy file");
+  const { "package.json": packageJson, ...files } = await tree(join(root, destination));
+  expect(files).toEqual({ "src/index.js": "// index\n", "src/résumé.js": "// résumé\n" });
+  expect(JSON.parse(packageJson)).toEqual({ name: destination, version: "1.0.0" });
+  expect(exitCode).toBe(0);
+});
+
 it("should keep bun-create task and start strings containing escape sequences intact", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "escaped-config-template";
@@ -1147,9 +1231,16 @@ describe.concurrent("bun-create tasks", () => {
   };
 
   /** Creates `dest` from a template with this package.json and these files; returns what is in `dest` afterwards. */
-  async function createFrom(packageJson: object, files: Record<string, string> = {}, args: string[] = ["--no-git"]) {
+  async function createFrom(
+    packageJson: object,
+    files: Record<string, string> = {},
+    args: string[] = ["--no-git"],
+    /** Files in the directory that `bun create` runs in, and variables of its environment. */
+    where: { files?: Record<string, string>; env?: Record<string, string> } = {},
+  ) {
     using dir = tempDir("create-tasks", {
       ...stubs,
+      ...where.files,
       "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0", ...packageJson }),
       ...Object.fromEntries(Object.entries(files).map(([file, contents]) => [`bun-create/tmpl/${file}`, contents])),
     });
@@ -1160,6 +1251,7 @@ describe.concurrent("bun-create tasks", () => {
     const result = await create(root, ["tmpl", "dest", ...args], {
       PATH: join(root, "bin") + delimiter + process.env.PATH,
       ...gitIdentity,
+      ...where.env,
     });
     const dest = join(root, "dest");
     const written = await tree(dest);
@@ -1238,6 +1330,30 @@ describe.concurrent("bun-create tasks", () => {
     );
 
     expect(err).not.toContain("$ echo");
+    expect(written).toEqual({});
+    expect(exitCode).toBe(0);
+  });
+
+  it.each<[string, { args?: string[]; files?: Record<string, string>; env?: Record<string, string> }]>([
+    ["--ignore-scripts", { args: ["--ignore-scripts"] }],
+    ["ignoreScripts in bunfig.toml", { files: { "bunfig.toml": "[install]\nignoreScripts = true\n" } }],
+    ["ignore-scripts in .npmrc", { files: { ".npmrc": "ignore-scripts=true\n" } }],
+    ["NPM_CONFIG_IGNORE_SCRIPTS", { env: { NPM_CONFIG_IGNORE_SCRIPTS: "true" } }],
+  ])("are all skipped by %s, with the scripts of the install", async (_, { args = [], ...where }) => {
+    const { out, err, exitCode, written } = await createFrom(
+      {
+        ...localdep,
+        scripts: { postinstall: "echo script > SCRIPT" },
+        "bun-create": { preinstall: "echo pre > PRE", postinstall: "echo post > POST" },
+      },
+      localdepFiles,
+      ["--no-git", ...args],
+      where,
+    );
+
+    expect(err).not.toContain("$ echo");
+    expect(out).toContain("$ bun install --ignore-scripts\n");
+    expect(out).toContain("1 package installed");
     expect(written).toEqual({});
     expect(exitCode).toBe(0);
   });
@@ -1334,4 +1450,36 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
   const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
+});
+
+describe.each([
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+])("%s in a template is printed spelled out", (_, raw, spelled) => {
+  const unprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
+
+  it("in the command to start with", async () => {
+    using dir = tempDir("create-start", {
+      "bun-create/tpl/package.json": JSON.stringify({ name: "tpl", "bun-create": { start: `bun run a${raw}b` } }),
+    });
+    const { out, err, exitCode } = await create(String(dir), ["tpl", "dest", "--no-install", "--no-git"]);
+    expect(out).toContain(`\n  cd dest\n  bun run a${spelled}b\n`);
+    expect(out + err).not.toMatch(unprintable);
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isPosix)("in the name of a file that is in the way", async () => {
+    using dir = tempDir("create-conflict", {
+      "bun-create/tpl/package.json": JSON.stringify({ name: "tpl" }),
+      [`bun-create/tpl/a${raw}b.js`]: "template",
+      [`dest/a${raw}b.js`]: "mine",
+    });
+    const { out, err, exitCode } = await create(String(dir), ["tpl", "dest", "--no-install", "--no-git"]);
+    expect(err).toContain(`\n  a${spelled}b.js\n`);
+    expect(out + err).not.toMatch(unprintable);
+    expect(exitCode).toBe(1);
+  });
 });

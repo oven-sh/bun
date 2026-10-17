@@ -5,6 +5,7 @@ use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
+use crate::languages::{Dialect, LineBreaks};
 use crate::options::Json;
 use crate::oxlint_order::Ran as InOxlint;
 use crate::rule::{Meta, Plugin};
@@ -286,8 +287,15 @@ pub struct ResolvedConfig {
     /// The plugins, of those that are implemented here, that the configuration objects for the file have. For ESLint the rules
     /// of any other do not exist there, and a comment cannot name them. `None`: all of them, as with `.oxlintrc.json`.
     pub plugins: Option<Vec<Plugin>>,
-    /// `language`, if it is configured: `js/js`, `json/json`, .. Only JavaScript can be linted.
+    /// `language`, if it is configured: `js/js`, `json/json`, ..
     pub language_name: Option<Box<[u8]>>,
+    /// `languageOptions`, if the language isn't JavaScript. What they mean is up to that language.
+    pub options_of_other_language: Option<Json>,
+    /// The language that `language_name` refers to, if it isn't JavaScript and Bun lints the file itself:
+    /// [`Route::Language`].
+    pub dialect: Option<Dialect>,
+    /// The language's line breaks, whoever lints the file. Defaults to ECMAScript's if Bun doesn't know the language.
+    pub line_breaks: LineBreaks,
     /// The name of the `processor`, if one is configured.
     pub processor: Option<Box<[u8]>>,
     /// Where it is, if the configuration is an `eslint.config.js`.
@@ -301,19 +309,9 @@ pub struct ResolvedConfig {
     pub for_eslint: Option<Arc<js_plugin::Configuration>>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
     pub error: Option<Vec<u8>>,
-    /// This config without its React-only part, if it has one. See [`ResolvedConfig::outside_of_react`].
-    pub(super) without_react: Option<Arc<ResolvedConfig>>,
 }
 
 impl ResolvedConfig {
-    /// The config to use instead of this one in a project that doesn't use React. The caller has to know whether it does.
-    pub fn outside_of_react(self: Arc<Self>) -> Arc<ResolvedConfig> {
-        match &self.without_react {
-            Some(others) => Arc::clone(others),
-            None => self,
-        }
-    }
-
     pub fn rule(&self, entry: &RuleEntry) -> Option<&ConfiguredRule> {
         let (plugin, name) = (entry.meta.plugin, entry.meta.name);
         let is_it = |it: &&ConfiguredRule| {
@@ -493,6 +491,22 @@ impl ResolvedConfig {
         (self.language_name.as_deref()).is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
     }
 
+    /// ESLint's `normalizeLanguageName`
+    pub(crate) fn normalized_language_name(&self) -> &[u8] {
+        match self.language_name.as_deref() {
+            None | Some(b"@/js") => b"js/js",
+            Some(name) => name,
+        }
+    }
+
+    /// ESLint's `doesRuleSupportLanguage`
+    pub(crate) fn supports_language(&self, rule: &Meta) -> bool {
+        let name = self.normalized_language_name();
+        rule.languages.is_empty()
+            || rule.is_on_in_any_language
+            || rule.languages.iter().any(|it| it.as_bytes() == name)
+    }
+
     /// Whether there are files that [`Route::Eslint`] is the way of.
     pub(crate) fn is_for_eslint(&self) -> bool {
         !self.is_javascript() || self.language.parser == Parser::Other || self.changes_linter
@@ -504,6 +518,7 @@ impl ResolvedConfig {
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
         match self.is_javascript() && is_read_here {
             true => Route::Native,
+            false if self.dialect.is_some() => Route::Language,
             false => Route::Eslint,
         }
     }
@@ -511,7 +526,7 @@ impl ResolvedConfig {
     /// How the file at `path` is linted. With a processor neither the language nor the parser reads the file itself.
     pub fn route(&self, path: &[u8]) -> Route {
         match (self.route_as_it_is(path), &self.processor) {
-            (Route::Native | Route::Eslint, Some(_)) => Route::Processor,
+            (Route::Native | Route::Language | Route::Eslint, Some(_)) => Route::Processor,
             (route, _) => route,
         }
     }

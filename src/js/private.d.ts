@@ -15,22 +15,37 @@ declare module "bun" {
       : never;
 
     type Adapter = NonNullable<Bun.SQL.Options["adapter"]>;
+    type ChannelBinding = "disable" | "prefer" | "require";
+
+    type AnyOptions = Omit<Bun.SQL.PostgresOrMySQLOptions, "adapter"> &
+      Omit<Bun.SQL.SQLiteOptions, "adapter"> & {
+        adapter?: Adapter;
+        socket?: unknown;
+        channelBinding?: ChannelBinding;
+        foundRows?: boolean;
+        transform?: any;
+      };
 
     /**
      * Represents the result of the `parseOptions()` function in the sqlite path
      */
-    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions, "filename">;
+    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions> & {
+      filename: string;
+      transform?: import("internal/sql/shared").Transform;
+    };
 
     /**
      * Represents the result of the `parseOptions()` function in the postgres, mysql or mariadb path
      */
-    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare" | "max"> & {
-      sslMode: import("internal/sql/shared").SSLMode;
+    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare"> & {
+      sslMode: import("internal/sql/options").SSLMode;
+      channelBinding: ChannelBinding;
+      foundRows: boolean;
       query: string;
+      transform?: import("internal/sql/shared").Transform;
     };
 
     type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOrMySQLOptions;
-    type OptionsWithDefinedAdapter = Define<Bun.SQL.Options, "adapter">;
   }
 }
 
@@ -73,7 +88,6 @@ declare module "bun" {
   namespace Serve {
     interface NodeHTTPServeOptions<WebSocketData> extends HostnamePortServeOptions<WebSocketData> {
       unix?: string;
-      websocket: WebSocketHandler<WebSocketData>;
       onNodeHTTPRequest(
         bunServer: Server<WebSocketData>,
         url: string,
@@ -273,13 +287,17 @@ declare function $newRustFunction<T = (...args: any) => any>(
   argCount: number,
 ): T;
 /**
- * Retrieves a handle to a function defined in native code, defined in a
+ * Retrieves a handle to a function or class defined in native code, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
+ * `undefined` for a `*_test.bind.ts` file in a build without assertions.
  * @param filename - The basename of the `.bind.ts` file.
- * @param symbol - The name of the function to call.
+ * @param name - The name of the export.
  */
-declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
+declare function $bindgen<File extends keyof $Bindgen.Exports, Name extends keyof $Bindgen.Exports[File]>(
+  filename: File,
+  name: Name,
+): $Bindgen.Exports[File][Name];
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 
 declare module "node:stream" {

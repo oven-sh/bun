@@ -78,9 +78,50 @@ fn range_in(outer: &[u8], inner: &[u8]) -> Span {
     Span::new(start as u32, (start + inner.len()).min(outer.len()) as u32)
 }
 
+/// `getInlineConfigNodes` as the languages in ESLint's own plugins implement it. Any kind of comment can have any of
+/// these labels, and no other labels are recognized.
+fn config_comments_among(text: &[u8], parsed: &crate::languages::Parsed) -> Vec<ConfigComment> {
+    let found = parsed.comments.iter().filter_map(|comment| {
+        let joined = parsed.joined.iter().find(|it| it.value() == comment.value);
+        let value = match joined {
+            Some(joined) => joined.text(),
+            None => text.get(comment.value.range())?,
+        };
+        let span_of = |part: &[u8]| match joined {
+            Some(joined) => joined.span_of(range_in(value, part).range()),
+            None => range_in(text, part),
+        };
+        let directive =
+            parse_directive(value, Space::Js).filter(|_| may_start_with_label(value))?;
+        let label = Label::of(directive.label).filter(|it| {
+            directive.label.starts_with(b"eslint")
+                && matches!(
+                    it,
+                    Label::Rules
+                        | Label::Enable
+                        | Label::Disable
+                        | Label::DisableLine
+                        | Label::DisableNextLine
+                )
+        })?;
+        Some(ConfigComment {
+            is_only_of_oxlint: false,
+            span: comment.span,
+            label,
+            label_span: span_of(directive.label),
+            value: span_of(directive.value),
+            justification: span_of(directive.justification),
+        })
+    });
+    found.collect()
+}
+
 /// ESLint's `getInlineConfigNodes`.
 pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
     let text = file.text();
+    if let Some(parsed) = file.parsed() {
+        return config_comments_among(text, parsed);
+    }
     let space = match file.language().is_oxlint {
         true => Space::Unicode,
         false => Space::Js,

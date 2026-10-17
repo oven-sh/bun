@@ -5,7 +5,7 @@
 use crate::Linter;
 use crate::cli::Options;
 use crate::embedded::Framework;
-use crate::lint::Context;
+use crate::lint::{Context, Fixes};
 use crate::paths::{self, Style};
 use crate::run::{Environment, Pool, Timing};
 use crate::typed::{self, Typed};
@@ -86,14 +86,23 @@ impl Host for Tester<'_> {
             memory: &names,
             skipped_in_comments: &bun_threading::Guarded::new(Vec::new()),
             out_of_stack: &bun_threading::Guarded::new(Vec::new()),
+            without_include: &bun_threading::Guarded::new(Vec::new()),
             broken_fixes: &bun_threading::Guarded::new(Vec::new()),
             handed_back: &bun_threading::Guarded::new(Vec::new()),
             unread: &bun_threading::Guarded::new(Vec::new()),
+            needs_eslint: &bun_threading::Guarded::new(Vec::new()),
             invalid_tsconfigs: &bun_threading::Guarded::new(Default::default()),
         };
         let config = Arc::new(case.config.clone());
         match case.place {
             Place::Nowhere => Some(match Framework::of(case.path) {
+                _ if let Some(dialect) = &config.dialect => {
+                    let of_the_file = (&*config, dialect);
+                    let fixes = Fixes::default();
+                    let linted =
+                        context.verify_in_language(case.path, None, case.code, of_the_file, fixes);
+                    linted.messages
+                }
                 Some(framework) if config.language.is_oxlint => {
                     let linted = context.verify_scripts(framework, case.path, case.code, &config);
                     linted.messages
@@ -147,7 +156,10 @@ fn registry() -> Registry {
         bun_lint_unicorn::RULES,
         bun_lint_react::RULES,
         bun_lint_jest::RULES,
+        bun_lint_json::RULES,
+        bun_lint_markdown::RULES,
     ])
+    .with_languages(crate::rules::LANGUAGES)
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {
@@ -276,6 +288,17 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
         out.push(b'\n');
     }
     Some(out)
+}
+
+/// `bun lint --print-markdown-trees <cases>`: `args` is what follows the flag. Returns the tree that `bun lint` parses
+/// each case into.
+#[optimize(size)]
+pub fn print_markdown_trees(args: &[&[u8]]) -> Option<Vec<u8>> {
+    let &[cases] = args else {
+        return None;
+    };
+    let cases = bun_lint_conformance::read_file(cases)?;
+    Some(bun_lint_markdown::for_tests::trees(&cases))
 }
 
 /// `bun lint --run-eslint-tests <bundle> ..`: `args` is what follows the flag. Prints the cases that

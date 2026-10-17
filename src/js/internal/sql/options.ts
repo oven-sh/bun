@@ -684,7 +684,7 @@ function parseOptions(
     envOf(prefix, "DATABASE") ||
     query.database ||
     (!isUnixUrl && decodeIfValid(urlPathname.slice(1))) ||
-    (isPostgres ? username : "");
+    (isPostgres ? username : adapter === "mysql" ? "mysql" : "");
 
   let path =
     options.path ||

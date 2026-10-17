@@ -255,9 +255,12 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.username).toBe("mysql-user");
   });
 
-  test.each(["mysql", "mariadb"] as const)("%s selects no database by default", adapter => {
-    expect(new SQL({ adapter, hostname: "localhost" }).options.database).toBe("");
-    expect(new SQL(`${adapter}://root@localhost/`).options.database).toBe("");
+  test.each([
+    ["mysql", "mysql"],
+    ["mariadb", ""],
+  ] as const)("%s: the default database is %p", (adapter, database) => {
+    expect(new SQL({ adapter, hostname: "localhost" }).options.database).toBe(database);
+    expect(new SQL(`${adapter}://root@localhost/`).options.database).toBe(database);
   });
 
   test("should default to username as database name for PostgreSQL adapter", () => {
@@ -1241,7 +1244,7 @@ describe("SQL adapter environment variable precedence", () => {
         "{ adapter: 'mysql' }: a PostgreSQL DATABASE_URL counts as not set",
         { DATABASE_URL: pg },
         [{ adapter: "mysql" }],
-        { adapter: "mysql", hostname: "localhost", port: 3306, username: "root", password: "", database: "" },
+        { adapter: "mysql", hostname: "localhost", port: 3306, username: "root", password: "", database: "mysql" },
       ],
       [
         "{ adapter: 'postgres' }: a MySQL TLS_DATABASE_URL counts as not set, except for the TLS in its name",
@@ -1284,7 +1287,7 @@ describe("SQL adapter environment variable precedence", () => {
     // `adapter` passes over the URL of another adapter's server. The server is not dialed and gets no credentials,
     // but the connection is as well protected as that URL asks for.
     const localPostgres = { adapter: "postgres", hostname: "localhost", port: 5432, password: "" };
-    const localMySQL = { adapter: "mysql", hostname: "localhost", port: 3306, password: "", database: "" };
+    const localMySQL = { adapter: "mysql", hostname: "localhost", port: 3306, password: "", database: "mysql" };
     const postgres = [{ adapter: "postgres" }] as Row[2];
     const mysql = [{ adapter: "mysql" }] as Row[2];
     test.each<Row>([
@@ -1409,7 +1412,7 @@ describe("SQL adapter environment variable precedence", () => {
         defaultPort,
         defaultUser,
         "",
-        adapter === "postgres" ? defaultUser : "",
+        adapter === "postgres" ? defaultUser : adapter === "mysql" ? "mysql" : "",
       ]);
 
       setEnv(prefix, "e");

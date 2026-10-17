@@ -498,7 +498,7 @@ declare module "bun" {
       /**
        * Name of the database to connect to. `PGDATABASE`, `MYSQL_DATABASE` and
        * `MARIADB_DATABASE` take priority over the database in a URL.
-       * @default The username value for PostgreSQL. MySQL and MariaDB select no database
+       * @default The username value for PostgreSQL, `"mysql"` for MySQL. MariaDB selects no database
        */
       database?: string | undefined;
 

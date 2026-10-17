@@ -612,11 +612,14 @@ console.log(JSON.stringify({ outcome, closed }));`,
         Bun.inspect(result);
       });
 
-      test.each(["mysql", "mariadb"])("%s:// without a database name selects no database", async scheme => {
+      test.each([
+        ["mysql", "mysql"],
+        ["mariadb", null],
+      ])("%s:// without a database name selects %p", async (scheme, selected) => {
         const url = `${scheme}://root:${password}@${container.host}:${container.port}`;
         for (const suffix of ["", "/"]) {
           await using db = new SQL({ ...getOptions(), url: url + suffix });
-          expect(await db`select database() as db`).toEqual([{ db: null }]);
+          expect(await db`select database() as db`).toEqual([{ db: selected }]);
         }
       });
 

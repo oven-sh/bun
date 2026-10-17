@@ -422,7 +422,7 @@ Call `.raw()` before the query starts, that is before `await`, `.then()` or `.ex
 
 ### Result metadata
 
-The array that a query resolves to has six more properties. They are not enumerable, so `console.log`, `Object.keys`, `JSON.stringify` and spreading only see the rows.
+The array that a query resolves to has six more properties. `console.log`, `Object.keys` and spreading list `count`, `command`, `lastInsertRowid` and `affectedRows` next to the rows. `columns` and `statement` are not enumerable, and `JSON.stringify` only sees the rows.
 
 | Property          | Meaning                                                        | PostgreSQL                                              | MySQL / MariaDB                                            | SQLite                                                                   |
 | ----------------- | -------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------ |
@@ -819,13 +819,13 @@ An `sslmode` in the URL takes priority over both, and a mode in the `tls` or `ss
 
 ### MySQL and MariaDB Environment Variables
 
-| MySQL            | MariaDB            | Default Value | Description                                                |
-| ---------------- | ------------------ | ------------- | ---------------------------------------------------------- |
-| `MYSQL_HOST`     | `MARIADB_HOST`     | `localhost`   | Database host                                              |
-| `MYSQL_PORT`     | `MARIADB_PORT`     | `3306`        | Database port                                              |
-| `MYSQL_USER`     | `MARIADB_USER`     | `root`        | Database user. Bun reads `USER`, then `USERNAME`, after it |
-| `MYSQL_PASSWORD` | `MARIADB_PASSWORD` | (empty)       | Database password                                          |
-| `MYSQL_DATABASE` | `MARIADB_DATABASE` | (none)        | Database name                                              |
+| MySQL            | MariaDB            | Default Value   | Description                                                |
+| ---------------- | ------------------ | --------------- | ---------------------------------------------------------- |
+| `MYSQL_HOST`     | `MARIADB_HOST`     | `localhost`     | Database host                                              |
+| `MYSQL_PORT`     | `MARIADB_PORT`     | `3306`          | Database port                                              |
+| `MYSQL_USER`     | `MARIADB_USER`     | `root`          | Database user. Bun reads `USER`, then `USERNAME`, after it |
+| `MYSQL_PASSWORD` | `MARIADB_PASSWORD` | (empty)         | Database password                                          |
+| `MYSQL_DATABASE` | `MARIADB_DATABASE` | `mysql`, (none) | Database name                                              |
 
 These variables do not select the adapter. Bun reads them for a client that is already MySQL or MariaDB, through its URL or the `adapter` option.
 
@@ -896,7 +896,7 @@ You can configure the connection manually by passing options to the `SQL` constr
 | `port`                    | `5432` or `3306`          | Database port                                                                                                     |
 | `username`                | `postgres` or `root`      | Database user                                                                                                     |
 | `password`                | (empty)                   | A string, or a [function](#dynamic-passwords) that returns one                                                    |
-| `database`                | PostgreSQL: the user name | Database name. MySQL and MariaDB select none by default                                                           |
+| `database`                | PostgreSQL: the user name | Database name. MySQL: `mysql`. MariaDB selects none by default                                                    |
 | `path`                    |                           | Unix socket to use instead of TCP. `socket` is an alias. On PostgreSQL, a directory gets `/.s.PGSQL.<port>` added |
 | `tls`                     | `false`                   | `true`, an [SSL mode](#ssl-modes-overview), TLS options, or a `BunFile` with the CA certificate                   |
 | `max`                     | `10`                      | Maximum number of connections in the [pool](#connection-pooling)                                                  |

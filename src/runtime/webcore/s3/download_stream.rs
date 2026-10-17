@@ -115,31 +115,22 @@ impl S3HttpDownloadStreamingTask {
                 return;
             }
             let empty = MutableString::default();
-            let mut code: &[u8] = b"UnknownError";
-            let mut message: &[u8] = b"an unexpected error has occurred";
-            let parsed;
             // SAFETY: fn contract.
-            if let Some(req_err) = unsafe { (*this).request_error } {
-                code = req_err.name().as_bytes();
-            } else {
-                // SAFETY: fn contract; the buffer is not touched again before the callback
-                // returns, and `message` is not used after it.
-                let bytes = unsafe { (*this).reported_response_buffer.list.as_slice() };
-                if !bytes.is_empty() {
-                    message = bytes;
-                }
-                parsed = xml_response::parse_error(bytes);
-                if let Some(error) = &parsed {
-                    code = error.code.as_deref().unwrap_or(code);
-                    message = error.message.as_deref().unwrap_or(message);
-                }
+            if let Some(cause) = unsafe { (*this).request_error } {
+                callback(
+                    &empty,
+                    false,
+                    Some(xml_response::transport_failure(cause, state.status_code())),
+                    callback_context,
+                );
+                return;
             }
-            callback(
-                &empty,
-                false,
-                Some(S3Error { code, message }),
-                callback_context,
-            );
+            // SAFETY: fn contract; the buffer is not touched again before the callback
+            // returns, and the error that borrows it is not used after it.
+            let bytes = unsafe { (*this).reported_response_buffer.list.as_slice() };
+            let mut response = xml_response::FailedResponse::read(bytes);
+            let err = response.error(bytes, state.status_code());
+            callback(&empty, false, Some(err), callback_context);
             return;
         }
 

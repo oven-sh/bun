@@ -2573,10 +2573,10 @@ impl NetworkSink {
         let Some(task) = task_ref else {
             return;
         };
-        let _ = task.fail(bun_s3_signing::error::S3Error {
-            code: b"UnknownError",
-            message: b"ReadableStream ended with an error",
-        });
+        let _ = task.fail(bun_s3_signing::error::S3Error::local(
+            b"UnknownError",
+            b"ReadableStream ended with an error",
+        ));
     }
 
     /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
@@ -2633,10 +2633,10 @@ impl NetworkSink {
             (task, wrapper)
         };
         if err.is_some() {
-            let _ = task.fail(bun_s3_signing::error::S3Error {
-                code: b"UnknownError",
-                message: b"ReadableStream ended with an error",
-            });
+            let _ = task.fail(bun_s3_signing::error::S3Error::local(
+                b"UnknownError",
+                b"ReadableStream ended with an error",
+            ));
         } else {
             let _ = task.write_bytes(b"", true);
         }

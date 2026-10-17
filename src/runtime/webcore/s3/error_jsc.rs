@@ -1,6 +1,8 @@
 //! JSC bridges for S3 signing errors. The pure error-code/message tables
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
+use core::num::NonZeroU16;
+
 use bun_core::String as BunString;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_s3_signing::Error as SignError;
@@ -121,19 +123,22 @@ struct JSS3Error {
     code: BunString,
     message: BunString,
     path: BunString,
+    /// `uint16_t` on the C++ side; 0 is `None`.
+    status: Option<NonZeroU16>,
 }
 
 impl JSS3Error {
-    fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
+    fn init(err: &S3Error, path: Option<&[u8]>) -> Self {
         Self {
             // lets make sure we can reuse code and message and keep it service independent
-            code: BunString::create_atom_if_possible(code),
-            message: BunString::create_atom_if_possible(message),
+            code: BunString::create_atom_if_possible(err.code),
+            message: BunString::create_atom_if_possible(err.message),
             path: if let Some(p) = path {
                 BunString::from_bytes(p)
             } else {
                 BunString::EMPTY
             },
+            status: err.status(),
         }
     }
 
@@ -144,8 +149,8 @@ impl JSS3Error {
 
 // C++ side defines `SYSV_ABI JSC::EncodedJSValue` (S3Error.cpp).
 bun_jsc::jsc_abi_extern! {
-    // C++ copies the three `BunString` fields out and does not write through
-    // `this`, so `&JSS3Error` (readonly) is sound.
+    // C++ copies the fields out and does not write through `this`, so
+    // `&JSS3Error` (readonly) is sound.
     safe fn S3Error__toErrorInstance(this: &JSS3Error, global: &JSGlobalObject) -> JSValue;
 }
 
@@ -154,7 +159,7 @@ pub(crate) fn s3_error_to_js(
     global_object: &JSGlobalObject,
     path: Option<&[u8]>,
 ) -> JSValue {
-    let value = JSS3Error::init(err.code, err.message, path).to_error_instance(global_object);
+    let value = JSS3Error::init(err, path).to_error_instance(global_object);
     debug_assert!(!global_object.has_exception());
     value
 }

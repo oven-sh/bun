@@ -647,6 +647,14 @@ declare module "bun" {
      * Checks if the file exists in S3, using an HTTP HEAD request that does not
      * download the file.
      *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
+     *
+     * Amazon S3 answers 403, not 404, for a missing key when the credentials
+     * lack the `s3:ListBucket` permission.
+     *
      * @returns Promise resolving to true if file exists, false otherwise
      *
      * @example
@@ -801,7 +809,12 @@ declare module "bun" {
     unlink: S3File["delete"];
 
     /**
-     * Get the stat of the file.
+     * Get the stat of the file, using an HTTP HEAD request.
+     *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
      *
      * @returns Promise resolving to {@link S3Stats}
      */
@@ -1279,6 +1292,11 @@ declare module "bun" {
     /**
      * Get the size of a file in bytes, using a HEAD request.
      *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
+     *
      * @param path The path to the file in the bucket
      * @param options Additional S3 options to override defaults
      * @returns A promise that resolves to the file size in bytes
@@ -1300,6 +1318,11 @@ declare module "bun" {
     /**
      * Get the size of a file in bytes, using a HEAD request.
      *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
+     *
      * @param path The path to the file in the bucket
      * @param options S3 credentials and configuration options
      * @returns A promise that resolves to the file size in bytes
@@ -1320,6 +1343,14 @@ declare module "bun" {
 
     /**
      * Check if a file exists in the bucket, using a HEAD request.
+     *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
+     *
+     * Amazon S3 answers 403, not 404, for a missing key when the credentials
+     * lack the `s3:ListBucket` permission.
      *
      * @param path The path to the file in the bucket
      * @param options Additional S3 options to override defaults
@@ -1348,6 +1379,14 @@ declare module "bun" {
     /**
      * Check if a file exists in the bucket, using a HEAD request.
      *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
+     *
+     * Amazon S3 answers 403, not 404, for a missing key when the credentials
+     * lack the `s3:ListBucket` permission.
+     *
      * @param path The path to the file in the bucket
      * @param options S3 credentials and configuration options
      * @returns A promise that resolves to true if the file exists, false otherwise
@@ -1373,7 +1412,12 @@ declare module "bun" {
     static exists(path: string, options?: S3Options): Promise<boolean>;
 
     /**
-     * Get the stat of a file in an S3-compatible storage service.
+     * Get the stat of a file in an S3-compatible storage service, using a HEAD request.
+     *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
      *
      * @param path The path to the file in the bucket
      * @param options Additional S3 options to override defaults
@@ -1387,7 +1431,12 @@ declare module "bun" {
     stat(path: string, options?: S3Options): Promise<S3Stats>;
 
     /**
-     * Get the stat of a file in an S3-compatible storage service.
+     * Get the stat of a file in an S3-compatible storage service, using a HEAD request.
+     *
+     * Rejects with an `S3Error` when the request fails. When the service
+     * answers with an error status (400 to 599), the error's `status` is that
+     * HTTP status code. A HEAD response has no body, so `status` is then the
+     * only detail. The error has no `status` when no response arrived.
      *
      * @param path The path to the file in the bucket
      * @param options S3 credentials and configuration options

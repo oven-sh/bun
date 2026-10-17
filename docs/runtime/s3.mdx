@@ -643,6 +643,29 @@ When Bun's S3 API throws an error, the error has a `code` property with one of t
 
 When the S3 service itself returns an error (that is, not Bun), the error is an `S3Error` instance: an `Error` instance with the name `"S3Error"`.
 
+When the service answers with an error status (400 to 599), the `S3Error` has a `status` property: the HTTP status code of the response. A `HEAD` response has no body, so a failed `exists()`, `stat()`, or `size()` carries no error code from the service. Branch on `status`, not on `code`.
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { s3 } from "bun";
+
+try {
+  await s3.file("my-file.txt").stat();
+} catch (error) {
+  if (error.status === 403) {
+    // The credentials cannot read this key.
+  } else if (error.status >= 500) {
+    // The service failed. Try again later.
+  }
+}
+```
+
+- `exists()` resolves to `false` only for a `404`. Amazon S3 answers `403`, not `404`, for a key that does not exist when the credentials lack the `s3:ListBucket` permission. In that case `exists()` rejects with `status: 403`.
+- The error has no `status` in three cases:
+  - No response arrived: the connection failed, or a proxy refused the tunnel.
+  - Bun raises the error itself (the `ERR_S3_*` codes above).
+  - The service answers with a status below 400. That is a redirect, or a 2xx with an error in the body, which Amazon S3 sends when a multipart upload fails after the response started. Branch on `code` for that last case, for example `"InternalError"`.
+- Web frameworks and loggers read `status` too. Express and Fastify answer a request with the `status` of an error that the route handler does not catch, so the client receives the status from S3 and not `500`. Fastify then logs the error at `info` when the status is below 500. Catch the error where the S3 call fails.
+
 ## `S3Client` static methods
 
 The `S3Client` class provides several static methods for interacting with S3.

@@ -76,3 +76,20 @@ describe("path.win32.matchesGlob(path, glob)", () => {
     expect(path.win32.matchesGlob(pathname, glob)).toBeFalse();
   });
 });
+
+describe("a brace group with `?` or a class, and a path of 64 bytes", () => {
+  const text = Buffer.alloc(62, "a").toString();
+  // `matchesGlob` keeps the matcher of the last pattern. With two patterns in turn, every call is the first one for its pattern.
+  const patterns = [`{${text}?c,zz}`, `{${text}[bc]c,zz}`];
+
+  it.each([
+    ["path.matchesGlob", path.matchesGlob],
+    ["path.posix.matchesGlob", path.posix.matchesGlob],
+    ["path.win32.matchesGlob", path.win32.matchesGlob],
+  ])("%s", (_, matchesGlob) => {
+    const answers = (pathname: string) =>
+      Array.from({ length: 8 }, (_, index) => matchesGlob(pathname, patterns[index % 2]));
+    expect(answers(text + "bc")).toEqual(Array(8).fill(true));
+    expect(answers(text + "bd")).toEqual(Array(8).fill(false));
+  });
+});

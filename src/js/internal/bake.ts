@@ -69,7 +69,7 @@ function routeOfPage(file: string): string {
 async function loadPages(pagesDir: string): Promise<Page[]> {
   let files: string[];
   try {
-    files = [...new Bun.Glob("**/*.html").scanSync({ cwd: pagesDir, onlyFiles: true })];
+    files = [...new Bun.Glob("**/*.html").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true })];
   } catch (error: any) {
     if (error?.code === "ENOENT") return [];
     throw error;

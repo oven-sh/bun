@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" };
@@ -245,9 +246,10 @@ function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
   return {
     async waitFor(pattern: RegExp) {
       while (!pattern.test(text)) {
-        await Promise.race([changed.promise, done]);
-        if (!pattern.test(text) && proc.exitCode !== null) {
-          throw new Error(`Exited before ${pattern}:\n${text}`);
+        const closed = await Promise.race([changed.promise.then(() => false), done.then(() => true)]);
+        if (closed && !pattern.test(text)) {
+          await proc.exited;
+          throw new Error(`Exited with code ${proc.exitCode} before ${pattern}:\n${text}`);
         }
       }
       return text.match(pattern)!;
@@ -279,4 +281,21 @@ test.concurrent.each([
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 
   expect(await get(url, "/missing")).toBe("200 1");
+});
+
+// Creating a symlink on Windows needs a privilege that CI does not have.
+test.skipIf(isWindows)("bun bake serves pages that are symlinks or in a symlinked folder", async () => {
+  using dir = tempDir("bake-command-symlink", {
+    "shared/page.html": `<!doctype html><html><body><h1>Shared</h1></body></html>`,
+    "shared/docs/intro.html": `<!doctype html><html><body><h1>Intro</h1></body></html>`,
+    "app/pages/index.html": page,
+  });
+  symlinkSync(join(String(dir), "shared/page.html"), join(String(dir), "app/pages/linked.html"));
+  symlinkSync(join(String(dir), "shared/docs"), join(String(dir), "app/pages/docs"));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await get(url, "/linked")).toContain("<h1>Shared</h1>");
+  expect(await get(url, "/docs/intro")).toContain("<h1>Intro</h1>");
 });

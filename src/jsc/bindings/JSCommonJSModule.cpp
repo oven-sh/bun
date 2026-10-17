@@ -316,6 +316,43 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     return true;
 }
 
+// A parent with more children than this keeps m_childrenIndex, so that addChild never scans a long vector.
+static constexpr size_t childrenIndexThreshold = 64;
+
+void JSCommonJSModule::addChild(JSC::VM& vm, JSC::JSCell* child)
+{
+    ASSERT(!m_childrenValue);
+    if (m_childrenIndex) {
+        if (!m_childrenIndex->add(child).isNewEntry)
+            return;
+    } else {
+        // A cached require() repeats the last child, so scan backwards.
+        for (size_t i = m_children.size(); i-- > 0;) {
+            if (m_children[i].get() == child)
+                return;
+        }
+        if (m_children.size() >= childrenIndexThreshold) {
+            m_childrenIndex = makeUnique<WTF::HashSet<JSC::JSCell*>>();
+            m_childrenIndex->reserveInitialCapacity(m_children.size() + 1);
+            for (const WriteBarrier<Unknown>& existing : m_children)
+                m_childrenIndex->add(existing.get().asCell());
+            m_childrenIndex->add(child);
+        }
+    }
+    WTF::Locker locker { cellLock() };
+    m_children.append(WriteBarrier<Unknown>());
+    m_children.last().set(vm, this, child);
+}
+
+void JSCommonJSModule::clearChildren()
+{
+    {
+        WTF::Locker locker { cellLock() };
+        m_children.clear();
+    }
+    m_childrenIndex = nullptr;
+}
+
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -369,9 +406,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = referrer->m_childrenValue.get();
         } else {
-            WTF::Locker locker { referrer->cellLock() };
-            referrer->m_children.append(WriteBarrier<Unknown>());
-            referrer->m_children.last().set(vm, referrer, moduleObject);
+            referrer->addChild(vm, moduleObject);
         }
     }
 
@@ -660,10 +695,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
-    {
-        WTF::Locker locker { thisObject->cellLock() };
-        thisObject->m_children.clear();
-    }
+    thisObject->clearChildren();
     thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
 }
@@ -680,38 +712,14 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         MarkedArgumentBuffer children;
         children.ensureCapacity(mod->m_children.size());
 
-        // Deduplicate children while preserving insertion order.
-        JSCommonJSModule* last = nullptr;
-        int n = -1;
-        for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
-            JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(childBarrier.get());
-            // Check the last module since duplicate imports, if any, will
-            // probably be adjacent. Then just do a linear scan.
-            if (last == child) [[unlikely]]
-                continue;
-            int i = 0;
-            while (i < n) {
-                if (children.at(i).asCell() == child) [[unlikely]]
-                    goto next;
-                i += 1;
-            }
-            children.append(child);
-            last = child;
-            n += 1;
-        next:
-            {
-            }
-        }
+        for (const WriteBarrier<Unknown>& childBarrier : mod->m_children)
+            children.append(childBarrier.get());
 
         // Construct the array
         JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
         RETURN_IF_EXCEPTION(throwScope, {});
         mod->m_childrenValue.set(globalObject->vm(), mod, array);
-
-        {
-            WTF::Locker locker { mod->cellLock() };
-            mod->m_children.clear();
-        }
+        mod->clearChildren();
 
         return JSValue::encode(array);
     }
@@ -1073,6 +1081,9 @@ size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
             additionalSize *= 2;
         }
     }
+    additionalSize += thisObject->m_children.capacity() * sizeof(WriteBarrier<Unknown>);
+    if (thisObject->m_childrenIndex)
+        additionalSize += thisObject->m_childrenIndex->capacity() * sizeof(JSC::JSCell*);
     return Base::estimatedSize(cell, vm) + additionalSize;
 }
 

@@ -1,0 +1,495 @@
+diff --git a/src/js/node/test.ts b/src/js/node/test.ts
+index 0a7ae9c43d..f311bcfd09 100644
+--- a/src/js/node/test.ts
++++ b/src/js/node/test.ts
+@@ -1397,6 +1397,14 @@ function makeTestFailure(message: string, failureType?: string) {
+   return error;
+ }
+ 
++function makeSubtestsFailure(failedSubtests: number, firstSubtestError: unknown) {
++  const error = makeTestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed");
++  if (firstSubtestError !== undefined) {
++    (error as { cause?: unknown }).cause = firstSubtestError;
++  }
++  return error;
++}
++
+ class TestPlan {
+   expected: number;
+   actual = 0;
+@@ -1531,6 +1539,9 @@ function getTestContext(): TestContext | SuiteContext | undefined {
+ type Hook = { fn: Function; timeout: number | undefined; signal: AbortSignal | undefined; result?: Promise<void> };
+ type HookSets = { before: Hook[]; after: Hook[]; beforeEach: Hook[]; afterEach: Hook[] };
+ 
++// The subtest chain of a node that has nothing left to wait for. drainSubtestChain() puts it back.
++const kSettledChain: Promise<unknown> = Promise.resolve();
++
+ class TestNode {
+   name: string;
+   parent: TestNode | undefined;
+@@ -1553,7 +1564,7 @@ class TestNode {
+   error: unknown = null;
+   // Inline subtests are serialized through this chain. `concurrency` is
+   // validated for Node-compat error codes but subtests always run serially.
+-  subtestChain: Promise<unknown> = Promise.resolve();
++  subtestChain: Promise<unknown> = kSettledChain;
+   failedSubtests = 0;
+   firstSubtestError: unknown = undefined;
+   // First failure from a before hook created while this test was running.
+@@ -1629,6 +1640,11 @@ class TestNode {
+   isRunning(): boolean {
+     return (this.started && !this.finished) || this.isExecutionPhase;
+   }
++
++  // True when the result of a test is in. Its afterEach and after hooks run then, and `finished` follows them.
++  hasResult(): boolean {
++    return this.passed || this.error !== null;
++  }
+ }
+ 
+ // Bumped by the runner's enter_file. Bound privately rather than read off the
+@@ -2272,6 +2288,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+   const ctx = node.getCtx();
+   const ancestors = ancestorChain(node);
+   let failure: unknown;
++  let subtestsFailure: unknown;
+ 
+   // Node applies the plan option before the beforeEach hooks run, and only for a
+   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
+@@ -2339,18 +2356,13 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+       node.plan?.cancel();
+     }
+ 
+-    const { failedSubtests, firstSubtestError } = node;
++    const { failedSubtests } = node;
+     if (failure === undefined && failedSubtests > 0) {
+-      const error = makeTestFailure(
+-        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
+-        "subtestsFailed",
+-      );
+-      if (firstSubtestError !== undefined) {
+-        (error as { cause?: unknown }).cause = firstSubtestError;
+-      }
+-      failure = error;
++      failure = subtestsFailure = makeSubtestsFailure(failedSubtests, node.firstSubtestError);
+     }
+   }
++  // After a failed body phase the chain is taken as it is: only what the hooks add to it is waited for.
++  const settled = failure !== undefined ? node.subtestChain : kSettledChain;
+ 
+   const bodyFailure = failure;
+   failure = applyExpectFailure(node, failure);
+@@ -2361,9 +2373,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+   // pass()/fail() precede afterEach).
+   node.passed = failure === undefined;
+   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
+-  // Mark finished before hooks so a late t.test() from an after/afterEach
+-  // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
+-  node.finished = true;
+ 
+   for (let i = ancestors.length - 1; i >= 0; i--) {
+     const ancestor = ancestors[i];
+@@ -2384,6 +2393,30 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+     }
+   }
+ 
++  // Node finishes a test after its hooks (postRun()). A subtest that came after the body's own wait is waited for here.
++  const chainAfterHooks = node.subtestChain;
++  if (chainAfterHooks !== settled) {
++    const stop = createStopController(node.options.timeout);
++    try {
++      do {
++        const drain = drainSubtestChain(node);
++        await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
++      } while (node.subtestChain !== kSettledChain);
++    } catch (err) {
++      if (!acceptedXfail) failure ??= err;
++    } finally {
++      stop?.dispose();
++    }
++    if (!acceptedXfail) {
++      failure ??= node.hookFailure;
++      const { failedSubtests } = node;
++      if (failedSubtests > 0 && (failure === undefined || failure === subtestsFailure)) {
++        failure = makeSubtestsFailure(failedSubtests, node.firstSubtestError);
++      }
++    }
++  }
++  node.finished = true;
++
+   try {
+     node.mockTracker?.reset();
+   } catch (err) {
+@@ -2438,6 +2471,7 @@ async function drainSubtestChain(node: TestNode) {
+       // Failures are tracked through failedSubtests.
+     }
+   } while (chain !== node.subtestChain);
++  node.subtestChain = kSettledChain;
+ }
+ 
+ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown, ownTodo: boolean): Promise<undefined> {
+@@ -2481,14 +2515,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
+         type: "suite",
+         tags: suite.tags,
+         todo: suite.todoFlag ? (suite.message ?? true) : undefined,
+-        error: suite.passed
+-          ? undefined
+-          : serializeRunError(
+-              makeTestFailure(
+-                `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
+-                "subtestsFailed",
+-              ),
+-            ),
++        error: suite.passed ? undefined : serializeRunError(makeSubtestsFailure(suite.failedSubtests, undefined)),
+       });
+     }
+     // A todo suite's failures do not fail the owning test (Node).
+@@ -2576,9 +2603,10 @@ function addTest(
+ 
+   const runningNode = executionParent ?? currentNode();
+   if (runningNode !== undefined) {
+-    if (runningNode.finished) {
++    if (runningNode.finished || (executionParent === undefined && runningNode.hasResult())) {
+       // t.test() escaped its parent: Node fails the late subtest but resolves
+       // the promise; don't fall through to bun:test's internal-phase throw.
++      // A global test() in an after hook is not a subtest of the test either: Node attaches it to the hook.
+       return Promise.resolve(undefined);
+     }
+     if (runningNode.isRunning()) {
+@@ -2675,7 +2703,10 @@ function addSuite(
+   const { ownTags } = validateTestOptions(options);
+ 
+   const runningNode = executionParent ?? currentNode();
+-  if (runningNode !== undefined && runningNode.finished) {
++  if (
++    runningNode !== undefined &&
++    (runningNode.finished || (executionParent === undefined && runningNode.hasResult()))
++  ) {
+     return Promise.resolve(undefined);
+   }
+   if (runningNode !== undefined && runningNode.isRunning()) {
+diff --git a/test/js/node/test_runner/fixtures/32-subtests-in-hooks.js b/test/js/node/test_runner/fixtures/32-subtests-in-hooks.js
+new file mode 100644
+index 0000000000..eb4711f030
+--- /dev/null
++++ b/test/js/node/test_runner/fixtures/32-subtests-in-hooks.js
+@@ -0,0 +1,49 @@
++const { after, before, test } = require("node:test");
++const assert = require("node:assert");
++
++// A test is not finished while its afterEach and after hooks run. A subtest
++// that a hook creates with t.test() is a subtest of that test.
++const events = [];
++
++test("a subtest from an after hook", t => {
++  t.after(async () => {
++    await t.test("from after", () => {
++      events.push("from after");
++    });
++  });
++});
++
++test("a subtest from an afterEach hook", async t => {
++  t.afterEach(async ctx => {
++    // The hook runs for the subtest that it creates too.
++    if (ctx.name !== "child") return;
++    await ctx.test("from afterEach", () => {
++      events.push("from afterEach");
++    });
++  });
++  await t.test("child", () => {});
++});
++
++test("hooks that an after hook registers", t => {
++  t.after(() => {
++    before(() => events.push("before"));
++    t.before(() => events.push("t.before"));
++    after(() => events.push("after"));
++    t.after(() => events.push("t.after"));
++  });
++});
++
++// The timeout of a test is for its body. A hook can wait for a subtest for longer.
++test("an after hook awaits a subtest for longer than the timeout of the test", { timeout: 50 }, t => {
++  t.after(async () => {
++    await t.test("slow", { timeout: 5000 }, () => new Promise(resolve => setTimeout(resolve, 150)));
++    events.push("slow");
++  });
++});
++
++test("the hooks and their subtests ran", () => {
++  assert.deepStrictEqual(events.slice(0, 2), ["from after", "from afterEach"]);
++  // Node runs a before hook when it is registered. bun runs it in the order of the subtests of the test.
++  assert.deepStrictEqual(events.slice(2, 6).sort(), ["after", "before", "t.after", "t.before"]);
++  assert.deepStrictEqual(events.slice(6), ["slow"]);
++});
+diff --git a/test/js/node/test_runner/fixtures/32b-subtests-in-hooks-fail.js b/test/js/node/test_runner/fixtures/32b-subtests-in-hooks-fail.js
+new file mode 100644
+index 0000000000..f477b6588d
+--- /dev/null
++++ b/test/js/node/test_runner/fixtures/32b-subtests-in-hooks-fail.js
+@@ -0,0 +1,50 @@
++const test = require("node:test");
++
++// This file fails on purpose. A subtest that is created before its parent is
++// finished counts for the parent, also when a hook creates it.
++test("a failing subtest from an after hook", t => {
++  t.after(async () => {
++    await t.test("fails", () => {
++      throw new Error("from the after hook");
++    });
++  });
++});
++
++test("a failing subtest that the body creates after its own wait", t => {
++  t.test("first", () => {}).then(() =>
++    t.test("second", () => {
++      throw new Error("from the second subtest");
++    }),
++  );
++});
++
++test("a failing subtest that follows a subtest from an after hook", t => {
++  t.after(() => {
++    t.test("first", () => {}).then(() =>
++      t.test("second", () => {
++        throw new Error("from the second subtest of the hook");
++      }),
++    );
++  });
++});
++
++test("failing subtests from the body and from an after hook", async t => {
++  t.after(async () => {
++    await t.test("fails in the hook", () => {
++      throw new Error("from the after hook");
++    });
++  });
++  await t.test("fails in the body", () => {
++    throw new Error("from the body");
++  });
++});
++
++test("a failing before hook that an after hook registers", t => {
++  t.after(() => {
++    t.before(() => {
++      throw new Error("from the before hook");
++    });
++  });
++});
++
++test("a later test still runs", () => {});
+diff --git a/test/js/node/test_runner/fixtures/32c-global-test-in-hook.js b/test/js/node/test_runner/fixtures/32c-global-test-in-hook.js
+new file mode 100644
+index 0000000000..ddf79b5416
+--- /dev/null
++++ b/test/js/node/test_runner/fixtures/32c-global-test-in-hook.js
+@@ -0,0 +1,33 @@
++const { after, describe, it, test } = require("node:test");
++
++// bun only: Node attaches a test that a hook creates with the global test()
++// to the hook. The owner of the hook passes on both runtimes. Node fails the
++// file for that test, and bun does not run it.
++test("the after hook of a test creates a test", t => {
++  t.after(() => {
++    test("created by the hook", () => {
++      throw new Error("from the test that the hook created");
++    });
++  });
++});
++
++test("the after hook of a test creates a suite", t => {
++  t.after(() => {
++    describe("created by the hook", () => {
++      it("fails", () => {
++        throw new Error("from the suite that the hook created");
++      });
++    });
++  });
++});
++
++test("the after hook of a suite creates a test", () => {
++  describe("suite", () => {
++    after(() => {
++      test("created by the hook", () => {
++        throw new Error("from the test that the hook created");
++      });
++    });
++    it("child", () => {});
++  });
++});
+diff --git a/test/js/node/test_runner/fixtures/32d-unfinished-subtests.js b/test/js/node/test_runner/fixtures/32d-unfinished-subtests.js
+new file mode 100644
+index 0000000000..4c45a8a3d9
+--- /dev/null
++++ b/test/js/node/test_runner/fixtures/32d-unfinished-subtests.js
+@@ -0,0 +1,16 @@
++const test = require("node:test");
++
++// This file fails on purpose. bun waits for a subtest that nothing awaits,
++// and Node cancels it. The test fails on both runtimes.
++test("a subtest from an after hook that does not settle", { timeout: 50 }, t => {
++  t.after(() => {
++    t.test("does not settle", () => new Promise(() => {}));
++  });
++});
++
++test("a body that throws does not wait for its subtest", t => {
++  t.test("does not settle", () => new Promise(() => {}));
++  throw new Error("from the body");
++});
++
++test("a later test still runs", () => {});
+diff --git a/test/js/node/test_runner/node-test.test.ts b/test/js/node/test_runner/node-test.test.ts
+index 2a27963203..f0fc474bac 100644
+--- a/test/js/node/test_runner/node-test.test.ts
++++ b/test/js/node/test_runner/node-test.test.ts
+@@ -1,8 +1,22 @@
+-import { spawn } from "bun";
++import { spawn, spawnSync } from "bun";
+ import { describe, expect, test } from "bun:test";
+-import { bunEnv, bunExe } from "harness";
++import { bunEnv, bunExe, nodeExe } from "harness";
+ import { join } from "node:path";
+ 
++// A fixture that states what Node does is run on Node too. The reference is
++// the Node version that bun reports: not any other `node` on PATH, and not
++// the `node` shim that `bun run` puts there, which is bun.
++const referenceNode = (() => {
++  const node = nodeExe();
++  if (!node) return null;
++  const { stdout, exitCode } = spawnSync({
++    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
++    env: bunEnv,
++    stderr: "ignore",
++  });
++  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
++})();
++
+ describe("node:test", () => {
+   // These three drive the largest fixtures (01-harness has 32 node:test cases);
+   // a debug+ASAN `bun test` child takes several seconds to start, so give them
+@@ -344,6 +358,123 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
+   return { exitCode, stdout, stderr };
+ }
+ 
++async function runTestsOnNode(filenames: string[]) {
++  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
++  await using proc = spawn({
++    cmd: [referenceNode!, "--test", ...testPaths],
++    env: bunEnv,
++    stdout: "pipe",
++    stderr: "pipe",
++  });
++  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
++  return { exitCode, stdout, stderr };
++}
++
++// The result lines and the error lines that `bun test` prints, without the times.
++function reportOf(stderr: string) {
++  return {
++    results: stderr.match(/^\((?:pass|fail)\) .*(?= \[)/gm),
++    errors: stderr.match(/^error: .*$/gm),
++  };
++}
++
++// Each of these tests starts a debug+ASAN bun process, and the tests run at the same time: they get the same headroom
++// as the tests of the largest fixtures above.
++describe.concurrent("a subtest that is created before its parent is finished", () => {
++  test("a hook creates it with t.test()", async () => {
++    const { exitCode, stderr } = await runTests(["32-subtests-in-hooks.js"]);
++    expect({ ...reportOf(stderr), exitCode }).toEqual({
++      results: [
++        "(pass) a subtest from an after hook",
++        "(pass) a subtest from an afterEach hook",
++        "(pass) hooks that an after hook registers",
++        "(pass) an after hook awaits a subtest for longer than the timeout of the test",
++        "(pass) the hooks and their subtests ran",
++      ],
++      errors: null,
++      exitCode: 0,
++    });
++  }, 30_000);
++
++  test.skipIf(!referenceNode)("a hook creates it with t.test(), on node", async () => {
++    const { exitCode, stdout } = await runTestsOnNode(["32-subtests-in-hooks.js"]);
++    expect(stdout).toContain("pass 9");
++    expect({ exitCode, stdout }).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("fail 0") });
++  });
++
++  test("it fails its parent when it fails", async () => {
++    const { exitCode, stderr } = await runTests(["32b-subtests-in-hooks-fail.js"]);
++    expect({ ...reportOf(stderr), exitCode }).toEqual({
++      results: [
++        "(fail) a failing subtest from an after hook",
++        "(fail) a failing subtest that the body creates after its own wait",
++        "(fail) a failing subtest that follows a subtest from an after hook",
++        "(fail) failing subtests from the body and from an after hook",
++        "(fail) a failing before hook that an after hook registers",
++        "(pass) a later test still runs",
++      ],
++      errors: [
++        "error: 1 subtest failed",
++        "error: from the after hook",
++        "error: 1 subtest failed",
++        "error: from the second subtest",
++        "error: 1 subtest failed",
++        "error: from the second subtest of the hook",
++        "error: 2 subtests failed",
++        "error: from the body",
++        "error: from the before hook",
++      ],
++      exitCode: 1,
++    });
++  }, 30_000);
++
++  test.skipIf(!referenceNode)("it fails its parent when it fails, on node", async () => {
++    const { exitCode, stdout } = await runTestsOnNode(["32b-subtests-in-hooks-fail.js"]);
++    // The five parents and their five subtests fail. The two `first` subtests and the last test pass.
++    expect(stdout).toContain("pass 3");
++    expect({ exitCode, stdout }).toMatchObject({ exitCode: 1, stdout: expect.stringContaining("fail 10") });
++  });
++
++  test("a test that a hook creates with the global test() does not fail the owner of the hook", async () => {
++    const { exitCode, stderr } = await runTests(["32c-global-test-in-hook.js"]);
++    expect({ ...reportOf(stderr), exitCode }).toEqual({
++      results: [
++        "(pass) the after hook of a test creates a test",
++        "(pass) the after hook of a test creates a suite",
++        "(pass) the after hook of a suite creates a test",
++      ],
++      errors: null,
++      exitCode: 0,
++    });
++  }, 30_000);
++
++  test.skipIf(!referenceNode)("the owner of the hook passes on node too", async () => {
++    const { exitCode, stdout } = await runTestsOnNode(["32c-global-test-in-hook.js"]);
++    // The three owners and `child` pass. The one failure is the file, for the tests that the hooks created.
++    expect(stdout).toContain("pass 4");
++    expect({ exitCode, stdout }).toMatchObject({ exitCode: 1, stdout: expect.stringContaining("fail 1") });
++  });
++
++  test("the wait for it has the timeout of the test", async () => {
++    const { exitCode, stderr } = await runTests(["32d-unfinished-subtests.js"]);
++    expect({ ...reportOf(stderr), exitCode }).toEqual({
++      results: [
++        "(fail) a subtest from an after hook that does not settle",
++        "(fail) a body that throws does not wait for its subtest",
++        "(pass) a later test still runs",
++      ],
++      errors: ["error: test timed out after 50ms", "error: from the body"],
++      exitCode: 1,
++    });
++  }, 30_000);
++
++  test.skipIf(!referenceNode)("the parent fails on node too when it does not settle", async () => {
++    const { exitCode, stdout } = await runTestsOnNode(["32d-unfinished-subtests.js"]);
++    expect(stdout).toContain("pass 1");
++    expect({ exitCode, stdout }).toMatchObject({ exitCode: 1, stdout: expect.stringContaining("fail 2") });
++  });
++});
++
+ describe("node:test mock", () => {
+   const { mock } = require("node:test");
+ 

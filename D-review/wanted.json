@@ -1,0 +1,6 @@
+{
+ "verdict": "wanted-in-a-different-shape",
+ "confidence": 0.7,
+ "reason": "The need is real and maintainer-acknowledged: Node's documented late-subtest example exits 0 on base and 1 on Node v26.3.0, #32631 recorded surfacing it as deferred, and no merged or open PR does it (premise, already-planned, tracker-history). But the diff is not the form the node:test owner described: for a test that a hook creates with global test() it fails the owner `p`, which he declined in writing because Node keeps `p` green, and its late bodies run outside the runner, so they are cut off at the first await or resume inside the next file (intentional-behaviour, cost). It also turns a stable exit 0 into a timing-dependent 0 or 1 for timer-late subtests, fails three programs that pass on Node, and its docs sentence and \"Node fails it too\" line claim more than it delivers (bigger-shape, compatibility, reach). The detached-report sink itself works in every reporter mode I ran and should stay (maintainer-stance).",
+ "pr_disposition": "rework"
+}

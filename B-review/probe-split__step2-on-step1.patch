@@ -1,0 +1,451 @@
+diff --git a/src/js/node/test.ts b/src/js/node/test.ts
+index 9076da4aa9..dbfd1c3a59 100644
+--- a/src/js/node/test.ts
++++ b/src/js/node/test.ts
+@@ -1641,15 +1641,13 @@ class TestNode {
+   expectFailure: ExpectFailure = false;
+   started = false;
+   finished = false;
+-  passed = false;
+-  error: TestFailure | null = null;
++  #passed = false;
++  #error: TestFailure | null = null;
+   // Inline subtests are serialized through this chain. `concurrency` is
+   // validated for Node-compat error codes but subtests always run serially.
+   subtestChain: Promise<unknown> = Promise.resolve();
+   failedSubtests = 0;
+   firstSubtestError: unknown = undefined;
+-  // First failure from a before hook created while this test was running.
+-  hookFailure: TestFailure | undefined = undefined;
+   #ctx: TestContext | undefined;
+   #suiteCtx: SuiteContext | undefined;
+   #tags: readonly string[] | undefined;
+@@ -1721,6 +1719,65 @@ class TestNode {
+   isRunning(): boolean {
+     return (this.started && !this.finished) || this.isExecutionPhase;
+   }
++
++  get passed(): boolean {
++    return this.#passed;
++  }
++
++  get error(): TestFailure | null {
++    return this.#error;
++  }
++
++  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1120-L1155
++  fail(failure: TestFailure) {
++    if (this.#error !== null) return;
++    const expectation = this.expectFailure;
++    if (expectation) {
++      const validation = expectation.match;
++      if (validation !== undefined) {
++        const errorToCheck = failure.failureType === "testCodeFailure" && failure.cause ? failure.cause : failure;
++        try {
++          nodeAssert.throws(() => {
++            throw errorToCheck;
++          }, validation);
++        } catch (e) {
++          const mismatch = new TestFailure(
++            "The test failed, but the error did not match the expected validation",
++            "testCodeFailure",
++          );
++          mismatch.cause = e;
++          this.#passed = false;
++          this.#error = mismatch;
++          return;
++        }
++      }
++      this.#passed = true;
++    } else {
++      this.#passed = false;
++    }
++    this.#error = failure;
++  }
++
++  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1157-L1185
++  pass() {
++    if (this.#error !== null) return;
++    if (this.expectFailure && !this.skipped) {
++      this.#passed = false;
++      this.#error = new TestFailure("test was expected to fail but passed", "expectedFailure");
++      return;
++    }
++    this.#passed = true;
++  }
++
++  // `--retry` runs the same node again.
++  resetOutcome() {
++    this.#passed = false;
++    this.#error = null;
++  }
++
++  printableError(): unknown {
++    return TestFailure.printable(this.#error!, this.firstSubtestError);
++  }
+ }
+ 
+ // Bumped by the runner's enter_file. Bound privately rather than read off the
+@@ -2079,36 +2136,6 @@ function parseExpectFailure(expectFailure: unknown): ExpectFailure {
+   return { __proto__: null, label: undefined, match: expectFailure } as any;
+ }
+ 
+-// Node inverts the verdict of an expectFailure test: a failure is the expected
+-// outcome, and passing is itself a failure (test.js:1120-1184).
+-function applyExpectFailure(node: TestNode, failure: TestFailure | undefined): TestFailure | undefined {
+-  const expectation = node.expectFailure;
+-  if (!expectation) return failure;
+-
+-  if (failure !== undefined) {
+-    const validation = expectation.match;
+-    if (validation !== undefined) {
+-      const errorToCheck = failure.failureType === "testCodeFailure" && failure.cause ? failure.cause : failure;
+-      try {
+-        nodeAssert.throws(() => {
+-          throw errorToCheck;
+-        }, validation);
+-      } catch (e) {
+-        const mismatch = new TestFailure(
+-          "The test failed, but the error did not match the expected validation",
+-          "testCodeFailure",
+-        );
+-        mismatch.cause = e;
+-        return mismatch;
+-      }
+-    }
+-    return undefined;
+-  }
+-
+-  if (node.skipped) return undefined;
+-  return new TestFailure("test was expected to fail but passed", "expectedFailure");
+-}
+-
+ function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
+   const { concurrency, tags, plan } = options;
+ 
+@@ -2327,7 +2354,7 @@ function scheduleImmediateBeforeHook(node: TestNode, hook: Hook, arg: unknown) {
+     try {
+       await runBeforeHookOnce(hook, node, arg);
+     } catch (err) {
+-      node.hookFailure ??= TestFailure.from(err);
++      node.fail(TestFailure.from(err));
+     }
+   });
+ }
+@@ -2355,15 +2382,14 @@ async function runOwnBeforeHooks(node: TestNode) {
+   }
+ }
+ 
+-async function executeTestNode(node: TestNode, fn: TestFn): Promise<TestFailure | undefined> {
+-  // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
+-  // body, pending subtests, the plan check, inherited afterEach hooks, and the
+-  // test's own after hooks. Returns the failure (if any) instead of throwing.
++// Test.run() and then Test.postRun(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1288-L1503
++async function executeTestNode(node: TestNode, fn: TestFn): Promise<void> {
++  if (node.started) node.resetOutcome();
+   node.started = true;
+   const started = runChildReporterEnabled ? performance.now() : 0;
+   const ctx = node.getCtx();
+   const ancestors = ancestorChain(node);
+-  let failure: TestFailure | undefined;
++  const { parent } = node;
+ 
+   // Node applies the plan option before the beforeEach hooks run, and only for a
+   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
+@@ -2373,133 +2399,127 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<TestFailure
+     node.plan = new TestPlan(planOption);
+   }
+ 
++  let afterEachStarted = false;
++  let afterStarted = false;
++  let stop: ReturnType<typeof createStopController>;
+   try {
+-    for (const ancestor of ancestors) {
+-      for (const hook of ancestor.hooks.beforeEach) {
+-        await runHook(hook, ancestor, ctx);
++    // A suite runs its before hooks itself (scheduleSuiteSubtest).
++    if (node.isExecutionPhase && parent !== undefined && !parent.isSuite) await runOwnBeforeHooks(parent);
++    try {
++      for (const ancestor of ancestors) {
++        for (const hook of ancestor.hooks.beforeEach) {
++          await runHook(hook, ancestor, ctx);
++        }
+       }
++    } catch (err) {
++      throw TestFailure.hook("beforeEach", err);
+     }
+-  } catch (err) {
+-    failure = TestFailure.hook("beforeEach", err);
+-  }
+ 
+-  if (failure === undefined) {
+     // Node arms one stopPromise (timeout + signal) and races both the body
+     // AND the plan wait against it. Arm timeout once here so plan({wait:true})
+     // is bounded by the same test timeout, not left unbounded.
+-    const stop = createStopController(node.options.timeout);
+-    try {
+-      const runBody = async () => {
+-        await runWithNode(node, () => invokeTestFn(fn, ctx));
+-        // Wait for inline subtests created during the body (awaited or not),
+-        // including ones scheduled while earlier subtests were running.
+-        await drainSubtestChain(node);
+-      };
+-
+-      try {
+-        await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
+-      } catch (err) {
+-        failure = TestFailure.from(err);
++    stop = createStopController(node.options.timeout);
++    const runBody = async () => {
++      await runWithNode(node, () => invokeTestFn(fn, ctx));
++      // Wait for the inline subtests that the body created, awaited or not, and for the ones that they schedule.
++      await drainSubtestChain(node);
++    };
++    await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
++
++    const { plan } = node;
++    if (plan !== null) {
++      const pending = plan.check();
++      if (pending !== undefined) {
++        // Defuse: when stop wins the race, the wait-timeout of the plan can still reject `pending` with no listener.
++        pending.catch(() => {});
++        await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
++        // A t.test() that fulfilled the plan during the wait is on subtestChain: drain again, so that its failure counts.
++        const drain = drainSubtestChain(node);
++        await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
+       }
++    }
+ 
+-      // A before hook created while the test was running failed (Node fails the
+-      // test with the hook's error).
+-      failure ??= node.hookFailure;
+-
+-      const { plan } = node;
+-      if (failure === undefined && plan !== null) {
+-        try {
+-          const pending = plan.check();
+-          if (pending !== undefined) {
+-            // Defuse: if stop wins the race, plan's own wait-timeout may still
+-            // reject `pending` afterward with no one listening.
+-            pending.catch(() => {});
+-            await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
+-            // A t.test() that fulfilled the plan from an async callback was
+-            // scheduled onto subtestChain during the wait; drain again so its
+-            // failure reaches failedSubtests below (Node fails the parent).
+-            const drain = drainSubtestChain(node);
+-            await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
+-          }
+-        } catch (err) {
+-          failure = TestFailure.from(err);
++    node.pass();
++    // Finished before the hooks, so that a t.test() from an afterEach or after hook takes the late path of addTest().
++    node.finished = true;
++    afterEachStarted = true;
++    try {
++      for (let i = ancestors.length - 1; i >= 0; i--) {
++        const ancestor = ancestors[i];
++        for (const hook of ancestor.hooks.afterEach) {
++          await runHook(hook, ancestor, ctx);
+         }
+       }
+-    } finally {
+-      stop?.dispose();
+-      node.plan?.cancel();
++    } catch (err) {
++      throw TestFailure.hook("afterEach", err);
+     }
+-
+-    const { failedSubtests } = node;
+-    if (failure === undefined && failedSubtests > 0) {
+-      failure = new TestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed");
++    afterStarted = true;
++    try {
++      for (const hook of node.hooks.after) {
++        await runHook(hook, node, ctx);
++      }
++    } catch (err) {
++      throw TestFailure.hook("after", err);
+     }
+-  }
+-
+-  const bodyFailure = failure;
+-  failure = applyExpectFailure(node, failure);
+-  const acceptedXfail = bodyFailure !== undefined && failure === undefined;
+-
+-  // Node sets passed/error before running afterEach/after so hooks can
+-  // introspect the outcome (nodejs/node lib/internal/test_runner/test.js
+-  // pass()/fail() precede afterEach).
+-  node.passed = failure === undefined;
+-  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
+-  // Mark finished before hooks so a late t.test() from an after/afterEach
+-  // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
+-  node.finished = true;
+-
+-  for (let i = ancestors.length - 1; i >= 0; i--) {
+-    const ancestor = ancestors[i];
+-    for (const hook of ancestor.hooks.afterEach) {
++  } catch (err) {
++    node.fail(TestFailure.from(err));
++    node.finished = true;
++    // The test fails already, so Node ignores what the hooks that did not start yet throw.
++    if (!afterEachStarted) {
+       try {
+-        await runHook(hook, ancestor, ctx);
+-      } catch (err) {
+-        if (!acceptedXfail) failure ??= TestFailure.hook("afterEach", err);
+-      }
++        for (let i = ancestors.length - 1; i >= 0; i--) {
++          const ancestor = ancestors[i];
++          for (const hook of ancestor.hooks.afterEach) {
++            await runHook(hook, ancestor, ctx);
++          }
++        }
++      } catch {}
+     }
+-  }
+-
+-  for (const hook of node.hooks.after) {
+-    try {
+-      await runHook(hook, node, ctx);
+-    } catch (err) {
+-      if (!acceptedXfail) failure ??= TestFailure.hook("after", err);
++    if (!afterStarted) {
++      try {
++        for (const hook of node.hooks.after) {
++          await runHook(hook, node, ctx);
++        }
++      } catch {}
+     }
++  } finally {
++    stop?.dispose();
++    node.plan?.cancel();
+   }
+ 
++  const { failedSubtests } = node;
++  if (node.passed && failedSubtests > 0) {
++    node.fail(new TestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed"));
++  }
+   try {
+     node.mockTracker?.reset();
+   } catch (err) {
+-    if (!acceptedXfail) failure ??= TestFailure.from(err);
++    node.fail(TestFailure.from(err));
+   }
+-
+-  node.passed = failure === undefined;
+-  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
+   reportNodeToRunParent(node, started);
+-  return failure;
+ }
+ 
+ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
+   const run = async () => {
+     if (child.options.skip) {
+       child.finished = true;
+-      child.passed = true;
++      child.pass();
+       return;
+     }
+-    let failure: TestFailure | undefined;
+     try {
+-      await runOwnBeforeHooks(parent);
+-      failure = await executeTestNode(child, fn);
++      // A test of a suite whose before hook failed does not run.
++      if (parent.isSuite) await runOwnBeforeHooks(parent);
++      await executeTestNode(child, fn);
+     } catch (err) {
+-      failure = TestFailure.from(err);
++      child.fail(TestFailure.from(err));
++      child.finished = true;
+     }
+     // Check the child's own todo declaration (options.todo or test.todo(...)),
+     // not the inherited todoFlag: a subtest that threw must still fail a
+     // {todo:true} parent so bun:test under --todo reports Todo (failure rolls up).
+-    if (failure !== undefined && !ownTodo && !child.skipped) {
++    if (!child.passed && !ownTodo && !child.skipped) {
+       parent.failedSubtests++;
+-      parent.firstSubtestError ??= TestFailure.printable(failure, child.firstSubtestError);
++      parent.firstSubtestError ??= child.printableError();
+     }
+   };
+   const result = (parent.subtestChain = parent.subtestChain.then(run));
+@@ -2507,8 +2527,10 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
+ }
+ 
+ function recordSuiteFailure(suite: TestNode, err: unknown) {
++  const failure = TestFailure.from(err);
++  suite.fail(failure);
+   suite.failedSubtests++;
+-  suite.firstSubtestError ??= TestFailure.printable(TestFailure.from(err));
++  suite.firstSubtestError ??= TestFailure.printable(failure);
+ }
+ 
+ // Awaits a node's subtest chain, including links appended while waiting.
+@@ -2546,15 +2568,19 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
+     }
+     // Wait for children created during the callback and any they schedule.
+     await drainSubtestChain(suite);
+-    for (const hook of suite.hooks.after) {
+-      try {
++    try {
++      for (const hook of suite.hooks.after) {
+         await runHook(hook, suite, suite.getSuiteCtx());
+-      } catch (err) {
+-        recordSuiteFailure(suite, err);
+       }
++    } catch (err) {
++      recordSuiteFailure(suite, TestFailure.hook("after", err));
+     }
+     suite.finished = true;
+-    suite.passed = suite.failedSubtests === 0;
++    suite.pass();
++    const { failedSubtests } = suite;
++    if (suite.passed && failedSubtests > 0) {
++      suite.fail(new TestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed"));
++    }
+     if (runChildReporterEnabled) {
+       emitRunChildEvent(suite.passed ? "test:pass" : "test:fail", {
+         __proto__: null,
+@@ -2565,20 +2591,13 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
+         type: "suite",
+         tags: suite.tags,
+         todo: suite.todoFlag ? (suite.message ?? true) : undefined,
+-        error: suite.passed
+-          ? undefined
+-          : serializeRunError(
+-              new TestFailure(
+-                `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
+-                "subtestsFailed",
+-              ),
+-            ),
++        error: suite.passed ? undefined : serializeRunError(suite.error),
+       });
+     }
+     // A todo suite's failures do not fail the owning test (Node).
+-    if (suite.failedSubtests > 0 && !ownTodo) {
++    if (!suite.passed && !ownTodo) {
+       parent.failedSubtests++;
+-      parent.firstSubtestError ??= suite.firstSubtestError;
++      parent.firstSubtestError ??= suite.firstSubtestError ?? suite.printableError();
+     }
+   };
+   const result = (parent.subtestChain = parent.subtestChain.then(run));
+@@ -2629,7 +2648,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
+     // plain describe so bun:test has no todo scope to consult.
+     const todoBefore = node.todoFlag;
+     executeTestNode(node, fn).then(
+-      failure => {
++      () => {
+         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
+         // (Node counts these as skip/todo even when the body threw); a declared
+         // todo body's failure must reach bun:test's own todo accounting instead.
+@@ -2638,7 +2657,8 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
+         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
+           markCurrentResult(true, done);
+         } else {
+-          done(failure === undefined ? undefined : TestFailure.printable(failure, node.firstSubtestError));
++          if (node.passed) done();
++          else done(node.printableError());
+           return;
+         }
+         done(undefined);

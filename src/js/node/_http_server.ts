@@ -749,7 +749,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isPipelinedDispatch?: boolean,
       ) {
         if (!socket) {
-          socket = new (getNodeHTTPServerSocket())(server, socketHandle, !!tls, listenerGeneration);
+          socket = createNodeHTTPServerSocket(server, socketHandle, !!tls, listenerGeneration);
         }
 
         if (isPipelinedDispatch) {
@@ -1249,7 +1249,7 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
     return;
   }
   const isTLS = !!this[tlsSymbol];
-  const socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS, listenerGeneration);
+  const socket = createNodeHTTPServerSocket(this, socketHandle, isTLS, listenerGeneration);
 
   // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
   // listener bypasses that, so gate it here. `>` (not Node's `>=`) because the constructor
@@ -1364,7 +1364,7 @@ function onServerClientError(
   // kTrackedConnections. Reuse it, and only announce genuinely new
   // connections - the existing duplex already had its 'connection' event.
   const existingDuplex = (socket as any).duplex;
-  const nodeSocket = existingDuplex ?? new (getNodeHTTPServerSocket())(self, socket, ssl, listenerGeneration);
+  const nodeSocket = existingDuplex ?? createNodeHTTPServerSocket(self, socket, ssl, listenerGeneration);
   if (!existingDuplex) {
     nodeSocket.parser = createServerParserShim(nodeSocket);
     self.emit("connection", nodeSocket);
@@ -1634,6 +1634,7 @@ function onSocketTimeoutTimerExpired(socket) {
 // contract (`req.socket instanceof net.Socket`); all I/O still goes through
 // the native NodeHTTP handle, not a net handle.
 let NodeHTTPServerSocket;
+let NodeHTTPServerTLSSocket;
 type NodeHTTPServerSocket = InstanceType<ReturnType<typeof getNodeHTTPServerSocket>>;
 type NetSocketPrototypeAccessors =
   | "bufferSize"
@@ -1673,7 +1674,6 @@ function getNodeHTTPServerSocket() {
     [kHandedOff] = false;
     server: Server;
     _httpMessage;
-    _secureEstablished = false;
     // Node's connectionListener sets socket._paused when it stops reading a
     // connection whose pipelined responses have buffered past the high water mark.
     _paused = false;
@@ -1684,7 +1684,6 @@ function getNodeHTTPServerSocket() {
     #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
-    declare encrypted: boolean;
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
     declare _readableState: { emitClose: boolean };
@@ -1709,11 +1708,9 @@ function getNodeHTTPServerSocket() {
       this.server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
-      this._secureEstablished = !!handle?.secureEstablished;
       handle.onclose = this.#onClose.bind(this);
       handle.duplex = this;
 
-      this.encrypted = encrypted;
       this.on("timeout", onNodeHTTPServerSocketTimeout);
       // Like Node.js's socketOnError: connection errors are routed to the
       // server's 'clientError' event instead of crashing as unhandled 'error'
@@ -2091,27 +2088,30 @@ function getNodeHTTPServerSocket() {
       }
     }
 
-    // SNI hostname the client sent in its ClientHello, or false when the TLS
-    // client sent none (matches Node's server-side TLSSocket.servername).
-    get servername() {
-      if (!this.encrypted) return undefined;
-      const name = (this[kHandle] ?? this.#peer)?.servername;
-      return typeof name === "string" && name.length > 0 ? name : false;
-    }
+    // Node's plain net.Socket has none of these names, and callers tell the two apart with `"encrypted" in socket`.
+    static {
+      NodeHTTPServerTLSSocket = class Socket extends this {
+        encrypted = true;
+        _secureEstablished = !!this[kHandle]?.secureEstablished;
 
-    // Like Node's server-side TLSSocket: `authorized` is only ever true when the
-    // server requested a client certificate and its verification succeeded;
-    // `authorizationError` carries the X.509 verification error code otherwise.
-    get authorized() {
-      if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return false;
-      return (this[kHandle] ?? this.#peer)?.peerCertVerified === true;
-    }
+        // The SNI hostname from the ClientHello, or false when the client sent none, like Node's server-side TLSSocket.
+        get servername() {
+          const name = (this[kHandle] ?? this.#peer)?.servername;
+          return typeof name === "string" && name.length > 0 ? name : false;
+        }
 
-    get authorizationError() {
-      if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return null;
-      return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
+        // Like Node's server-side TLSSocket: true only when the server requested a client certificate and it verified.
+        get authorized() {
+          if (!this.server?.[tlsSymbol]?.requestCert) return false;
+          return (this[kHandle] ?? this.#peer)?.peerCertVerified === true;
+        }
+
+        // The X.509 verification error code when it did not.
+        get authorizationError() {
+          if (!this.server?.[tlsSymbol]?.requestCert) return null;
+          return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
+        }
+      };
     }
 
     ref() {
@@ -2266,6 +2266,11 @@ function getNodeHTTPServerSocket() {
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
   return NodeHTTPServerSocket;
+}
+
+function createNodeHTTPServerSocket(server: Server, handle, encrypted: boolean, listenerGeneration) {
+  const PlainSocket = getNodeHTTPServerSocket();
+  return new (encrypted ? NodeHTTPServerTLSSocket : PlainSocket)(server, handle, encrypted, listenerGeneration);
 }
 
 // Node validates the `Trailer` header inside _storeHeader, after the body framing has

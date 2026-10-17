@@ -2305,7 +2305,7 @@ Socket.prototype.connect = function connect(...args) {
       process.nextTick(destroyNT, this, ex);
       return this;
     }
-    this.servername = options.servername;
+    if (typeof this[bunTlsSymbol] === "function") this.servername = options.servername;
     if (socket) {
       connection = socket;
     }

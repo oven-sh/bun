@@ -68,19 +68,29 @@ describe("node:http", () => {
       }
     });
     it("is not marked encrypted (#5867)", async () => {
+      // `"encrypted" in socket` is how callers tell a TLSSocket from a net.Socket, so a false value reads as HTTPS.
+      const tlsOnly = ["encrypted", "authorized", "authorizationError", "servername", "_secureEstablished"];
+      const seen: Record<string, string[]> = {};
+      const server = createServer((req, res) => {
+        seen.request = tlsOnly.filter(name => name in req.socket);
+        res.end("Hello World");
+      });
+      server.on("connection", socket => {
+        seen.connection = tlsOnly.filter(name => name in socket);
+      });
       try {
-        var server = createServer((req, res) => {
-          expect((req.connection as any).encrypted).toBe(false);
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Hello World");
-        });
-        const url = await listen(server);
-        const res = await fetch(new URL("", url));
-        expect(await res.text()).toBe("Hello World");
-      } catch (e) {
-        throw e;
+        const { port } = new URL(await listen(server));
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        http
+          .get({ port, agent: false }, res => {
+            seen.client = tlsOnly.filter(name => name in res.socket);
+            res.resume().on("end", resolve);
+          })
+          .on("error", reject);
+        await promise;
+        expect(seen).toEqual({ connection: [], request: [], client: [] });
       } finally {
-        server!.close();
+        server.close();
       }
     });
     it("request & response body streaming (large)", async () => {
@@ -1538,14 +1548,15 @@ describe("node https server", async () => {
     });
   };
   it("is marked encrypted (#5867)", async () => {
+    let seen;
     const { server, url, done } = await createServer(async (req, res) => {
-      expect(req.connection.encrypted).toBe(true);
+      const { encrypted, authorized, authorizationError, servername } = req.connection;
+      seen = { encrypted, authorized, authorizationError, servername };
       res.end();
     });
     try {
       await fetch(url, { tls: { rejectUnauthorized: false } });
-    } catch (e) {
-      throw e;
+      expect(seen).toEqual({ encrypted: true, authorized: false, authorizationError: null, servername: "localhost" });
     } finally {
       done();
     }

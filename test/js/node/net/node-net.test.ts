@@ -2941,6 +2941,21 @@ it.skipIf(isWindows)("a write after the peer reset the connection fails with a w
 // so write() returns false and the socket is errored in the same call. The
 // stream runs the write callbacks and destroys the socket on the next tick.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
+it("a plain socket has no servername property", async () => {
+  const server = createServer(socket => socket.end());
+  try {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", servername: "example.com" });
+    await once(client, "connect");
+    expect("servername" in client).toBe(false);
+    client.resume();
+    await once(client, "close");
+  } finally {
+    server.close();
+  }
+});
+
 describe("a write that fails at once", () => {
   type ErrnoException = NodeJS.ErrnoException;
 

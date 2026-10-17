@@ -269,8 +269,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       this.reject(new Error("describe() is not supported by this adapter (PostgreSQL only)"));
       return this as Promise<unknown> as Promise<SQLStatementDescription>;
     }
-    // sql.unsafe(text) without values is simple, and a simple query is run. The extended protocol
-    // has the statement and its description apart.
+    // sql.unsafe(text) without values is simple, and a simple query runs
     this[_flags] = (this[_flags] & ~SQLQueryFlags.simple) | SQLQueryFlags.describe;
     return this as Promise<unknown> as Promise<SQLStatementDescription>;
   }

@@ -1913,9 +1913,7 @@ impl PostgresSQLConnection {
             StatementStatus::Parsing => return false,
             StatementStatus::Prepared => {
                 if req.flags.get().describe_only {
-                    // A describe() parses the text itself, under a new name: the server answers for the
-                    // text as it is now, and a statement that a schema change made stale fails no
-                    // transaction. The stale one is closed, and the runs that follow take the new one.
+                    // Parsed again under a new name: a stale statement would fail a transaction.
                     let replacement = self.statements.with_mut(|cache| {
                         cache.replace(req.query.to_utf8().slice(), statement, || {
                             self.take_prepared_statement_id()

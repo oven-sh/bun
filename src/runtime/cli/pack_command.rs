@@ -104,6 +104,8 @@ impl<'a> Context<'a> {
         // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
         if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
             bun_core::pretty!("\n");
+        } else {
+            Output::stdout_is_the_result();
         }
         bun_core::pretty!("{}\n", bun_fmt::EscapeControlChars(path));
     }

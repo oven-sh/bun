@@ -58,8 +58,8 @@ impl QuietWriter {
     };
 
     #[inline]
-    pub fn adapt_to_new_api(self, buf: &mut [u8]) -> QuietWriterAdapter {
-        output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len())
+    pub fn adapt_to_new_api(self, buf: &mut [u8], on_error: OnWriteError) -> QuietWriterAdapter {
+        output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len(), on_error)
     }
     #[inline]
     pub(crate) fn context_handle(&self) -> Fd {
@@ -71,6 +71,17 @@ impl QuietWriter {
     pub(crate) fn write_all(&mut self, bytes: &[u8]) -> bool {
         output_sink().quiet_writer_write_all(self, bytes)
     }
+}
+
+/// What the sink does with a failed write through a [`QuietWriterAdapter`].
+/// It selects the sink functions of the adapter. The adapter does not store it.
+#[derive(Clone, Copy)]
+pub enum OnWriteError {
+    /// Stdout. The errno of the first failure is kept for `Global::exit`, which
+    /// reports it for a command that called [`stdout_is_the_result`].
+    Record,
+    /// Dropped: stderr, and `console.*` as Node's `Console` does (`ignoreErrors`).
+    Ignore,
 }
 
 /// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
@@ -331,17 +342,20 @@ impl Source {
         out.buffered_stream_backing = out
             .raw_stream
             .quiet_writer()
-            .adapt_to_new_api(&mut out.stdout_buffer);
+            .adapt_to_new_api(&mut out.stdout_buffer, OnWriteError::Record);
         out.buffered_error_stream_backing = out
             .raw_error_stream
             .quiet_writer()
-            .adapt_to_new_api(&mut out.stderr_buffer);
+            .adapt_to_new_api(&mut out.stderr_buffer, OnWriteError::Ignore);
 
-        out.stream_backing = out.raw_stream.quiet_writer().adapt_to_new_api(&mut []);
+        out.stream_backing = out
+            .raw_stream
+            .quiet_writer()
+            .adapt_to_new_api(&mut [], OnWriteError::Record);
         out.error_stream_backing = out
             .raw_error_stream
             .quiet_writer()
-            .adapt_to_new_api(&mut []);
+            .adapt_to_new_api(&mut [], OnWriteError::Ignore);
     }
 
     pub fn configure_thread() {
@@ -1086,6 +1100,68 @@ pub fn flush_guard() -> FlushGuard {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// A result that did not reach stdout
+// ──────────────────────────────────────────────────────────────────────────
+
+/// errno of the first failed write through an [`OnWriteError::Record`] adapter,
+/// 0 if none. Process-wide like fd 1: any thread prints, any thread exits.
+static STDOUT_WRITE_ERRNO: AtomicI32 = AtomicI32::new(0);
+static STDOUT_IS_THE_RESULT: AtomicBool = AtomicBool::new(false);
+static STDOUT_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// Called by the sink when a write through an [`OnWriteError::Record`] adapter failed.
+#[cold]
+#[inline(never)]
+pub fn record_stdout_write_error(errno: i32) {
+    let _ = STDOUT_WRITE_ERRNO.compare_exchange(0, errno, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+/// For a command whose result is what it prints on stdout (`bun build` with no
+/// outdir, `bun pm hash`, `bun --version`). When a write of it fails,
+/// `Global::exit` says so on stderr and does not exit 0. A command that does
+/// not call this keeps its exit code: what it prints is a log of work that is done.
+pub fn stdout_is_the_result() {
+    STDOUT_IS_THE_RESULT.store(true, Ordering::SeqCst);
+}
+
+/// The exit code for a process that is about to exit with `code`, after its last flush.
+#[inline]
+pub(crate) fn exit_code_after_stdout_writes(code: u32) -> u32 {
+    let errno = STDOUT_WRITE_ERRNO.load(Ordering::SeqCst);
+    if errno == 0 {
+        return code;
+    }
+    report_stdout_write_error(errno, code)
+}
+
+#[cold]
+#[inline(never)]
+fn report_stdout_write_error(errno: i32, code: u32) -> u32 {
+    // A pipe or a socket fails a write only when its reader is gone (`bun pm ls | head`).
+    if !STDOUT_IS_THE_RESULT.load(Ordering::SeqCst) || output_sink().is_pipe_or_socket(Fd::stdout())
+    {
+        return code;
+    }
+    // Once: more than one thread can be in `Global::exit`.
+    if !STDOUT_WRITE_ERROR_REPORTED.swap(true, Ordering::SeqCst) {
+        // Any thread may exit. One that never configured its `Source` has zeroed writers.
+        Source::configure_thread_no_js();
+        let name = crate::ErrnoNames::SYS.name(errno).unwrap_or("UNKNOWN");
+        err(
+            SysErrInfo {
+                tag_name: name.as_bytes(),
+                errno,
+                syscall: "write",
+            },
+            "failed to write to stdout",
+            (),
+        );
+        flush();
+    }
+    code.max(1)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // ElapsedFormatter
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1301,7 +1377,8 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     if let Some(s) = args.as_str() {
         return write_bytes(dest, s.as_bytes());
     }
-    // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
+    // There's not much we can do here if this errors. Especially if it's something like BrokenPipe.
+    // The sink keeps the errno of a failed write to stdout for `Global::exit`.
     with_dest_writer(dest, |w| {
         // SAFETY: `w` is valid per `with_dest_writer`; `write_fmt_raw` routes
         // through the vtable without forming a `&mut Writer`, so `Display`
@@ -2457,6 +2534,14 @@ impl ErrName for &[u8] {
 impl ErrName for crate::CrateError {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()
+    }
+}
+impl ErrName for SysErrInfo {
+    fn name(&self) -> &[u8] {
+        self.tag_name
+    }
+    fn as_sys_err_info(&self) -> Option<SysErrInfo> {
+        Some(*self)
     }
 }
 // Higher-tier impls live with their types (orphan rule allows it):

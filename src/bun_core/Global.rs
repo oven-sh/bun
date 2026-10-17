@@ -688,6 +688,8 @@ unsafe extern "C" {
 }
 
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
+/// Exits with 1 instead of 0 when the result of the command did not reach stdout
+/// (`Output::stdout_is_the_result`).
 pub fn exit(code: u32) -> ! {
     IS_EXITING.store(true, Ordering::Relaxed);
     // MOVE_DOWN: bun_analytics::features → bun_core (move-in pass).
@@ -699,6 +701,7 @@ pub fn exit(code: u32) -> ! {
 
     // Flush output before exiting to ensure all messages are visible
     Output::flush();
+    let code = Output::exit_code_after_stdout_writes(code);
 
     #[cfg(target_os = "macos")]
     {

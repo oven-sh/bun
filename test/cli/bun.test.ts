@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMusl, isWindows, tempDir, unwritableFd } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -547,6 +547,221 @@ describe("bun", () => {
       } finally {
         fs.unlinkSync(path);
       }
+    });
+  });
+
+  // A command that exists to print (a bundle on stdout, `bun pm hash`, `bun --version`) declares that stdout
+  // holds its result. When stdout does not take it (a full disk behind `> file`), the command says so on
+  // stderr and exits 1. Every other command keeps its exit code: what it prints is a log of work that is done.
+  describe.concurrent("a result that does not reach stdout", () => {
+    const dep = "github:example/repo#abc1234";
+    const files = {
+      "package.json": JSON.stringify({
+        name: "failed-stdout",
+        version: "1.2.3",
+        dependencies: { dep },
+        scripts: { a: "echo out-a && echo err-a 1>&2", b: "echo out-b && echo err-b 1>&2" },
+      }),
+      // A lockfile and a node_modules folder by hand: no command here installs or leaves the machine.
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "failed-stdout", dependencies: { dep } } },
+        packages: { dep: [`dep@${dep}`, {}, "example-repo-abc1234"] },
+      }),
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", license: "MIT" }),
+      "old/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "new/package.json": JSON.stringify({ name: "x", version: "1.0.1" }),
+      "entry.js": `import "./shared.js";\nconsole.log("the bundle");\n`,
+      "other.js": `import "./shared.js";\nconsole.log("the other bundle");\n`,
+      "shared.js": `console.log("shared");\n`,
+      "entry.ts": `const n: number = 1;\nconsole.log(n);\n`,
+      // More than the 4096 bytes that stdout buffers: the bundle is written at once, not at exit.
+      "big.js": `console.log("${Buffer.alloc(8192, "x").toString()}");\n`,
+      "pass.test.ts": `import { test } from "bun:test";\ntest("passes", () => console.log("from the test"));\n`,
+    };
+    const lockb = join(import.meta.dir, "..", "integration", "sharp", "bun.lockb");
+    const failedToWrite = "failed to write to stdout (write)\n";
+
+    async function run(
+      args: string[],
+      stdio: { stdin?: Buffer; stdout: number | Bun.BunFile; stderr?: number },
+      dir: string,
+      env?: Record<string, string | undefined>,
+    ) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: dir,
+        // `bun repl` and `bun completions` write below the home directory.
+        env: { ...bunEnv, HOME: dir, USERPROFILE: dir, ...env },
+        stdin: stdio.stdin ?? "ignore",
+        stdout: stdio.stdout,
+        stderr: stdio.stderr ?? "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([
+        stdio.stderr === undefined ? (proc.stderr as ReadableStream).text() : "",
+        proc.exited,
+      ]);
+      return { stderr, exitCode };
+    }
+
+    for (const args of [
+      ["--version"],
+      ["--revision"],
+      ["build", "entry.js"],
+      ["build", "--no-bundle", "entry.ts"],
+      ["build", "big.js"],
+      ["pm", "pkg", "get", "version"],
+      ["pm", "pack", "--quiet"],
+      ["pm", "hash"],
+      ["pm", "hash-string"],
+      ["pm", "hash-print"],
+      ["pm", "bin"],
+      ["pm", "cache"],
+      ["pm", "ls"],
+      ["pm", "licenses"],
+      ["pm", "default-trusted"],
+      ["pm", "why", "dep"],
+      ["why", "dep"],
+      ["pm", "diff", "./old", "./new"],
+      [lockb],
+    ]) {
+      test(`bun ${args.join(" ").replace(lockb, "bun.lockb")} reports it and exits 1`, async () => {
+        using dir = tempDir("failed-stdout", files);
+        using stdout = unwritableFd();
+        expect(await run(args, { stdout: stdout.fd }, String(dir))).toEqual({
+          stderr: "EBADF: Bad file descriptor: " + failedToWrite,
+          exitCode: 1,
+        });
+      });
+    }
+
+    test("bun pm untrusted reports it and exits 1", async () => {
+      using dir = tempDir("failed-stdout", files);
+      using stdout = unwritableFd();
+      const { stderr, exitCode } = await run(["pm", "untrusted"], { stdout: stdout.fd }, String(dir));
+      // After the header that it prints on stderr.
+      expect(stderr).toEndWith("\nEBADF: Bad file descriptor: " + failedToWrite);
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(isWindows)("bun completions reports it and exits 1", async () => {
+      using dir = tempDir("failed-stdout", files);
+      using stdout = unwritableFd();
+      const env = { SHELL: "/bin/bash", BUN_INSTALL: undefined };
+      expect(await run(["completions"], { stdout: stdout.fd }, String(dir), env)).toEqual({
+        stderr: "EBADF: Bad file descriptor: " + failedToWrite,
+        exitCode: 1,
+      });
+    });
+
+    test.skipIf(!isLinux)("a full disk is reported as ENOSPC", async () => {
+      using dir = tempDir("failed-stdout", files);
+      expect(await run(["build", "entry.js"], { stdout: Bun.file("/dev/full") }, String(dir))).toEqual({
+        stderr: "ENOSPC: No space left on device: " + failedToWrite,
+        exitCode: 1,
+      });
+    });
+
+    // The file size limit stands for a disk that fills up in the middle of the bundle.
+    test.skipIf(isWindows)("a bundle that is cut in the middle of the file is reported", async () => {
+      using dir = tempDir("failed-stdout-cut", {
+        "big.js": `console.log("${Buffer.alloc(200 * 1024, "x").toString()}");\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'ulimit -f 16 && exec "$0" build big.js > out.js', bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("EFBIG: File too large: " + failedToWrite);
+      const written = fs.statSync(join(String(dir), "out.js")).size;
+      expect(written).toBeGreaterThan(0);
+      expect(written).toBeLessThan(200 * 1024);
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun build big.js | head -c 1`: the reader has what it wants. A pipe fails a write only for that reason.
+    test("a reader that hangs up is not an error", async () => {
+      using dir = tempDir("failed-stdout-hang-up", {
+        "big.js": `console.log("${Buffer.alloc(8 * 1024 * 1024, "x").toString()}");\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "big.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Take one chunk, then close the read end while most of the bundle is still to be written.
+      const reader = proc.stdout.getReader();
+      await reader.read();
+      await reader.cancel();
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // `bun pm untrusted` prints its header on stderr and its result on stdout.
+    test("a failed write to stderr is not reported", async () => {
+      using dir = tempDir("failed-stdout", files);
+      using stderr = unwritableFd();
+      const out = join(String(dir), "out.txt");
+      const { exitCode } = await run(["pm", "untrusted"], { stdout: Bun.file(out), stderr: stderr.fd }, String(dir));
+      expect(fs.readFileSync(out, "utf8")).toContain("Found 0 untrusted dependencies");
+      expect(exitCode).toBe(0);
+    });
+
+    // Not a result: stdout of a script belongs to the script (as in Node, a console.log that fails is
+    // not an exit code), and the rest is a log.
+    for (const [args, stdin] of [
+      [["-e", "console.log('from the script')"]],
+      [["-p", "1 + 1"]],
+      [["-e", "alert('from the script')"]],
+      [["test", "pass.test.ts"]],
+      [["repl"], Buffer.from("1 + 1\n")],
+      [["--help"]],
+      [["pm", "pack"]],
+    ] as [string[], Buffer?][]) {
+      test(`bun ${args.join(" ")} does not report it and exits 0`, async () => {
+        using dir = tempDir("failed-stdout", files);
+        using stdout = unwritableFd();
+        const { stderr, exitCode } = await run(args, { stdin, stdout: stdout.fd }, String(dir));
+        expect(stderr).not.toContain("failed to write");
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test("bun build --outdir writes every output file and exits 0", async () => {
+      using dir = tempDir("failed-stdout", files);
+      using stdout = unwritableFd();
+      const args = ["build", "./entry.js", "./other.js", "--outdir=out", "--splitting"];
+      expect(await run(args, { stdout: stdout.fd }, String(dir))).toEqual({ stderr: "", exitCode: 0 });
+      // Two entry points and the shared chunk.
+      const written = fs.readdirSync(join(String(dir), "out"));
+      expect(written).toHaveLength(3);
+      expect(written).toContain("entry.js");
+      expect(written).toContain("other.js");
+    });
+
+    test.each(["--parallel", "--sequential"])("bun run %s runs every script and exits 0", async mode => {
+      using dir = tempDir("failed-stdout", files);
+      using stdout = unwritableFd();
+      const env = { NO_COLOR: "1" };
+      const { stderr, exitCode } = await run(["run", mode, "a", "b"], { stdout: stdout.fd }, String(dir), env);
+      // Both scripts ran to their end and their status is on stderr.
+      expect(stderr).toContain("err-a");
+      expect(stderr).toContain("err-b");
+      expect(stderr.match(/Done in/g)).toHaveLength(2);
+      expect(stderr).not.toContain("failed to write");
+      expect(exitCode).toBe(0);
     });
   });
 });

@@ -130,6 +130,8 @@ impl ConsoleObject {
             _pin: core::marker::PhantomPinned,
         });
         let p: *mut ConsoleObject = out;
+        // A failed `console.log` does not change the exit code: Node's `Console` has `ignoreErrors`.
+        let on_error = Output::OnWriteError::Ignore;
         // SAFETY: `out` is now fully initialized at its final address; the
         // adapters store raw pointers into `out.stderr_buffer` /
         // `out.stdout_buffer`, which remain valid for `out`'s lifetime
@@ -137,10 +139,10 @@ impl ConsoleObject {
         unsafe {
             (*p).error_writer_backing = error_writer
                 .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
+                .adapt_to_new_api(&mut (*p).stderr_buffer, on_error);
             (*p).writer_backing = writer
                 .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
+                .adapt_to_new_api(&mut (*p).stdout_buffer, on_error);
         }
         out
     }

@@ -9342,11 +9342,15 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
 
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
-fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
+/// `RECORD` is `OnWriteError::Record`: the errno is kept for `Global::exit`.
+fn fd_write_all_quiet<const RECORD: bool>(fd: Fd, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
-        match write(fd, bytes) {
-            Ok(0) => return false, // short write → give up
-            Ok(n) => bytes = &bytes[n..],
+        let errno = match write(fd, bytes) {
+            Ok(0) => E::EIO, // nothing written and no errno → give up
+            Ok(n) => {
+                bytes = &bytes[n..];
+                continue;
+            }
             #[cfg(unix)]
             Err(e) if e.get_errno() == E::EAGAIN => {
                 // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
@@ -9355,12 +9359,17 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
                     events: posix::POLL_OUT,
                     revents: 0,
                 }];
-                if posix::poll(&mut pfd, -1).is_err() {
-                    return false;
+                match posix::poll(&mut pfd, -1) {
+                    Ok(_) => continue,
+                    Err(e) => e.get_errno(),
                 }
             }
-            Err(_) => return false,
+            Err(e) => e.get_errno(),
+        };
+        if RECORD {
+            bun_core::output::record_stdout_write_error(errno as i32);
         }
+        return false;
     }
     true
 }
@@ -9401,25 +9410,27 @@ impl SysQuietWriterAdapter {
     }
 }
 
-unsafe fn adapter_write_all(
+/// Always `Ok(())`: a `?` on a print does not stop the work of a command. A
+/// write to stdout that fails is recorded instead (`fd_write_all_quiet`).
+unsafe fn adapter_write_all<const RECORD: bool>(
     w: *mut bun_core::io::Writer,
     bytes: &[u8],
 ) -> core::result::Result<(), bun_core::Error> {
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.cap == 0 {
-        let _ = fd_write_all_quiet(this.fd, bytes);
+        let _ = fd_write_all_quiet::<RECORD>(this.fd, bytes);
         return Ok(());
     }
     if this.pos + bytes.len() > this.cap {
         // Drain buffered bytes first.
         if this.pos > 0 {
-            let _ = fd_write_all_quiet(this.fd, this.buffered());
+            let _ = fd_write_all_quiet::<RECORD>(this.fd, this.buffered());
             this.pos = 0;
         }
         // Large writes bypass the buffer so the next small write still coalesces.
         if bytes.len() >= this.cap {
-            let _ = fd_write_all_quiet(this.fd, bytes);
+            let _ = fd_write_all_quiet::<RECORD>(this.fd, bytes);
             return Ok(());
         }
     }
@@ -9432,11 +9443,13 @@ unsafe fn adapter_write_all(
     this.pos += bytes.len();
     Ok(())
 }
-unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<(), bun_core::Error> {
+unsafe fn adapter_flush<const RECORD: bool>(
+    w: *mut bun_core::io::Writer,
+) -> core::result::Result<(), bun_core::Error> {
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.pos > 0 {
-        let _ = fd_write_all_quiet(this.fd, this.buffered());
+        let _ = fd_write_all_quiet::<RECORD>(this.fd, this.buffered());
         this.pos = 0;
     }
     Ok(())
@@ -9495,12 +9508,18 @@ bun_core::link_impl_OutputSink! {
             qw_set_fd(&mut out, fd);
             out
         },
-        quiet_writer_adapt(qw, buf, len) => {
+        quiet_writer_adapt(qw, buf, len, on_error) => {
             let fd = qw_fd(&qw);
             let concrete = SysQuietWriterAdapter {
-                writer: bun_core::io::Writer {
-                    write_all: adapter_write_all,
-                    flush: adapter_flush,
+                writer: match on_error {
+                    bun_core::output::OnWriteError::Record => bun_core::io::Writer {
+                        write_all: adapter_write_all::<true>,
+                        flush: adapter_flush::<true>,
+                    },
+                    bun_core::output::OnWriteError::Ignore => bun_core::io::Writer {
+                        write_all: adapter_write_all::<false>,
+                        flush: adapter_flush::<false>,
+                    },
                 },
                 fd,
                 buf,
@@ -9512,10 +9531,14 @@ bun_core::link_impl_OutputSink! {
             core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
             out
         },
-        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
+        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet::<false>(qw_fd(qw), bytes),
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
+        is_pipe_or_socket(fd) => matches!(
+            File::borrow(&fd).kind(),
+            Ok(FileKind::NamedPipe | FileKind::UnixDomainSocket)
+        ),
         read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
     }
 }

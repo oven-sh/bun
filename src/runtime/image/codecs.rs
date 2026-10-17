@@ -785,3 +785,20 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(out)
 }
+
+/// Copy the `cw`×`ch` region at (`x`, `y`) out of an `sw`×`sh` RGBA8 image.
+pub(crate) fn crop(src: &[u8], sw: u32, sh: u32, x: u32, y: u32, cw: u32, ch: u32) -> Vec<u8> {
+    debug_assert!(u64::from(x) + u64::from(cw) <= u64::from(sw));
+    debug_assert!(u64::from(y) + u64::from(ch) <= u64::from(sh));
+    let row_bytes = (cw as usize) * 4;
+    let x_bytes = (x as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(row_bytes * (ch as usize));
+    for row in src
+        .chunks_exact((sw as usize) * 4)
+        .skip(y as usize)
+        .take(ch as usize)
+    {
+        out.extend_from_slice(&row[x_bytes..x_bytes + row_bytes]);
+    }
+    out
+}

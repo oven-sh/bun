@@ -1064,6 +1064,35 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|roots| {
+        let mut pending = Vec::new();
+        let result = parse_to_values(global, call_frame, roots, &mut pending)?;
+        for PendingProperty {
+            mapping,
+            key,
+            value,
+        } in pending
+        {
+            mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+        }
+        Ok(result)
+    })
+}
+
+/// A property that waits for the tree to be gone. Its key is a sequence or a mapping, or it comes after one that is.
+/// `ToString` of those is JavaScript, which can free the input that the tree points into.
+struct PendingProperty {
+    mapping: JSValue,
+    key: JSValue,
+    value: JSValue,
+}
+
+fn parse_to_values(
+    global: &JSGlobalObject,
+    call_frame: &CallFrame,
+    roots: &mut MarkedArgumentBuffer,
+    pending: &mut Vec<PendingProperty>,
+) -> JsResult<JSValue> {
     // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
@@ -1096,13 +1125,14 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
                 seen_objects: HashMap::default(),
                 stack_check: StackCheck::init(),
                 global,
-                root,
-                result: JSValue::ZERO,
+                pending,
             };
 
-            MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
-
-            Ok(ctx.result)
+            ctx.to_js(roots, root).map_err(|err| match err {
+                ToJsError::OutOfMemory => JsError::OutOfMemory,
+                ToJsError::JsError => JsError::Thrown,
+                ToJsError::StackOverflow => global.throw_stack_overflow(),
+            })
         },
     )
 }
@@ -1112,9 +1142,8 @@ struct ParserCtx<'a> {
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
-    root: Expr,
-
-    result: JSValue,
+    /// The `MarkedArgumentBuffer` holds what these do.
+    pending: &'a mut Vec<PendingProperty>,
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -1154,28 +1183,6 @@ impl From<bun_ast::ToJSError> for ToJsError {
 
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
-
-    extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
-        // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
-        let root = ctx.root;
-        ctx.result = match ctx.to_js(args, root) {
-            Ok(v) => v,
-            Err(ToJsError::OutOfMemory) => {
-                ctx.result = ctx.global.throw_out_of_memory_value();
-                return;
-            }
-            Err(ToJsError::JsError) => {
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-            Err(ToJsError::StackOverflow) => {
-                let _ = ctx.global.throw_stack_overflow();
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-        };
-    }
 
     fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
@@ -1223,12 +1230,26 @@ impl<'a> ParserCtx<'a> {
                 args.append(obj);
                 self.seen_objects.put(key, obj)?;
 
+                // Those after the first that waits wait too, to be defined in the order they are written in.
+                let mut is_pending = false;
                 for prop in e_object.properties.slice() {
                     let key_expr = prop.key.expect("infallible: prop has key");
                     let value_expr = prop.value.expect("infallible: prop has value");
 
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
+
+                    is_pending |= key.is_object();
+                    if is_pending {
+                        args.append(key);
+                        args.append(value);
+                        self.pending.push(PendingProperty {
+                            mapping: obj,
+                            key,
+                            value,
+                        });
+                        continue;
+                    }
 
                     let key_str = key.to_bun_string(self.global)?;
                     obj.put_may_be_index(self.global, &key_str, value)?;

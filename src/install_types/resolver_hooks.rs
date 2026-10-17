@@ -107,6 +107,12 @@ impl<T> ExternalSlice<T> {
         id >= self.off && (id as u64) < self.len as u64 + self.off as u64
     }
 
+    /// Checks an offset and length that were read from a file. Call it before calling `get`.
+    #[inline]
+    pub fn is_within(self, in_: &[T]) -> bool {
+        self.off as usize + self.len as usize <= in_.len()
+    }
+
     #[inline]
     pub fn get(self, in_: &[T]) -> &[T] {
         // Compute the sum in usize so
@@ -825,14 +831,6 @@ impl OperatingSystem {
     // ("win32").
 
     #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
-    #[inline]
     pub fn is_match(self, target: Self) -> bool {
         (self.0 & target.0) != 0
     }
@@ -946,14 +944,6 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT: Self = Self(Self::X64);
 
-    #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
     #[inline]
     pub fn is_match(self, target: Self) -> bool {
         (self.0 & target.0) != 0
@@ -1285,11 +1275,6 @@ impl Features {
     };
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct TaskCallbackContext {
-    pub root_request_id: u32,
-}
-
 /// What the runtime installs to nudge the JS event loop when a network task completes.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the fn-ptr is POD.
@@ -1410,7 +1395,6 @@ pub enum EnqueueResult {
 /// `Resolver::use_package_manager()`.
 pub trait AutoInstaller {
     // ── Lockfile reads ────────────────────────────────────────────────────
-    fn lockfile_packages_len(&self) -> usize;
     fn lockfile_package_dependencies(&self, id: PackageID) -> DependencySlice;
     fn lockfile_package_resolutions(&self, id: PackageID) -> ResolutionSlice;
     fn lockfile_package_resolution(&self, id: PackageID) -> Resolution;
@@ -1424,24 +1408,21 @@ pub trait AutoInstaller {
         version: &DependencyVersion,
         version_buf: &[u8],
     ) -> Option<PackageID>;
-    fn lockfile_legacy_package_to_dependency_id(
-        &self,
-        package_id: PackageID,
-    ) -> core::result::Result<DependencyID, bun_core::Error>;
-
-    // ── Lockfile writes ───────────────────────────────────────────────────
-    /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —
-    /// collapsed because `Package` itself is install-internal. Returns the
-    /// id assigned to the appended package.
-    fn lockfile_append_from_package_json(
-        &mut self,
-        package_json: &dyn PackageJsonView,
-        features: Features,
-    ) -> core::result::Result<PackageID, bun_core::Error>;
-    fn lockfile_append_root_stub(&mut self) -> core::result::Result<PackageID, bun_core::Error>;
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
+    /// Returns the folder that `bun install` would link `name` to: a workspace, or the target of
+    /// `file:` or `link:`. `package_json_dir` is `None` unless the package.json is the project's.
+    fn project_folder<'b>(
+        &mut self,
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+        package_json_dir: Option<&[u8]>,
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]>;
+    /// Returns the package's folder in the cache. An npm package that is not cached yet is
+    /// downloaded first, and the call blocks until that finishes.
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,
@@ -1449,19 +1430,14 @@ pub trait AutoInstaller {
         buf: &'b mut [u8],
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
-    fn enqueue_package_for_download(
-        &mut self,
-        name: &[u8],
-        dependency_id: DependencyID,
-        package_id: PackageID,
-        resolution: &Resolution,
-        ctx: TaskCallbackContext,
-    ) -> core::result::Result<(), bun_core::Error>;
+    /// `package_json_dir` means the same as in `project_folder`. The path of a `file:` tarball is
+    /// relative to it.
     fn enqueue_dependency_to_root(
         &mut self,
         name: &[u8],
         version: &DependencyVersion,
         version_buf: &[u8],
+        package_json_dir: Option<&[u8]>,
         behavior: Behavior,
     ) -> EnqueueResult;
 
@@ -1488,18 +1464,4 @@ pub trait AutoInstaller {
     /// Pure string
     /// classification, but the table lives in `bun_install`.
     fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag;
-}
-
-/// Read-only view of `bun_resolver::PackageJSON` that
-/// [`AutoInstaller::lockfile_append_from_package_json`] needs. Defined here
-/// (not in `bun_resolver`) so `bun_install` can name it without depending on
-/// the resolver crate at the trait-definition layer.
-pub trait PackageJsonView {
-    fn name(&self) -> &[u8];
-    fn version(&self) -> &[u8];
-    /// Backing string-bytes buffer the dependency `SemverString`s slice into.
-    fn dependency_source_buf(&self) -> &[u8];
-    fn arch(&self) -> Architecture;
-    fn os(&self) -> OperatingSystem;
-    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_>;
 }

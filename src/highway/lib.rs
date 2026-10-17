@@ -241,6 +241,17 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     found
 }
 
+/// [`index_of_char`] of bytes that another thread may be writing, which is why they are not a `&[u8]`. The byte found
+/// can have changed by the time this returns.
+///
+/// # Safety
+/// `len` bytes at `haystack` are readable.
+#[inline(always)]
+pub unsafe fn index_of_char_raw(haystack: *const u8, len: usize, needle: u8) -> Option<usize> {
+    // SAFETY: the caller's.
+    found_at(unsafe { highway_index_of_char(haystack, len, needle) }, len)
+}
+
 #[inline(always)]
 pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     if scalar_only(haystack.len()) {

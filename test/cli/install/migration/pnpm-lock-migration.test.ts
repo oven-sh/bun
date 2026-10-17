@@ -732,7 +732,7 @@ importers:
     });
 
     const { stderr, exitCode } = await runBun(dir, "install");
-    expect(stderr).toContain("pnpm-lock.yaml is lockfileVersion 6.0, which bun cannot migrate");
+    expect(stderr).toContain("cannot migrate pnpm-lock.yaml: unsupported lockfileVersion 6.0");
     expect(stderr).toContain(movedWorkspaces);
     expect(exitCode).toBe(0);
 

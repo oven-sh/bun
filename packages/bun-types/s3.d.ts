@@ -635,9 +635,25 @@ declare module "bun" {
     /**
      * The bucket name containing the file.
      *
+     * With `virtualHostedStyle`, the path is not read for a bucket. This is
+     * then the `bucket` option when it is set. Otherwise it is the bucket in
+     * the hostname of the `endpoint` when the hostname has a form such as
+     * `<bucket>.s3.<region>.amazonaws.com` or
+     * `<bucket>.<account-id>.r2.cloudflarestorage.com`, and `undefined` for
+     * any other hostname.
+     *
      * @example
      * ```ts
      * const file = s3.file("s3://my-bucket/file.txt");
+     * console.log(file.bucket); // "my-bucket"
+     * ```
+     *
+     * @example
+     * ```ts
+     * const file = s3.file("folder/file.txt", {
+     *   virtualHostedStyle: true,
+     *   endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com",
+     * });
      * console.log(file.bucket); // "my-bucket"
      * ```
      */

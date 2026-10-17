@@ -349,6 +349,24 @@ describe("bun", () => {
     expect(exitCode).toBe(7);
   });
 
+  test("a failed script does not skip the script of another package with the same name", () => {
+    using dir = tempDir("testworkspace", {
+      a: { "package.json": JSON.stringify({ name: "same", scripts: { script: "exit 7" } }) },
+      b: { "package.json": JSON.stringify({ name: "same", scripts: { script: "echo ran-b" } }) },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out).toContain("same script: ran-b");
+    expect(out).not.toContain("same script: Skipped");
+    expect(exitCode).toBe(7);
+  });
+
   test("respect dependency order", () => {
     using dir = tempDir("testworkspace", {
       dep0: {

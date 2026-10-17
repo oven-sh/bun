@@ -411,14 +411,15 @@ impl PackageManagerCommand {
                 let dry_run = pm.options.dry_run;
 
                 // Not `pm.options`: a project's `.env`, bunfig.toml or `.npmrc` does not choose what is deleted.
-                // The user's own `.bunfig.toml` and `.npmrc` do. No project can write them.
+                // The user's own `.bunfig.toml` does, because no project can write it. Their `.npmrc`
+                // does not: its `cache` is also npm's cache, which is not Bun's to delete.
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let user_cache_dir = match cli.cache_dir {
                     Some(_) => None,
-                    None => {
-                        bun_install::package_manager_real::user_cache_directory(&process_env, &cwd)
-                    }
+                    None => (bun_bunfig::arguments::load_user_install_section().ok())
+                        .flatten()
+                        .and_then(|install| install.cache_directory),
                 };
                 let configured = cli.cache_dir.or(user_cache_dir.as_deref());
                 let cache_dir = match fetch_cache_directory_path(&mut process_env, configured) {
@@ -467,7 +468,7 @@ impl PackageManagerCommand {
                         ),
                     );
                     bun_core::note!(
-                        "cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r>, <b>~/.bunfig.toml<r>, <b>~/.npmrc<r> or <b>$BUN_INSTALL<r>. point it at a directory used only for the bun install cache"
+                        "cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r>, <b>~/.bunfig.toml<r> or <b>$BUN_INSTALL<r>. point it at a directory used only for the bun install cache"
                     );
                     had_err = true;
                 } else if prune {

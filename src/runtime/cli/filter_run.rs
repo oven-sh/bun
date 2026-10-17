@@ -395,12 +395,11 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    /// Counts `handle` as finished and starts the scripts that were only waiting for it. If it
+    /// Marks `handle` as finished and starts the scripts that were only waiting for it. If it
     /// failed or was skipped, the next script of its `pre`, main, `post` chain is skipped, as in
     /// `bun run` without `--filter`. Scripts of other packages that waited for it still run.
     fn finish(&mut self, handle: &mut ProcessHandle<'a>) {
         handle.finished = true;
-        self.remaining_scripts -= 1;
         if self.aborted {
             return;
         }
@@ -482,6 +481,8 @@ impl<'a> State<'a> {
             }
             self.flush_draw_buf();
         }
+        // `start` counted it. A skipped script never starts, so `finish` does not count.
+        self.remaining_scripts -= 1;
         self.finish(handle);
         // On abort `finalize` draws the last frame; drawing it here too
         // would print everything twice once it no longer fits the screen.
@@ -1106,7 +1107,9 @@ pub(crate) fn run_scripts_with_filter(
             let next_ptr: *mut ProcessHandle = &raw mut state.handles[i + 1];
             state.handles[i].dependents.push(next_ptr);
             state.handles[i + 1].remaining_dependencies += 1;
-            state.handles[i + 1].follows_previous = true;
+            // Two packages can have the same name, or none.
+            state.handles[i + 1].follows_previous = state.handles[i].config.package_json_path
+                == state.handles[i + 1].config.package_json_path;
         }
     }
 

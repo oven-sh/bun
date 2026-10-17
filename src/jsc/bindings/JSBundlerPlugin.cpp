@@ -92,8 +92,9 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
 
     auto& filters = *group;
 
+    // Abandoned goes to the JS thread like a match: BundlerPlugin.ts runs filter.test() there, which answers or throws.
     for (auto& filter : filters) {
-        if (filter.match(vm, pathString)) {
+        if (filter.match(vm, pathString) != Yarr::MatchStatus::NoMatch) {
             return true;
         }
     }
@@ -283,11 +284,13 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
 }
 
-bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
+Yarr::MatchStatus BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
     WTF::Locker locker { lock };
     Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
-    return regex.match(path) != -1;
+    int position;
+    int matchLength;
+    return regex.match(path, 0, position, matchLength);
 }
 
 int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult)
@@ -295,14 +298,14 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
     unsigned index = 0;
     auto* groupPtr = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
     if (groupPtr == nullptr) {
-        return -1;
+        return noCallbacks;
     }
     auto& filters = *groupPtr;
 
     const auto& callbacks = index == std::numeric_limits<unsigned>::max() ? this->fileCallbacks : this->namespaceCallbacks[index];
     ASSERT_WITH_MESSAGE(callbacks.size() == filters.size(), "Number of callbacks and filters must match");
     if (callbacks.isEmpty()) {
-        return -1;
+        return noCallbacks;
     }
 
     int count = 0;
@@ -313,7 +316,13 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
             OnBeforeParseResult__reset(onBeforeParseResult);
         }
 
-        if (filters[i].match(vm, path)) {
+        // A native callback has no JS thread to run the filter again on, so the build has to fail.
+        auto status = filters[i].match(vm, path);
+        if (status == Yarr::MatchStatus::Abandoned) {
+            return filterAbandoned;
+        }
+
+        if (status == Yarr::MatchStatus::Match) {
             Bun::NapiExternal* external = callbacks[i].external;
             ASSERT(onBeforeParseArgs != nullptr);
             if (external) {

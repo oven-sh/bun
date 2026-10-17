@@ -185,7 +185,7 @@ describe("Bun.FetchSession", () => {
     }
     // The close crosses two threads after the collection; give it until a
     // deadline, and fail with a message instead of hanging.
-    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline;) {
       await new Promise(resolve => setImmediate(resolve));
     }
     expect(done).toBe(true);

@@ -183,4 +183,80 @@ describe("ArrayBufferSink", () => {
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // write() resolves the native sink only after the chunk is converted. A
+  // String object's Symbol.toPrimitive / toString runs user JS, and that JS can
+  // close() the sink, which frees it. Before, write() held the freed sink and
+  // read it (ASAN: heap-use-after-free in ArrayBufferSink::write_latin1).
+  describe("write() converts the chunk before it resolves the sink", () => {
+    it("a conversion hook that closes the sink reports the closed sink", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          for (const key of ["toPrimitive", "toString"]) {
+            for (const ret of ["payload", "pay\u4f60"]) {
+              const s = new Bun.ArrayBufferSink();
+              s.start({ highWaterMark: 64 });
+              s.write("seed");
+              const hook = () => { s.close(); return ret; };
+              const chunk = Object.assign(new String("x"), key === "toPrimitive" ? { [Symbol.toPrimitive]: hook } : { toString: hook });
+              for (const label of ["closing write", "write after"]) {
+                const arg = label === "closing write" ? chunk : "y";
+                try { console.log(key, ret.length, label, s.write(arg)); }
+                catch (e) { console.log(key, ret.length, label, "threw", /already been closed/.test(e.message)); }
+              }
+            }
+          }
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const expected = ["toPrimitive", "toString"]
+        .flatMap(key =>
+          [7, 4].flatMap(len => ["closing write", "write after"].map(l => `${key} ${len} ${l} threw true`)),
+        )
+        .join("\n");
+      expect(stdout.trim()).toBe(expected);
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // The accepted chunk types do not change: a String object still writes.
+    it("still accepts a String object, Object(str) and a String subclass", () => {
+      class Sub extends String {}
+      const write = (chunk: any) => {
+        const s = new ArrayBufferSink();
+        s.start({});
+        const n = s.write(chunk);
+        return [n, new TextDecoder().decode(s.end() as ArrayBuffer)];
+      };
+      expect(write(new String("abc"))).toEqual([3, "abc"]);
+      expect(write(Object("abc"))).toEqual([3, "abc"]);
+      expect(write(new Sub("abc"))).toEqual([3, "abc"]);
+      // An own hook decides the bytes, as it does for any string coercion.
+      expect(write(Object.assign(new String("abc"), { [Symbol.toPrimitive]: () => "zz" }))).toEqual([2, "zz"]);
+    });
+
+    // An error of the receiver still wins over an error of the chunk, and a
+    // chunk that needs no coercion never runs a hook.
+    it("reports a closed sink and a bad `this` before a bad chunk", () => {
+      const closed = new ArrayBufferSink();
+      closed.start({});
+      closed.close();
+      for (const chunk of ["", new Uint8Array(0), undefined, 123, null]) {
+        expect(() => closed.write(chunk as any)).toThrow(/already been closed/);
+      }
+      const live = new ArrayBufferSink();
+      live.start({});
+      expect(() => live.write.call({}, "x")).toThrow("Expected ArrayBufferSink");
+      expect(() => live.write.call({}, 123 as any)).toThrow("Expected ArrayBufferSink");
+      expect(() => live.write(123 as any)).toThrow("write() expects a string, ArrayBufferView, or ArrayBuffer");
+      expect(() => live.write()).toThrow("write() expects a string, ArrayBufferView, or ArrayBuffer");
+    });
+  });
 });

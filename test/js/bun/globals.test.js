@@ -308,7 +308,9 @@ describe.concurrent("builtin modules read the native classes and objects, not th
         const exports = require(id);
         for (const name of names) {
           if (!Object.hasOwn(exports, name) || ofTheirOwn.includes(id + "." + name)) continue;
-          (exports[name] === natives[name] ? exported : replaced).push(id + "." + name);
+          // undici's WebSocket extends the native one.
+          const isNative = exports[name] === natives[name] || Object.getPrototypeOf(exports[name]) === natives[name];
+          (isNative ? exported : replaced).push(id + "." + name);
         }
       }
       console.log(JSON.stringify({ names, exported, replaced }));
@@ -321,6 +323,7 @@ describe.concurrent("builtin modules read the native classes and objects, not th
     expect(result.exported).toContain("http.WebSocket");
     expect(result.exported).toContain("perf_hooks.Performance");
     expect(result.exported).toContain("stream/web.TextDecoderStream");
+    expect(result.exported).toContain("undici.WebSocket");
     expect(result.exported).toContain("url.URL");
     expect(result.exported).toContain("util.TextDecoder");
     expect(result.exported).toContain("worker_threads.MessageChannel");

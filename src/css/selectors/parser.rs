@@ -182,26 +182,24 @@ pub mod attrs {
     }
 
     #[derive(Clone)]
-    pub struct AttrSelectorWithOptionalNamespace<Impl: SelectorImpl> {
-        pub(crate) namespace: Option<NamespaceConstraint<NamespaceUrl<Impl>>>,
+    pub struct AttrSelectorWithNamespace<Impl: SelectorImpl> {
+        pub(crate) namespace: NamespaceConstraint<NamespaceUrl<Impl>>,
         pub(crate) local_name: Impl::LocalName,
         pub(crate) local_name_lower: Impl::LocalName,
         pub(crate) operation: ParsedAttrSelectorOperation<Impl::AttrValue>,
         pub(crate) never_matches: bool,
     }
 
-    impl<Impl: BunSelectorImpl> AttrSelectorWithOptionalNamespace<Impl> {
+    impl<Impl: BunSelectorImpl> AttrSelectorWithNamespace<Impl> {
         pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
             dest.write_char(b'[')?;
-            if let Some(nsp) = &self.namespace {
-                match nsp {
-                    NamespaceConstraint::Specific(v) => {
-                        IdentFns::to_css(&v.prefix, dest)?;
-                        dest.write_char(b'|')?;
-                    }
-                    NamespaceConstraint::Any => {
-                        dest.write_str("*|")?;
-                    }
+            match &self.namespace {
+                NamespaceConstraint::Specific(v) => {
+                    IdentFns::to_css(&v.prefix, dest)?;
+                    dest.write_char(b'|')?;
+                }
+                NamespaceConstraint::Any => {
+                    dest.write_str("*|")?;
                 }
             }
             IdentFns::to_css(&self.local_name, dest)?;
@@ -231,13 +229,7 @@ pub mod attrs {
         }
 
         pub fn eql(&self, rhs: &Self) -> bool {
-            match (&self.namespace, &rhs.namespace) {
-                (None, None) => true,
-                (Some(a), Some(b)) => a.eql(b),
-                _ => return false,
-            }
-            .then_some(())
-            .is_some()
+            self.namespace.eql(&rhs.namespace)
                 && self.local_name.eql(&rhs.local_name)
                 && self.local_name_lower.eql(&rhs.local_name_lower)
                 && self.operation.eql(&rhs.operation)
@@ -245,7 +237,7 @@ pub mod attrs {
         }
         pub(crate) fn deep_clone(&self) -> Self {
             Self {
-                namespace: self.namespace.as_ref().map(|n| n.deep_clone()),
+                namespace: self.namespace.deep_clone(),
                 local_name: self.local_name,
                 local_name_lower: self.local_name_lower,
                 operation: self.operation.deep_clone(),
@@ -253,9 +245,7 @@ pub mod attrs {
             }
         }
         pub(crate) fn hash(&self, hasher: &mut Wyhash) {
-            if let Some(ns) = &self.namespace {
-                ns.hash(hasher);
-            }
+            self.namespace.hash(hasher);
             self.local_name.hash(hasher);
             self.local_name_lower.hash(hasher);
             self.operation.hash(hasher);
@@ -1981,7 +1971,7 @@ pub enum GenericComponent<Impl: SelectorImpl> {
         local_name: Impl::LocalName,
         local_name_lower: Impl::LocalName,
     },
-    /// Used only when local_name is already lowercase.
+    /// `[name op value]` with no namespace prefix. The name can have any letter case.
     AttributeInNoNamespace {
         local_name: Impl::LocalName,
         operator: attrs::AttrSelectorOperator,
@@ -1989,8 +1979,8 @@ pub enum GenericComponent<Impl: SelectorImpl> {
         case_sensitivity: attrs::ParsedCaseSensitivity,
         never_matches: bool,
     },
-    /// Use a Box in the less common cases with more data to keep size_of::<Component>() small.
-    AttributeOther(Box<attrs::AttrSelectorWithOptionalNamespace<Impl>>),
+    /// An `ns|` or `*|` attribute selector, in a Box to keep size_of::<Component>() small.
+    AttributeOther(Box<attrs::AttrSelectorWithNamespace<Impl>>),
 
     /// Pseudo-classes
     Negation(Box<[GenericSelector<Impl>]>),
@@ -3433,8 +3423,8 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
                 // [foo]
                 let local_name_lower: *const [u8] = arena_lowercase(input.arena(), local_name);
                 if let Some(ns) = namespace {
-                    let x = attrs::AttrSelectorWithOptionalNamespace::<Impl> {
-                        namespace: Some(ns),
+                    let x = attrs::AttrSelectorWithNamespace::<Impl> {
+                        namespace: ns,
                         local_name: Ident { v: local_name },
                         local_name_lower: Ident {
                             v: local_name_lower,
@@ -3505,7 +3495,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let attribute_flags = parse_attribute_flags(input)?;
 
     let value: Impl::AttrValue = std::ptr::from_ref::<[u8]>(value_str);
-    let (local_name_lower, local_name_is_ascii_lowercase): (Impl::LocalName, bool) = 'brk: {
+    let local_name_lower: Impl::LocalName = 'brk: {
         let first_uppercase = 'a: {
             for (i, &b) in local_name.iter().enumerate() {
                 if b >= b'A' && b <= b'Z' {
@@ -3517,21 +3507,19 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
         if let Some(first_uppercase) = first_uppercase {
             let str_ = &local_name[first_uppercase..];
             let lowered: *const [u8] = arena_lowercase(input.arena(), str_);
-            break 'brk (Ident { v: lowered }, false);
+            break 'brk Ident { v: lowered };
         } else {
-            break 'brk (
-                Ident {
-                    v: std::ptr::from_ref::<[u8]>(local_name),
-                },
-                true,
-            );
+            break 'brk Ident {
+                v: std::ptr::from_ref::<[u8]>(local_name),
+            };
         }
     };
     let case_sensitivity: attrs::ParsedCaseSensitivity =
         attribute_flags.to_case_sensitivity(local_name_lower.v(), namespace.is_some());
-    if namespace.is_some() && !local_name_is_ascii_lowercase {
+    // lightningcss boxes uppercase names (`|| !local_name_is_ascii_lowercase`) for its matcher.
+    if let Some(namespace) = namespace {
         Ok(GenericComponent::AttributeOther(Box::new(
-            attrs::AttrSelectorWithOptionalNamespace::<Impl> {
+            attrs::AttrSelectorWithNamespace::<Impl> {
                 namespace,
                 local_name: Ident {
                     v: std::ptr::from_ref::<[u8]>(local_name),

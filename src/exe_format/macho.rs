@@ -126,7 +126,7 @@ impl MachoFile {
         let mut iter = self.iterator();
         let (seg, sections_base) = loop {
             let Some(entry) = iter.next() else {
-                return Ok(None);
+                return Err(MachoError::InvalidObject);
             };
             if entry.hdr.cmd != macho::LC::SEGMENT_64 {
                 continue;

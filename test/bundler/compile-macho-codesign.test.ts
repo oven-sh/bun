@@ -587,6 +587,7 @@ describe("--macos-info-plist", () => {
       "InvalidObject",
     ],
     ["is listed past the end of its load command", t => t.writeUInt32LE(100, 32 + 64), "InvalidObject"],
+    ["is in a segment that is not named __TEXT", t => t.write("__TEXT.1", 32 + 8, "latin1"), "InvalidObject"],
     [
       "was filled by an earlier compile and claims less room than it uses",
       (t, slot) => {

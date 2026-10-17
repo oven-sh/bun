@@ -1170,11 +1170,12 @@ When compiling a standalone executable for macOS, you can embed an `Info.plist` 
 
 Bun puts the file into the `__TEXT,__info_plist` section of the executable. It is the same section that `ld -sectcreate __TEXT __info_plist` creates, and it is where macOS reads the `Info.plist` of a program that is not inside an `.app` bundle. The compiled program then has the bundle identifier and the other keys of that file (`CFBundleGetMainBundle()`, `NSBundle.mainBundle`), and they travel with the executable.
 
-- The file is an XML or binary property list with a dictionary at its root. Bun does not check its keys, and it does not expand Xcode build settings such as `$(PRODUCT_BUNDLE_IDENTIFIER)`.
+- The file is an XML or binary property list with a dictionary at its root. An XML file must be well-formed: macOS accepts some files that Bun refuses, for example one with text after the closing tag. Bun does not check the keys, and it does not expand Xcode build settings such as `$(PRODUCT_BUNDLE_IDENTIFIER)`.
 - The file can be at most 4096 bytes. If it is larger, remove the indentation and the `<!DOCTYPE>` line, or convert it to a binary property list, which is usually smaller. On macOS: `plutil -convert binary1 -o app.binary.plist app.plist`.
 - The option works when cross-compiling, for example with `--target=bun-darwin-arm64` on Linux.
 - The Bun executable that the program is built from must have room for the file. An older one, from `--target=bun-darwin-arm64-v1.x.y` or `--compile-executable-path`, fails with an error.
 - A program compiled from a compiled executable does not inherit its `Info.plist`.
+- The `Info.plist` is part of the executable, so it also applies to a process that the executable starts from itself, such as the WebKit host process of `Bun.WebView`.
 - If the directory of the executable has a file named `Info.plist`, and the `CFBundleExecutable` of that file is the name of the executable, macOS uses that file and not the embedded one.
 - In the JavaScript API, `compile.macos.infoPlist` is read and checked for every target, and it goes into the executable only when the target is macOS. The CLI flag is an error for another target.
 

@@ -125,17 +125,17 @@ pub fn copy_file_with_state(
         {
             // We only check once if the ioctl is supported, and cache the result.
             // EXT4 does not support FICLONE.
-            let rc = crate::linux::ioctl_ficlone(out, in_);
+            let errno = match crate::ioctl_ficlone(out, in_) {
+                Ok(()) => E::SUCCESS,
+                Err(err) => err.get_errno(),
+            };
             // the ordering is flipped but it is consistent with other system calls.
-            crate::syslog!("ioctl_ficlone({}, {}) = {}", in_, out, rc);
-            match crate::get_errno(rc) {
+            crate::syslog!("ioctl_ficlone({}, {}) = {:?}", in_, out, errno);
+            match errno {
                 E::SUCCESS => return Ok(()),
                 E::EXDEV => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
                 }
-
-                // Don't worry about EINTR here.
-                E::EINTR => {}
 
                 // On Linux EOPNOTSUPP == ENOTSUP.
                 E::EACCES | E::EBADF | E::EINVAL | E::ENOTSUP | E::ENOSYS | E::EPERM => {
@@ -351,21 +351,18 @@ pub(crate) fn copy_file_range(
         && !copy_file_state.contains(LinuxCopyFileState::HAS_SEEN_EXDEV)
         && !copy_file_state.contains(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED)
     {
-        loop {
-            // SAFETY: raw syscall; fds valid, offset ptrs null
-            let rc = unsafe {
-                crate::linux::copy_file_range(
-                    in_,
-                    core::ptr::null_mut(),
-                    out,
-                    core::ptr::null_mut(),
-                    len,
-                    flags,
-                )
-            };
-            crate::syslog!("copy_file_range({}, {}, {}) = {}", in_, out, len, rc);
-            match crate::get_errno(rc) {
-                E::SUCCESS => return Ok(rc as usize),
+        let result = crate::copy_file_range(
+            Fd::from_native(in_),
+            None,
+            Fd::from_native(out),
+            None,
+            len,
+            flags,
+        );
+        crate::syslog!("copy_file_range({}, {}, {}) = {:?}", in_, out, len, result);
+        match result {
+            Ok(written) => return Ok(written),
+            Err(err) => match err.get_errno() {
                 // these may not be regular files, try fallback
                 E::EINVAL => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
@@ -383,13 +380,11 @@ pub(crate) fn copy_file_range(
                     bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
                     CAN_USE_COPY_FILE_RANGE.store(-1, Ordering::Relaxed);
                 }
-                E::EINTR => continue,
                 _ => {
                     // failed for some other reason
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                 }
-            }
-            break;
+            },
         }
     }
 

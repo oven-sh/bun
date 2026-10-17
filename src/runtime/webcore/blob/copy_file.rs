@@ -595,6 +595,7 @@ impl CopyFile {
                     .path()
                     .slice_z(&mut source_buf),
                 dest,
+                0,
             ) {
                 bun_sys::Result::Err(errno) => {
                     let err_path = self.destination_file_store.pathlike.path().slice().to_vec();

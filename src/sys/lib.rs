@@ -1579,6 +1579,8 @@ mod safe_libc {
         pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
         pub(crate) safe fn isatty(fd: c_int) -> c_int;
         pub(crate) safe fn fsync(fd: c_int) -> c_int;
+        // Not in the `libc` crate for Darwin, which has had it since 10.7.
+        pub(crate) safe fn fdatasync(fd: c_int) -> c_int;
         pub(crate) safe fn fchdir(fd: c_int) -> c_int;
         pub(crate) safe fn umask(mode: libc::mode_t) -> libc::mode_t;
         pub(crate) safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
@@ -2471,9 +2473,61 @@ mod posix_impl {
         })
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
+        unlink_without_path(path).map_err(|err| err.with_path(path.as_bytes()))
+    }
+
+    // node:fs reports the path its caller passed, not the NUL-terminated copy
+    // given to the syscall. The next four put no path on the error, so that
+    // node:fs boxes a path once.
+
+    pub fn unlink_without_path(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-        check_p!(unsafe { libc::unlink(path.as_ptr()) }, Tag::unlink, path);
+        check!(unsafe { libc::unlink(path.as_ptr()) }, Tag::unlink);
         Ok(())
+    }
+    /// `rmdir(2)`, tagged `rmdir`. `bun_sys::rmdir` is `unlinkat(AT_REMOVEDIR)`,
+    /// tagged `unlink`.
+    pub fn posix_rmdir(path: &ZStr) -> Maybe<()> {
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+        check!(unsafe { libc::rmdir(path.as_ptr()) }, Tag::rmdir);
+        Ok(())
+    }
+    /// `link(2)`. On macOS it follows a symlink at `from`, which
+    /// [`linkat`] does not.
+    pub fn link(from: &ZStr, to: &ZStr) -> Maybe<()> {
+        // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
+        check!(unsafe { libc::link(from.as_ptr(), to.as_ptr()) }, Tag::link);
+        Ok(())
+    }
+    pub fn truncate(path: &ZStr, len: i64) -> Maybe<()> {
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+        check!(unsafe { libc::truncate(path.as_ptr(), len) }, Tag::truncate);
+        Ok(())
+    }
+    /// `mkdtemp(3)`. `template` is a `...XXXXXX` pattern with its NUL
+    /// terminator. The call replaces the `XXXXXX` with the name it created.
+    /// The error carries no path.
+    pub fn mkdtemp(template: &mut [u8]) -> Maybe<()> {
+        let [.., 0] = template else {
+            return Err(Error::from_code_int(libc::EINVAL, Tag::mkdtemp));
+        };
+        let len = template.len() - 1;
+        loop {
+            // SAFETY: `template` is a writable NUL-terminated C string, and
+            // mkdtemp(3) writes only over its `XXXXXX`.
+            if !unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) }.is_null() {
+                return Ok(());
+            }
+            let e = last_errno();
+            if e != libc::EINTR {
+                return Err(Error::from_code_int(e, Tag::mkdtemp));
+            }
+            // The failed call can leave its candidate name in place of the
+            // `XXXXXX`. libc then rejects the template with EINVAL.
+            if let Some(suffix) = len.checked_sub(6) {
+                template[suffix..len].copy_from_slice(b"XXXXXX");
+            }
+        }
     }
     pub fn rename(from: &ZStr, to: &ZStr) -> Maybe<()> {
         check_p!(
@@ -3066,10 +3120,9 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// Windows uses `GetFileAttributesW`; posix is plain `access`.
+    /// Windows uses `GetFileAttributesW`; posix is `faccessat(AT_FDCWD, path, F_OK)`.
     pub fn exists_z(path: &ZStr) -> bool {
-        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-        unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
+        exists_at(Fd::cwd(), path)
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
@@ -3079,9 +3132,16 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-            // valid NUL-terminated C string.
-            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+            loop {
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+                // valid NUL-terminated C string.
+                if unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) } == 0 {
+                    return true;
+                }
+                if last_errno() != libc::EINTR {
+                    return false;
+                }
+            }
         }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
@@ -3157,6 +3217,17 @@ mod posix_impl {
     pub fn fsync(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fsync(fd.native()), Tag::fsync);
         Ok(())
+    }
+    pub fn fdatasync(fd: Fd) -> Maybe<()> {
+        loop {
+            if safe_libc::fdatasync(fd.native()) == 0 {
+                return Ok(());
+            }
+            match last_errno() {
+                libc::EINTR => continue,
+                e => return Err(Error::from_code_int(e, Tag::fdatasync).with_fd(fd)),
+            }
+        }
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
@@ -3395,10 +3466,10 @@ mod posix_impl {
                 flags: u32,
             ) -> i32;
         }
-        pub fn clonefile_(from: &ZStr, to: &ZStr) -> Maybe<()> {
+        pub fn clonefile_(from: &ZStr, to: &ZStr, flags: u32) -> Maybe<()> {
             check_p!(
                 // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
-                unsafe { clonefile(from.as_ptr(), to.as_ptr(), 0) },
+                unsafe { clonefile(from.as_ptr(), to.as_ptr(), flags) },
                 Tag::clonefile,
                 from
             );
@@ -3624,6 +3695,67 @@ mod posix_impl {
             }
             return Ok(rc as usize);
         }
+    }
+
+    /// `copy_file_range(2)`. An offset of `None` uses the file position and
+    /// advances it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn copy_file_range(
+        in_: Fd,
+        mut off_in: Option<&mut i64>,
+        out: Fd,
+        mut off_out: Option<&mut i64>,
+        len: usize,
+        flags: u32,
+    ) -> Maybe<usize> {
+        let rc = check!(
+            // SAFETY: each offset pointer is null or an exclusive borrow that
+            // outlives the call; the kernel validates the fds.
+            unsafe {
+                super::linux::copy_file_range(
+                    in_.native(),
+                    off_in
+                        .as_deref_mut()
+                        .map_or(core::ptr::null_mut(), core::ptr::from_mut),
+                    out.native(),
+                    off_out
+                        .as_deref_mut()
+                        .map_or(core::ptr::null_mut(), core::ptr::from_mut),
+                    len,
+                    flags,
+                )
+            },
+            Tag::copy_file_range
+        );
+        Ok(rc as usize)
+    }
+
+    /// `splice(2)` between the file positions of `src` and `dest`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn splice(src: Fd, dest: Fd, len: usize, flags: u32) -> Maybe<usize> {
+        let rc = check!(
+            // SAFETY: null offsets use the file positions; the kernel
+            // validates the fds.
+            unsafe {
+                libc::splice(
+                    src.native(),
+                    core::ptr::null_mut(),
+                    dest.native(),
+                    core::ptr::null_mut(),
+                    len,
+                    flags,
+                )
+            },
+            Tag::splice
+        );
+        Ok(rc as usize)
+    }
+
+    /// `ioctl(dest, FICLONE, src)`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn ioctl_ficlone(dest: Fd, src: Fd) -> Maybe<()> {
+        check!(super::linux::ioctl_ficlone(dest, src), Tag::ioctl_ficlone);
+        Ok(())
     }
 }
 #[cfg(unix)]
@@ -7230,13 +7362,12 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
-/// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
+/// [`exists_z`] on POSIX, where `file_only` is ignored.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]
     {
         let _ = file_only;
-        // SAFETY: path is NUL-terminated.
-        unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 }
+        exists_z(path)
     }
     #[cfg(windows)]
     {

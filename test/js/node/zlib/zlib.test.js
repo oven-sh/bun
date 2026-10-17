@@ -135,6 +135,40 @@ describe("zlib", () => {
       });
     }
   });
+
+  describe("memLevel and strategy", () => {
+    const data = Buffer.from(Array.from({ length: 4000 }, (_, i) => Math.imul(i, 2654435761).toString(36)).join(" "));
+    for (const [compress, decompress, nodeCompress] of [
+      [gzipSync, gunzipSync, zlib.gzipSync],
+      [deflateSync, inflateSync, zlib.deflateRawSync],
+    ]) {
+      it.each([
+        { strategy: zlib.constants.Z_HUFFMAN_ONLY },
+        { strategy: zlib.constants.Z_RLE },
+        { strategy: zlib.constants.Z_FIXED },
+        { memLevel: 1 },
+        { memLevel: 9 },
+        { memLevel: 1, strategy: zlib.constants.Z_RLE, level: 9 },
+      ])(`${compress.name}: %j gives the bytes node:zlib gives, which are not the default's`, options => {
+        const compressed = Buffer.from(compress(data, options));
+        expect(compressed).toEqual(nodeCompress(data, options));
+        expect(compressed).not.toEqual(Buffer.from(compress(data)));
+        expect(Buffer.from(decompress(compressed))).toEqual(data);
+      });
+
+      it.each([{ memLevel: 0 }, { memLevel: 10 }, { strategy: -1 }, { strategy: 5 }])(
+        `${compress.name}: %j is not a value zlib takes`,
+        options => {
+          expect(() => compress(data, options)).toThrow(new Error("Zlib error: Invalid argument"));
+        },
+      );
+
+      it(`${compress.name}: libdeflate has neither`, () => {
+        const library = "libdeflate";
+        expect(compress(data, { library, memLevel: 10, strategy: 5 })).toEqual(compress(data, { library }));
+      });
+    }
+  });
 });
 
 function* window(buffer, size, advance = size) {

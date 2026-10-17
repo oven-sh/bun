@@ -332,7 +332,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
 
 /**
  * Where the published types promise what the schema does not do: a call they allow has an argument
- * the schema refuses, or a result they name is not one the schema gives. They may be narrower than it,
+ * the schema refuses or an option its dictionary does not have, so nothing reads it, or a result
+ * they name is not one the schema gives. They may be narrower than it,
  * which says "a buffer" of a `Uint8Array`, but not by leaving out `null`.
  */
 function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, schema: ts.Type) {
@@ -340,6 +341,8 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   const compared = new Map<ts.Type, Set<ts.Type>>();
   const show = (type: ts.Type) => checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
   const generated = schema.symbol.declarations![0].getSourceFile();
+  const isGenerated = (type: ts.Type) =>
+    !!type.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
 
   function refusal(allowed: ts.Signature, taken: ts.Signature) {
     for (const [i, parameter] of taken.parameters.entries()) {
@@ -350,6 +353,12 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
       const takes = checker.getTypeOfSymbol(parameter);
       if (!checker.isTypeAssignableTo(given, takes))
         return `${parameter.name} takes ${show(takes)}, not ${show(given)}`;
+      const dictionaries = (takes.isUnion() ? takes.types : [takes]).filter(isGenerated);
+      const unread = (given.isUnion() ? given.types : [given])
+        .flatMap(type => (dictionaries.length > 0 && type.flags & ts.TypeFlags.Object ? type.getProperties() : []))
+        .filter(member => !dictionaries.some(dictionary => dictionary.getProperty(member.name)));
+      if (unread.length > 0)
+        return `${parameter.name} has no ${[...new Set(unread.map(member => member.name))].join(", ")}`;
     }
     return null;
   }
@@ -368,8 +377,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   function compare(path: string, published: ts.Type, schema: ts.Type) {
     const calls = schema.getCallSignatures();
     const constructs = schema.getConstructSignatures();
-    const isGenerated = schema.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
-    if (calls.length === 0 && constructs.length === 0 && !isGenerated) {
+    if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
       const promisesNothing = published.flags & ts.TypeFlags.Void;
       const givesNull = schema.isUnion() && schema.types.some(type => type.flags & ts.TypeFlags.Null);
       if (

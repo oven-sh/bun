@@ -2004,6 +2004,7 @@ pub(crate) mod JSZlib {
                 // `init` reserves `deflateBound` of the input.
                 let mut list: Vec<u8> = Vec::new();
 
+                let defaults = zlib::Options::default();
                 let mut reader = zlib::ZlibCompressorArrayList::init(
                     data,
                     &mut list,
@@ -2011,7 +2012,13 @@ pub(crate) mod JSZlib {
                         window_bits: 15,
                         gzip: is_gzip,
                         level,
-                        ..Default::default()
+                        mem_level: options
+                            .mem_level
+                            .map_or(defaults.mem_level, |mem_level| mem_level as i32),
+                        strategy: options
+                            .strategy
+                            .map_or(defaults.strategy, |strategy| strategy as i32),
+                        ..defaults
                     },
                 )
                 .map_err(|err| init_error(heap, err))?;

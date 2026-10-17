@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -317,6 +317,25 @@ describe.concurrent("bun pm pkg", () => {
           get("\\357\\277\\275", "\\376"),
         ]),
       ).toEqual([one(2), one(3), one(1)]);
+    });
+
+    // The time was quadratic: 157 s for these 250,000 values in a release build, where it now takes 0.3 s.
+    it("should get a name from every element of a large array", async () => {
+      const n = isDebug || isASAN ? 16_000 : 250_000;
+      using dir = tempDir("pm-pkg-get-wide", {
+        "package.json": `{"name":"n","arr":[${Array(n).fill('{"q":1}').join(",")}]}`,
+      });
+      // `join` writes the indexes: a callback for each element is slow in a debug build.
+      const indexes = Array.from(Array(n).keys());
+      const expected = `{\n  "arr[${indexes.join('].q": 1,\n  "arr[')}].q": 1\n}\n`;
+      const { output, error, code } = await runPmPkg(["get", "arr.q"], String(dir));
+      // `toBe` on the output would print megabytes when it fails.
+      expect({ same: output === expected, length: output.length, error, code }).toEqual({
+        same: true,
+        length: expected.length,
+        error: "",
+        code: 0,
+      });
     });
 
     it("should handle boolean values", async () => {

@@ -314,6 +314,118 @@ describe("node:test", () => {
     });
   });
 
+  test("should run a failed test's hooks, mock restore and remaining subtests before the next test when the error is thrown outside its promise", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["30-outside-error-order.js"]);
+    const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+    // The line `node --test` (v26.3.0) prints for this fixture.
+    expect(JSON.parse(order)).toEqual([
+      "afterEach(A)",
+      "t.after(A)",
+      "B start shared=clean read=real",
+      "B end shared=used-by-B",
+      "afterEach(B)",
+      "sub1",
+      "afterEach(sub1)",
+      "sub2",
+      "afterEach(sub2)",
+      "P end",
+      "afterEach(P)",
+      "C start",
+      "C end",
+      "afterEach(C)",
+      "afterEach(R)",
+      "t.after(R)",
+      "D start",
+      "D end",
+      "afterEach(D)",
+      "S after dispatchEvent seen=",
+      "afterEach(S)",
+      "E",
+      "afterEach(E)",
+    ]);
+    // Each error is reported once, under the test that was running.
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown from a timer of A",
+      "(fail) A",
+      "(pass) B",
+      "error: thrown from a timer of sub1",
+      "(fail) P",
+      "(pass) C",
+      "error: rejected in R",
+      "(fail) suite > R",
+      "(pass) suite > D",
+      "error: thrown from a listener of S",
+      "(fail) S",
+      "(pass) E",
+    ]);
+    // S never settles, so waiting for it would end in a bun:test timeout.
+    expect(stderr).not.toContain("timed out");
+    expect(exitCode).toBe(1);
+  });
+
+  test("should give up a hook that is pending when the error is thrown and run the test's remaining hooks before the next test", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["31-outside-error-in-hooks.js"]);
+    const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+    expect(JSON.parse(order)).toEqual([
+      "afterEach(H)",
+      "second afterEach(H)",
+      "t.after(H)",
+      "I",
+      "afterEach(I)",
+      "second afterEach(I)",
+      "beforeEach(J)",
+      "afterEach(J)",
+      "second afterEach(J)",
+      "K",
+      "afterEach(K)",
+      "second afterEach(K)",
+    ]);
+    // The hooks never settle, so waiting for them would end in a bun:test timeout.
+    expect(stderr).not.toContain("timed out");
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown while an afterEach hook was pending",
+      "(fail) H",
+      "(pass) I",
+      "error: thrown while a beforeEach hook was pending",
+      "(fail) J",
+      "(pass) K",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("should not let a todo subtest, expectFailure, t.skip() or t.todo() absorb an error thrown outside the test's promise", async () => {
+    const { exitCode, stderr } = await runTests(["32-outside-error-not-absorbed.js"]);
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown while a todo subtest was pending",
+      "(fail) a todo subtest is pending",
+      "error: thrown while an expectFailure subtest was pending",
+      "(fail) an expectFailure subtest is pending",
+      "error: thrown after t.skip()",
+      "(fail) after t.skip()",
+      "error: thrown after t.todo()",
+      "(fail) after t.todo()",
+      "error: thrown in an expectFailure test",
+      "(fail) expectFailure",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("should retry from a clean test, after the first attempt's hooks, when the error is thrown outside the test's promise", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["33-outside-error-retry.js"], {}, ["--retry=2"]);
+    const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+    expect(JSON.parse(order)).toEqual([
+      "attempt 1 start",
+      "t.after of attempt 1",
+      "attempt 2 start",
+      "t.after of attempt 2",
+    ]);
+    expect(errorsAndVerdicts(stderr)).toEqual([
+      "error: thrown in the first attempt",
+      "(pass) flaky parent (attempt 2)",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("should resolve the promise of a test that a name pattern filters out", async () => {
     const { exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, ["-t", "should resolve"]);
     expect(stderr).not.toContain("timed out");
@@ -342,6 +454,14 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// The `error: ...` lines and the per-test verdict lines of a `bun test` report, in order.
+function errorsAndVerdicts(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(line => /^(error: |\((pass|fail|skip|todo)\) )/.test(line))
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
 }
 
 describe("node:test mock", () => {

@@ -640,6 +640,8 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
+    /// See [`BunTest::offer_uncaught_to_node_test`].
+    pub(crate) node_test_uncaught: Option<NodeTestUncaught>,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -677,6 +679,7 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            node_test_uncaught: None,
         }
     }
 
@@ -1260,6 +1263,42 @@ impl BunTest {
         Some(cfg_data)
     }
 
+    /// `true`: `node:test` runs the failed entry's hooks and subtests (all inside this one callback) and then calls its `done`, so do not advance yet.
+    pub(crate) fn offer_uncaught_to_node_test(
+        this_strong: &BunTestPtr,
+        global_this: &JSGlobalObject,
+        current: &RefDataValue,
+        error: JSValue,
+    ) -> bool {
+        // The call re-enters JS: copy the handler out so that no borrow of the `BunTest` is live across it.
+        let handler = match &this_strong.get().node_test_uncaught {
+            Some(claim) if claim.entry.is_same_entry(current) => claim.handler.get(),
+            _ => return false,
+        };
+        if global_this.has_exception() {
+            return false;
+        }
+        // JS gets the thrown value, not the `JSC::Exception` cell around it.
+        let thrown_value = error.to_error().unwrap_or(error);
+        let taken = match handler.call(global_this, JSValue::UNDEFINED, &[thrown_value]) {
+            Ok(taken) => taken.to_boolean(),
+            Err(e) => {
+                // As `on_unhandled_rejection` does for `run`: a termination is left where it is.
+                if !global_this.has_pending_termination_exception() {
+                    let thrown = global_this.take_exception(e);
+                    this_strong.get().on_uncaught_exception(global_this, Some(thrown), false, current);
+                }
+                false
+            }
+        };
+        bun_core::scoped_log!(bun_test_group, "offerUncaughtToNodeTest -> taken: {}", taken);
+        if taken {
+            // The handler queued promise reactions, possibly after this turn's last drain or under a live JS frame: run them next turn.
+            this_strong.get().wants_wakeup = true;
+        }
+        taken
+    }
+
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
     pub(crate) fn on_uncaught_exception(
         &mut self,
@@ -1399,11 +1438,18 @@ bun_jsc::jsc_host_abi! {
 
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
 // `ExecutionEntry` owned by `BunTest::execution`.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
     pub(crate) remaining_repeat_count: i64,
+}
+
+/// Registered through `jest::js_node_test_on_uncaught` each time bun:test invokes a `node:test` test.
+pub(crate) struct NodeTestUncaught {
+    /// The entry whose callback registered `handler`.
+    pub(crate) entry: RefDataValue,
+    pub(crate) handler: Strong,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
@@ -1427,6 +1473,17 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
+    /// Same execution entry in the same repeat (a retry of it compares equal).
+    pub(crate) fn is_same_entry(&self, other: &RefDataValue) -> bool {
+        match (self, other) {
+            (
+                RefDataValue::Execution { group_index: a_group, entry_data: Some(a) },
+                RefDataValue::Execution { group_index: b_group, entry_data: Some(b) },
+            ) => a_group == b_group && a == b,
+            _ => false,
+        }
+    }
+
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;

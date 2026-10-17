@@ -185,13 +185,17 @@ impl ProcessAutoKiller {
             let mut step_ms: i64 = 1;
             while !self.terminating.is_empty() {
                 self.terminating.retain(|waiting| {
-                    // SAFETY: ref'd by `terminating`.
-                    let p = unsafe { &*waiting.process };
+                    // SAFETY: ref'd by `terminating`; nothing else borrows it.
+                    let p = unsafe { &mut *waiting.process };
                     let ended = p.has_exited() || !Self::can_force_kill(p) || {
                         let mut status: core::ffi::c_int = 0;
-                        // This reaps the child, which is fine: nothing else waits for it any more.
                         // SAFETY: `status` is a valid out-pointer.
-                        unsafe { libc::waitpid(p.pid, &raw mut status, libc::WNOHANG) != 0 }
+                        let reaped = unsafe { libc::waitpid(p.pid, &raw mut status, libc::WNOHANG) } != 0;
+                        if reaped {
+                            // The pid can be another process's from here on, and `kill` leaves alone what is not watched.
+                            p.close();
+                        }
+                        reaped
                     };
                     if ended {
                         // SAFETY: releases the ref that `kill_processes` left with `terminating`.

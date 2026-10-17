@@ -256,6 +256,8 @@ pub struct RareData {
     websocket_inflate_scratch: Option<Vec<u8>>,
     /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
     libdeflate_decompressor: Option<libdeflate::OwnedDecompressor>,
+    /// Parked mimalloc heap for short synchronous parses; see [`Self::take_scratch_arena`].
+    scratch_arena: Option<bun_alloc::Arena>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -306,6 +308,7 @@ impl Default for RareData {
             compression_scratch: None,
             websocket_inflate_scratch: None,
             libdeflate_decompressor: None,
+            scratch_arena: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -771,6 +774,21 @@ impl RareData {
         if self.websocket_inflate_scratch.is_none() && buffer.capacity() <= KEEP {
             buffer.clear();
             self.websocket_inflate_scratch = Some(buffer);
+        }
+    }
+
+    /// Per VM, not a thread-local: mimalloc keeps a heap whose thread exits, and
+    /// `VirtualMachine::destroy` frees this one on the Worker's own thread.
+    pub fn take_scratch_arena(&mut self) -> bun_alloc::Arena {
+        self.scratch_arena.take().unwrap_or_default()
+    }
+
+    /// Hand a taken arena back; the slot keeps the first one returned and recycles it past `KEEP`.
+    pub fn put_back_scratch_arena(&mut self, mut arena: bun_alloc::Arena) {
+        const KEEP: usize = 64 * 1024;
+        if self.scratch_arena.is_none() {
+            arena.reset_retain_with_limit(KEEP);
+            self.scratch_arena = Some(arena);
         }
     }
 

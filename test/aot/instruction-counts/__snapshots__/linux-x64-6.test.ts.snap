@@ -123,7 +123,7 @@ exports[`adds up an array of numbers with a for loop in a small function 1`] = `
 "typed, function: 4.43 instructions (kernel 4.31, module 0.12), 330 bytes
 typed, module level: 4.25 instructions (module 4.25), 1741 bytes
 untyped, function: 57.32 instructions (kernel 34.42, stub Add 22.78, module 0.12), 403 bytes
-untyped, module level: 42.03 instructions (module 42.03), 2573 bytes"
+untyped, module level: 43.53 instructions (module 40.53, outlined code 3), 2557 bytes"
 `;
 
 exports[`turns an object of a number, a string and two dates into JSON 1`] = `

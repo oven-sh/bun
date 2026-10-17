@@ -12570,14 +12570,14 @@ impl<'p, 's> Checker<'p, 's> {
                 return member.kind == MemberKind::Property
                     && !member.flags.intersects(Flags::ACCESSOR | Flags::ABSTRACT);
             }
-            let is_parameter_property = self.class_constructor(file, class).is_some_and(
-                |constructor| {
-                    hir[constructor].params.iter().any(|p| {
+            let is_parameter_property =
+                self.class_constructor(file, class)
+                    .is_some_and(|constructor| {
+                        hir[constructor].params.iter().any(|p| {
                         hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
                             && matches!(hir[hir[p].pat].kind, PatKind::Ident(key) if key == name)
                     })
-                },
-            );
+                    });
             if is_parameter_property {
                 return true;
             }

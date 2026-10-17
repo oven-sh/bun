@@ -14,3 +14,28 @@ door tools exit ^<bun_runtime::cli::run_command::RunCommand>::check_main$
 door tools exit ^bun_runtime::cli::aot_audit::prepare$
 door tools exit ^Bun__BytecodeLinkEncoder__setTypedProgram$
 door jit return ^Bun__installCompilers$
+feature bundler Bun.build, HTML imports and the development server
+when bundler Bun build
+when bundler loader html
+smallest bundler 1500000
+door bundler return ^Bun__hasBundler$
+door bundler exit ^<*bun_runtime::bake::
+door bundler exit ^<*bun_runtime::server::html_bundle::
+door bundler exit ^<*bun_runtime::api::js_bundle_completion_task::
+door bundler exit ^<*bun_runtime::api::js_bundler::
+door bundler exit ^<*bun_bundler::(bundle_v2|linker_context|HTMLScanner|Chunk|chunk|LinkerContext|LinkerGraph|Graph|ThreadPool|barrel_imports|DeferredBatchTask|ServerComponentParseTask|AstBuilder|BundleThread)::
+door bundler exit ^BunObject_callback_build$
+door bundler exit ^BunServe__on(Resolve|Reject)Plugins$
+door bundler exit ^WebCore::JS(HTMLBundle|FrameworkFileSystemRouter|BuildArtifact)::create(Prototype|Structure|Constructor)\(
+feature color Bun.color
+when color Bun color
+door color exit ^BunObject_callback_color$
+feature htmlrewriter HTMLRewriter
+when htmlrewriter global HTMLRewriter
+smallest htmlrewriter 200000
+door htmlrewriter exit ^<?<?bun_runtime::api::html_rewriter::
+door htmlrewriter exit ^core::ptr::drop_glue::<(alloc::boxed::Box<)?bun_runtime::api::html_rewriter::
+door htmlrewriter exit ^Bun__HTMLRewriter__
+door htmlrewriter exit ^HTMLRewriterSink__
+door htmlrewriter exit ^WebCore::(HTMLRewriterSink__|JS(Readable)?HTMLRewriterSink)
+door htmlrewriter exit ^WebCore::JS(HTMLRewriter|HTMLRewriterTransform|TextChunk|DocType|DocEnd|Comment|EndTag|AttributeIterator|Element)::create(Prototype|Structure|Constructor)\(

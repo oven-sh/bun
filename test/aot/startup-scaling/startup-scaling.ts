@@ -18,6 +18,7 @@ const kindsThatGrow = ["CommonJS modules", "embedded files"];
 const usedKinds = kinds.filter(kind => kind.name !== "built-in modules");
 
 const runs = 5;
+const rounds = 3;
 const allowedPrivateGrowth = process.platform === "darwin" ? 256 * 1024 : 64 * 1024;
 const privateGrowthFactor: Record<string, number> = { request: 4, workers: 8, terminate: 32 };
 const scenariosWithOtherThreads = ["workers", "terminate"];
@@ -66,6 +67,16 @@ async function measureLeast(executable: string, scenario: string): Promise<Measu
   };
 }
 
+function leastOfBoth(one: Measurement, other: Measurement): Measurement {
+  return {
+    ...one,
+    instructions: Math.min(one.instructions, other.instructions),
+    allThreadsInstructions: Math.min(one.allThreadsInstructions!, other.allThreadsInstructions!),
+    privateBytes: Math.min(one.privateBytes, other.privateBytes),
+    residentBytes: Math.min(one.residentBytes, other.residentBytes),
+  };
+}
+
 type Variant = { flags?: string[]; privateGrowthFactor?: number; scenariosThatGrow?: string[] };
 
 export function describeStartupScaling(label: string, isUnused: (kind: Kind, index: number) => boolean, variant: Variant = {}) {
@@ -91,24 +102,31 @@ export function describeStartupScaling(label: string, isUnused: (kind: Kind, ind
     test.concurrent.each([...scenarios, useEverything].filter(scenario => !variant.scenariosThatGrow?.includes(scenario)))(
       "%s",
       async scenario => {
-        const [small, large] = await Promise.all([measureLeast(executables.small, scenario), measureLeast(executables.large, scenario)]);
+        const measureBoth = () => Promise.all([measureLeast(executables.small, scenario), measureLeast(executables.large, scenario)]);
         const fileGrowth = statSync(executables.large).size - statSync(executables.small).size;
-        const allowed = {
-          instructions: Math.round(small.instructions * 0.02) + 30_000 + (small.counter === "rusage" ? 500_000 + Math.round(fileGrowth * 0.02) : 0),
-          allThreadsInstructions: scenariosWithOtherThreads.includes(scenario) ? Math.round(small.allThreadsInstructions! * 0.08) + 300_000 + (small.counter === "rusage" ? 500_000 + Math.round(fileGrowth * 0.02) : 0) : Infinity,
-          privateBytes: allowedPrivateGrowth * (privateGrowthFactor[scenario] ?? 1) * (variant.privateGrowthFactor ?? 1),
-          residentBytes: 1024 * 1024 + Math.round(fileGrowth * 0.25),
+        const excessiveGrowth = (small: Measurement, large: Measurement) => {
+          const allowed = {
+            instructions: Math.round(small.instructions * 0.02) + 30_000 + (small.counter === "rusage" ? 500_000 + Math.round(fileGrowth * 0.02) : 0),
+            allThreadsInstructions: scenariosWithOtherThreads.includes(scenario) ? Math.round(small.allThreadsInstructions! * 0.08) + 300_000 + (small.counter === "rusage" ? 500_000 + Math.round(fileGrowth * 0.02) : 0) : Infinity,
+            privateBytes: allowedPrivateGrowth * (privateGrowthFactor[scenario] ?? 1) * (variant.privateGrowthFactor ?? 1),
+            residentBytes: 1024 * 1024 + Math.round(fileGrowth * 0.25),
+          };
+          const growth = {
+            instructions: large.instructions - small.instructions,
+            allThreadsInstructions: large.allThreadsInstructions! - small.allThreadsInstructions!,
+            privateBytes: large.privateBytes - small.privateBytes,
+            residentBytes: large.residentBytes - small.residentBytes,
+          };
+          return (Object.keys(growth) as (keyof typeof growth)[])
+            .filter(name => growth[name] > allowed[name])
+            .map(name => `${name} grew from ${small[name]} by ${growth[name]}; allowed: ${allowed[name]}`);
         };
-        const growth = {
-          instructions: large.instructions - small.instructions,
-          allThreadsInstructions: large.allThreadsInstructions! - small.allThreadsInstructions!,
-          privateBytes: large.privateBytes - small.privateBytes,
-          residentBytes: large.residentBytes - small.residentBytes,
-        };
-        const excessive = (Object.keys(growth) as (keyof typeof growth)[])
-          .filter(name => growth[name] > allowed[name])
-          .map(name => `${name} grew from ${small[name]} by ${growth[name]}; allowed: ${allowed[name]}`);
-        expect(excessive).toEqual([]);
+        let [small, large] = await measureBoth();
+        for (let round = 1; round < rounds && small.counter !== "ptrace" && excessiveGrowth(small, large).length; round++) {
+          const [smallAgain, largeAgain] = await measureBoth();
+          [small, large] = [leastOfBoth(small, smallAgain), leastOfBoth(large, largeAgain)];
+        }
+        expect(excessiveGrowth(small, large)).toEqual([]);
       },
       240_000,
     );

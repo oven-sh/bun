@@ -121,7 +121,33 @@ export const mounted = mount(new Builder({})) + mount(new Router());
 `;
 }
 
+function arrayFilledWithSumsOfItsOwnElements(pushes: number) {
+  const indexes = Array.from({ length: pushes }, (_, index) => index);
+  return `const parts = [];\nparts.push("a");\n${indexes.map(index => `parts.push(parts[${index}] + parts[${index + 1}]);\n`).join("")}console.log(parts.length);\n`;
+}
+
+function twoArraysFilledWithSumsOfEachOthersElements(pushes: number) {
+  const indexes = Array.from({ length: pushes }, (_, index) => index);
+  return `const left = [];\nconst right = [];\nleft.push("a");\nright.push("b");\n${indexes.map(index => `left.push(right[${index}] + "x");\nright.push(left[${index}] + "y");\n`).join("")}console.log(left.length + right.length);\n`;
+}
+
 export const shapes: Shape[] = [
+  {
+    name: "array filled with sums of its own elements",
+    counted: "pushes",
+    sizes: [1, 100, 200, 400],
+    instructionsPerItem: 1_500_000,
+    bytesPerItem: 256 * 1024,
+    write: count => ({ "main.ts": arrayFilledWithSumsOfItsOwnElements(count) }),
+  },
+  {
+    name: "two arrays filled with sums of each other's elements",
+    counted: "pushes into each",
+    sizes: [1, 100, 200, 400],
+    instructionsPerItem: 3_000_000,
+    bytesPerItem: 256 * 1024,
+    write: count => ({ "main.ts": twoArraysFilledWithSumsOfEachOthersElements(count) }),
+  },
   {
     name: "generic builder entering a union with another class",
     counted: "methods of the same names in both classes",

@@ -118,9 +118,15 @@ struct Door {
     when_shut: WhenShut,
 }
 
+struct Condition<'a> {
+    feature: usize,
+    fact: &'a [u8],
+}
+
 struct Table<'a> {
     stub: u64,
     features: Vec<&'a [u8]>,
+    conditions: Vec<Condition<'a>>,
     islands: Vec<Island>,
     doors: Vec<Door>,
 }
@@ -162,6 +168,7 @@ impl<'a> Table<'a> {
         let mut table = Table {
             stub: 0,
             features: Vec::new(),
+            conditions: Vec::new(),
             islands: Vec::new(),
             doors: Vec::new(),
         };
@@ -172,6 +179,11 @@ impl<'a> Table<'a> {
             match kind {
                 b"stub" => table.stub = hexadecimal(word()?)?,
                 b"feature" => table.features.push(word()?),
+                b"when" => {
+                    let feature = word()?;
+                    let fact = line.get(kind.len() + feature.len() + 2..).ok_or(Error::InvalidExecutable)?;
+                    table.conditions.push(Condition { feature: table.feature(feature)?, fact });
+                }
                 b"island" => {
                     let addresses = hexadecimal(word()?)?..hexadecimal(word()?)?;
                     let needed_by = strings::split(word()?, b",")
@@ -216,22 +228,23 @@ fn elf_offset_of(file: &[u8], address: u64) -> Result<usize> {
 }
 
 fn shut_door(door: &Door, number: usize, stub: u64, is_arm64: bool) -> Result<Vec<u8>> {
-    if door.feature >= 16 || number >= 4096 {
+    if door.feature >= 1 << 8 || number >= 1 << 24 {
         return Err(Error::InvalidExecutable);
     }
-    let feature = (door.feature | number << 4) as u16;
+    let door_and_feature = (door.feature | number << 8) as u32;
     let mut code = Vec::new();
     if is_arm64 {
-        let distance = (stub as i64 - (door.addresses.start as i64 + 4)) / 4;
+        let distance = (stub as i64 - (door.addresses.start as i64 + 8)) / 4;
         if !(-(1 << 25)..1 << 25).contains(&distance) {
             return Err(Error::InvalidExecutable);
         }
-        let words = match door.when_shut {
-            WhenShut::Exit => [
-                0x5280_0000 | u32::from(feature) << 5,
+        let words: &[u32] = match door.when_shut {
+            WhenShut::Exit => &[
+                0x5280_0000 | (door_and_feature & 0xffff) << 5,
+                0x72a0_0000 | (door_and_feature >> 16) << 5,
                 0x1400_0000 | (distance as u32 & 0x03ff_ffff),
             ],
-            WhenShut::Return => [0x5280_0000, 0xd65f_03c0],
+            WhenShut::Return => &[0x5280_0000, 0xd65f_03c0],
         };
         for word in words {
             code.extend_from_slice(&word.to_le_bytes());
@@ -242,7 +255,7 @@ fn shut_door(door: &Door, number: usize, stub: u64, is_arm64: bool) -> Result<Ve
                 let distance = stub as i64 - (door.addresses.start as i64 + 10);
                 let distance = i32::try_from(distance).map_err(|_| Error::InvalidExecutable)?;
                 code.push(0xbf);
-                code.extend_from_slice(&u32::from(feature).to_le_bytes());
+                code.extend_from_slice(&door_and_feature.to_le_bytes());
                 code.push(0xe9);
                 code.extend_from_slice(&distance.to_le_bytes());
             }
@@ -258,6 +271,22 @@ fn shut_door(door: &Door, number: usize, stub: u64, is_arm64: bool) -> Result<Ve
 pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
     let range = Container::of(file)?.table_range(file)?;
     Ok(Table::parse(&file[range])?.features)
+}
+
+pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let range = Container::of(file)?.table_range(file)?;
+    let table = Table::parse(&file[range])?;
+    let holds = |fact: &[u8]| {
+        strings::split(facts, b"\n").any(|line| match line.strip_suffix(b"*") {
+            Some(every) if every.ends_with(b" ") => fact.starts_with(every),
+            _ => line == fact,
+        })
+    };
+    let conditions_of = |feature: usize| table.conditions.iter().filter(move |condition| condition.feature == feature);
+    Ok((0..table.features.len())
+        .filter(|&feature| conditions_of(feature).next().is_some() && !conditions_of(feature).any(|condition| holds(condition.fact)))
+        .map(|feature| table.features[feature].to_vec())
+        .collect())
 }
 
 pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
@@ -279,6 +308,13 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
         .map(|island| island.addresses.clone())
         .collect();
     sort_slice_by_key(&mut dead, |addresses| addresses.start);
+    dead.dedup_by(|next, before| {
+        let abuts = next.start <= before.end;
+        if abuts {
+            before.end = before.end.max(next.end);
+        }
+        abuts
+    });
 
     let trap: &[u8] = if is_arm64 { &[0x20, 0x00, 0x20, 0xd4] } else { &[0xcc] };
     for addresses in &dead {

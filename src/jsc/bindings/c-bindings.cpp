@@ -1211,7 +1211,7 @@ extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
 extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
 {
     const char* description = Bun__trimmedFeatures;
-    for (uint32_t feature = door & 15; feature--;)
+    for (uint32_t feature = door & 255; feature--;)
         description += strlen(description) + 1;
     const auto print = [](const char* text) { (void)!write(STDERR_FILENO, text, strlen(text)); };
     const char* actsAsBun = getenv("BUN_BE_BUN");
@@ -1224,7 +1224,7 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
     char digits[9];
     size_t first = sizeof(digits) - 1;
     digits[first] = 0;
-    for (uint32_t number = door >> 4; number || !digits[first]; number /= 10)
+    for (uint32_t number = door >> 8; number || !digits[first]; number /= 10)
         digits[--first] = static_cast<char>('0' + number % 10);
     print(", and something has just asked for it.");
     if (getenv("BUN_OPTIONS"))
@@ -1240,6 +1240,13 @@ extern "C" __attribute__((noinline)) bool Bun__hasTypeChecker()
     bool hasTypeChecker = true;
     asm volatile("" : "+r"(hasTypeChecker));
     return hasTypeChecker;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasBundler()
+{
+    uint32_t hasBundler = 2;
+    asm volatile("" : "+r"(hasBundler));
+    return hasBundler;
 }
 
 #endif

@@ -161,6 +161,7 @@ pub(super) enum Query {
     Claim(FileId, ExprId),
     ArgumentUse(FileId, ParamId),
     FlowCoverage(Sym),
+    FilledWithExternalData(FileId, SymbolId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -221,6 +222,7 @@ pub(super) struct State {
     data_flow_in_progress: Vec<DataFlowNode>,
     data_flow_cuts: usize,
     container_mutations: FxHashMap<FileId, Rc<FxHashMap<SymbolId, Vec<ExprId>>>>,
+    filled_with_external_data: FxHashMap<(FileId, SymbolId), bool>,
     results: FxHashMap<(FileId, FnId), (TypeId, bool)>,
     in_flight: Vec<InFlight>,
     outermost_assumed: Outermost,
@@ -267,6 +269,7 @@ struct SavedState {
     variable_reads: FxHashMap<Sym, Option<VariableRead>>,
     stored: FxHashMap<Sym, TypeId>,
     external_data_flow: FxHashMap<DataFlowNode, bool>,
+    filled_with_external_data: FxHashMap<(FileId, SymbolId), bool>,
     confirmed_results: FxHashMap<Query, u64>,
     results: FxHashMap<(FileId, FnId), (TypeId, bool)>,
     trust: super::trust::State,
@@ -2278,7 +2281,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mutations = self.container_mutations_in(file);
         let Some(stored) = mutations.get(&sym.id) else { return false };
-        stored.iter().any(|&value| self.is_external_element(file, value))
+        if let Some(&known) = self.aot.storage.filled_with_external_data.get(&(file, sym.id)) {
+            return known;
+        }
+        let query = Query::FilledWithExternalData(file, sym.id);
+        if let Some(assumed) = self.assumption(query) {
+            return assumed != 0;
+        }
+        let careful_before = (self.aot.javascript.is_idle() && self.aot.kinds.is_stable()).then(|| self.stack_half_used_count());
+        let cuts = self.aot.storage.data_flow_cuts;
+        let (found, is_final) = self.solve(query, 0, 1, |c| u64::from(stored.iter().any(|&value| c.is_external_element(file, value))));
+        if is_final && cuts == self.aot.storage.data_flow_cuts && self.is_result_cacheable(careful_before) {
+            self.aot.storage.filled_with_external_data.insert((file, sym.id), found != 0);
+        }
+        found != 0
     }
 
     fn chain_root_identifier(&self, file: FileId, e: ExprId) -> Option<ExprId> {
@@ -2449,6 +2465,7 @@ impl<'p, 's> Checker<'p, 's> {
         std::mem::swap(&mut self.aot.storage.variable_reads, &mut aside.variable_reads);
         std::mem::swap(&mut self.aot.storage.stored, &mut aside.stored);
         std::mem::swap(&mut self.aot.storage.external_data_flow, &mut aside.external_data_flow);
+        std::mem::swap(&mut self.aot.storage.filled_with_external_data, &mut aside.filled_with_external_data);
         std::mem::swap(&mut self.aot.storage.confirmed_results, &mut aside.confirmed_results);
         std::mem::swap(&mut self.aot.storage.results, &mut aside.results);
         std::mem::swap(&mut self.aot.trust, &mut aside.trust);

@@ -1062,6 +1062,17 @@ impl ServerConfig {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
                     }
+                    #[cfg(not(windows))]
+                    {
+                        unsafe extern "C" {
+                            safe fn Bun__hasBundler() -> bool;
+                        }
+                        if !Bun__hasBundler() {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "app: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
+                            )));
+                        }
+                    }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
                         return Err(global.throw_invalid_arguments(format_args!(

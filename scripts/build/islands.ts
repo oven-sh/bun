@@ -26,6 +26,8 @@ interface Door {
 interface Doors {
   features: { name: string; description: string }[];
   doors: Door[];
+  conditions: { feature: string; kind: string; name: string }[];
+  smallest: Map<string, number>;
 }
 
 interface Graph {
@@ -43,8 +45,8 @@ interface Graph {
 }
 
 const pageSize = 16384;
-const tableRoom = 32768;
-const smallestIsland = 65536;
+const tableRoom = 65536;
+const smallestIsland = 4096;
 const isCode = (output: string) => output === ".text" || output.startsWith(".text.");
 const isMovable = (output: string) => isCode(output) || output === ".rodata";
 const isOrdinary = (output: string) => isMovable(output) || [".data", ".data.rel.ro", ".bss"].includes(output) || islandOutput.test(output);
@@ -68,15 +70,19 @@ function fail(message: string): never {
 }
 
 function readDoors(path: string): Doors {
-  const result: Doors = { features: [], doors: [] };
+  const result: Doors = { features: [], doors: [], conditions: [], smallest: new Map() };
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const words = line.trim().split(/\s+/);
     if (words[0] === "feature") result.features.push({ name: words[1]!, description: words.slice(2).join(" ") });
+    else if (words[0] === "when") result.conditions.push({ feature: words[1]!, kind: words[2]!, name: words[3]! });
+    else if (words[0] === "smallest") result.smallest.set(words[1]!, Number(words[2]));
     else if (words[0] === "door") {
       if (words[2] !== "exit" && words[2] !== "return") fail(`${path}: a door exits or returns: ${line}`);
       result.doors.push({ feature: words[1]!, whenShut: words[2], pattern: new RegExp(words.slice(3).join(" ")) });
     }
   }
+  const names = new Set(result.features.map(feature => feature.name));
+  for (const { feature } of [...result.doors, ...result.conditions]) if (!names.has(feature)) fail(`${path}: there is no feature ${feature}`);
   return result;
 }
 
@@ -279,6 +285,15 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
   }
   const folded = foldedSections(log);
   const placed = (key: string) => nodesOf.get(key)?.[0] ?? nodesOf.get(folded.get(key) ?? "")?.[0];
+  for (const [removed, selected] of folded) {
+    const node = nodesOf.get(selected)?.[0];
+    const [object, section] = removed.split("\0") as [string, string];
+    const name = functionOfSection(section);
+    if (node === undefined || name === undefined) continue;
+    const aliases = graph.aliases.get(node);
+    if (aliases === undefined) graph.aliases.set(node, [[object, "_" + name]]);
+    else aliases.push([object, "_" + name]);
+  }
   const objects = new Map<string, ObjectReferences | undefined>();
   const defined = new Map<string, string[]>();
   for (const [object, live] of liveSections) {
@@ -586,6 +601,7 @@ interface Analysis {
   core: Set<number>;
   neededBy: Map<number, string>;
   unexplained: number;
+  foldedOpen: number;
 }
 
 function demangle(demangler: string, names: string[]): string[] {
@@ -621,7 +637,20 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
   for (const name of demangle(demangler, foldedAway)) {
     for (const door of declared.doors) if (door.pattern.test(name)) matched.add(door);
   }
-  for (const door of declared.doors) if (!matched.has(door)) fail(`no function matches the door ${door.pattern.source}`);
+  for (const door of declared.doors) {
+    if (!matched.has(door) && !declared.smallest.has(door.feature)) fail(`no function matches the door ${door.pattern.source}`);
+  }
+  const folded = [...graph.aliases].filter(([node]) => doors.has(node));
+  const plainAliases = demangle(demangler, folded.flatMap(([, aliases]) => aliases.map(([, name]) => name.replace(/^_/, ""))));
+  let foldedOpen = 0;
+  let aliasAt = 0;
+  for (const [node, aliases] of folded) {
+    const names = plainAliases.slice(aliasAt, (aliasAt += aliases.length));
+    const feature = doors.get(node)!.feature;
+    if (names.every(name => declared.doors.find(door => door.pattern.test(name))?.feature === feature)) continue;
+    doors.delete(node);
+    foldedOpen++;
+  }
   const explained = reach(graph, graph.roots, new Map());
   let unexplained = 0;
   for (let node = 0; node < graph.address.length; node++) {
@@ -638,7 +667,12 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
       if (!core.has(node)) neededBy.set(node, neededBy.has(node) ? neededBy.get(node) + "," + name : name);
     }
   }
-  return { doors, plainName, core, neededBy, unexplained };
+  return { doors, plainName, core, neededBy, unexplained, foldedOpen };
+}
+
+function staysAsDoor(analysis: Analysis, node: number): boolean {
+  const door = analysis.doors.get(node);
+  return door !== undefined && analysis.neededBy.get(node) !== door.feature;
 }
 
 function renameSections(object: string, islandOf: Map<string, number>, copy: string): void {
@@ -709,23 +743,54 @@ function tableOf(
   const table =
     `bun-islands 1\nstub ${hex(stub)}\n` +
     declared.features.map(feature => `feature ${feature.name} ${feature.description}\n`).join("") +
+    declared.conditions.map(({ feature, kind, name }) => `when ${feature} ${kind} ${name}\n`).join("") +
     [...islands]
       .sort((a, b) => a.start - b.start)
       .map(island => `island ${hex(island.start)} ${hex(island.end)} ${island.features}\n`)
       .join("") +
     doors
-      .map(({ address, size, door, name }) => `door ${hex(address)} ${hex(size)} ${door.feature} ${door.whenShut} ${name.slice(0, 100)}\n`)
+      .map(({ address, size, door, name }) => `door ${hex(address)} ${hex(size)} ${door.feature} ${door.whenShut} ${name.slice(0, 60)}\n`)
       .join("");
   if (table.length > tableRoom) fail(`the table takes ${table.length} bytes and there is room for ${tableRoom}`);
   return table;
 }
 
-function islandsBySize(graph: Graph, analysis: Analysis, isMovable: (output: string) => boolean) {
+function listedDoors(graph: Graph, check: Analysis, work: string, featuresOfIslandAt: (node: number) => string | undefined) {
+  const listed: { address: number; size: number; door: Door; name: string }[] = [];
+  const namedBy = new Map<number, number[]>();
+  for (const node of check.core) {
+    if (check.doors.has(node)) continue;
+    for (const next of graph.successors[node]!) {
+      if (!check.doors.has(next)) continue;
+      const list = namedBy.get(next);
+      if (list === undefined) namedBy.set(next, [node]);
+      else list.push(node);
+    }
+  }
+  const spell = (node: number) => check.plainName.get(node) ?? `${graph.object[node]!.slice(graph.object[node]!.lastIndexOf("/") + 1)}:${graph.section[node]}`;
+  const review: string[] = [];
+  for (const [node, door] of check.doors) {
+    if (featuresOfIslandAt(node) === door.feature) continue;
+    if (door.whenShut === "exit" && graph.successors[node]!.every(next => check.core.has(next))) continue;
+    const name = check.plainName.get(node)!;
+    if (graph.size[node]! < (door.whenShut === "exit" ? 12 : 8)) fail(`the door ${name} has ${graph.size[node]} bytes: too few to be shut`);
+    review.push(`${listed.length} ${door.feature} ${graph.size[node]} ${name}\n` + [...new Set((namedBy.get(node) ?? []).map(spell))].map(by => `    ${by}\n`).join(""));
+    listed.push({ address: graph.address[node]!, size: graph.size[node]!, door, name });
+  }
+  writeFileSync(join(work, "doors.txt"), review.join(""));
+  return listed;
+}
+
+function islandsBySize(graph: Graph, analysis: Analysis, declared: Doors, isMovable: (output: string) => boolean) {
   const bytesOf = new Map<string, number>();
   for (const [node, features] of analysis.neededBy) {
     if (isMovable(graph.output[node]!)) bytesOf.set(features, (bytesOf.get(features) ?? 0) + graph.size[node]!);
   }
-  const islands = [...bytesOf.keys()].filter(features => bytesOf.get(features)! >= smallestIsland).sort((a, b) => bytesOf.get(b)! - bytesOf.get(a)!);
+  const rankOf = new Map(declared.features.map((feature, index) => [feature.name, index]));
+  const rank = (features: string) => Math.max(...features.split(",").map(feature => rankOf.get(feature)!));
+  const islands = [...bytesOf.keys()]
+    .filter(features => bytesOf.get(features)! >= smallestIsland)
+    .sort((a, b) => rank(a) - rank(b) || bytesOf.get(b)! - bytesOf.get(a)!);
   if (islands.length === 0) {
     fail(
       `nothing lies behind the ${analysis.doors.size} doors: ${graph.address.length} sections, ` +
@@ -733,6 +798,10 @@ function islandsBySize(graph: Graph, analysis: Analysis, isMovable: (output: str
         `${megabytes(analysis.unexplained)} that nothing names, ${graph.unreadObjects.length} inputs that could not be read` +
         graph.unreadObjects.slice(0, 5).map(object => `\n  ${object}`).join(""),
     );
+  }
+  for (const [feature, smallest] of declared.smallest) {
+    const bytes = islands.filter(features => features.split(",").includes(feature)).reduce((sum, features) => sum + bytesOf.get(features)!, 0);
+    if (bytes < smallest) fail(`${megabytes(bytes)} can go with ${feature}, which is to be at least ${megabytes(smallest)}: something that stays has begun to name the rest`);
   }
   return { islands, bytesOf, numberOf: new Map(islands.map((features, index) => [features, index + 1])) };
 }
@@ -774,14 +843,14 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
   const foldedAway = foldedDoors(first.log, declared, demangler);
   const analysis = analyze(graph, declared, demangler, foldedAway);
   const keptApart = [...foldedAway, ...[...analysis.doors.keys()].map(node => graph.functionName.get(node)!)];
-  const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, isMovable);
+  const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, declared, isMovable);
 
   const islandOf = new Map<string, Map<string, number>>();
   for (let node = 0; node < graph.address.length; node++) {
     if (graph.object[node] === "<internal>" || !isMovable(graph.output[node]!)) continue;
     let sections = islandOf.get(graph.object[node]!);
     if (sections === undefined) islandOf.set(graph.object[node]!, (sections = new Map()));
-    const island = analysis.doors.has(node) ? 0 : (numberOf.get(analysis.neededBy.get(node) ?? "") ?? 0);
+    const island = staysAsDoor(analysis, node) ? 0 : (numberOf.get(analysis.neededBy.get(node) ?? "") ?? 0);
     const before = sections.get(graph.section[node]!);
     sections.set(graph.section[node]!, before === undefined || before === island ? island : 0);
   }
@@ -806,11 +875,13 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
 
   const edge = (begins: boolean) =>
     islands
-      .map(
-        (_, index) =>
-          `.section .bun_x.${index + 1},"axR",@progbits\n.p2align 14\n${begins ? ".zero 16, 0xcc\n" : ""}` +
-          `.section .bun_r.${index + 1},"aR",@progbits\n.p2align 14\n${begins ? ".zero 16\n" : ""}`,
-      )
+      .map((_, index) => {
+        const alignment = index === (begins ? 0 : islands.length - 1) ? ".p2align 14\n" : "";
+        return (
+          `.section .bun_x.${index + 1},"axR",@progbits\n${alignment}${begins ? ".zero 16, 0xcc\n" : ""}` +
+          `.section .bun_r.${index + 1},"aR",@progbits\n${alignment}${begins ? ".zero 16\n" : ""}`
+        );
+      })
       .join("");
   const second = link(
     "second",
@@ -821,18 +892,13 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
   lap("second link");
 
   const laidOut = readGraph(second.executable, second.map, second.log);
-  if (foldedDoors(second.log, declared, demangler).length > 0) fail("a door was folded into another function");
   const check = analyze(laidOut, declared, demangler, keptApart);
-  const ranges = new Map<string, { start: number; end: number; features: string }>();
+  if (check.foldedOpen > 0) console.log(`${check.foldedOpen} doors were folded into other functions and stay open`);
   let faults = 0;
   for (let node = 0; node < laidOut.address.length; node++) {
     const island = islandOutput.exec(laidOut.output[node]!);
     if (island === null) continue;
     const features = islands[Number(island[1]) - 1]!;
-    const range = ranges.get(laidOut.output[node]!);
-    const end = Math.ceil((laidOut.address[node]! + laidOut.size[node]!) / pageSize) * pageSize;
-    if (range === undefined) ranges.set(laidOut.output[node]!, { start: laidOut.address[node]!, end, features });
-    else range.end = Math.max(range.end, end);
     if (laidOut.size[node]! <= 16 && laidOut.object[node]!.startsWith(work)) continue;
     const needed = check.core.has(node) ? ["what always stays"] : (check.neededBy.get(node) ?? "").split(",");
     if (!needed.every(feature => features.split(",").includes(feature)) && faults++ < 10) {
@@ -841,30 +907,27 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
   }
   if (faults > 0) fail(`${faults} sections lie in an island that can go while they are needed`);
 
+  const elf = openElf(resolve(output), "r+") ?? fail(`${output} is not an ELF file`);
+  const placed = elf.sections.filter(section => (section.flags & 2) !== 0 && section.size > 0).sort((a, b) => a.address - b.address);
+  const ranges = placed.flatMap((section, index) => {
+    const island = islandOutput.exec(section.name);
+    if (island === null) return [];
+    const next = placed[index + 1];
+    const end = next !== undefined && islandOutput.test(next.name) ? next.address : section.address + section.size;
+    return [{ start: section.address, end, features: islands[Number(island[1]) - 1]! }];
+  });
   const stub = [...check.plainName].find(([, name]) => name === "Bun__trimmedOut")?.[0] ?? fail("Bun__trimmedOut is gone");
   const table = tableOf(
     declared,
     laidOut.address[stub]!,
-    [...ranges.values()],
-    [...check.doors].map(([node, door]) => ({
-      address: laidOut.address[node]!,
-      size: laidOut.size[node]!,
-      door,
-      name: check.plainName.get(node)!,
-    })),
+    ranges,
+    listedDoors(laidOut, check, work, node => islands[Number(islandOutput.exec(laidOut.output[node]!)?.[1]) - 1]),
   );
-  const elf = openElf(resolve(output), "r+") ?? fail(`${output} is not an ELF file`);
   const room = elf.sections.find(section => section.name === ".bun_islands") ?? fail("the room for the table is gone");
   writeSync(elf.fd, Buffer.from(table, "latin1"), 0, table.length, room.offset);
   closeSync(elf.fd);
   lap("check");
-  report(check.doors.size, islands, bytesOf, [...ranges.values()].reduce((sum, range) => sum + range.end - range.start, 0));
-}
-
-function withoutFoldedDoors(graph: Graph, analysis: Analysis): Doors["doors"] {
-  const folded: Door[] = [];
-  for (const [node, door] of analysis.doors) if (graph.aliases.has(node)) folded.push(door);
-  return folded;
+  report(check.doors.size, islands, bytesOf, ranges.reduce((sum, range) => sum + range.end - range.start, 0));
 }
 
 function linkMachO({ work, output, declared, demangler, command, assemble, link }: Linker): void {
@@ -898,19 +961,16 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
   if (first !== fromBitcode) lap("link of what it compiled");
   const graph = readMachOGraph(first.map, exportedSymbols);
   lap("graph");
-  const known = declared.doors.map(door => door.pattern.source);
   const foldedNames = (of: Graph) => [...of.aliases.values()].flat().map(([, name]) => name.replace(/^_/, ""));
-  const open = analyze(graph, declared, demangler, foldedNames(graph));
-  const usable: Doors = { features: declared.features, doors: declared.doors.filter(door => !withoutFoldedDoors(graph, open).includes(door)) };
-  const analysis = usable.doors.length === declared.doors.length ? open : analyze(graph, usable, demangler, foldedNames(graph));
-  if (usable.doors.length !== known.length) console.log(`${known.length - usable.doors.length} doors were folded into other functions and stay open`);
-  const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, output => movable.has(output));
+  const analysis = analyze(graph, declared, demangler, foldedNames(graph));
+  if (analysis.foldedOpen > 0) console.log(`${analysis.foldedOpen} doors were folded into other functions and stay open`);
+  const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, declared, output => movable.has(output));
 
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
   const stem = (name: string) => name.split(".llvm.")[0]!.split(".__uniq.")[0]!;
   const spell = (object: string, name: string) => (graph.externalNames.has(name) ? name : `${base(object)}:${name}`);
   const namesOf = (node: number): [string, string][] => [[graph.object[node]!, graph.section[node]!], ...(graph.aliases.get(node) ?? [])];
-  const moves = (node: number) => analysis.neededBy.has(node) && movable.has(graph.output[node]!) && !analysis.doors.has(node);
+  const moves = (node: number) => analysis.neededBy.has(node) && movable.has(graph.output[node]!) && !staysAsDoor(analysis, node);
   const taken = new Set<string>();
   const takenAnywhere = new Set<string>();
   for (let node = 0; node < graph.address.length; node++) {
@@ -929,19 +989,16 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
         : !taken.has(base(graph.object[node]!) + "\0" + stem(name)) && !taken.has(base(object) + "\0" + stem(name)) && !taken.has("\0" + stem(name)),
     );
   let order: string[] = [];
-  const markers: string[] = [];
+  let markerText = "";
   islands.forEach((features, index) => {
     for (const [section, short] of movable) {
       const isCode = short === "text";
       for (const edge of ["begin", "end"]) {
         const symbol = `_bun_island_${index + 1}_${short}_${edge}`;
-        markers.push(
-          assemble(
-            `${symbol}.s`,
-            `.section ${section}${isCode ? ",regular,pure_instructions" : ""}\n.p2align 14\n.globl ${symbol}\n.no_dead_strip ${symbol}\n` +
-              `${symbol}:\n${isCode ? "brk #1" : ".long 0"}\n.subsections_via_symbols\n`,
-          ),
-        );
+        const alignment = index === (edge === "begin" ? 0 : islands.length - 1) ? 14 : 2;
+        markerText +=
+          `.section ${section}${isCode ? ",regular,pure_instructions" : ""}\n.p2align ${alignment}\n.globl ${symbol}\n.no_dead_strip ${symbol}\n` +
+          `${symbol}:\n${isCode ? "brk #1" : ".long 0"}\n`;
       }
       order.push(`_bun_island_${index + 1}_${short}_begin`);
       for (let node = 0; node < graph.address.length; node++) {
@@ -952,6 +1009,7 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
       order.push(`_bun_island_${index + 1}_${short}_end`);
     }
   });
+  const markers = [assemble("markers.s", markerText + ".subsections_via_symbols\n")];
   const inherited = orderAt >= 0 ? readFileSync(command[orderAt]!.slice("-Wl,-order_file,".length), "utf8") : "";
   const orderFile = join(work, "order.txt");
   if (orderAt >= 0) command[orderAt] = "-Wl,-order_file," + orderFile;
@@ -963,13 +1021,13 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
     const second = link("second", withoutBitcode, [support, ...markers, ...native], always);
     lap("ordered link");
     const laidOut = readMachOGraph(second.map, exportedSymbols);
-    const check = analyze(laidOut, usable, demangler, foldedNames(laidOut));
+    const check = analyze(laidOut, declared, demangler, foldedNames(laidOut));
     const marker = new Map<string, number>();
     laidOut.section.forEach((name, node) => void (name.startsWith("_bun_island_") && marker.set(name, laidOut.address[node]!)));
     const ranges = islands.flatMap((features, index) =>
       [...movable.values()].map(short => ({
         start: marker.get(`_bun_island_${index + 1}_${short}_begin`)!,
-        end: marker.get(`_bun_island_${index + 1}_${short}_end`)!,
+        end: marker.get(index + 1 < islands.length ? `_bun_island_${index + 2}_${short}_begin` : `_bun_island_${index + 1}_${short}_end`)!,
         features,
       })),
     );
@@ -996,9 +1054,7 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
       declared,
       laidOut.address[stub]!,
       ranges,
-      [...check.doors]
-        .filter(([node]) => islandAt(laidOut.address[node]!) === undefined)
-        .map(([node, door]) => ({ address: laidOut.address[node]!, size: laidOut.size[node]!, door, name: check.plainName.get(node)! })),
+      listedDoors(laidOut, check, work, node => islandAt(laidOut.address[node]!)?.features),
     );
     const fd = openSync(resolve(output), "r+");
     const commands = readAt(fd, 0, 32 + readAt(fd, 20, 4).readUInt32LE(0));

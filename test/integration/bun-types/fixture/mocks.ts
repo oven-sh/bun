@@ -1,4 +1,4 @@
-import { jest, mock } from "bun:test";
+import { expect, jest, mock } from "bun:test";
 import { expectType } from "./utilities";
 
 const mock1 = mock((arg: string) => {
@@ -29,3 +29,5 @@ jest.fn<() => string>().mockResolvedValue("24");
 jest.fn().mockClear();
 jest.fn().mockReset();
 jest.fn().mockRejectedValueOnce(new Error());
+
+expect(jest.fn()).toHaveBeenCalledOnce();

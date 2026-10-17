@@ -1110,7 +1110,8 @@ fn parse_to_values(
             &text
         }
     };
-    super::with_text_format_source(global, bytes, b"input.yaml", |arena, log, source| {
+    let bytes = super::copy_if_shared(global, input, bytes)?;
+    super::with_text_format_source(global, &bytes, b"input.yaml", |arena, log, source| {
         // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
         // once by pointer identity, so a cyclic graph is fine here.
         let root =

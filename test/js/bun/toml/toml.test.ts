@@ -69,6 +69,39 @@ describe("input types", () => {
     expect(TOML.parse(new DataView(sab))).toEqual(expected);
   });
 
+  test("a SharedArrayBuffer does not change under the parser while another thread writes it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { Worker } = require("node:worker_threads");
+          const bytes = new Uint8Array(new SharedArrayBuffer(1 << 14)).fill(10);
+          const writer = new Worker(
+            \`const { workerData: bytes, parentPort } = require("node:worker_threads");
+             parentPort.postMessage("ready");
+             for (let i = 0; ; i++) bytes[i % bytes.length] = Math.floor(i / bytes.length) % 2 ? 35 : 10;\`,
+            { eval: true, workerData: bytes },
+          );
+          writer.once("message", () => {
+            for (let i = 0; i < 4000; i++) {
+              try {
+                Bun.TOML.parse(bytes);
+              } catch {}
+            }
+            console.log("done");
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("non-string values are coerced via toString", () => {
     expect(TOML.parse({ toString: () => "a = 1" } as any)).toEqual({ a: 1 });
     // A number coerces to a string that is not valid TOML.

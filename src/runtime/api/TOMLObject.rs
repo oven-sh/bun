@@ -10,9 +10,10 @@ pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: WithValue<'a, &'a [u8]>) -> Js
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, its properties are defined
     // and not set, and a date or a time is `Temporal.*.from` of a primitive string, which looks nothing up.
     let global = unsafe { heap.global() };
+    let bytes = super::input_to_parse(global, input)?;
     super::with_text_format_source(
         global,
-        super::input_to_parse(global, input)?,
+        &super::copy_if_shared(global, input.value.to_js(), bytes)?,
         b"input.toml",
         |arena, log, source| {
             let root = match TOML::parse(source, log, arena, false) {

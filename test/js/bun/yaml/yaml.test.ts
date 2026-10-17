@@ -305,6 +305,39 @@ development:
           sharedArray.set(bytes);
           expect(YAML.parse(sharedArray)).toEqual({ type: "shared", value: 123 });
         });
+
+        test("a SharedArrayBuffer does not change under the parser while another thread writes it", async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              /* js */ `
+                const { Worker } = require("node:worker_threads");
+                const bytes = new Uint8Array(new SharedArrayBuffer(1 << 14)).fill(10);
+                const writer = new Worker(
+                  \`const { workerData: bytes, parentPort } = require("node:worker_threads");
+                   parentPort.postMessage("ready");
+                   for (let i = 0; ; i++) bytes[i % bytes.length] = Math.floor(i / bytes.length) % 2 ? 45 : 10;\`,
+                  { eval: true, workerData: bytes },
+                );
+                writer.once("message", () => {
+                  for (let i = 0; i < 200; i++) {
+                    try {
+                      Bun.YAML.parse(bytes);
+                    } catch {}
+                  }
+                  console.log("done");
+                  process.exit(0);
+                });
+              `,
+            ],
+            env: bunEnv,
+            stderr: "inherit",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect(stdout).toBe("done\n");
+          expect(exitCode).toBe(0);
+        });
       }
 
       test("handles File (which is a Blob)", () => {

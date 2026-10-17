@@ -3031,6 +3031,60 @@ export { n, area, u };
       },
     );
 
+    // The first after the sort is the module that names the type. Here no module can, so the error quotes it. Where the
+    // comparison goes in a circle, which one is first depends on how the list is sorted. The names are those of tsc 7.0.2.
+    test.each([
+      [5, 5, "lib/shared/shim"],
+      [10, 11, "page08"],
+      [16, 14, "page02"],
+      [20, 5, "page00"],
+      [20, 30, "page00"],
+      [40, 45, "page00"],
+    ])(
+      "the module that names a type of a namespace that %i modules before it and %i after it export again",
+      async (before, after, named) => {
+        const names = (count: number, start: string) =>
+          Array.from({ length: count }, (_, i) => start + String(i).padStart(2, "0"));
+        const [deep, pages] = [names(before, "lib/shared/f"), names(after, "page")];
+        const imports = (modules: string[]) => `${modules.map(name => `import "./${name}";\n`).join("")}export {};\n`;
+        const inner = {
+          "package.json": '{ "name": "inner", "version": "1.0.0", "types": "index.d.ts" }',
+          "index.d.ts": imports(["first", "second"]),
+          "first.d.ts": imports(deep),
+          "second.d.ts": `/// <reference path="./legacy.d.ts" />\n${imports(pages)}`,
+          "legacy.d.ts": "declare namespace Legacy { interface Options { verbose: boolean } }\n",
+          "lib/shared/shim.d.ts": "export import Options = Legacy.Options;\n",
+          ...Object.fromEntries(deep.map(name => [`${name}.d.ts`, 'export * from "./shim";\n'])),
+          ...Object.fromEntries(pages.map(name => [`${name}.d.ts`, 'export * from "./lib/shared/shim";\n'])),
+        };
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: {
+              strict: true,
+              declaration: true,
+              noEmit: true,
+              module: "esnext",
+              moduleResolution: "bundler",
+              target: "esnext",
+              types: [],
+            },
+            include: ["src/**/*.ts"],
+          }),
+          "src/main.ts": 'import { defaults } from "dep";\nexport const options = defaults();\n',
+          "node_modules/dep/package.json": '{ "name": "dep", "version": "1.0.0", "types": "index.d.ts" }',
+          "node_modules/dep/index.d.ts": 'import "inner";\nexport declare function defaults(): Legacy.Options;\n',
+          ...Object.fromEntries(
+            Object.entries(inner).map(([name, text]) => [`node_modules/dep/node_modules/inner/${name}`, text]),
+          ),
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout.split("\n")[0]).toBe(
+          `src/main.ts(2,14): error TS2883: The inferred type of 'options' cannot be named without a reference to 'Options' from 'dep/node_modules/inner/${named}'. This is likely not portable. A type annotation is necessary.`,
+        );
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test("a variable referenced in a callback inside its own initializer", async () => {
       using dir = project({
         "a.ts": `

@@ -46,17 +46,22 @@ fn sort_unstable(indices: &mut [u32], mut by: By<'_>) {
 /// that are written in Rust give, even if the comparison isn't a total order.
 const INSERTION_RUN: usize = 20;
 
+/// Each item goes to the left for as long as it is less than the one before it. The standard library's and Go's ask the same.
+fn insertion_sort(run: &mut [u32], by: &mut By<'_>) {
+    for end in 1..run.len() {
+        let mut at = end;
+        while at > 0 && by.compare(run[end], run[at - 1]) == Ordering::Less {
+            at -= 1;
+        }
+        run[at..=end].rotate_right(1);
+    }
+}
+
 /// See [`merge_sort_indices`].
 #[inline(never)]
 fn merge_sort(indices: &mut [u32], mut by: By<'_>) {
     for run in indices.chunks_mut(INSERTION_RUN) {
-        for end in 1..run.len() {
-            let mut at = end;
-            while at > 0 && by.compare(run[end], run[at - 1]) == Ordering::Less {
-                at -= 1;
-            }
-            run[at..=end].rotate_right(1);
-        }
+        insertion_sort(run, &mut by);
     }
     let mut left = Vec::new();
     let mut width = INSERTION_RUN;
@@ -87,6 +92,86 @@ fn merge(both: &mut [u32], middle: usize, left: &mut Vec<u32>, by: &mut By<'_>) 
         to += 1;
     }
     both[to..from_right].copy_from_slice(&left[from_left..]);
+}
+
+/// Go's `blockSize`.
+const GO_BLOCK: usize = 20;
+
+/// Go's `stableCmpFunc`. See [`go_stable_sort_slice_by`].
+#[inline(never)]
+fn go_stable_sort(indices: &mut [u32], mut by: By<'_>) {
+    for block in indices.chunks_mut(GO_BLOCK) {
+        insertion_sort(block, &mut by);
+    }
+    let mut width = GO_BLOCK;
+    while width < indices.len() {
+        for both in indices.chunks_mut(2 * width) {
+            if width < both.len() {
+                sym_merge(both, width, &mut by);
+            }
+        }
+        width *= 2;
+    }
+}
+
+/// Go's `symMergeCmpFunc`: merges `both[..middle]` with `both[middle..]`, neither of which is empty. It moves items by rotating
+/// alone, which asks nothing, so a rotation of the standard library stands for Go's `rotateCmpFunc` and for its loops of swaps.
+///
+/// Whatever `by` answers: a search halves a range that lies in `both`, so it ends and reads nothing outside. After the last one
+/// `start <= middle <= end`, `start <= half <= end` and `end <= both.len()`. A half that is merged again is shorter than `both` and
+/// is cut where neither part is empty.
+fn sym_merge(both: &mut [u32], middle: usize, by: &mut By<'_>) {
+    let len = both.len();
+    if middle == 1 {
+        // The first goes before the first of the others that is not less than it.
+        let (mut low, mut high) = (1, len);
+        while low < high {
+            let at = (low + high) / 2;
+            match by.compare(both[at], both[0]) {
+                Ordering::Less => low = at + 1,
+                _ => high = at,
+            }
+        }
+        return both[..low].rotate_left(1);
+    }
+    if middle + 1 == len {
+        // The last goes before the first of the others that it is less than.
+        let (mut low, mut high) = (0, middle);
+        while low < high {
+            let at = (low + high) / 2;
+            match by.compare(both[middle], both[at]) {
+                Ordering::Less => high = at,
+                _ => low = at + 1,
+            }
+        }
+        return both[low..].rotate_right(1);
+    }
+    // `both[start..middle]` and `both[middle..end]` change places. Then `both[..half]` is two sorted parts that meet at `start`,
+    // and `both[half..]` two that meet at `end`.
+    let half = len / 2;
+    let sum = half + middle;
+    let (mut start, mut stop) = match middle > half {
+        true => (sum - len, half),
+        false => (0, middle),
+    };
+    while start < stop {
+        let at = (start + stop) / 2;
+        match by.compare(both[sum - 1 - at], both[at]) {
+            Ordering::Less => stop = at,
+            _ => start = at + 1,
+        }
+    }
+    let end = sum - start;
+    if start < middle && middle < end {
+        both[start..end].rotate_left(middle - start);
+    }
+    let (first, second) = both.split_at_mut(half);
+    if 0 < start && start < half {
+        sym_merge(first, start, by);
+    }
+    if half < end && end < len {
+        sym_merge(second, end - half, by);
+    }
 }
 
 /// Stable sort of `indices` by `cmp` (called with the two indices being compared).
@@ -222,6 +307,28 @@ pub fn merge_sort_slice_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Or
     apply_permutation_in_place(items, &mut order);
 }
 
+/// `0..len` as [`go_stable_sort_slice_by`] sorts it.
+#[inline(never)]
+fn go_stable_sorted(len: usize, cmp: &mut dyn Compare) -> Vec<u32> {
+    let mut order = identity(len);
+    go_stable_sort(&mut order, By::Comparison(cmp));
+    order
+}
+
+/// Go's `slices.SortStableFunc`: it asks `cmp` the same questions in the same order. That matters for a port of a program in Go
+/// whose `cmp` isn't a total order, because then the result depends on what is asked. Like [`merge_sort_slice_by`] it takes every
+/// `cmp`, and for a total order the result is that of [`sort_slice_by`]. Unlike it, it can move what has no item less than the one
+/// before it.
+pub fn go_stable_sort_slice_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
+    if items.len() < 2 {
+        return;
+    }
+    let mut order = go_stable_sorted(items.len(), &mut |a: u32, b: u32| {
+        cmp(&items[a as usize], &items[b as usize])
+    });
+    apply_permutation_in_place(items, &mut order);
+}
+
 /// Unstable counterpart of [`sort_slice_by`].
 pub fn sort_slice_unstable_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
     if items.len() < 2 {
@@ -323,6 +430,22 @@ mod tests {
             .collect()
     }
 
+    /// 0 < 1 < 2 < 0, by the remainder of a division by 3.
+    fn circle(a: u32, b: u32) -> Ordering {
+        [Ordering::Equal, Ordering::Greater, Ordering::Less][((a + 3 - b % 3) % 3) as usize]
+    }
+
+    /// Which of two is less is a coin toss, the same both ways round.
+    fn coin_toss(a: u32, b: u32) -> Ordering {
+        let (low, high) = (a.min(b), a.max(b));
+        let toss = low.wrapping_mul(0x9E37_79B1) ^ high.wrapping_mul(0x85EB_CA6B);
+        match a.cmp(&b) {
+            Ordering::Equal => Ordering::Equal,
+            order if toss.count_ones() % 2 == 0 => order,
+            order => order.reverse(),
+        }
+    }
+
     #[test]
     fn merge_sort_matches_std_for_an_order() {
         for len in LENGTHS {
@@ -338,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_sort_keeps_the_items_whatever_the_comparison() {
+    fn merge_sort_and_go_stable_sort_keep_the_items_whatever_the_comparison() {
         const ANSWERS: [Ordering; 11] = [
             Ordering::Less,
             Ordering::Greater,
@@ -361,10 +484,7 @@ mod tests {
                 asked += 1;
                 ANSWERS[asked % ANSWERS.len()]
             },
-            // 0 < 1 < 2 < 0
-            &mut |a, b| {
-                [Ordering::Equal, Ordering::Greater, Ordering::Less][((a + 3 - b % 3) % 3) as usize]
-            },
+            &mut circle,
         ];
         for cmp in comparisons {
             for len in LENGTHS {
@@ -378,24 +498,22 @@ mod tests {
                 items.sort_unstable();
                 expected.sort_unstable();
                 assert_eq!(items, expected);
+
+                let mut sorted = identity(len);
+                go_stable_sort(&mut sorted, By::Function(&mut *cmp));
+                sorted.sort_unstable();
+                assert_eq!(sorted, identity(len));
+                let mut items = shuffled(len);
+                go_stable_sort_slice_by(&mut items, |a, b| cmp(*a, *b));
+                items.sort_unstable();
+                assert_eq!(items, expected);
             }
         }
     }
 
     #[test]
     fn merge_sort_leaves_no_item_less_than_the_one_before_it_and_then_changes_nothing() {
-        // Which of two is less is a coin toss, the same both ways round.
-        let cmp = |a: u32, b: u32| {
-            let (low, high) = (a.min(b), a.max(b));
-            let toss =
-                (low.wrapping_mul(0x9E37_79B1) ^ high.wrapping_mul(0x85EB_CA6B)).count_ones() % 2
-                    == 0;
-            match a.cmp(&b) {
-                Ordering::Equal => Ordering::Equal,
-                order if toss => order,
-                order => order.reverse(),
-            }
-        };
+        let cmp = coin_toss;
         for len in LENGTHS {
             let mut sorted = identity(len);
             merge_sort_indices(&mut sorted, &mut |a, b| cmp(a, b));
@@ -407,6 +525,87 @@ mod tests {
             let once = sorted.clone();
             merge_sort_indices(&mut sorted, &mut |a, b| cmp(a, b));
             assert_eq!(sorted, once, "{len}");
+        }
+    }
+
+    #[test]
+    fn go_stable_sort_matches_std_for_an_order() {
+        for len in LENGTHS {
+            let mut a: Vec<(u32, usize)> = shuffled(len).into_iter().zip(0..).collect();
+            let mut b = a.clone();
+            go_stable_sort_slice_by(&mut a, |x, y| x.0.cmp(&y.0));
+            b.sort_by_key(|x| x.0);
+            assert_eq!(a, b, "{len}");
+            go_stable_sort_slice_by(&mut a, |x, y| y.0.cmp(&x.0));
+            b.sort_by_key(|x| std::cmp::Reverse(x.0));
+            assert_eq!(a, b, "{len}");
+        }
+    }
+
+    /// `i * 11 % len` as [`go_stable_sort_slice_by`] sorts it, how many questions it asks, and which: a question `(a, b)` makes
+    /// `asked * 31 + a * 1009 + b` of `asked`.
+    fn sorted_as_go(len: u32, cmp: fn(u32, u32) -> Ordering) -> (Vec<u32>, u32, u32) {
+        let mut items: Vec<u32> = (0..len).map(|i| i * 11 % len).collect();
+        let (mut count, mut asked) = (0, 0u32);
+        go_stable_sort_slice_by(&mut items, |&a, &b| {
+            count += 1;
+            asked = asked.wrapping_mul(31).wrapping_add(a * 1009 + b);
+            cmp(a, b)
+        });
+        (items, count, asked)
+    }
+
+    // What is expected is what `slices.SortStableFunc` of Go 1.24 gives and asks.
+    #[test]
+    fn go_stable_sort_asks_what_go_asks_where_the_comparison_is_not_a_total_order() {
+        let circles: [(&[u32], u32, u32); 4] = [
+            (
+                &[
+                    11, 0, 12, 1, 13, 2, 14, 3, 15, 4, 16, 5, 17, 6, 18, 7, 19, 10, 8, 20, 9,
+                ],
+                33,
+                3_990_134_517,
+            ),
+            (
+                &[
+                    11, 0, 22, 19, 16, 13, 8, 5, 2, 20, 17, 14, 24, 21, 18, 15, 12, 6, 3, 10, 7, 4,
+                    1, 23, 9,
+                ],
+                55,
+                4_027_449_448,
+            ),
+            (
+                &[
+                    11, 0, 33, 3, 22, 25, 14, 17, 26, 36, 6, 15, 18, 37, 7, 40, 10, 29, 32, 2, 39,
+                    9, 21, 24, 30, 28, 31, 1, 20, 23, 12, 34, 4, 13, 16, 35, 5, 38, 8, 27, 19,
+                ],
+                87,
+                1_257_487_390,
+            ),
+            (
+                &[
+                    11, 0, 33, 22, 55, 44, 77, 71, 66, 99, 21, 88, 10, 43, 32, 65, 54, 87, 76, 98,
+                    51, 60, 93, 15, 40, 73, 82, 4, 37, 62, 95, 17, 26, 59, 9, 84, 6, 39, 48, 81,
+                    31, 20, 53, 42, 75, 64, 97, 19, 70, 91, 86, 8, 41, 30, 63, 52, 85, 74, 96, 18,
+                    7, 13, 92, 14, 80, 2, 35, 3, 36, 24, 57, 46, 79, 68, 90, 28, 61, 25, 58, 29,
+                    50, 12, 1, 34, 83, 23, 56, 72, 94, 16, 5, 38, 47, 27, 69, 45, 78, 49, 67, 89,
+                ],
+                250,
+                2_426_472_811,
+            ),
+        ];
+        for (items, count, asked) in circles {
+            let found = sorted_as_go(items.len() as u32, circle);
+            assert_eq!(found, (items.to_vec(), count, asked));
+        }
+        for (len, count, asked) in [
+            (21, 46, 463_171_968),
+            (25, 72, 3_613_303_437),
+            (41, 109, 345_428_119),
+            (100, 365, 1_584_551_272),
+        ] {
+            let found = sorted_as_go(len, coin_toss);
+            assert_eq!((found.1, found.2), (count, asked), "{len}");
         }
     }
 

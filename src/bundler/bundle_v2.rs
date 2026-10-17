@@ -2558,7 +2558,14 @@ pub mod bv2_impl {
                 is_named[index] && (loaders[index] == Loader::Html || is_loaded_by_plugin(index))
             };
             let is_of_the_project = |index: usize| !sources[index].path.is_node_module();
-            let end = |index: usize| (sources[index].path.namespace, sources[index].path.text);
+            let end = |index: usize| {
+                let path = &sources[index].path;
+                let namespace = match path.is_file() {
+                    true => &b""[..],
+                    false => path.namespace,
+                };
+                (namespace, path.text)
+            };
             // The next import to look at: of which file, and which one of it.
             let mut next = match self.plugins {
                 Some(_) => (0, 0),

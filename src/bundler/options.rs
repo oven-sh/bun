@@ -1203,9 +1203,9 @@ pub struct TypeChecked<'a, 'i> {
 
 /// `TypeChecked::plugin_imports`
 pub struct PluginImport<'a> {
-    /// The namespace and the path of the file that imports.
+    /// The namespace and the path of the module that imports. A file has no namespace here.
     pub importer: (&'a [u8], &'a [u8]),
-    /// Of the file that the bundler has found for the import.
+    /// Of the module that the bundler has found for the import.
     pub imported: (&'a [u8], &'a [u8]),
     /// A plugin has loaded that file.
     pub is_loaded_by_plugin: bool,

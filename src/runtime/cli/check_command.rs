@@ -632,18 +632,13 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
         .collect()
 }
 
-/// Whether a module of the bundler is in a file: that has a path. What a plugin provides in a
-/// namespace of its own, and a `data:` URL, have none.
-fn is_in_a_file((namespace, _): (&[u8], &[u8])) -> bool {
-    matches!(namespace, b"" | b"file")
-}
-
-/// What `PluginImports` has a module of the bundler by: the path of its file in the checker's
-/// format, which begins with `/` and is that of `already_read`. Otherwise a name that no path is.
-fn name_of_module(cwd: &[u8], module: (&[u8], &[u8])) -> Vec<u8> {
+/// What `PluginImports` has a module of the bundler by (`PluginImport::importer`): the path of its
+/// file in the checker's format, which begins with `/` and is that of `already_read`. What a
+/// plugin provides in a namespace of its own, and a `data:` URL, are in no file: each goes by a
+/// name that no path is.
+fn name_of_module(cwd: &[u8], (namespace, path): (&[u8], &[u8])) -> Vec<u8> {
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
-    let (namespace, path) = module;
-    match is_in_a_file(module) {
+    match namespace.is_empty() {
         true => bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path])),
         false => [b"\0", namespace, b":", path].concat(),
     }
@@ -695,8 +690,8 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         // The text of a file that a plugin has loaded is among `already_read` only if it is
         // nowhere else: then it is what the plugin provides.
         let is_only_of_plugin = import.is_loaded_by_plugin && already_read.contains_key(&path);
-        let is_source =
-            is_in_a_file(import.imported) && is_source(&import.imported.1) && !is_only_of_plugin;
+        let is_in_a_file = import.imported.0.is_empty();
+        let is_source = is_in_a_file && is_source(&import.imported.1) && !is_only_of_plugin;
         if !is_source && !import.is_loaded_by_plugin {
             continue;
         }

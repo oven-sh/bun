@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "fs";
 import { exists, rm } from "fs/promises";
-import { bunEnv, bunExe, isASAN, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, isASAN, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
 import { installEnv, TestRegistry } from "registry";
 import { pathToFileURL } from "url";
@@ -123,6 +123,17 @@ afterAll(async () => {
   await Promise.all(createdDirs.map(dir => rm(dir, { recursive: true, force: true })));
 });
 
+// Stands in for api.github.com. It answers every request with the archive of `me/n`.
+let github: Bun.Server<undefined> | undefined;
+const githubFiles = {
+  "package.json": JSON.stringify({ name: "n", version: "1.0.0", dependencies: { b: "^2.0.0" } }),
+  "index.js": `module.exports = require("b/package.json").version;`,
+};
+beforeAll(() => {
+  github = Bun.serve({ port: 0, fetch: async () => new Response(await githubTarball("me-n-abcdef1", githubFiles)) });
+});
+afterAll(() => github?.stop(true));
+
 // The timeout only matters if an install never returns. The runner does not clean up the children
 // of concurrent tests, so without it a layout that stops terminating would keep running, and
 // growing, after its test has failed.
@@ -134,7 +145,7 @@ async function spawnBun(cwd: string, ...cmd: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
     cwd,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), GITHUB_API_URL: github?.url.origin },
     stdout: "pipe",
     stderr: "pipe",
     timeout: isASAN ? 90_000 : 30_000,
@@ -1960,8 +1971,14 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
   });
 });
 
-// Bun installs no node_modules out of a folder or a git checkout, so `n/node_modules/b` is not a part of `n`.
-test.each(["file: folder", "git repository"])("an older bun's nested copy goes below a %s", async kind => {
+// Bun installs no node_modules out of a folder or a git checkout, so `n/node_modules/b` is not a part of `n`. An archive
+// from GitHub can hold one. The cache entry shows that this one does not. Without the entry, the version decides.
+test.concurrent.each([
+  "file: folder",
+  "git repository",
+  "github repository",
+  "github repository, without the older bun's cache",
+])("an older bun's nested copy goes below a %s", async kind => {
   const graph: Record<string, Record<string, object>> = {
     m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
     b: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} },
@@ -1970,10 +1987,7 @@ test.each(["file: folder", "git repository"])("an older bun's nested copy goes b
   const { "2.1.0": published, ...before } = graph.b;
   graph.b = before;
 
-  const n = {
-    "package.json": JSON.stringify({ name: "n", version: "1.0.0", dependencies: { b: "^2.0.0" } }),
-    "index.js": `module.exports = require("b/package.json").version;`,
-  };
+  const n = githubFiles;
   using repository = tempDir("hoist-older-owner-repository", n);
   if (kind === "git repository") {
     for (const args of [
@@ -1982,7 +1996,8 @@ test.each(["file: folder", "git repository"])("an older bun's nested copy goes b
       ["commit", "-q", "-m", "n"],
     ]) {
       const identity = ["-c", "user.name=n", "-c", "user.email=n@example.com"];
-      expect(Bun.spawnSync({ cmd: ["git", ...identity, ...args], cwd: String(repository) }).exitCode).toBe(0);
+      await using git = Bun.spawn({ cmd: ["git", ...identity, ...args], cwd: String(repository) });
+      expect(await git.exited).toBe(0);
     }
   }
   const files = (root: object) => ({
@@ -1993,7 +2008,12 @@ test.each(["file: folder", "git repository"])("an older bun's nested copy goes b
       name: "app",
       dependencies: {
         m: "1.0.0",
-        n: kind === "git repository" ? `git+${pathToFileURL(String(repository))}` : "file:./vendor/n",
+        n:
+          kind === "git repository"
+            ? `git+${pathToFileURL(String(repository))}`
+            : kind === "file: folder"
+              ? "file:./vendor/n"
+              : "github:me/n#abcdef1",
       },
       ...root,
     }),
@@ -2010,6 +2030,7 @@ test.each(["file: folder", "git repository"])("an older bun's nested copy goes b
   // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
   await run(dir, "install");
   expect(layout(dir)).toEqual(["b@1.0.0", "m@1.0.0", "n@1.0.0", "n/b@2.0.0"]);
+  if (kind.endsWith("cache")) rmSync(join(dir, ".bun-cache"), { recursive: true });
   await pull();
   await run(dir, "install", "--production");
 
@@ -2021,7 +2042,7 @@ test.each(["file: folder", "git repository"])("an older bun's nested copy goes b
 });
 
 // `x/node_modules/n` is from the older bun. The same run installs `y/node_modules/n`, the same package.
-test("an older bun's nested copy goes while the run installs its owner at another place", async () => {
+test.concurrent("an older bun's nested copy goes while the run installs its owner at another place", async () => {
   using server = await serveGraph({
     m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
     n: { "1.0.0": { dependencies: { b: "^2.0.0" } }, "2.0.0": {} },

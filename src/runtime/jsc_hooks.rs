@@ -1019,9 +1019,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // On every turn, ahead of the reads below: this runs the immediates
-        // queued while a macro ran, and a program that queues an immediate
-        // each turn must not starve them.
+        // Every turn, before the reads below, so the program's immediates cannot starve these.
         // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
         let macro_loop_pending =
             unsafe { bun_jsc::event_loop::EventLoop::run_macro_loop_leftovers(el, vm) };

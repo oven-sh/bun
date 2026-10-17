@@ -2610,11 +2610,9 @@ impl VirtualMachine {
     /// Release — never run — everything queued on both event loops (tasks,
     /// concurrent tasks, pending immediates) while the JSC heap and this
     /// thread's loop are alive: their JS handles and keep-alives drop now. The
-    /// macro loop too: between macros the regular loop runs its immediates and
-    /// adopts its concurrent tasks, a turn at a time, and nothing else
-    /// (`tasks`, `yield_tasks`), so work can still be queued on it. Teardown
-    /// phase B; also the one thing an owner that calls `destroy()` without a
-    /// teardown (bake's build VM) must do first.
+    /// macro loop too: not everything a macro queued on it is handed over, so
+    /// it is still there. Teardown phase B; also the one thing an owner that
+    /// calls `destroy()` without a teardown (bake's build VM) must do first.
     pub fn release_queued_work(&mut self) {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();
@@ -5599,9 +5597,7 @@ impl VirtualMachine {
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
 
-        // Same again for a VM that ran a macro: the table of registered
-        // macro functions, and the entry points `load_macro_entry_point`
-        // boxed into the other table.
+        // Same raw-dealloc story for the two macro tables.
         drop(core::mem::take(&mut self.macros));
         for entry_point in core::mem::take(&mut self.macro_entry_points).values() {
             // SAFETY: boxed by `load_macro_entry_point`; the table owned it.

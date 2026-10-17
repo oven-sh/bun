@@ -5,7 +5,7 @@ use bun_core;
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from the printer crate
 //
-// `js_printer` is the sole *producer* of ModuleInfo records (it walks the AST
+// `js_printer` holds the producers of ModuleInfo records (the printer walks the AST
 // during printing); the bundler/runtime only consume the resulting bytes. The
 // canonical builder type therefore lives in `bun_js_printer` (moved down to
 // bun_js_printer), and is re-exported here so that bundler-side callers — which
@@ -15,7 +15,7 @@ use bun_core;
 // the print boundary.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_js_printer::analyze_transpiled_module::{
-    FetchParameters, ModuleInfo, ModulePhase, StringID,
+    AnalyzedRecord, FetchParameters, ModuleInfo, ModulePhase, RequestType, StringID,
 };
 
 /// Downstream name for `FetchParameters` — mirrors how

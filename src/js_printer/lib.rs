@@ -67,8 +67,7 @@ use renamer as rename;
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
-/// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
-/// only consume the serialized form.
+/// ModuleInfo records are produced here, by the printer or by `AnalyzedRecord`; the bundler/runtime consume them.
 pub mod analyze_transpiled_module {
     use bun_collections::HashMap;
 
@@ -863,6 +862,116 @@ pub mod analyze_transpiled_module {
             }
             self.finalized = true;
             Ok(())
+        }
+    }
+
+    /// A module request's `with { type }`, as JavaScriptCore's record holds it.
+    #[derive(Clone, Copy)]
+    pub enum RequestType<'a> {
+        None,
+        JavaScript,
+        WebAssembly,
+        Json,
+        HostDefined(&'a [u8]),
+    }
+
+    /// A `ModuleInfo` from JavaScriptCore's own record of a text the printer did not print all of.
+    pub struct AnalyzedRecord {
+        info: Box<ModuleInfo>,
+        requests: Vec<(StringID, FetchParameters, ModulePhase)>,
+    }
+
+    impl AnalyzedRecord {
+        pub fn new(is_typescript: bool) -> Self {
+            Self {
+                info: ModuleInfo::create(is_typescript),
+                requests: Vec::new(),
+            }
+        }
+
+        /// In the record's order: an entry names its request by how many were added before it.
+        pub fn request(&mut self, specifier: &[u8], r#type: RequestType<'_>, phase: ModulePhase) {
+            let specifier = self.info.str(specifier);
+            let fetch = match r#type {
+                RequestType::None => FetchParameters::None,
+                RequestType::JavaScript => FetchParameters::Javascript,
+                RequestType::WebAssembly => FetchParameters::Webassembly,
+                RequestType::Json => FetchParameters::Json,
+                RequestType::HostDefined(name) => {
+                    FetchParameters::host_defined(self.info.str(name))
+                }
+            };
+            self.info.request_module_with_phase(specifier, fetch, phase);
+            self.requests.push((specifier, fetch, phase));
+        }
+
+        /// `import_name`: `None` for `import * as`. `re_exported`: the module exports the binding.
+        pub fn import(
+            &mut self,
+            request: u32,
+            import_name: Option<&[u8]>,
+            local_name: &[u8],
+            re_exported: bool,
+        ) -> Option<()> {
+            let &(module, fetch, phase) = self.requests.get(request as usize)?;
+            let local = self.info.str(local_name);
+            match import_name {
+                Some(name) => {
+                    let name = self.info.str(name);
+                    // As `finalize()` re-tags the printer's: what a TypeScript module re-exports may be a type.
+                    let may_be_type = re_exported && self.info.flags.is_typescript;
+                    self.info
+                        .add_import_info_single(module, name, local, fetch, may_be_type);
+                }
+                None if phase == ModulePhase::Defer => self
+                    .info
+                    .add_import_info_namespace_defer(module, local, fetch),
+                None => self.info.add_import_info_namespace(module, local, fetch),
+            }
+            Some(())
+        }
+
+        /// `local_name`: `None` for an `export default` of something unnamed.
+        pub fn export_local(&mut self, export_name: &[u8], local_name: Option<&[u8]>) {
+            let export = self.info.str(export_name);
+            let local = match local_name {
+                Some(name) => self.info.str(name),
+                None => StringID::STAR_DEFAULT,
+            };
+            self.info.add_export_info_local(export, local);
+        }
+
+        pub fn export_indirect(
+            &mut self,
+            request: u32,
+            export_name: &[u8],
+            import_name: &[u8],
+        ) -> Option<()> {
+            let &(module, fetch, _) = self.requests.get(request as usize)?;
+            let export = self.info.str(export_name);
+            let import = self.info.str(import_name);
+            self.info
+                .add_export_info_indirect(export, import, module, fetch);
+            Some(())
+        }
+
+        pub fn export_namespace(&mut self, request: u32, export_name: &[u8]) -> Option<()> {
+            let &(module, fetch, _) = self.requests.get(request as usize)?;
+            let export = self.info.str(export_name);
+            self.info.add_export_info_namespace(export, module, fetch);
+            Some(())
+        }
+
+        pub fn export_star(&mut self, request: u32) -> Option<()> {
+            let &(module, fetch, _) = self.requests.get(request as usize)?;
+            self.info.add_export_info_star(module, fetch);
+            Some(())
+        }
+
+        pub fn finish(mut self, contains_import_meta: bool, has_tla: bool) -> Box<ModuleInfo> {
+            self.info.flags.contains_import_meta = contains_import_meta;
+            self.info.flags.has_tla = has_tla;
+            self.info
         }
     }
 }

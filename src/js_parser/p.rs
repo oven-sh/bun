@@ -220,6 +220,8 @@ pub struct StartsForParseOnly {
     pub(crate) async_arrow_parameters: bun_collections::HashMap<i32, i32>,
     pub(crate) arrow_expression_bodies: bun_collections::HashMap<i32, i32>,
     pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
+    /// Not every `import` declaration leaves a statement or a record: the parser takes `bun:bundle` for itself.
+    pub(crate) has_import_declaration: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -4124,6 +4126,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
+        if let Some(starts) = &mut self.starts_for_parse_only {
+            starts.has_import_declaration = true;
+        }
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;

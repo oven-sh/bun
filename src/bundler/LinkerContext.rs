@@ -27,6 +27,7 @@ use bun_ast::{
 use crate::Index;
 use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
+use bun_js_parser::parse::parse_entry::{ModuleSyntax, parse_only_text};
 use bun_js_printer::{self as js_printer, renamer};
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
@@ -1469,6 +1470,23 @@ impl LinkerOptions {
         self.generate_bytecode_cache
             && self.output_format == Format::Esm
             && self.compile_mode.is_executable()
+    }
+
+    /// The module-record flags of `--banner` and `--footer`, text the printer never sees. `None`: a piece has an `import` or `export`, or does not parse alone.
+    pub(crate) fn raw_text_module_syntax(&self) -> Option<ModuleSyntax> {
+        let mut syntax = ModuleSyntax::default();
+        for text in [self.banner, self.footer] {
+            if text.is_empty() {
+                continue;
+            }
+            let piece = parse_only_text(text, true, false, |parsed| parsed.module_syntax())?;
+            if piece.declarations {
+                return None;
+            }
+            syntax.import_meta |= piece.import_meta;
+            syntax.top_level_await |= piece.top_level_await;
+        }
+        Some(syntax)
     }
 }
 

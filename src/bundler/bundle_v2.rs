@@ -1506,6 +1506,13 @@ pub mod bv2_impl {
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
+            /// JavaScriptCore's own module record of a chunk's final text; `None` if JavaScriptCore does not parse it.
+            pub(crate) safe fn __bun_jsc_analyze_module_source(
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                is_typescript: bool,
+            ) -> Option<Box<crate::analyze_transpiled_module::ModuleInfo>>;
+
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
             pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(

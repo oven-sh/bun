@@ -1,5 +1,7 @@
-import { afterEach, beforeEach, describe, expect } from "bun:test";
-import { isASAN, isDebug, isWindows } from "harness";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows, tempDir } from "harness";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { BundlerTestInput, BundlerTestRunOptions, itBundled as itBundledBase } from "./expectBundled";
 
 // `bun build --compile --bytecode --format=esm` embeds a pre-resolved module graph that JSC's loader consumes instead
@@ -49,18 +51,33 @@ interface GraphCase {
   splitRun?: (mode: LoaderMode) => Partial<BundlerTestRunOptions>;
 }
 
-// Registers `compile/prelinked/<id>` (one chunk) and `compile/prelinked/<id>+splitting` (entries and dynamic imports
-// become separate chunks that import each other's bindings).
+// Registers `compile/prelinked/<id>` (one chunk), `compile/prelinked/<id>+splitting` (entries and dynamic imports
+// become separate chunks that import each other's bindings) and `compile/prelinked/<id>+splitting+banner`, the
+// +splitting build with `--banner "export {};"`. The bundler's printer never prints a banner, and what the printer
+// prints is what a chunk's module record is made from; for a banner with an import or export declaration the record
+// of every chunk is JSC's own reading of the chunk's final text instead, made while building. The program has to
+// load, link and run the same from those records.
 function graphCase(id: string, c: GraphCase) {
-  for (const splitting of [false, true]) {
-    const entries = splitting && c.entries ? c.entries : undefined;
-    itBundled(`compile/prelinked/${id}${splitting ? "+splitting" : ""}`, {
+  for (const [suffix, splitting, banner] of [
+    ["", false, false],
+    ["+splitting", true, false],
+    ["+splitting+banner", true, true],
+  ] as const) {
+    const files = variant(c.files, splitting);
+    const entries = (splitting && c.entries ? c.entries : banner ? [Object.keys(files)[0]] : undefined)?.map(
+      e => "./" + e.replace(/^\//, ""),
+    );
+    itBundled(`compile/prelinked/${id}${suffix}`, {
       compile: true,
       bytecode: true,
       format: "esm",
       splitting,
-      files: variant(c.files, splitting),
-      ...(entries ? { entryPointsRaw: entries.map(e => "./" + e.replace(/^\//, "")), outfile: "dist/out" } : {}),
+      files,
+      // The banner goes on the command line as it is, after the entry points: itBundled's `banner` option would put
+      // the text in quotes, which makes it a string.
+      ...(entries
+        ? { entryPointsRaw: banner ? [...entries, "--banner", "export {};"] : entries, outfile: "dist/out" }
+        : {}),
       run: eachMode(mode => ({
         stdout: variant(c.stdout, splitting),
         stderr: "",
@@ -871,4 +888,485 @@ describe.concurrent("bundler", () => {
     entries: ["/entry.ts", "/state.ts"],
     stdout: "1 1,1,/,function\ntrue 2 1,2,/,function",
   });
+
+  // --banner and --footer are text in every chunk that the bundler's printer never prints, and the module record of
+  // a chunk is made from what the printer prints. What that text says of the module still has to be in the record:
+  // without it the executable reads an import.meta slot nothing filled (a segfault), finishes before its awaits
+  // settle, or runs with the banner's imports unbound. import.meta and a top-level await are two flags, which are
+  // added to the printer's record. An import or an export is an entry, and a piece that is no JavaScript on its own
+  // can be half of anything: for those the record of every chunk is JSC's own reading of the chunk's final text,
+  // made while building.
+  // Every executable runs in the three loader modes, and once more to show that no chunk was left for JSC to read
+  // at startup. ("api": itBundled's "cli" backend wraps the text in quotes.)
+  const bannerFooterCases: {
+    name: string;
+    banner?: string;
+    footer?: string;
+    splitting?: boolean;
+    minify?: boolean;
+    files: Record<string, string>;
+    stdout: string;
+    /** With the graph in use: how often the loader may call the host's fetch and resolve hooks, and evaluates. */
+    loaderHookCalls?: { fetch: number; resolve: number; evaluate: number };
+  }[] = [
+    {
+      // Flags. Also read under typeof, and from a closure after the module body has run.
+      name: "ImportMeta",
+      banner: `const metaLater = () => typeof import.meta.dir; console.log("banner", typeof import.meta.url, typeof import.meta);`,
+      footer: `console.log("footer", typeof import.meta.url, metaLater());`,
+      files: { "/entry.ts": `console.log("entry");` },
+      stdout: "banner string object\nentry\nfooter string string",
+    },
+    {
+      // Flags.
+      name: "TopLevelAwait",
+      banner: `console.log("banner", await Promise.resolve("awaited"));`,
+      footer: `for await (const value of [Promise.resolve("awaited")]) console.log("footer", value);`,
+      files: { "/entry.ts": `console.log("entry");` },
+      stdout: "banner awaited\nentry\nfooter awaited",
+    },
+    {
+      // Entries: a default, a named and a namespace import, and the banner esbuild users write for ESM output. The
+      // entry reads what the banner declared.
+      name: "Imports",
+      banner: `import os from "node:os"; import { join } from "node:path"; import * as util from "node:util"; import { createRequire } from "node:module"; const bannerRequire = createRequire(import.meta.url); console.log("banner", typeof os.platform, typeof join, typeof util.inspect);`,
+      files: {
+        "/entry.ts": `
+          declare const bannerRequire: NodeJS.Require;
+          console.log("entry", typeof bannerRequire("node:fs").readFileSync);
+        `,
+      },
+      stdout: "banner function function function\nentry function",
+    },
+    {
+      // An import is the only thing the text says.
+      name: "ImportOnly",
+      banner: `import { platform as bannerPlatform } from "node:os";`,
+      files: {
+        "/entry.ts": `
+          declare const bannerPlatform: () => string;
+          console.log("entry", typeof bannerPlatform);
+        `,
+      },
+      stdout: "entry function",
+    },
+    {
+      // An export in the footer is the only thing the text says: the banner is a plain statement.
+      name: "FooterExportOnly",
+      splitting: true,
+      banner: `console.log("banner");`,
+      footer: `export const fromFooter = "footer";`,
+      files: {
+        "/entry.ts": `console.log("entry", (await import("./lazy")).fromFooter);`,
+        "/lazy.ts": `export const value = 1;`,
+      },
+      stdout: "banner\nbanner\nentry footer",
+    },
+    {
+      // The text is in the chunk both others import from and in the import() targets, one of them a JSON chunk
+      // that gets a record but no bytecode. Each exports what the footer declares, and the entry reads that through
+      // the targets' namespaces. The records are embedded all the same: loading costs what it costs without the
+      // banner and footer (fetch 4, resolve 7), not what it costs when JSC makes each record from the chunk's source
+      // as it loads (fetch 6, resolve 13).
+      name: "EveryChunk",
+      splitting: true,
+      banner: `import { sep as bannerSep } from "node:path"; const bannerMeta = typeof import.meta.url;`,
+      footer: `export const fromFooter = [bannerMeta, typeof bannerSep, await Promise.resolve("awaited")].join(" ");`,
+      files: {
+        "/entry.ts": `
+          import { shared } from "./shared";
+          const lazy = await import("./lazy");
+          const data = await import("./data.json");
+          console.log(shared, lazy.value, lazy.fromFooter, data.default.key, data.fromFooter);
+        `,
+        "/shared.ts": `export const shared = "shared";`,
+        "/lazy.ts": `
+          import { shared } from "./shared";
+          export const value = "lazy+" + shared;
+        `,
+        "/data.json": `{ "key": "value" }`,
+      },
+      stdout: "shared lazy+shared string string awaited value string string awaited",
+      loaderHookCalls: { fetch: 4, resolve: 7, evaluate: 5 },
+    },
+    {
+      // The names of a record JSC made have to be the atoms the bytecode reads them by: Latin-1, UTF-16, empty.
+      name: "NonAsciiNames",
+      splitting: true,
+      banner: `export {};`,
+      files: {
+        "/entry.ts": `
+          import { a, café, слово, "" as empty } from "./names";
+          const { lazy } = await import("./lazy");
+          console.log(a, café, слово, empty, lazy());
+        `,
+        "/names.ts": `
+          export const a = 1, café = 2, слово = 3;
+          const empty = 4;
+          export { empty as "" };
+        `,
+        "/lazy.ts": `
+          import { café, слово } from "./names";
+          export function lazy() { return café + слово; }
+        `,
+      },
+      stdout: "1 2 3 4 5",
+    },
+    ...[false, true].map(minify => ({
+      // A star export, a namespace export and an indirect one, read through the chunk's namespace.
+      name: "ReExports" + (minify ? "+minify" : ""),
+      splitting: true,
+      minify,
+      banner: `export {};`,
+      files: {
+        "/entry.ts": `
+          const mod = await import("./reexports.ts");
+          console.log(typeof mod.fs.readFileSync, typeof mod.join, typeof mod.rfs);
+        `,
+        "/reexports.ts": `
+          export * from "node:path";
+          export * as fs from "node:fs";
+          export { readFileSync as rfs } from "node:fs";
+        `,
+      },
+      stdout: "function function function",
+    })),
+    {
+      // A default export of something that has no name.
+      name: "AnonymousDefaultExport",
+      splitting: true,
+      footer: `export default "footer default";`,
+      files: {
+        "/entry.ts": `console.log("entry", (await import("./lazy")).default);`,
+        "/lazy.ts": `export const value = 1;`,
+      },
+      stdout: "entry footer default",
+    },
+    {
+      // The footer exports what the banner declares: neither piece says so alone, and the printer prints neither.
+      name: "ExportAcrossPieces",
+      splitting: true,
+      banner: `var fromBanner = "banner value";`,
+      footer: `export { fromBanner };`,
+      files: {
+        "/entry.ts": `console.log("entry", (await import("./lazy")).fromBanner);`,
+        "/lazy.ts": `export const value = 1;`,
+      },
+      stdout: "entry banner value",
+    },
+    {
+      // Neither piece is JavaScript on its own. What the pair says is only in the chunk's final text.
+      name: "StatementAroundChunk",
+      banner: `try {`,
+      footer: `} finally { console.log("footer", typeof import.meta.url, await Promise.resolve("awaited")); }`,
+      files: { "/entry.ts": `console.log("entry");` },
+      stdout: "entry\nfooter string awaited",
+    },
+    {
+      // The pair takes text away: the exports the printer printed are not in the module JSC compiles.
+      name: "CommentAroundChunk",
+      banner: `/*`,
+      footer: `*/ console.log("footer only");`,
+      files: {
+        "/entry.ts": `
+          export const answer = 42;
+          export default function hello() {}
+          console.log("entry");
+        `,
+      },
+      stdout: "footer only",
+    },
+    {
+      // The printer's record lets a TypeScript module re-export a name its import does not have, which may be a
+      // type (a build without --bytecode throws a SyntaxError here). A record JSC made for the banner's sake allows
+      // what the build allows without the banner.
+      name: "TypeScriptReExport",
+      banner: `import { sep as bannerSep } from "node:path"; console.log("banner", typeof bannerSep);`,
+      files: {
+        "/entry.ts": `
+          import { NotExported, join } from "node:path";
+          export { NotExported, join };
+          console.log("entry", typeof join);
+        `,
+      },
+      stdout: "banner string\nentry function",
+    },
+  ];
+
+  // The chunks JSC read the source of to make their record: it prints the key of each such module.
+  const recordsMadeFromSource = (stderr: string) =>
+    [...stderr.matchAll(/^Analyzing ModuleRecord key\('([^']*)'\)/gm)]
+      .map(m => m[1])
+      .filter(key => /[$~]bunfs|~BUN/i.test(key));
+
+  for (const c of bannerFooterCases) {
+    const { loaderHookCalls } = c;
+    itBundled(`compile/prelinked/BannerFooter/${c.name}`, {
+      backend: "api",
+      compile: true,
+      bytecode: true,
+      format: "esm",
+      splitting: c.splitting,
+      ...(c.minify && { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true }),
+      banner: c.banner,
+      footer: c.footer,
+      files: c.files,
+      run: [
+        ...eachMode(() => ({ stdout: c.stdout, stderr: "" })),
+        {
+          stdout: c.stdout,
+          bunArgs: launcher,
+          env: { BUN_JSC_dumpModuleRecord: "1" },
+          validate({ stderr }) {
+            expect(recordsMadeFromSource(stderr)).toEqual([]);
+          },
+        },
+        ...(loaderHookCalls
+          ? [
+              {
+                stdout: c.stdout,
+                bunArgs: launcher,
+                // JSC logs one line per call of a host hook, and nothing else may be on stderr.
+                env: { BUN_JSC_dumpModuleLoadingState: "1" },
+                validate({ stderr }: { stderr: string }) {
+                  const calls: Record<string, number> = {};
+                  for (const line of stderr.trim().split("\n")) {
+                    const hook = /^Loader \[(\w+)\] /.exec(line)?.[1] ?? `not a loader line: ${line}`;
+                    calls[hook] = (calls[hook] ?? 0) + 1;
+                  }
+                  expect(Object.keys(calls).sort()).toEqual(["evaluate", "fetch", "import", "resolve"]);
+                  expect(calls.evaluate).toBe(loaderHookCalls.evaluate);
+                  expect(calls.fetch).toBeLessThanOrEqual(loaderHookCalls.fetch);
+                  expect(calls.resolve).toBeLessThanOrEqual(loaderHookCalls.resolve);
+                },
+              },
+            ]
+          : []),
+      ],
+    });
+  }
+
+  // The cases below need the command line, the build's environment, or a path only known once the files exist.
+  // A debug build's link alone takes about as long as the default timeout; itBundled sets the same for its tests.
+  const spawnTimeout = isCI ? undefined : isDebug ? Infinity : 30_000;
+  const exe = (dir: string, name = "app") => join(dir, isWindows ? name + ".exe" : name);
+
+  async function build(dir: string, args: string[], env: Record<string, string> = {}, bytecode = true) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...(bytecode ? ["--bytecode"] : []), "--format=esm", ...args],
+      env: { ...bunEnv, ...env },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  async function run(dir: string, file: string, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [...launcher, file],
+      env: { ...bunEnv, ...env },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const runEachMode = async (dir: string, file: string) =>
+    Object.fromEntries(
+      await Promise.all(loaderModes.map(async ({ mode, env }) => [mode, await run(dir, file, env)] as const)),
+    );
+  const inEachMode = <T>(result: T) => Object.fromEntries(loaderModes.map(({ mode }) => [mode, result]));
+
+  // The report this came from, through the command line: the executable crashed before "app ok" with the banner
+  // and after it with the footer.
+  test(
+    "compile/prelinked/BannerFooter/CLI",
+    async () => {
+      using dir = tempDir("compile-prelinked-banner-cli", { "app.mjs": `console.log("app ok");` });
+      const built = await build(String(dir), [
+        "--banner",
+        `console.log(typeof import.meta.url);`,
+        "--footer",
+        `console.log(typeof import.meta.dir);`,
+        "./app.mjs",
+        "--outfile",
+        exe(String(dir)),
+      ]);
+      expect(built).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
+      expect(await runEachMode(String(dir), exe(String(dir)))).toEqual(
+        inEachMode({ stdout: "string\napp ok\nstring\n", stderr: "", exitCode: 0 }),
+      );
+    },
+    spawnTimeout,
+  );
+
+  // Requests with a type and a deferred one, for files that are not in the executable.
+  test(
+    "compile/prelinked/BannerFooter/TypedAndDeferredImports",
+    async () => {
+      using dir = tempDir("compile-prelinked-banner-typed", {
+        "app.mjs": `console.log("app ok");`,
+        "extra.json": `{ "key": "from json" }`,
+        "extra.txt": `from text`,
+      });
+      const url = (file: string) => JSON.stringify(pathToFileURL(join(String(dir), file)).href);
+      const built = await build(String(dir), [
+        "--banner",
+        `import bannerJson from ${url("extra.json")} with { type: "json" }; import bannerText from ${url("extra.txt")} with { type: "text" }; import defer * as bannerOs from "node:os"; console.log("banner", bannerJson.key, bannerText, typeof bannerOs.platform);`,
+        "./app.mjs",
+        "--outfile",
+        exe(String(dir)),
+      ]);
+      expect(built).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
+      expect(await runEachMode(String(dir), exe(String(dir)))).toEqual(
+        inEachMode({ stdout: "banner from json from text function\napp ok\n", stderr: "", exitCode: 0 }),
+      );
+      const startup = await run(String(dir), exe(String(dir)), { BUN_JSC_dumpModuleRecord: "1" });
+      expect(recordsMadeFromSource(startup.stderr)).toEqual([]);
+    },
+    spawnTimeout,
+  );
+
+  // Which of the three a build does, seen from outside: JSC prints each record it makes from source.
+  test(
+    "compile/prelinked/BannerFooter/RecordsJSCMakesWhileBuilding",
+    async () => {
+      using dir = tempDir("compile-prelinked-banner-gate", {
+        "entry.ts": `
+          import index from "./index.html";
+          const lazy = await import("./lazy.ts");
+          console.log(typeof index, lazy.value);
+        `,
+        "lazy.ts": `export const value = "lazy";`,
+        "index.html": `<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>`,
+        "client.ts": `document.body.textContent = "client";`,
+      });
+      const recordsMade = async (name: string, args: string[]) => {
+        const built = await build(
+          String(dir),
+          [...args, "--splitting", "./entry.ts", "--outfile", exe(String(dir), name)],
+          { BUN_JSC_dumpModuleRecord: "1" },
+        );
+        expect(built.exitCode).toBe(0);
+        const ran = await run(String(dir), exe(String(dir), name));
+        expect(ran).toEqual({ stdout: "object lazy\n", stderr: "", exitCode: 0 });
+        return recordsMadeFromSource(built.stderr).length;
+      };
+      expect({
+        // Text that says nothing of the module, whatever it spells: the printer's records, as without it.
+        none: await recordsMade("none", [
+          "--banner",
+          `/* import.meta */ "use client"; var text = "await import export";`,
+          "--footer",
+          `// export default import.meta`,
+        ]),
+        // Flags only: the printer's records again.
+        flags: await recordsMade("flags", ["--banner", `import.meta.url; await 0;`]),
+        // An entry: the entry's chunk and the import() target's, and not the chunk the page is served.
+        entries: await recordsMade("entries", ["--footer", `export {};`]),
+      }).toEqual({ none: 0, flags: 0, entries: 2 });
+    },
+    spawnTimeout,
+  );
+
+  // With such a banner a chunk can be text JSC does not take, here one that imports what the banner imports. It
+  // has no record to give and the build says it made no bytecode for it; the executable then reads that chunk's
+  // source when it is asked for, as a build without --bytecode does for every chunk, and fails there the same way.
+  test(
+    "compile/prelinked/BannerFooter/ChunkThatDoesNotParse",
+    async () => {
+      using dir = tempDir("compile-prelinked-banner-no-record", {
+        "entry.mjs": `
+          console.log("entry start");
+          const settle = async f => { try { return (await f()).value; } catch (e) { return String(e).split("\\n")[0]; } };
+          console.log("via:", await settle(() => import("./via.mjs")));
+          console.log("plain:", await settle(() => import("./plain.mjs")));
+          console.log("via again:", await settle(() => import("./via.mjs")));
+        `,
+        "via.mjs": `
+          import { createRequire } from "node:module";
+          import { common } from "./common.mjs";
+          export const value = "via+" + typeof createRequire(import.meta.url) + "+" + common;
+        `,
+        "plain.mjs": `
+          import { common } from "./common.mjs";
+          export const value = "plain+" + common;
+        `,
+        "common.mjs": `export const common = "common";`,
+      });
+      const args = (name: string) => [
+        "--splitting",
+        "--banner",
+        `import { createRequire } from "node:module"; const bannerRequire = createRequire(import.meta.url);`,
+        "./entry.mjs",
+        "--outfile",
+        exe(String(dir), name),
+      ];
+      const built = await build(String(dir), args("app"));
+      expect({
+        bytecodeFailures: built.stderr.split("\n").filter(line => line.includes("Failed to generate bytecode for"))
+          .length,
+        exitCode: built.exitCode,
+      }).toEqual({ bytecodeFailures: 1, exitCode: 0 });
+
+      expect((await build(String(dir), args("source"), {}, false)).exitCode).toBe(0);
+      const expected = await run(String(dir), exe(String(dir), "source"));
+      const [, viaFails] = expected.stdout.split("\n");
+      expect(expected).toEqual({
+        stdout: [
+          "entry start",
+          viaFails,
+          "plain: plain+common",
+          "via again: " + viaFails.slice("via: ".length),
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(viaFails).toStartWith("via: SyntaxError");
+      expect(await runEachMode(String(dir), exe(String(dir)))).toEqual(inEachMode(expected));
+    },
+    spawnTimeout,
+  );
+
+  // One payload for every chunk, laid out by what a run read: the records of such a link come from the same place.
+  test(
+    "compile/prelinked/BannerFooter/BytecodeOrder",
+    async () => {
+      using dir = tempDir("compile-prelinked-banner-order", {
+        "entry.mjs": `
+          import { shared } from "./shared.mjs";
+          const lazy = await import("./lazy.mjs");
+          console.log(shared, lazy.value, typeof bannerPlatform);
+        `,
+        "shared.mjs": `export const shared = "shared";`,
+        "lazy.mjs": `
+          import { shared } from "./shared.mjs";
+          export const value = "lazy+" + shared;
+        `,
+      });
+      const args = ["--splitting", "--banner", `import { platform as bannerPlatform } from "node:os";`, "./entry.mjs"];
+      const expected = { stdout: "shared lazy+shared function\n", stderr: "", exitCode: 0 };
+
+      expect(await build(String(dir), [...args, "--outfile", exe(String(dir), "plain")])).toEqual({
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+      const order = join(String(dir), "app.order");
+      expect(await run(String(dir), exe(String(dir), "plain"), { BUN_BYTECODE_ORDER_OUT: order })).toEqual(expected);
+
+      expect(
+        await build(String(dir), [...args, "--bytecode-order=app.order", "--outfile", exe(String(dir), "ordered")]),
+      ).toEqual({
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+      expect(await runEachMode(String(dir), exe(String(dir), "ordered"))).toEqual(inEachMode(expected));
+    },
+    spawnTimeout,
+  );
 });

@@ -118,6 +118,41 @@ unsafe extern "C" {
     fn WebPMuxAssemble(mux: *mut WebPMux, assembled_data: *mut WebPData) -> c_int;
 }
 
+/// The head length that `WebPGetInfo` needs to answer as for the whole file. `None`: this one. `usize::MAX`: no head.
+pub(crate) fn info_needs(head: &[u8]) -> Option<usize> {
+    // A chunk header, then the longer (VP8) of the two frame headers.
+    const FRAME: usize = 8 + 10;
+    if head.len() < 12 + FRAME {
+        return Some(12 + FRAME);
+    }
+    if &head[12..16] != b"VP8X" {
+        // libwebp sizes a bitstream with no chunk header by the bytes that it gets.
+        return match &head[12..16] {
+            b"VP8 " | b"VP8L" => None,
+            _ => Some(usize::MAX),
+        };
+    }
+    // An animated file answers with the canvas and never looks for a frame.
+    if head[20] & 0x02 != 0 {
+        return None;
+    }
+    let mut at: usize = 12 + FRAME;
+    loop {
+        let frame_end = at.saturating_add(FRAME);
+        // Off the input before the frame header, libwebp answers with the canvas, which it did not check.
+        let Some(chunk) = head.get(at..).filter(|rest| rest.len() >= 8) else {
+            return Some(frame_end);
+        };
+        if matches!(&chunk[0..4], b"VP8 " | b"VP8L") {
+            return (chunk.len() < FRAME).then_some(frame_end);
+        }
+        let size =
+            u32::from_le_bytes(chunk[4..8].try_into().expect("infallible: size matches")) as usize;
+        // The step of libwebp's ParseOptionalChunks: the payload is padded to an even length.
+        at = at.saturating_add(8 + size + (size & 1));
+    }
+}
+
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     let mut cw: c_int = 0;
     let mut ch: c_int = 0;

@@ -252,6 +252,13 @@ macro_rules! coerce_int {
 /// path-driven request from materialising gigabytes before any guard runs.
 const MAX_INPUT_FILE_BYTES: u64 = 256 << 20;
 
+/// The first read of a path for `metadata()`: every header at a fixed position fits, and most JPEG headers.
+const HEAD_BYTES: usize = 64 << 10;
+/// The least length of the second read. The third read is the rest of the file.
+const LONG_HEAD_BYTES: usize = 4 * HEAD_BYTES;
+/// A read of the rest of a file asks for this much past `st_size`, as `read_to_end` does.
+const PAST_SIZE_BYTES: usize = 16;
+
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
 impl Image {
@@ -930,17 +937,11 @@ impl Image {
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
+        // A path string reads a head of the file there (`read_head`).
         if let Some(buf) = self.js_thread_bytes(callframe.this(), global) {
-            match codecs::probe(buf, self.max_pixels) {
+            match codecs::probe_oriented(buf, self.max_pixels, self.auto_orient) {
                 Ok(p) => {
-                    let mut w = p.width;
-                    let mut h = p.height;
-                    if self.auto_orient && p.format == codecs::Format::Jpeg {
-                        let t = exif::read_jpeg(buf).transform();
-                        if t.rotate == 90 || t.rotate == 270 {
-                            mem::swap(&mut w, &mut h);
-                        }
-                    }
+                    let (w, h) = (p.width, p.height);
                     self.last_width.set(i32::try_from(w).expect("int cast"));
                     self.last_height.set(i32::try_from(h).expect("int cast"));
                     let obj = JSValue::create_empty_object(global, 3);
@@ -1537,6 +1538,101 @@ pub(crate) enum TaskResult {
     IoErr(sys::Error),
 }
 
+/// What a header-only read of a file gives.
+enum HeadRead {
+    /// The whole file: it is no longer than a head, or no head of it has the answer.
+    Whole(Vec<u8>),
+    /// The answer of the whole file, from a head of it.
+    Answer(Result<codecs::Probe, codecs::Error>),
+}
+
+/// Reads a head of `file`, then one longer head, then the rest, for as long as `codecs::probe_head` asks for more.
+fn read_head(
+    file: &sys::File,
+    size: usize,
+    max_pixels: u64,
+    auto_orient: bool,
+) -> sys::Result<HeadRead> {
+    // `st_size` is also 0 for a file whose length the file system does not report.
+    if size == 0 {
+        return file.read_to_end().map(HeadRead::Whole);
+    }
+    let whole = size + PAST_SIZE_BYTES;
+    let mut bytes: Vec<u8> = Vec::new();
+    // A file that two reads end gets its one buffer now: a head without the answer then costs no copy.
+    if size <= LONG_HEAD_BYTES && bytes.try_reserve_exact(whole).is_err() {
+        return Err(sys::Error::oom());
+    }
+    let mut end = size.min(HEAD_BYTES);
+    let mut long = false;
+    loop {
+        if end == size {
+            read_rest(file, &mut bytes, size)?;
+            return Ok(HeadRead::Whole(bytes));
+        }
+        read_to(file, &mut bytes, end)?;
+        // A short read is the end of the file.
+        if bytes.len() < end {
+            return Ok(HeadRead::Whole(bytes));
+        }
+        let needs = match codecs::probe_head(&bytes, max_pixels, auto_orient) {
+            codecs::HeadProbe::Final(answer) => return Ok(HeadRead::Answer(answer)),
+            codecs::HeadProbe::Longer(needs) => needs,
+        };
+        debug_assert!(needs > bytes.len());
+        end = if long {
+            size
+        } else {
+            needs.max(LONG_HEAD_BYTES).min(size)
+        };
+        long = true;
+        // One reservation for the whole file costs one copy of the head, not one at each read.
+        if bytes.try_reserve_exact(whole - bytes.len()).is_err() {
+            return Err(sys::Error::oom());
+        }
+    }
+}
+
+/// Reads the rest of `file`. `size` can be stale, so the end is a read that stops at `size` or returns nothing.
+fn read_rest(file: &sys::File, bytes: &mut Vec<u8>, size: usize) -> sys::Result<()> {
+    loop {
+        let have = bytes.len();
+        // Past `size`, the buffer grows by half of what it holds.
+        let ask = if have < size { size - have } else { have / 2 } + PAST_SIZE_BYTES;
+        if bytes.try_reserve_exact(ask).is_err() {
+            return Err(sys::Error::oom());
+        }
+        // SAFETY: the spare bytes are only written, by `pread`, which returns
+        // how many of them it initialized.
+        let n = unsafe {
+            let spare = bun_core::vec::spare_bytes_mut(bytes);
+            sys::pread(file.handle, &mut spare[..ask], have as i64)?
+        };
+        // SAFETY: `pread` initialized the first `n` spare bytes.
+        unsafe { bun_core::vec::commit_spare(bytes, n) };
+        if n == 0 || (n < ask && bytes.len() == size) {
+            return Ok(());
+        }
+    }
+}
+
+/// Reads `file` on after `bytes` until they are `end` bytes. Fewer bytes mean that the file ended.
+fn read_to(file: &sys::File, bytes: &mut Vec<u8>, end: usize) -> sys::Result<()> {
+    let have = bytes.len();
+    if bytes.try_reserve_exact(end - have).is_err() {
+        return Err(sys::Error::oom());
+    }
+    // SAFETY: the spare bytes are only written, by `pread_all`, which returns
+    // how many of them it initialized.
+    let n = unsafe {
+        let spare = bun_core::vec::spare_bytes_mut(bytes);
+        file.pread_all(&mut spare[..end - have], have as u64)?
+    };
+    // SAFETY: `pread_all` initialized the first `n` spare bytes.
+    unsafe { bun_core::vec::commit_spare(bytes, n) };
+    Ok(())
+}
+
 impl PipelineTask {
     /// Runs on a `WorkPool` thread. No JSC access.
     pub(crate) fn run(&mut self) {
@@ -1590,12 +1686,30 @@ impl PipelineTask {
                 });
                 return;
             }
-            if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
+            let size = u64::try_from(st.st_size.max(0)).expect("int cast");
+            if size > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;
             }
-            match file.read_to_end() {
-                Ok(bytes) => owned_file = Some(bytes),
+            let read = if matches!(self.kind, Kind::Metadata) {
+                // The cap above bounds `size`, so the cast cannot truncate.
+                read_head(&file, size as usize, self.max_pixels, self.auto_orient)
+            } else {
+                file.read_to_end().map(HeadRead::Whole)
+            };
+            match read {
+                Ok(HeadRead::Whole(bytes)) => owned_file = Some(bytes),
+                Ok(HeadRead::Answer(answer)) => {
+                    self.result = match answer {
+                        Ok(p) => TaskResult::Meta {
+                            w: p.width,
+                            h: p.height,
+                            format: p.format,
+                        },
+                        Err(e) => TaskResult::Err(e),
+                    };
+                    return;
+                }
                 Err(e) => {
                     self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
                     return;
@@ -1611,19 +1725,11 @@ impl PipelineTask {
         // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
         // reported dims, no pixels involved.
         if matches!(self.kind, Kind::Metadata) {
-            match codecs::probe(input, self.max_pixels) {
+            match codecs::probe_oriented(input, self.max_pixels, self.auto_orient) {
                 Ok(p) => {
-                    let mut w = p.width;
-                    let mut h = p.height;
-                    if self.auto_orient && p.format == codecs::Format::Jpeg {
-                        let t = exif::read_jpeg(input).transform();
-                        if t.rotate == 90 || t.rotate == 270 {
-                            mem::swap(&mut w, &mut h);
-                        }
-                    }
                     self.result = TaskResult::Meta {
-                        w,
-                        h,
+                        w: p.width,
+                        h: p.height,
                         format: p.format,
                     };
                     return;

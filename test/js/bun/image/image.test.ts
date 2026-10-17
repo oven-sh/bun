@@ -1,6 +1,7 @@
 import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { expectRssDeltaBelow, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import fs from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -1764,5 +1765,659 @@ describe("Bun.Image.backend", () => {
       const out = await new Bun.Image(cornersPng).heic().bytes();
       expect(out.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// `metadata()` needs the header of the picture. For a path string it reads a
+// head of the file, and reads on only when that head cannot have the answer of
+// the whole file.
+describe("metadata() on a path string", () => {
+  const HEAD = 64 * 1024;
+  type Answer = Promise<Bun.Image.Metadata>;
+  // The whole answer as text, or the error code, so that two routes to one file compare.
+  const settle = (p: Answer) =>
+    p.then(
+      m => JSON.stringify(m),
+      e => String(e.code),
+    );
+  const meta = (width: number, height: number, format: string) => JSON.stringify({ width, height, format });
+  // "4x3 png" for the text of an answer.
+  function brief(answer: string) {
+    if (!answer.startsWith("{")) return answer;
+    const { width, height, format } = JSON.parse(answer);
+    return `${width}x${height} ${format}`;
+  }
+
+  function chunk(type: string, data: Uint8Array) {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, "latin1");
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(data, zlib.crc32(head.subarray(4))) >>> 0, 0);
+    return Buffer.concat([head, data, crc]);
+  }
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  function ihdr(width: number, height: number, colorType: number) {
+    const b = Buffer.alloc(13);
+    b.writeUInt32BE(width, 0);
+    b.writeUInt32BE(height, 4);
+    b[8] = 8;
+    b[9] = colorType;
+    return chunk("IHDR", b);
+  }
+  // A valid RGBA PNG of about side * side * 4 bytes: level 0 stores the rows.
+  function storedPng(side: number): Buffer {
+    const row = 1 + side * 4;
+    const raw = Buffer.alloc(row * side);
+    for (let y = 0; y < side; y++) raw.fill((y * 7) & 255, y * row + 1, (y + 1) * row);
+    return Buffer.concat([
+      pngSignature,
+      ihdr(side, side, 6),
+      chunk("IDAT", zlib.deflateSync(raw, { level: 0 })),
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+  }
+  const le32 = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(n >>> 0, 0);
+    return b;
+  };
+  const padded = (bytes: Uint8Array, length: number) =>
+    Buffer.concat([bytes, Buffer.alloc(Math.max(0, length - bytes.length))]);
+  // A JPEG marker segment, and `total` bytes of comment segments.
+  const segment = (marker: number, body: Uint8Array) =>
+    Buffer.concat([Buffer.from([0xff, marker, (body.length + 2) >> 8, (body.length + 2) & 255]), body]);
+  function comments(total: number) {
+    const out: Buffer[] = [];
+    while (total > 0) {
+      // A segment is 4 to 65537 bytes. Leave 4 or more for the last one.
+      const size = total <= 65537 ? total : Math.min(65537, total - 4);
+      out.push(segment(0xfe, Buffer.alloc(size - 4, 0x20)));
+      total -= size;
+    }
+    return Buffer.concat(out);
+  }
+  // SOI, then `segments`, then the rest of a JPEG that Bun.Image wrote.
+  const spliced = (jpeg: Uint8Array, ...segments: Uint8Array[]) =>
+    Buffer.concat([jpeg.subarray(0, 2), ...segments, jpeg.subarray(2)]);
+  function sosEnd(jpeg: Uint8Array) {
+    let i = 2;
+    while (jpeg[i + 1] !== 0xda) i += 2 + ((jpeg[i + 2] << 8) | jpeg[i + 3]);
+    return i + 2 + ((jpeg[i + 2] << 8) | jpeg[i + 3]);
+  }
+  // APP1/Exif with the Orientation tag. 5 to 8 are quarter turns: width and height swap.
+  // prettier-ignore
+  const exif = (orientation: number) => segment(0xe1, Buffer.concat([Buffer.from("Exif\0\0"), Buffer.from([
+    0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, 0x00, 0x01,
+    0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ])]));
+  const exifQuarterTurn = exif(6);
+  // RIFF/WEBP around `chunks`.
+  const riff = (...chunks: Uint8Array[]) => {
+    const body = Buffer.concat([Buffer.from("WEBP"), ...chunks]);
+    return Buffer.concat([Buffer.from("RIFF"), le32(body.length), body]);
+  };
+  const riffChunk = (tag: string, data: Uint8Array) =>
+    Buffer.concat([Buffer.from(tag), le32(data.length), data, Buffer.alloc(data.length & 1)]);
+  // The 10-byte header of a VP8 key frame, then `length - 10` bytes.
+  function vp8Frame(width: number, height: number, firstPartition: number, length: number) {
+    const b = Buffer.alloc(length, 0x41);
+    b.writeUIntLE((1 << 4) | (firstPartition << 5), 0, 3);
+    b.set([0x9d, 0x01, 0x2a], 3);
+    b.writeUInt16LE(width, 6);
+    b.writeUInt16LE(height, 8);
+    return b;
+  }
+  function vp8x(canvasWidth: number, canvasHeight: number, flags = 0) {
+    const b = Buffer.alloc(10);
+    b[0] = flags;
+    b.writeUIntLE(canvasWidth - 1, 4, 3);
+    b.writeUIntLE(canvasHeight - 1, 7, 3);
+    return riffChunk("VP8X", b);
+  }
+  // `compression` 3 is BI_BITFIELDS: 32 bits, and three masks after the first 40 bytes of the info header.
+  function bmp(width: number, height: number, infoHeader: number, length: number, compression = 0) {
+    const b = Buffer.alloc(Math.max(length, 70));
+    b.write("BM", 0, "latin1");
+    b.writeUInt32LE(length, 2);
+    b.writeUInt32LE(14 + infoHeader, 10);
+    b.writeUInt32LE(infoHeader, 14);
+    b.writeInt32LE(width, 18);
+    b.writeInt32LE(height, 22);
+    b.writeUInt16LE(1, 26);
+    b.writeUInt16LE(compression === 3 ? 32 : 24, 28);
+    b.writeUInt32LE(compression, 30);
+    if (compression === 3) {
+      b.writeUInt32LE(0xff0000, 54);
+      b.writeUInt32LE(0xff00, 58);
+      b.writeUInt32LE(0xff, 62);
+    }
+    return b;
+  }
+  // A baseline TIFF as libtiff writes it: the directory comes after the pixels.
+  function tiff(width: number, height: number) {
+    const pixels = Buffer.alloc(width * height * 3, 128);
+    const entries: [number, number, number, number | null][] = [
+      [256, 3, 1, width],
+      [257, 3, 1, height],
+      [258, 3, 3, null],
+      [259, 3, 1, 1],
+      [262, 3, 1, 2],
+      [273, 4, 1, 8],
+      [277, 3, 1, 3],
+      [278, 3, 1, height],
+      [279, 4, 1, pixels.length],
+      [284, 3, 1, 1],
+    ];
+    const directoryAt = 8 + pixels.length;
+    const directory = Buffer.alloc(2 + entries.length * 12 + 4 + 6);
+    const bitsAt = 2 + entries.length * 12 + 4;
+    directory.writeUInt16LE(entries.length, 0);
+    entries.forEach(([tag, type, count, value], i) => {
+      const at = 2 + i * 12;
+      directory.writeUInt16LE(tag, at);
+      directory.writeUInt16LE(type, at + 2);
+      directory.writeUInt32LE(count, at + 4);
+      if (value === null) directory.writeUInt32LE(directoryAt + bitsAt, at + 8);
+      else if (type === 3) directory.writeUInt16LE(value, at + 8);
+      else directory.writeUInt32LE(value, at + 8);
+    });
+    for (let i = 0; i < 3; i++) directory.writeUInt16LE(8, bitsAt + i * 2);
+    const header = Buffer.alloc(8);
+    header.write("II*\0", 0, "latin1");
+    header.writeUInt32LE(directoryAt, 4);
+    return Buffer.concat([header, pixels, directory]);
+  }
+
+  // What the kernel has counted for this process: the bytes read, and the read calls.
+  function io() {
+    const text = fs.readFileSync("/proc/self/io", "utf8");
+    return { bytes: Number(/rchar: (\d+)/.exec(text)![1]), calls: Number(/syscr: (\d+)/.exec(text)![1]) };
+  }
+  let countsReads = false;
+  if (isLinux) {
+    try {
+      io();
+      countsReads = true;
+    } catch {}
+  }
+  // [the value, the KiB read for it, the read calls made for it]. Another
+  // thread can read in the middle of a measurement (a timer, or a new thread
+  // under ASAN), so `f` runs until two runs in a row cost the same.
+  async function cost<T>(f: () => Promise<T>): Promise<[T, number, number]> {
+    let last: [T, number, number] | undefined;
+    for (let run = 0; ; run++) {
+      // A call of `io` reads too: the first two calls measure how much.
+      const floor = io();
+      const before = io();
+      const value = await f();
+      const after = io();
+      const kib = Math.round((after.bytes - 2 * before.bytes + floor.bytes) / 1024);
+      const calls = after.calls - 2 * before.calls + floor.calls;
+      if ((last && last[1] === kib && last[2] === calls) || run === 5) return [value, kib, calls];
+      last = [value, kib, calls];
+    }
+  }
+  const read = (f: () => Answer) => cost(() => settle(f()));
+  const HEAD_KIB = HEAD / 1024;
+  // [by path, in memory] for `bytes`: the answer, and where the kernel counts
+  // reads, the KiB that the path read against `kib`. The answers compare
+  // whole, so that a new field of the answer is compared too.
+  async function both(p: string, bytes: Uint8Array, kib: number, options: Bun.Image.ConstructorOptions = {}) {
+    fs.writeFileSync(p, bytes);
+    const whole = await settle(new Bun.Image(bytes, options).metadata());
+    const path = () => new Bun.Image(p, options).metadata();
+    return countsReads ? [(await read(path)).slice(0, 2), [whole, kib]] : [[await settle(path())], [whole]];
+  }
+
+  test.skipIf(!countsReads)("reads one head of a large file", async () => {
+    using dir = tempDir("image-metadata-head", {});
+    const large = storedPng(1024);
+    expect(large.length).toBeGreaterThan(64 * HEAD);
+    const png = join(String(dir), "large.png");
+    fs.writeFileSync(png, large);
+    const text = join(String(dir), "large.txt");
+    fs.writeFileSync(text, Buffer.alloc(64 * HEAD, "a"));
+    const padding = join(String(dir), "padding.png");
+    fs.writeFileSync(padding, padded(cornersPng, 16 * HEAD));
+    const short = join(String(dir), "short.png");
+    fs.writeFileSync(short, padded(cornersPng, HEAD / 2));
+
+    const img = new Bun.Image(png);
+    // An Image from Bun.file(path) is a path source once it has been a Response body.
+    const viaFile = Bun.file(padding).image();
+    new Response(viaFile);
+    expect({
+      first: await read(() => img.metadata()),
+      again: await read(() => img.metadata()),
+      maxPixels: await read(() => new Bun.Image(png, { maxPixels: 4 }).metadata()),
+      // A file that is not a picture is rejected from its head.
+      text: await read(() => new Bun.Image(text).metadata()),
+      viaFile: await read(() => viaFile.metadata()),
+      // A file of a head or less: one read that ends where the file does.
+      short: await read(() => new Bun.Image(short).metadata()),
+    }).toEqual({
+      first: [meta(1024, 1024, "png"), HEAD_KIB, 1],
+      again: [meta(1024, 1024, "png"), HEAD_KIB, 1],
+      maxPixels: ["ERR_IMAGE_TOO_MANY_PIXELS", HEAD_KIB, 1],
+      text: ["ERR_IMAGE_UNKNOWN_FORMAT", HEAD_KIB, 1],
+      viaFile: [meta(4, 3, "png"), HEAD_KIB, 1],
+      short: [meta(4, 3, "png"), HEAD_KIB / 2, 1],
+    });
+  });
+
+  test.skipIf(!countsReads)("reads one longer head, then the rest of the file", async () => {
+    using dir = tempDir("image-metadata-long-head", {});
+    const jpeg = Buffer.from(
+      await new Bun.Image(makePng(40, 24, (x, y) => [x * 6, y * 10, 128, 255])).jpeg({ quality: 90 }).bytes(),
+    );
+    const app0End = 4 + ((jpeg[4] << 8) | jpeg[5]);
+    const frame = riffChunk("VP8 ", vp8Frame(40, 30, 20, 64));
+    const profile = riffChunk("ICCP", Buffer.alloc(10 * HEAD, 1));
+    const LENGTH = 128 * HEAD;
+    const FILE = LENGTH / 1024;
+    // name -> [the start of the file, the KiB read, the read calls]
+    const rows: Record<string, [Uint8Array, number, number]> = {
+      // A chunk before the frame header of a WebP says where that header is.
+      "webp, frame after a 640 KB chunk": [riff(vp8x(40, 30), profile, frame), 10 * HEAD_KIB, 2],
+      // A head says at once that no head has the answer.
+      "jpeg magic, then text": [Buffer.concat([jpeg.subarray(0, 3), Buffer.alloc(16 * HEAD, "a")]), FILE, 2],
+      "jpeg, fill bytes": [Buffer.concat([jpeg.subarray(0, 2), Buffer.alloc(16 * HEAD, 0xff)]), FILE, 2],
+      "jpeg, stray bytes, then a long header": [
+        Buffer.concat([jpeg.subarray(0, app0End), Buffer.alloc(5), comments(6 * HEAD), jpeg.subarray(app0End)]),
+        FILE,
+        2,
+      ],
+      "tiff magic": [Buffer.from("II*\0\x08\0\0\0", "latin1"), FILE, 2],
+      // Each head says that a longer one can have the answer.
+      "jpeg, segments and no scan header": [Buffer.concat([jpeg.subarray(0, app0End), comments(8 * HEAD)]), FILE, 3],
+      "webp, chunks and no frame": [
+        riff(vp8x(40, 30), ...Array.from({ length: 8 * 64 }, () => riffChunk("EXIF", Buffer.alloc(1016, 1)))),
+        FILE,
+        3,
+      ],
+    };
+    // The scan header of a JPEG ends `past` bytes from the end of the first
+    // head, and of the longer one. Only the next segment is known from a head.
+    for (const past of [-1, 0, 1]) {
+      rows[`jpeg, scan header ends ${past} from the end of a head`] = [
+        spliced(jpeg, comments(HEAD + past - sosEnd(jpeg))),
+        ...((past <= 0 ? [HEAD_KIB, 1] : [4 * HEAD_KIB, 2]) as [number, number]),
+      ];
+      rows[`jpeg, scan header ends ${past} from the end of the longer head`] = [
+        spliced(jpeg, comments(4 * HEAD + past - sosEnd(jpeg))),
+        ...((past <= 0 ? [4 * HEAD_KIB, 2] : [FILE, 3]) as [number, number]),
+      ];
+    }
+
+    const got: Record<string, unknown> = {};
+    const want: Record<string, unknown> = {};
+    const p = join(String(dir), "file.bin");
+    for (const [name, [start, kib, calls]] of Object.entries(rows)) {
+      // `start`, then a hole: the file is 128 heads long and costs little to write.
+      fs.writeFileSync(p, start);
+      fs.truncateSync(p, LENGTH);
+      got[name] = await read(() => new Bun.Image(p).metadata());
+      want[name] = [await settle(new Bun.Image(fs.readFileSync(p)).metadata()), kib, calls];
+    }
+    expect(got).toEqual(want);
+  });
+
+  test("gives the answer of the whole file, whatever the header needs", async () => {
+    const jpeg = Buffer.from(
+      await new Bun.Image(makePng(40, 24, (x, y) => [x * 6, y * 10, 128, 255])).jpeg({ quality: 90 }).bytes(),
+    );
+    // The format sniffer wants a marker straight after SOI, so stray bytes go after APP0.
+    const app0End = 4 + ((jpeg[4] << 8) | jpeg[5]);
+    const lossless = Buffer.from(await new Bun.Image(gradientPng).webp({ lossless: true }).bytes());
+    const frame = riffChunk("VP8 ", vp8Frame(40, 30, 20, 64));
+    const profile = riffChunk("ICCP", Buffer.alloc(100_000, 1));
+    const LONG = 8 * HEAD;
+    // libjpeg has no length for a TEM marker. The orientation reader reads one:
+    // the next two bytes, here the APP0 marker. It lands on `exifQuarterTurn`.
+    const tem = Buffer.alloc(LONG);
+    spliced(jpeg, Buffer.from([0xff, 0x01])).copy(tem);
+    exifQuarterTurn.copy(tem, 4 + 0xffe0);
+    // The same, and the orientation reader lands on a scan header inside the
+    // head. libjpeg finds its own, which the end of the head cuts after `keep`
+    // bytes. Its frame has component 255 and its scan names component 7.
+    function cutScanHeader(keep: number) {
+      const b = Buffer.alloc(LONG);
+      const scanAt = HEAD - keep;
+      Buffer.concat([
+        Buffer.from([0xff, 0xd8, 0xff, 0x01]),
+        segment(0xc0, Buffer.from([8, 0, 24, 0, 40, 1, 0xff, 0x11, 0])),
+        segment(0xfe, Buffer.alloc(scanAt - 17 - 4, 0x20)),
+        segment(0xda, Buffer.from([1, 7, 0, 0, 63, 0])),
+      ]).copy(b);
+      segment(0xda, Buffer.from([1, 1, 0, 0, 63, 0])).copy(b, 4 + 0xffc0);
+      return b;
+    }
+    // A frame header of a kind that libjpeg does not decode (SOF5).
+    const sof5 = Buffer.from(jpeg);
+    sof5[sof5.indexOf(Buffer.from([0xff, 0xc0])) + 1] = 0xc5;
+    const ftyp = Buffer.alloc(LONG);
+    ftyp.writeUInt32BE(100 * 1024, 0);
+    ftyp.write("ftypisom", 4, "latin1");
+    ftyp.write("avif", 80 * 1024, "latin1");
+    const ftypOther = Buffer.alloc(LONG);
+    ftypOther.writeUInt32BE(32 * 1024, 0);
+    ftypOther.write("ftypisom", 4, "latin1");
+    // GIF: the header, 70 KB of comment extensions, then the first image, which has a transparent colour.
+    const gifBlocks: Buffer[] = [Buffer.from("GIF89a"), Buffer.from([33, 0, 21, 0, 0, 0, 0])];
+    for (let i = 0; i < 275; i++)
+      gifBlocks.push(Buffer.from([0x21, 0xfe, 0xff]), Buffer.alloc(255, 0x20), Buffer.from([0]));
+    gifBlocks.push(Buffer.from([0x21, 0xf9, 4, 1, 0, 0, 0, 0]));
+    gifBlocks.push(Buffer.from([0x2c, 0, 0, 0, 0, 33, 0, 21, 0, 0, 2, 2, 0x4c, 0x01, 0, 0x3b]));
+    // PNG: palette colour, 70 KB of text, then the tRNS chunk that gives it alpha.
+    const palettePng = Buffer.concat([
+      pngSignature,
+      ihdr(3, 2, 3),
+      chunk("iTXt", Buffer.concat([Buffer.from("Comment\0\0\0\0\0"), Buffer.alloc(70_000, 0x20)])),
+      chunk("PLTE", Buffer.from([255, 0, 0, 0, 255, 0])),
+      chunk("tRNS", Buffer.from([0, 128])),
+      chunk("IDAT", zlib.deflateSync(Buffer.from([0, 0x40, 0, 0x80]))),
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+
+    // name -> [bytes, the KiB that a path reads ("file": all of it), the answer
+    // when every platform gives the same one]
+    const fixtures: Record<string, [Uint8Array, number | "file", string?]> = {
+      "png, one byte less than a head": [padded(cornersPng, HEAD - 1), HEAD_KIB, "4x3 png"],
+      "png, a head": [padded(cornersPng, HEAD), HEAD_KIB, "4x3 png"],
+      "png, one byte more than a head": [padded(cornersPng, HEAD + 1), HEAD_KIB, "4x3 png"],
+      "png, tRNS after a head": [padded(palettePng, LONG), HEAD_KIB, "3x2 png"],
+      "gif": [padded(Buffer.concat([Buffer.from("GIF89a"), Buffer.from([33, 0, 21, 0])]), LONG), HEAD_KIB, "33x21 gif"],
+      "gif, first image after a head": [padded(Buffer.concat(gifBlocks), LONG), HEAD_KIB, "33x21 gif"],
+      "bmp": [bmp(31, 17, 40, LONG), HEAD_KIB, "31x17 bmp"],
+      "bmp, info header longer than a head": [bmp(31, 17, 100_000, LONG), 4 * HEAD_KIB, "31x17 bmp"],
+      "bmp magic, then text": [
+        Buffer.concat([Buffer.from("BM"), Buffer.alloc(LONG, "a")]),
+        HEAD_KIB,
+        "ERR_IMAGE_DECODE_FAILED",
+      ],
+      "webp": [padded(lossless, LONG), HEAD_KIB, "16x16 webp"],
+      "webp, frame after a long profile": [
+        padded(riff(vp8x(40, 30), profile, frame), LONG),
+        4 * HEAD_KIB,
+        "40x30 webp",
+      ],
+      "webp, frame after an odd chunk": [
+        padded(riff(vp8x(40, 30), riffChunk("EXIF", Buffer.alloc(7)), frame), LONG),
+        HEAD_KIB,
+        "40x30 webp",
+      ],
+      "webp, canvas that is not the frame": [
+        padded(riff(vp8x(400, 300), profile, frame), LONG),
+        4 * HEAD_KIB,
+        "ERR_IMAGE_DECODE_FAILED",
+      ],
+      "webp, animated": [padded(riff(vp8x(400, 300, 0x02)), LONG), HEAD_KIB, "400x300 webp"],
+      "webp, frame with no chunk header": [riff(vp8Frame(320, 200, 100_000, 400_000)), "file", "320x200 webp"],
+      "jpeg": [padded(jpeg, LONG), HEAD_KIB, "40x24 jpeg"],
+      "jpeg, 240 KB before the frame header": [
+        padded(spliced(jpeg, comments(240_000)), LONG),
+        4 * HEAD_KIB,
+        "40x24 jpeg",
+      ],
+      "jpeg, Exif after a head": [
+        padded(spliced(jpeg, comments(70_000), exifQuarterTurn), LONG),
+        4 * HEAD_KIB,
+        "24x40 jpeg",
+      ],
+      "jpeg, Exif in the head, frame header after it": [
+        padded(spliced(jpeg, exifQuarterTurn, comments(70_000)), LONG),
+        4 * HEAD_KIB,
+        "24x40 jpeg",
+      ],
+      "jpeg, TEM marker": [tem, "file"],
+      // A parse of the head alone takes the bytes after its end as an end
+      // marker, and accepts the scan. The whole file is rejected.
+      "jpeg, TEM marker, scan header cut after 4 bytes": [cutScanHeader(4), "file", "ERR_IMAGE_DECODE_FAILED"],
+      "jpeg, TEM marker, scan header cut after 5 bytes": [cutScanHeader(5), "file", "ERR_IMAGE_DECODE_FAILED"],
+      "jpeg, TEM marker, scan header cut after 7 bytes": [cutScanHeader(7), "file", "ERR_IMAGE_DECODE_FAILED"],
+      // libjpeg warns about the stray bytes and reads the header all the same.
+      "jpeg, stray bytes between segments": [
+        padded(Buffer.concat([jpeg.subarray(0, app0End), Buffer.alloc(5), jpeg.subarray(app0End)]), LONG),
+        "file",
+        "40x24 jpeg",
+      ],
+      "jpeg, fill bytes before a marker": [padded(spliced(jpeg, Buffer.alloc(5, 0xff)), LONG), "file", "40x24 jpeg"],
+      "jpeg, end marker before the scan": [
+        padded(Buffer.concat([jpeg.subarray(0, 20), Buffer.from([0xff, 0xd9])]), LONG),
+        "file",
+        "ERR_IMAGE_DECODE_FAILED",
+      ],
+      "jpeg, frame header that libjpeg rejects": [padded(sof5, LONG), "file", "ERR_IMAGE_DECODE_FAILED"],
+      "ftyp box longer than a head": [ftyp, "file"],
+      "ftyp box of a file that is not a picture": [ftypOther, HEAD_KIB, "ERR_IMAGE_UNKNOWN_FORMAT"],
+      "tiff, directory after the pixels": [tiff(200, 200), "file"],
+      "text": [Buffer.alloc(LONG, "a"), HEAD_KIB, "ERR_IMAGE_UNKNOWN_FORMAT"],
+      "empty": [Buffer.alloc(0), 0, "ERR_IMAGE_UNKNOWN_FORMAT"],
+      "png signature only": [cornersPng.subarray(0, 10), 0, "ERR_IMAGE_DECODE_FAILED"],
+    };
+
+    using dir = tempDir("image-metadata-parity", {});
+    const got: Record<string, unknown> = {};
+    const want: Record<string, unknown> = {};
+    for (const [name, [bytes, kib, answer]] of Object.entries(fixtures)) {
+      const all = Math.round(bytes.length / 1024);
+      const [path, whole] = await both(join(String(dir), "file.bin"), bytes, kib === "file" ? all : kib);
+      got[name] = { path, whole: brief(whole[0] as string) };
+      want[name] = { path: whole, whole: answer ?? brief(whole[0] as string) };
+    }
+    expect(got).toEqual(want);
+
+    // Options reach the head too. 40 x 24 is 960 pixels, whichever way up.
+    const turned = join(String(dir), "turned.jpg");
+    fs.writeFileSync(turned, padded(spliced(jpeg, exifQuarterTurn), LONG));
+    const withOptions = (options: Bun.Image.ConstructorOptions) =>
+      settle(new Bun.Image(turned, options).metadata()).then(brief);
+    expect({
+      default: await withOptions({}),
+      unturned: await withOptions({ autoOrient: false }),
+      maxPixels959: await withOptions({ maxPixels: 959 }),
+      maxPixels960: await withOptions({ maxPixels: 960 }),
+    }).toEqual({
+      default: "24x40 jpeg",
+      unturned: "40x24 jpeg",
+      maxPixels959: "ERR_IMAGE_TOO_MANY_PIXELS",
+      maxPixels960: "24x40 jpeg",
+    });
+  });
+
+  test("gives the answer of the whole file when the header ends next to the end of a head", async () => {
+    const jpeg = Buffer.from(
+      await new Bun.Image(makePng(40, 24, (x, y) => [x * 6, y * 10, 128, 255])).jpeg({ quality: 90 }).bytes(),
+    );
+    // A lossy 40 x 30 frame chunk, and the lossless 16 x 16 one of a file that Bun.Image wrote.
+    const vp8 = riffChunk("VP8 ", vp8Frame(40, 30, 20, 64));
+    const vp8l = Buffer.from(await new Bun.Image(gradientPng).webp({ lossless: true }).bytes()).subarray(12);
+    const xmp = segment(0xe1, Buffer.from("http://ns.adobe.com/xap/1.0/\0<x:xmpmeta/>"));
+    const where = (cut: number, past: number) =>
+      `${past < 0 ? -past : past} ${past < 0 ? "before" : "after"} ${cut / HEAD}`;
+
+    const cases: { name: string; bytes: Buffer; kib: number; options: Bun.Image.ConstructorOptions }[] = [];
+    // A path reads a head. When the header ends at `needs`, past the head, it
+    // reads one longer head: to `needs`, and 4 heads at least. A JPEG head
+    // knows only where its next segment ends (`hops`), so its longer head is
+    // 4 heads. Then comes the file ("file": no head has the answer).
+    function add(
+      name: string,
+      start: Uint8Array,
+      needs: number | "file",
+      { hops = false, options = {} }: { hops?: boolean; options?: Bun.Image.ConstructorOptions } = {},
+    ) {
+      const read =
+        needs === "file" || (hops && needs > 4 * HEAD) ? Infinity : needs <= HEAD ? HEAD : Math.max(needs, 4 * HEAD);
+      // The file goes on after what is read, so that a longer read shows.
+      const length = (read === Infinity ? start.length : Math.max(start.length, read)) + 8 * 1024;
+      cases.push({ name, bytes: padded(start, length), kib: Math.round(Math.min(read, length) / 1024), options });
+    }
+
+    // WebP: the frame chunk starts `past` bytes from the end of a head, and the
+    // frame header ends 18 bytes later. The canvas is not the frame, so the
+    // answer of a head that ends before the frame header is wrong.
+    let n = 0;
+    for (const [cut, pasts] of [
+      [HEAD, [-20, -18, -16, -8, -6, 2]],
+      [4 * HEAD, [-18, -16, 2]],
+    ] as const) {
+      for (const past of pasts) {
+        for (const lossy of cut === HEAD ? [n % 2 === 0] : [true, false]) {
+          const [frame, width, height] = lossy ? ([vp8, 40, 30] as const) : ([vp8l, 16, 16] as const);
+          // Every flag but ANIMATION (0x02), the reserved bits too.
+          const flags = [0xfd, 0x00, 0x10, 0x20, 0x08, 0x04, 0x3c][n % 7];
+          const chunks = [vp8x(width + 360, height + 270, flags)];
+          if (n % 2) chunks.push(riffChunk(n % 4 === 1 ? "EXIF" : "XMP ", Buffer.alloc([1, 7, 13][n % 3], 1)));
+          n++;
+          const used = chunks.reduce((sum, c) => sum + c.length, 12);
+          chunks.push(riffChunk("ICCP", Buffer.alloc(cut + past - used - 8, 1)), frame);
+          const name = `webp, ${lossy ? "VP8" : "VP8L"} frame chunk ${where(cut, past)}, flags ${flags}`;
+          add(name, riff(...chunks), cut + past + 18);
+        }
+      }
+    }
+    // WebP that the first head answers.
+    for (const flags of [0x02, 0x12, 0xff]) {
+      const frames = riffChunk("ANMF", Buffer.alloc(40_000, 1));
+      const animated = riff(vp8x(400, 300, flags), riffChunk("ANIM", Buffer.alloc(6)), frames, frames);
+      add(`webp, animated, flags ${flags}`, animated, 30);
+    }
+    for (const lossy of [true, false]) {
+      const [frame, width, height] = lossy ? ([vp8, 40, 30] as const) : ([vp8l, 16, 16] as const);
+      const kind = lossy ? "VP8" : "VP8L";
+      for (const odd of [1, 7]) {
+        const chunks = [vp8x(width, height, 0x08), riffChunk("EXIF", Buffer.alloc(odd, 1)), frame];
+        add(`webp, ${kind} frame after a chunk of ${odd}`, riff(...chunks), 100);
+      }
+      add(`webp, ${kind} frame with no other chunk`, riff(frame), 30);
+    }
+
+    // JPEG: the first scan header ends `past` bytes from the end of a head.
+    // Only the first Exif segment counts, and it can lie on either side.
+    for (const [cut, layouts] of [
+      [HEAD, ["no Exif", "Exif first", "Exif last", "two Exif"]],
+      [4 * HEAD, ["Exif last"]],
+    ] as const) {
+      for (const [i, past] of [-1, 0, 1].entries()) {
+        for (const [j, layout] of layouts.entries()) {
+          const turn = 2 + (n % 7);
+          // Each layout gets each of the options.
+          const options = [{}, { autoOrient: false }, { maxPixels: 500 }][(i + j) % 3];
+          const first =
+            layout === "Exif first" || layout === "two Exif" ? [n % 2 ? xmp : Buffer.alloc(0), exif(turn)] : [];
+          const last =
+            layout === "Exif last" ? [exif(turn)] : layout === "two Exif" ? [exif(((turn + 3) % 8) + 1)] : [];
+          n++;
+          const fixed = [...first, ...last].reduce((sum, b) => sum + b.length, 0);
+          const bytes = spliced(jpeg, ...first, comments(cut + past - sosEnd(jpeg) - fixed), ...last);
+          const name = `jpeg, scan header ends ${where(cut, past)}, ${layout}, orientation ${turn}, ${JSON.stringify(options)}`;
+          add(name, bytes, cut + past, { hops: true, options });
+        }
+      }
+    }
+    // Every orientation, with the header in the first head.
+    for (let turn = 1; turn <= 8; turn++) {
+      const options = turn % 4 === 0 ? { autoOrient: false } : {};
+      add(`jpeg, orientation ${turn}, ${JSON.stringify(options)}`, spliced(jpeg, exif(turn)), 1, {
+        hops: true,
+        options,
+      });
+    }
+
+    // BMP: the info header ends `past` bytes from the end of a head.
+    for (const [cut, past, compression] of [
+      [HEAD, -1, 0],
+      [HEAD, 0, 3],
+      [HEAD, 1, 0],
+      [4 * HEAD, 1, 3],
+    ]) {
+      const bytes = bmp(31, 17, cut + past - 14, cut + past, compression);
+      add(`bmp, info header ends ${where(cut, past)}, compression ${compression}`, bytes, cut + past);
+    }
+
+    // ISO BMFF: the ftyp box ends `past` bytes from the end of a head, and its
+    // last brand decides. A picture brand sends the file to a decoder, which
+    // reads all of it.
+    for (const [cut, past, brand] of [
+      [HEAD, -4, "avif"],
+      [HEAD, 0, "heic"],
+      [HEAD, 0, null],
+      [HEAD, 4, "avif"],
+      [HEAD, 4, null],
+      [2 * HEAD, 0, "heic"],
+      [4 * HEAD, 0, "avif"],
+    ] as const) {
+      const box = Buffer.alloc(cut + past);
+      box.writeUInt32BE(box.length, 0);
+      box.write("ftypisom", 4, "latin1");
+      if (brand) box.write(brand, box.length - 4, "latin1");
+      add(`ftyp box ends ${where(cut, past)}, last brand ${brand}`, box, brand ? "file" : box.length);
+    }
+
+    using dir = tempDir("image-metadata-boundary", {});
+    const got: Record<string, unknown> = {};
+    const want: Record<string, unknown> = {};
+    for (const { name, bytes, kib, options } of cases) {
+      [got[name], want[name]] = await both(join(String(dir), "file.bin"), bytes, kib, options);
+    }
+    expect(got).toEqual(want);
+  });
+
+  test("a terminal that decodes after metadata() reads the file", async () => {
+    using dir = tempDir("image-metadata-then-decode", {});
+    const bytes = storedPng(160);
+    expect(bytes.length).toBeGreaterThan(HEAD);
+    const p = join(String(dir), "picture.png");
+    fs.writeFileSync(p, bytes);
+    const resized = Buffer.from(await new Bun.Image(bytes).resize(8).png().bytes());
+
+    const img = new Bun.Image(p);
+    const first = brief(await settle(img.metadata()));
+    const size = [img.width, img.height];
+    const [out, kib] = countsReads
+      ? await cost(() => img.resize(8).png().bytes())
+      : [await img.resize(8).png().bytes(), undefined];
+    const body = new Bun.Image(p);
+    await body.metadata();
+    const response = await new Response(body.resize(8).png()).bytes();
+    expect({
+      first,
+      size,
+      bytes: resized.equals(out),
+      sizeAfter: [img.width, img.height],
+      kib,
+      response: resized.equals(response),
+    }).toEqual({
+      first: "160x160 png",
+      size: [160, 160],
+      bytes: true,
+      sizeAfter: [8, 8],
+      kib: countsReads ? Math.round(bytes.length / 1024) : undefined,
+      response: true,
+    });
+  });
+
+  // The kernel counts the bytes a process reads on Linux only. Everywhere, a
+  // whole read shows in the peak resident size of a process that does only this.
+  test("does not bring a large file into memory", async () => {
+    using dir = tempDir("image-metadata-rss", {});
+    const small = join(String(dir), "small.png");
+    fs.writeFileSync(small, cornersPng);
+    const large = join(String(dir), "large.png");
+    fs.writeFileSync(large, padded(cornersPng, 48 * 1024 * 1024));
+    const code = `
+      const peakKB = () => process.platform === "linux"
+        ? Number(/VmHWM:\\s+(\\d+)/.exec(require("node:fs").readFileSync("/proc/self/status", "utf8"))[1])
+        : process.resourceUsage().maxRSS;
+      // The first call starts the thread that reads. Its memory is not the file's.
+      await new Bun.Image(process.argv[1]).metadata();
+      const before = peakKB();
+      await new Bun.Image(process.argv[2]).metadata();
+      console.log(JSON.stringify({ deltaMiB: (peakKB() - before) / 1024 }));
+    `;
+    // A whole read: 48 MiB or more. A head: 64 KiB and allocator slack.
+    await expectRssDeltaBelow(["-e", code, small, large], { release: 8, debug: 16 });
   });
 });

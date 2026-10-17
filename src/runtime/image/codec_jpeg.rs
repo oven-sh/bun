@@ -100,6 +100,18 @@ impl Handle {
     }
 }
 
+/// SOF dimensions when libjpeg parses `head`, a cut file, with no warning. Its memory source warns at the cut.
+pub(crate) fn header_of_head(head: &[u8]) -> Option<(u32, u32)> {
+    let handle = Handle::init(1)?;
+    // SAFETY: `handle` owns a live tjhandle; ptr/len come from a valid `&[u8]` borrowed for the call.
+    let rc = unsafe { tj3DecompressHeader(handle.as_ptr(), head.as_ptr(), head.len()) };
+    if rc != 0 {
+        return None;
+    }
+    // A stream of tables alone also returns 0. The new handle has no dimensions then.
+    handle.dimensions()
+}
+
 impl Drop for Handle {
     #[inline]
     fn drop(&mut self) {

@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -881,6 +881,124 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+
+// `WebAssembly.Memory` hands out an ArrayBuffer over its own block. Once the
+// process holds more fast memories than the platform reserves slots for, the
+// next one is bounds-checked, and `grow()` on a bounds-checked memory allocates
+// a new block, copies into it, and frees the old one. JSC detaches the old
+// buffer whatever its pin count, so the pin the async write takes on the input
+// does not keep those pages mapped for the pool thread.
+//
+// Run in a child: on an unfixed build the pool thread compresses another
+// object's memory or faults.
+describe("input over a WebAssembly.Memory that grows after the call", () => {
+  it("zstdCompress compresses the bytes the caller passed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import { zstdCompress, zstdDecompressSync, constants } from "node:zlib";
+        import { randomFillSync } from "node:crypto";
+        const PAGES = 16; // 1 MB
+        const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
+
+        const mem = newMemory();
+        const input = new Uint8Array(mem.buffer);
+        // Incompressible input at a high level: the job is still reading when the block is freed.
+        randomFillSync(input);
+        const original = Buffer.from(input);
+
+        const { promise, resolve } = Promise.withResolvers();
+        const options = { chunkSize: 12 << 20, params: { [constants.ZSTD_c_compressionLevel]: 12 } };
+        zstdCompress(input, options, (err, out) =>
+          resolve(err ? String(err) : Buffer.compare(zstdDecompressSync(out), original) === 0),
+        );
+        mem.grow(2);
+        // Claim the freed block, so that reading it cannot see the caller's bytes.
+        const claim = Array.from({ length: 4 }, () => {
+          const memory = newMemory();
+          new Uint8Array(memory.buffer).fill(0xee);
+          return memory;
+        });
+
+        console.log(JSON.stringify({ detachedAfterGrow: input.byteLength === 0, roundTripMatches: await promise }));
+      `,
+      ],
+      // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()`
+      // moves the block on every platform. `Malloc=1` makes WebKit use system
+      // malloc, so the freed block is unmapped instead of kept in bmalloc's
+      // cache: the unfixed build faults instead of reading stale bytes.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The stream APIs reach the same native write as the one-shots above.
+  it("createZstdCompress().write() compresses the bytes the caller passed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import { createZstdCompress, zstdDecompressSync, constants } from "node:zlib";
+        import { randomFillSync } from "node:crypto";
+        const PAGES = 16; // 1 MB
+        const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
+
+        const mem = newMemory();
+        const input = new Uint8Array(mem.buffer);
+        // Incompressible input at a high level: the job is still reading when the block is freed.
+        randomFillSync(input);
+        const original = Buffer.from(input);
+
+        const stream = createZstdCompress({
+          chunkSize: 12 << 20,
+          params: { [constants.ZSTD_c_compressionLevel]: 12 },
+        });
+        const chunks = [];
+        stream.on("data", chunk => chunks.push(chunk));
+        const ended = new Promise(resolve => stream.on("end", resolve));
+
+        stream.write(input);
+        stream.end();
+        mem.grow(2);
+        // Claim the freed block, so that reading it cannot see the caller's bytes.
+        const claim = Array.from({ length: 4 }, () => {
+          const memory = newMemory();
+          new Uint8Array(memory.buffer).fill(0xee);
+          return memory;
+        });
+
+        await ended;
+        const out = Buffer.concat(chunks);
+        console.log(JSON.stringify({
+          detachedAfterGrow: input.byteLength === 0,
+          roundTripMatches: Buffer.compare(zstdDecompressSync(out), original) === 0,
+        }));
+      `,
+      ],
+      // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()`
+      // moves the block on every platform. `Malloc=1` makes WebKit use system
+      // malloc, so the freed block is unmapped instead of kept in bmalloc's
+      // cache: the unfixed build faults instead of reading stale bytes.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

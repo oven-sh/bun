@@ -194,6 +194,15 @@ pub(crate) trait CompressionContext {
 // R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
+/// A stream's own copy of an input whose storage a pin cannot hold, and the
+/// view it was taken from. Empty while no copy is live.
+#[derive(Default)]
+pub(crate) struct InputCopy {
+    bytes: Vec<u8>,
+    /// Compared, never read through: the copy serves one view's writes only.
+    from: (*const u8, usize),
+}
+
 pub(crate) trait CompressionStreamImpl:
     Sized + Taskable + bun_ptr::CellRefCounted + bun_ptr::AnyRefCounted + 'static
 {
@@ -238,6 +247,8 @@ pub(crate) trait CompressionStreamImpl:
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pinned_buffers(&self) -> &Cell<u8>;
+    /// Scratch for [`CompressionStream::borrow_input_copy`].
+    fn input_copy(&self) -> &JsCell<InputCopy>;
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
@@ -391,12 +402,13 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        if out_buf.resizable && !out_buf.shared {
+        // The pool thread writes into `out` after this call returns.
+        if out_buf.pin_cannot_hold() {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
-                        "The \"out\" argument must not be backed by a resizable ArrayBuffer"
+                        "The \"out\" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory"
                     ),
                 )
                 .throw());
@@ -415,15 +427,31 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             };
             Some(buf)
         };
-        let in_: Option<&[u8]> = in_buf
-            .as_ref()
-            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
             if let Some(buf) = &in_buf {
                 buf.unpin();
             }
             return Err(global_this.throw_out_of_memory());
         };
+        let mut in_: Option<&[u8]> = in_buf
+            .as_ref()
+            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
+        // The pool thread reads the input after this call returns, so read a
+        // copy of storage the pin does not keep mapped.
+        if let Some(buf) = in_buf.as_ref().filter(|b| b.pin_cannot_hold()) {
+            let Some(copied) = Self::borrow_input_copy(
+                this,
+                global_this,
+                buf.byte_slice(),
+                in_off as usize,
+                in_len as usize,
+            ) else {
+                buf.unpin();
+                out_buf.unpin();
+                return Err(global_this.throw_out_of_memory());
+            };
+            in_ = Some(copied);
+        }
         this.pinned_buffers().set(
             u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
         );
@@ -492,6 +520,41 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // `this` may be freed by the JS thread the moment this is queued.
         ticket.post(ConcurrentTask::create(Task::init(this)));
+    }
+
+    /// `view[in_off..in_off + in_len]` out of the stream's own copy of `view`.
+    ///
+    /// `processCallback` re-sends the same input with `in_off` advanced once per
+    /// output chunk, so copying the remainder per write would be quadratic. The
+    /// copy holds the whole view and serves those writes, and any other view
+    /// takes a fresh copy. `None` if the copy cannot be allocated.
+    fn borrow_input_copy<'a>(
+        this: &'a T,
+        global: &JSGlobalObject,
+        view: &[u8],
+        in_off: usize,
+        in_len: usize,
+    ) -> Option<&'a [u8]> {
+        this.input_copy().with_mut(|copy| {
+            if copy.from != (view.as_ptr(), view.len()) {
+                copy.from = (core::ptr::null(), 0);
+                copy.bytes.clear();
+                if copy.bytes.try_reserve_exact(view.len()).is_err() {
+                    return None;
+                }
+                copy.bytes.extend_from_slice(view);
+                copy.from = (view.as_ptr(), view.len());
+                global.vm().report_extra_memory(copy.bytes.len());
+            }
+            let chunk = copy.bytes.get(in_off..in_off + in_len)?;
+            // SAFETY: the bytes live in `this.input_copy`, which `write()`, the
+            // completion, `reset()` and `close()` touch. A second `write()` is
+            // refused while one is in progress, the completion releases the copy
+            // only once the input is consumed, and `reset()` and `close()` are
+            // refused or deferred while a write is in progress, so the bytes
+            // outlive the job that reads them.
+            Some(unsafe { core::slice::from_raw_parts(chunk.as_ptr(), chunk.len()) })
+        })
     }
 
     /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
@@ -576,6 +639,15 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.flush_write_result(global, this_value);
         this_value.ensure_still_alive();
+
+        // Only a continuation reads the input copy, and one follows only while
+        // the input is not consumed.
+        let (mut avail_in, mut avail_out) = (0, 0);
+        this.stream()
+            .with_mut(|s| s.update_write_result(&mut avail_in, &mut avail_out));
+        if avail_in == 0 {
+            this.input_copy().set(InputCopy::default());
+        }
 
         // `init()` caches the JS write callback; a handle whose `init()` was
         // never called has none, so there is nothing to notify.
@@ -751,6 +823,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             return;
         }
         let err = this.stream().with_mut(|s| s.reset());
+        // Before `emit_error`, whose callback may re-enter `write()` and leave a
+        // copy of its own that the pool thread is reading.
+        this.input_copy().set(InputCopy::default());
         if err.is_error() {
             Self::emit_error(this, global_this, this_value, err);
         }
@@ -774,6 +849,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.closed().set(true);
         this.this_value().with_mut(|v| v.deinit());
         this.stream().with_mut(|s| s.close());
+        this.input_copy().set(InputCopy::default());
     }
 
     pub(crate) fn set_on_error(
@@ -1026,6 +1102,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
+            #[inline] fn input_copy(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::InputCopy> { &self.input_copy }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 

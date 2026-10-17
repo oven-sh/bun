@@ -667,6 +667,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--globals <STR>                  Module that 'test', 'expect' and the other globals come from: 'bun' (default) uses \"vitest\" in files that import from it and \"bun:test\" elsewhere, 'vitest' uses it everywhere."
     ),
+    parse_param!(
+        "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
+    ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
@@ -2068,6 +2071,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             Global::exit(1);
         };
         ctx.test_options.globals = Some(globals);
+    }
+    if args.flag(b"--react-compiler") {
+        ctx.test_options.react_compiler = Some(Default::default());
     }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");

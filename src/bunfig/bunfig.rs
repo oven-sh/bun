@@ -20,8 +20,8 @@ use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
-    MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, TestEnvironment,
-    TestGlobals,
+    MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, ReactCompilerScope,
+    TestEnvironment, TestGlobals,
 };
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
@@ -171,6 +171,28 @@ pub(crate) enum Counts {
 }
 
 impl<'a> Parser<'a, '_> {
+    /// A string or an array of strings.
+    fn strings(&mut self, expr: &Expr, error: &'static [u8]) -> crate::Result<Vec<Box<[u8]>>> {
+        match &expr.data {
+            ExprData::EString(s) => Ok(vec![estring_to_owned(s, self.bump)]),
+            ExprData::EArray(array) => {
+                let mut strings = Vec::with_capacity(array.items.slice().len());
+                for item in array.items.slice() {
+                    let ExprData::EString(s) = &item.data else {
+                        self.add_error(item.loc, error)?;
+                        unreachable!();
+                    };
+                    strings.push(estring_to_owned(s, self.bump));
+                }
+                Ok(strings)
+            }
+            _ => {
+                self.add_error(expr.loc, error)?;
+                unreachable!();
+            }
+        }
+    }
+
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -498,6 +520,40 @@ impl<'a> Parser<'a, '_> {
                     // --globals is parsed first and wins.
                     if self.ctx.test_options.globals.is_none() {
                         self.ctx.test_options.globals = Some(globals);
+                    }
+                }
+
+                if let Some(expr) = test.get(b"reactCompiler") {
+                    let mut scope = ReactCompilerScope::default();
+                    match &expr.data {
+                        // --react-compiler is parsed first and wins.
+                        ExprData::EBoolean(enabled) => {
+                            if enabled.value && self.ctx.test_options.react_compiler.is_none() {
+                                self.ctx.test_options.react_compiler = Some(scope);
+                            }
+                        }
+                        ExprData::EObject(_) => {
+                            if let Some(include) = expr.get(b"include") {
+                                scope.include = self.strings(
+                                    &include,
+                                    b"reactCompiler.include must be a string or array of strings",
+                                )?;
+                            }
+                            if let Some(exclude) = expr.get(b"exclude") {
+                                scope.exclude = self.strings(
+                                    &exclude,
+                                    b"reactCompiler.exclude must be a string or array of strings",
+                                )?;
+                            }
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
+                        _ => {
+                            scope.include = self.strings(
+                                &expr,
+                                b"reactCompiler must be a boolean, an array of folders, or a table with \"include\" and \"exclude\"",
+                            )?;
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
                     }
                 }
 

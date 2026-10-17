@@ -490,6 +490,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if let Some(globals) = opts.globals {
         argv.push(print_z(format_args!("--globals={}", globals.name()))?);
     }
+    // The worker reads what to include and exclude from bunfig.toml itself.
+    if opts.react_compiler.is_some() {
+        argv.push(lit(b"--react-compiler\0"));
+    }
 
     argv.push(core::ptr::null());
     // Callers index by .len(), so keep the trailing null in the boxed slice.

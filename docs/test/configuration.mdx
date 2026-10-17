@@ -123,6 +123,37 @@ The `--globals` flag overrides `bunfig.toml`.
 
 Libraries such as `@testing-library/dom` look for a global `jest` and use it to advance fake timers while they wait. Without one, they leave the clock alone. To make them advance it, use `vi.useFakeTimers({ shouldAdvanceTime: true })` or set `globalThis.jest = { advanceTimersByTime: ms => vi.advanceTimersByTime(ms) }`.
 
+### React Compiler
+
+`bun test` can compile your components and hooks with Bun's built-in [React Compiler](https://react.dev/learn/react-compiler), so that your tests run what your build ships. The compiled code imports `react/compiler-runtime`, which React 19 has. This option is experimental.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reactCompiler = true # default false
+```
+
+Bun compiles every JavaScript and TypeScript file except test files, preload scripts and `node_modules`. It leaves alone a file or a function that has the `"use no memo"` directive, and a function that breaks the [Rules of React](https://react.dev/reference/rules).
+
+To compile part of a project, list folders or glob patterns. They are relative to the directory you run `bun test` in.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reactCompiler = ["src", "packages/ui"]
+```
+
+Use a table to leave out some of what's in them:
+
+```toml title="bunfig.toml" icon="settings"
+[test.reactCompiler]
+include = ["src", "packages/ui"]
+exclude = ["**/*.stories.*", "**/__mocks__/**"]
+```
+
+The `--react-compiler` flag turns the compiler on for one run. It compiles what `bunfig.toml` includes, or every file if `bunfig.toml` doesn't say.
+
+- What `importOriginal()` and `vi.importActual()` load is compiled like any other import of that file.
+- To check that a function was compiled, look for its cache in the source: `/\$\[\d+\]/.test(String(Component))`.
+
 ### Path Ignore Patterns
 
 `pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.

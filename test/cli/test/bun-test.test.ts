@@ -1896,6 +1896,137 @@ function runTest({
 
 // A test's console in Jest and Vitest is a `new Console()`, which has none. React's development build logs each render
 // where it finds one, and reads into the props for that: a getter that throws there breaks every later render.
+describe.concurrent("--react-compiler", () => {
+  const component = (name: string, directive = "") => `
+    export function ${name}({ items }) {
+      ${directive}
+      const doubled = items.map(item => item * 2);
+      return <ul>{doubled.map(item => <li key={item}>{item}</li>)}</ul>;
+    }
+  `;
+  const printCompiled = `console.log("compiled: " + Object.keys(all).filter(name => /\\$\\[\\d+\\]/.test(String(all[name]))).join(" "));`;
+  const files = {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      version: "19.0.0",
+      exports: {
+        ".": "./index.js",
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    "node_modules/react/index.js": `export const useState = value => [value, () => {}];`,
+    "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+    "node_modules/library/package.json": JSON.stringify({ name: "library", main: "./index.jsx" }),
+    "node_modules/library/index.jsx": component("Library"),
+    "src/List.tsx": component("List"),
+    "src/List.stories.tsx": component("Story"),
+    "src/OptOut.tsx": component("OptOut", `"use no memo";`),
+    "src/shared.test.tsx": component("InATestFile"),
+    "src/useTotal.ts": `
+      import { useState } from "react";
+      export function useTotal(items: number[]) {
+        const [factor] = useState(2);
+        const scaled = items.map(item => item * factor);
+        return { scaled, factor };
+      }
+    `,
+    "other/Other.jsx": component("Other"),
+    "setup.tsx": component("InAPreload") + `globalThis.InAPreload = InAPreload;`,
+    "compiled.test.tsx": `
+      import { expect, test } from "bun:test";
+      import { Library } from "library";
+      import { Other } from "./other/Other";
+      import { List } from "./src/List";
+      import { Story } from "./src/List.stories";
+      import { OptOut } from "./src/OptOut";
+      import { InATestFile } from "./src/shared.test";
+      import { useTotal } from "./src/useTotal";
+      ${component("InThisFile")}
+      test("which are compiled", () => {
+        const all = { List, useTotal, Story, Other, OptOut, Library, InATestFile, InThisFile, InAPreload: globalThis.InAPreload };
+        ${printCompiled}
+        expect(JSON.stringify(List({ items: [1, 2] }))).toBe(JSON.stringify(OptOut({ items: [1, 2] })));
+        expect(useTotal([1, 2])).toEqual({ scaled: [2, 4], factor: 2 });
+      });
+    `,
+  };
+  async function compiled(more: Record<string, string>, args: string[] = []) {
+    using dir = tempDir("react-compiler", { ...files, ...more });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload=./setup.tsx", ...args, "./compiled.test.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { compiled: stdout.match(/compiled: (.*)/)?.[1] ?? stderr, stderr, exitCode };
+  }
+
+  const everything = "List useTotal Story Other";
+  test.each([
+    ["nothing without it", "", [], ""],
+    ["the flag", "", ["--react-compiler"], everything],
+    ["the flag, in workers", "", ["--react-compiler", "--parallel=2"], everything],
+    ["the flag, with --isolate", "", ["--react-compiler", "--isolate"], everything],
+    ["true", `reactCompiler = true`, [], everything],
+    ["false", `reactCompiler = false`, [], ""],
+    ["false, and the flag", `reactCompiler = false`, ["--react-compiler"], everything],
+    ["folders", `reactCompiler = ["./src/"]`, [], "List useTotal Story"],
+    ["a pattern", `reactCompiler = ["**/*.jsx"]`, [], "Other"],
+    ["exclude alone", `reactCompiler = { exclude = "src" }`, [], "Other"],
+    [
+      "include and exclude",
+      `reactCompiler = { include = ["src", "other"], exclude = ["**/*.stories.*", "other"] }`,
+      [],
+      "List useTotal",
+    ],
+    [
+      "include and exclude, in workers",
+      `reactCompiler = { include = ["src"], exclude = ["**/*.stories.*"] }`,
+      ["--parallel=2"],
+      "List useTotal",
+    ],
+  ])("%s", async (_, config, args, expected) => {
+    const result = await compiled({ "bunfig.toml": `[test]\n${config}` }, args);
+    expect(result.compiled).toBe(expected);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("the original of a mocked module is compiled", async () => {
+    const result = await compiled(
+      {
+        "compiled.test.tsx": `
+          import { test, vi } from "bun:test";
+          vi.mock("./src/List", async importOriginal => ({ ...(await importOriginal()), extra: 1 }));
+          import { List } from "./src/List";
+          test("which are compiled", async () => {
+            const all = { List, actual: (await vi.importActual("./src/List")).List };
+            ${printCompiled}
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("List actual");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each([
+    `reactCompiler = 1`,
+    `reactCompiler = [1]`,
+    `reactCompiler = { include = 1 }`,
+    `reactCompiler = { exclude = [1] }`,
+  ])("%s is an error", async config => {
+    const result = await compiled({ "bunfig.toml": `[test]\n${config}` });
+    expect(result.stderr).toContain("reactCompiler");
+    expect(result.exitCode).toBe(1);
+  });
+});
+
 describe.concurrent("console.timeStamp", () => {
   test.each([[[]], [["--isolate"]], [["--isolate=modules"]]])(
     "is not defined in a preload or a test file %j",

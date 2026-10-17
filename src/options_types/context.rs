@@ -416,6 +416,14 @@ pub enum HotReload {
     Watch,
 }
 
+/// The files `bun test` compiles with the React Compiler. Test files, preloads and `node_modules` never are.
+#[derive(Default)]
+pub struct ReactCompilerScope {
+    /// Folders or globs, relative to the working directory. Empty is every file.
+    pub include: Vec<Box<[u8]>>,
+    pub exclude: Vec<Box<[u8]>>,
+}
+
 /// `[test]` and `vi.setConfig()` options, in the order Vitest applies them before each test.
 pub const RESETS_BEFORE_EACH_TEST: [&str; 5] = [
     "restoreMocks",
@@ -484,6 +492,8 @@ pub struct TestOptions {
     /// `--environment` or `[test] environment`. A file's `@vitest-environment` / `@jest-environment` comment overrides it.
     pub environment: Option<TestEnvironment>,
     pub globals: Option<TestGlobals>,
+    /// `--react-compiler` or `[test] reactCompiler`.
+    pub react_compiler: Option<ReactCompilerScope>,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -626,6 +636,7 @@ impl Default for TestOptions {
             update_timings: false,
             environment: None,
             globals: None,
+            react_compiler: None,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }

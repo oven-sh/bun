@@ -219,6 +219,22 @@ globals = "vitest"
 
 Equivalent CLI flag: `--globals`. It overrides the `bunfig.toml` value.
 
+### `test.reactCompiler`
+
+Compile components and hooks with Bun's built-in React Compiler. Default `false`. Experimental.
+
+- `true`: every JavaScript and TypeScript file, except test files, preload scripts and `node_modules`.
+- An array of folders or glob patterns: only the files in them.
+- A table with `include` and `exclude`: the files that `include` matches and `exclude` doesn't.
+
+```toml title="bunfig.toml" icon="settings"
+[test.reactCompiler]
+include = ["src", "packages/ui"]
+exclude = ["**/*.stories.*"]
+```
+
+Equivalent CLI flag: `--react-compiler`. See [React Compiler](/test/configuration#react-compiler).
+
 ### `test.pathIgnorePatterns`
 
 Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.

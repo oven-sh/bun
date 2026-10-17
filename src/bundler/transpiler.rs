@@ -1531,6 +1531,15 @@ impl<'a> Transpiler<'a> {
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.is_test_entry_point = this_parse.is_test_entry_point;
+                if !this_parse.is_test_entry_point
+                    && !source.path.is_node_module()
+                    && self
+                        .options
+                        .react_compiler_filter
+                        .is_some_and(|is_compiled| is_compiled(source.path.text))
+                {
+                    opts.features.react_compiler = self.options.react_compiler;
+                }
                 opts.features.vitest_globals =
                     self.options.vitest_globals || self.options.test_file_imports_vitest;
                 opts.features.own_test_globals = self.options.own_test_globals;

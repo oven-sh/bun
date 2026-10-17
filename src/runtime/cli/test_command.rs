@@ -14,7 +14,7 @@ use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
-use bun_options_types::context::{JunitSuites, TestGlobals};
+use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -984,6 +984,49 @@ impl JunitReporter {
 /// would before exiting; the vendored-node-test runner opts in via
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
+/// Leaked: the transpiler of every thread asks it until the process exits.
+fn react_compiler_filter(
+    scope: &ReactCompilerScope,
+    root: &'static [u8],
+) -> &'static (dyn Fn(&[u8]) -> bool + Sync) {
+    let patterns = |patterns: &[Box<[u8]>]| -> Vec<Box<[u8]>> {
+        patterns
+            .iter()
+            .map(|pattern| {
+                let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+                Box::from(pattern.strip_suffix(b"/").unwrap_or(pattern))
+            })
+            .collect()
+    };
+    let (include, exclude) = (patterns(&scope.include), patterns(&scope.exclude));
+    Box::leak(Box::new(move |path: &[u8]| {
+        // The original of a mocked module is loaded as "file.ts?actual".
+        let path = path.split(|&byte| byte == b'?').next().unwrap_or(path);
+        let name = bun_paths::basename(path);
+        let stem = &name[..name.len() - bun_paths::extension(name).len()];
+        if scanner::TEST_NAME_SUFFIXES
+            .iter()
+            .any(|suffix| stem.ends_with(suffix))
+        {
+            return false;
+        }
+        let relative = bun_paths::resolve_path::relative(root, path);
+        #[cfg(windows)]
+        let relative = &*relative
+            .iter()
+            .map(|&byte| if byte == b'\\' { b'/' } else { byte })
+            .collect::<Vec<u8>>();
+        // A folder stands for all that is in it.
+        let matches = |pattern: &Box<[u8]>| {
+            relative
+                .strip_prefix(&**pattern)
+                .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
+                || bun_glob::r#match(pattern, relative).matches()
+        };
+        (include.is_empty() || include.iter().any(matches)) && !exclude.iter().any(matches)
+    }))
+}
+
 fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
@@ -2044,6 +2087,13 @@ impl TestCommand {
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.vitest_globals =
             ctx.test_options.globals == Some(TestGlobals::Vitest);
+        if let Some(scope) = &ctx.test_options.react_compiler {
+            vm.transpiler.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+            vm.transpiler.options.react_compiler_filter = Some(react_compiler_filter(
+                scope,
+                FileSystem::instance().top_level_dir,
+            ));
+        }
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,

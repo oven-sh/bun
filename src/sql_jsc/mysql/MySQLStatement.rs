@@ -221,6 +221,10 @@ impl Drop for MySQLStatement {
 pub(crate) type StatementCache = crate::shared::StatementCache<MySQLStatement>;
 
 impl StatementCache {
+    /// As the mariadb connector's `prepareCacheLength`. All connections to a server share its
+    /// `max_prepared_stmt_count`, 16,382 by default.
+    pub(crate) const MAX_STATEMENTS: usize = 256;
+
     pub(crate) fn get<P: ExecuteParam>(
         &mut self,
         query: &[u8],

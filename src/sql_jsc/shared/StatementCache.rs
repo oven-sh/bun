@@ -6,6 +6,7 @@ use bun_ptr::{AnyRefCounted, CellRefCounted, RefPtr};
 pub(crate) struct StatementCache<S: AnyRefCounted> {
     /// Each with the `clock` of its last use.
     statements: StringHashMap<Vec<(RefPtr<S>, u64)>>,
+    len: usize,
     clock: u64,
 }
 
@@ -13,15 +14,13 @@ impl<S: AnyRefCounted> Default for StatementCache<S> {
     fn default() -> Self {
         Self {
             statements: StringHashMap::default(),
+            len: 0,
             clock: 0,
         }
     }
 }
 
 impl<S: AnyRefCounted + CellRefCounted> StatementCache<S> {
-    /// As the mariadb connector's `prepareCacheLength`.
-    const MAX_STATEMENTS: usize = 256;
-
     pub(crate) fn find(&mut self, query: &[u8], accepts: impl Fn(&S) -> bool) -> Option<RefPtr<S>> {
         let (statement, last_used) = self
             .statements
@@ -34,6 +33,7 @@ impl<S: AnyRefCounted + CellRefCounted> StatementCache<S> {
     }
 
     pub(crate) fn add(&mut self, query: &[u8], statement: RefPtr<S>) {
+        self.len += 1;
         self.clock += 1;
         self.statements
             .get_or_put(query)
@@ -53,23 +53,22 @@ impl<S: AnyRefCounted + CellRefCounted> StatementCache<S> {
             }
             !variants.is_empty()
         });
+        self.len -= usize::from(removed.is_some());
         removed
     }
 
-    /// Over the limit: takes out the statement used longest ago that no request holds.
-    pub(crate) fn evict(&mut self) -> Option<RefPtr<S>> {
-        let mut count: usize = 0;
-        let mut oldest: Option<&(RefPtr<S>, u64)> = None;
-        for entry in self.statements.values().flatten() {
-            count += 1;
-            if entry.0.ref_count().get() == 1 && oldest.is_none_or(|oldest| entry.1 < oldest.1) {
-                oldest = Some(entry);
-            }
-        }
-        if count <= Self::MAX_STATEMENTS {
+    /// With more than `max`: takes out the statement used longest ago that no request holds.
+    pub(crate) fn evict(&mut self, max: usize) -> Option<RefPtr<S>> {
+        if self.len <= max {
             return None;
         }
-        let oldest = oldest?.0.clone();
+        let (oldest, _) = self
+            .statements
+            .values()
+            .flatten()
+            .filter(|(statement, _)| statement.ref_count().get() == 1)
+            .min_by_key(|(_, last_used)| *last_used)?;
+        let oldest = oldest.clone();
         self.remove(&oldest)
     }
 }

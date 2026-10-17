@@ -686,7 +686,7 @@ declare module "bun" {
 
       /**
        * PostgreSQL only. Use named prepared statements. Each connection keeps
-       * the 256 it used last. `false` throws for MySQL and does nothing for
+       * the 1,024 it used last. `false` throws for MySQL and does nothing for
        * MariaDB.
        * @default true
        */

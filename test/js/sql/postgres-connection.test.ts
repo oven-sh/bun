@@ -8,6 +8,7 @@ import {
   bunExe,
   describeWithContainer,
   expiredTls,
+  isDebug,
   isLinux,
   isWindows,
   tls as localhostTls,
@@ -1540,24 +1541,25 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       statements.map(([, text]) => Number(text.match(/\+ (\d+)/)![1]));
     const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
 
-    test("the connection keeps the 256 it used last and closes the others on the server", async () => {
-      await using sql = await connect();
-      for (const i of range(0, 256)) await numbered(sql, i);
-      await numbered(sql, 0);
-      for (const i of range(256, 300)) await numbered(sql, i);
-      expect(numbers(await onServer(sql))).toEqual([0, ...range(45, 300)]);
+    // 1,028 first runs take 15 s and more on an unoptimized build. There the MySQL rows at 256 cover the eviction.
+    test.skipIf(isDebug)(
+      "the connection keeps the 1,024 it used last and closes the others on the server",
+      async () => {
+        await using sql = await connect();
+        // More than it keeps, handed over at once: a statement that a queued query is going to run is not closed.
+        const results = await Promise.all(range(0, 1028).map(i => settled(numbered(sql, i))));
+        expect(results).toEqual(range(0, 1028).map(i => [{ x: 1 + i }]));
+        expect(numbers(await onServer(sql))).toEqual(range(4, 1028));
 
-      // A closed one is prepared again, in place of the one that is now the oldest.
-      expect(await numbered(sql, 1)).toEqual([{ x: 2 }]);
-      expect(numbers(await onServer(sql))).toEqual([0, ...range(46, 300), 1]);
-    });
+        await numbered(sql, 4);
+        await numbered(sql, 1028);
+        expect(numbers(await onServer(sql))).toEqual([4, ...range(6, 1029)]);
 
-    test("a statement that a queued query is going to run is not closed", async () => {
-      await using sql = await connect();
-      const results = await Promise.all(range(0, 300).map(i => settled(numbered(sql, i))));
-      expect(results).toEqual(range(0, 300).map(i => [{ x: 1 + i }]));
-      expect(numbers(await onServer(sql))).toEqual(range(44, 300));
-    });
+        // A closed one is prepared again, in place of the one that is now the oldest.
+        expect(await numbered(sql, 0)).toEqual([{ x: 1 }]);
+        expect(numbers(await onServer(sql))).toEqual([4, ...range(7, 1029), 0]);
+      },
+    );
 
     describe("that the server lost or cannot run any more", () => {
       const altered = async (sql: SQL) => {

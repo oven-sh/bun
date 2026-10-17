@@ -1021,7 +1021,7 @@ impl MySQLConnection {
         params: &[P],
     ) -> Result<RefPtr<MySQLStatement>, AnyMySQLError> {
         let statement = self.statements.insert(query, params);
-        if let Some(evicted) = self.statements.evict() {
+        if let Some(evicted) = self.statements.evict(StatementCache::MAX_STATEMENTS) {
             let _ = mysql_request::close_statement(evicted.statement_id, self.writer());
         }
         if let Err(err) = mysql_request::prepare_request(query, self.writer()) {

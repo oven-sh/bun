@@ -209,6 +209,9 @@ pub(crate) struct StatementCache {
 }
 
 impl StatementCache {
+    /// A statement with a join and ten columns takes about 40 KB of the backend's memory.
+    const MAX_STATEMENTS: usize = 1024;
+
     pub(crate) fn get(
         &mut self,
         query: &[u8],
@@ -263,6 +266,6 @@ impl StatementCache {
         {
             return Some(self.discarded.swap_remove(i));
         }
-        self.cache.evict()
+        self.cache.evict(Self::MAX_STATEMENTS)
     }
 }

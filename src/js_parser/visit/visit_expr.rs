@@ -2488,20 +2488,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !contains_identifier(code, name) {
                 continue;
             }
-            // A define replaces every reference, so there is no binding to declare.
-            if p.define
-                .for_identifier(name)
-                .is_some_and(|def| !def.valueless())
-            {
-                continue;
-            }
             // A declaration in the file shadows the parser's symbol. The eval reads that one.
             let found = p
                 .find_symbol_with_record_usage::<false>(arg.loc, name)
                 .expect("unreachable");
-            if found.r#ref.eql(ambient) {
-                p.record_usage_impl(ambient, false);
+            if !found.r#ref.eql(ambient) {
+                continue;
             }
+            // As for a reference: outside a `with` scope a define replaces it, so nothing is declared.
+            if !found.is_inside_with_scope
+                && p.define
+                    .for_identifier(name)
+                    .is_some_and(|def| !def.valueless())
+            {
+                continue;
+            }
+            p.record_usage_impl(ambient, false);
         }
     }
 

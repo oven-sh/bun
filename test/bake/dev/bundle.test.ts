@@ -99,6 +99,35 @@ devTest("direct eval reads __dirname and __filename in a commonjs package", {
     await dev.fetch("/").equals("node_modules/example node_modules/example/index.js");
   },
 });
+devTest("direct eval in a with scope reads __dirname when the name has a define", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      define = { "__dirname" = "\\"defined\\"" }
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import inWith from "./lib/in-with.cjs";
+      import outside from "./lib/outside.cjs";
+      console.log(inWith.split(/[\\\\/]/).pop() + " " + outside.join(" "));
+    `,
+    // A define does not replace a reference inside a with scope, so the module declares the name.
+    "lib/in-with.cjs": `
+      with ({}) {
+        module.exports = eval("__dirname");
+      }
+    `,
+    "lib/outside.cjs": `
+      module.exports = [__dirname, eval("typeof __dirname")];
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("lib defined undefined");
+  },
+});
 devTest("importing a file before it is created", {
   files: {
     "index.html": emptyHtmlFile({

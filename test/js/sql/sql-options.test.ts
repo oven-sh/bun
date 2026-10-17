@@ -58,7 +58,7 @@ describe("the query of a postgres:// URL", () => {
 
   test("a key without a value is not given", () => {
     const { options } = new SQL("postgres://uu@uh/ud?connect_timeout=&max=&host=&sslrootcert=&channel_binding=");
-    expect(options).toMatchObject({ hostname: "uh", max: 10, sslMode: 0, channelBinding: "prefer", query: "" });
+    expect(options).toMatchObject({ hostname: "uh", max: 10, sslMode: 0, channelBinding: "disable", query: "" });
     expect(options.connectionTimeout).toBeUndefined();
     expect(options.tls).toBeUndefined();
   });
@@ -183,13 +183,13 @@ describe.each(["mysql", "mariadb"] as const)("the query of a %s:// URL", adapter
 describe("channelBinding", () => {
   const channelBinding = (...args: unknown[]) => optionsOf(...args).channelBinding;
 
-  test("option > URL > PGCHANNELBINDING > prefer", () => {
-    expect(channelBinding("postgres://uh/ud")).toBe("prefer");
-    process.env.PGCHANNELBINDING = "disable";
+  test("option > URL > PGCHANNELBINDING > disable", () => {
     expect(channelBinding("postgres://uh/ud")).toBe("disable");
+    process.env.PGCHANNELBINDING = "prefer";
+    expect(channelBinding("postgres://uh/ud")).toBe("prefer");
     expect(channelBinding("postgres://uh/ud?channel_binding=require")).toBe("require");
     expect(channelBinding("postgres://uh/ud?channel_binding=require", { channelBinding: "prefer" })).toBe("prefer");
-    expect(channelBinding("mysql://uh/ud")).toBe("prefer");
+    expect(channelBinding("mysql://uh/ud")).toBe("disable");
   });
 
   test("any other value throws", () => {
@@ -231,7 +231,7 @@ describe("channelBinding", () => {
 
     test("PGCHANNELBINDING is not read", () => {
       process.env.PGCHANNELBINDING = "require";
-      expect(channelBinding(url)).toBe(adapter === "sqlite" ? undefined : "prefer");
+      expect(channelBinding(url)).toBe(adapter === "sqlite" ? undefined : "disable");
     });
   });
 });

@@ -734,7 +734,7 @@ function parseOptions(
   const channelBinding = (options.channelBinding ||
     query.channelBinding ||
     (isPostgres && env.PGCHANNELBINDING) ||
-    "prefer") as Bun.SQL.__internal.ChannelBinding;
+    "disable") as Bun.SQL.__internal.ChannelBinding;
   if (channelBinding !== "disable" && channelBinding !== "prefer" && channelBinding !== "require") {
     throw $ERR_INVALID_ARG_VALUE("channelBinding", channelBinding, "must be one of: disable, prefer, require");
   }

@@ -811,7 +811,7 @@ Bun uses the first of these variables that is set:
 | `PGCONNECT_TIMEOUT`                        | `30`          | `connectionTimeout`, in seconds                                                |
 | `PGAPPNAME`                                | (empty)       | `application_name` of the session                                              |
 | `PGOPTIONS`                                | (empty)       | Command-line options for the server, such as `-c geqo=off`                     |
-| `PGCHANNELBINDING`                         | `prefer`      | [`channelBinding`](#channel-binding)                                           |
+| `PGCHANNELBINDING`                         | `disable`     | [`channelBinding`](#channel-binding)                                           |
 
 `PGSSLMODE` also applies next to a connection URL. A URL from a `TLS_*` variable uses at least `require`; `PGSSLMODE=verify-ca` and `PGSSLMODE=verify-full` raise that.
 
@@ -906,7 +906,7 @@ You can configure the connection manually by passing options to the `SQL` constr
 | `prepare`                 | `true`                    | PostgreSQL. Use named [prepared statements](#prepared-statements)                                                 |
 | `bigint`                  | `false`                   | Return large integers as [`BigInt`](#bigint-instead-of-strings)                                                   |
 | `connection`              |                           | PostgreSQL. Startup parameters, such as `{ application_name: "api", search_path: "app" }`                         |
-| `channelBinding`          | `prefer`                  | PostgreSQL. [Channel binding](#channel-binding): `"disable"`, `"prefer"` or `"require"`                           |
+| `channelBinding`          | `disable`                 | PostgreSQL. [Channel binding](#channel-binding): `"disable"`, `"prefer"` or `"require"`                           |
 | `allowPublicKeyRetrieval` | `false`                   | MySQL. Fetch the server's RSA key to log in without TLS                                                           |
 | `foundRows`               | `false`                   | MySQL. Count the rows an `UPDATE` [matched](#working-with-mysql-result-sets) rather than the rows it changed      |
 | `transform`               |                           | [Column name transforms](#column-name-transforms), such as `SQL.camel`                                            |
@@ -1248,9 +1248,9 @@ Over TLS, PostgreSQL can tie a SCRAM login to the server's certificate (SCRAM-SH
 
 | `channelBinding` | Description                                                                                                                                                                                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `prefer`         | Default. Binds the login when the connection uses TLS and the server offers it.                                                                                                                                                                              |
+| `prefer`         | Binds the login when the connection uses TLS and the server offers it.                                                                                                                                                                                       |
 | `require`        | Only accepts a bound login. Otherwise the connection fails with `ERR_POSTGRES_CHANNEL_BINDING_REQUIRED` before Bun sends anything that derives from the password: without TLS, and when the server asks for an MD5 password, a clear text password, or none. |
-| `disable`        | Never binds the login. Use it for a proxy that terminates TLS.                                                                                                                                                                                               |
+| `disable`        | Default. Never binds the login.                                                                                                                                                                                                                              |
 
 ```ts
 const sql = new SQL("postgres://user:password@db.example.com/mydb?sslmode=verify-full", {
@@ -1260,7 +1260,7 @@ const sql = new SQL("postgres://user:password@db.example.com/mydb?sslmode=verify
 
 You can also set it with `?channel_binding=` in the URL or with `PGCHANNELBINDING`. Channel binding does not replace certificate verification, so keep `verify-full`.
 
-With `sslmode=prefer`, a connection that fell back to plaintext fails with `ERR_POSTGRES_CHANNEL_BINDING_FAILED` when the server offers SCRAM-SHA-256-PLUS: the server is on TLS, so something between the two removed it. `channelBinding: "disable"` turns the check off.
+A bound login fails behind a proxy that terminates TLS, which is what it is for. With `"prefer"` and `sslmode=prefer`, a connection that fell back to plaintext fails with `ERR_POSTGRES_CHANNEL_BINDING_FAILED` when the server offers SCRAM-SHA-256-PLUS: the server is on TLS, so something between the two removed it.
 
 Only PostgreSQL has channel binding. On MySQL, MariaDB and SQLite, `"require"` throws when you create the client, and the other values have no effect.
 

@@ -434,9 +434,16 @@ describe.concurrent("scripted server", () => {
 
   test.each([
     [
-      "TLS, -PLUS offered: binds",
+      "TLS, -PLUS offered, by default: does not bind",
       { tls: certificates.rsa, mechanisms: [PLUS, PLAIN] },
       undefined,
+      PLAIN,
+      "n,,",
+    ],
+    [
+      "TLS, -PLUS offered: binds",
+      { tls: certificates.rsa, mechanisms: [PLUS, PLAIN] },
+      "prefer",
       PLUS,
       "p=tls-server-end-point,,",
     ],

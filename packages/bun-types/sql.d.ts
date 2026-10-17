@@ -727,15 +727,14 @@ declare module "bun" {
        *   fails with `ERR_POSTGRES_CHANNEL_BINDING_REQUIRED`: without TLS, and
        *   when the server asks for an MD5 password, a clear text password, or
        *   none.
-       * - `"disable"`: never binds the login. Use it for a proxy that
-       *   terminates TLS.
+       * - `"disable"`: never binds the login
        *
        * Also the `?channel_binding=` parameter of the URL, and the
        * `PGCHANNELBINDING` environment variable.
        *
        * On MySQL and MariaDB, `"require"` throws when the client is created,
        * and the other values have no effect.
-       * @default "prefer"
+       * @default "disable"
        */
       channelBinding?: "disable" | "prefer" | "require" | undefined;
 

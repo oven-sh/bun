@@ -1633,24 +1633,24 @@ impl Written<'_, '_> {
             .augmented_modules
             .iter()
             .find(|augmented| augmented.0 == statement.start)?;
-        let inside =
-            file.ids(file[declared].body)
-                .map(|inner| &file[inner])
-                .map(|inner| {
-                    let declare: &[u8] =
-                        if matches!(inner.kind, StmtKind::Interface(_) | StmtKind::TypeAlias(_)) {
-                            b""
-                        } else {
-                            b"declare "
-                        };
-                    [
+        let inside = file
+            .ids(file[declared].body)
+            .map(|inner| &file[inner])
+            .map(|inner| {
+                let declare: &[u8] =
+                    if matches!(inner.kind, StmtKind::Interface(_) | StmtKind::TypeAlias(_)) {
+                        b""
+                    } else {
+                        b"declare "
+                    };
+                [
                         declare,
                         &self
                             .statement_text(inner, Flags::EXPORT | Flags::DEFAULT | Flags::AMBIENT)
                             [..],
                     ]
                     .concat()
-                });
+            });
         Some(inside.collect::<Vec<_>>().join(&b"\n"[..]))
     }
 

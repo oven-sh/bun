@@ -162,6 +162,23 @@ pub struct Options<'a> {
     pub is_entry_point: bool,
 }
 
+/// The parser options that a tsconfig.json controls, besides JSX.
+#[derive(Clone, Copy)]
+pub struct TsconfigOptions {
+    pub experimental_decorators: bool,
+    pub emit_decorator_metadata: bool,
+    pub use_define_for_class_fields: bool,
+}
+
+impl TsconfigOptions {
+    /// No tsconfig.json governs this parse.
+    pub const NONE: TsconfigOptions = TsconfigOptions {
+        experimental_decorators: false,
+        emit_decorator_metadata: false,
+        use_define_for_class_fields: true,
+    };
+}
+
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
         // `macro_context` is `None`; caller must set
@@ -325,7 +342,21 @@ impl<'a> Options<'a> {
         self.bundle
     }
 
-    pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
+    /// `emitDecoratorMetadata` implies legacy decorators: it only makes sense with
+    /// TypeScript's `reflect-metadata` system. Every other parse uses TC39 decorators.
+    #[inline]
+    pub fn set_tsconfig(&mut self, tsconfig: TsconfigOptions) {
+        self.use_define_for_class_fields = tsconfig.use_define_for_class_fields;
+        self.features.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+        self.features.standard_decorators =
+            !self.ts || !(tsconfig.experimental_decorators || tsconfig.emit_decorator_metadata);
+    }
+
+    pub fn init(
+        jsx: options::JSX::Pragma,
+        loader: options::Loader,
+        tsconfig: TsconfigOptions,
+    ) -> Options<'static> {
         // `macro_context` is `None`
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
@@ -335,7 +366,7 @@ impl<'a> Options<'a> {
             ignore_dce_annotations: false,
             keep_directives: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: true,
+            use_define_for_class_fields: tsconfig.use_define_for_class_fields,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
@@ -360,6 +391,7 @@ impl<'a> Options<'a> {
             is_entry_point: false,
         };
         opts.jsx.parse = loader.is_jsx();
+        opts.set_tsconfig(tsconfig);
         opts
     }
 }

@@ -94,7 +94,13 @@ impl FunctionIdentities {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
         let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
-        let mut options = crate::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
+        let mut options = crate::ParserOptions::init(
+            Default::default(),
+            bun_ast::Loader::Js,
+            crate::TsconfigOptions::NONE,
+        );
+        // JavaScriptCore has no decorator or auto-accessor grammar.
+        options.features.standard_decorators = false;
         options.features.no_macros = true;
         options.features.top_level_await = kind == Text::Module;
         options.jsc_builtin_syntax = kind == Text::Builtin;

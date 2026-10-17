@@ -766,6 +766,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             stmts.push(*stmt);
+                            if p.options.features.minify_keep_names
+                                && matches!(data.value, js_ast::StmtOrExpr::Stmt(_))
+                                && let Some(fname) = func_name
+                            {
+                                stmts.push(p.keep_stmt_symbol_name(fname.loc, fname.ref_, name));
+                            }
                         }
 
                         p.react_refresh.hook_ctx_storage = prev;
@@ -945,6 +951,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ),
                 Expr::init_identifier(func_name.ref_, func_name.loc),
             ));
+            if p.options.features.minify_keep_names {
+                stmts.push(p.keep_stmt_symbol_name(func_name.loc, func_name.ref_, original_name));
+            }
         } else if !mark_as_dead {
             if remove_overwritten {
                 // restore on early return.
@@ -984,6 +993,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ));
             } else {
                 stmts.push(*stmt);
+                if p.options.features.minify_keep_names {
+                    let name = data.func.name.expect("infallible: name checked");
+                    stmts.push(p.keep_stmt_symbol_name(name.loc, name.ref_, original_name));
+                }
             }
         } else if mark_as_dead {
             if let Some(replacement) = p

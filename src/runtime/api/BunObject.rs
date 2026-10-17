@@ -1870,13 +1870,12 @@ pub(crate) mod JSZlib {
         heap.error(format_args!("{}", bstr::BStr::new(message)))
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn gzip_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gzip_or_deflate_sync(heap, data, &options, true)
+        gzip_or_deflate_sync(heap, data, options, true)
     }
 
     #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
@@ -1888,13 +1887,12 @@ pub(crate) mod JSZlib {
         gunzip_or_inflate_sync(heap, data, &options, false)
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gzip_or_deflate_sync(heap, data, &options, false)
+        gzip_or_deflate_sync(heap, data, options, false)
     }
 
     #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
@@ -1996,7 +1994,7 @@ pub(crate) mod JSZlib {
     fn gzip_or_deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: &ZlibCompressionOptions<'a>,
+        options: ZlibCompressionOptions<'a>,
         is_gzip: bool,
     ) -> BufferResult<'a> {
         let level = options.level.map_or(6, |level| level as i32);
@@ -2006,7 +2004,6 @@ pub(crate) mod JSZlib {
                 // `init` reserves `deflateBound` of the input.
                 let mut list: Vec<u8> = Vec::new();
 
-                let defaults = zlib::Options::default();
                 let mut reader = zlib::ZlibCompressorArrayList::init(
                     data,
                     &mut list,
@@ -2014,13 +2011,9 @@ pub(crate) mod JSZlib {
                         window_bits: 15,
                         gzip: is_gzip,
                         level,
-                        mem_level: options
-                            .mem_level
-                            .map_or(defaults.mem_level, |mem_level| mem_level as i32),
-                        strategy: options
-                            .strategy
-                            .map_or(defaults.strategy, |strategy| strategy as i32),
-                        ..defaults
+                        mem_level: options.mem_level,
+                        strategy: options.strategy,
+                        ..Default::default()
                     },
                 )
                 .map_err(|err| init_error(heap, err))?;

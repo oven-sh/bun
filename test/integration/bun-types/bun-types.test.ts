@@ -305,7 +305,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
 
 /**
  * What the published types call the exports of each schema of the bindgen (docs/project/bindgen.mdx).
- * `null`: nothing, since JavaScript wraps them or only tests reach them.
+ * `null`: nothing, since JavaScript wraps them, only tests reach them, or the file has only types.
  */
 const PUBLISHED_AS: Record<string, string | null> = {
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
@@ -318,7 +318,9 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "JSONCObject.bind.ts": "typeof Bun.JSONC",
   "NodeModuleModule.bind.ts": null,
   "PasswordObject.bind.ts": "typeof Bun.password",
+  "SSLConfig.bind.ts": null,
   "SemverObject.bind.ts": "typeof Bun.semver",
+  "SocketConfig.bind.ts": null,
   "TOMLObject.bind.ts": "typeof Bun.TOML",
   "UnsafeObject.bind.ts": "typeof Bun.unsafe",
   "XMLObject.bind.ts": "typeof Bun.XML",
@@ -464,12 +466,7 @@ describe("@types/bun integration test", () => {
 
     const checker = program.getTypeChecker();
     const [published, generated] = source.statements.map(statement => checker.getTypeAtLocation(statement));
-    expect(
-      generated
-        .getProperties()
-        .map(file => file.name)
-        .sort(),
-    ).toEqual(Object.keys(PUBLISHED_AS).sort());
+    expect(schemas.map(file => basename(file)).sort()).toEqual(Object.keys(PUBLISHED_AS).sort());
     expect(
       generated
         .getProperties()

@@ -156,16 +156,44 @@ describe("zlib", () => {
         expect(Buffer.from(decompress(compressed))).toEqual(data);
       });
 
-      it.each([{ memLevel: 0 }, { memLevel: 10 }, { strategy: -1 }, { strategy: 5 }])(
-        `${compress.name}: %j is not a value zlib takes`,
-        options => {
-          expect(() => compress(data, options)).toThrow(new Error("Zlib error: Invalid argument"));
-        },
-      );
+      it.each([
+        [{ memLevel: 0 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: 10 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: 1.5 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: "9" }, "ERR_INVALID_ARG_TYPE"],
+        [{ memLevel: null }, "ERR_INVALID_ARG_TYPE"],
+        [{ strategy: -1 }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: 5 }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: NaN }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: "Z_RLE" }, "ERR_INVALID_ARG_TYPE"],
+      ])(`${compress.name}: %j is refused`, (options, code) => {
+        expect(() => compress(data, options)).toThrow(expect.objectContaining({ code }));
+      });
 
       it(`${compress.name}: libdeflate has neither`, () => {
         const library = "libdeflate";
-        expect(compress(data, { library, memLevel: 10, strategy: 5 })).toEqual(compress(data, { library }));
+        expect(compress(data, { library, memLevel: 1, strategy: 2 })).toEqual(compress(data, { library }));
+      });
+
+      // A low memLevel makes many short blocks, and the output is given only what deflateBound() asks for.
+      it(`${compress.name}: what does not compress fits`, () => {
+        let state = 1;
+        const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 16;
+        for (const length of [16, 127 * 32 + 1, 65537]) {
+          const noise = Buffer.from(Array.from({ length }, () => next() & 255));
+          for (const options of [
+            { memLevel: 1 },
+            { memLevel: 1, level: 0 },
+            { memLevel: 1, level: 1 },
+            { memLevel: 1, strategy: 4 },
+          ]) {
+            const compressed = Buffer.from(compress(noise, options));
+            expect(compressed.length).toBeGreaterThan(length);
+            // Stored blocks are as long as the room for output allows, so node:zlib gets as much of it.
+            expect(compressed).toEqual(nodeCompress(noise, { ...options, chunkSize: 2 * length + 64 }));
+            expect(Buffer.from(decompress(compressed))).toEqual(noise);
+          }
+        }
       });
     }
   });

@@ -104,6 +104,26 @@ describe.concurrent("WebKit 23b0720b40 upgrade", () => {
     expect(result).toBe(-2);
   });
 
+  test("optimized code does not truncate the operand of `!` under a bitwise operator (96115d8717)", () => {
+    // `!0.5` and `!-4294967296` are false. The DFG took the quotient for the integer 0 and let the sum wrap to 0.
+    const cases: [body: string, x: number, y: number][] = [
+      ["return !(x / y) | 0;", 1, 2],
+      ["return !(x + y) | 0;", -2147483648, -2147483648],
+    ];
+    const results = cases.map(([body, x, y]) => {
+      const f = new Function("x", "y", body);
+      let result = f(x, y);
+      // Until the DFG's code is what runs. The bound is for a run with the JIT off.
+      for (let i = 0; i < 200_000 && result === 0 && numberOfDFGCompiles(f) === 0; i++) result = f(x, y);
+      for (let i = 0; i < 100 && result === 0; i++) result = f(x, y);
+      return [body, result];
+    });
+    expect(results).toEqual([
+      ["return !(x / y) | 0;", 0],
+      ["return !(x + y) | 0;", 0],
+    ]);
+  });
+
   // JavaScriptCore no longer captures a stack in its Exception for a throw that a `catch` clause is certain to handle
   // (70896f26ff). node:vm takes the position for its header from that stack, between the throw and the `catch`.
   test("node:vm gives an error its header under a `catch` clause too", async () => {

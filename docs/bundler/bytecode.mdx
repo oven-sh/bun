@@ -166,6 +166,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun build --bytecode --minify --sourcemap \
   --target=bun \
+  --production \
   --compile \
   ./src/server.ts --outfile=./dist/server
 

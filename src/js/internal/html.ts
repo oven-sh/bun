@@ -7,6 +7,9 @@ const argv = process.argv;
 // `import` cannot be used in this file and only Bun builtin modules can be used.
 const path = require("node:path");
 
+// `undefined` if `arg` is the path of a page, else the pages that match it. `pages_of` in check_command.rs asks too.
+const pagesOf = $bindgen("html_pages.bind.ts", "pagesOf");
+
 const env = Bun.env;
 
 // This function is called at startup.
@@ -76,11 +79,10 @@ yourself with Bun.serve().
       continue;
     }
 
-    if (arg.includes("*") || arg.includes("**") || arg.includes("{")) {
-      const glob = new Bun.Glob(arg);
-
-      for (const file of glob.scanSync(cwd)) {
-        let resolved = path.resolve(cwd, file);
+    const matches = pagesOf(arg, cwd);
+    if (matches !== undefined) {
+      for (let j = 0, matchCount = matches.length; j < matchCount; j++) {
+        let resolved = path.resolve(cwd, matches[j]);
         if (resolved.includes(path.sep + "node_modules" + path.sep)) {
           continue;
         }

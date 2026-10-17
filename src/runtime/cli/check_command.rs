@@ -786,26 +786,15 @@ fn what_to_check(
     (!paths.is_empty()).then_some((paths, script_kinds))
 }
 
-/// The pages that `bun` serves for the argument `page`, which src/js/internal/html.ts finds with
-/// `new Bun.Glob(page).scanSync(cwd)` if it can be a pattern. None of them is in a `node_modules`.
+/// The pages that `bun` serves for the argument `page`, as src/js/internal/html.ts does. None is in a `node_modules`.
 fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
-    use bun_glob::{BunGlobWalker, walk};
-    let mut pages = Vec::new();
-    if !bun_core::strings::contains_any(page, b"*{") {
-        pages.push(page.to_vec());
-    } else if let Ok(Ok(mut walker)) =
-        // The defaults of `scanSync`: files only.
-        BunGlobWalker::init_with_cwd(
-            page, cwd, false, false, false, false, true, None,
-        )
-    {
-        let mut matches = walk::Iterator::new(&mut walker);
-        if matches!(matches.init(), Ok(Ok(()))) {
-            while let Ok(Ok(Some(path))) = matches.next() {
-                pages.push(path.into_vec());
-            }
-        }
-    }
+    use crate::cli::html_pages::{self, Pages};
+    let mut pages = match html_pages::pages_of(cwd, page) {
+        Ok(Pages::Named) => vec![page.to_vec()],
+        // src/js/internal/html.ts reports the error, when it asks for the pages to serve them.
+        Ok(Pages::Matched { pages, error: _ }) => pages.into_iter().map(Vec::from).collect(),
+        Err(_) => Vec::new(),
+    };
     pages.retain(|page| {
         let page =
             bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[page]);

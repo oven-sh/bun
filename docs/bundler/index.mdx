@@ -766,6 +766,8 @@ Specifies the type of sourcemap to generate.
 
 The associated `*.js.map` sourcemap is a JSON file containing an equivalent `debugId` property.
 
+When an input file carries its own `//# sourceMappingURL=` comment (the output of an earlier build step, or a package that ships a `.map` file next to its code), Bun composes that map into the output sourcemap, like esbuild does. The `sources` of the output map then point at the original files instead of the intermediate file, and stack traces from `bun run` and from a `--compile` executable name the original files. The comment can be a `data:` URL, a `file:` URL, or a path relative to the input file. A map file that does not exist is ignored. A map that cannot be read or parsed produces a warning, and the input file then maps to itself.
+
 ### minify
 
 Whether to enable minification. Default `false`.

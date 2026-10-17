@@ -28,6 +28,7 @@ bun_io.workspace = true
 # is now un-gated without the cycle.
 bun_ast.workspace = true
 bun_paths.workspace = true
+bun_url.workspace = true
 bun_ptr.workspace = true
 bun_semver.workspace = true
 bun_sys.workspace = true

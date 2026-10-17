@@ -200,4 +200,20 @@ describe("path.resolve", () => {
     const expectedEnding = isWindows ? "\\c" : "/c";
     assert.ok(result.endsWith(expectedEnding));
   });
+
+  test("more than 65535 arguments", () => {
+    // Same uint16_t argument-count wrap as path.join (see join.test.js).
+    const n = 70000;
+    const args = new Array(n).fill("a");
+
+    const posix = path.posix.resolve("/", ...args);
+    assert.strictEqual(posix.length, 1 + n * 2 - 1);
+    assert.strictEqual(posix.slice(0, 4), "/a/a");
+    assert.strictEqual(posix.slice(-3), "a/a");
+
+    const win32 = path.win32.resolve("C:\\", ...args);
+    assert.strictEqual(win32.length, 3 + n * 2 - 1);
+    assert.strictEqual(win32.slice(0, 6), "C:\\a\\a");
+    assert.strictEqual(win32.slice(-3), "a\\a");
+  });
 });

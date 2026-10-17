@@ -1354,6 +1354,204 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
+  /** A server answering every stream 200 "ok" that records each stream reaching JS. */
+  async function recordingSession() {
+    const seen: { id: number; sync?: string }[] = [];
+    const server = http2.createServer();
+    server.on("stream", (stream: any, headers: any) => {
+      seen.push({ id: stream.id, sync: headers["x-bun-sync"] });
+      stream.on("error", () => {});
+      try {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      } catch {}
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    return { server, c, seen };
+  }
+
+  /** PING as a barrier: once its ACK arrives the server has processed every frame written
+   *  before it, so the next write lands in a later read. A GOAWAY fails fast instead. */
+  async function pingBarrier(c: RawH2, tag: number) {
+    const opaque = Buffer.alloc(8, tag);
+    c.sendFrame(FrameType.PING, 0, 0, opaque);
+    const frame = await c.waitFor(
+      f =>
+        f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(opaque)),
+    );
+    expect(frame.type).toBe(FrameType.PING);
+  }
+
+  /** A request block split across HEADERS(END_STREAM) + CONTINUATION whose CONTINUATION half
+   *  inserts `x-bun-sync: 1` into the HPACK dynamic table (index 62). */
+  function splitRequestBlock(id: number): Buffer {
+    const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+    return Buffer.concat([
+      encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, id, requestHeaderBlock("GET")),
+      encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, id, insert),
+    ]);
+  }
+
+  /** After splitRequestBlock() was sent on a closed stream: it must have been decoded (a request
+   *  on `probeId` referencing index 62 is answered, no GOAWAY) yet never surfaced as a request. */
+  async function expectDecodedButDiscarded(c: RawH2, seen: { id: number; sync?: string }[], probeId: number) {
+    c.sendFrame(FrameType.HEADERS, 0x5, probeId, Buffer.concat([requestHeaderBlock("GET"), Buffer.from([0xbe])]));
+    const resp = await c.waitFor(
+      f => (f.type === FrameType.HEADERS && f.streamId === probeId) || f.type === FrameType.GOAWAY,
+    );
+    expect(resp.type).toBe(FrameType.HEADERS);
+    await pingBarrier(c, 0xff);
+    expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    expect(seen.filter(s => s.sync !== undefined)).toEqual([{ id: probeId, sync: "1" }]);
+  }
+
+  function headersOrRstOn(c: RawH2, id: number, since = 0) {
+    return c.frames
+      .slice(since)
+      .filter(f => f.streamId === id && (f.type === FrameType.HEADERS || f.type === FrameType.RST_STREAM));
+  }
+
+  // RFC 9113 §5.1 "closed": HEADERS on a closed stream is minimally processed (HPACK state
+  // updated) and discarded — nothing is sent on that stream, nothing reaches JS, no GOAWAY.
+  test("discards HEADERS following the peer's RST_STREAM in the same write", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("GET")),
+          encodeFrame(FrameType.RST_STREAM, 0, 1, cancel),
+          splitRequestBlock(1),
+        ]),
+      );
+      await expectDecodedButDiscarded(c, seen, 3);
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("discards HEADERS arriving in a later read for a stream the peer reset", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("GET")),
+          encodeFrame(FrameType.RST_STREAM, 0, 1, cancel),
+        ]),
+      );
+      await pingBarrier(c, 1);
+      const since = c.frames.length;
+      c.send(splitRequestBlock(1));
+      await expectDecodedButDiscarded(c, seen, 3);
+      expect(headersOrRstOn(c, 1, since)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("discards HEADERS reusing the id of a fully answered stream", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) === 1);
+      await pingBarrier(c, 1);
+      const since = c.frames.length;
+      c.send(splitRequestBlock(1));
+      await expectDecodedButDiscarded(c, seen, 3);
+      expect(headersOrRstOn(c, 1, since)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // §5.1.1: opening stream 5 implicitly closed the never-used stream 3.
+  test("discards HEADERS on a lower stream id than one already opened", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 5);
+      await pingBarrier(c, 1);
+      c.send(splitRequestBlock(3));
+      await expectDecodedButDiscarded(c, seen, 7);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // The closed-vs-new line is the highest CLIENT stream id: even ids the server promised above it
+  // (pushes 2, 4, 6 off stream 1) must not make a first HEADERS on stream 3 look closed.
+  test("a client stream id below the server's promised ids is still new", async () => {
+    const seen: number[] = [];
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      seen.push(stream.id);
+      stream.on("error", () => {});
+      const pushes = stream.id === 1 ? 3 : 0;
+      for (let i = 0; i < pushes; i++) {
+        stream.pushStream({ ":path": `/push/${i}` }, (err: any, push: any) => {
+          if (err) return;
+          push.on("error", () => {});
+          push.respond({ ":status": 200 });
+          push.end("p");
+        });
+      }
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings(); // ENABLE_PUSH defaults to 1
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      // Three PUSH_PROMISEs on stream 1 reserve 2, 4 and 6.
+      await c.waitFor(f => f.type === FrameType.PUSH_PROMISE && f.streamId === 1 && f.payload.readUInt32BE(0) === 6);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 3) || f.type === FrameType.GOAWAY,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(seen).toEqual([1, 3]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // nghttp2 charges each header block that it ignores to a budget: 10,000, and 330 more per second.
+  test("ends the session when HEADERS on a closed stream use up the budget", async () => {
+    const { server, c } = await recordingSession();
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) === 1);
+      await pingBarrier(c, 1);
+      const late = encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      c.send(Buffer.concat(Array(9_000).fill(late)));
+      await pingBarrier(c, 2);
+      c.send(Buffer.concat(Array(12_000).fill(late)));
+      const goaway = await c.waitForGoaway(10_000);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(goaway.payload.subarray(8).toString()).toBe("too many header blocks on closed streams");
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
   // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
   // feeding the stream's own RST_STREAM (then another read) back into the parser from that
   // callback must not free the Stream out from under the caller (use-after-free under ASAN).
@@ -2052,7 +2250,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   }
 
   // A reset is charged only when it cancels a live stream. nghttp2 charges every RST_STREAM, but
-  // Bun's own client answers each late DATA frame on a cancelled stream with one.
+  // Bun's client up to 1.4.3 answers each late DATA frame on a cancelled stream with one.
   test("RST_STREAM frames for a stream that is already closed are not charged", async () => {
     const { server } = respondingServer();
     await withClient(server, async c => {
@@ -2064,8 +2262,8 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     });
   });
 
-  // A server-sent reset is charged only when it cancels a request the handler was given. Each
-  // late DATA frame below is answered with RST_STREAM(STREAM_CLOSED), which cancels nothing.
+  // A server-sent reset is charged only when it cancels a request the handler was given. The
+  // late DATA frames below are on a closed stream: they get no reply at all.
   const lateData = Buffer.concat(
     Array.from({ length: 1200 }, () => encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"))),
   );
@@ -2140,12 +2338,11 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   test("resets of streams opened after the server's GOAWAY are charged", async () => {
     // nghttp2 can exempt every reset after its GOAWAY because it ignores the streams a client
     // opens after that frame. This engine still opens them, so only the earlier streams are exempt.
-    // It also accepts ids below the held stream's, so the GOAWAY's last stream id is no criterion.
     const { server, state } = respondingServer();
     await withClient(server, async c => {
-      c.send(upload(4001));
+      c.send(upload(1));
       await serverGoaway(c);
-      c.send(pairs(1200, 1, rstStream));
+      c.send(pairs(1200, 3, rstStream));
       const goaway = await c.waitFor(calm, 10_000);
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
       expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
@@ -2164,5 +2361,235 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
       expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
     });
+  });
+});
+
+// RFC 9113 §5.1: frames on a closed stream are discarded after minimal processing, which for DATA
+// means counting it toward the connection flow-control window. nghttp2 sends nothing back.
+describe("DATA and WINDOW_UPDATE on a closed stream", () => {
+  const PING = encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 1));
+  const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
+  const isFatal = (f: Frame) => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY;
+  const windowUpdate = (id: number, increment: number) => {
+    const payload = Buffer.alloc(4);
+    payload.writeUInt32BE(increment, 0);
+    return encodeFrame(FrameType.WINDOW_UPDATE, 0, id, payload);
+  };
+  const ONE_BYTE = encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"));
+  // A zero increment and an overflow are stream errors on a stream that is still open.
+  const WINDOW_UPDATES = [windowUpdate(1, 0), windowUpdate(1, 0x7fffffff)];
+  const floods: [string, Buffer][] = [
+    ["DATA", Buffer.concat(Array(2000).fill(ONE_BYTE))],
+    ["WINDOW_UPDATE", Buffer.concat(Array.from({ length: 2000 }, (_, i) => WINDOW_UPDATES[i % 2]))],
+  ];
+
+  test.each(floods)("server: %s gets no RST_STREAM", async (_, flood) => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      c.send(flood);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      c.send(PING);
+      await c.waitFor(isPingAck);
+      expect(c.frames.filter(isFatal)).toEqual([]);
+      expect(c.frames.some(f => f.type === FrameType.HEADERS && f.streamId === 3)).toBe(true);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test("server: DATA still counts toward the connection window", async () => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      // 49,152 bytes: inside the 65,535-byte connection window and past the half of it at which the
+      // server sends a WINDOW_UPDATE.
+      const large = encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16_384));
+      c.send(Buffer.concat([large, large, large]));
+      const credit = await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0);
+      expect(credit.payload.readUInt32BE(0)).toBeGreaterThanOrEqual(32_767);
+      expect(c.frames.filter(isFatal)).toEqual([]);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test.each(floods)("client: %s gets no RST_STREAM, and the session keeps working", async (_, flood) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    let sessionError: Error | undefined;
+    client.on("error", e => (sessionError = e));
+    // One request, answered by the raw server with 200 and a body that ends the stream.
+    const roundTrip = async (id: number) => {
+      const req = client.request({ ":path": "/" });
+      req.resume();
+      const closed = once(req, "close");
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === id);
+      raw.sendFrame(FrameType.HEADERS, 0x4, id, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.DATA, 0x1, id, Buffer.from("ok"));
+      await closed;
+    };
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      await roundTrip(1);
+      raw.socket!.write(Buffer.concat([flood, PING]));
+      await raw.waitFor(isPingAck);
+      await roundTrip(3);
+      expect(raw.frames.filter(isFatal)).toEqual([]);
+      expect(sessionError).toBeUndefined();
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // The engine has no entry for a request stream until the first frame arrives on it. That is
+  // not a closed stream: an upload larger than the window needs this WINDOW_UPDATE to finish.
+  test("client: WINDOW_UPDATE before any HEADERS or DATA on a request stream is applied", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const body = Buffer.alloc(100_000, "u");
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      req.end(body);
+      const uploaded = () =>
+        raw.frames.filter(f => f.type === FrameType.DATA && f.streamId === 1).reduce((n, f) => n + f.length, 0);
+      // The 65,535-byte stream and connection windows stop the upload here.
+      await raw.waitFor(() => uploaded() === 65_535);
+      raw.socket!.write(Buffer.concat([windowUpdate(0, 65_535), windowUpdate(1, 65_535)]));
+      await raw.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      expect(uploaded()).toBe(body.length);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
+const RESPONSE_200 = Buffer.from([0x88]); // ":status: 200", static table
+const END_STREAM = 0x1;
+const END_HEADERS = 0x4;
+
+/** Two PING round trips: what the client wrote before it read the first PING has arrived. */
+let pings = 0;
+async function twoRoundTrips(raw: RawH2Server) {
+  for (let i = 0; i < 2; i++) {
+    const payload = Buffer.alloc(8);
+    payload.writeUInt32BE(++pings, 4);
+    raw.sendFrame(FrameType.PING, 0, 0, payload);
+    await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(payload));
+  }
+}
+
+// The cases that node passes too are in node-http2-client-close.test.ts.
+describe("frames on a stream that the client closed", () => {
+  const { NGHTTP2_CANCEL } = http2.constants;
+  const isReset = (id: number) => (f: Frame) => f.type === FrameType.RST_STREAM && f.streamId === id;
+  const requestOn = (id: number) => (f: Frame) => f.type === FrameType.HEADERS && f.streamId === id;
+
+  /** A client with the server's SETTINGS, and request stream 1 cancelled and acknowledged as such. */
+  async function cancelledRequest(raw: RawH2Server, options: http2.ClientSessionOptions = {}) {
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    await raw.waitFor(requestOn(1));
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    await twoRoundTrips(raw);
+    req.close(NGHTTP2_CANCEL);
+    await raw.waitFor(isReset(1));
+    return client;
+  }
+
+  // A header block on a closed stream is decoded. nghttp2 does the same.
+  test("a header block that does not decode is a COMPRESSION_ERROR", async () => {
+    const raw = await RawH2Server.listen();
+    const client = await cancelledRequest(raw);
+    const sessionError = once(client, "error");
+    try {
+      // 0xff 0x00: index 127 names no entry of the static or the dynamic table.
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 1, Buffer.from([0xff, 0x00]));
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.COMPRESSION_ERROR);
+      const [err] = await sessionError;
+      expect(err.code).toBe("ERR_HTTP2_ERROR");
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // nghttp2 charges each header block that it ignores to a budget: 10,000, and 330 more per second.
+  test("header blocks that use up the budget end the session", async () => {
+    const raw = await RawH2Server.listen();
+    const client = await cancelledRequest(raw);
+    const sessionError = once(client, "error");
+    try {
+      const late = encodeFrame(FrameType.HEADERS, END_HEADERS, 1, RESPONSE_200);
+      raw.socket!.write(Buffer.concat(Array(9_000).fill(late)));
+      await twoRoundTrips(raw);
+      expect(raw.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+      raw.socket!.write(Buffer.concat(Array(12_000).fill(late)));
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY, 10_000);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      const [err] = await sessionError;
+      expect(err.code).toBe("ERR_HTTP2_ERROR");
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a late response leaves no stream behind", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxSessionMemory: 1 });
+    client.on("error", () => {});
+    try {
+      // A stalled upload: all but 20,000 bytes of the 1 MiB session budget sit in the outbound queue.
+      const upload = client.request({ ":path": "/", ":method": "POST" });
+      upload.on("error", () => {});
+      await raw.waitFor(requestOn(1));
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      upload.write(Buffer.alloc(65_535 + 1024 * 1024 - 20_000));
+      const uploaded = () =>
+        raw.frames.filter(f => f.type === FrameType.DATA && f.streamId === 1).reduce((n, f) => n + f.length, 0);
+      await raw.waitFor(() => uploaded() === 65_535);
+
+      // 300 cancelled requests, each with a late response. One stream entry is 104 bytes, so
+      // entries that stay behind use up the budget and request() is refused.
+      const refused = Promise.withResolvers<string>();
+      let id = 1;
+      for (let batch = 0; batch < 12; batch++) {
+        const requests = Array.from({ length: 25 }, () => {
+          id += 2;
+          return client.request({ ":path": "/" }).on("error", (err: Error) => refused.resolve(err.message));
+        });
+        const sent = raw.waitFor(requestOn(id), 10_000).then(() => "sent");
+        expect(await Promise.race([sent, refused.promise])).toBe("sent");
+        for (const req of requests) req.close(NGHTTP2_CANCEL);
+        await raw.waitFor(isReset(id), 10_000);
+        const late = requests.map((_, i) => encodeFrame(FrameType.HEADERS, END_HEADERS, id - 2 * i, RESPONSE_200));
+        raw.socket!.write(Buffer.concat(late));
+        await twoRoundTrips(raw);
+      }
+      expect(id).toBe(601);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
   });
 });

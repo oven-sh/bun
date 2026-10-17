@@ -89,10 +89,10 @@ extern "C" void bun_ignore_sigpipe()
 }
 extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 {
-#ifdef __APPLE__
-    return sysconf(_SC_CLK_TCK);
-#else
+#if OS(WINDOWS)
     return 0;
+#else
+    return sysconf(_SC_CLK_TCK);
 #endif
 }
 

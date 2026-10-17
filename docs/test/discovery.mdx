@@ -86,5 +86,9 @@ root = "src"  # Only scan for tests in the src directory
 
 Tests run in the following order:
 
-1. Test files run sequentially, or across worker processes with [`--parallel`](/test/parallel)
+1. Test files run sequentially in path order, or across worker processes with [`--parallel`](/test/parallel)
 2. Within each file, tests run sequentially in definition order
+
+Path order is the byte order of the absolute file paths. It is case-sensitive, and it does not depend on the order in which the file system lists a directory.
+
+Path arguments keep their order: `bun test ./b.test.ts ./a.test.ts` runs `b.test.ts` first. The files that a directory argument finds run in path order. `--shard`, `--randomize`, `--seed` and `--parallel` with more than one worker ignore the order of the arguments. They put the files that the arguments find in path order first. Your shell expands a glob such as `./test/*.test.ts` before Bun runs, so those arguments arrive in the shell's order.

@@ -49,6 +49,62 @@ async function parallelRunList(cwd: string, id: string, args: string[]): Promise
   return [...xml.matchAll(/<testsuite name="([^"]+)\.test\.ts"/g)].map(m => m[1].replaceAll("\\", "/"));
 }
 
+// With no flag, the files of a directory run in path order: the byte order of their absolute paths.
+const inPathOrder = ["apple", "lib/x", "test/B", "test/a", "test/a/b", "test/ab", "z"];
+// Neither path order nor its reverse, for a file system that lists by creation.
+const written = ["test/ab", "z", "test/a/b", "lib/x", "test/B", "apple", "test/a"];
+
+describe.concurrent("file order", () => {
+  test("the files of a directory run in path order", async () => {
+    using dir = project("file-order", written);
+    const cwd = String(dir);
+
+    const [noFlag, parallel1, shard] = await Promise.all([
+      ranFiles(cwd),
+      ranFiles(cwd, ["--parallel=1"]),
+      ranFiles(cwd, ["--shard=1/1"]),
+    ]);
+    expect({ noFlag, parallel1, shard }).toEqual({
+      noFlag: inPathOrder,
+      parallel1: inPathOrder,
+      shard: inPathOrder,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/18987
+  test("numbered files in one directory run in that order", async () => {
+    const numbered = ["01_seller", "02_product", "03_user", "04_order"].map(name => `__test__/${name}`);
+    using dir = project("file-order-numbered", [numbered[2], numbered[0], numbered[3], numbered[1]]);
+
+    expect(await ranFiles(String(dir))).toEqual(numbered);
+  });
+
+  test("path arguments run in argument order, and --shard starts from path order", async () => {
+    const timings = Object.fromEntries(inPathOrder.map(name => [`${name}.test.ts`, name === "lib/x" ? 1000 : 1]));
+    using dir = project("file-order-arguments", written, {
+      "timings.json": JSON.stringify({ version: 1, files: timings }),
+    });
+    const cwd = String(dir);
+
+    const [directories, files, parallel1, shard, shardByTime] = await Promise.all([
+      ranFiles(cwd, ["./test", "./lib"]),
+      ranFiles(cwd, ["./z.test.ts", "./apple.test.ts"]),
+      ranFiles(cwd, ["--parallel=1", "./z.test.ts", "./apple.test.ts"]),
+      ranFiles(cwd, ["--shard=1/1", "./test", "./lib"]),
+      ranFiles(cwd, ["--shard=1/2", "--timings=timings.json", "./test", "./lib"]),
+    ]);
+    expect({ directories, files, parallel1, shard, shardByTime }).toEqual({
+      // The files of each argument are in path order.
+      directories: ["test/B", "test/a", "test/a/b", "test/ab", "lib/x"],
+      files: ["z", "apple"],
+      parallel1: ["z", "apple"],
+      shard: ["lib/x", "test/B", "test/a", "test/a/b", "test/ab"],
+      // The slow file is first in path order, so it is the whole first shard.
+      shardByTime: ["lib/x"],
+    });
+  });
+});
+
 const seeded = Array.from({ length: 12 }, (_, i) => `test/f${String(i + 1).padStart(2, "0")}`);
 const seededWritten = [7, 3, 11, 1, 9, 5, 12, 2, 10, 6, 4, 8].map(n => seeded[n - 1]);
 // A seeded run shuffles the files from their path order, so one seed gives one order.

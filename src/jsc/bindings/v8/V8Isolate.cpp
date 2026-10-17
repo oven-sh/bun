@@ -3,6 +3,7 @@
 #include "V8String.h"
 #include "shim/GlobalInternals.h"
 #include "ZigGlobalObject.h"
+#include "ZeroCollectorStack.h"
 #include "real_v8.h"
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/Error.h>
@@ -61,6 +62,7 @@ void Isolate::LowMemoryNotification()
 {
     JSC::JSLockHolder lock(vm());
     vm().heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    Bun::zeroCollectorStack();
 }
 
 void Isolate::AutomaticallyRestoreInitialHeapLimit(double)

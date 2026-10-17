@@ -47,7 +47,7 @@ specializing-stores: 4 layouts, 0 given, 5 open, places 105 of 122, reads 23 of 
 spread-after-explicit-members: 13 layouts, 0 given, 15 open, places 53 of 88, reads 8 of 20
 super-template-tag-this: 3 layouts, 0 given, 0 open, places 30 of 59, reads 0 of 11
 template-strings-array: 11 layouts, 0 given, 19 open, places 17 of 52, reads 0 of 37
-this-in-plain-literal: 8 layouts, 0 given, 7 open, places 30 of 64, reads 15 of 48
+this-in-plain-literal: 9 layouts, 0 given, 8 open, places 31 of 65, reads 15 of 48
 top-level-literals-in-try: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 ts-namespace-as-value: 7 layouts, 0 given, 0 open, places 34 of 59, reads 12 of 25
 typed-object-as-prototype: 4 layouts, 0 given, 6 open, places 19 of 29, reads 2 of 35

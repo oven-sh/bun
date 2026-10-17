@@ -1,5 +1,5 @@
 closures-from-earlier-iterations: 7 layouts, 0 given, 1 open, places 72 of 92, reads 4 of 11
-constants-copied-from-returned-object: 41 layouts, 0 given, 10 open, places 203 of 220, reads 61 of 155
+constants-copied-from-returned-object: 42 layouts, 0 given, 11 open, places 204 of 221, reads 61 of 155
 constants-mutated-through-rest-patterns: 7 layouts, 0 given, 13 open, places 48 of 60, reads 0 of 2
 export-let: 0 layouts, 0 given, 0 open, places 4 of 15, reads 0 of 3
 export-tdz: 0 layouts, 0 given, 1 open, places 2 of 14, reads 2 of 6

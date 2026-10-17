@@ -92,7 +92,7 @@ field-stored-before-definition-keeps-slot: 18 layouts, 0 given, 2 open, places 5
 fields-added-by-later-cast: 5 layouts, 0 given, 7 open, places 34 of 46, reads 7 of 24
 fields-added-by-later-passes: 14 layouts, 0 given, 18 open, places 199 of 214, reads 69 of 115
 fields-after-extra-properties: 5 layouts, 0 given, 3 open, places 73 of 133, reads 0 of 0
-fields-initialized-after-allocation: 11 layouts, 1 given, 13 open, places 99 of 115, reads 26 of 67
+fields-initialized-after-allocation: 10 layouts, 1 given, 13 open, places 97 of 113, reads 26 of 67
 fields-on-most-family-members: 14 layouts, 0 given, 4 open, places 127 of 140, reads 14 of 29
 for-in-typed-objects: 3 layouts, 30 given, 0 open, places 45 of 79, reads 20 of 49
 for-in-via-any: 1 layouts, 0 given, 1 open, places 4 of 13, reads 2 of 3
@@ -115,8 +115,8 @@ generic-deep-merge-via-variables: 4 layouts, 0 given, 2 open, places 11 of 19, r
 generic-factory-helpers: 11 layouts, 0 given, 17 open, places 191 of 200, reads 42 of 81
 generic-forwarder-record-to-callback: 8 layouts, 0 given, 3 open, places 43 of 55, reads 17 of 22
 generic-helper-returns-as-t: 3 layouts, 0 given, 2 open, places 32 of 42, reads 7 of 12
-generic-interface: 30 layouts, 0 given, 1 open, places 116 of 144, reads 21 of 89
-generic-mapped-type-table: 6 layouts, 0 given, 2 open, places 30 of 39, reads 7 of 10
+generic-interface: 30 layouts, 0 given, 7 open, places 116 of 144, reads 21 of 89
+generic-mapped-type-table: 6 layouts, 0 given, 3 open, places 30 of 39, reads 5 of 10
 generic-record-unrelated-instantiations: 6 layouts, 0 given, 1 open, places 31 of 49, reads 32 of 37
 generic-record-wider-then-narrower: 7 layouts, 0 given, 1 open, places 38 of 58, reads 40 of 44
 generic-spread-after-named-property: 2 layouts, 0 given, 1 open, places 9 of 19, reads 4 of 7

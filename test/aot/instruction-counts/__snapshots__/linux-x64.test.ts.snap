@@ -214,7 +214,7 @@ untyped, module level: 133.68 instructions (module 30.15, stub Add 24, stub NewO
 `;
 
 exports[`copies an instance of a class, one of whose methods is replaced, with Object.assign(Object.create(Object.getPrototypeOf(x)), x) 1`] = `
-"typed, function: 704.14 instructions (the runtime 615.39, kernel 32.36, Point.copy 25, elsewhere 24.27, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedTryCloneWithPrototype 2, module 0.12), 427 bytes
+"typed, function: 705.31 instructions (the runtime 616.20, kernel 32.39, Point.copy 25, elsewhere 24.60, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedTryCloneWithPrototype 2, module 0.12), 485 bytes
 typed, module level: 701.19 instructions (the runtime 615.58, module 29.33, Point.copy 25, elsewhere 24.27, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedTryCloneWithPrototype 2), 1685 bytes
 untyped, function: 652.79 instructions (the runtime 491, kernel 57.49, Point.copy 53, stub CallMethodByName0 21, stub OperationVoidWithInstance 14, stub CallValue0 12, Point 2, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.12, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 706 bytes
 untyped, module level: 650.66 instructions (the runtime 491, module 55.48, Point.copy 53, stub CallMethodByName0 21, stub OperationVoidWithInstance 14, stub CallValue0 12, Point 2, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 2655 bytes"

@@ -32,7 +32,7 @@ closure-in-default-captures-outer-function: 0 layouts, 0 given, 0 open, places 4
 closure-in-key-captures-outer-function: 0 layouts, 0 given, 0 open, places 3 of 11, reads 0 of 1
 closure-stored-in-typed-loop-test: 0 layouts, 0 given, 0 open, places 4 of 13, reads 0 of 3
 closures-read-variables-before-assignment: 1 layouts, 0 given, 1 open, places 14 of 25, reads 1 of 7
-computed-key-next-to-literal-key: 1 layouts, 0 given, 7 open, places 15 of 33, reads 4 of 9
+computed-key-next-to-literal-key: 2 layouts, 0 given, 8 open, places 16 of 34, reads 4 of 9
 computed-keys-run-after-heritage-check: 0 layouts, 0 given, 0 open, places 1 of 13, reads 0 of 2
 conditional-any-or-literal: 1 layouts, 0 given, 0 open, places 2 of 13, reads 0 of 2
 conditional-both-arms-never: 1 layouts, 0 given, 1 open, places 12 of 30, reads 1 of 6
@@ -208,7 +208,7 @@ sloppy-delete-of-name: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 sloppy-legacy-octal-literals: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 sloppy-reserved-word-names: 0 layouts, 1 given, 0 open, places 0 of 8, reads 0 of 1
 small-untyped-objects-vs-larger-type: 3 layouts, 0 given, 4 open, places 20 of 38, reads 4 of 21
-spread-inherits-required-member: 0 layouts, 3 given, 0 open, places 4 of 13, reads 0 of 8
+spread-inherits-required-member: 2 layouts, 0 given, 3 open, places 7 of 16, reads 2 of 7
 spread-into-any-holding-literal: 2 layouts, 0 given, 2 open, places 4 of 12, reads 0 of 5
 spread-literal-for-intersection-parameter: 3 layouts, 1 given, 3 open, places 75 of 104, reads 2 of 16
 spread-literal-satisfies: 8 layouts, 0 given, 3 open, places 157 of 174, reads 6 of 10

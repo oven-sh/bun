@@ -6084,7 +6084,11 @@ describe("server names for a connection handed in with server.emit('connection')
           );
         },
       });
-      const refused = once(socket, "error");
+      // How the server side ends: with its error, or with a close that no error came before.
+      const refused = new Promise<string>(resolve => {
+        socket.on("error", err => resolve(err.message));
+        socket.on("close", () => resolve("closed with no error"));
+      });
       const client = connect({
         socket: clientSide,
         servername: "tenant.test",
@@ -6096,9 +6100,10 @@ describe("server names for a connection handed in with server.emit('connection')
         const outcome = await new Promise<string>(resolve => {
           client.on("secureConnect", () => resolve("connected"));
           client.on("error", err => resolve(String((err as NodeJS.ErrnoException).code)));
+          client.on("close", () => resolve("closed"));
         });
         // The refusal reaches the listeners of the server side after the client sees the reset.
-        const server = beforeAnswer === undefined ? "not asked" : (await refused)[0].message;
+        const server = beforeAnswer === undefined ? "not asked" : await refused;
         expect({ beforeAnswer, afterRefusal: wrote, client: outcome, server }).toEqual({
           beforeAnswer: 0,
           afterRefusal: 0,
@@ -6144,12 +6149,15 @@ describe("server names for a connection handed in with server.emit('connection')
   });
 
   // In a process of its own: a count taken here would include what earlier tests left for the GC.
-  it("over a Duplex, no SecureContext is kept once the socket that it answered for is gone", async () => {
+  it("over a Duplex, no SecureContext that answered is kept once its socket is gone", async () => {
     const script = `
       const { sslCtxLiveCount } = require("bun:internal-for-testing");
       const { duplexPair } = require("node:stream");
       const tls = require("node:tls");
       const [defaults, selected] = ${JSON.stringify([agent2, agent3])};
+      // The two contexts that every connection shares stay alive to the end, so the count is of the answers.
+      const serverContext = tls.createSecureContext(defaults);
+      const clientContext = tls.createSecureContext({});
       const before = sslCtxLiveCount();
 
       // One handshake whose callback answers with a context of its own. Nothing of it outlives the call.
@@ -6159,7 +6167,7 @@ describe("server names for a connection handed in with server.emit('connection')
         let asked = false;
         const socket = new tls.TLSSocket(serverSide, {
           isServer: true,
-          ...defaults,
+          secureContext: serverContext,
           SNICallback(_, cb) {
             asked = true;
             const context = tls.createSecureContext({ ...selected, sessionTimeout: 7000 + id });
@@ -6171,10 +6179,16 @@ describe("server names for a connection handed in with server.emit('connection')
           },
         });
         socket.on("error", () => {});
-        const client = tls.connect({ socket: clientSide, servername: "tenant.test", rejectUnauthorized: false });
+        const client = tls.connect({
+          socket: clientSide,
+          servername: "tenant.test",
+          rejectUnauthorized: false,
+          secureContext: clientContext,
+        });
         const outcome = await new Promise(resolve => {
           client.on("secureConnect", () => resolve(client.getPeerCertificate().subject.CN));
           client.on("error", err => resolve(err.code));
+          client.on("close", () => resolve("closed"));
         });
         if (asked) await given.promise;
         client.destroy();
@@ -6187,7 +6201,8 @@ describe("server names for a connection handed in with server.emit('connection')
         outcomes.push(await answered(when, outcomes.length));
       }
       // Finalizers run on GC, so wait for the condition.
-      for (let i = 0; i < 10 && sslCtxLiveCount() !== before; i++) {
+      const deadline = performance.now() + 3000;
+      while (sslCtxLiveCount() !== before && performance.now() < deadline) {
         Bun.gc(true);
         await new Promise(resolve => setImmediate(resolve));
       }

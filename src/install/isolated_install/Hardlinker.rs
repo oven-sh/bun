@@ -59,9 +59,11 @@ impl Hardlinker {
     /// refuses is copied instead. `Ok(true)`: the file system refuses every
     /// link from `src` to `dest`, and the walk copied from that file on.
     ///
-    /// The copies are made in the link loop, behind `copy_the_rest`. A second
-    /// loop for them would be a second caller of `dest.append`, and the
-    /// compiler then stops inlining it into the link loop.
+    /// The link loop is the only caller of `dest.append`, and the compiler
+    /// inlines it there for that reason. So no second loop appends to `dest`:
+    /// POSIX copies the rest from the directory fds (`copy_rest`). Windows,
+    /// where a copy takes two paths, copies in the link loop behind
+    /// `copy_the_rest`.
     pub(crate) fn link(&mut self) -> sys::Result<bool> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
@@ -255,7 +257,6 @@ impl Hardlinker {
         #[cfg(not(windows))]
         {
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
-            let mut copy_the_rest = false;
             while let Some(entry) = self.walker.next()? {
                 // A `dest.save()` ResetScope would hold `&mut Path` and keep
                 // `self.dest` exclusively borrowed across the body. Capture
@@ -272,14 +273,6 @@ impl Hardlinker {
                         EntryKind::Directory => Fd::cwd().make_path(self.dest.slice()),
                         EntryKind::File => {
                             let (dir, name) = (entry.dir, entry.basename);
-                            if copy_the_rest {
-                                break 'body Self::copy_file(
-                                    dir,
-                                    name,
-                                    self.dest.slice_z(),
-                                    &mut copy_file_state,
-                                );
-                            }
                             let Err(link_err1) =
                                 sys::linkat(dir, name, Fd::cwd(), self.dest.slice_z())
                             else {
@@ -310,11 +303,13 @@ impl Hardlinker {
                             let dest = self.dest.slice_z();
                             let state = &mut copy_file_state;
                             match copy_refused_link(refused, move || {
-                                Self::copy_file(dir, name, dest, state)
+                                Self::copy_file(dir, name, Fd::cwd(), dest, state)
                             }) {
-                                Ok(rest) => {
-                                    copy_the_rest = rest;
-                                    Ok(())
+                                Ok(false) => Ok(()),
+                                Ok(true) => {
+                                    return self
+                                        .copy_rest(dest_saved_len, &mut copy_file_state)
+                                        .map(|()| true);
                                 }
                                 Err(err) => Err(err),
                             }
@@ -328,7 +323,7 @@ impl Hardlinker {
                 result?;
             }
 
-            Ok(copy_the_rest)
+            Ok(false)
         }
     }
 
@@ -351,22 +346,51 @@ impl Hardlinker {
             .map_err(|code| sys::Error::from_win32(code, sys::Tag::copyfile))
     }
 
-    /// Copies one file of the walk to `dest`.
+    /// Copies one file of the walk to `dest`, a path from `dest_dir`.
     #[cfg(not(windows))]
     fn copy_file(
         src_dir: Fd,
         src_basename: &bun_core::ZStr,
+        dest_dir: Fd,
         dest: &bun_core::ZStr,
         copy_file_state: &mut bun_sys::copy_file::CopyFileState,
     ) -> sys::Result<()> {
-        match copy_file_at(src_dir, src_basename, Fd::cwd(), dest, copy_file_state) {
+        match copy_file_at(src_dir, src_basename, dest_dir, dest, copy_file_state) {
             // The copy unlinks a file that is in its way. Like the link walk,
             // remove a directory too.
             Err(err) if err.get_errno() == sys::E::EEXIST => {
-                let _ = Fd::cwd().delete_tree(dest.as_bytes());
-                copy_file_at(src_dir, src_basename, Fd::cwd(), dest, copy_file_state)
+                let _ = dest_dir.delete_tree(dest.as_bytes());
+                copy_file_at(src_dir, src_basename, dest_dir, dest, copy_file_state)
             }
             result => result,
         }
+    }
+
+    /// The file system refused a link. Copies what is left of the walk into
+    /// the package directory. `dest` is that directory again once `dest_len`
+    /// cuts the refused entry's path off it.
+    #[cfg(not(windows))]
+    #[cold]
+    fn copy_rest(
+        &mut self,
+        dest_len: usize,
+        copy_file_state: &mut bun_sys::copy_file::CopyFileState,
+    ) -> sys::Result<()> {
+        self.dest.set_length(dest_len);
+        let dest_dir = Fd::cwd().make_open_path(self.dest.slice())?;
+        while let Some(entry) = self.walker.next()? {
+            match entry.kind {
+                EntryKind::Directory => dest_dir.make_path(entry.path.as_bytes())?,
+                EntryKind::File => Self::copy_file(
+                    entry.dir,
+                    entry.basename,
+                    dest_dir.fd(),
+                    entry.path,
+                    copy_file_state,
+                )?,
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }

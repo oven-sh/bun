@@ -604,7 +604,7 @@ test("error.stack doesnt lose frames", () => {
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
 
-describe("event loop keep-alive", () => {
+describe.concurrent("event loop keep-alive", () => {
   async function spawnWithInspector(args: string[], cwd: string) {
     const inspectee = spawn({
       cmd: [bunExe(), ...args],
@@ -643,12 +643,30 @@ describe("event loop keep-alive", () => {
     return { inspectee, url, readStdoutUntil };
   }
 
+  // A client whose pending promises reject when the socket drops, so a dead
+  // inspectee fails the test with a reason instead of a timeout.
   function open(url: URL) {
     const ws = new WebSocket(url);
-    const opened = new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
-      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    const pending = new Set<(error: Error) => void>();
+    const fail = (message: string) => {
+      const error = new Error(message);
+      for (const reject of pending) reject(error);
+      pending.clear();
+    };
+    const track = <T>(executor: (resolve: (value: T) => void) => void) =>
+      new Promise<T>((resolve, reject) => {
+        pending.add(reject);
+        executor(value => {
+          pending.delete(reject);
+          resolve(value);
+        });
+      });
+    let closing = false;
+    ws.addEventListener("error", () => fail("WebSocket error"));
+    ws.addEventListener("close", () => {
+      if (!closing) fail("WebSocket closed");
     });
+    const opened = track<void>(resolve => ws.addEventListener("open", () => resolve()));
     let nextId = 1;
     const replies = new Map<number, (reply: any) => void>();
     ws.addEventListener("message", ({ data }) => {
@@ -656,12 +674,13 @@ describe("event loop keep-alive", () => {
       replies.get(reply.id)?.(reply);
     });
     const send = (method: string, params?: object) =>
-      new Promise<any>(resolve => {
+      track<any>(resolve => {
         const id = nextId++;
         replies.set(id, resolve);
         ws.send(JSON.stringify({ id, method, params }));
       });
     const close = () => {
+      closing = true;
       const closed = new Promise<void>(resolve => ws.addEventListener("close", () => resolve()));
       ws.close();
       return closed;
@@ -747,10 +766,6 @@ describe("event loop keep-alive", () => {
   test("an inspector target that refuses the connection does not unref the inspectee's loop", async () => {
     // The debugger thread creates a connection and closes it at once when the
     // dial fails, before the inspectee can run the connect task.
-    const closed = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    const port = closed.port;
-    closed.stop(true);
-
     using dir = tempDir("inspect-refused", {
       "timer.js": `
         process.on("beforeExit", () => console.log("beforeExit"));
@@ -758,15 +773,28 @@ describe("event loop keep-alive", () => {
         setTimeout(() => console.log("alive"), 200);
       `,
     });
+    let target: string;
+    if (isPosix) {
+      target = `unix://${join(String(dir), "nobody.sock")}`;
+    } else {
+      // Windows dials unix: targets over TCP. Take a free port and release it.
+      const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      target = `tcp://127.0.0.1:${listener.port}`;
+      listener.stop(true);
+    }
     await using inspectee = spawn({
-      cmd: [bunExe(), `--inspect=tcp://127.0.0.1:${port}`, "timer.js"],
+      cmd: [bunExe(), `--inspect=${target}`, "timer.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([inspectee.stdout.text(), inspectee.exited]);
-    expect(stdout).toBe("ready\nalive\nbeforeExit\n");
-    expect(exitCode).toBe(0);
+    // Drain stderr too. The inspector banner on it races the exit, so it is not asserted.
+    const [stdout, , exitCode] = await Promise.all([
+      inspectee.stdout.text(),
+      inspectee.stderr.text(),
+      inspectee.exited,
+    ]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "ready\nalive\nbeforeExit\n", exitCode: 0 });
   });
 });

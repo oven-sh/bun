@@ -478,9 +478,7 @@ public:
 
     bool shouldRefEventLoop = false;
 
-    // True only while this connection holds the keep-alive ref taken in
-    // doConnect(). A close that lands before the connect task runs never
-    // takes the ref, so the disconnect task must not release one.
+    // Set with the +1 in doConnect(); the disconnect task releases only when true.
     bool unrefOnDisconnect = false;
 
     bool hasEverConnected = false;

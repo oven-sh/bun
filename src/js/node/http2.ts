@@ -2226,6 +2226,20 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
+// The 'aborted' rule of node's closeStream() (v26.3.0 core.js#L2019-L2027). Returns whether the caller has to end() the writable.
+function abortIfWritableOpen(stream: Http2Stream): boolean {
+  // Nothing to end: end() ran, or node ended this pushed stream when it created it (core.js#L425).
+  if (stream._writableState.ending || stream[kPush]) return false;
+  // Closed: closeStream() ran. Waiting for trailers, or a HEAD request (core.js#L401-L405): node ended the writable.
+  const decided =
+    (stream[bunHTTP2StreamStatus] & (StreamState.Closed | StreamState.WantTrailer)) !== 0 ||
+    (stream[kHeadRequest] && stream instanceof ServerHttp2Stream);
+  if (!decided && !stream[kAborted]) {
+    stream[kAborted] = true;
+    stream.emit("aborted");
+  }
+  return true;
+}
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
@@ -2570,22 +2584,21 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
+      const endWritable = abortIfWritableOpen(this);
       if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
         // For other rstCodes _destroy ends the readable so 'end' is suppressed.
         this.push(null);
       }
-      const { ending } = this._writableState;
-      if (!ending) {
-        // If the writable side of the Http2Stream is still open, emit the
-        // 'aborted' event and set the aborted flag.
-        if (!this.aborted) {
-          this[kAborted] = true;
-          this.emit("aborted");
-        }
+      if (endWritable) {
         this.end();
       }
       this.rstCode = code;
       markStreamClosed(this);
+      if (this[kPush]) {
+        // A pushed stream on the client has no writable side that can finish. _destroy() sends its reset.
+        scheduleDestroyIfNotDestroyed(this);
+        return;
+      }
       if (this.pending) {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
@@ -2609,17 +2622,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
-    const { ending } = this._writableState;
+    const endWritable = abortIfWritableOpen(this);
     this.push(null);
-    // A pushed stream's request was synthesized by the server, so its local (writable) half is
-    // closed by definition — closing it is not an abort and nothing must be sent on the wire.
-    if (!ending && !this[kPush]) {
-      // If the writable side of the Http2Stream is still open, emit the
-      // 'aborted' event and set the aborted flag.
-      if (!this.aborted) {
-        this[kAborted] = true;
-        this.emit("aborted");
-      }
+    if (endWritable) {
       // at this state destroyed will be true but we need to close the writable side
       this._writableState.destroyed = false;
       this.end();
@@ -4069,14 +4074,10 @@ class ServerHttp2Session extends Http2Session {
       // Emit the frameError event with the frame type and error code
       process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
     },
-    aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
+    aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any) {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
-      // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
-        stream[kAborted] = true;
-        stream.emit("aborted");
-      }
+      abortIfWritableOpen(stream);
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -5075,14 +5076,10 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
       },
     ),
-    aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
+    aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any) => {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
-      // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
-        stream[kAborted] = true;
-        stream.emit("aborted");
-      }
+      abortIfWritableOpen(stream);
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
@@ -6200,6 +6197,7 @@ class ClientHttp2Session extends Http2Session {
               const req = new ClientHttp2Stream(undefined, this, headers);
               req.authority = authority;
               req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+              if (options?.endStream) req.end();
               req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
               process.nextTick(emitStreamErrorNT, this, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
               process.nextTick(emitEventNT, req, "ready");
@@ -6216,6 +6214,7 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+        req.end();
         process.nextTick(rejectNoPayloadContentLengthNT, req);
         process.nextTick(emitEventNT, req, "ready");
         return req;
@@ -6285,6 +6284,7 @@ class ClientHttp2Session extends Http2Session {
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
+        if (options?.endStream) req.end();
         process.nextTick(emitOutofStreamErrorNT, req);
         return req;
       }

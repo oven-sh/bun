@@ -229,7 +229,18 @@ impl StandaloneModuleGraph {
         }
         let name = strings::paths::without_nt_prefix::<u8>(name);
         let root = PRESERVED_PATHS_ROOT.as_bytes();
-        if !self.flags.intersects(flags) || !bun_paths::is_fully_qualified(name) || root.len() + name.len() > buf.len() {
+        if !self.flags.intersects(flags) || name.is_empty() {
+            return None;
+        }
+        let mut buffers = None;
+        let name = if bun_paths::is_fully_qualified(name) {
+            name
+        } else {
+            let (working_directory, absolute) = buffers.insert((bun_paths::path_buffer_pool::get(), bun_paths::path_buffer_pool::get()));
+            let working_directory = bun_core::getcwd(working_directory).ok()?;
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(working_directory.as_bytes(), &mut absolute[..], &[name])?
+        };
+        if root.len() + name.len() > buf.len() {
             return None;
         }
         buf[..root.len()].copy_from_slice(root);

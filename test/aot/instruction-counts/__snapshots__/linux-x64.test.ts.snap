@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`makes a Set from an array of four numbers 1`] = `
+"typed, function: 786.42 instructions (the runtime 269.61, stub SetAdd 264, built-in modules 93, stub ArrayElement 88, kernel 30.48, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, stub ArrayElement with arguments 12, stub TypedBuiltinCell of 1192 5, module 0.30, elsewhere -2.96), 307 bytes
+typed, module level: 775.17 instructions (the runtime 269.61, stub SetAdd 264, built-in modules 93, stub ArrayElement 88, module 19.88, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, stub ArrayElement with arguments 12, stub TypedBuiltinCell of 1192 5, elsewhere -3.31), 1262 bytes
+untyped, function: 793.47 instructions (the runtime 269.61, stub SetAdd 264, built-in modules 93, stub ArrayElement 88, kernel 37.52, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, stub ArrayElement with arguments 12, stub TypedBuiltinCell of 1192 5, module 0.30, elsewhere -2.96), 461 bytes
+untyped, module level: 778.52 instructions (the runtime 269.61, stub SetAdd 264, built-in modules 93, stub ArrayElement 88, module 22.88, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, stub ArrayElement with arguments 12, stub TypedBuiltinCell of 1192 5, elsewhere -2.96), 1293 bytes"
+`;
+
 exports[`walks the three pairs of a URLSearchParams that is also kept in an array 1`] = `
 "typed, function: 8126.25 instructions (the runtime 7169.85, kernel 314.95, stub IterHasInFrame 160, elsewhere 140.85, stub ReadBatchedElements 108, stub CallHostFunction0 96, stub FrontEndTypedConstruct 49, stub CallValue0 36, stub OperationValueWithInstance 28, stub IterOpenInFrame 15, stub CallValueWithoutArguments 4, stub IterOpenPairsInFrame 2, stub OperationValueWithInstance to operationAOTTypedConstruct 2, module 0.60), 1294 bytes
 typed, module level: 8105.10 instructions (the runtime 7169.85, module 295.10, stub IterHasInFrame 160, elsewhere 140.15, stub ReadBatchedElements 108, stub CallHostFunction0 96, stub FrontEndTypedConstruct 49, stub CallValue0 36, stub OperationValueWithInstance 28, stub IterOpenInFrame 15, stub CallValueWithoutArguments 4, stub IterOpenPairsInFrame 2, stub OperationValueWithInstance to operationAOTTypedConstruct 2), 2215 bytes
@@ -60,15 +67,15 @@ untyped, module level: 1016.80 instructions (the runtime 841.95, module 59.85, s
 `;
 
 exports[`awaits an async function that returns at once 1`] = `
-"typed, function: 127.40 instructions (the runtime 63.15, kernel 23.10, stub AwaitCallBySavingFrame 17.75, double 9, stub EnterSavedFrame 3.30, module 2.75, stub EnterResume 2.15, elsewhere 1.70, stub OperationVoidWithInstance 1.40, stub RestoreSavedFrameToStack 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 268 bytes
-typed, module level: 71.70 instructions (module 41.70, double 16, stub TypedNewPromise 14), 1973 bytes
+"typed, function: 126.40 instructions (the runtime 63.15, kernel 22.10, stub AwaitCallBySavingFrame 17.75, double 9, stub EnterSavedFrame 3.30, module 2.75, stub EnterResume 2.15, elsewhere 1.70, stub OperationVoidWithInstance 1.40, stub RestoreSavedFrameToStack 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 264 bytes
+typed, module level: 70.70 instructions (module 40.70, double 16, stub TypedNewPromise 14), 1969 bytes
 untyped, function: 126.40 instructions (the runtime 63.15, kernel 22.10, stub AwaitCallBySavingFrame 17.75, double 9, stub EnterSavedFrame 3.30, module 2.75, stub EnterResume 2.15, elsewhere 1.70, stub OperationVoidWithInstance 1.40, stub RestoreSavedFrameToStack 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 317 bytes
 untyped, module level: 69.70 instructions (module 39.70, double 16, stub TypedNewPromise 14), 1947 bytes"
 `;
 
 exports[`awaits a promise that is already fulfilled 1`] = `
-"typed, function: 132.10 instructions (the runtime 66.55, stub AwaitBySavingFrame 30.05, kernel 21.10, stub EnterSavedFrame 3.30, module 2.75, stub EnterResume 2.15, elsewhere 1.70, stub OperationVoidWithInstance 1.40, stub RestoreSavedFrameToStack 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 265 bytes
-typed, module level: 38.60 instructions (module 38.60), 2048 bytes
+"typed, function: 131.10 instructions (the runtime 66.55, stub AwaitBySavingFrame 30.05, kernel 20.10, stub EnterSavedFrame 3.30, module 2.75, stub EnterResume 2.15, elsewhere 1.70, stub OperationVoidWithInstance 1.40, stub RestoreSavedFrameToStack 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 261 bytes
+typed, module level: 37.60 instructions (module 37.60), 2044 bytes
 untyped, function: 131.10 instructions (the runtime 66.55, stub AwaitBySavingFrame 30.05, kernel 20.10, stub EnterSavedFrame 3.30, module 2.75, stub EnterResume 2.15, elsewhere 1.70, stub OperationVoidWithInstance 1.40, stub RestoreSavedFrameToStack 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 299 bytes
 untyped, module level: 40.60 instructions (module 40.60), 2119 bytes"
 `;
@@ -81,8 +88,8 @@ untyped, module level: 97.37 instructions (module 60.37, stub GetByNameWithDirec
 `;
 
 exports[`adds up an array of numbers with forEach 1`] = `
-"typed, function: 7.38 instructions (kernel 7.26, module 0.12), 511 bytes
-typed, module level: 7.25 instructions (module 7.25), 2093 bytes
+"typed, function: 7.38 instructions (kernel 7.26, module 0.12), 507 bytes
+typed, module level: 7.25 instructions (module 7.25), 2089 bytes
 untyped, function: 47.31 instructions (kernel 24.41, stub Add 22.78, module 0.12), 741 bytes
 untyped, module level: 36.18 instructions (module 36.18), 2519 bytes"
 `;
@@ -117,21 +124,21 @@ untyped, module level: 211.61 instructions (module 102.53, stub PutPropertiesWit
 
 exports[`scans a Uint8Array to the closing quote, with a test for an escape and one for control characters 1`] = `
 "typed, function: 13.31 instructions (kernel 13.19, module 0.12), 716 bytes
-typed, module level: 13.20 instructions (module 13.20), 2617 bytes
+typed, module level: 13.20 instructions (module 13.20), 2632 bytes
 untyped, function: 13.44 instructions (kernel 13.32, module 0.12), 1245 bytes
 untyped, module level: 13.28 instructions (module 13.28), 2740 bytes"
 `;
 
 exports[`scans a string by charCodeAt to the closing quote, with a test for an escape and one for control characters 1`] = `
-"typed, function: 12.30 instructions (kernel 12.18, module 0.12), 309 bytes
-typed, module level: 12.08 instructions (module 12.08), 2054 bytes
+"typed, function: 12.29 instructions (kernel 12.17, module 0.12), 344 bytes
+typed, module level: 12.08 instructions (module 12.08), 2040 bytes
 untyped, function: 16.33 instructions (kernel 16.21, module 0.12), 704 bytes
-untyped, module level: 13.14 instructions (module 13.14), 2402 bytes"
+untyped, module level: 13.14 instructions (module 13.14), 2412 bytes"
 `;
 
 exports[`sorts a copy of an array of numbers with a comparator in a small function 1`] = `
-"typed, function: 122.80 instructions (kernel 112.53, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92, module 0.19), 6186 bytes
-typed, module level: 122.52 instructions (module 112.44, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92), 7928 bytes
+"typed, function: 122.80 instructions (kernel 112.53, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92, module 0.19), 6198 bytes
+typed, module level: 122.52 instructions (module 112.44, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92), 7940 bytes
 untyped, function: 242.97 instructions (kernel 232.47, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub Add 0.25, module 0.19), 8253 bytes
 untyped, module level: 248.08 instructions (module 238.02, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 10239 bytes"
 `;

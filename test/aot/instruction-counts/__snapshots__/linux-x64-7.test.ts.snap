@@ -43,8 +43,8 @@ untyped, module level: 21.41 instructions (module 21.41), 2381 bytes"
 `;
 
 exports[`iterates over an async generator that awaits an async function before every yield 1`] = `
-"typed, function: 472.05 instructions (the runtime 139.95, stub AsyncIteratorNext 92.05, doubles 55.25, kernel 51.85, stub AwaitBySavingFrame 31.50, stub AwaitMayContinue 26.80, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14.70, stub EnterSavedFrame 6.50, elsewhere 4.05, module 2.75, stub EnterResume 2.15, stub OperationValueWithInstance 2.10, stub OperationVoidWithInstance 2.10, stub RestoreSavedFrameToStack 1.70, stub AllocateTypedCell 1.60, stub EnterAsyncGenerator 1.40, stub AwaitInAsyncGenerator 1.30, stub ResolvePromiseAfterAwait 0.90, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 517 bytes
-typed, module level: 360.45 instructions (stub AsyncIteratorNext 95.45, module 69.75, doubles 54.15, the runtime 39.90, stub AwaitMayContinue 28, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14, stub OperationValueWithInstance 2.10, elsewhere 1.70, stub AllocateTypedCell 1.60, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10), 2525 bytes
+"typed, function: 471.05 instructions (the runtime 139.95, stub AsyncIteratorNext 92.05, doubles 55.25, kernel 50.85, stub AwaitBySavingFrame 31.50, stub AwaitMayContinue 26.80, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14.70, stub EnterSavedFrame 6.50, elsewhere 4.05, module 2.75, stub EnterResume 2.15, stub OperationValueWithInstance 2.10, stub OperationVoidWithInstance 2.10, stub RestoreSavedFrameToStack 1.70, stub AllocateTypedCell 1.60, stub EnterAsyncGenerator 1.40, stub AwaitInAsyncGenerator 1.30, stub ResolvePromiseAfterAwait 0.90, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 513 bytes
+typed, module level: 359.45 instructions (stub AsyncIteratorNext 95.45, module 68.75, doubles 54.15, the runtime 39.90, stub AwaitMayContinue 28, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14, stub OperationValueWithInstance 2.10, elsewhere 1.70, stub AllocateTypedCell 1.60, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10), 2525 bytes
 untyped, function: 472.20 instructions (the runtime 139.95, stub AsyncIteratorNext 92.05, doubles 55.40, kernel 51.85, stub AwaitBySavingFrame 31.50, stub AwaitMayContinue 26.80, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14.70, stub EnterSavedFrame 6.50, elsewhere 4.05, module 2.75, stub EnterResume 2.15, stub OperationValueWithInstance 2.10, stub OperationVoidWithInstance 2.10, stub RestoreSavedFrameToStack 1.70, stub AllocateTypedCell 1.60, stub EnterAsyncGenerator 1.40, stub AwaitInAsyncGenerator 1.30, stub ResolvePromiseAfterAwait 0.90, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 701 bytes
 untyped, module level: 359.60 instructions (stub AsyncIteratorNext 95.45, module 68.75, doubles 54.30, the runtime 39.90, stub AwaitMayContinue 28, stub GetByNameWithDirectColumnWithReceiverInR15 20.50, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14, stub OperationValueWithInstance 2.10, elsewhere 1.70, stub AllocateTypedCell 1.60, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10), 3089 bytes"
 `;
@@ -85,8 +85,8 @@ untyped, module level: 55.65 instructions (module 41.47, stub PutByNameWithDirec
 `;
 
 exports[`iterates with for await over an array of numbers 1`] = `
-"typed, function: 475.40 instructions (the runtime 329.40, kernel 56.85, stub AwaitBySavingFrame 41.50, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncIteratorNext 10.15, stub EnterSavedFrame 3.30, module 2.80, elsewhere 2.35, stub EnterResume 2.15, stub RestoreSavedFrameToStack 1.70, stub OperationValueWithInstance 1.40, stub OperationVoidWithInstance 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 511 bytes
-typed, module level: 447.05 instructions (the runtime 310.20, module 70.65, stub AsyncIteratorNext 29.40, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub OperationValueWithInstance 16.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10), 2842 bytes
+"typed, function: 474.40 instructions (the runtime 329.40, kernel 55.85, stub AwaitBySavingFrame 41.50, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncIteratorNext 10.15, stub EnterSavedFrame 3.30, module 2.80, elsewhere 2.35, stub EnterResume 2.15, stub RestoreSavedFrameToStack 1.70, stub OperationValueWithInstance 1.40, stub OperationVoidWithInstance 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 507 bytes
+typed, module level: 446.05 instructions (the runtime 310.20, module 69.65, stub AsyncIteratorNext 29.40, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub OperationValueWithInstance 16.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10), 2842 bytes
 untyped, function: 472.35 instructions (the runtime 324.40, kernel 50.85, stub AwaitBySavingFrame 41.50, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncIteratorNext 10.15, stub Add 8, stub EnterSavedFrame 3.30, module 2.75, elsewhere 2.35, stub EnterResume 2.15, stub RestoreSavedFrameToStack 1.70, stub OperationValueWithInstance 1.40, stub OperationVoidWithInstance 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 586 bytes
 untyped, module level: 440.05 instructions (the runtime 305.20, module 68.65, stub AsyncIteratorNext 29.40, stub GetByNameWithDirectColumnWithReceiverInR15 20.50, stub OperationValueWithInstance 16.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10), 3411 bytes"
 `;
@@ -99,8 +99,8 @@ untyped, module level: 113.55 instructions (count 50.98, stub AllocateTypedCell 
 `;
 
 exports[`iterates with for of over a generator that was kept in an array 1`] = `
-"typed, function: 95.33 instructions (stub IterHasInFrame 42.42, kernel 29.60, upTo 16.57, outlined code 6, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30, module 0.12), 719 bytes
-typed, module level: 90.21 instructions (stub IterHasInFrame 42.42, module 30.60, upTo 16.57, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30), 1825 bytes
+"typed, function: 95.32 instructions (stub IterHasInFrame 42.42, kernel 29.59, upTo 16.57, outlined code 6, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30, module 0.12), 721 bytes
+typed, module level: 90.20 instructions (stub IterHasInFrame 42.42, module 30.59, upTo 16.57, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30), 1820 bytes
 untyped, function: 91.39 instructions (stub IterHasInFrame 42.42, kernel 21.63, upTo 18.60, stub Add 8, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30, module 0.12), 586 bytes
 untyped, module level: 91.31 instructions (stub IterHasInFrame 42.42, module 29.67, upTo 18.60, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30), 2065 bytes"
 `;
@@ -197,8 +197,8 @@ untyped, module level: 40.26 instructions (stub GetByNameWithDirectColumnPreserv
 `;
 
 exports[`reads a property under a key that is a rope of four thousand characters 1`] = `
-"typed, function: 2539.85 instructions (elsewhere 1358.50, the runtime 1046, kernel 80.75, stub GetByValCachedOfCells 50, stub GetByValCached 4, module 0.60), 536 bytes
-typed, module level: 2519.50 instructions (elsewhere 1358.50, the runtime 1046, module 65, stub GetByValCachedOfCells 50), 1987 bytes
+"typed, function: 2538.85 instructions (elsewhere 1358.50, the runtime 1046, kernel 79.75, stub GetByValCachedOfCells 50, stub GetByValCached 4, module 0.60), 536 bytes
+typed, module level: 2518.50 instructions (elsewhere 1358.50, the runtime 1046, module 64, stub GetByValCachedOfCells 50), 1983 bytes
 untyped, function: 2541.85 instructions (elsewhere 1358.50, the runtime 1046, kernel 74.75, stub GetByValCachedOfCells 50, stub Add 8, stub GetByValCached 4, module 0.60), 522 bytes
 untyped, module level: 2525.50 instructions (elsewhere 1358.50, the runtime 1046, module 59, stub GetByValCachedOfCells 50, stub Add 8, stub GetByValCached 4), 1882 bytes"
 `;
@@ -211,17 +211,17 @@ untyped, module level: 4058.83 instructions (the runtime 3749.68, elsewhere 103,
 `;
 
 exports[`parses the digits of a string by charCodeAt as a 32-bit integer 1`] = `
-"typed, function: 11.45 instructions (kernel 11.33, module 0.12), 415 bytes
-typed, module level: 11.24 instructions (module 11.24), 2139 bytes
+"typed, function: 11.44 instructions (kernel 11.32, module 0.12), 443 bytes
+typed, module level: 11.23 instructions (module 11.23), 2140 bytes
 untyped, function: 78.81 instructions (kernel 54.15, stub AddAfterInt32Check 21.84, outlined code 2.70, module 0.12), 591 bytes
-untyped, module level: 77.53 instructions (module 53.23, stub AddAfterInt32Check 21.60, outlined code 2.70), 2622 bytes"
+untyped, module level: 77.54 instructions (module 53.12, stub AddAfterInt32Check 21.60, outlined code 2.82), 2503 bytes"
 `;
 
 exports[`skips white space in a string by charCodeAt 1`] = `
-"typed, function: 8.36 instructions (kernel 8.24, module 0.12), 306 bytes
-typed, module level: 9.13 instructions (module 9.13), 2094 bytes
-untyped, function: 8.41 instructions (kernel 8.29, module 0.12), 301 bytes
-untyped, module level: 9.17 instructions (module 9.17), 2271 bytes"
+"typed, function: 8.35 instructions (kernel 8.23, module 0.12), 332 bytes
+typed, module level: 8.14 instructions (module 8.14), 2111 bytes
+untyped, function: 8.40 instructions (kernel 8.28, module 0.12), 302 bytes
+untyped, module level: 9.17 instructions (module 9.17), 2251 bytes"
 `;
 
 exports[`adds strings to an empty Set 1`] = `

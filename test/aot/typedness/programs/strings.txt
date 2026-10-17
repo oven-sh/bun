@@ -69,7 +69,7 @@ regexp-exec-test-last-index: 1 layouts, 0 given, 2 open, places 92 of 112, reads
 regexp-futile-backtracking-stress-1: 0 layouts, 0 given, 0 open, places 16 of 24, reads 2 of 12
 regexp-futile-backtracking-stress-2: 0 layouts, 0 given, 0 open, places 16 of 24, reads 2 of 12
 regexp-futile-backtracking: 0 layouts, 0 given, 0 open, places 16 of 24, reads 2 of 12
-regexp-hundreds-of-long-alternatives: 0 layouts, 0 given, 0 open, places 58 of 67, reads 2 of 9
+regexp-hundreds-of-long-alternatives: 0 layouts, 0 given, 0 open, places 58 of 67, reads 4 of 9
 regexp-literal-patterns-not-compiled: 0 layouts, 0 given, 0 open, places 13 of 22, reads 11 of 51
 regexp-literal-patterns-searched-in-stubs: 1 layouts, 0 given, 1 open, places 35 of 44, reads 7 of 35
 regexp-literals-inline-or-stored: 4 layouts, 0 given, 5 open, places 79 of 99, reads 12 of 47
@@ -107,8 +107,8 @@ repeat-and-pad: 4 layouts, 0 given, 5 open, places 106 of 126, reads 12 of 25
 replace-all: 2 layouts, 0 given, 3 open, places 67 of 93, reads 10 of 22
 replace-matching-and-non-matching: 1 layouts, 0 given, 1 open, places 115 of 130, reads 13 of 53
 replace-no-match-16-bit: 0 layouts, 0 given, 0 open, places 18 of 26, reads 2 of 17
-rope-compared-again: 1 layouts, 0 given, 0 open, places 52 of 64, reads 0 of 13
-rope-equality: 0 layouts, 0 given, 0 open, places 142 of 157, reads 42 of 69
+rope-compared-again: 1 layouts, 0 given, 0 open, places 52 of 64, reads 2 of 13
+rope-equality: 0 layouts, 0 given, 0 open, places 142 of 157, reads 43 of 69
 run-once-async-and-element-stores: 2 layouts, 0 given, 2 open, places 37 of 51, reads 6 of 114
 same-strings-at-many-sites: 1 layouts, 0 given, 1 open, places 108 of 118, reads 9 of 28
 scanning-by-code-units: 2 layouts, 0 given, 3 open, places 167 of 184, reads 31 of 51

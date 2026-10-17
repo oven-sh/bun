@@ -9,14 +9,14 @@ untyped, module level: 2032.70 instructions (the runtime 1720.70, elsewhere 99, 
 
 exports[`parses the digits of a Uint8Array as a 32-bit integer 1`] = `
 "typed, function: 12.49 instructions (kernel 12.37, module 0.12), 887 bytes
-typed, module level: 21.35 instructions (module 21.35), 2814 bytes
+typed, module level: 21.35 instructions (module 21.35), 2829 bytes
 untyped, function: 95.77 instructions (kernel 71.11, stub AddAfterInt32Check 21.84, outlined code 2.70, module 0.12), 1307 bytes
 untyped, module level: 97.43 instructions (module 72.94, stub AddAfterInt32Check 21.60, outlined code 2.89), 2791 bytes"
 `;
 
 exports[`skips white space in a Uint8Array 1`] = `
 "typed, function: 8.42 instructions (kernel 8.30, module 0.12), 695 bytes
-typed, module level: 9.28 instructions (module 9.28), 2564 bytes
+typed, module level: 9.28 instructions (module 9.28), 2556 bytes
 untyped, function: 8.54 instructions (kernel 8.42, module 0.12), 827 bytes
 untyped, module level: 9.35 instructions (module 9.35), 2310 bytes"
 `;
@@ -104,7 +104,7 @@ untyped, module level: 22.17 instructions (module 14.17, stub Add 8), 1093 bytes
 `;
 
 exports[`sends a value into a generator with next(value) and reads what it yields back 1`] = `
-"typed, function: 101.27 instructions (stub StepIfUnmodifiedGenerator 47, kernel 24.15, accumulate 22, stub BoxNumber 8, module 0.12), 277 bytes
+"typed, function: 100.27 instructions (stub StepIfUnmodifiedGenerator 47, kernel 24.15, accumulate 21, stub BoxNumber 8, module 0.12), 277 bytes
 typed, module level: 35.08 instructions (module 35.08), 1410 bytes
 untyped, function: 218.89 instructions (stub StepIfGenerator 43, built-in modules 34.99, accumulate 26, stub CallMethodByName1 24, kernel 19.15, stub Call1 18, stub CallValue1 15, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInRCX 10, the runtime 8.96, stub Add 8, elsewhere 1.52, stub ColdPlainOperationWithoutFPRs 0.13, module 0.12, stub ColdPlainOperationWithoutFPRs to operationAOTTypedCreateIteratorResult 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedCreateIteratorResult with arguments 0.01), 169 bytes
 untyped, module level: 22.08 instructions (module 22.08), 1310 bytes"

@@ -2491,6 +2491,9 @@ impl<'a> Transfer<'_, 'a, '_> {
 }
 
 fn absolute(directory: &[u8], path: &[u8]) -> Vec<u8> {
+    if cfg!(windows) && bun_paths::is_fully_qualified(path) {
+        return crate::host::from_native(path);
+    }
     let mut parts: Vec<&[u8]> = if path.starts_with(b"/") { Vec::new() } else { bun_core::strings::split(directory, b"/").filter(|part| !part.is_empty()).collect() };
     for part in bun_core::strings::split(path, b"/") {
         match part {
@@ -2735,7 +2738,7 @@ pub fn emitted_declarations_path(source: &[u8]) -> Option<Vec<u8>> {
 pub fn tsconfig_of_sources(outputs: &[Output<'_>], modules: &[ModuleTypes]) -> Option<Vec<u8>> {
     let source = outputs.iter().find_map(|output| output.entry_point).or_else(|| modules.first().map(|module| &module.path[..]))?;
     let candidates = crate::typed_packages::ancestors(source).skip(1).flat_map(|directory| [&b"tsconfig.json"[..], b"jsconfig.json"].map(|name| crate::typed_packages::join(&[directory, name])));
-    candidates.into_iter().find(|candidate| crate::fs_queries::exists(candidate))
+    candidates.into_iter().map(|candidate| crate::host::to_native(&candidate).to_vec()).find(|candidate| crate::fs_queries::exists(candidate))
 }
 
 pub fn emitted_declarations_of(modules: &[ModuleTypes], sources: &[Vec<u8>]) -> Vec<(Vec<u8>, Vec<u8>)> {

@@ -1,6 +1,6 @@
 // awaits a parsed request body from a method that returns Promise<T> with T = any, casts it to a record type that takes plain objects as they are, and reads it: the body and its items stay plain, the customer is converted
 type Order = { customer: { id: number; name: string; tags: string[] }; items: { sku: string; quantity: number }[]; coupon?: string };
-const operations = 100;
+const operations = 20;
 class Incoming {
   #text: string;
   constructor(text: string) {

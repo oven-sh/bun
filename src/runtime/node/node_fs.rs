@@ -4994,6 +4994,14 @@ impl NodeFS {
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
     fn copy_file_inner(&mut self, args: &args::CopyFile) -> Maybe<ret::CopyFile> {
+        if let Some(file) = standalone_module_graph().and_then(|graph| graph.find_ref(args.src.slice())) {
+            let mut dest_buf = bun_paths::path_buffer_pool::get();
+            let if_there = if args.mode.shouldnt_overwrite() { sys::O::EXCL } else { sys::O::TRUNC };
+            let fd = Syscall::open(args.dest.slice_z(&mut dest_buf), sys::O::WRONLY | sys::O::CREAT | if_there, 0o644)?;
+            let written = sys::File::borrow(&fd).write_all(file.utf8_contents());
+            fd.close();
+            return written;
+        }
         // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
         {

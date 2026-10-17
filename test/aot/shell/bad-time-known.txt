@@ -23,6 +23,7 @@ counterexamples/sort-nine-numbers-comparator-adds-index    has one in the plain 
 counterexamples/sort-numbers-comparator-adds-index    has one in the plain engine too
 counterexamples/sort-strings-comparator-adds-index    has one in the plain engine too
 language/array-subclass-iteration    TODO: has none in the plain engine: a getter at an index of the prototype of a class that extends Array and has no instance yet
+objects/object-assign-onto-instances-of-classes-with-accessors    has one in the plain engine too
 type-rules/out-of-bounds-array-reads    has one in the plain engine too
 typed-objects/absent-fields-under-another-prototype    has one in the plain engine too
 typed-objects/index-on-array-prototype-object    has one in the plain engine too

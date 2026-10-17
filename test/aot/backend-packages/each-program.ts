@@ -4,6 +4,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
+const shipsNoBuildForThisPlatform = process.platform === "win32" && process.arch === "arm64" ? ["argon2"] : [];
+
 function testEachProgram(folder: string, part: number, parts: number, needsTheDisk: Record<string, string>, given: Record<string, string[]> = {}, prepare: string[][] = [], withoutExceptionValidation: string[] = []) {
   const programs = readdirSync(join(import.meta.dir, folder))
     .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.startsWith("fake_") && !file.startsWith("lib_"))
@@ -48,7 +50,7 @@ function testEachProgram(folder: string, part: number, parts: number, needsTheDi
     }, 600_000);
 
     for (const program of programs) {
-      test(
+      test.skipIf(shipsNoBuildForThisPlatform.includes(program))(
         program,
         async () => {
           const env = withoutExceptionValidation.includes(program) ? { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined } : bunEnv;

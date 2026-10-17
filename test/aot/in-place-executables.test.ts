@@ -147,16 +147,23 @@ const text = stream => new Promise((done, fail) => {
   await handle.close();
   console.log(await text(fs.createReadStream(file)), await text(fs.createReadStream(file, { start: 2, end: 5 })));
   console.log(path.basename(fs.realpathSync.native(file)), path.basename(await fs.promises.realpath(file)));
+  process.chdir(__dirname);
+  console.log(JSON.stringify(fs.readFileSync(path.join("public", "hello.txt"), "utf8")), fs.statSync("public").isDirectory(), fs.existsSync("./public/none.txt"));
+  const copy = path.join(require("node:os").tmpdir(), "a-copy-of-an-asset-" + process.pid + ".txt");
+  fs.copyFileSync(file, copy);
+  console.log(JSON.stringify(fs.readFileSync(copy, "utf8")), (await Bun.file(file).stat()).size);
+  fs.rmSync(copy);
 })();
 `,
   });
   const app = join(String(dir), "app");
   const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
-  expect(plain).toEqual({ stdout: `4 publ 14\n14 "a public file\\n"\n"a public file\\n" "publ"\nhello.txt hello.txt\n`, stderr: "", exitCode: 0 });
+  expect(plain).toEqual({ stdout: `4 publ 14\n14 "a public file\\n"\n"a public file\\n" "publ"\nhello.txt hello.txt\n"a public file\\n" true false\n"a public file\\n" 14\n`, stderr: "", exitCode: 0 });
   const built = await build(app, "./start.cjs", "--asset", "./public");
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
   renameSync(app, join(String(dir), "moved-away"));
+  mkdirSync(app);
   expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
 }, 120_000);
 

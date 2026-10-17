@@ -1612,6 +1612,7 @@ fn analyze_sources<'c, 'i, 'l>(
                     entry_points: compiled_entry_points(),
                     builtin_modules_of_entry_points: Vec::new(),
                     tokens: None,
+                    runtime_use: None,
                 });
             }
             return vec![false; errors.len()];
@@ -1631,6 +1632,7 @@ fn analyze_sources<'c, 'i, 'l>(
                     entry_points: compiled_entry_points(),
                     builtin_modules_of_entry_points,
                     tokens,
+                    runtime_use: None,
                 });
             }
             Err(problems) => *not_compiled.lock() = problems,
@@ -1773,6 +1775,19 @@ pub(crate) fn sound_declarations_for_build(checked: TypeChecked, log: &mut bun_a
     check_and_emit_for_build(checked, log, false, Emitted::DeclarationsAndModuleTypes)
 }
 
+fn bundler_path(path: &[u8]) -> Vec<u8> {
+    let mut path = bun_sema_driver::host::to_native(path).to_vec();
+    bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
+    path
+}
+
+fn checker_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    match cfg!(windows) {
+        true => bun_sema_driver::host::from_native(path).into(),
+        false => path.into(),
+    }
+}
+
 fn first_error(report: &Report) -> Option<&Diagnostic> {
     report.diagnostics.iter().find(|reported| matches!(reported.category, Category::Error) && !bun_sema_driver::is_type_only_diagnostic(reported.code))
 }
@@ -1781,7 +1796,11 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
     use bun_sema_driver::sound_files::{ModuleTypes, Output, sound_files, typed_outputs, annotate_implicit_any, emitted_declarations_of};
     let &SoundFilesRequest { cwd, tsconfig, conditions, loaders, outdir, written, module_types, rolls_up_declarations, keeps_modules_apart } = asked;
     let modules = module_types.and_then(|types| types.downcast_ref::<Vec<ModuleTypes>>());
-    let outputs: Vec<Output<'_>> = written.iter().map(|file| Output { path: file.path, javascript: file.text, source_map: file.source_map, entry_point: file.entry_point }).collect();
+    let (bundler_outdir, outdir) = (outdir, &checker_path(outdir)[..]);
+    let paths: Vec<_> = written.iter().map(|file| (checker_path(file.path), file.entry_point.map(checker_path))).collect();
+    let outputs: Vec<Output<'_>> = (written.iter().zip(&paths))
+        .map(|(file, (path, entry_point))| Output { path, javascript: file.text, source_map: file.source_map, entry_point: entry_point.as_deref() })
+        .collect();
     let by_extension = script_kinds_by_extension(loaders);
     let tsconfig_of_sources = if tsconfig.is_none() { bun_sema_driver::sound_files::tsconfig_of_sources(&outputs, modules.map_or(&[][..], Vec::as_slice)) } else { None };
     let tsconfig = tsconfig.or(tsconfig_of_sources.as_deref());
@@ -1836,7 +1855,7 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
         .map_or_else(Vec::new, |report| {
             (report.declaration_files.iter())
                 .filter_map(|(source, text)| {
-                    let source = bun_sema_driver::host::to_native(source);
+                    let source = bundler_path(source);
                     let path = NAMES.iter().find_map(|(from, to)| Some([source.strip_suffix(*from)?, *to].concat()))?;
                     Some((path.into_boxed_slice(), text[..].into()))
                 })
@@ -1852,8 +1871,8 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
     };
     let report = check(&mut found.typed, &found.declarations_while_checked);
     if let Some(first) = first_error(&report) {
-        let path = bun_sema_driver::host::to_native(&first.path);
-        let shown = BStr::new(path.strip_prefix(outdir).map_or(path, |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)));
+        let path = bundler_path(&first.path);
+        let shown = BStr::new(path.strip_prefix(bundler_outdir).map_or(&path[..], |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)));
         let text = BStr::new(bun_core::strings::split(&first.text[..], b"\n").next().unwrap_or_default());
         log.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{SKIPPED_SOUND_FILES}: with its types put back it has type errors, the first at {shown}:{}:{}: TS{}: {text}", first.line, first.column, first.code));
         return TypedOutputs { sound_files: Vec::new(), declaration_files };
@@ -1864,6 +1883,7 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
     }
     let sound_files = (found.typed.into_iter().zip(found.marks))
         .map(|((path, text), (declaration_file, mark))| {
+            let (path, declaration_file) = (bundler_path(&path), bundler_path(&declaration_file));
             let rolled_up = declaration_files.iter_mut().find(|(path, _)| path[..] == declaration_file[..]);
             let is_marked = rolled_up.map(|(_, text)| *text = [&mark[..], &text[..]].concat().into_boxed_slice()).is_some();
             let mark = if is_marked { Vec::new() } else { mark };
@@ -1968,7 +1988,7 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
         false => run_quietly(cwd, tsconfig, &paths, &[], 0, None, provided, then),
     };
     add_to_log(&report, log);
-    let declaration_files = report.declaration_files.iter().map(|(source, text)| (bun_sema_driver::host::to_native(source).into(), text[..].into()));
+    let declaration_files = report.declaration_files.iter().map(|(source, text)| (bundler_path(source).into(), text[..].into()));
     let mut module_types = std::mem::take(&mut *module_types.lock());
     module_types.sort_by_key(|module| module.0);
     let mut module_types: Vec<bun_sema_driver::sound_files::ModuleTypes> = module_types.into_iter().map(|module| module.1).collect();

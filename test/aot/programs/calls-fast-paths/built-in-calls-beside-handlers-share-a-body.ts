@@ -9,6 +9,22 @@
 // IR= 0 countKeys CallBuiltin Object.keys#
 // IR= 0 countKeysOrNone CallBuiltin Object.keys#
 // IR= 1 overKeys CallBuiltin Object.keys#
+// IR= 1 isPlainNumber CallBuiltin Number.isNaN#
+// IR= 1 isPlainNumber CallBuiltin Number.isFinite#
+// IR= 1 isWholeNumber CallBuiltin Number.isNaN#
+// IR= 1 isWholeNumber CallBuiltin Number.isInteger#
+function isPlainNumber(value: any): boolean {
+  try {
+    measure(String(value));
+  } catch {}
+  return !Number.isNaN(value) && Number.isFinite(value);
+}
+function isWholeNumber(value: any): boolean {
+  try {
+    measure(String(value));
+  } catch {}
+  return !Number.isNaN(value) && Number.isInteger(value);
+}
 function measure(text: string): number {
   if (text.length > 6) throw new RangeError("too long: " + text);
   return text.length;
@@ -117,7 +133,7 @@ export function descend(text: string): number {
   }
 }
 
-const f: any = { insideTry, inHandler, inFinally, besideTry, afterAwait, inLoop, keysOrName, keysOrNothing, countKeys, countKeysOrNone, overKeys, descend };
+const f: any = { isPlainNumber, isWholeNumber, insideTry, inHandler, inFinally, besideTry, afterAwait, inLoop, keysOrName, keysOrNothing, countKeys, countKeysOrNone, overKeys, descend };
 const log: string[] = [];
 console.log(f.insideTry("  ab "), "|", f.insideTry("  abcdefgh "));
 console.log(f.inHandler("abc"), "|", f.inHandler("  abcdefgh "));
@@ -128,6 +144,7 @@ try {
   console.log((error as Error).message, "|", log.join());
 }
 console.log(f.besideTry("  ab "), "|", f.besideTry("  abcdefgh "));
+for (const value of [1, 1.5, NaN, Infinity, "1", null, undefined, {}, 12345678]) console.log(f.isPlainNumber(value), f.isWholeNumber(value));
 console.log(f.inLoop([" a", "b ", " c "]));
 const throwing = new Proxy({}, { ownKeys() { throw new SyntaxError("no keys"); } });
 console.log(f.keysOrName({ a: 1, b: 2 }), "|", f.keysOrName(throwing), "|", f.keysOrName(null), "|", f.keysOrNothing({ c: 3 }), "|", f.keysOrNothing(throwing), "|", f.keysOrNothing(undefined));

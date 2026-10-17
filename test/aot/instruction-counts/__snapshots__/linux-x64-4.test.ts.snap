@@ -50,8 +50,8 @@ untyped, module level: 17.06 instructions (module 17.06), 2767 bytes"
 `;
 
 exports[`sorts a copy of an array of numbers with a comparator 1`] = `
-"typed, function: 122.80 instructions (kernel 112.53, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92, module 0.19), 6186 bytes
-typed, module level: 122.52 instructions (module 112.44, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92), 7928 bytes
+"typed, function: 122.80 instructions (kernel 112.53, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92, module 0.19), 6198 bytes
+typed, module level: 122.52 instructions (module 112.44, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92), 7940 bytes
 untyped, function: 242.97 instructions (kernel 232.47, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub Add 0.25, module 0.19), 8253 bytes
 untyped, module level: 248.08 instructions (module 238.02, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 10205 bytes"
 `;
@@ -83,8 +83,8 @@ untyped, module level: 55.65 instructions (module 41.47, stub PutByNameWithDirec
 `;
 
 exports[`adds up an array of numbers with forEach in a small function 1`] = `
-"typed, function: 7.39 instructions (kernel 7.27, module 0.12), 522 bytes
-typed, module level: 7.25 instructions (module 7.25), 2093 bytes
+"typed, function: 7.39 instructions (kernel 7.27, module 0.12), 518 bytes
+typed, module level: 7.25 instructions (module 7.25), 2089 bytes
 untyped, function: 43.34 instructions (stub Add 22.78, kernel 20.44, module 0.12), 727 bytes
 untyped, module level: 44.20 instructions (stub Add 22.78, module 21.42), 2203 bytes"
 `;
@@ -111,8 +111,8 @@ untyped, module level: 177.23 instructions (module 95.23, stub PutByNameWithDire
 `;
 
 exports[`builds a string by += of one character of another string at a time 1`] = `
-"typed, function: 39.52 instructions (kernel 34.36, the runtime 4.61, stub OperationValueWithInstance 0.14, stub OperationVoidWithInstance 0.14, module 0.12, elsewhere 0.11, stub OperationValueWithInstance to operationAOTTypedStringAppendFinish 0.02, stub OperationVoidWithInstance to operationAOTTypedStringAppend 0.02), 604 bytes
-typed, module level: 38.20 instructions (module 33.16, the runtime 4.61, stub OperationValueWithInstance 0.14, stub OperationVoidWithInstance 0.14, elsewhere 0.11, stub OperationValueWithInstance to operationAOTTypedStringAppendFinish 0.02, stub OperationVoidWithInstance to operationAOTTypedStringAppend 0.02), 2114 bytes
+"typed, function: 39.52 instructions (kernel 34.36, the runtime 4.61, stub OperationValueWithInstance 0.14, stub OperationVoidWithInstance 0.14, module 0.12, elsewhere 0.11, stub OperationValueWithInstance to operationAOTTypedStringAppendFinish 0.02, stub OperationVoidWithInstance to operationAOTTypedStringAppend 0.02), 613 bytes
+typed, module level: 38.20 instructions (module 33.16, the runtime 4.61, stub OperationValueWithInstance 0.14, stub OperationVoidWithInstance 0.14, elsewhere 0.11, stub OperationValueWithInstance to operationAOTTypedStringAppendFinish 0.02, stub OperationVoidWithInstance to operationAOTTypedStringAppend 0.02), 2122 bytes
 untyped, function: 62.39 instructions (kernel 57.23, the runtime 4.61, stub OperationValueWithInstance 0.14, stub OperationVoidWithInstance 0.14, module 0.12, elsewhere 0.11, stub OperationValueWithInstance to operationAOTTypedStringAppendFinish 0.02, stub OperationVoidWithInstance to operationAOTTypedStringAppend 0.02), 636 bytes
 untyped, module level: 49.28 instructions (module 44.24, the runtime 4.61, stub OperationValueWithInstance 0.14, stub OperationVoidWithInstance 0.14, elsewhere 0.11, stub OperationValueWithInstance to operationAOTTypedStringAppendFinish 0.02, stub OperationVoidWithInstance to operationAOTTypedStringAppend 0.02), 2367 bytes"
 `;
@@ -139,8 +139,8 @@ untyped, module level: 139.72 instructions (module 32.15, stub Add 24, stub NewO
 `;
 
 exports[`a function drives a generator it is given: next(value) in a loop, done and value read from each result 1`] = `
-"typed, function: 138.71 instructions (kernel 58.70, tasks 37.63, stub StepGenerator 35, stub AllocateTypedObject 17.74, stub StepIfUnmodifiedGenerator 0.49, stub AllocateTypedCell 0.32, module 0.12, stub BoxNumber 0.08, elsewhere -1.52, the runtime -9.85), 953 bytes
-typed, module level: 138.56 instructions (module 58.67, tasks 37.63, stub StepGenerator 35, stub AllocateTypedObject 17.74, stub StepIfUnmodifiedGenerator 0.49, stub AllocateTypedCell 0.32, stub BoxNumber 0.08, elsewhere -1.52, the runtime -9.85), 1938 bytes
+"typed, function: 137.71 instructions (kernel 58.70, tasks 36.63, stub StepGenerator 35, stub AllocateTypedObject 17.74, stub StepIfUnmodifiedGenerator 0.49, stub AllocateTypedCell 0.32, module 0.12, stub BoxNumber 0.08, elsewhere -1.52, the runtime -9.85), 953 bytes
+typed, module level: 137.42 instructions (module 58.67, tasks 36.63, stub StepGenerator 35, stub AllocateTypedObject 17.74, stub StepIfUnmodifiedGenerator 0.49, stub AllocateTypedCell 0.32, stub BoxNumber 0.08, elsewhere -1.67, the runtime -9.85), 1938 bytes
 untyped, function: 342.53 instructions (tasks 56.74, stub StepIfGenerator 43.45, built-in modules 35.35, kernel 31.70, stub NewObjectLiteral0 26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 20.10, stub Call1 18.18, Task 15, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 14, stub PutByNameWithDirectColumn 14, stub DefineByNameWithDirectColumnPreservingTwo 11, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub CallValue1 8.15, stub Add 8.08, stub TypedClosureInRCX 8, stub CallValueNamed1 7, stub ReadInheritedOutOfLineByName 6, stub AddInlineByName 5, stub WriteBarrier 4, stub AllocateTypedCell 0.32, stub CallMethodByName1 0.24, module 0.12, stub GetByNameWithDirectColumnWithReceiverInRDX 0.10), 662 bytes
 untyped, module level: 340.32 instructions (tasks 56.74, stub StepIfGenerator 43.45, built-in modules 35.35, module 29.69, stub NewObjectLiteral0 26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 20.10, stub Call1 18.18, Task 15, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 14, stub PutByNameWithDirectColumn 14, stub DefineByNameWithDirectColumnPreservingTwo 11, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub CallValue1 8.15, stub Add 8, stub TypedClosureInRCX 8, stub CallValueNamed1 7, stub ReadInheritedOutOfLineByName 6, stub AddInlineByName 5, stub WriteBarrier 4, stub AllocateTypedCell 0.32, stub CallMethodByName1 0.24, stub GetByNameWithDirectColumnWithReceiverInRDX 0.10), 1598 bytes"
 `;

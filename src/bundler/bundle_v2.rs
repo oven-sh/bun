@@ -7677,7 +7677,7 @@ pub mod bv2_impl {
             if !typed.declaration_files.is_empty() {
                 self.declaration_files.clear();
             }
-            let inside_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)).into() };
+            let inside_outdir = |path: &[u8]| options::OutputFile::path_inside(&outdir, path);
             for file in typed.sound_files {
                 let beside = inside_outdir(&file.declaration_file);
                 let root_dir = &self.transpiler.options.root_dir;

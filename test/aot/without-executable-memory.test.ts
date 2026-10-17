@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { unsupported, withoutCoreDump } from "./run-programs";
-import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -87,7 +87,9 @@ async function isRefusedNowhere() {
 const refusedNowhere = await isRefusedNowhere();
 if (refusedNowhere) console.error("SKIPPED: test/aot/without-executable-memory.test.ts: this machine does not enforce the hardened runtime: an executable signed with it, without the entitlement, is granted memory for generated code");
 
-describe.skipIf(!isSupported || refusedNowhere)("an executable needs no permission to make memory executable", () => {
+if (isWindows) console.error("SKIPPED: test/aot/without-executable-memory.test.ts: nothing here refuses executable memory on Windows, where Arbitrary Code Guard would, and there an executable makes its own code executable with VirtualProtect");
+
+describe.skipIf(!isSupported || refusedNowhere || isWindows)("an executable needs no permission to make memory executable", () => {
   test("the control: what asks for executable memory gets it, and is refused it there", async () => {
     using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refusesOnLinux });
     const executable = await build(control, String(dir));

@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { jscPrograms, webkit } from "../../scripts/build/deps/webkit.ts";
@@ -80,7 +80,7 @@ describe("which builds compile WebKit", () => {
     const saved = process.env.BUN_WEBKIT_PATH;
     try {
       process.env.BUN_WEBKIT_PATH = join("/somewhere", "WebKit");
-      expect(linux({ webkit: "local" }).localDeps.WebKit).toBe(join("/somewhere", "WebKit"));
+      expect(linux({ webkit: "local" }).localDeps.WebKit).toBe(resolve("/somewhere", "WebKit"));
       delete process.env.BUN_WEBKIT_PATH;
       const cfg = linux({ webkit: "local" });
       expect(cfg.localDeps.WebKit).toBe(join(cfg.vendorDir, "WebKit"));
@@ -94,12 +94,12 @@ describe("which builds compile WebKit", () => {
   test("--local-deps=WebKit=<path> means --webkit=local", () => {
     const cfg = linux({ localDeps: `WebKit=${join("/elsewhere", "WebKit")}` });
     expect(cfg.webkit).toBe("local");
-    expect(cfg.localDeps.WebKit).toBe(join("/elsewhere", "WebKit"));
+    expect(cfg.localDeps.WebKit).toBe(resolve("/elsewhere", "WebKit"));
   });
 
   test("a missing checkout says where it looked", () => {
     expect(() => webkit.build(linux({ localDeps: "WebKit=/nowhere/WebKit" }))).toThrow(
-      /local WebKit checkout not found at .nowhere.WebKit/,
+      /local WebKit checkout not found at (\w:)?.nowhere.WebKit/,
     );
   });
 
@@ -207,7 +207,8 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     const root = String(dir);
     const cfg = linux({ localDeps: `WebKit=${root}`, buildDir: join(root, "build"), ...partial });
     const spec = webkit.build(cfg) as DirectBuild;
-    const short = (p: string) => {
+    const short = (written: string) => {
+      const p = isWindows ? written.replaceAll("/", "\\") : written;
       for (const [name, base] of [
         ["B", join(cfg.buildDir, "deps", "WebKit")],
         ["JSC", join(root, "Source", "JavaScriptCore")],
@@ -217,7 +218,7 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       ] as const) {
         if (p.startsWith(base)) return `${name}/${relative(base, p).replaceAll("\\", "/")}`;
       }
-      return p;
+      return written;
     };
     const group = (name: string) => {
       const g = spec.groups!.find(g => g.name === name)!;

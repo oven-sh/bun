@@ -301,7 +301,12 @@ function reference(cwd: () => string): Record<string, (...args: any[]) => unknow
   return posix;
 }
 
-const node = reference(() => process.cwd());
+function posixCwd() {
+  if (process.platform !== "win32") return process.cwd();
+  const cwd = process.cwd().replaceAll("\\", "/");
+  return cwd.slice(cwd.indexOf("/"));
+}
+const node = reference(posixCwd);
 const pieces = ["a", "bc", "def", ".", "..", "", "/", "//", "./", "../", "a/b", "/a", "b/", "...", ".a", "a.", "..a", "a..", " ", "é", "日本", "\u{1F600}", "a/./b", "a/../b", "../..", "/..", "/.", "x.y.z", "node_modules", "\ud800", "\udc00x", "\\", "C:", "%2e", ".ts", "index.ts", "\u0000", "\ud7ff", "\uffff"];
 const names = ["name", "project", "src", "index.ts", "node_modules", "x.y.z", ".git", "a", "lib.d.ts", "..x", "x..", "...", ".x."];
 let seed = 12345;

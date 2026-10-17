@@ -476,6 +476,8 @@ pub(super) const BUILTIN_ENTRIES: &[BuiltinEntry] = &[
     BuiltinEntry { kind: BuiltinKind::Method, holder: "Map", name: "getOrInsertComputed", this: 66, parameters: &[(Pattern::Any, Arity::Optional, 132), (Pattern::Any, Arity::Optional, 8), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Construct, holder: "", name: "Set", this: 0, parameters: &[], fresh: Fresh::Yes },
     BuiltinEntry { kind: BuiltinKind::Construct, holder: "", name: "Set", this: 0, parameters: &[(Pattern::Any, Arity::Required, 80)], fresh: Fresh::Yes },
+    BuiltinEntry { kind: BuiltinKind::Construct, holder: "", name: "Set", this: 0, parameters: &[(Pattern::Any, Arity::Required, 80)], fresh: Fresh::Yes },
+    BuiltinEntry { kind: BuiltinKind::Construct, holder: "", name: "Set", this: 0, parameters: &[(Pattern::Any, Arity::Required, 80), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::Yes },
     BuiltinEntry { kind: BuiltinKind::Getter, holder: "Set", name: "size", this: 0, parameters: &[], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Method, holder: "Set", name: "add", this: 34, parameters: &[(Pattern::Any, Arity::Required, 4)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Method, holder: "Set", name: "clear", this: 2, parameters: &[], fresh: Fresh::No },

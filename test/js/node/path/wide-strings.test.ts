@@ -112,17 +112,17 @@ test("the working directory may hold what is not ASCII", () => {
     const cwd = process.cwd();
     console.log(JSON.stringify([
       cwd.normalize("NFC").endsWith("é日本"),
-      path.resolve("ü") === cwd + "/ü",
-      path.resolve("a") === cwd + "/a",
+      path.resolve("ü") === cwd + path.sep + "ü",
+      path.resolve("a") === cwd + path.sep + "a",
       path.resolve() === cwd,
       path.resolve("ü", "..") === cwd,
-      path.resolve("\\ud800") === cwd + "/\\ud800",
+      path.resolve("\\ud800") === cwd + path.sep + "\\ud800",
       path.relative("ü", "ö"),
       path.relative("ü", cwd),
       path.relative(cwd, "ü/日"),
-      path.relative("/", "ü") === cwd.slice(1) + "/ü",
+      path.relative("/", "ü") === cwd.slice(path.parse(cwd).root.length) + path.sep + "ü",
     ]));`;
-  const expected = JSON.stringify([true, true, true, true, true, true, "../ö", "..", "ü/日", true]);
+  const expected = JSON.stringify([true, true, true, true, true, true, path.join("..", "ö"), "..", path.join("ü", "日"), true]);
   for (const [cwd, args] of [
     [inside, []],
     [String(folder), [inside]],

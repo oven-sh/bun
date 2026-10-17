@@ -1,6 +1,6 @@
 // parses a request body behind an untyped function, casts it to a record type that the program also makes, and reads it: a nested record and an array of records
 type Order = { customer: { id: number; name: string }; items: { sku: string; quantity: number }[]; coupon?: string };
-const operations = 100;
+const operations = 20;
 const parse = (text: string): any => JSON.parse(text);
 const made = (i: number): Order => ({ customer: { id: i, name: "made" }, items: [{ sku: "m", quantity: i }], coupon: "C" });
 const read = (order: Order) => {

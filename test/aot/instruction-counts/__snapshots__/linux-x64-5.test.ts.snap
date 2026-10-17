@@ -22,10 +22,10 @@ untyped, module level: 131.17 instructions (module 66.65, stub NewObjectFromDesc
 `;
 
 exports[`parses a request body behind an untyped function, casts it to a record type that the program also makes, and reads it: a nested record and an array of records 1`] = `
-"typed, function: 3935.50 instructions (the runtime 3631.34, kernel 91.14, stub ArrayElementAs 73, elsewhere 46.90, stub CallHostFunction1 27, stub ColdOperationValueWithoutFPRs 27, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ArrayElementAs with arguments 4, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, module 0.12), 996 bytes
-typed, module level: 3932.94 instructions (the runtime 3628.03, stub ArrayElementAs 73, read 66, elsewhere 46.76, stub CallHostFunction1 27, stub ColdOperationValueWithoutFPRs 27, module 26.15, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ArrayElementAs with arguments 4, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3), 2623 bytes
-untyped, function: 1935.98 instructions (the runtime 1600.96, kernel 191.14, stub GetById 50, elsewhere 46.76, stub CallHostFunction1 27, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 0.12), 1675 bytes
-untyped, module level: 1946.45 instructions (the runtime 1597.54, read 182, stub GetById 50, elsewhere 46.76, stub CallHostFunction1 27, module 23.15, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 20), 1266 bytes"
+"typed, function: 3881.95 instructions (the runtime 3586.65, kernel 91.70, stub ArrayElementAs 73, elsewhere 37, stub CallHostFunction1 27, stub ColdOperationValueWithoutFPRs 27, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ArrayElementAs with arguments 4, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, module 0.60), 996 bytes
+typed, module level: 3883.07 instructions (the runtime 3587.32, stub ArrayElementAs 73, read 66, elsewhere 37, stub CallHostFunction1 27, stub ColdOperationValueWithoutFPRs 27, module 26.75, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ArrayElementAs with arguments 4, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3), 2623 bytes
+untyped, function: 1870.33 instructions (the runtime 1543.33, kernel 191.70, stub GetById 50, elsewhere 37.70, stub CallHostFunction1 27, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 0.60), 1675 bytes
+untyped, module level: 1883.10 instructions (the runtime 1542.65, read 182, stub GetById 50, elsewhere 37.70, stub CallHostFunction1 27, module 23.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 20), 1266 bytes"
 `;
 
 exports[`writes a date as ISO 8601 text 1`] = `
@@ -57,8 +57,8 @@ untyped, module level: 73.26 instructions (module 43.26, stub GetByNameWithDirec
 `;
 
 exports[`makes a generator, keeps it in an array, takes its first value with for of and leaves the loop 1`] = `
-"typed, function: 290.93 instructions (upTo 71.98, kernel 69.18, stub IterHasInFrame 42, stub IterCloseInFrame 37, stub AllocateTypedCell 32, stub IterOpenInFrame 30, the runtime 8.13, elsewhere 0.34, stub ColdOperationValueWithoutFPRs 0.14, module 0.12, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 561 bytes
-typed, module level: 291.63 instructions (upTo 71.98, module 70.14, stub IterHasInFrame 42, stub IterCloseInFrame 37, stub AllocateTypedCell 32, stub IterOpenInFrame 30, the runtime 8, elsewhere 0.34, stub ColdOperationValueWithoutFPRs 0.14, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 1577 bytes
+"typed, function: 289.98 instructions (upTo 71.98, kernel 68.18, stub IterHasInFrame 42, stub IterCloseInFrame 37, stub AllocateTypedCell 32, stub IterOpenInFrame 30, the runtime 8.19, elsewhere 0.34, stub ColdOperationValueWithoutFPRs 0.14, module 0.12, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 561 bytes
+typed, module level: 290.82 instructions (upTo 71.98, module 69.14, stub IterHasInFrame 42, stub IterCloseInFrame 37, stub AllocateTypedCell 32, stub IterOpenInFrame 30, the runtime 8.19, elsewhere 0.34, stub ColdOperationValueWithoutFPRs 0.14, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 1573 bytes
 untyped, function: 304.81 instructions (kernel 81.20, upTo 73.98, stub IterHasInFrame 42, stub IterCloseInFrame 37, stub AllocateTypedCell 32, stub IterOpenInFrame 30, the runtime 8, elsewhere 0.34, stub ColdOperationValueWithoutFPRs 0.14, module 0.12, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 859 bytes
 untyped, module level: 302.66 instructions (module 79.17, upTo 73.98, stub IterHasInFrame 42, stub IterCloseInFrame 37, stub AllocateTypedCell 32, stub IterOpenInFrame 30, the runtime 8, elsewhere 0.34, stub ColdOperationValueWithoutFPRs 0.14, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 1766 bytes"
 `;
@@ -134,10 +134,10 @@ untyped, module level: 36.31 instructions (module 36.31), 2604 bytes"
 `;
 
 exports[`appends the ASCII characters of a string to a Uint8Array, under a test 1`] = `
-"typed, function: 11.96 instructions (kernel 11.84, module 0.12), 813 bytes
-typed, module level: 11.45 instructions (module 11.45), 2284 bytes
+"typed, function: 11.92 instructions (kernel 11.80, module 0.12), 799 bytes
+typed, module level: 11.44 instructions (module 11.44), 2313 bytes
 untyped, function: 31.76 instructions (kernel 31.64, module 0.12), 1017 bytes
-untyped, module level: 23.53 instructions (module 23.53), 2519 bytes"
+untyped, module level: 23.50 instructions (module 23.50), 2506 bytes"
 `;
 
 exports[`hashes a Uint8Array: hash = (hash * 33) ^ c 1`] = `
@@ -148,10 +148,10 @@ untyped, module level: 7.71 instructions (module 7.52, outlined code 0.19), 2395
 `;
 
 exports[`hashes a string by charCodeAt: hash = (hash * 33) ^ c 1`] = `
-"typed, function: 7.44 instructions (kernel 7.32, module 0.12), 316 bytes
-typed, module level: 7.25 instructions (module 7.25), 2040 bytes
-untyped, function: 7.73 instructions (kernel 7.37, stub AddAfterInt32Check 0.24, module 0.12), 300 bytes
-untyped, module level: 7.50 instructions (module 7.46, outlined code 0.04), 2216 bytes"
+"typed, function: 7.43 instructions (kernel 7.31, module 0.12), 325 bytes
+typed, module level: 7.24 instructions (module 7.24), 2045 bytes
+untyped, function: 7.72 instructions (kernel 7.36, stub AddAfterInt32Check 0.24, module 0.12), 304 bytes
+untyped, module level: 7.50 instructions (module 7.38, outlined code 0.12), 2167 bytes"
 `;
 
 exports[`validates an order of ten items with safeValidate<T>(); unknown keys are refused at every level 1`] = `

@@ -29,8 +29,8 @@ untyped, function that no loop calls: 206.50 instructions (the runtime 124, kern
 `;
 
 exports[`maps a short array with a small function, outside loops 1`] = `
-"typed, function: 193.50 instructions (kernel 140.50, stub NewArrayUnderConstructionWithDouble 47, module 6), 1639 bytes
-typed, function that no loop calls: 411.50 instructions (built-in modules 199, a function without a name 48, stub CallValue3 48, stub NewArrayUnderConstructionWithContiguous 47, stub BoxNumber 32, kernel 17.50, stub InitializeTypedClosure0 12, module 7, elsewhere 1), 173 bytes
+"typed, function: 189.50 instructions (kernel 136.50, stub NewArrayUnderConstructionWithDouble 47, module 6), 1631 bytes
+typed, function that no loop calls: 407.50 instructions (built-in modules 199, stub CallValue3 48, stub NewArrayUnderConstructionWithContiguous 47, a function without a name 44, stub BoxNumber 32, kernel 17.50, stub InitializeTypedClosure0 12, module 7, elsewhere 1), 173 bytes
 untyped, function: 222 instructions (kernel 169, stub NewArrayUnderConstructionWithContiguous 47, module 6), 2076 bytes
 untyped, function that no loop calls: 420.50 instructions (built-in modules 199, stub CallValue3 48, stub NewArrayUnderConstructionWithContiguous 47, a function without a name 28, stub Add 24, stub Mul 22, kernel 19.50, stub GetLengthByName 13, stub InitializeTypedClosure0 12, module 7, elsewhere 1), 193 bytes"
 `;
@@ -64,15 +64,15 @@ untyped, function that no loop calls: 31.25 instructions (stub PutByValAtIndex 1
 `;
 
 exports[`awaits an async function, outside loops 1`] = `
-"typed, function: 844.50 instructions (the runtime 631, stub AwaitCallBySavingFrame 33, stub EnterSavedFrame 33, module 27.50, kernel 23.50, stub EnterResume 21.50, elsewhere 17, answer 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 258 bytes
+"typed, function: 843.50 instructions (the runtime 631, stub AwaitCallBySavingFrame 33, stub EnterSavedFrame 33, module 27.50, kernel 22.50, stub EnterResume 21.50, elsewhere 17, answer 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 258 bytes
 typed, function that no loop calls: 846.50 instructions (the runtime 612, stub AwaitCallBySavingFrame 33, stub EnterSavedFrame 33, module 31.50, kernel 23.50, stub EnterResume 21.50, elsewhere 17, answer 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 258 bytes
 untyped, function: 843.50 instructions (the runtime 631, stub AwaitCallBySavingFrame 33, stub EnterSavedFrame 33, module 27.50, stub EnterResume 21.50, elsewhere 17, answer 16, kernel 14.50, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub Add 8, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 161 bytes
 untyped, function that no loop calls: 845.50 instructions (the runtime 612, stub AwaitCallBySavingFrame 33, stub EnterSavedFrame 33, module 31.50, stub EnterResume 21.50, elsewhere 17, answer 16, kernel 14.50, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub Add 8, stub TypedNewPromise 7, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 161 bytes"
 `;
 
 exports[`awaits a promise that is settled, outside loops 1`] = `
-"typed, function: 869.50 instructions (the runtime 665, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 27.50, kernel 24.50, stub EnterResume 21.50, elsewhere 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 281 bytes
-typed, function that no loop calls: 890.50 instructions (the runtime 665, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 31.50, kernel 24.50, stub EnterResume 21.50, elsewhere 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 281 bytes
+"typed, function: 868.50 instructions (the runtime 665, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 27.50, kernel 23.50, stub EnterResume 21.50, elsewhere 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 282 bytes
+typed, function that no loop calls: 889.50 instructions (the runtime 665, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 31.50, kernel 23.50, stub EnterResume 21.50, elsewhere 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 282 bytes
 untyped, function: 870 instructions (the runtime 665, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 27.50, stub EnterResume 21.50, elsewhere 17, kernel 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub Add 8, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 190 bytes
 untyped, function that no loop calls: 890.50 instructions (the runtime 665, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 31, stub EnterResume 21.50, elsewhere 17, kernel 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub Add 8, stub TypedNewPromise 7, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 190 bytes"
 `;
@@ -113,14 +113,14 @@ untyped, function that no loop calls: 39.25 instructions (kernel 15.75, a functi
 `;
 
 exports[`looks up an object that a Map holds, outside loops 1`] = `
-"typed, function: 34.50 instructions (kernel 31.50, module 3), 616 bytes
+"typed, function: 34.50 instructions (kernel 31.50, module 3), 632 bytes
 typed, function that no loop calls: 44.75 instructions (a function without a name 33, kernel 8.25, module 3.50), 197 bytes
 untyped, function: 88.25 instructions (stub MapGet 58, kernel 27.25, module 3), 812 bytes
 untyped, function that no loop calls: 112.75 instructions (stub MapGet 58, kernel 17.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub Add 8, stub MapGetOrCallValue 6, stub ReadInheritedOutOfLineByName 6, module 3.50), 363 bytes"
 `;
 
 exports[`looks up a string that a Map holds, outside loops 1`] = `
-"typed, function: 72 instructions (stub MapGetWithStringKey 49, kernel 20, module 3), 492 bytes
+"typed, function: 71 instructions (stub MapGetWithStringKey 49, kernel 19, module 3), 477 bytes
 typed, function that no loop calls: 77.75 instructions (stub MapGetWithStringKey 49, a function without a name 17, kernel 8.25, module 3.50), 197 bytes
 untyped, function: 79.25 instructions (stub MapGetWithStringKey 49, kernel 27.25, module 3), 805 bytes
 untyped, function that no loop calls: 105.75 instructions (stub MapGet 51, kernel 17.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub Add 8, stub MapGetOrCallValue 6, stub ReadInheritedOutOfLineByName 6, module 3.50), 363 bytes"

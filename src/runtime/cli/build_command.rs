@@ -755,7 +755,7 @@ impl BuildCommand {
                         file.source_map_index = u32::MAX;
                     }
                     output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
-                    let inside_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)).into() };
+                    let inside_outdir = |path: &[u8]| options::OutputFile::path_inside(&outdir, path);
                     for file in typed.sound_files {
                         let beside = inside_outdir(&file.declaration_file);
                         let declarations = output_files.iter_mut().find(|written| written.output_kind == options::OutputKind::Declaration && written.dest_path == beside);

@@ -249,6 +249,13 @@ impl OutputFile {
         Some(path.into_boxed_slice())
     }
 
+    pub fn path_inside(outdir: &[u8], path: &[u8]) -> Box<[u8]> {
+        let inside = path.strip_prefix(outdir).map_or(path, |inside| inside.strip_prefix(bun_paths::SEP_STR.as_bytes()).unwrap_or(inside));
+        let mut inside = inside.to_vec();
+        resolve_path::platform_to_posix_in_place::<u8>(&mut inside);
+        inside.into_boxed_slice()
+    }
+
     pub fn sound(source: &[u8], path: Box<[u8]>, text: Box<[u8]>, is_saved: bool) -> OutputFile {
         let loader = if path.ends_with(b".json") { Loader::Json } else { Loader::Ts };
         let mut file = OutputFile::declaration(source, path, text, is_saved);

@@ -50,6 +50,17 @@ const isMovable = (output: string) => isCode(output) || output === ".rodata";
 const isOrdinary = (output: string) => isMovable(output) || [".data", ".data.rel.ro", ".bss"].includes(output) || islandOutput.test(output);
 const ignoredOutputs = /^\.(debug|gdb_index|symtab|strtab|comment|shstrtab|eh_frame|gcc_except_table|rela|tbss|tdata)/;
 const islandOutput = /^\.bun_[xr]\.(\d+)$/;
+const onlyForDebuggers = /^-Wl,--(gdb-index|compress-debug-sections=.*)$/;
+
+const startedAt = performance.now();
+let lapStartedAt = startedAt;
+const laps: string[] = [];
+
+function lap(name: string): void {
+  const now = performance.now();
+  laps.push(`${name} ${((now - lapStartedAt) / 1000).toFixed(1)} s`);
+  lapStartedAt = now;
+}
 
 function fail(message: string): never {
   console.error(`islands: ${message}`);
@@ -685,7 +696,7 @@ interface Linker {
   demangler: string;
   command: string[];
   assemble(name: string, text: string): string;
-  link(name: string, rewrite: (path: string) => string | undefined, first: string[], last: string[], runs?: boolean): Link;
+  link(name: string, rewrite: (path: string) => string | undefined, first: string[], last: string[], runs?: boolean, without?: RegExp): Link;
 }
 
 function tableOf(
@@ -731,6 +742,7 @@ function report(doors: number, islands: string[], bytesOf: Map<string, number>, 
     `${doors} doors, ${islands.length} islands of ${pageSize} byte pages, ${megabytes(held)}: ` +
       islands.map(features => `${features} ${megabytes(bytesOf.get(features)!)}`).join(", "),
   );
+  console.log(`islands took ${((performance.now() - startedAt) / 1000).toFixed(1)} s: ${laps.join(", ")}`);
 }
 
 function linkElf({ work, output, declared, demangler, assemble, link }: Linker): void {
@@ -751,12 +763,14 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
     );
   link("listing", path => (inputDirectories.add(dirname(path)), undefined), [], [], false);
   for (const stale of compiledAtLinkTime()) rmSync(stale);
-  const first = link("first", path => path, [support], [...always, "-Wl,--save-temps=prelink"]);
+  const first = link("first", path => path, [support], [...always, "-Wl,--save-temps=prelink", "-Wl,--strip-debug"], true, onlyForDebuggers);
+  lap("first link");
   const empty = compiledAtLinkTime().filter(object => statSync(object).size === 0);
   if (empty.length > 0) {
     fail(`the linker kept ${empty.length} empty files for what it compiled from bitcode: it does so when it has a ThinLTO cache; link without one`);
   }
   const graph = readGraph(first.executable, first.map, first.log);
+  lap("graph");
   const foldedAway = foldedDoors(first.log, declared, demangler);
   const analysis = analyze(graph, declared, demangler, foldedAway);
   const keptApart = [...foldedAway, ...[...analysis.doors.keys()].map(node => graph.functionName.get(node)!)];
@@ -788,6 +802,7 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
     renameSections(object, sections, copy);
     renamed.set(object, copy);
   }
+  lap("plan and renaming");
 
   const edge = (begins: boolean) =>
     islands
@@ -803,6 +818,7 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
     [support, assemble("begin.s", edge(true)), ...compiledAtLinkTime().map(object => renamed.get(object) ?? object)],
     [assemble("end.s", edge(false)), ...always, ...keptApart.map(name => "-Wl,--keep-unique=" + name)],
   );
+  lap("second link");
 
   const laidOut = readGraph(second.executable, second.map, second.log);
   if (foldedDoors(second.log, declared, demangler).length > 0) fail("a door was folded into another function");
@@ -841,6 +857,7 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
   const room = elf.sections.find(section => section.name === ".bun_islands") ?? fail("the room for the table is gone");
   writeSync(elf.fd, Buffer.from(table, "latin1"), 0, table.length, room.offset);
   closeSync(elf.fd);
+  lap("check");
   report(check.doors.size, islands, bytesOf, [...ranges.values()].reduce((sum, range) => sum + range.end - range.start, 0));
 }
 
@@ -872,12 +889,15 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
   if (compiledAt >= 0) command[compiledAt] = "-Wl,-object_path_lto," + compiled;
   else always.push("-Wl,-object_path_lto," + compiled);
   const fromBitcode = link("compiling", path => path, [support], always);
+  lap("first link");
   const native = readdirSync(compiled).map(name => join(compiled, name));
   const withoutBitcode = (path: string) => (isBitcode(path) ? undefined : path);
   if (compiledAt >= 0) command[compiledAt] = "-Wl,-object_path_lto," + join(work, "unused");
   else always[always.length - 1] = "-Wl,-object_path_lto," + join(work, "unused");
   const first = native.length === 0 ? fromBitcode : link("first", withoutBitcode, [support, ...native], always);
+  if (first !== fromBitcode) lap("link of what it compiled");
   const graph = readMachOGraph(first.map, exportedSymbols);
+  lap("graph");
   const known = declared.doors.map(door => door.pattern.source);
   const foldedNames = (of: Graph) => [...of.aliases.values()].flat().map(([, name]) => name.replace(/^_/, ""));
   const open = analyze(graph, declared, demangler, foldedNames(graph));
@@ -939,7 +959,9 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
 
   for (let round = 1; ; round++) {
     writeFileSync(orderFile, order.join("\n") + "\n" + inherited);
+    if (round === 1) lap("plan");
     const second = link("second", withoutBitcode, [support, ...markers, ...native], always);
+    lap("ordered link");
     const laidOut = readMachOGraph(second.map, exportedSymbols);
     const check = analyze(laidOut, usable, demangler, foldedNames(laidOut));
     const marker = new Map<string, number>();
@@ -962,6 +984,7 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
       while (before >= 0 && (check.core.has(before) || laidOut.section[before]!.startsWith("_bun_island_"))) before--;
       if (before >= 0) dragging.add(spell(laidOut.object[before]!, laidOut.section[before]!));
     }
+    lap("check");
     if (dragging.size > 0) {
       if (round === 5) fail(`${dragging.size} atoms lie in an island that can go while they are needed`);
       order = order.filter(line => !dragging.has(line));
@@ -1029,12 +1052,13 @@ function main(): void {
       if (made.status !== 0) fail(`${name} does not compile`);
       return source + ".o";
     },
-    link(name, rewrite, first, last, runs = true) {
+    link(name, rewrite, first, last, runs = true, without) {
       const executable = name === "second" ? output : join(work, name);
       const map = name === "second" ? finalMap : join(work, name + ".map");
       const rewritten = command.slice(1).flatMap((argument, index) => {
         if (index + 1 === outputAt) return [executable];
         if (index + 1 === mapAt) return [mapFlag + map];
+        if (without?.test(argument)) return [];
         const file = /^(-Wl,)?@(.*)$/.exec(argument);
         if (file === null) return [argument];
         const lines = readFileSync(file[2]!, "utf8").split("\n").filter(line => line !== "");

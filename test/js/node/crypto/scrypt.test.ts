@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { scryptSync } from "node:crypto";
+import { scrypt, scryptSync } from "node:crypto";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
 // `keylen`), `CryptoJob.init` takes the error path. Previously the `errdefer`
@@ -89,4 +89,18 @@ test("scryptSync reads its buffers only after every argument has been coerced", 
   });
   expect(passwordBytes.byteLength).toBe(0);
   expect(key).toStrictEqual(scryptSync("", "salt", 16, { N: 1024 }));
+});
+
+// Node documents `err` as `null` when the derivation works, so a wrapper that
+// tests `err === null` must not take a call that worked for a failure.
+test("scrypt passes null as the callback error when the derivation works", async () => {
+  const plain = Promise.withResolvers<unknown[]>();
+  const withOptions = Promise.withResolvers<unknown[]>();
+  scrypt("secret", "salt", 16, (...args) => plain.resolve(args));
+  scrypt("secret", "salt", 16, { N: 1024 }, (...args) => withOptions.resolve(args));
+
+  expect(await Promise.all([plain.promise, withOptions.promise])).toStrictEqual([
+    [null, scryptSync("secret", "salt", 16)],
+    [null, scryptSync("secret", "salt", 16, { N: 1024 })],
+  ]);
 });

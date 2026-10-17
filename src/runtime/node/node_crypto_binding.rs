@@ -1149,7 +1149,7 @@ mod _impl {
                 callback,
                 global,
                 JSValue::UNDEFINED,
-                &[JSValue::UNDEFINED, js.buf.get()],
+                &[JSValue::NULL, js.buf.get()],
             );
             Ok(())
         }

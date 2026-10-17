@@ -1076,10 +1076,10 @@ pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JS
             mapping,
             key,
             value,
-            key_is_shared_string,
         } in pending
         {
-            if key_is_shared_string {
+            if key.is_string() {
+                // As in `to_js`: a string that is shared keeps the atom it becomes.
                 JSValue::put_to_property_key(mapping, global, key, value)?;
             } else {
                 mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
@@ -1095,8 +1095,6 @@ struct PendingProperty {
     mapping: JSValue,
     key: JSValue,
     value: JSValue,
-    /// See `ParserCtx::is_shared_string`.
-    key_is_shared_string: bool,
 }
 
 fn parse_to_values(
@@ -1129,17 +1127,18 @@ fn parse_to_values(
 
         let mut ctx = ParserCtx {
             seen_objects: HashMap::default(),
-            share_min_len: if parsed.shares_long_strings {
-                SHARED_STRING_MIN_LEN
-            } else {
-                usize::MAX
-            },
             stack_check: StackCheck::init(),
             global,
             pending,
         };
 
-        ctx.to_js(roots, parsed.root).map_err(|err| match err {
+        // Two copies of `to_js`: a document that shares no long string does not look for one.
+        let result = if parsed.shares_long_strings {
+            ctx.to_js::<true>(roots, parsed.root)
+        } else {
+            ctx.to_js::<false>(roots, parsed.root)
+        };
+        result.map_err(|err| match err {
             ToJsError::OutOfMemory => JsError::OutOfMemory,
             ToJsError::JsError => JsError::Thrown,
             ToJsError::StackOverflow => global.throw_stack_overflow(),
@@ -1149,9 +1148,6 @@ fn parse_to_values(
 
 struct ParserCtx<'a> {
     seen_objects: HashMap<*const c_void, JSValue>,
-    /// A string node of this many bytes or more is in `seen_objects` too. `usize::MAX` for a document
-    /// in which no such node is reached twice.
-    share_min_len: usize,
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
@@ -1197,12 +1193,36 @@ impl From<bun_ast::ToJSError> for ToJsError {
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
 
-    /// Whether `to_js` makes one JS string of `expr` for all the places that hold it.
-    fn is_shared_string(&self, expr: &Expr) -> bool {
-        matches!(expr.data, ExprData::EString(str) if str.data.len() >= self.share_min_len)
+    /// Whether `to_js::<true>` makes one JS string of `expr` for all the places that hold it.
+    fn is_shared_string(expr: &Expr) -> bool {
+        matches!(expr.data, ExprData::EString(str) if str.data.len() >= SHARED_STRING_MIN_LEN)
     }
 
-    fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
+    fn shared_string_to_js(
+        &mut self,
+        args: &mut MarkedArgumentBuffer,
+        str: bun_ast::StoreRef<bun_ast::E::String>,
+    ) -> Result<JSValue, ToJsError> {
+        let key = str.as_ptr().cast_const().cast::<c_void>();
+        if let Some(shared) = self.seen_objects.get(&key) {
+            return Ok(*shared);
+        }
+
+        let shared = bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?;
+
+        args.append(shared);
+        self.seen_objects.put(key, shared)?;
+
+        Ok(shared)
+    }
+
+    /// `SHARES_LONG_STRINGS` is `Parsed::shares_long_strings`: a string node of `SHARED_STRING_MIN_LEN`
+    /// bytes or more is in `seen_objects` too.
+    fn to_js<const SHARES_LONG_STRINGS: bool>(
+        &mut self,
+        args: &mut MarkedArgumentBuffer,
+        expr: Expr,
+    ) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
         }
@@ -1211,23 +1231,13 @@ impl<'a> ParserCtx<'a> {
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
             ExprData::EString(str) => {
-                if !self.is_shared_string(&expr) {
-                    return Ok(bun_js_parser_jsc::value_string_to_js(
-                        str.get(),
-                        self.global,
-                    )?);
+                if SHARES_LONG_STRINGS && Self::is_shared_string(&expr) {
+                    return self.shared_string_to_js(args, str);
                 }
-                let key = str.as_ptr().cast_const().cast::<c_void>();
-                if let Some(shared) = self.seen_objects.get(&key) {
-                    return Ok(*shared);
-                }
-
-                let shared = bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?;
-
-                args.append(shared);
-                self.seen_objects.put(key, shared)?;
-
-                Ok(shared)
+                Ok(bun_js_parser_jsc::value_string_to_js(
+                    str.get(),
+                    self.global,
+                )?)
             }
             ExprData::EArray(e_array) => {
                 let key = e_array.as_ptr().cast_const().cast::<c_void>();
@@ -1243,7 +1253,7 @@ impl<'a> ParserCtx<'a> {
 
                 for (_i, item) in e_array.slice().iter().enumerate() {
                     let i: u32 = u32::try_from(_i).expect("int cast");
-                    let value = self.to_js(args, *item)?;
+                    let value = self.to_js::<SHARES_LONG_STRINGS>(args, *item)?;
                     arr.put_index(self.global, i, value)?;
                 }
 
@@ -1269,9 +1279,8 @@ impl<'a> ParserCtx<'a> {
                     let key_expr = prop.key.expect("infallible: prop has key");
                     let value_expr = prop.value.expect("infallible: prop has value");
 
-                    let key = self.to_js(args, key_expr)?;
-                    let value = self.to_js(args, value_expr)?;
-                    let key_is_shared_string = self.is_shared_string(&key_expr);
+                    let key = self.to_js::<SHARES_LONG_STRINGS>(args, key_expr)?;
+                    let value = self.to_js::<SHARES_LONG_STRINGS>(args, value_expr)?;
 
                     is_pending |= key.is_object();
                     if is_pending {
@@ -1281,12 +1290,11 @@ impl<'a> ParserCtx<'a> {
                             mapping: obj,
                             key,
                             value,
-                            key_is_shared_string,
                         });
                         continue;
                     }
 
-                    if key_is_shared_string {
+                    if SHARES_LONG_STRINGS && Self::is_shared_string(&key_expr) {
                         // The JS string keeps the atom it becomes, so the mappings after the first
                         // that have this key do not read its text.
                         JSValue::put_to_property_key(obj, self.global, key, value)?;

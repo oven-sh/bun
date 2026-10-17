@@ -4,6 +4,14 @@ import { createHash, createHmac } from "node:crypto";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
 
+const typedArrayTooSmall = (byteLength: number) =>
+  expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `TypedArray must be at least ${byteLength} bytes`,
+  });
+const toHex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
+
 test("Bun.file in CryptoHasher is not supported yet", () => {
   const file = Bun.file(import.meta.path);
   const fileBlob = expect.objectContaining({
@@ -304,6 +312,24 @@ describe("HMAC", () => {
   });
   const allConsumed = { digest: consumed, byteLength: consumed, copy: consumed, update: consumed };
 
+  test.each(Object.entries(hashes))("%s digest(hashInto)", (algorithm, expected) => {
+    const byteLength = expected.length / 2;
+    const hmac = new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, "key").update("data\n");
+
+    // A TypedArray that is one byte short throws, and the HMAC is not consumed.
+    expect(() => hmac.digest(new Uint8Array(byteLength - 1))).toThrow(typedArrayTooSmall(byteLength));
+
+    const exact = new Uint8Array(byteLength);
+    expect(hmac.digest(exact)).toBe(exact);
+    expect(toHex(exact)).toBe(expected);
+    expect(() => hmac.digest(exact)).toThrow(consumed);
+
+    // A longer TypedArray starts with the digest. The rest stays as it was.
+    const longer = new Uint8Array(byteLength + 8).fill(7);
+    new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, "key").update("data\n").digest(longer);
+    expect(toHex(longer)).toBe(expected + "0707070707070707");
+  });
+
   for (let key of ["key", Buffer.from("key"), Buffer.from("key").buffer]) {
     test.each(Object.entries(hashes))("%s (key: " + key.constructor.name + ")", (algorithm, expected) => {
       const hmac = new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, key as string | Buffer);
@@ -532,5 +558,48 @@ describe("CryptoHasher", () => {
       instance: collect(encoding => new Bun.CryptoHasher(algorithm).update("hello").digest(encoding as any)),
       static: collect(encoding => Bun.CryptoHasher.hash(algorithm, "hello", encoding as any)),
     }).toEqual({ instance: expected, static: expected });
+  });
+
+  describe("digest(hashInto)", () => {
+    test("writes into a TypedArray of exactly byteLength bytes, as docs/runtime/hashing.mdx shows", () => {
+      const hasher = new Bun.CryptoHasher("sha256");
+      hasher.update("hello world");
+      const arr = new Uint8Array(32);
+      expect(hasher.digest(arr)).toBe(arr);
+      expect(toHex(arr)).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    });
+
+    test.each(Bun.CryptoHasher.algorithms)("%s", algorithm => {
+      const hex = hello[algorithm];
+      const byteLength = hex.length / 2;
+      const hasher = new Bun.CryptoHasher(algorithm).update("hello");
+
+      // One byte short: the error names the digest length, and the hasher keeps its data.
+      expect(() => hasher.digest(new Uint8Array(byteLength - 1))).toThrow(typedArrayTooSmall(byteLength));
+
+      const exact = new Uint8Array(byteLength);
+      expect(hasher.digest(exact)).toBe(exact);
+      expect(toHex(exact)).toBe(hex);
+      // The static form takes the same array.
+      expect(Bun.CryptoHasher.hash(algorithm, "hello", new Uint8Array(byteLength))).toEqual(exact);
+
+      // A longer TypedArray starts with the digest. A fixed-length digest leaves the rest
+      // as it was. The rest is not checked for SHAKE, an extendable-output function.
+      const longer = new Uint8Array(byteLength + 8).fill(7);
+      expect(hasher.update("hello").digest(longer)).toBe(longer);
+      expect(toHex(longer.subarray(0, byteLength))).toBe(hex);
+      if (!algorithm.startsWith("shake")) expect(toHex(longer.subarray(byteLength))).toBe("0707070707070707");
+    });
+
+    test("counts bytes, not elements, and writes at the offset of a view", () => {
+      const words = new Uint32Array(8);
+      expect(new Bun.CryptoHasher("sha256").update("hello").digest(words)).toBe(words);
+      expect(toHex(new Uint8Array(words.buffer))).toBe(hello.sha256);
+
+      const backing = new Uint8Array(48).fill(7);
+      const view = backing.subarray(8, 40);
+      expect(new Bun.CryptoHasher("sha256").update("hello").digest(view)).toBe(view);
+      expect(toHex(backing)).toBe("0707070707070707" + hello.sha256 + "0707070707070707");
+    });
   });
 });

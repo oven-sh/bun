@@ -310,14 +310,19 @@ impl CryptoHasher {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(match this {
-            CryptoHasher::Evp(inner) => inner.get().size() as f64,
+        Ok(JSValue::js_number(this.byte_length(global)? as f64))
+    }
+
+    /// The length in bytes of the digest this hasher produces.
+    fn byte_length(&self, global: &JSGlobalObject) -> JsResult<usize> {
+        Ok(match self {
+            CryptoHasher::Evp(inner) => inner.get().size() as usize,
             CryptoHasher::Hmac(inner) => match inner.get() {
-                Some(hmac) => hmac.size() as f64,
+                Some(hmac) => hmac.size(),
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
-            CryptoHasher::Zig(inner) => inner.get().digest_length as f64,
-        }))
+            CryptoHasher::Zig(inner) => inner.get().digest_length as usize,
+        })
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -707,20 +712,22 @@ impl CryptoHasher {
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: evp::Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
-        let buf_len = output_digest_buf.len();
         let output_digest_slice: &mut [u8];
         if let Some(output_buf) = &output {
+            let size = self.byte_length(global)?;
             let bytes_len = output_buf.byte_slice().len();
-            if bytes_len < buf_len {
+            if bytes_len < size {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
-                    boring_ssl::EVP_MAX_MD_SIZE
+                    size
                 )));
             }
             // Reshaped for borrowck.
-            // SAFETY: `bytes_len >= EVP_MAX_MD_SIZE` checked above; `output_buf.ptr`
-            // is the JSC-owned writable backing store, outliving this frame. Build
-            // the `&mut` directly from the raw `*mut u8` field — never via
+            // SAFETY: `bytes_len >= size` checked above, and `final_` writes `size`
+            // bytes, or all `bytes_len` of them for a SHAKE hasher. No digest is
+            // empty, so the view is not detached and `output_buf.ptr` is the
+            // JSC-owned writable backing store, outliving this frame. Build the
+            // `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
             output_digest_slice =
                 unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };

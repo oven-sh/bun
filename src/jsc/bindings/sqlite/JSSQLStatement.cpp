@@ -280,7 +280,10 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
         else if (record->db) {
             WTF::SetForScope forbidScript { record->scriptForbidden, true };
             Bun__sqliteCheckpointForTermination(record->db);
-            record->closeHandle();
+            // Under a statement that was left on a row, sqlite3_close_v2() rolls back what its virtual tables hold,
+            // and the statement's destructor (a Worker's heap is destructed) commits the rest. So the last destructor closes.
+            record->closed = true;
+            record->closeIfDrained();
         }
     }
 }

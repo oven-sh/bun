@@ -6994,3 +6994,106 @@ describe.concurrent("a graph that is disposed in the middle of a write", () => {
     ).toEqual(quiet);
   });
 });
+
+// The file is read by a new connection once the thread is gone. Each case runs in a child.
+describe("a thread that ends in the middle of a write leaves all of the statement in the file or none of it", () => {
+  const tables = {
+    fts5: {
+      schema: "CREATE VIRTUAL TABLE ft USING fts5(body)",
+      insert: "INSERT INTO ft (body) VALUES ('hello world') RETURNING rowid",
+      rows: "ft",
+    },
+    fts4: {
+      schema: "CREATE VIRTUAL TABLE ft USING fts4(body)",
+      insert: "INSERT INTO ft (body) VALUES ('hello world') RETURNING 1",
+      rows: "ft",
+    },
+    "a table whose triggers keep an fts5 index": {
+      schema: `
+        CREATE TABLE docs (id INTEGER PRIMARY KEY, body);
+        CREATE VIRTUAL TABLE ft USING fts5(body, content = 'docs', content_rowid = 'id');
+        CREATE TRIGGER ai AFTER INSERT ON docs BEGIN INSERT INTO ft (rowid, body) VALUES (new.id, new.body); END;
+      `,
+      insert: "INSERT INTO docs (body) VALUES ('hello world') RETURNING id",
+      rows: "docs",
+    },
+  };
+  // The run stays on its first row, and the thread holds on to it.
+  const leave = ({ schema, insert }, file, end) => `
+    const { Database } = require("bun:sqlite");
+    const db = new Database(${JSON.stringify(file)});
+    db.run(${JSON.stringify(schema)});
+    const rows = db.prepare(${JSON.stringify(insert)}).iterate();
+    rows.next();
+    globalThis.kept = [db, rows];
+    ${end}
+  `;
+  function read(file, table) {
+    using db = new Database(file, { readonly: true });
+    const first = sql => Object.values(db.query(sql).get())[0];
+    return {
+      rows: first(`SELECT count(*) FROM ${table.rows}`),
+      found: first("SELECT count(*) FROM ft WHERE ft MATCH 'hello'"),
+      check: first("PRAGMA integrity_check"),
+    };
+  }
+  async function run(script, env = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  }
+  const all = { rows: 1, found: 1, check: "ok" };
+  const none = { rows: 0, found: 0, check: "ok" };
+
+  describe.each(Object.keys(tables))("%s", name => {
+    it.each([
+      ["ends", "", `await new Promise(resolve => worker.once("exit", resolve));`],
+      ["calls process.exit()", "process.exit(0);", `await new Promise(resolve => worker.once("exit", resolve));`],
+      [
+        "calls process.exit() in a function of a query",
+        `db.function("quit", () => process.exit(0)); db.query("SELECT quit()").get();`,
+        `await new Promise(resolve => worker.once("exit", resolve));`,
+      ],
+      [
+        "is terminated",
+        `require("node:worker_threads").parentPort.postMessage(1); setInterval(() => {}, 1000);`,
+        `await new Promise(resolve => worker.once("message", resolve)); await worker.terminate();`,
+      ],
+    ])("a Worker that %s", async (_, end, wait) => {
+      using dir = tempDir("sqlite-thread-ends", {});
+      const file = path.join(String(dir), "db.sqlite");
+      await run(`
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(${JSON.stringify(leave(tables[name], file, end))}, { eval: true });
+        ${wait}
+      `);
+      expect(read(file, tables[name])).toEqual(all);
+    });
+
+    it("the main thread, when its heap is destructed", async () => {
+      using dir = tempDir("sqlite-thread-ends", {});
+      const file = path.join(String(dir), "db.sqlite");
+      await run(leave(tables[name], file, ""), { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+      expect(read(file, tables[name])).toEqual(all);
+    });
+
+    it.each([
+      ["ends", ""],
+      ["calls process.exit()", "process.exit(0);"],
+      [
+        "calls process.exit() in a function of a query",
+        `db.function("quit", () => process.exit(0)); db.query("SELECT quit()").get();`,
+      ],
+    ])("the main thread that %s", async (_, end) => {
+      using dir = tempDir("sqlite-thread-ends", {});
+      const file = path.join(String(dir), "db.sqlite");
+      await run(leave(tables[name], file, end), { BUN_DESTRUCT_VM_ON_EXIT: "0" });
+      expect(read(file, tables[name])).toEqual(none);
+    });
+  });
+});

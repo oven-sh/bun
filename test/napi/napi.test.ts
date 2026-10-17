@@ -643,6 +643,27 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         expect(result.split(/\r?\n/)).toEqual(["terminate() resolved with 1", probe, "resolved to undefined"]);
       }, 30_000);
     });
+
+    // The stop lands inside script the addon entered, so JSC throws the
+    // termination there and it is pending on the VM when napi_call_function
+    // returns. The readers never hand it out, and napi_throw answers as the
+    // closed gate does. Bun only: Node stores null as its last exception for a
+    // termination and reports it pending.
+    it.each([
+      [9, 10],
+      [10, 23],
+    ])(
+      "worker.terminate() inside script entered from an addon (NAPI_VERSION=%i) is not a readable exception",
+      async (version, gateStatus) => {
+        const result = await runOn(bunExe(), "test_terminate_during_gated_calls", [version, "script"]);
+        expect(result.trim().split(/\r?\n/)).toEqual([
+          "terminate() resolved with 1",
+          `call_function=10 pending=0 get_and_clear=0 exception_type=0 pending_after_clear=0 napi_throw=${gateStatus}`,
+          "resolved to undefined",
+        ]);
+      },
+      30_000,
+    );
   });
 
   describe("status code alignment with Node.js", () => {

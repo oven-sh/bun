@@ -2131,6 +2131,23 @@ test.concurrent("a nested copy that stays keeps the dependency that it loads fro
   expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.0.0\n");
 });
 
+test.concurrent("a workspace that gets another name keeps the copy in its node_modules", async () => {
+  using server = await serveGraph({ y: { "1.0.0": {}, "2.0.0": {} } });
+  using tmp = tempDir("hoist-renamed-workspace", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "app", workspaces: ["pk/*"] }),
+    "pk/one/package.json": JSON.stringify({ name: "one", dependencies: { y: "1.0.0" } }),
+    "pk/two/package.json": JSON.stringify({ name: "two", dependencies: { y: "2.0.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+  expect(layout(dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
+
+  await write(join(dir, "pk", "two", "package.json"), JSON.stringify({ name: "zwei", dependencies: { y: "2.0.0" } }));
+  await run(dir, "install");
+  expect(layout(dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
+});
+
 // `x/node_modules/n` is from the older bun. The same run installs `y/node_modules/n`, the same package.
 test.concurrent("an older bun's nested copy goes while the run installs its owner at another place", async () => {
   using server = await serveGraph({

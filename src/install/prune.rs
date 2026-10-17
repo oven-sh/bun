@@ -1424,8 +1424,10 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             continue;
         }
         let old_tree = &old.trees[old_idx];
+        // The `node_modules` of a workspace, also of one that has another name by now.
         if old_tree.parent == 0
-            && contains(&workspace_names, old_tree.folder_name(old_deps, old_buf))
+            && (is_member_tree(before, old_idx)
+                || contains(&workspace_names, old_tree.folder_name(old_deps, old_buf)))
         {
             continue;
         }

@@ -6,6 +6,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1676,8 +1677,8 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // createContext takes codeGeneration, Script#runInNewContext and
+    // vm.runInNewContext take contextCodeGeneration.
     // A dotted key puts the throwing getter on the nested object.
     const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
     const contextKeys = (...codeGenerationKeyNames: string[]) => [
@@ -1689,7 +1690,7 @@ describe("context options with throwing getters", () => {
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      runInNewContext: contextKeys("contextCodeGeneration"),
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
@@ -1792,6 +1793,108 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+});
+
+describe("a context's global proxy passed as a context", () => {
+  // The unfixed build overflows the stack, so the cases that used to crash run in a child process.
+  test("createContext(globalProxy) creates a new context that reads through the proxy", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        const g = vm.runInContext("this", vm.createContext());
+        console.log(vm.isContext(g));
+        const ctx = vm.createContext(g);
+        console.log(ctx === g, vm.isContext(ctx));
+        console.log(vm.runInContext("this.x", ctx));
+        console.log(vm.runInContext("this.Array", ctx) === g.Array);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("false\ntrue true\nundefined\ntrue\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("runInContext(code, globalProxy) rejects the proxy", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        const g = vm.runInContext("this", vm.createContext());
+        try {
+          vm.runInContext("this.x", g);
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        try {
+          new vm.Script("this.x").runInContext(g);
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      'ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n' +
+        'ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n',
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("the global proxy of a DONT_CONTEXTIFY context is still that context", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const proxy = runInContext("this", ctx);
+    expect(isContext(proxy)).toBe(true);
+    expect(createContext(proxy)).toBe(ctx);
+    expect(runInContext("globalThis", proxy)).toBe(ctx);
+    runInContext("fromProxy = 1", proxy);
+    expect(ctx.fromProxy).toBe(1);
+    expect(runInContext("fromProxy", ctx)).toBe(1);
+  });
+
+  test("runInNewContext(code, DONT_CONTEXTIFY) returns a global that is a context", () => {
+    const proxy = runInNewContext("this", constants.DONT_CONTEXTIFY);
+    expect(isContext(proxy)).toBe(true);
+    expect(runInContext("1 + 1", proxy)).toBe(2);
+    runInNewContext("fromFirstRun = 3", proxy);
+    expect(runInContext("fromFirstRun", proxy)).toBe(3);
+  });
+
+  test("runInNewContext on an existing context runs in that context's global", () => {
+    const ctx = createContext({});
+    expect(runInNewContext("Array", ctx)).toBe(runInContext("Array", ctx));
+    expect(runInNewContext("this", ctx)).toBe(runInContext("this", ctx));
+    runInNewContext("let lexical = 1; class K {}", ctx);
+    expect(runInContext("typeof lexical + typeof K", ctx)).toBe("numberfunction");
+
+    const sandbox = {};
+    new Script("1").runInNewContext(sandbox);
+    expect(isContext(sandbox)).toBe(true);
+  });
+
+  test("compileFunction parsingContext accepts the same contexts as isContext", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.fromCtx = 7;
+    expect(compileFunction("return fromCtx", [], { parsingContext: ctx })()).toBe(7);
+    expect(compileFunction("return fromCtx", [], { parsingContext: runInContext("this", ctx) })()).toBe(7);
+
+    const g = runInContext("this", createContext());
+    expect(() => compileFunction("1", [], { parsingContext: g })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 });
 

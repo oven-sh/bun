@@ -783,58 +783,73 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
     }
 }
 
-NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow)
+NodeVMGlobalObject* findGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    if (contextValue.isUndefinedOrNull()) {
-        if (canThrow) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextValue);
-        }
-        return nullptr;
-    }
-
     if (!contextValue.isObject()) {
-        if (canThrow) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextValue);
-        }
         return nullptr;
     }
 
     JSObject* context = asObject(contextValue);
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
-    if (scopeValue.isUndefined()) {
-        if (auto* specialSandbox = dynamicDowncast<NodeVMSpecialSandbox>(context)) {
-            return specialSandbox->parentGlobal();
-        }
-
-        if (auto* proxy = dynamicDowncast<JSGlobalProxy>(context)) {
-            if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(proxy->target())) {
-                return nodeVmGlobalObject;
-            }
-        }
-
-        if (canThrow) {
-            INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
-        }
-        return nullptr;
+    if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(scopeValue)) {
+        return nodeVmGlobalObject;
     }
 
-    auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(scopeValue);
-
-    if (!nodeVmGlobalObject) {
-        nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(context);
+    if (auto* specialSandbox = dynamicDowncast<NodeVMSpecialSandbox>(context)) {
+        return specialSandbox->parentGlobal();
     }
 
-    if (!nodeVmGlobalObject) {
-        if (canThrow) {
-            INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
+    // Node's createContext(DONT_CONTEXTIFY) returns the context's global proxy, so `this` inside
+    // such a context is the context. Bun returns a NodeVMSpecialSandbox instead, but `this` is
+    // still the proxy, so the proxy must count too. The proxy of a contextified global is not a
+    // context: its sandbox is a separate object, and Node rejects it.
+    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(context)) {
+        if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); nodeVmGlobalObject && nodeVmGlobalObject->isNotContextified()) {
+            return nodeVmGlobalObject;
         }
-        return nullptr;
     }
 
-    return nodeVmGlobalObject;
+    return nullptr;
+}
+
+NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow)
+{
+    if (auto* nodeVmGlobalObject = findGlobalObjectFromContext(globalObject, contextValue)) {
+        return nodeVmGlobalObject;
+    }
+
+    if (canThrow) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        if (!contextValue.isObject()) {
+            ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextValue);
+        } else {
+            INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, contextValue);
+        }
+    }
+    return nullptr;
+}
+
+NodeVMGlobalObject* createContext(JSGlobalObject* globalObject, JSObject* sandbox, NodeVMContextOptions options, JSValue importer)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+
+    auto* targetContext = NodeVMGlobalObject::create(vm, zigGlobalObject->NodeVMGlobalObjectStructure(), options, importer);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (options.notContextified) {
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        targetContext->setSpecialSandbox(specialSandbox);
+        targetContext->setContextifiedObject(specialSandbox);
+        return targetContext;
+    }
+
+    targetContext->setContextifiedObject(sandbox);
+    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
+    return targetContext;
 }
 
 /// For some reason Node has this error message with a grammatical error and we have to match it so the tests pass:
@@ -848,21 +863,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, 
 
 bool isContext(JSGlobalObject* globalObject, JSValue value)
 {
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-
-    if (zigGlobalObject->vmModuleContextMap()->has(asObject(value))) {
-        return true;
-    }
-
-    if (value.inherits(NodeVMSpecialSandbox::info())) {
-        return true;
-    }
-
-    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(value); proxy && proxy->target()) {
-        return proxy->target()->inherits(NodeVMGlobalObject::info());
-    }
-
-    return false;
+    return findGlobalObjectFromContext(globalObject, value) != nullptr;
 }
 
 bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
@@ -1598,39 +1599,14 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSObject* sandbox = asObject(contextArg);
 
-    if (isContext(globalObject, sandbox)) {
-        if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(sandbox)) {
-            if (auto* targetContext = dynamicDowncast<NodeVMGlobalObject>(proxy->target())) {
-                if (targetContext->isNotContextified()) {
-                    return JSValue::encode(targetContext->specialSandbox());
-                }
-            }
-        }
-        return JSValue::encode(sandbox);
+    if (auto* existing = findGlobalObjectFromContext(globalObject, sandbox)) {
+        return JSValue::encode(existing->contextifiedObject());
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
-
+    auto* targetContext = createContext(globalObject, sandbox, contextOptions, importer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Set sandbox as contextified object
-    targetContext->setContextifiedObject(sandbox);
-
-    // Store context in WeakMap for isContext checks
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
-
-    if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
-        RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        return JSValue::encode(targetContext->specialSandbox());
-    }
-
-    return JSValue::encode(sandbox);
+    return JSValue::encode(targetContext->contextifiedObject());
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1995,14 +1971,7 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
             if (parsingContextValue.isNull() || !parsingContextValue.isObject())
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 
-            JSObject* context = asObject(parsingContextValue);
-            auto* zigGlobalObject = defaultGlobalObject(globalObject);
-            JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
-
-            if (scopeValue.isUndefined())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            parsingContext = dynamicDowncast<NodeVMGlobalObject>(scopeValue);
+            parsingContext = findGlobalObjectFromContext(globalObject, parsingContextValue);
             if (!parsingContext)
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 

@@ -39,7 +39,7 @@ pub(crate) fn stringify<'a>(
 
 pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
-    // defined and not set.
+    // defined and not set. What throws returns without reading `input` again.
     let global = unsafe { heap.global() };
     super::with_text_format_source(global, input, b"input.json5", |bump, log, source| {
         let root =

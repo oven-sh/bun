@@ -1,5 +1,5 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, WithValue};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass, JsResult, StringJsc};
 
@@ -229,7 +229,7 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 pub(crate) fn random_uuid_v5<'a>(
     heap: &JsHeap<'a>,
     name: &[u8],
-    namespace: WithValue<'a, &'a [u8]>,
+    namespace: StringOrJsBytes<'a>,
     encoding: UUIDEncoding<'a>,
 ) -> bindgen::Result<'a, JsLocal<'a>> {
     let encoding = match encoding {
@@ -248,21 +248,22 @@ pub(crate) fn random_uuid_v5<'a>(
         )
     };
 
-    let namespace: [u8; 16] = if namespace.value.to_js().is_string() {
-        let text = namespace.converted;
-        if text.len() == 36 {
-            UUID::parse(text)
-                .map_err(|_| invalid_value("Invalid UUID format for namespace"))?
-                .bytes
-        } else {
-            *uuid::namespaces::get(text)
-                .ok_or_else(|| invalid_value("Invalid UUID format for namespace"))?
+    let namespace: [u8; 16] = match namespace {
+        StringOrJsBytes::String(text) => {
+            let text = text.to_utf8();
+            if text.len() == 36 {
+                UUID::parse(&text)
+                    .map_err(|_| invalid_value("Invalid UUID format for namespace"))?
+                    .bytes
+            } else {
+                *uuid::namespaces::get(&text)
+                    .ok_or_else(|| invalid_value("Invalid UUID format for namespace"))?
+            }
         }
-    } else {
-        namespace
-            .converted
+        StringOrJsBytes::Bytes(bytes) => bytes
+            .get(heap)
             .try_into()
-            .map_err(|_| invalid_value("Namespace must be exactly 16 bytes"))?
+            .map_err(|_| invalid_value("Namespace must be exactly 16 bytes"))?,
     };
 
     let uuid = UUID5::init(&namespace, name);

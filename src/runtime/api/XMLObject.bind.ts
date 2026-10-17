@@ -11,6 +11,7 @@ export const XML = b.namespace({
         otherwise: "toString",
         refuse: ["undefined", "null"],
         string: "asIs",
+        held: "handle",
       }),
       options: b.any,
     },

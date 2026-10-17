@@ -131,10 +131,10 @@ template<> struct ExternTraits<JSBytesView> {
     }
 };
 
-template<> struct ExternTraits<JSStringOrBuffer> {
+template<> struct ExternTraits<JSBlobOrStringOrBuffer> {
     using ExternType = WTF::StringImpl*;
 
-    static ExternType convertToExtern(JSStringOrBuffer&& cppValue)
+    static ExternType convertToExtern(JSBlobOrStringOrBuffer&& cppValue)
     {
         return ExternTraits<WTF::String>::convertToExtern(cppValue.takeString());
     }

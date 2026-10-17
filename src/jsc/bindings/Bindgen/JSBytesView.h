@@ -7,13 +7,12 @@
 namespace Bun::Bindgen {
 
 // The bytes of a BufferSource or of a Blob whose bytes are in memory, where they are now. The data is not null.
-std::span<const uint8_t> bytesOfBuffer(JSC::JSValue);
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue);
 
-// False for anything else. Throws for a Blob whose bytes are not in memory: a file.
-bool isInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
+// Whether it is a Blob. Throws for one whose bytes are not in memory: a file.
+bool checkInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
 
-// An argument of a host call that is `b.bytes`, borrowed: the UTF-8 of a string, or the bytes of a BufferSource or a
-// Blob, where they are. Nothing changes them while no JavaScript runs, but another thread that writes a shared buffer.
+// The UTF-8 of a string, or the bytes of a Blob or a buffer where they are, which only JavaScript and a thread that writes a shared buffer change.
 class JSBytesView {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(JSBytesView);
@@ -28,38 +27,36 @@ public:
         m_string.initialize(globalObject, string);
     }
 
-    // The argument is a BufferSource or a Blob.
-    void initializeAsBuffer()
+    void initializeAsBlobOrBuffer()
     {
-        ASSERT(!m_isBuffer);
-        m_isBuffer = true;
+        ASSERT(!m_isBlobOrBuffer);
+        m_isBlobOrBuffer = true;
     }
 
     // Converting a later argument can run JavaScript, so these two come after all of them.
     ALWAYS_INLINE void read(JSC::JSValue argument)
     {
-        if (m_isBuffer)
-            m_buffer = bytesOfBuffer(argument);
+        if (m_isBlobOrBuffer)
+            m_bytes = bytesOfBlobOrBuffer(argument);
     }
 
     // The bytes of a shared buffer become those of `copy`. Allocating it can throw.
     void copyIfShared(JSC::JSGlobalObject&, JSC::JSValue argument, WTF::MallocSpan<uint8_t>& copy);
 
-    // Null data for a buffer that was neither read nor copied: Rust reads it, each time it borrows the bytes.
+    // Null data for a Blob or a buffer that was neither read nor copied: Rust reads it, each time it borrows the bytes.
     std::span<const uint8_t> bytes() const LIFETIME_BOUND
     {
-        return m_isBuffer ? m_buffer : m_string.bytes();
+        return m_isBlobOrBuffer ? m_bytes : m_string.bytes();
     }
 
 private:
     JSStringUTF8View m_string;
-    std::span<const uint8_t> m_buffer;
-    bool m_isBuffer { false };
+    std::span<const uint8_t> m_bytes;
+    bool m_isBlobOrBuffer { false };
 };
 
-// An argument that is `b.bytes`, for Rust to copy, to pin, or to read a string of as it is: the string, or null for a
-// BufferSource or a Blob, which is the argument itself.
-class JSStringOrBuffer {
+// The string, or null for a Blob or a buffer, which Rust reads, copies or pins from the argument itself.
+class JSBlobOrStringOrBuffer {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
@@ -67,11 +64,9 @@ public:
     void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
         m_string = string->value(&globalObject);
-        if (m_string.isNull())
-            m_string = emptyString();
     }
 
-    void initializeAsBuffer() {}
+    void initializeAsBlobOrBuffer() {}
 
     WTF::String takeString() { return std::exchange(m_string, {}); }
 

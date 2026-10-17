@@ -1,17 +1,13 @@
 /// # Safety
-/// As the type's `from_js_async` parser or owned constructor builds it — JS
-/// buffers pinned and GC-rooted, strings thread-isolated — nothing in it is
-/// thread-affine: a work-pool job may read it and the JS thread drops it.
+/// Its JS buffers are pinned and GC-rooted and its strings thread-isolated: a work-pool job may read it and the JS thread drops it.
 pub unsafe trait ThreadIsolatedArg {}
 
-/// A `T` built by its `from_js_async` parser or owned constructor (see
-/// [`ThreadIsolatedArg`]); nothing else constructs one.
+/// A `T` built as [`ThreadIsolatedArg`] describes.
 pub struct ThreadIsolated<T>(T);
 
 impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
     /// # Safety
-    /// `value` was built as [`ThreadIsolatedArg`] describes (async parse or
-    /// owned data only).
+    /// `value` was built as [`ThreadIsolatedArg`] describes.
     #[inline]
     pub unsafe fn new(value: T) -> Self {
         Self(value)

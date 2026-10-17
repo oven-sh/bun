@@ -4,7 +4,6 @@ export default b.module({ rustPath: "crate::api::json5_object" });
 
 export const JSON5 = b.namespace({
   parse: {
-    /** The body refuses `undefined` and `null`. */
     args: {
       input: b.bytes({
         from: ["string", "buffer", "blob"],

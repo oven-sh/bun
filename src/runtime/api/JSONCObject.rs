@@ -7,9 +7,9 @@ use bun_parsers::json;
 
 pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
-    // defined and not set.
+    // defined and not set. What throws returns without reading `input` again.
     let global = unsafe { heap.global() };
-    super::with_text_format_source(global, input, b"input.jsonc", |_arena, log, source| {
+    super::with_text_format_source(global, input, b"input.jsonc", |_, log, source| {
         // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
         if source.contents.is_empty() {
             return Err(

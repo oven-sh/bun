@@ -21,9 +21,7 @@ use crate::{JSFunction, JSGlobalObject, JSHostFn, JSValue};
 /// a [`JSHostFn`]); `arity` is the JS `function.length` reported to userland.
 pub type HostFnEntry = (&'static str, JSHostFn, u32);
 
-/// `{ name₀: fn₀, name₁: fn₁, … }` — fresh object pre-sized to `fns.len()`
-/// inline-capacity slots. The JS-visible `function.name` is the table key;
-/// options are `Default` (public visibility, no intrinsic, no constructor).
+/// `{ name₀: fn₀, name₁: fn₁, … }` — fresh object pre-sized to `fns.len()` inline-capacity slots.
 pub fn create_host_function_object(global: &JSGlobalObject, fns: &[HostFnEntry]) -> JSValue {
     let object = JSValue::create_empty_object(global, fns.len());
     for &(name, host_fn, arity) in fns {

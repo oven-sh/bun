@@ -3,8 +3,8 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bindgen::{
-    self, BufferSource, Bytes, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
-    JsWrapperStrong, PinnedBytes, StringOrBytes, WithValue,
+    self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
+    JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
@@ -202,10 +202,6 @@ pub(crate) fn sum_bytes(bytes: &[u8]) -> u32 {
     sum(bytes)
 }
 
-pub(crate) fn sum_bytes_optional(bytes: Option<&[u8]>) -> Option<u32> {
-    bytes.map(sum)
-}
-
 pub(crate) fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
     sum(bytes) + sum(text)
 }
@@ -244,7 +240,7 @@ fn call<'a>(cx: &mut JsScope<'a>, callback: JsLocal<'a>) -> bindgen::Result<'a, 
 
 pub(crate) fn bytes_before_and_after_callback<'a>(
     cx: &mut JsScope<'a>,
-    data: Bytes<'a>,
+    data: JsBytes<'a>,
     callback: JsLocal<'a>,
 ) -> bindgen::Result<'a, [Vec<u8>; 2]> {
     let before = data.get(&cx.heap).to_vec();
@@ -268,11 +264,11 @@ pub(crate) fn pinned_bytes_after_callback<'a>(
     Ok(bytes)
 }
 
-pub(crate) fn string_as_is_or_bytes<'a>(heap: &JsHeap<'a>, data: StringOrBytes<'a>) -> Vec<u8> {
+pub(crate) fn string_as_is_or_bytes<'a>(heap: &JsHeap<'a>, data: StringOrJsBytes<'a>) -> Vec<u8> {
     match data {
-        StringOrBytes::Bytes(bytes) => [&[0], bytes.get(heap)].concat(),
-        StringOrBytes::String(text) if text.is_8bit() => [&[1], text.latin1()].concat(),
-        StringOrBytes::String(text) => [&[2], bytemuck::cast_slice(text.utf16())].concat(),
+        StringOrJsBytes::Bytes(bytes) => [&[0], bytes.get(heap)].concat(),
+        StringOrJsBytes::String(text) if text.is_8bit() => [&[1], text.latin1()].concat(),
+        StringOrJsBytes::String(text) => [&[2], bytemuck::cast_slice(text.utf16())].concat(),
     }
 }
 
@@ -282,13 +278,6 @@ pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {
 
 pub(crate) fn as_big_int(value: u64) -> u64 {
     value
-}
-
-pub(crate) fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsLocal<'a> {
-    if text.converted.is_empty() {
-        return JsLocal::UNDEFINED;
-    }
-    text.value
 }
 
 pub(crate) fn fail<'a>(

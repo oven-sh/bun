@@ -42,7 +42,7 @@ pub(crate) fn xx_hash64(data: &[u8], seed: JsLocal<'_>) -> u64 {
     bun_hash::XxHash64::hash(seed_of(seed), data)
 }
 
-/// Runtime-dispatched SIMD (Highway): src/jsc/bindings/xxhash3.cpp. The seed has always been truncated to 32 bits.
+/// Runtime-dispatched SIMD (Highway): src/jsc/bindings/xxhash3.cpp. The seed is truncated to 32 bits.
 pub(crate) fn xx_hash3(data: &[u8], seed: JsLocal<'_>) -> u64 {
     bun_highway::xxhash3_64(u64::from(seed_of(seed) as u32), data)
 }

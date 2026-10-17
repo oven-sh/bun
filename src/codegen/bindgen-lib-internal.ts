@@ -160,10 +160,6 @@ export abstract class Type {
   get falsyAsNull(): OptionalType {
     return new OptionalType(this, "falsyAsNull");
   }
-  /** Converted for use now, and the value itself for whatever holds it longer. Only for arguments. */
-  get withValue(): WithValueType {
-    return new WithValueType(this);
-  }
   /** Value to use when absent. Only for arguments and dictionary members. */
   default(value: unknown): DefaultType {
     return new DefaultType(this, value);
@@ -194,11 +190,7 @@ export abstract class Type {
   get isOptional(): boolean {
     return false;
   }
-  /** What it is as an argument of a function of that capability. */
-  inFunction(capability: Capability): Type {
-    return this;
-  }
-  /** The host function passes the argument itself along: `ExternWithValue`. */
+  /** The host function passes the argument itself along: `ExternWithValue`. Only for an argument. */
   get passesValue(): boolean {
     return false;
   }
@@ -252,10 +244,9 @@ export abstract class Type {
   cppConvert(value: string, ctx: string, name: string): string {
     return `Bun::convertIDL<${this.idlType}>(*globalObject, ${value}, ${ctx})`;
   }
-  /** C++ lines for once every argument is converted. They read again into `target`, converted from `value`, what converting a later argument could have changed. */
-  cppReadLast(target: string, value: string, ctx: string, name: string, isLastArgument: boolean): string[] {
-    if (!this.borrowsHeap || isLastArgument) return [];
-    return [`${target} = ${this.cppConvert(value, ctx, name)};`, `scope.assertNoException();`];
+  /** C++ lines for once every argument is converted. They read into `target`, converted from `value`, what converting a later argument could have changed. */
+  cppReadLast(target: string, value: string): string[] {
+    return [];
   }
   /** Large, or holds something large: built where it ends up, not returned and moved there. */
   get convertsInPlace(): boolean {
@@ -653,7 +644,7 @@ export class Utf8Type extends Type {
     return true;
   }
   cppConvertInto(target: string, value: string, ctx: string): string {
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
+    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`;
   }
   cppAssign(target: string, value: unknown): string {
     assert(typeof value === "string", `${util.inspect(value)} is not a string`);
@@ -688,144 +679,65 @@ export class Utf8Type extends Type {
 const bufferSourceKinds: ValueKinds = ["arrayBuffer", "arrayBufferView"];
 const sharedBuffers = "shared buffers";
 
-/** The bytes of a typed array, `DataView` or `ArrayBuffer`, as `&[u8]`. */
-export class BytesType extends Type {
-  readonly idlType: string = "Bun::Bindgen::IDLBufferSourceBytes";
-  readonly tsType: string = "ArrayBuffer | ArrayBufferView";
-  /** WebIDL's `[AllowShared]`: a `SharedArrayBuffer` and a view of one too, as a `PossiblySharedBytes<'a>`. */
-  get allowShared(): PossiblySharedBytesType {
-    return new PossiblySharedBytesType();
-  }
-  get valueKinds(): ValueKinds {
-    return bufferSourceKinds;
-  }
-  get borrowsHeap(): boolean {
-    return true;
-  }
-  get nullRepresentation() {
-    return "pointer" as const;
-  }
-  layout(): Layout {
-    return { size: 16, align: 8 };
-  }
-  rustExternType(): string {
-    return "bindgen::extern_types::ExternBytes";
-  }
-  rustType(): string {
-    return "&'a [u8]";
-  }
-  rustFromExtern(expr: string): string {
-    return `${expr}.get(heap)`;
-  }
-}
-
-/** Bytes that another thread may be writing, so not as `&[u8]`. */
-export class PossiblySharedBytesType extends BytesType {
-  readonly idlType = "WebCore::IDLAllowSharedAdaptor<Bun::Bindgen::IDLBufferSourceBytes>";
-  readonly tsType = "ArrayBuffer | SharedArrayBuffer | ArrayBufferView";
-  rustType(): string {
-    return "bindgen::PossiblySharedBytes<'a>";
-  }
-  rustFromExtern(expr: string): string {
-    return `${expr}.get_possibly_shared(heap)`;
-  }
-}
-
+/** What each option means: docs/project/bindgen.mdx, "Bytes". */
 export interface BytesOptions {
-  /**
-   * What is taken as it is. "string": also a `String` object. "buffer": a typed array, `DataView`, `ArrayBuffer` or
-   * `SharedArrayBuffer`. "blob": one whose bytes are in memory; a file, here or in S3, throws.
-   */
   from: readonly ("string" | "buffer" | "blob")[];
-  /** Anything else. Default: "throw". */
   otherwise?: "throw" | "toString";
-  /** With `otherwise: "toString"`: these throw, and are not `"undefined"` and `"null"`. */
   refuse?: readonly ("undefined" | "null")[];
-  /** "utf8", the default: a string is its UTF-8. "asIs": it stays a `bun_core::String`, Latin-1 or UTF-16. */
   string?: "utf8" | "asIs";
-  /**
-   * The bytes of a shared buffer, which another thread can write during the call. "borrow", the default: where they
-   * are, as JSC's `toBase64` reads them. "copy": for a body that reads a byte again and counts on what it was, as
-   * JSC's `sort` does.
-   */
-  shared?: "borrow" | "copy";
-  /**
-   * "borrowed", the default: where they are, while no JavaScript runs. "copied": a `Vec<u8>`. "pinned": for another
-   * thread to read after the call returns.
-   */
-  held?: "borrowed" | "copied" | "pinned";
+  shared?: "borrowed" | "copied";
+  held?: "borrowed" | "handle" | "copied" | "pinned";
 }
 
-/**
- * The bytes of an argument. Its kind is checked, and a string converted, in the order of the arguments. The bytes of a
- * buffer are read, copied or pinned once every argument is converted.
- */
-export class BytesArgumentType extends Type {
-  readonly options: Required<BytesOptions>;
-  /** Of the function it is an argument of. */
-  readonly #capability: Capability | null;
-  constructor(options: BytesOptions, capability: Capability | null = null) {
+/** The bytes of an argument. Those of a buffer are read, copied or pinned once every argument is converted. */
+export class BytesType extends Type {
+  readonly #options: Required<BytesOptions>;
+  constructor(options: BytesOptions) {
     super();
-    const { from, otherwise = "throw", refuse = [], string = "utf8", shared = "borrow", held = "borrowed" } = options;
-    this.options = { from, otherwise, refuse, string, shared, held };
-    this.#capability = capability;
+    const { from, otherwise = "throw", refuse = [], string = "utf8", shared = "borrowed", held = "borrowed" } = options;
+    this.#options = { from, otherwise, refuse, string, shared, held };
     assert(from.length > 0, "from: it takes nothing");
-    assertDistinct(from, "from");
-    assertDistinct(refuse, "refuse");
+    assertDistinct(from, "kinds");
+    assertDistinct(refuse, "refused values");
     assert(refuse.length === 0 || otherwise === "toString", 'refuse: without otherwise: "toString" they throw already');
+    assert(string === "utf8" || from.includes("string") || otherwise === "toString", "string: it takes no string");
+    assert(shared === "borrowed" || from.includes("buffer"), "shared: it takes no buffer");
+    assert(shared === "borrowed" || held !== "copied", 'held: "copied" copies every buffer');
     // What no function needs yet is not written.
-    assert(string === "utf8" || (held === "borrowed" && shared === "borrow"), 'string: "asIs" is only borrowed');
-    assert(shared === "borrow" || held !== "pinned", 'held: "pinned" pins a shared buffer; it does not copy one');
+    assert(string === "utf8" || held === "handle", 'string: "asIs" is only with held: "handle"');
+    assert(string === "utf8" || shared === "borrowed", 'string: "asIs" does not copy a shared buffer');
+    assert(shared === "borrowed" || held !== "pinned", 'held: "pinned" pins a shared buffer; it does not copy one');
     assert(held !== "pinned" || !from.includes("blob"), 'held: "pinned" does not take a Blob');
-    assert(string === "utf8" || capability !== "none", 'string: "asIs": the bytes are read with a JsHeap');
-  }
-  inFunction(capability: Capability): BytesArgumentType {
-    return new BytesArgumentType(this.options, capability);
-  }
-  /** What the body gets. */
-  get #form(): "slice" | "handle" | "asIs" | "copied" | "pinned" {
-    assert(this.#capability, "b.bytes is only for an argument of a function");
-    const { held, string } = this.options;
-    if (held !== "borrowed") return held;
-    if (string === "asIs") return "asIs";
-    return this.#capability === "js" ? "handle" : "slice";
   }
   /** C++ converts a string to UTF-8 in the frame. Otherwise Rust gets the string. */
   get #isView(): boolean {
-    return this.#form === "slice" || this.#form === "handle";
+    const { held, string } = this.#options;
+    return string === "utf8" && (held === "borrowed" || held === "handle");
   }
   get idlType(): string {
-    const { from, otherwise, refuse } = this.options;
+    const { from, otherwise, refuse } = this.#options;
     const options = {
-      string: from.includes("string"),
-      buffer: from.includes("buffer"),
-      blob: from.includes("blob"),
+      fromString: from.includes("string"),
+      fromBuffer: from.includes("buffer"),
+      fromBlob: from.includes("blob"),
       toStringOtherwise: otherwise === "toString",
       refuseUndefined: refuse.includes("undefined"),
       refuseNull: refuse.includes("null"),
     };
-    const members = Object.entries(options).map(([name, value]) => `.${name} = ${value}`);
-    return `Bun::Bindgen::IDL${this.#isView ? "Bytes" : "StringOrBuffer"}<Bun::Bindgen::BytesOptions { ${members.join(", ")} }>`;
+    const members = Object.entries(options).flatMap(([name, value]) => (value ? [`.${name} = true`] : []));
+    const sink = this.#isView ? "JSBytesView" : "JSBlobOrStringOrBuffer";
+    return `Bun::Bindgen::IDLBytes<Bun::Bindgen::${sink}, Bun::Bindgen::BytesOptions { ${members.join(", ")} }>`;
   }
   get tsType(): string {
-    if (this.options.otherwise === "toString") return "any";
+    if (this.#options.otherwise === "toString") return "any";
     const spelling = { string: "string", buffer: "ArrayBuffer | SharedArrayBuffer | ArrayBufferView", blob: "Blob" };
-    return this.options.from.map(kind => spelling[kind]).join(" | ");
+    return this.#options.from.map(kind => spelling[kind]).join(" | ");
   }
   get passesValue(): boolean {
-    return this.#capability !== null && this.#form !== "slice";
-  }
-  get holdsJSValue(): boolean {
-    return this.#form === "handle" || this.#form === "asIs";
-  }
-  get rustIsCopy(): boolean {
-    return this.#isView;
-  }
-  get borrowsFrame(): boolean {
-    return this.#isView;
+    return this.#options.held !== "borrowed";
   }
   get borrowsHeap(): boolean {
-    return true;
+    return this.#options.held === "borrowed";
   }
   get convertsInPlace(): boolean {
     return true;
@@ -833,9 +745,9 @@ export class BytesArgumentType extends Type {
   cppConvertInto(target: string, value: string, ctx: string): string {
     const spelling = { string: ["a string"], buffer: ["ArrayBuffer", "ArrayBufferView"], blob: ["Blob"] };
     const expected = (["string", "buffer", "blob"] as const)
-      .filter(kind => this.options.from.includes(kind))
+      .filter(kind => this.#options.from.includes(kind))
       .flatMap(kind => spelling[kind]);
-    if (!this.options.from.includes("string")) expected[0] = `${/^A/.test(expected[0]) ? "an" : "a"} ${expected[0]}`;
+    if (!this.#options.from.includes("string")) expected[0] = `${/^A/.test(expected[0]) ? "an" : "a"} ${expected[0]}`;
     const last = expected.pop();
     const list = expected.length > 0 ? `${expected.join(", ")} or ${last}` : last!;
     return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)});`;
@@ -843,8 +755,8 @@ export class BytesArgumentType extends Type {
   cppReadLast(target: string, value: string): string[] {
     if (!this.#isView) return [];
     return [
-      ...(this.#form === "slice" ? [`${target}.read(${value});`] : []),
-      ...(this.options.shared === "copy"
+      ...(this.#options.held === "borrowed" ? [`${target}.read(${value});`] : []),
+      ...(this.#options.shared === "copied"
         ? [
             `WTF::MallocSpan<uint8_t> ${target}Copy;`,
             `${target}.copyIfShared(*globalObject, ${value}, ${target}Copy);`,
@@ -861,26 +773,27 @@ export class BytesArgumentType extends Type {
     const converted = `bindgen::extern_types::Extern${this.#isView ? "Bytes" : "String"}`;
     return this.passesValue ? `bindgen::extern_types::ExternWithValue<${converted}>` : converted;
   }
+  /** What the body gets, and the expression that makes it of `argument`. */
+  #rust(argument: string): readonly [type: string, fromExtern: string] {
+    const stringOrBytes = `bindgen::StringOrJsBytes::from_extern(${argument}, heap)`;
+    if (this.#options.string === "asIs") return ["bindgen::StringOrJsBytes<'a>", stringOrBytes];
+    return (
+      {
+        borrowed: ["&'a [u8]", `${argument}.get(heap)`],
+        handle: ["bindgen::JsBytes<'a>", `bindgen::JsBytes::from_extern(${argument}, heap)`],
+        copied: ["Vec<u8>", `${stringOrBytes}.into_vec(heap)`],
+        pinned: ["bindgen::PinnedBytes", `bindgen::PinnedBytes::from_extern(${argument}, heap)`],
+      } as const
+    )[this.#options.held];
+  }
   rustType(): string {
-    return {
-      slice: "&'a [u8]",
-      handle: "bindgen::Bytes<'a>",
-      asIs: "bindgen::StringOrBytes<'a>",
-      copied: "Vec<u8>",
-      pinned: "bindgen::PinnedBytes",
-    }[this.#form];
+    return this.#rust("")[0];
   }
   get rustFromExternThrows(): boolean {
-    return this.#form === "pinned";
+    return this.#options.held === "pinned";
   }
   rustFromExtern(expr: string): string {
-    return {
-      slice: `${expr}.get(heap)`,
-      handle: `bindgen::Bytes::from_extern(${expr}, heap)`,
-      asIs: `bindgen::StringOrBytes::from_extern(${expr}, heap)`,
-      copied: `bindgen::extern_types::copy_string_or_buffer(${expr}, heap)`,
-      pinned: `bindgen::PinnedBytes::from_extern(${expr}, heap)`,
-    }[this.#form];
+    return this.#rust(expr)[1];
   }
 }
 
@@ -893,10 +806,6 @@ export class BufferSourceType extends Type {
   }
   get refuses() {
     return sharedBuffers;
-  }
-  /** `&[u8]` for the duration of the call. Not for `capability: "js"`, where JavaScript could detach it. */
-  get bytes(): BytesType {
-    return new BytesType();
   }
   /** A reference on a `JSC::ArrayBuffer`, which can be stored: the buffer itself, or a copy of what a view shows. */
   get arrayBuffer(): RefType {
@@ -926,72 +835,6 @@ export class BufferSourceType extends Type {
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;
-  }
-}
-
-/** Converts as `inner` does; the host function passes the argument itself along. */
-export class WithValueType extends Type {
-  readonly inner: Type;
-  constructor(inner: Type) {
-    super();
-    assert(!(inner instanceof DefaultType), ".withValue cannot be combined with .default()");
-    assert(!(inner instanceof WithValueType), "already .withValue");
-    assert(!inner.passesValue, ".withValue follows b.bytes only where the body gets a slice");
-    this.inner = inner;
-  }
-  inFunction(capability: Capability): WithValueType {
-    return new WithValueType(this.inner.inFunction(capability));
-  }
-  get passesValue(): boolean {
-    return true;
-  }
-  get idlType(): string {
-    return this.inner.idlType;
-  }
-  get tsType(): string {
-    return this.inner.tsType;
-  }
-  get takesUndefined(): boolean {
-    return this.inner.takesUndefined;
-  }
-  get isOptional(): boolean {
-    return this.inner.isOptional;
-  }
-  get conversionThrows(): boolean {
-    return this.inner.conversionThrows;
-  }
-  get valueKinds(): ValueKinds {
-    return this.inner.valueKinds;
-  }
-  get holdsJSValue(): boolean {
-    return true;
-  }
-  get dependencies(): readonly Type[] {
-    return [this.inner];
-  }
-  get convertsInPlace(): boolean {
-    return this.inner.convertsInPlace;
-  }
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    return this.inner.cppConvertInto(target, value, ctx, name);
-  }
-  cppConvert(value: string, ctx: string, name: string): string {
-    return this.inner.cppConvert(value, ctx, name);
-  }
-  cppReadLast(target: string, value: string, ctx: string, name: string, isLastArgument: boolean): string[] {
-    return this.inner.cppReadLast(target, value, ctx, name, isLastArgument);
-  }
-  layout(): Layout {
-    return structLayout([this.inner.layout(), { size: 8, align: 8 }]);
-  }
-  rustExternType(scope: RustScope): string {
-    return `bindgen::extern_types::ExternWithValue<${this.inner.rustExternType(scope)}>`;
-  }
-  rustType(scope: RustScope): string {
-    return `bindgen::WithValue<'a, ${this.inner.rustType(scope)}>`;
-  }
-  rustFromExtern(expr: string, scope: RustScope): string {
-    return `{ let with_value = ${expr}; bindgen::WithValue { converted: ${this.inner.rustFromExtern("with_value.converted", scope)}, value: bindgen::JsLocal::from_extern(with_value.value, heap) } }`;
   }
 }
 
@@ -1095,10 +938,8 @@ export class OptionalType extends Type {
     assert(!(inner instanceof OptionalType), "already optional");
     assert(!(inner instanceof DefaultType), "put .default() last");
     assert(!(inner instanceof AnyType), "b.any already accepts undefined and null");
-    assert(!(inner instanceof WithValueType), "put .withValue last");
     assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
-    assert(!(inner instanceof PossiblySharedBytesType), ".allowShared is for an argument that is always there");
-    assert(!(inner instanceof BytesArgumentType), "b.bytes is for an argument that is always there");
+    assert(!(inner instanceof BytesType), "b.bytes is for an argument that is always there");
     this.inner = inner;
     this.modifier = modifier;
   }
@@ -1279,7 +1120,7 @@ export class ArrayType extends Type {
     super();
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
-    assert(!(element instanceof WithValueType), ".withValue is only for an argument");
+    assert(!element.passesValue, "b.bytes is only for an argument");
     assert(
       !element.borrowsHeap,
       "the bytes of a buffer are only for an argument: they are read after everything else is converted",
@@ -1487,8 +1328,7 @@ export class DictionaryType extends NamedType {
       this.members.map(member => member.fieldName),
       "fields",
     );
-    for (const { name, type } of this.members)
-      assert(!(type instanceof WithValueType), `${name}: .withValue is only for an argument`);
+    for (const { name, type } of this.members) assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
       "nonObjectAsEmpty: every member must be optional or have a default",
@@ -1596,7 +1436,7 @@ export class UnionType extends NamedType {
       assert(!(type instanceof UnionType), `${name}: list the alternatives of the other union here`);
       assert(!(type instanceof OptionalType), `${name}: add b.null as an alternative`);
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
-      assert(!(type instanceof WithValueType), `${name}: .withValue is only for an argument`);
+      assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
       assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
@@ -1695,12 +1535,9 @@ export class Signature {
   readonly length: number | undefined;
   constructor(options: SignatureOptions) {
     this.length = options.length;
-    this.capability = options.capability ?? "none";
-    this.args = Object.entries(options.args ?? {}).map(([name, type]) => ({
-      name,
-      type: type.inFunction(this.capability),
-    }));
+    this.args = Object.entries(options.args ?? {}).map(([name, type]) => ({ name, type }));
     this.returns = options.returns ?? new UnitType("undefined");
+    this.capability = options.capability ?? "none";
     this.throws = options.throws ?? false;
     this.rustPath = options.rustPath;
     assertDistinct(
@@ -1714,12 +1551,16 @@ export class Signature {
     for (const { name, type } of this.args) {
       assert(!isMadeOf(type, BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
       assert(
-        !type.borrowsHeap || this.capability !== "js" || isMadeOf(type, BytesArgumentType),
-        isMadeOf(type, PossiblySharedBytesType)
-          ? `${name}: JavaScript can detach a buffer; .allowShared is for a function that cannot run it`
-          : `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
+        !type.borrowsHeap || this.capability !== "js",
+        `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
       );
     }
+    const pinned = this.args.filter(arg => arg.type.rustFromExternThrows);
+    assert(pinned.length <= 1, 'held: "pinned": if one fails, nothing releases the string of the next');
+    assert(
+      pinned.length === 0 || !this.args.some(arg => arg.type.borrowsHeap),
+      'held: "pinned" moves the bytes of a small typed array, which another argument that is held: "borrowed" can be',
+    );
     assert(!(this.returns instanceof DefaultType), "a result has no default");
     assert(
       !this.returns.holdsJSValue || this.capability !== "none",

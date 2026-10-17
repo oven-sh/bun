@@ -8,6 +8,7 @@ use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
+pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
@@ -237,8 +238,6 @@ impl BlobOrStringOrBuffer {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
 
 /// Parsed from JS it is `StringOrBuffer<'static>`; `Utf8` may instead borrow
 /// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).

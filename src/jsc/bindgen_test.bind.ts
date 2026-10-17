@@ -71,11 +71,10 @@ export const sumArray = b.fn({ args: { numbers: b.array(b.i32) }, returns: b.f64
 export const range = b.fn({ args: { length: b.u32 }, returns: b.array(b.u32) });
 export const words = b.fn({ args: { text: b.string.utf8 }, returns: b.array(b.string.utf8) });
 
-export const sumBytes = b.fn({ args: { bytes: b.bufferSource.bytes }, returns: b.u32 });
-export const sumBytesOptional = b.fn({ args: { bytes: b.bufferSource.bytes.nullable }, returns: b.u32.nullable });
+export const sumBytes = b.fn({ args: { bytes: b.bytes({ from: ["buffer"] }) }, returns: b.u32 });
 /** Converting `text` can run JavaScript. */
 export const sumBytesThenText = b.fn({
-  args: { bytes: b.bufferSource.bytes, text: b.string.loose.utf8 },
+  args: { bytes: b.bytes({ from: ["buffer"] }), text: b.string.loose.utf8 },
   returns: b.u32,
 });
 /** The sum before `callback` runs, then after it. */
@@ -86,29 +85,30 @@ export const sumBeforeAndAfterCallback = b.fn({
   throws: true,
 });
 
-const bytesOfA = (options: Parameters<typeof b.bytes>[0]) =>
+type BytesOptions = Parameters<typeof b.bytes>[0];
+const bytesOfWith = (options: BytesOptions) =>
   b.fn({ args: { data: b.bytes(options) }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
-export const bytesOf = bytesOfA({ from: ["string", "buffer"] });
-export const bytesOfOrBlob = bytesOfA({ from: ["string", "buffer", "blob"] });
-export const bytesOfLoose = bytesOfA({ from: ["string", "buffer"], otherwise: "toString" });
-export const bytesOfLooseOrBlob = bytesOfA({ from: ["string", "buffer", "blob"], otherwise: "toString" });
-export const bytesOfString = bytesOfA({ from: ["string"] });
-export const bytesOfBufferOrBlob = bytesOfA({ from: ["buffer", "blob"] });
-export const bytesOfBlobLoose = bytesOfA({ from: ["blob"], otherwise: "toString" });
-export const bytesOfDefined = bytesOfA({ from: ["string", "buffer"], otherwise: "toString", refuse: ["undefined"] });
-export const bytesOfNotNull = bytesOfA({ from: ["string", "buffer"], otherwise: "toString", refuse: ["null"] });
+export const bytesOf = bytesOfWith({ from: ["string", "buffer"] });
+export const bytesOfString = bytesOfWith({ from: ["string"] });
+export const bytesOfBufferOrBlob = bytesOfWith({ from: ["buffer", "blob"] });
+export const bytesOfOrToString = bytesOfWith({ from: ["string", "buffer", "blob"], otherwise: "toString" });
+export const bytesOfRefusingUndefined = bytesOfWith({
+  from: ["string", "buffer"],
+  otherwise: "toString",
+  refuse: ["undefined"],
+});
 /** `after` is converted after `data`, and can run JavaScript. */
-const bytesOfThenA = (options: Omit<Parameters<typeof b.bytes>[0], "from">, rustName: string) =>
+const bytesOfThenWith = (options: Omit<BytesOptions, "from">, rustName: string) =>
   b.fn({
     args: { data: b.bytes({ from: ["string", "buffer", "blob"], ...options }), after: b.f64.loose },
     returns: b.array(b.u8),
     rustPath: `crate::bindgen_test::${rustName}`,
   });
-export const bytesOfThen = bytesOfThenA({}, "bytes_of_then");
-export const bytesOfThenCopyingShared = bytesOfThenA({ shared: "copy" }, "bytes_of_then");
-export const bytesOfThenCopied = bytesOfThenA({ held: "copied" }, "bytes_of_then_copied");
+export const bytesOfThen = bytesOfThenWith({}, "bytes_of_then");
+export const bytesOfThenCopyingShared = bytesOfThenWith({ shared: "copied" }, "bytes_of_then");
+export const bytesOfThenCopied = bytesOfThenWith({ held: "copied" }, "bytes_of_then_copied");
 /** Given one value twice: whether both are its own memory, and not a copy each. */
-const bytesOfAreSameMemoryA = (shared: "borrow" | "copy") => {
+const bytesOfAreSameMemoryWith = (shared: BytesOptions["shared"]) => {
   const data = b.bytes({ from: ["string", "buffer", "blob"], shared });
   return b.fn({
     args: { data, again: data },
@@ -116,19 +116,22 @@ const bytesOfAreSameMemoryA = (shared: "borrow" | "copy") => {
     rustPath: "crate::bindgen_test::bytes_of_are_same_memory",
   });
 };
-export const bytesOfAreSameMemory = bytesOfAreSameMemoryA("borrow");
-export const bytesOfAreSameMemoryCopyingShared = bytesOfAreSameMemoryA("copy");
+export const bytesOfAreSameMemory = bytesOfAreSameMemoryWith("borrowed");
+export const bytesOfAreSameMemoryCopyingShared = bytesOfAreSameMemoryWith("copied");
 /** The bytes before `callback` runs, then after it. */
-const bytesBeforeAndAfterCallbackA = (shared: "borrow" | "copy") =>
+const bytesBeforeAndAfterCallbackWith = (shared: BytesOptions["shared"]) =>
   b.fn({
-    args: { data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", shared }), callback: b.any },
+    args: {
+      data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", shared, held: "handle" }),
+      callback: b.any,
+    },
     returns: b.array(b.array(b.u8)),
     capability: "js",
     throws: true,
     rustPath: "crate::bindgen_test::bytes_before_and_after_callback",
   });
-export const bytesBeforeAndAfterCallback = bytesBeforeAndAfterCallbackA("borrow");
-export const bytesBeforeAndAfterCallbackCopyingShared = bytesBeforeAndAfterCallbackA("copy");
+export const bytesBeforeAndAfterCallback = bytesBeforeAndAfterCallbackWith("borrowed");
+export const bytesBeforeAndAfterCallbackCopyingShared = bytesBeforeAndAfterCallbackWith("copied");
 /** The bytes another thread reads after `callback` has run. */
 export const pinnedBytesAfterCallback = b.fn({
   args: { data: b.bytes({ from: ["string", "buffer"], held: "pinned" }), callback: b.any },
@@ -138,18 +141,13 @@ export const pinnedBytesAfterCallback = b.fn({
 });
 /** The size of a code unit of a string, 0 for anything else, then the bytes. */
 export const stringAsIsOrBytes = b.fn({
-  args: { data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", string: "asIs" }) },
+  args: {
+    data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", string: "asIs", held: "handle" }),
+  },
   returns: b.array(b.u8),
   capability: "heap",
 });
 export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt });
-
-/** The original value if the converted text is not empty. */
-export const withValueEcho = b.fn({
-  args: { text: b.string.loose.utf8.withValue },
-  returns: b.any,
-  capability: "heap",
-});
 
 export const TestFailure = b.enumeration(["type", "range", "plain", "code", "syscall", "outOfMemory", "value"]);
 export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability: "heap", throws: true });

@@ -8,7 +8,8 @@ use bun_parsers::toml::TOML;
 
 pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, its properties are defined
-    // and not set, and a date or a time is `Temporal.*.from` of a primitive string, which looks nothing up.
+    // and not set, and a date or a time is `Temporal.*.from` of a primitive string, which looks nothing up. What throws
+    // returns without reading `input` again.
     let global = unsafe { heap.global() };
     super::with_text_format_source(global, input, b"input.toml", |arena, log, source| {
         let root =
@@ -39,13 +40,10 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     })
 }
 
-/// `space` is accepted for signature parity with YAML/JSON5 but ignored: TOML output is line-oriented and has no
-/// nesting indentation.
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
     replacer: JsLocal<'a>,
-    _: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (value, replacer) = (value.to_js(), replacer.to_js());

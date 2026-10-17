@@ -76,7 +76,7 @@ export const gzipSync = zlib("gzip_sync", ZlibCompressionOptions);
 
 export const indexOfLine = b.fn({
   args: {
-    buffer: b.bufferSource.bytes.allowShared,
+    buffer: b.bytes({ from: ["buffer"] }),
     offset: b.f64.loose.allowBigInt.default(0),
   },
   returns: b.f64,

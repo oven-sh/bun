@@ -14,13 +14,13 @@ use bun_collections::HashMap;
 use bun_core::String as BunString;
 use bun_core::{StackCheck, strings};
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::bindgen::{JsLocal, JsScope, StringOrBytes};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
 pub(crate) fn parse<'a>(
     cx: &mut JsScope<'a>,
-    input: StringOrBytes<'a>,
+    input: StringOrJsBytes<'a>,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
@@ -46,8 +46,8 @@ pub(crate) fn parse<'a>(
     let text;
     let mut utf16 = None;
     let (bytes, encoding): (&[u8], _) = match input {
-        StringOrBytes::Bytes(bytes) => (bytes.get(&cx.heap), xml::InputEncoding::Bytes),
-        StringOrBytes::String(string) => {
+        StringOrJsBytes::Bytes(bytes) => (bytes.get(&cx.heap), xml::InputEncoding::Bytes),
+        StringOrJsBytes::String(string) => {
             text = string;
             if text.is_8bit() {
                 (text.latin1(), xml::InputEncoding::Latin1)
@@ -59,7 +59,7 @@ pub(crate) fn parse<'a>(
         }
     };
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
-    // defined and not set.
+    // defined and not set. What throws returns without reading `input` again.
     let global = unsafe { cx.heap.global() };
 
     super::with_text_format_source(global, bytes, b"input.xml", |arena, log, source| {

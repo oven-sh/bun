@@ -5,7 +5,7 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{Bytes, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, wtf,
@@ -1064,10 +1064,11 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
-pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: Bytes<'a>) -> JsResult<JSValue> {
+pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|roots| {
         let mut pending = Vec::new();
-        // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`.
+        // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`. What throws
+        // returns without reading `input` again.
         let global = unsafe { cx.heap.global() };
         let result = parse_to_values(global, input.get(&cx.heap), roots, &mut pending)?;
         let global = cx.global();

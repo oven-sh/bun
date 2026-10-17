@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
-use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{JSPromise, JSPromiseStrong};
 
 use crate::generated_bindgen::password_object::{PasswordHashAlgorithm, PasswordHashOptions};
@@ -131,10 +131,9 @@ fn invalid_argument_type<'a>(
     field: &str,
     typename: &str,
 ) -> bindgen::Error<'a> {
-    heap.error_with_code(
-        ErrorCode::INVALID_ARG_TYPE,
-        format_args!("Expected {field} to be a {typename} for '{function}'."),
-    )
+    heap.invalid_arguments(format_args!(
+        "Expected {field} to be a {typename} for '{function}'."
+    ))
 }
 
 /// `None` for `undefined`, `null` and `""`.
@@ -375,13 +374,35 @@ impl fmt::Display for PascalToUpperUnderscoreCaseFormatter<'_> {
 // both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
 // `PasswordOp` carrying exactly those three axes.
 
+/// A copy of a password or a hash, zeroed before it is freed.
+struct Sensitive(Box<[u8]>);
+
+impl From<Vec<u8>> for Sensitive {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(bytes.into_boxed_slice())
+    }
+}
+
+impl core::ops::Deref for Sensitive {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for Sensitive {
+    fn drop(&mut self) {
+        bun_alloc::free_sensitive(core::mem::take(&mut self.0));
+    }
+}
+
 pub(crate) trait PasswordOp: Send + 'static {
     /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
     type Value: Send;
     /// "hashing" | "verification" — slotted into the JS Error message.
     const ERR_VERB: &'static str;
     /// Off-thread compute. `self` borrows the op so its inputs stay owned by
-    /// the job and are `free_sensitive`d in the job's / op's `Drop`.
+    /// the job.
     fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
     /// Convert the success payload to a `JSValue` on the JS thread.
     fn to_js(value: Self::Value, g: &JSGlobalObject) -> JSValue;
@@ -404,15 +425,8 @@ impl PasswordOp for HashOp {
 }
 
 pub(crate) struct VerifyOp {
-    prev_hash: Box<[u8]>,
+    prev_hash: Sensitive,
     algorithm: Option<Algorithm>,
-}
-impl Drop for VerifyOp {
-    fn drop(&mut self) {
-        // bun.freeSensitive — volatile-zero then free; the job's Drop handles
-        // `password`, this handles the op-specific `prev_hash`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.prev_hash));
-    }
 }
 impl PasswordOp for VerifyOp {
     type Value = bool;
@@ -455,20 +469,11 @@ fn password_error<'a>(heap: &JsHeap<'a>, err: &HashError, verb: &str) -> bindgen
 }
 
 /// `Bun.password.hash/verify` off the JS thread: the op and the password are
-/// owned copies (zeroed on drop); the promise is the JS side.
+/// owned copies; the promise is the JS side.
 struct PasswordJob<Op: PasswordOp> {
     op: Op,
-    password: Box<[u8]>,
+    password: Sensitive,
     value: Option<Result<Op::Value, HashError>>,
-}
-
-impl<Op: PasswordOp> Drop for PasswordJob<Op> {
-    fn drop(&mut self) {
-        // bun.freeSensitive — volatile-zero the buffer then free; take the Box so
-        // the field's own Drop sees an empty slice afterwards. Any op-owned
-        // sensitive buffers (`prev_hash`) are freed by the op's own `Drop`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.password));
-    }
 }
 
 impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
@@ -501,7 +506,7 @@ impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
 // ─── hash / verify entry points ───────────────────────────────────────────
 
 /// Boxes a `PasswordJob<Op>`, refs the loop, and schedules it.
-fn schedule<Op: PasswordOp>(cx: &bun_jsc::JsThread<'_>, password: Box<[u8]>, op: Op) -> JSValue {
+fn schedule<Op: PasswordOp>(cx: &bun_jsc::JsThread<'_>, password: Sensitive, op: Op) -> JSValue {
     debug_assert!(!password.is_empty()); // caller must check
 
     let promise = JSPromiseStrong::init(cx.global());
@@ -525,16 +530,13 @@ pub(crate) fn hash<'a>(
     password: Vec<u8>,
     algorithm: PasswordHashAlgorithm<'a>,
 ) -> bindgen::Result<'a, JSValue> {
+    let password = Sensitive::from(password);
     let algorithm = AlgorithmValue::from_argument(&cx.heap, algorithm)?;
     if password.is_empty() {
         return Err(cx.heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
 
-    Ok(schedule(
-        &cx.js_thread(),
-        password.into_boxed_slice(),
-        HashOp { algorithm },
-    ))
+    Ok(schedule(&cx.js_thread(), password, HashOp { algorithm }))
 }
 
 pub(crate) fn hash_sync<'a>(
@@ -565,6 +567,8 @@ pub(crate) fn verify<'a>(
     prev_hash: Vec<u8>,
     algorithm: Option<&'a [u8]>,
 ) -> bindgen::Result<'a, JSValue> {
+    let password = Sensitive::from(password);
+    let prev_hash = Sensitive::from(prev_hash);
     let algorithm = verify_algorithm(&cx.heap, algorithm)?;
     if prev_hash.is_empty() || password.is_empty() {
         return Ok(JSPromise::resolved_promise_value(
@@ -575,9 +579,9 @@ pub(crate) fn verify<'a>(
 
     Ok(schedule(
         &cx.js_thread(),
-        password.into_boxed_slice(),
+        password,
         VerifyOp {
-            prev_hash: prev_hash.into_boxed_slice(),
+            prev_hash,
             algorithm,
         },
     ))

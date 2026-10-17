@@ -1,9 +1,8 @@
 //! Rust side of `src/jsc/bindings/Bindgen/Extern*.h`. The generated conversion that reads a value takes ownership.
 
 use core::ffi::{c_uint, c_void};
-use core::marker::PhantomData;
 
-use super::{JsHeap, PossiblySharedBytes};
+use super::JsHeap;
 use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
@@ -84,7 +83,7 @@ impl<T: Copy> ExternVector<T> {
     }
 }
 
-/// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns.
+/// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns. Another thread can write those of a shared buffer.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternBytes {
@@ -92,26 +91,12 @@ pub struct ExternBytes {
     length: usize,
 }
 impl ExternBytes {
-    pub(super) const NULL: Self = Self {
-        data: core::ptr::null(),
-        length: 0,
-    };
     /// # Safety
     /// The host function that passed this is the call `heap` belongs to.
     #[inline(always)]
     pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [u8] {
         // SAFETY: C++ never passes a null pointer for a present value.
         unsafe { core::slice::from_raw_parts(self.data, self.length) }
-    }
-    /// # Safety
-    /// As [`get`](Self::get).
-    #[inline(always)]
-    pub unsafe fn get_possibly_shared<'a>(self, _: &JsHeap<'a>) -> PossiblySharedBytes<'a> {
-        PossiblySharedBytes {
-            data: self.data,
-            length: self.length,
-            lifetime: PhantomData,
-        }
     }
     /// # Safety
     /// As [`get`](Self::get).
@@ -132,27 +117,9 @@ pub struct ExternWithValue<T: Copy> {
     pub value: JSValue,
 }
 
-/// `b.bytes` with `held: "copied"`.
-///
-/// # Safety
-/// As [`ExternBytes::get`].
-pub unsafe fn copy_string_or_buffer(
-    argument: ExternWithValue<ExternString>,
-    heap: &JsHeap<'_>,
-) -> Vec<u8> {
-    let copy = if argument.converted.is_null() {
-        // SAFETY: forwarded.
-        unsafe { Bun__Bindgen__bytesOfBuffer(argument.value).get(heap) }.to_vec()
-    } else {
-        adopt_string(argument.converted).to_owned_slice()
-    };
-    heap.global_object().vm().report_extra_memory(copy.len());
-    copy
-}
-
 unsafe extern "C" {
     /// `value` is a `BufferSource` or a `Blob` whose bytes are in memory.
-    pub(super) safe fn Bun__Bindgen__bytesOfBuffer(value: JSValue) -> ExternBytes;
+    pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBuffer(value: JSValue) -> ExternBytes;
     pub(super) fn Bun__Bindgen__constructArray(
         global: *mut JSGlobalObject,
         values: *mut MarkedArgumentBuffer,

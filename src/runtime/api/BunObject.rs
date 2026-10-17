@@ -93,9 +93,7 @@ use crate::generated_bindgen::bun_object::{
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use crate::generated_bindgen::glob::GlobClass as _;
-use bun_jsc::bindgen::{
-    self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes, PossiblySharedBytes,
-};
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -1212,14 +1210,14 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
     })
 }
 
-pub(crate) fn index_of_line(buffer: PossiblySharedBytes<'_>, offset: f64) -> f64 {
+pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
     // The cast saturates: NaN and a negative offset are 0.
     let offset = offset as usize;
     // 0x0A never appears inside a multi-byte UTF-8 sequence.
-    match buffer
-        .get(offset..)
-        .and_then(|rest| rest.index_of_char(b'\n'))
-    {
+    // SAFETY: readable. `index_of_char` asserts that the byte it found is still there, and another thread can write a shared buffer.
+    match buffer.get(offset..).and_then(|rest| unsafe {
+        bun_highway::index_of_char_raw(rest.as_ptr(), rest.len(), b'\n')
+    }) {
         Some(i) => (offset + i) as f64,
         None => -1.0,
     }
@@ -1848,7 +1846,7 @@ pub(crate) mod JSZlib {
     use super::*;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
 
-    type Output<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
+    type BufferResult<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
 
     /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
     #[inline]
@@ -1861,7 +1859,6 @@ pub(crate) mod JSZlib {
         }
     }
 
-    #[derive(Copy, Clone, PartialEq, Eq)]
     enum Library {
         Zlib,
         Libdeflate,
@@ -1905,7 +1902,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
-    ) -> Output<'a> {
+    ) -> BufferResult<'a> {
         gzip_or_deflate_sync(heap, data, options, true)
     }
 
@@ -1914,7 +1911,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibDecompressionOptions<'a>,
-    ) -> Output<'a> {
+    ) -> BufferResult<'a> {
         gunzip_or_inflate_sync(heap, data, &options, false)
     }
 
@@ -1922,7 +1919,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
-    ) -> Output<'a> {
+    ) -> BufferResult<'a> {
         gzip_or_deflate_sync(heap, data, options, false)
     }
 
@@ -1931,7 +1928,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibDecompressionOptions<'a>,
-    ) -> Output<'a> {
+    ) -> BufferResult<'a> {
         gunzip_or_inflate_sync(heap, data, &options, true)
     }
 
@@ -1940,7 +1937,7 @@ pub(crate) mod JSZlib {
         compressed: &[u8],
         options: &ZlibDecompressionOptions<'a>,
         is_gzip: bool,
-    ) -> Output<'a> {
+    ) -> BufferResult<'a> {
         let library = Library::from_option(heap, options.library)?;
 
         let mut list: Vec<u8> = Vec::new();
@@ -2027,7 +2024,7 @@ pub(crate) mod JSZlib {
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
         is_gzip: bool,
-    ) -> Output<'a> {
+    ) -> BufferResult<'a> {
         let level = options.level.map_or(6, |level| level as i32);
 
         match Library::from_option(heap, options.library)? {
@@ -2142,7 +2139,7 @@ pub(crate) mod JSZstd {
             match self {
                 Failure::OutOfMemory => global_this.create_out_of_memory_error(),
                 failure => global_this
-                    .err(jsc::ErrCode::ZSTD, format_args!("{failure}"))
+                    .err(jsc::ErrorCode::ZSTD, format_args!("{failure}"))
                     .to_js(),
             }
         }

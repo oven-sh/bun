@@ -69,18 +69,19 @@ describe("input types", () => {
     expect(TOML.parse(new DataView(sab))).toEqual(expected);
   });
 
-  test("a SharedArrayBuffer does not change under the parser while another thread writes it", async () => {
+  test("parses a SharedArrayBuffer that another thread is writing", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         /* js */ `
           const { Worker } = require("node:worker_threads");
-          const bytes = new Uint8Array(new SharedArrayBuffer(1 << 14)).fill(10);
+          const bytes = new Uint8Array(new SharedArrayBuffer(1 << 14)).fill("\\n".charCodeAt(0));
           const writer = new Worker(
             \`const { workerData: bytes, parentPort } = require("node:worker_threads");
              parentPort.postMessage("ready");
-             for (let i = 0; ; i++) bytes[i % bytes.length] = Math.floor(i / bytes.length) % 2 ? 35 : 10;\`,
+             // Each pass over the buffer flips every byte, so that a byte the parser reads twice differs.
+             for (let i = 0; ; i++) bytes[i % bytes.length] = (Math.floor(i / bytes.length) % 2 ? "#" : "\\\\n").charCodeAt(0);\`,
             { eval: true, workerData: bytes },
           );
           writer.once("message", () => {

@@ -5,8 +5,8 @@ import {
   ArrayType,
   BoolType,
   BufferSourceType,
-  BytesArgumentType,
   type BytesOptions,
+  BytesType,
   type ClassOptions,
   ClassType,
   type DictionaryOptions,
@@ -45,11 +45,11 @@ export const string = new StringType();
 /** The JS value itself, as a `JsLocal<'a>`. */
 export const any = new AnyType();
 
-/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.bytes`, `.arrayBuffer`. */
+/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
 
 /** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
-export const bytes = (options: BytesOptions) => new BytesArgumentType(options);
+export const bytes = (options: BytesOptions) => new BytesType(options);
 
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType(
@@ -88,10 +88,7 @@ export const fn = (signature: SignatureOptions) => new FunctionDefinition([signa
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
 
-/**
- * `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions.
- * `b.namespace({ wyhash: { .. }, .. }, { call: "wyhash" })`: a function that holds them, and does what that one does.
- */
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. */
 export const namespace = (functions: Record<string, SignatureOptions>, options?: NamespaceOptions) =>
   new NamespaceDefinition(functions, options);
 

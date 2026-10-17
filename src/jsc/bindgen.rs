@@ -366,81 +366,55 @@ impl<'a> JsLocal<'a, BufferSource> {
     }
 }
 
-/// The bytes of a buffer that may be a `SharedArrayBuffer`'s, which another thread can write at any time. There is no
-/// `&[u8]` of them: a byte can differ each time it is read, and only what is written for that reads them.
+/// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.
 #[derive(Clone, Copy)]
-pub struct PossiblySharedBytes<'a> {
-    data: *const u8,
-    length: usize,
-    lifetime: PhantomData<&'a ()>,
-}
-
-impl PossiblySharedBytes<'_> {
-    /// `None` if `range` starts beyond the end.
-    #[inline]
-    pub fn get(self, range: core::ops::RangeFrom<usize>) -> Option<Self> {
-        let length = self.length.checked_sub(range.start)?;
-        // SAFETY: at most one past the end.
-        let data = unsafe { self.data.add(range.start) };
-        Some(Self {
-            data,
-            length,
-            ..self
-        })
-    }
-
-    /// The byte there can have changed by the time this returns.
-    #[inline]
-    pub fn index_of_char(self, needle: u8) -> Option<usize> {
-        // SAFETY: readable for `'a`.
-        unsafe { bun_highway::index_of_char_raw(self.data, self.length, needle) }
-    }
-}
-
-/// `b.bytes` in a function that can run JavaScript, which can detach, resize or free a buffer. The bytes are borrowed
-/// from the [`JsHeap`], so nothing that takes the `&mut JsScope` runs while they are.
-#[derive(Clone, Copy)]
-pub struct Bytes<'a> {
-    /// What JavaScript does not change: the UTF-8 of a string, or a copy. Null data for a buffer.
-    stable: extern_types::ExternBytes,
+pub struct JsBytes<'a> {
+    /// What JavaScript does not change: the UTF-8 of a string, or a copy. `None` for a `Blob` or a buffer.
+    stable: Option<&'a [u8]>,
     value: JsLocal<'a>,
 }
 
-impl<'a> Bytes<'a> {
+impl<'a> JsBytes<'a> {
+    /// # Safety
+    /// As [`ExternBytes::get`](extern_types::ExternBytes::get).
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn from_extern(
         argument: extern_types::ExternWithValue<extern_types::ExternBytes>,
         heap: &JsHeap<'a>,
     ) -> Self {
-        Self {
-            stable: argument.converted,
-            // SAFETY: forwarded.
-            value: unsafe { JsLocal::from_extern(argument.value, heap) },
+        // SAFETY: forwarded.
+        unsafe {
+            Self {
+                stable: argument.converted.get_optional(heap),
+                value: JsLocal::from_extern(argument.value, heap),
+            }
         }
     }
 
     /// Those of a buffer are as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn get<'heap>(self, heap: &'heap JsHeap<'a>) -> &'heap [u8] {
-        // SAFETY: `from_extern`'s caller holds both until the call returns, which `'a` does not outlive.
-        unsafe {
-            match self.stable.get_optional(heap) {
-                Some(bytes) => bytes,
-                None => extern_types::Bun__Bindgen__bytesOfBuffer(self.value.0).get(heap),
-            }
+        match self.stable {
+            Some(bytes) => bytes,
+            // SAFETY: the frame keeps `value` alive, and only JavaScript moves its bytes, which takes the `&mut JsScope` that `'heap` borrows from.
+            None => unsafe {
+                extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.value.0).get(heap)
+            },
         }
     }
 }
 
 /// `b.bytes` with `string: "asIs"`.
-pub enum StringOrBytes<'a> {
+pub enum StringOrJsBytes<'a> {
     /// Latin-1 or UTF-16.
     String(bun_core::String),
-    Bytes(Bytes<'a>),
+    Bytes(JsBytes<'a>),
 }
 
-impl<'a> StringOrBytes<'a> {
+impl<'a> StringOrJsBytes<'a> {
+    /// # Safety
+    /// As [`ExternBytes::get`](extern_types::ExternBytes::get). The string's ref becomes the result's.
     #[doc(hidden)]
     #[inline]
     pub unsafe fn from_extern(
@@ -450,20 +424,32 @@ impl<'a> StringOrBytes<'a> {
         if !argument.converted.is_null() {
             return Self::String(extern_types::adopt_string(argument.converted));
         }
-        Self::Bytes(Bytes {
-            stable: extern_types::ExternBytes::NULL,
+        Self::Bytes(JsBytes {
+            stable: None,
             // SAFETY: forwarded.
             value: unsafe { JsLocal::from_extern(argument.value, heap) },
         })
     }
+
+    /// `held: "copied"`.
+    #[doc(hidden)]
+    pub fn into_vec(self, heap: &JsHeap<'a>) -> Vec<u8> {
+        let copy = match self {
+            Self::String(string) => string.to_owned_slice(),
+            Self::Bytes(bytes) => bytes.get(heap).to_vec(),
+        };
+        heap.global_object().vm().report_extra_memory(copy.len());
+        copy
+    }
 }
 
-/// `b.bytes` with `held: "pinned"`, for a job on another thread to read. A string is thread-isolated. A buffer is pinned
-/// and GC-rooted, and a resizable one copied. It is dropped on the JS thread.
+/// `b.bytes` with `held: "pinned"`, for a job on another thread to read. It is dropped on the JS thread.
 pub struct PinnedBytes(ThreadIsolated<Pinned>);
 
 enum Pinned {
-    Utf8(bun_core::Utf8Bytes<'static>),
+    /// Thread-isolated.
+    String(bun_core::Utf8WithString),
+    /// GC-rooted too. A resizable one is copied.
     Buffer(PinnedArrayBuffer),
 }
 
@@ -471,25 +457,29 @@ enum Pinned {
 unsafe impl ThreadIsolatedArg for Pinned {}
 
 impl PinnedBytes {
+    /// # Safety
+    /// As [`StringOrJsBytes::from_extern`]. What is not a string is a buffer.
     #[doc(hidden)]
     pub unsafe fn from_extern<'a>(
         argument: extern_types::ExternWithValue<extern_types::ExternString>,
         heap: &JsHeap<'a>,
     ) -> Result<'a, Self> {
         let global = heap.global_object();
-        let pinned = if argument.converted.is_null() {
-            match PinnedArrayBuffer::root_read_only(global, argument.value) {
-                Some(buffer) => Pinned::Buffer(buffer),
-                None => return Err(global.throw_out_of_memory().into()),
+        // SAFETY: forwarded.
+        let pinned = match unsafe { StringOrJsBytes::from_extern(argument, heap) } {
+            StringOrJsBytes::Bytes(bytes) => {
+                match PinnedArrayBuffer::root_read_only(global, bytes.value.0) {
+                    Some(buffer) => Pinned::Buffer(buffer),
+                    None => return Err(global.throw_out_of_memory().into()),
+                }
             }
-        } else {
-            let utf8 = extern_types::adopt_string(argument.converted)
-                .into_utf8_with_string_thread_isolated()
-                .into_utf8();
-            if let bun_core::Utf8Bytes::Owned(transcoded) = &utf8 {
-                global.vm().report_extra_memory(transcoded.len());
+            StringOrJsBytes::String(string) => {
+                let utf8 = string.into_utf8_with_string_thread_isolated();
+                if !utf8.is_shared() {
+                    global.vm().report_extra_memory(utf8.slice().len());
+                }
+                Pinned::String(utf8)
             }
-            Pinned::Utf8(utf8)
         };
         // SAFETY: the string is thread-isolated, and the buffer pinned and GC-rooted.
         Ok(Self(unsafe { ThreadIsolated::new(pinned) }))
@@ -501,17 +491,10 @@ impl core::ops::Deref for PinnedBytes {
     #[inline]
     fn deref(&self) -> &[u8] {
         match &*self.0 {
-            Pinned::Utf8(utf8) => utf8,
+            Pinned::String(utf8) => utf8.slice(),
             Pinned::Buffer(buffer) => buffer.slice(),
         }
     }
-}
-
-/// An argument converted for use now, and the value itself for whatever holds it longer.
-#[derive(Clone, Copy)]
-pub struct WithValue<'a, T> {
-    pub converted: T,
-    pub value: JsLocal<'a>,
 }
 
 // ───────────────────────────── classes ─────────────────────────────

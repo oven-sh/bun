@@ -4,13 +4,12 @@ export default b.module({ rustPath: "crate::api::toml_object" });
 
 export const TOML = b.namespace({
   parse: {
-    /** The body refuses `undefined` and `null`. */
     args: {
       input: b.bytes({
         from: ["string", "buffer", "blob"],
         otherwise: "toString",
         refuse: ["undefined", "null"],
-        shared: "copy",
+        shared: "copied",
       }),
     },
     returns: b.any,
@@ -18,7 +17,9 @@ export const TOML = b.namespace({
     throws: true,
   },
   stringify: {
-    args: { value: b.any, replacer: b.any, space: b.any },
+    args: { value: b.any, replacer: b.any },
+    /** As for YAML and JSON5. `space` is ignored: the output is line-oriented and has no nesting indentation. */
+    length: 3,
     returns: b.any,
     capability: "js",
     throws: true,

@@ -6392,6 +6392,201 @@ it("connectionListener ends the connection after a Connection: close response in
   serverSide.destroy();
 });
 
+describe("connectionListener closes the connection like Node's resOnFinish", () => {
+  // A connection is ended after a response when the request forbade reuse, the
+  // response itself did, or (httpAllowHalfOpen) the peer half-closed while the
+  // response was in flight: Node's res._last.
+  type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+  // `connection` holds the value of every Connection header of the response.
+  type WireResponse = { connection: string[]; body: string };
+  // `destroyed`: the server destroyed its side of the connection in place of ending it.
+  type Outcome = { responses: WireResponse[]; ended: boolean; destroyed: boolean; served: string[] };
+  type Case = {
+    name: string;
+    version?: string;
+    requestHeaders?: string;
+    handler?: Handler;
+    // httpAllowHalfOpen server; the client half-closes right after its request.
+    peerEndsFirst?: boolean;
+    expected: Outcome;
+  };
+
+  // Splits what the client received at each status line, so every byte is in a response. A body
+  // is all that follows its head, and bytes with no head are a body too. `complete` is false
+  // while the last response lacks the end of its head or a part of its Content-Length.
+  function splitResponses(wire: string) {
+    const responses: WireResponse[] = [];
+    let complete = true;
+    for (const piece of wire === "" ? [] : wire.split(/(?=HTTP\/1\.1 \d{3} )/)) {
+      const headEnd = piece.indexOf("\r\n\r\n");
+      const head = headEnd === -1 ? "" : piece.slice(0, headEnd);
+      const body = headEnd === -1 ? piece : piece.slice(headEnd + 4);
+      complete = headEnd !== -1 && body.length >= Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+      responses.push({ connection: Array.from(head.matchAll(/^connection: (.*)$/gim), match => match[1]), body });
+    }
+    return { responses, complete };
+  }
+
+  async function serve({
+    version = "1.1",
+    requestHeaders = "",
+    handler = endBody,
+    peerEndsFirst = false,
+  }: Case): Promise<Outcome> {
+    const requestFor = (path: string) => `GET ${path} HTTP/${version}\r\nHost: x\r\n${requestHeaders}\r\n`;
+    const served: string[] = [];
+    const server = createServer((req, res) => {
+      served.push(req.url!);
+      handler(req, res);
+    });
+    if (peerEndsFirst) server.httpAllowHalfOpen = true;
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      let wire = "";
+      let ended = false;
+      let destroyed = false;
+      let observed = 0;
+      clientSide.on("error", reject);
+      clientSide.on("close", () => reject(new Error("the connection closed before the server ended it")));
+      clientSide.on("end", () => {
+        ended = true;
+        // Read in this listener: a side that has ended in both directions destroys itself right after it.
+        destroyed = serverSide.destroyed;
+        resolve();
+      });
+      clientSide.on("data", chunk => {
+        wire += chunk;
+        const { responses, complete } = splitResponses(wire);
+        if (!complete || responses.length === observed) return;
+        observed = responses.length;
+        // A server that ends the connection does so as the response finishes,
+        // so its 'end' settles this before the immediate runs. One that keeps
+        // it open is sent a second request and answers it (or, once the client
+        // has half-closed, is simply observed to still be open).
+        setImmediate(() => {
+          if (ended) return;
+          if (peerEndsFirst || observed >= 2) resolve();
+          else clientSide.write(requestFor("/2"));
+        });
+      });
+      if (peerEndsFirst) clientSide.end(requestFor("/1"));
+      else clientSide.write(requestFor("/1"));
+      await promise;
+      return { responses: splitResponses(wire).responses, ended, destroyed, served };
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  function endBody(_req: IncomingMessage, res: ServerResponse) {
+    res.end("served");
+  }
+  const answered = (connection: string[], body = "served"): WireResponse => ({ connection, body });
+  const ends = (response: WireResponse): Outcome => ({
+    responses: [response],
+    ended: true,
+    destroyed: false,
+    served: ["/1"],
+  });
+  const closes = ends(answered(["close"]));
+  const closesAdvertisingKeepAlive = ends(answered(["keep-alive"]));
+  let manyOtherHeaders = "";
+  for (let i = 0; i < 40; i++) manyOtherHeaders += `X-Filler-${i}: ${i}\r\n`;
+
+  const cases: Case[] = [
+    {
+      name: "ends it after answering an HTTP/1.0 request that asked for keep-alive",
+      version: "1.0",
+      requestHeaders: "Connection: keep-alive\r\n",
+      expected: closes,
+    },
+    { name: "ends it after answering an HTTP/1.0 request", version: "1.0", expected: closes },
+    {
+      name: "ends it after answering an HTTP/1.1 request that sent Connection: close",
+      requestHeaders: "Connection: close\r\n",
+      expected: closes,
+    },
+    {
+      // More header fields than the parser delivers in one batch.
+      name: "ends it after answering a Connection: close request that carried many other headers",
+      requestHeaders: "Connection: close\r\n" + manyOtherHeaders,
+      expected: closes,
+    },
+    {
+      name: "ends it after a response the handler gave a Connection: close header",
+      handler: (_req, res) => {
+        res.setHeader("Connection", "close");
+        res.end("served");
+      },
+      expected: closes,
+    },
+    {
+      name: "ends it after a response the handler cleared shouldKeepAlive on",
+      handler: (_req, res) => {
+        res.shouldKeepAlive = false;
+        res.end("served");
+      },
+      expected: closes,
+    },
+    {
+      // Node's _removedConnection branch: nothing advertised, still the last response.
+      name: "ends it after a response with shouldKeepAlive cleared and the Connection header removed",
+      handler: (_req, res) => {
+        res.removeHeader("Connection");
+        res.shouldKeepAlive = false;
+        res.end("served");
+      },
+      expected: ends(answered([])),
+    },
+    {
+      name: "ends it after a 204 response carrying a Transfer-Encoding header",
+      handler: (_req, res) => {
+        res.writeHead(204, { "Transfer-Encoding": "chunked" });
+        res.end();
+      },
+      expected: ends(answered(["close"], "")),
+    },
+    {
+      // An HTTP/1.0 response without a Content-Length ends where the connection
+      // does, whatever Connection header the handler writes itself.
+      name: "ends an HTTP/1.0 connection after a response without Content-Length, even when the handler advertised keep-alive",
+      version: "1.0",
+      requestHeaders: "Connection: keep-alive\r\n",
+      handler: (_req, res) => {
+        res.setHeader("Connection", "keep-alive");
+        res.end("served");
+      },
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "ends it after the response when the peer half-closed before the handler answered (httpAllowHalfOpen)",
+      peerEndsFirst: true,
+      handler: (req, res) => req.socket.once("end", () => res.end("served")),
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "ends it after a synchronous response to a request that arrived together with the peer's FIN (httpAllowHalfOpen)",
+      peerEndsFirst: true,
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "keeps a kept-alive HTTP/1.1 connection open for the next request",
+      expected: {
+        responses: [answered(["keep-alive"]), answered(["keep-alive"])],
+        ended: false,
+        destroyed: false,
+        served: ["/1", "/2"],
+      },
+    },
+  ];
+  it.each(cases)("$name", async testCase => {
+    expect(await serve(testCase)).toEqual(testCase.expected);
+  });
+});
+
 it("connectionListener resets the connection when a queued pipelined response is destroyed", async () => {
   // Deliberate divergence from Node v26, which assigns the destroyed message
   // and wedges the connection until requestTimeout: an HTTP/1.1 connection

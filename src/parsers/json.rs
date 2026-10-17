@@ -944,11 +944,6 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 pub mod scan {
     use bun_core::strings;
 
-    /// Start of the next token at or after `p`; `None` when only whitespace and comments are left.
-    pub fn next_token(contents: &[u8], p: usize) -> Option<usize> {
-        gap(contents, p).map(|gap| gap.end)
-    }
-
     /// What is between two tokens.
     #[derive(Clone, Copy)]
     pub struct Gap {

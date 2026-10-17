@@ -2,11 +2,15 @@ import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
+import domain from "node:domain";
+import vm from "node:vm";
+import { inheritedErrors, thrownBy } from "../inherited-errors";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
 import EventEmitter, {
   captureRejectionSymbol,
+  EventEmitterAsyncResource,
   getEventListeners,
   getMaxListeners,
   listenerCount,
@@ -755,6 +759,148 @@ describe("EventEmitter error handling", () => {
     }).toThrow("Hello");
 
     expect(handled).toBe(true);
+  });
+
+  // Node throws `er` itself when `er instanceof Error`: https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L472
+  describe("an 'error' event with no listener throws the emitted error itself", () => {
+    const routes: [route: string, emit: (x: unknown) => unknown][] = [
+      ["emit", x => new EventEmitter().emit("error", x)],
+      ["EventEmitterAsyncResource#emit", x => new EventEmitterAsyncResource({ name: "test" }).emit("error", x)],
+      ["emit on a domain", x => domain.create().emit("error", x)],
+    ];
+    describe.each(routes)("%s", (_route, emit) => {
+      test.each(inheritedErrors)("%s", (_kind, make) => {
+        const x = make();
+        expect(thrownBy(() => emit(x))).toBe(x);
+      });
+    });
+
+    // Not as in Node: `x instanceof Error` is false here, so Node throws ERR_UNHANDLED_ERROR.
+    test("a native error of another realm is thrown as itself", () => {
+      const x = vm.runInNewContext("new Error('m')");
+      expect(thrownBy(() => new EventEmitter().emit("error", x))).toBe(x);
+    });
+
+    test("the errorMonitor listeners run before the error is classified", () => {
+      const emitter = new EventEmitter();
+      emitter.on(EventEmitter.errorMonitor, er => void Object.setPrototypeOf(er, Error.prototype));
+      const x = { message: "m" };
+      expect(thrownBy(() => emitter.emit("error", x))).toBe(x);
+    });
+
+    test("a getPrototypeOf trap that throws propagates", () => {
+      const trapError = new RangeError("trap");
+      const x = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw trapError;
+          },
+        },
+      );
+      expect(thrownBy(() => new EventEmitter().emit("error", x))).toBe(trapError);
+    });
+
+    // Not as in Node: it throws a RangeError. JavaScriptCore's `x instanceof Error` never returns.
+    test("a prototype chain that cycles through a Proxy is no error", () => {
+      const x: object = new Proxy({}, { getPrototypeOf: () => x });
+      const thrown = thrownBy(() => new EventEmitter().emit("error", x)) as { code?: string; context?: unknown };
+      expect({ code: thrown.code, contextIsTheValue: thrown.context === x }).toEqual({
+        code: "ERR_UNHANDLED_ERROR",
+        contextIsTheValue: true,
+      });
+    });
+
+    test.concurrent("the error reaches 'uncaughtException' unchanged", async () => {
+      const script = `
+        const { EventEmitter } = require("node:events");
+        const { Readable, Writable } = require("node:stream");
+        function OldError(message) {
+          Error.captureStackTrace(this, OldError);
+          this.message = message;
+          this.code = "E_OLD";
+        }
+        require("node:util").inherits(OldError, Error);
+        const routes = {
+          "readable.destroy(x)": x => new Readable({ read() {} }).destroy(x),
+          "writable.destroy(x)": x => new Writable({ write() {} }).destroy(x),
+          "a rejected listener with captureRejections": x => {
+            const emitter = new EventEmitter({ captureRejections: true });
+            emitter.on("go", async () => {
+              throw x;
+            });
+            emitter.emit("go");
+          },
+        };
+        const names = Object.keys(routes);
+        let i = 0;
+        let x;
+        process.on("uncaughtException", e => {
+          console.log(names[i] + ": " + (e === x ? "x itself" : "another error, code " + e?.code));
+          i++;
+          next();
+        });
+        function next() {
+          if (i === names.length) return;
+          x = new OldError("m");
+          routes[names[i]](x);
+        }
+        next();
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: [
+          "readable.destroy(x): x itself",
+          "writable.destroy(x): x itself",
+          "a rejected listener with captureRejections: x itself",
+        ],
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("globals replaced after node:events is loaded change nothing", async () => {
+      const script = `
+        const { EventEmitter } = require("node:events");
+        function OldError(message) {
+          this.message = message;
+        }
+        OldError.prototype = Object.create(Error.prototype);
+        const errors = { "a native error": new Error("m"), "an old-style error": new OldError("m") };
+        function run(tamper) {
+          for (const [kind, x] of Object.entries(errors)) {
+            let thrown;
+            try {
+              new EventEmitter().emit("error", x);
+            } catch (e) {
+              thrown = e;
+            }
+            console.log(tamper + ", " + kind + ": " + (thrown === x ? "x itself" : "another error"));
+          }
+        }
+        const RealError = Error;
+        const realIsError = Error.isError;
+        globalThis.Error = function FakeError() {};
+        run("globalThis.Error replaced");
+        globalThis.Error = RealError;
+        Error.isError = () => false;
+        run("Error.isError replaced");
+        Error.isError = realIsError;
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: [
+          "globalThis.Error replaced, a native error: x itself",
+          "globalThis.Error replaced, an old-style error: x itself",
+          "Error.isError replaced, a native error: x itself",
+          "Error.isError replaced, an old-style error: x itself",
+        ],
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
   });
 });
 

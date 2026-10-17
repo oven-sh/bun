@@ -288,11 +288,11 @@ namespace Bun {
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
 }
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool isTestRunner)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, isTestRunner, envp, envc, onCrash]() {
         Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
@@ -372,6 +372,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // `bun test --isolate`: FTL code dies with each file's global, so only tier up code hot enough to pay that back within one file.
             if (shortLivedGlobals) {
                 JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
+            }
+
+            // A tail call drops its caller's frame. The stack tells which file called vi.mock(), where an inline snapshot is, and where a test failed.
+            if (isTestRunner) {
+                JSC::Options::useTailCalls() = false;
             }
 
             if (envc > 0) [[likely]] {

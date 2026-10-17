@@ -1628,6 +1628,34 @@ test("jest.mock() and friends return jest, and vi.doMock() returns a disposable"
   expect(await import(a)).toBe(ns);
 });
 
+test.concurrent(
+  "a relative path is resolved beside the file of the call, also in an arrow that ends in the call",
+  async () => {
+    await expectFixturesToPass(
+      {
+        // "await" keeps this call out of tail position, so the helper's frame is the one below the arrow's.
+        "helpers/run.ts": `export const run = async callback => await callback();`,
+        "helpers/where.ts": `export default "beside the helper";`,
+        "tests/where.ts": `export default "beside the test file";`,
+        "tests/path.test.ts": `
+        import { expect, test, vi } from "vitest";
+        import { run } from "../helpers/run";
+
+        test("vi.importActual()", async () => {
+          expect((await run(() => vi.importActual("./where"))).default).toBe("beside the test file");
+        });
+
+        test("vi.doMock()", async () => {
+          await run(() => vi.doMock("./where", () => ({ default: "mock" })));
+          expect([(await import("./where")).default, (await import("../helpers/where")).default]).toEqual(["mock", "beside the helper"]);
+        });
+      `,
+      },
+      2,
+    );
+  },
+);
+
 test.concurrent.each(["bun:test", "vitest"])(
   "vi.doMock() from %s leaves a module that is already loaded as it is",
   async from => {

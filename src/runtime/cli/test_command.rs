@@ -1960,6 +1960,7 @@ impl TestCommand {
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate && !ctx.test_options.isolate_modules,
+            is_test_runner: true,
             ..Default::default()
         });
         bun_http::http_thread::init(&Default::default());

@@ -130,6 +130,20 @@ Like Node.js, Bun makes a `setTimeout()` delay under 1 ms wait for 1 ms. In `bun
 
 `setInterval()` keeps its minimum of 1 ms.
 
+## Tail Calls
+
+`bun test` turns off tail calls. Elsewhere in Bun, a strict-mode function that ends in a call, like `() => check(value)`, hands its stack frame to the function it calls. Node.js never does that.
+
+The test runner reads the stack. With every frame in place:
+
+- A failure's stack trace lists every function on the way to the failed `expect()`.
+- `toMatchInlineSnapshot()` finds its call site when it's the last call in a helper.
+- A relative path passed to `vi.mock()`, `vi.importActual()`, and similar functions resolves from the file that contains the call.
+
+A function that calls itself in tail position more than about ten thousand levels deep throws a `RangeError` under `bun test`, as it does in Node.js. Bytecode produced inside a test, by `Bun.build({ bytecode: true })` or `vm.Script`'s `cachedData`, has no tail calls either, wherever it runs later.
+
+Run `BUN_JSC_useTailCalls=1 bun test` to turn tail calls back on.
+
 ## Error Handling
 
 ### Unhandled Errors

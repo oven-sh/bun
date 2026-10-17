@@ -492,6 +492,8 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
+    /// `bun test` turns off tail calls so that stack traces keep every frame.
+    pub is_test_runner: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -511,6 +513,7 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            options.is_test_runner,
         )
     };
 }
@@ -1577,6 +1580,7 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        is_test_runner: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }

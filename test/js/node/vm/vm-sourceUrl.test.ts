@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 
+const normalize = (stack: string) =>
+  stack.replaceAll(import.meta.path, "<this-url>").replace(/node:vm:\d+:\d+/g, "node:vm");
+
 test("can get sourceURL from eval inside node:vm", () => {
   try {
     runInNewContext(
@@ -14,7 +17,7 @@ throw new Error("hello");
     var err: Error = e;
   }
 
-  expect(err!.stack!.replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
+  expect(normalize(err!.stack!)).toMatchSnapshot();
 });
 
 test("can get sourceURL inside node:vm", () => {
@@ -32,7 +35,7 @@ hello();
     { Bun },
   );
 
-  expect(err.replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
+  expect(normalize(err)).toMatchSnapshot();
 });
 
 test("eval sourceURL is correct", () => {
@@ -48,5 +51,5 @@ hello();
 //# sourceURL=hellohello.js
 `,
   );
-  expect(err.replaceAll(import.meta.path, "<this-url>")).toMatchSnapshot();
+  expect(normalize(err)).toMatchSnapshot();
 });

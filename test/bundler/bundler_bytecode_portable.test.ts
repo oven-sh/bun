@@ -388,6 +388,7 @@ describe("bytecode cache portability", () => {
     const bundled = Promise.all(bundlerBuilds.map(build));
     const outputs: Record<string, unknown> = {};
     // Program and module code blocks straight from the encoder, without the bundler in between.
+    // `bun test` turns off tail calls, so these have none. The bundler builds run in child processes, so they do.
     outputs["vm.Script features.js"] = fingerprint(
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
     );
@@ -566,16 +567,16 @@ describe("bytecode cache portability", () => {
           "sha256": "65b311a2fab26d51db7b7ffd3e399b225ad5e74b0f622439b6d53f4cd6dc689f",
         },
         "vm.Script features.js": {
-          "bytes": 45240,
-          "sha256": "95fb7b91fc1113cbc3e2b5b137bb5096dc70495aecebbd0a4b776fa141c693b4",
+          "bytes": 45232,
+          "sha256": "3361459c73d8383fd32b6d927a06c3eb2af56fdab87931411af54ba398a43d6f",
         },
         "vm.Script lodash.js": {
           "bytes": 342960,
           "sha256": "642ce0567cc591bd522d7102c76034f76985fd46c241d0df633a742cf0d78d13",
         },
         "vm.Script records.js": {
-          "bytes": 86624,
-          "sha256": "46323dc86ba13f798366cce48166284dfca6c70b402f53fae906acc81b496e9f",
+          "bytes": 86640,
+          "sha256": "e08a66d305d2f581d78aa148422285ea1c2a391dd7ac8e3a9b7b282ff7955fdc",
         },
         "vm.Script shapes.js": {
           "bytes": 257488,
@@ -586,12 +587,12 @@ describe("bytecode cache portability", () => {
           "sha256": "0369108eea0729ee4075e5e2e9d371835c63af9f10262ba27d3b4f18429ea5b8",
         },
         "vm.Script typescript.js": {
-          "bytes": 11326400,
-          "sha256": "0348719bf1d0408a92c883bda77569ec55f266d5df0a1fae4265c8f0aefcbbac",
+          "bytes": 11319632,
+          "sha256": "0541063a546f39bc713bdbba4050f0f73115307daca88b8cbaaedfc258a6cd41",
         },
         "vm.SourceTextModule acorn.mjs": {
-          "bytes": 255472,
-          "sha256": "e21a36d1a6c30aecc3b524d7516834c0d2ca8996eb57a21a8f64d10307ce0429",
+          "bytes": 255216,
+          "sha256": "67b6d1f1b5a8ebb07de9a7416a97071fc86af1b4e9bfe10e317e23697541ee4a",
         },
         "vm.SourceTextModule module.js": {
           "bytes": 9104,
@@ -629,6 +630,8 @@ describe("bytecode cache portability", () => {
       `,
     });
     const { entry, args } = bundlerBuilds[0];
+    // This process encodes too, and `bun test` turns off tail calls, which changes the bytecode.
+    const env = { ...bunEnv, BUN_JSC_useTailCalls: "0" };
     const hash = (bytes: Uint8Array) => fingerprint(bytes).sha256;
     const conditions: Record<string, Record<string, string>> = {
       "collectContinuously": { BUN_JSC_collectContinuously: "1" },
@@ -636,17 +639,17 @@ describe("bytecode cache portability", () => {
       "gcMaxHeapSize=64KB": { BUN_JSC_gcMaxHeapSize: "65536" },
     };
     // Start every child first; this process encodes its own internal modules while they run.
-    const reference = build(bundlerBuilds[0]);
+    const reference = bundle(join(String(dir), "reference"), entry, args, env);
     const conditioned = Promise.all(
-      Object.entries(conditions).map(async ([condition, env]) => {
-        const { jsc } = await bundle(join(String(dir), condition), entry, args, { ...bunEnv, ...env });
+      Object.entries(conditions).map(async ([condition, extra]) => {
+        const { jsc } = await bundle(join(String(dir), condition), entry, args, { ...env, ...extra });
         return [condition, hash(jsc)] as const;
       }),
     );
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(String(dir), "api.js"), entry, join(String(dir), "api"), join(corpusDir, "features.js")],
       cwd: corpusDir, // as bundle() does, so module path comments in the output agree
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });

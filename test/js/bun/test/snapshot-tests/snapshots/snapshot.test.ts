@@ -788,6 +788,18 @@ describe("inline snapshots", () => {
       `,
     );
   });
+  test("in a function that ends in the call", async () => {
+    await tester.test(
+      v => /*js*/ `
+        const run = callback => callback();
+        const check = value => expect(value).toMatchInlineSnapshot(${v("", bad, '`"a"`')});
+        test("cases", () => {
+          check("a");
+          run(() => expect("b").toMatchInlineSnapshot(${v("", bad, '`"b"`')}));
+        });
+      `,
+    );
+  });
   test("inline snapshot update cases", async () => {
     await tester.test(
       // prettier-ignore

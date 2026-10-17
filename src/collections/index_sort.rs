@@ -329,10 +329,10 @@ mod tests {
             let mut a: Vec<(u32, usize)> = shuffled(len).into_iter().zip(0..).collect();
             let mut b = a.clone();
             merge_sort_slice_by(&mut a, |x, y| x.0.cmp(&y.0));
-            b.sort_by(|x, y| x.0.cmp(&y.0));
+            b.sort_by_key(|x| x.0);
             assert_eq!(a, b, "{len}");
             merge_sort_slice_by(&mut a, |x, y| y.0.cmp(&x.0));
-            b.sort_by(|x, y| y.0.cmp(&x.0));
+            b.sort_by_key(|x| std::cmp::Reverse(x.0));
             assert_eq!(a, b, "{len}");
         }
     }
@@ -399,10 +399,9 @@ mod tests {
         for len in LENGTHS {
             let mut sorted = identity(len);
             merge_sort_indices(&mut sorted, &mut |a, b| cmp(a, b));
+            let mut neighbors = sorted.iter().zip(sorted.iter().skip(1));
             assert!(
-                sorted
-                    .windows(2)
-                    .all(|it| cmp(it[1], it[0]) != Ordering::Less),
+                neighbors.all(|(a, b)| cmp(*b, *a) != Ordering::Less),
                 "{len}"
             );
             let once = sorted.clone();

@@ -3462,7 +3462,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
     ])("SIG$name ends the install (bun install after `$setup`)", async ({ name, description, setup }) => {
       // bash ignores SIGQUIT, so for that signal the script becomes a bun that ends itself with it.
       const postinstall =
-        name === "QUIT" ? `exec ${bunExe()} -e "process.kill(process.pid, 'SIGQUIT')"` : `kill -${name} $$`;
+        name === "QUIT" ? `exec "${bunExe()}" -e "process.kill(process.pid, 'SIGQUIT')"` : `kill -${name} $$`;
       using ctx = await setupScriptPackages(linker, { baz: { scripts: { postinstall } } });
       await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", ...optional }));
       expect(await installAfter(ctx, setup)).toEqual({

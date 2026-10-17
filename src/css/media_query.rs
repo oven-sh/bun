@@ -65,11 +65,8 @@ pub trait QueryCondition: Sized + ToCss {
         v.extend(conditions);
         Self::create_operation(operator, v)
     }
-    /// Parse a query function such as `style(...)` or `scroll-state(...)`.
-    /// The dispatcher has consumed the `name(` token. `None` means the
-    /// implementor has no function with that name, and the dispatcher reports
-    /// the token as unexpected. Each implementor owns its own function set, so
-    /// `style(style(...))` is rejected by `StyleQuery` itself.
+    /// Parse the block of a query function (`style(`, `scroll-state(`) after
+    /// the `name(` token. `None`: this condition type has no such function.
     fn parse_query_function(
         _name: &[u8],
         _input: &mut Parser,

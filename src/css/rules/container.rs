@@ -381,9 +381,7 @@ impl QueryCondition for ContainerCondition {
                 dest.write_char(b')')
             }
             Self::ScrollState(query) => {
-                // A plain feature prints its own parentheses. Everything else
-                // (`not`, and/or, a feature that downlevels to `(min) and (max)`)
-                // needs the outer pair.
+                // A plain feature prints its own parentheses.
                 let needs_parens = query.needs_parens(None, &dest.targets);
                 dest.write_str("scroll-state")?;
                 if needs_parens {
@@ -466,8 +464,7 @@ impl ContainerCondition {
 
 // ─── ContainerCondition parse ─────────────────────────────────────────────
 impl ContainerCondition {
-    /// Parse the `( ... )` block of a query function such as `style(...)`: a
-    /// `not`/`and`/`or` condition over `Q`, or a single bare feature.
+    /// Parse a query function block: a condition over `Q`, or one bare feature.
     fn parse_query_function_block<Q: QueryCondition>(
         input: &mut css::Parser,
         wrap: fn(Q) -> Self,

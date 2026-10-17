@@ -1370,29 +1370,69 @@ class ChildProcess extends EventEmitter {
     return result;
   }
 
+  // Own data properties as in node. The private slots hold only what spawn() created.
+  #defineOwn(key: string, value) {
+    Object.defineProperty(this, key, { value, enumerable: true, configurable: true, writable: true });
+  }
+
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
+    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
+    this.#defineOwn("stdin", value);
+    return value;
+  }
+
+  set stdin(value) {
+    this.#defineOwn("stdin", value);
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
+    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
+    this.#defineOwn("stdout", value);
+    return value;
+  }
+
+  set stdout(value) {
+    this.#defineOwn("stdout", value);
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
+    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
+    this.#defineOwn("stderr", value);
+    return value;
+  }
+
+  set stderr(value) {
+    this.#defineOwn("stderr", value);
   }
 
   get stdio() {
-    return (this.#stdioObject ??= this.#createStdioObject());
+    if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+    const value = (this.#stdioObject ??= this.#createStdioObject());
+    this.#defineOwn("stdio", value);
+    return value;
   }
 
+  set stdio(value) {
+    this.#defineOwn("stdio", value);
+  }
+
+  // An assigned `connected`, until spawn() or a disconnect overwrites it.
+  #connected;
+
   get connected() {
-    const handle = this.#handle;
-    if (handle === null) return false;
-    return handle.connected ?? false;
+    if (!(#handle in this)) return undefined;
+    return this.#connected ?? this.#handle?.connected ?? false;
+  }
+
+  set connected(value) {
+    this.#connected = value;
   }
 
   get [kHandle]() {
+    if (!(#handle in this)) return undefined;
     return this.#handle;
   }
 
@@ -1432,6 +1472,12 @@ class ChildProcess extends EventEmitter {
 
     const detachedOption = options.detached;
     this.#stdioOptions = bunStdio;
+    this.#connected = undefined;
+    // node's spawn() assigns the streams over any value assigned before it.
+    for (const key of ["stdin", "stdout", "stderr", "stdio"]) {
+      if (ObjectHasOwn(this, key)) delete this[key];
+    }
+    this.#stdin = this.#stdout = this.#stderr = this.#stdioObject = undefined;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
@@ -1617,6 +1663,7 @@ class ChildProcess extends EventEmitter {
       // strange
       return;
     }
+    this.#connected = undefined;
     $assert(!this.connected);
     process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());
@@ -1626,6 +1673,7 @@ class ChildProcess extends EventEmitter {
       this.emit("error", $ERR_IPC_DISCONNECTED());
       return;
     }
+    this.#connected = undefined;
     this.#handle.disconnect();
     this.channel = null;
   }
@@ -1670,71 +1718,11 @@ class ChildProcess extends EventEmitter {
     if (this.#handle) this.#handle.unref();
   }
 
-  // Static initializer to make stdio properties enumerable on the prototype
-  // This fixes libraries like tinyspawn that use Object.assign(promise, childProcess)
+  // Enumerable, so Object.assign(promise, child) (tinyspawn) copies them.
   static {
-    Object.defineProperties(this.prototype, {
-      stdin: {
-        get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stdin", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
-      stdout: {
-        get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stdout", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
-      stderr: {
-        get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stderr", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
-      stdio: {
-        get: function () {
-          const value = (this.#stdioObject ??= this.#createStdioObject());
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stdio", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
-    });
+    for (const key of ["stdin", "stdout", "stderr", "stdio", "connected"]) {
+      Object.defineProperty(this.prototype, key, { enumerable: true });
+    }
   }
 }
 

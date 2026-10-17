@@ -110,6 +110,24 @@ test("a subclass inherits the static getters", () => {
   expect(MyHasher.algorithms).toEqual(Bun.CryptoHasher.algorithms);
 });
 
+test("heapStats does not count a prototype as an instance", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const classes = ["CryptoHasher", "MD4", "MD5", "SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256"];
+      for (const name of classes) Bun[name].prototype;
+      const counts = require("bun:jsc").heapStats().objectTypeCounts;
+      console.log(JSON.stringify(classes.filter(name => counts[name])));`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("[]\n");
+  expect(exitCode).toBe(0);
+});
+
 test("hex of odd length is refused in a String object as in a string", () => {
   const expected = expect.objectContaining({
     name: "TypeError",

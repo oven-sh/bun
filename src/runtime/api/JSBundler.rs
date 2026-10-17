@@ -157,6 +157,8 @@ pub(crate) mod js_bundler {
         pub(crate) throw_on_error: bool,
         pub(crate) env_behavior: api::DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
+        /// See `options::Env::node_env_define_is_default`.
+        pub(crate) node_env_define_is_default: bool,
         pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
@@ -226,6 +228,7 @@ pub(crate) mod js_bundler {
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
+                node_env_define_is_default: false,
                 compile: None,
                 files: FileMap::default(),
                 metafile: false,

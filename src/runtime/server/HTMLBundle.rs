@@ -467,6 +467,7 @@ impl Route {
             config
                 .define
                 .put(b"process.env.NODE_ENV", b"\"production\"")?;
+            config.node_env_define_is_default = true;
             config.jsx.development = false;
         } else {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;

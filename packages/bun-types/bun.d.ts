@@ -3511,6 +3511,10 @@ declare module "bun" {
      * Type check the entrypoints and everything they import, like `bun check`.
      * Equivalent to `--check` in the CLI.
      *
+     * The code in a file that only a plugin can read, such as `App.svelte`, is
+     * not checked. The files that it imports are checked if the
+     * `tsconfig.json` of the file that imports it includes them.
+     *
      * A type error fails the build like any other build error: nothing is
      * written, and each error is a {@link BuildMessage} whose message starts
      * with TypeScript's error code.

@@ -18,6 +18,26 @@ use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
+/// `Host::plugin_imports`: each importer by `tspath.Path`, sorted, with what it imports.
+pub type PluginImports = Vec<(Vec<u8>, Vec<PluginImport>)>;
+
+/// What the file at `path` imports, in `Host::plugin_imports`.
+pub fn plugin_imports_of<'a>(
+    imports: &'a [(Vec<u8>, Vec<PluginImport>)],
+    path: &[u8],
+) -> &'a [PluginImport] {
+    let found = imports.binary_search_by(|it| it.0.as_slice().cmp(path));
+    found.map_or(&[], |at| &imports[at].1)
+}
+
+/// What the bundler has found for an import.
+pub struct PluginImport {
+    /// What `PluginImports` has the file by.
+    pub path: Vec<u8>,
+    /// The type checker can read it. Otherwise only a plugin can read it or provides it.
+    pub is_source: bool,
+}
+
 /// The phases of loading a program, for timing. `Discover`, `Link` and `Merge` run on one thread,
 /// and `Aliases` is the time of the thread that waits for it. The others run on all threads in
 /// parallel, and the time of every thread is counted.
@@ -121,6 +141,8 @@ pub trait Host: Sync {
     /// `extraFileExtensions`: the extensions, each with its `.`, of which the host knows the
     /// language, besides those that TypeScript knows. `include` finds the files that have them.
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)];
+    /// The imports into and out of what a plugin of the bundler has loaded. See `PluginImport`.
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)];
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;

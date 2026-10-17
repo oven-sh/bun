@@ -56,7 +56,7 @@ impl<'c> StructuralIndex<'c> {
     }
 
     fn with_producer(contents: &'c [u8], use_scalar: bool) -> Self {
-        if contents.len() > i32::MAX as usize {
+        if contents.len() > bun_ast::Source::MAX_PARSEABLE_LEN {
             let mut idx = Self::empty(contents, use_scalar);
             idx.index_error = Some(IndexError::DocumentTooLarge);
             idx.done = true;

@@ -14,7 +14,7 @@ import {
   connectRequest,
   forwardRecordsTogether,
   startEchoServer,
-  startOriginBehindCorruptingProxy,
+  startOriginWithCorruptRecord,
   startRecordingProxy,
   startRenegotiatingWssServer,
   TLS_RECORD,
@@ -459,35 +459,44 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
     gc();
   });
 
-  describe.concurrent("a corrupt TLS record right behind messages that came with the 101", () => {
-    const messages = ["m0", "m1", "m2"];
-    const connect = (origin: { url: string; proxy: string }) =>
-      new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: tlsCerts.cert } } as ClientOptions);
+  // "direct" is the reference.
+  describe.concurrent.each(["direct", "http"] as const)(
+    "a corrupt TLS record right behind messages that came with the 101 (%s)",
+    route => {
+      const messages = ["m0", "m1", "m2"];
+      const connect = (origin: { url: string; proxy?: string }) =>
+        new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: tlsCerts.cert } } as ClientOptions);
 
-    test.each([
-      ["open", "send"],
-      ["open", "ping"],
-      ["open", "close"],
-      ["message", "send"],
-      ["message", "close"],
-    ] as const)("the '%s' listener calls %s(): every message is still delivered", async (listener, method) => {
-      await using origin = await startOriginBehindCorruptingProxy("http", messages);
-      const ws = connect(origin);
-      ws.once(listener, () => (method === "close" ? ws.close(1000) : ws[method]("never sent")));
-      expect(await wsEvents(ws)).toEqual([...messages, { close: [1006, Buffer.alloc(0)] }]);
-    });
-
-    test("the callback of a send() that could not be written gets an error", async () => {
-      await using origin = await startOriginBehindCorruptingProxy("http", messages);
-      const ws = connect(origin);
-      const sent = Promise.withResolvers<Error | null | undefined>();
-      ws.on("open", () => ws.send("never sent", sent.resolve));
-      expect({ events: await wsEvents(ws), sent: await sent.promise }).toEqual({
-        events: [...messages, { close: [1006, Buffer.alloc(0)] }],
-        sent: expect.objectContaining({ code: "ERR_STREAM_DESTROYED" }),
+      test.each([
+        ["open", "send"],
+        ["open", "ping"],
+        ["open", "close"],
+        ["open", "pause"],
+        ["message", "send"],
+        ["message", "close"],
+      ] as const)("the '%s' listener calls %s(): every message is still delivered", async (listener, method) => {
+        await using origin = await startOriginWithCorruptRecord(route, messages);
+        const ws = connect(origin);
+        ws.once(listener, () => {
+          if (method === "close") ws.close(1000);
+          else if (method === "pause") ws.pause();
+          else ws[method]("never sent");
+        });
+        expect(await wsEvents(ws)).toEqual([...messages, { close: [1006, Buffer.alloc(0)] }]);
       });
-    });
-  });
+
+      test("the callback of a send() that could not be written gets an error", async () => {
+        await using origin = await startOriginWithCorruptRecord(route, messages);
+        const ws = connect(origin);
+        const sent = Promise.withResolvers<Error | null | undefined>();
+        ws.on("open", () => ws.send("never sent", sent.resolve));
+        expect({ events: await wsEvents(ws), sent: await sent.promise }).toEqual({
+          events: [...messages, { close: [1006, Buffer.alloc(0)] }],
+          sent: expect.objectContaining({ code: "ERR_STREAM_DESTROYED" }),
+        });
+      });
+    },
+  );
 
   test.skipIf(!nodeExe())("a message sent during a TLS renegotiation arrives after it", async () => {
     await using origin = await startRenegotiatingWssServer("behind a message");

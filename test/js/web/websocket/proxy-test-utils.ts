@@ -304,10 +304,11 @@ export function forwardRecordsTogether(count: number, firstType?: number) {
 }
 
 /**
- * A wss:// origin that sends `messages` in the same write as the 101, behind a CONNECT proxy that
- * puts a TLS record that can't be decrypted behind them, in the same write to the client.
+ * A wss:// origin that sends `frames` (a string is a text message) in the same write as the 101. What stands in
+ * front of it, a CONNECT proxy or for "direct" a plain forwarder, puts a TLS record that can't be decrypted
+ * behind them, in the same write to the client. Connect to `url`, through `proxy` if there is one.
  */
-export async function startOriginBehindCorruptingProxy(scheme: "http" | "https", messages: string[]) {
+export async function startOriginWithCorruptRecord(route: "direct" | "http" | "https", frames: (string | Buffer)[]) {
   const response = forwardRecordsTogether(1);
   const origin = await createPeer({
     secure: true,
@@ -317,22 +318,29 @@ export async function startOriginBehindCorruptingProxy(scheme: "http" | "https",
       response.hold();
       return response101(connection);
     },
-    afterUpgrade: Buffer.concat(messages.map(message => encodeFrame(OP.text, message))),
+    afterUpgrade: Buffer.concat(frames.map(frame => (typeof frame === "string" ? encodeFrame(OP.text, frame) : frame))),
   });
   const corruptRecord = Buffer.from([TLS_RECORD.applicationData, 3, 3, 0, 20, ...Buffer.alloc(20, 7)]);
-  const proxy = await startRecordingProxy({
-    tls: scheme === "https",
-    onTargetData(chunk, forward) {
-      response.onTargetData(chunk, bytes =>
-        forward(response.forwarded.length === 1 ? Buffer.concat([bytes, corruptRecord]) : bytes),
-      );
-    },
-  });
+  const onTargetData = (chunk: Buffer, forward: (bytes: Buffer) => void) =>
+    response.onTargetData(chunk, bytes =>
+      forward(response.forwarded.length === 1 ? Buffer.concat([bytes, corruptRecord]) : bytes),
+    );
+  const hop =
+    route === "direct"
+      ? net.createServer(client => {
+          const target = net.connect(origin.port, "127.0.0.1");
+          client.on("data", chunk => target.write(chunk));
+          target.on("data", chunk => onTargetData(chunk, bytes => client.write(bytes)));
+          client.on("error", () => {}).on("close", () => target.destroy());
+          target.on("error", () => {}).on("close", () => client.destroy());
+        })
+      : createConnectProxy({ tls: route === "https", onTargetData });
+  const port = await startProxy(hop);
   return {
-    url: origin.url,
-    proxy: `${scheme}://127.0.0.1:${proxy.port}`,
+    url: route === "direct" ? `wss://127.0.0.1:${port}` : origin.url,
+    proxy: route === "direct" ? undefined : `${route}://127.0.0.1:${port}`,
     async [Symbol.asyncDispose]() {
-      proxy[Symbol.dispose]();
+      hop.close();
       await origin[Symbol.asyncDispose]();
     },
   };

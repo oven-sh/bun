@@ -228,7 +228,8 @@ interface NativeClientBinding {
     opcode: number,
     fin: boolean,
     compress: boolean,
-  ): void;
+    // False if the connection has ended, so nothing was sent. Its 'close' is queued behind the current task.
+  ): false | undefined;
   setRef(ws: NativeClient, ref: boolean): void;
   remoteAddress(ws: NativeClient): { address: string; family: "IPv4" | "IPv6"; port: number } | undefined;
 }
@@ -1372,9 +1373,9 @@ class WebSocket extends EventEmitter {
       this[kFirstFragment] = !!fin;
       scheduleSendCallback(this, status === -1, cb);
     } else if (transport === NATIVE_CLIENT) {
-      clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
+      const sent = clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
       this[kFirstFragment] = !!fin;
-      scheduleSendCallback(this, (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
+      scheduleSendCallback(this, sent === false || (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
     } else {
       this[kWriteCallback] = cb && bindAsyncContext(cb);
       try {
@@ -1504,7 +1505,12 @@ function sendControl(
   }
 
   if (isStream) flushUnusedWriteCallback(websocket);
-  else scheduleSendCallback(websocket, nativeBufferedAmount(websocket) !== 0, cb);
+  else scheduleSendCallback(websocket, endedNatively(websocket) || nativeBufferedAmount(websocket) !== 0, cb);
+}
+
+// The connection of a native client has ended, so it sends nothing. Its 'close' is queued behind the current task.
+function endedNatively(websocket: WebSocket): boolean {
+  return websocket[kTransport] === NATIVE_CLIENT && (websocket[kNative] as NativeClient).readyState !== OPEN;
 }
 
 function nativeBufferedAmount(websocket: WebSocket): number {
@@ -2386,7 +2392,7 @@ function extractAgentOptions(agent: Agent): {
         headers = new Headers(headers);
         for (const name of setByAgent) headers.delete(name);
       } else {
-        const kept: HttpHeaders = {};
+        const kept: HttpHeaders = { __proto__: null };
         for (const name of Object.keys(headers)) {
           if (!setByAgent.includes(name.toLowerCase())) kept[name] = headers[name];
         }

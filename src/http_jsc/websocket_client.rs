@@ -348,7 +348,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// The single teardown path. Closes the connection if it's still open, reports the
     /// outcome to C++ and releases the C++ ref. The close is clean (RFC 6455 §7.1.4) if both
-    /// Close frames were exchanged, no matter how the connection ended afterwards.
+    /// Close frames were exchanged, no matter how the connection ended afterwards. Once the peer's
+    /// Close frame has arrived, its code is the outcome (§7.1.5), also if the connection then fails.
     ///
     /// Every caller holds a ref guard (the uws dispatcher, a C++ entry point,
     /// or the tunnel callback), so `self` outlives the releases below.
@@ -364,11 +365,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if is_stream {
             ws.stream_destroy();
         }
-        match outcome {
-            Outcome::Failed(code, detail) => {
+        match (outcome, received) {
+            (Outcome::Failed(code, detail), None) => {
                 ws.did_fail(code, buffered_amount, BunString::EMPTY, detail);
             }
-            Outcome::Closed => {
+            (_, received) => {
                 let was_clean = received.is_some() && self.sent_fin.get();
                 let (code, reason) = received.unwrap_or((1006, BunString::EMPTY));
                 ws.did_close(code, reason, was_clean, buffered_amount);
@@ -406,7 +407,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.send_fin_if_done();
     }
 
-    /// Only a TLS renegotiation reaches this: the upgrade client handles the first handshake.
+    /// The upgrade client handles the first handshake. This gets the end of a renegotiation, and a
+    /// read that failed (`success` is 0).
     pub fn handle_handshake(
         &self,
         socket: Socket<SSL>,
@@ -426,6 +428,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             success == 1 && ssl_error.error_no == 0,
             &self.verified_hostname,
         ) {
+            self.parse_initial_data();
             self.fail(ErrorCode::TlsHandshakeFailed);
         }
     }

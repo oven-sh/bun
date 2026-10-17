@@ -22,13 +22,14 @@ import {
   forwardRecordsTogether,
   openOrFailure,
   startEchoServer,
-  startOriginBehindCorruptingProxy,
+  startOriginWithCorruptRecord,
   startProxy,
   startRawWssServer,
   startRecordingProxy,
   startRenegotiatingWssServer,
   TLS_RECORD,
 } from "./proxy-test-utils";
+import { closePayload, encodeFrame, OP } from "./raw-peer";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
@@ -874,31 +875,47 @@ describe.concurrent.skipIf(!harness.nodeExe())("wss:// origin that renegotiates"
   });
 });
 
-// The tunnel's TLS engine refuses writes as soon as a read fails, and only then hands over what it decrypted before
-// the failure. So these listeners run while it refuses.
-describe.concurrent("wss:// through a proxy: a corrupt TLS record right behind the messages", () => {
+// What was decrypted before a read failed is delivered, whatever a listener does meanwhile. The tunnel's TLS engine
+// refuses writes as soon as the read fails, so these listeners run while it refuses. "direct" is the reference.
+describe.concurrent("wss://: a corrupt TLS record right behind the messages", () => {
   const messages = ["m0", "m1", "m2"];
+  const connect = (origin: { url: string; proxy?: string }) =>
+    new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: tlsCerts.cert } });
 
-  describe.each(["http", "https"] as const)("%s proxy", scheme => {
+  describe.each(["direct", "http", "https"] as const)("%s", route => {
+    // Only a direct connection reports the failed read.
+    const failure: ClientEvent[] = route === "direct" ? [{ error: expect.any(String) }] : [];
+
     test.each([
       ["open", "send"],
       ["open", "ping"],
+      ["open", "pause"],
       ["message", "send"],
       ["message", "pong"],
     ] as const)("the '%s' listener calls %s(): every message is still delivered", async (listener, method) => {
-      await using origin = await startOriginBehindCorruptingProxy(scheme, messages);
-      const ws = new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: tlsCerts.cert } });
+      await using origin = await startOriginWithCorruptRecord(route, messages);
+      const ws = connect(origin);
       ws.addEventListener(listener, () => ws[method]("never sent"), { once: true });
-      expect(await clientEvents(ws)).toEqual([...messages, { code: 1006, reason: "", wasClean: false }]);
+      expect(await clientEvents(ws)).toEqual([...messages, ...failure, { code: 1006, reason: "", wasClean: false }]);
     });
 
     test("what send() could not write stays in bufferedAmount", async () => {
-      await using origin = await startOriginBehindCorruptingProxy(scheme, messages);
-      const ws = new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: tlsCerts.cert } });
+      await using origin = await startOriginWithCorruptRecord(route, messages);
+      const ws = connect(origin);
       ws.addEventListener("open", () => ws.send("never sent"));
       await clientEvents(ws);
       // The whole frame: a 2-byte header, the mask and the payload.
       expect(ws.bufferedAmount).toBe(2 + 4 + "never sent".length);
+    });
+
+    test("the peer's Close frame in front of it decides the close code", async () => {
+      const close = encodeFrame(OP.close, closePayload(4001, "why"));
+      await using origin = await startOriginWithCorruptRecord(route, [...messages, close]);
+      // Not clean: the reply can't be sent any more.
+      expect(await clientEvents(connect(origin))).toEqual([
+        ...messages,
+        { code: 4001, reason: "why", wasClean: false },
+      ]);
     });
   });
 });

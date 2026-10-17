@@ -3451,14 +3451,19 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
 
     // SIGINT, SIGTERM, SIGHUP and SIGQUIT ask a process to stop, so they end the install also for a
     // package that nothing else needs. bun itself can outlive such a signal, under `nohup` or as
-    // PID 1 of a container: the last row ignores SIGTERM the way `nohup` ignores SIGHUP.
+    // PID 1 of a container: the last row ignores SIGTERM the way `nohup` ignores SIGHUP. SIGQUIT
+    // writes a core file by default, so its row sets that limit to 0 for bun and for the script.
     test.each([
       { name: "INT", description: "Quit request", setup: ":" },
       { name: "TERM", description: "Polite quit request", setup: ":" },
       { name: "HUP", description: "Terminal hung up", setup: ":" },
+      { name: "QUIT", description: "Quit request", setup: "ulimit -c 0" },
       { name: "TERM", description: "Polite quit request", setup: 'trap "" TERM' },
     ])("SIG$name ends the install (bun install after `$setup`)", async ({ name, description, setup }) => {
-      using ctx = await setupScriptPackages(linker, { baz: { scripts: { postinstall: `kill -${name} $$` } } });
+      // bash ignores SIGQUIT, so for that signal the script becomes a bun that ends itself with it.
+      const postinstall =
+        name === "QUIT" ? `exec ${bunExe()} -e "process.kill(process.pid, 'SIGQUIT')"` : `kill -${name} $$`;
+      using ctx = await setupScriptPackages(linker, { baz: { scripts: { postinstall } } });
       await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", ...optional }));
       expect(await installAfter(ctx, setup)).toEqual({
         errors: [`${terminatedBy(name)} (${description})`],

@@ -623,29 +623,29 @@ describe("?mode=", () => {
   });
 });
 
+// What `make` opens: a database with one row, or a file that is not there.
+async function observe(exists: boolean, make: (file: string) => SQL) {
+  using dir = tempDir("sqlite-inherited", {});
+  const file = join(String(dir), "open.db");
+  if (exists) {
+    await using seed = new SQL({ adapter: "sqlite", filename: file });
+    await seed`CREATE TABLE t (n)`;
+    await seed`INSERT INTO t VALUES (1)`;
+  }
+  await using sql = make(file);
+  const rows = await sql`SELECT n FROM t`.catch(() => null);
+  return {
+    integer: rows && typeof rows[0].n,
+    writes: await sql`CREATE TABLE u (a)`.then(
+      () => true,
+      () => false,
+    ),
+    files: readdirSync(String(dir)),
+  };
+}
+
 describe("what the options object inherits", () => {
   const inheriting = (inherited: object, own: object = {}) => Object.assign(Object.create(inherited), own);
-
-  // What `make` opens: a database with one row, or a file that is not there.
-  async function observe(exists: boolean, make: (file: string) => SQL) {
-    using dir = tempDir("sqlite-inherited", {});
-    const file = join(String(dir), "open.db");
-    if (exists) {
-      await using seed = new SQL({ adapter: "sqlite", filename: file });
-      await seed`CREATE TABLE t (n)`;
-      await seed`INSERT INTO t VALUES (1)`;
-    }
-    await using sql = make(file);
-    const rows = await sql`SELECT n FROM t`.catch(() => null);
-    return {
-      integer: rows && typeof rows[0].n,
-      writes: await sql`CREATE TABLE u (a)`.then(
-        () => true,
-        () => false,
-      ),
-      files: readdirSync(String(dir)),
-    };
-  }
 
   type Shape = [string, (file: string, inherited: object) => SQL];
   // `sqlite://C:\\Temp\\open.db` is not a URL.
@@ -738,53 +738,6 @@ describe("what the options object inherits", () => {
     await using sql = new SQL("sqlite://:memory:?mode=ro", inheriting({ readonly: false }));
     expect(sql.options.readonly).toBe(true);
   });
-
-  // Object.prototype is not a prototype of the caller's own.
-  describe.each<[string, (file: string) => SQL]>([
-    ["new SQL(file, { adapter })", file => new SQL(file, { adapter: "sqlite" })],
-    ["new SQL('sqlite://file')", file => new SQL(`sqlite://${file}`)],
-    ["new SQL({ adapter, filename })", file => new SQL({ adapter: "sqlite", filename: file })],
-  ])("%s: what Object.prototype holds does not count", (_, make) => {
-    /** Makes the client while `values` are on Object.prototype, the way an assignment leaves them. */
-    const planted = (values: Record<string, unknown>, url: (file: string) => string) => (file: string) => {
-      for (const name of Object.keys(values)) {
-        Object.defineProperty(Object.prototype, name, {
-          value: values[name],
-          configurable: true,
-          enumerable: true,
-          writable: true,
-        });
-      }
-      try {
-        return make(url(file));
-      } finally {
-        for (const name of Object.keys(values)) delete (Object.prototype as Record<string, unknown>)[name];
-      }
-    };
-    const asItIs = (file: string) => file;
-
-    test("readonly: true", async () => {
-      expect(await observe(true, planted({ readonly: true }, asItIs))).toEqual({
-        integer: "number",
-        writes: true,
-        files: ["open.db"],
-      });
-    });
-    test("create: false", async () => {
-      expect(await observe(false, planted({ create: false }, asItIs))).toEqual({
-        integer: null,
-        writes: true,
-        files: ["open.db"],
-      });
-    });
-    test("safeIntegers: true and bigint: true", async () => {
-      expect((await observe(true, planted({ safeIntegers: true, bigint: true }, asItIs))).integer).toBe("number");
-    });
-    test("readonly: false and readwrite: true do not replace ?mode=ro", async () => {
-      const readOnly = (file: string) => `${file}?mode=ro`;
-      expect((await observe(true, planted({ readonly: false, readwrite: true }, readOnly))).writes).toBe(false);
-    });
-  });
 });
 
 describe("integers", () => {
@@ -798,5 +751,53 @@ describe("integers", () => {
   ])("%p", async (options, safeIntegers) => {
     await using sql = new SQL(":memory:", options);
     expect(sql.options.safeIntegers).toBe(safeIntegers as boolean);
+  });
+});
+
+// Object.prototype is not a prototype of the caller's own.
+// Last in the file: a key that was on Object.prototype makes what runs later in the process slower.
+describe.each<[string, (file: string) => SQL]>([
+  ["new SQL(file, { adapter })", file => new SQL(file, { adapter: "sqlite" })],
+  ["new SQL('sqlite://file')", file => new SQL(`sqlite://${file}`)],
+  ["new SQL({ adapter, filename })", file => new SQL({ adapter: "sqlite", filename: file })],
+])("%s: what Object.prototype holds does not count", (_, make) => {
+  /** Makes the client while `values` are on Object.prototype, the way an assignment leaves them. */
+  const planted = (values: Record<string, unknown>, url: (file: string) => string) => (file: string) => {
+    for (const name of Object.keys(values)) {
+      Object.defineProperty(Object.prototype, name, {
+        value: values[name],
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+    try {
+      return make(url(file));
+    } finally {
+      for (const name of Object.keys(values)) delete (Object.prototype as Record<string, unknown>)[name];
+    }
+  };
+  const asItIs = (file: string) => file;
+
+  test("readonly: true", async () => {
+    expect(await observe(true, planted({ readonly: true }, asItIs))).toEqual({
+      integer: "number",
+      writes: true,
+      files: ["open.db"],
+    });
+  });
+  test("create: false", async () => {
+    expect(await observe(false, planted({ create: false }, asItIs))).toEqual({
+      integer: null,
+      writes: true,
+      files: ["open.db"],
+    });
+  });
+  test("safeIntegers: true and bigint: true", async () => {
+    expect((await observe(true, planted({ safeIntegers: true, bigint: true }, asItIs))).integer).toBe("number");
+  });
+  test("readonly: false and readwrite: true do not replace ?mode=ro", async () => {
+    const readOnly = (file: string) => `${file}?mode=ro`;
+    expect((await observe(true, planted({ readonly: false, readwrite: true }, readOnly))).writes).toBe(false);
   });
 });

@@ -386,7 +386,154 @@ describe("what the options object inherits", () => {
   });
 });
 
+describe("inspecting sql.options", () => {
+  const secret = "sekret-password";
+
+  test.each<[string, () => InstanceType<typeof SQL>]>([
+    ["postgres URL", () => new SQL(`postgres://app:${secret}@127.0.0.1:5432/db`)],
+    ["mysql URL", () => new SQL(`mysql://app:${secret}@127.0.0.1:3306/db`)],
+    ["options", () => new SQL({ adapter: "postgres", hostname: "127.0.0.1", username: "app", password: secret })],
+    ["?password=", () => new SQL(`postgres://app@127.0.0.1/db?password=${secret}`)],
+  ])("the password is not printed (%s)", (_, make) => {
+    const sql = make();
+    expect(sql.options.password).toBe(secret);
+    expect(Object.keys(sql.options)).toContain("password");
+    expect(Bun.inspect(sql.options)).toContain('password: "[REDACTED]"');
+    for (const printed of [Bun.inspect(sql.options), util.inspect(sql.options), util.inspect(sql), Bun.inspect(sql)]) {
+      expect(printed).not.toContain(secret);
+    }
+  });
+
+  test("a password function is not called", () => {
+    let calls = 0;
+    const { options } = new SQL({ hostname: "127.0.0.1", password: () => (calls++, secret) });
+    expect(Bun.inspect(options)).toContain('password: "[REDACTED]"');
+    expect(calls).toBe(0);
+  });
+
+  test("an empty password is printed as it is", () => {
+    expect(Bun.inspect(optionsOf("postgres://app@127.0.0.1/db"))).toContain('password: ""');
+  });
+
+  test("tls.key and tls.passphrase are not printed", () => {
+    const key = Buffer.from("sekret-key");
+    const { options } = new SQL({ hostname: "127.0.0.1", tls: { key, passphrase: "sekret-passphrase" } });
+    expect(options.tls).toMatchObject({ key, passphrase: "sekret-passphrase" });
+    for (const printed of [Bun.inspect(options), util.inspect(options, { depth: 4 })]) {
+      expect(printed).toMatch(/passphrase: ["']\[REDACTED\]["']/);
+      expect(printed).toMatch(/key: ["']\[REDACTED\]["']/);
+      expect(printed).not.toContain("sekret-passphrase");
+      expect(printed).not.toContain(Bun.inspect(key));
+    }
+  });
+});
+
+// The pool reads `sql.options` again for every connection, so what is assigned reaches the native constructor unparsed.
+test.concurrent.each([
+  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED"],
+])("%s: invalid values assigned to sql.options reject the next connection", async (adapter, refused) => {
+  const port = await closedPort();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const timeouts = ["idleTimeout", "connectionTimeout", "maxLifetime"];
+async function attempt(assign) {
+  const sql = new Bun.SQL({ url: process.env.SQL_URL, max: 1 });
+  assign(sql.options);
+  try {
+    await sql.connect();
+    return "connected";
+  } catch (e) {
+    return e.code ?? e.name;
+  } finally {
+    await sql.close({ timeout: 0 });
+  }
+}
+const results = {};
+for (const [label, value] of [["object", {}], ["string", "abc"], ["negative", -1], ["huge", 1e300], ["NaN", NaN]]) {
+  results["timeouts " + label] = await attempt(options => {
+    for (const key of timeouts) options[key] = value;
+  });
+}
+for (const key of timeouts) {
+  results[key + " symbol"] = await attempt(options => {
+    options[key] = Symbol();
+  });
+  results[key + " valueOf throws"] = await attempt(options => {
+    options[key] = {
+      valueOf() {
+        throw Object.assign(new Error("from valueOf"), { code: "FROM_VALUE_OF" });
+      },
+    };
+  });
+}
+for (const [label, value] of [["object", {}], ["string", "require"], ["negative", -1], ["out of range", 5], ["fraction", 1.5]]) {
+  results["sslMode " + label] = await attempt(options => {
+    options.sslMode = value;
+  });
+}
+console.log(JSON.stringify(results));`,
+    ],
+    env: { ...bunEnv, SQL_URL: `${adapter}://user@127.0.0.1:${port}/db` },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "timeouts object": refused,
+    "timeouts string": refused,
+    "timeouts negative": refused,
+    "timeouts huge": refused,
+    "timeouts NaN": refused,
+    "idleTimeout symbol": "TypeError",
+    "idleTimeout valueOf throws": "FROM_VALUE_OF",
+    "connectionTimeout symbol": "TypeError",
+    "connectionTimeout valueOf throws": "FROM_VALUE_OF",
+    "maxLifetime symbol": "TypeError",
+    "maxLifetime valueOf throws": "FROM_VALUE_OF",
+    // A mode that cannot be mapped must not mean `disable`.
+    "sslMode object": "ERR_INVALID_ARG_TYPE",
+    "sslMode string": "ERR_INVALID_ARG_TYPE",
+    "sslMode negative": "ERR_INVALID_ARG_TYPE",
+    "sslMode out of range": "ERR_INVALID_ARG_TYPE",
+    "sslMode fraction": "ERR_INVALID_ARG_TYPE",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows).concurrent.each(["postgres", "mysql"] as const)(
+  "%s: a unix socket that is not there fails the connection, and TCP is not dialed",
+  async adapter => {
+    let tcpConnections = 0;
+    const { port, server } = await listeningServer(socket => {
+      tcpConnections++;
+      socket.destroy();
+    });
+    const sql = new SQL({
+      adapter,
+      path: "/nonexistent/dir/database.sock",
+      hostname: "127.0.0.1",
+      port,
+      username: "user",
+      database: "db",
+      max: 1,
+      connectionTimeout: 0.25,
+    });
+    try {
+      expect(await sql.connect().catch(e => e)).toBeInstanceOf(Error);
+      expect(tcpConnections).toBe(0);
+    } finally {
+      await sql.close({ timeout: 0 });
+      server.close();
+    }
+  },
+);
+
 // A merge of untrusted JSON, or a package, can leave keys on Object.prototype. They are not options.
+// Last in the file: a key that was on Object.prototype makes what runs later in the process slower.
 describe("what Object.prototype holds", () => {
   /** Runs `run` with `values` on Object.prototype, the way an assignment leaves them. */
   async function planted<T>(values: Record<string, unknown>, run: () => T | Promise<T>): Promise<T> {
@@ -606,149 +753,3 @@ describe("what Object.prototype holds", () => {
     });
   });
 });
-
-describe("inspecting sql.options", () => {
-  const secret = "sekret-password";
-
-  test.each<[string, () => InstanceType<typeof SQL>]>([
-    ["postgres URL", () => new SQL(`postgres://app:${secret}@127.0.0.1:5432/db`)],
-    ["mysql URL", () => new SQL(`mysql://app:${secret}@127.0.0.1:3306/db`)],
-    ["options", () => new SQL({ adapter: "postgres", hostname: "127.0.0.1", username: "app", password: secret })],
-    ["?password=", () => new SQL(`postgres://app@127.0.0.1/db?password=${secret}`)],
-  ])("the password is not printed (%s)", (_, make) => {
-    const sql = make();
-    expect(sql.options.password).toBe(secret);
-    expect(Object.keys(sql.options)).toContain("password");
-    expect(Bun.inspect(sql.options)).toContain('password: "[REDACTED]"');
-    for (const printed of [Bun.inspect(sql.options), util.inspect(sql.options), util.inspect(sql), Bun.inspect(sql)]) {
-      expect(printed).not.toContain(secret);
-    }
-  });
-
-  test("a password function is not called", () => {
-    let calls = 0;
-    const { options } = new SQL({ hostname: "127.0.0.1", password: () => (calls++, secret) });
-    expect(Bun.inspect(options)).toContain('password: "[REDACTED]"');
-    expect(calls).toBe(0);
-  });
-
-  test("an empty password is printed as it is", () => {
-    expect(Bun.inspect(optionsOf("postgres://app@127.0.0.1/db"))).toContain('password: ""');
-  });
-
-  test("tls.key and tls.passphrase are not printed", () => {
-    const key = Buffer.from("sekret-key");
-    const { options } = new SQL({ hostname: "127.0.0.1", tls: { key, passphrase: "sekret-passphrase" } });
-    expect(options.tls).toMatchObject({ key, passphrase: "sekret-passphrase" });
-    for (const printed of [Bun.inspect(options), util.inspect(options, { depth: 4 })]) {
-      expect(printed).toMatch(/passphrase: ["']\[REDACTED\]["']/);
-      expect(printed).toMatch(/key: ["']\[REDACTED\]["']/);
-      expect(printed).not.toContain("sekret-passphrase");
-      expect(printed).not.toContain(Bun.inspect(key));
-    }
-  });
-});
-
-// The pool reads `sql.options` again for every connection, so what is assigned reaches the native constructor unparsed.
-test.concurrent.each([
-  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED"],
-  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED"],
-])("%s: invalid values assigned to sql.options reject the next connection", async (adapter, refused) => {
-  const port = await closedPort();
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const timeouts = ["idleTimeout", "connectionTimeout", "maxLifetime"];
-async function attempt(assign) {
-  const sql = new Bun.SQL({ url: process.env.SQL_URL, max: 1 });
-  assign(sql.options);
-  try {
-    await sql.connect();
-    return "connected";
-  } catch (e) {
-    return e.code ?? e.name;
-  } finally {
-    await sql.close({ timeout: 0 });
-  }
-}
-const results = {};
-for (const [label, value] of [["object", {}], ["string", "abc"], ["negative", -1], ["huge", 1e300], ["NaN", NaN]]) {
-  results["timeouts " + label] = await attempt(options => {
-    for (const key of timeouts) options[key] = value;
-  });
-}
-for (const key of timeouts) {
-  results[key + " symbol"] = await attempt(options => {
-    options[key] = Symbol();
-  });
-  results[key + " valueOf throws"] = await attempt(options => {
-    options[key] = {
-      valueOf() {
-        throw Object.assign(new Error("from valueOf"), { code: "FROM_VALUE_OF" });
-      },
-    };
-  });
-}
-for (const [label, value] of [["object", {}], ["string", "require"], ["negative", -1], ["out of range", 5], ["fraction", 1.5]]) {
-  results["sslMode " + label] = await attempt(options => {
-    options.sslMode = value;
-  });
-}
-console.log(JSON.stringify(results));`,
-    ],
-    env: { ...bunEnv, SQL_URL: `${adapter}://user@127.0.0.1:${port}/db` },
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    "timeouts object": refused,
-    "timeouts string": refused,
-    "timeouts negative": refused,
-    "timeouts huge": refused,
-    "timeouts NaN": refused,
-    "idleTimeout symbol": "TypeError",
-    "idleTimeout valueOf throws": "FROM_VALUE_OF",
-    "connectionTimeout symbol": "TypeError",
-    "connectionTimeout valueOf throws": "FROM_VALUE_OF",
-    "maxLifetime symbol": "TypeError",
-    "maxLifetime valueOf throws": "FROM_VALUE_OF",
-    // A mode that cannot be mapped must not mean `disable`.
-    "sslMode object": "ERR_INVALID_ARG_TYPE",
-    "sslMode string": "ERR_INVALID_ARG_TYPE",
-    "sslMode negative": "ERR_INVALID_ARG_TYPE",
-    "sslMode out of range": "ERR_INVALID_ARG_TYPE",
-    "sslMode fraction": "ERR_INVALID_ARG_TYPE",
-  });
-  expect(exitCode).toBe(0);
-});
-
-test.skipIf(isWindows).concurrent.each(["postgres", "mysql"] as const)(
-  "%s: a unix socket that is not there fails the connection, and TCP is not dialed",
-  async adapter => {
-    let tcpConnections = 0;
-    const { port, server } = await listeningServer(socket => {
-      tcpConnections++;
-      socket.destroy();
-    });
-    const sql = new SQL({
-      adapter,
-      path: "/nonexistent/dir/database.sock",
-      hostname: "127.0.0.1",
-      port,
-      username: "user",
-      database: "db",
-      max: 1,
-      connectionTimeout: 0.25,
-    });
-    try {
-      expect(await sql.connect().catch(e => e)).toBeInstanceOf(Error);
-      expect(tcpConnections).toBe(0);
-    } finally {
-      await sql.close({ timeout: 0 });
-      server.close();
-    }
-  },
-);

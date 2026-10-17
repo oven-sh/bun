@@ -406,8 +406,8 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // The body of the response: a chunk size line, the chunk, its CRLF, and the
   // terminating chunk.
   const PEAK_FRAMED_SIZE = PEAK_CHUNK_SIZE.toString(16).length + 2 + PEAK_CHUNK_SIZE + 2 + 5;
-  // Measured with the fix: 1.05 on a release build, 1.13 on a debug ASAN
-  // build. Without it: 2.07 and 2.17. The sanitizer allocator adds the slack.
+  // Measured with the fix: 1.03 on a release build, 1.14 on a debug ASAN
+  // build. Without it: 2.04 and 2.21. The sanitizer allocator adds the slack.
   const PEAK_RATIO_BOUND = isASAN || isDebug ? 1.5 : 1.3;
   test.skipIf(!isLinux)("the framing behind a spilled tail does not copy the tail again", async () => {
     using dir = tempDir("pinned-write-peak", {});
@@ -425,12 +425,16 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         // A unix socket takes about 200 KB, so the rest of the body waits.
         const SOCKET = ${JSON.stringify(socketPath)};
         const peakBytes = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
+        // VmHWM never falls, so an earlier peak would hide the copies. Writing
+        // 5 to clear_refs sets it back to what is resident now.
+        const resetPeak = () => fs.writeFileSync("/proc/self/clear_refs", "5");
 
         const wrote = Promise.withResolvers();
         const ended = Promise.withResolvers();
         let baseline = 0;
         let peakOverBaseline = 0;
         const server = http.createServer((req, res) => {
+          resetPeak();
           baseline = peakBytes();
           // Zero pages are not resident, so the peak counts the copies only.
           // No Content-Length: chunked framing is what follows the tail.

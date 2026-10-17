@@ -2,6 +2,8 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFile as readFileCallback } from "node:fs";
+import { opendir, readFile } from "node:fs/promises";
 import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1396,11 +1398,11 @@ test.concurrent.each([
   ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
   ["deleted", `delete Error.stackTraceLimit;`],
 ])("Error.appendStackTrace does not crash when stackTraceLimit is %s", async (_, setup) => {
-  // An error made under such a limit has no frames, so appendStackTrace captures them first.
+  // An error made under such a limit has no stack, so appendStackTrace captures one first: no frames, so the header.
   const src = `${setup}
     const source = new Error("source"), destination = new Error("destination");
     Error.appendStackTrace(source, destination);
-    console.log(typeof destination.stack);`;
+    console.log(destination.stack);`;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
     env: bunEnv,
@@ -1408,7 +1410,10 @@ test.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "undefined", signalCode: null });
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+    stdout: "Error: destination",
+    signalCode: null,
+  });
   expect(exitCode).toBe(0);
 });
 
@@ -2088,3 +2093,61 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test.each([0, -1])("an error made under Error.stackTraceLimit = %p has its header as its stack", limit => {
+  class Sub extends Error {
+    name = "Sub";
+  }
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = limit;
+  try {
+    const errors = [
+      new Error("m"),
+      Error("m"),
+      new Error(),
+      new TypeError("m"),
+      new Sub("m"),
+      new AggregateError([], "m"),
+    ];
+    try {
+      new Array(-1);
+    } catch (e) {
+      e.message = "m";
+      errors.push(e);
+    }
+    expect(errors.map(e => [Object.hasOwn(e, "stack"), e.stack])).toEqual([
+      [true, "Error: m"],
+      [true, "Error: m"],
+      [true, "Error"],
+      [true, "TypeError: m"],
+      [true, "Sub: m"],
+      [true, "AggregateError: m"],
+      [true, "RangeError: m"],
+    ]);
+    expect(errors.filter(e => "line" in e || "column" in e || "sourceURL" in e)).toEqual([]);
+    expect(structuredClone(errors[0]).stack).toBe("Error: m");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});
+
+test("Error.prepareStackTrace gets no call sites under Error.stackTraceLimit = 0", () => {
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try {
+    Error.prepareStackTrace = (error, callSites) => [error.message, callSites];
+    expect(new Error("m").stack).toEqual(["m", []]);
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});
+
+test("an error that native code makes with no JavaScript on the stack has a stack", async () => {
+  const errors = await Promise.all([
+    readFile("/nonexistent-stack-test").catch(e => e),
+    new Promise(resolve => readFileCallback("/nonexistent-stack-test", resolve)),
+    opendir("/nonexistent-stack-test").catch(e => e),
+    WebAssembly.compile(new Uint8Array([1, 2, 3])).catch(e => e),
+  ]);
+  expect(errors.map(e => e.stack?.split("\n")[0])).toEqual(errors.map(e => `${e.name}: ${e.message}`));
+});

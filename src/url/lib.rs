@@ -389,7 +389,7 @@ impl<'a> URL<'a> {
         };
         let Some(url) = normalized else {
             return Some(S3Endpoint {
-                host_with_path: Box::from(as_written.host_with_path()),
+                host_with_path: Box::from(strings::trim_right(as_written.host_with_path(), b"/")),
                 is_http: as_written.is_http(),
             });
         };

@@ -898,6 +898,7 @@ unsafe extern "C" {
         name: *const c_char,
         namelen: usize,
     ) -> c_int;
+    pub fn X509_VERIFY_PARAM_set1_ip(param: *mut c_void, ip: *const u8, iplen: usize) -> c_int;
     pub fn SSL_CTX_set_keylog_callback(
         ctx: *mut SSL_CTX,
         cb: Option<unsafe extern "C" fn(ssl: *const SSL, line: *const c_char)>,

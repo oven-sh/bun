@@ -43,7 +43,8 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
     struct hdr_histogram* raw_histogram = nullptr;
     int result = hdr_init(lowest, highest, figures, &raw_histogram);
     if (result != 0 || !raw_histogram) {
-        throwTypeError(globalObject, scope, "Failed to initialize histogram"_s);
+        // Node v26.9.0 throws this from HistogramBase::New (src/histogram.cc). Older releases abort.
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid histogram options"_s);
         return nullptr;
     }
     auto histogramData = HistogramData(raw_histogram);

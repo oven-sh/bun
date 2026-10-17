@@ -56,7 +56,6 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     RETURN_IF_EXCEPTION(scope, {});
     auto max_num = max.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
@@ -75,7 +74,6 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     RETURN_IF_EXCEPTION(scope, {});
     auto max_num = max.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);

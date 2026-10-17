@@ -1,0 +1,37 @@
+Free the worker threads of a context before the dictionaries they read.
+
+ZSTD_freeCCtxContent() calls ZSTD_clearAllDicts() and then ZSTDMT_freeCCtx().
+With nbWorkers >= 1, ZSTD_compressStream2() posts a job to a worker thread and
+returns. The first job of a frame reads the dictionary of the context through
+a pointer that it does not own (job->cdict, the localDict of the CCtx). A job
+stops only in ZSTDMT_freeCCtx(), which joins the threads (POOL_free).
+
+So ZSTD_freeCCtx() of a context that has a dictionary and a running job frees
+the dictionary under that job: heap-use-after-free in ZSTDMT_compressionJob().
+destroy() and close() of a node:zlib zstd stream make that call.
+
+ZSTDMT_freeCCtx() has this order for its own dictionary. It joins the threads
+and then frees mtctx->cdictLocal.
+
+Not covered: ZSTD_CCtx_reset() with parameters, ZSTD_CCtx_loadDictionary(),
+ZSTD_CCtx_refCDict() and ZSTD_CCtx_refPrefix() on a context whose jobs still
+run. They free the dictionaries too. Bun does not call them on such a context.
+
+facebook/zstd has the same order on its dev branch (01b7154f11), and no issue
+there reports it (checked 2026-10-01).
+
+--- a/lib/compress/zstd_compress.c
++++ b/lib/compress/zstd_compress.c
+@@ -171,10 +171,11 @@
+ {
+     assert(cctx != NULL);
+     assert(cctx->staticSize == 0);
+-    ZSTD_clearAllDicts(cctx);
+ #ifdef ZSTD_MULTITHREAD
+     ZSTDMT_freeCCtx(cctx->mtctx); cctx->mtctx = NULL;
+ #endif
++    /* Bun: after the join above. A job that still runs reads these dictionaries. */
++    ZSTD_clearAllDicts(cctx);
+     ZSTD_cwksp_free(&cctx->workspace, cctx->customMem);
+ }
+ 

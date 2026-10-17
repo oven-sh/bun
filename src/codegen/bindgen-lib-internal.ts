@@ -561,6 +561,11 @@ export class StringType extends Type {
   get loose(): StringType {
     return new StringType("WebCore::IDLDOMString", "any");
   }
+  /** Also takes a `String` object, as `.utf8` does. */
+  get allowStringObject(): StringType {
+    assert(this.valueKinds !== "any", ".loose already takes a String object");
+    return new StringType("Bun::Bindgen::IDLStrictStringOrStringObject", ["string", "stringObject"]);
+  }
   /** `&[u8]`, UTF-8, for the duration of the call, instead of an owned string. Also takes a `String` object. */
   get utf8(): Utf8Type {
     return new Utf8Type(this.valueKinds === "any");
@@ -596,6 +601,9 @@ export class StringType extends Type {
 export class OwnedUtf8Type extends StringType {
   get loose(): never {
     throw new TypeError("write b.string.loose.utf8.owned");
+  }
+  get allowStringObject(): never {
+    throw new TypeError("b.string.utf8.owned already takes a String object");
   }
   get utf8(): never {
     throw new TypeError("b.string.utf8.owned is already UTF-8");
@@ -739,6 +747,9 @@ export class BytesType extends Type {
   get borrowsHeap(): boolean {
     return this.#options.held === "borrowed";
   }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
   get convertsInPlace(): boolean {
     return true;
   }
@@ -799,16 +810,30 @@ export class BytesType extends Type {
 
 /** A typed array, `DataView` or `ArrayBuffer`, as a handle whose bytes are read through `with_bytes`. */
 export class BufferSourceType extends Type {
-  readonly idlType = "Bun::Bindgen::IDLRawBufferSource";
-  readonly tsType = "ArrayBuffer | ArrayBufferView";
+  readonly #allowShared: boolean;
+  constructor(allowShared = false) {
+    super();
+    this.#allowShared = allowShared;
+  }
+  get idlType(): string {
+    return `Bun::Bindgen::IDLRawBufferSource<${this.#allowShared}>`;
+  }
+  get tsType(): string {
+    return `ArrayBuffer | ArrayBufferView${this.#allowShared ? " | SharedArrayBuffer" : ""}`;
+  }
   get valueKinds(): ValueKinds {
     return bufferSourceKinds;
   }
   get refuses() {
-    return sharedBuffers;
+    return this.#allowShared ? null : sharedBuffers;
+  }
+  /** WebIDL's `[AllowShared]`. */
+  get allowShared(): BufferSourceType {
+    return new BufferSourceType(true);
   }
   /** A reference on a `JSC::ArrayBuffer`, which can be stored: the buffer itself, or a copy of what a view shows. */
   get arrayBuffer(): RefType {
+    assert(!this.#allowShared, ".arrayBuffer is a buffer that is not shared");
     return new RefType(
       "Bun::Bindgen::IDLArrayBufferRef",
       this.tsType,
@@ -939,7 +964,7 @@ export class OptionalType extends Type {
     assert(!(inner instanceof DefaultType), "put .default() last");
     assert(!(inner instanceof AnyType), "b.any already accepts undefined and null");
     assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
-    assert(!(inner instanceof BytesType), "b.bytes is for an argument that is always there");
+    assert(!(inner instanceof BytesType) || inner.borrowsHeap, 'only b.bytes that is held: "borrowed" can be absent');
     this.inner = inner;
     this.modifier = modifier;
   }
@@ -970,6 +995,9 @@ export class OptionalType extends Type {
   }
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
+  }
+  cppReadLast(target: string, value: string): string[] {
+    return this.inner.cppReadLast(target, value);
   }
   /** What converts in place is null when default-constructed. A pointer to a class instance, which does not, is not. */
   cppConvertInto(target: string, value: string, ctx: string, name: string): string {
@@ -1586,9 +1614,9 @@ export class FunctionDefinition {
   readonly dispatch: OverloadDispatch;
   name = "";
   origin: Origin | null = null;
-  constructor(signatures: readonly SignatureOptions[]) {
+  constructor(signatures: readonly (SignatureOptions | Signature)[]) {
     assert(signatures.length > 0, "b.overloads needs at least one signature");
-    this.signatures = signatures.map(options => new Signature(options));
+    this.signatures = signatures.map(options => (options instanceof Signature ? options : new Signature(options)));
     assert(this.signatures.filter(signature => signature.length !== undefined).length <= 1, "length is given once");
     const nodes = new Map<string, OverloadDispatch>();
     this.dispatch = this.dispatchOn(this.signatures, 0, nodes);
@@ -1613,11 +1641,12 @@ export class FunctionDefinition {
     if (candidates.length > 1 && candidates.some(signature => argument < signature.args.length)) {
       const types = candidates.map(signature => signature.args[argument]?.type);
       const next = (kind: ValueKind | "other") => {
-        const takers = candidates.filter((signature, i) => {
-          if (!types[i]) return true;
-          return kind === "undefined" ? types[i].takesUndefined : takes(types[i], kind);
-        });
-        return this.dispatchOn(takers.length > 0 ? takers : candidates, argument + 1, nodes);
+        const keep = (test: (type: Type) => boolean) =>
+          candidates.filter((signature, i) => !types[i] || test(types[i]));
+        const ofKind = keep(type => takes(type, kind));
+        const takers = kind === "undefined" ? keep(type => type.takesUndefined) : ofKind;
+        const kept = [takers, ofKind, candidates].find(list => list.length > 0)!;
+        return this.dispatchOn(kept, argument + 1, nodes);
       };
       const kinds = new Set(["undefined" as const, ...distinguishingKinds(types.filter(type => type !== undefined))]);
       const byKind = new Map([...kinds].map(kind => [kind, next(kind)]));
@@ -1642,6 +1671,8 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   passThis?: boolean;
   /** Key the function by this private builtin name (`$name` in src/js) instead of a string. */
   privateSymbol?: string;
+  /** The trait's function. Defaults to the property's name in snake_case. */
+  rustName?: string;
 }
 
 export interface GetterField {
@@ -1652,6 +1683,8 @@ export interface GetterField {
   cache?: true;
   capability?: Capability;
   throws?: boolean;
+  /** As a function's. */
+  rustName?: string;
 }
 
 /** A function written in JavaScript: the export of this name in `src/js/builtins/<class name>.ts`. */
@@ -1660,7 +1693,10 @@ export interface BuiltinField {
   length: number;
 }
 
-export type Field = FunctionField | GetterField | BuiltinField;
+/** Several functions are the overloads of one, each with a `rustName`. */
+export type Field = FunctionField | readonly FunctionField[] | GetterField | BuiltinField;
+export type StaticField =
+  Omit<FunctionField, "mutates" | "passThis" | "privateSymbol"> | Omit<GetterField, "setter" | "cache">;
 
 export interface ClassOptions {
   /** Path of the Rust struct. It implements the generated `${name}Class` trait. */
@@ -1670,7 +1706,7 @@ export interface ClassOptions {
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
-  static?: Record<string, Omit<SignatureOptions, "rustPath">>;
+  static?: Record<string, StaticField>;
   /** JS values the object holds. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
   internalFields?: readonly string[];
   /** `false`: prototype properties are non-configurable. */
@@ -1686,7 +1722,7 @@ export class Method extends Signature {
   constructor(name: string, options: FunctionField, isStatic = false) {
     super(options);
     this.name = name;
-    this.rustName = rustIdent(snakeCase(name.replace(/^_+/, "")));
+    this.rustName = rustIdent(options.rustName ?? snakeCase(name.replace(/^_+/, "")));
     assert(
       !(options.mutates && this.capability === "js"),
       `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
@@ -1704,10 +1740,14 @@ export class Getter {
   readonly throws: boolean;
   readonly hasSetter: boolean;
   readonly cached: boolean;
+  readonly isStatic: boolean;
+  readonly rustName: string;
   /** Where a cached one keeps the value. Set by its class. */
   internalFieldIndex = -1;
-  constructor(name: string, options: GetterField) {
+  constructor(name: string, options: GetterField, isStatic = false) {
     this.name = name;
+    this.isStatic = isStatic;
+    this.rustName = rustIdent(options.rustName ?? snakeCase(name));
     this.type = options.getter;
     this.capability = options.capability ?? "none";
     this.throws = options.throws ?? false;
@@ -1718,9 +1758,6 @@ export class Getter {
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
     this.cached = !!options.cache;
-  }
-  get rustName(): string {
-    return rustIdent(snakeCase(this.name));
   }
 }
 
@@ -1749,10 +1786,15 @@ export const selfType = new SelfType();
 export class ClassType extends NamedType {
   readonly rustPath: string;
   readonly construct: Signature | null;
-  readonly methods: readonly Method[];
+  /** The native functions of the prototype. The signatures of each are `Method`s. */
+  readonly functions: readonly FunctionDefinition[];
   readonly getters: readonly Getter[];
-  readonly staticMethods: readonly Method[];
+  readonly staticFunctions: readonly FunctionDefinition[];
+  readonly staticGetters: readonly Getter[];
   readonly builtins: readonly { name: string; length: number }[];
+  /** As written. */
+  readonly protoNames: readonly string[];
+  readonly staticNames: readonly string[];
   readonly internalFields: readonly string[];
   /** Each has an internal field of its own, after `internalFields`. */
   readonly cachedGetters: readonly Getter[];
@@ -1769,23 +1811,34 @@ export class ClassType extends NamedType {
       ...(signature.returns ? { returns: own(signature.returns) } : {}),
     });
     this.construct = options.construct ? new Signature(resolve(options.construct)) : null;
-    const methods: Method[] = [];
-    const getters: Getter[] = [];
     const builtins: { name: string; length: number }[] = [];
-    for (const [name, field] of Object.entries(options.proto ?? {})) {
-      if ("builtin" in field) builtins.push({ name, length: field.length });
-      else if ("getter" in field) {
-        assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
-        getters.push(new Getter(name, { ...field, getter: own(field.getter) }));
-      } else methods.push(new Method(name, resolve(field)));
-    }
-    this.methods = methods;
-    this.getters = getters;
+    const members = (fields: Record<string, Field>, isStatic: boolean) => {
+      const functions: FunctionDefinition[] = [];
+      const getters: Getter[] = [];
+      for (const [name, field] of Object.entries(fields)) {
+        if ("builtin" in field) builtins.push({ name, length: field.length });
+        else if ("getter" in field) {
+          assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
+          getters.push(new Getter(name, { ...field, getter: own(field.getter) }, isStatic));
+        } else {
+          const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
+          const fn = new FunctionDefinition(overloads.map(overload => new Method(name, resolve(overload), isStatic)));
+          fn.name = name;
+          functions.push(fn);
+        }
+      }
+      return { functions, getters };
+    };
+    ({ functions: this.functions, getters: this.getters } = members(options.proto ?? {}, false));
+    ({ functions: this.staticFunctions, getters: this.staticGetters } = members(options.static ?? {}, true));
+    const { getters } = this;
     this.builtins = builtins;
-    this.staticMethods = Object.entries(options.static ?? {}).map(
-      ([name, field]) => new Method(name, resolve(field), true),
+    this.protoNames = Object.keys(options.proto ?? {});
+    this.staticNames = Object.keys(options.static ?? {});
+    assert(
+      this.construct || this.staticFunctions.length + this.staticGetters.length === 0,
+      "static members need a constructor object",
     );
-    assert(this.construct || this.staticMethods.length === 0, "static members need a constructor object");
     this.internalFields = options.internalFields ?? [];
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
@@ -1794,7 +1847,10 @@ export class ClassType extends NamedType {
         "constructor",
         "get_constructor",
         ...[...this.methods, ...this.staticMethods].map(method => method.rustName),
-        ...getters.flatMap(getter => [getter.rustName, ...(getter.hasSetter ? [`set_${snakeCase(getter.name)}`] : [])]),
+        ...[...getters, ...this.staticGetters].flatMap(getter => [
+          getter.rustName,
+          ...(getter.hasSetter ? [`set_${snakeCase(getter.name)}`] : []),
+        ]),
       ],
       "members' Rust functions",
     );
@@ -1808,6 +1864,12 @@ export class ClassType extends NamedType {
         `${method.name}: &mut self and an argument of the same class may be the same object`,
       );
     }
+  }
+  get methods(): readonly Method[] {
+    return this.functions.flatMap(fn => fn.signatures as readonly Method[]);
+  }
+  get staticMethods(): readonly Method[] {
+    return this.staticFunctions.flatMap(fn => fn.signatures as readonly Method[]);
   }
   get numberOfInternalFields(): number {
     return this.internalFields.length + this.cachedGetters.length;
@@ -1835,7 +1897,7 @@ export class ClassType extends NamedType {
         ...method.args.map(arg => arg.type),
         method.returns,
       ]),
-      ...this.getters.map(getter => getter.type),
+      ...[...this.getters, ...this.staticGetters].map(getter => getter.type),
     ];
   }
   layout(): Layout {

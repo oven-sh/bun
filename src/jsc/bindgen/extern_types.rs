@@ -99,6 +99,13 @@ impl ExternBytes {
         unsafe { core::slice::from_raw_parts(self.data, self.length) }
     }
     /// # Safety
+    /// They are those of a buffer, which nothing else borrows for `'b`.
+    #[inline(always)]
+    pub(super) unsafe fn get_mut<'b>(self) -> &'b mut [u8] {
+        // SAFETY: as `get`.
+        unsafe { core::slice::from_raw_parts_mut(self.data.cast_mut(), self.length) }
+    }
+    /// # Safety
     /// As [`get`](Self::get).
     #[inline(always)]
     pub unsafe fn get_optional<'a>(self, heap: &JsHeap<'a>) -> Option<&'a [u8]> {

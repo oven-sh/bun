@@ -79,7 +79,6 @@ use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
-use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
@@ -92,7 +91,6 @@ use crate::generated_bindgen::bun_object::{
     BracesOptions, EditorOptions, MMapOptions, WhichOptions, ZlibCompressionOptions,
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
-use crate::generated_bindgen::glob::GlobClass as _;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
@@ -146,12 +144,6 @@ mod static_adapters {
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
         crate::shell::interpreter::create_shell_interpreter(g, cf)
-    }
-
-    /// `Bun.sha(input, output?)` is `Bun.SHA512_256.hash` under another name,
-    /// so it shares that method's argument decode and errors.
-    pub(super) fn sha(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        Crypto::SHA512_256::hash(g, cf)
     }
 }
 
@@ -256,7 +248,6 @@ pub(crate) mod bun_object {
         BunObject_callback_resolve => super::resolve,
         BunObject_callback_resolveSync => super::resolve_sync,
         BunObject_callback_serve => super::serve,
-        BunObject_callback_sha => super::static_adapters::sha,
         BunObject_callback_spawn => super::static_adapters::subprocess_spawn,
         BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
@@ -274,20 +265,10 @@ pub(crate) mod bun_object {
     // --- Lazy property callbacks ---
     export_lazy_prop_callbacks! {
         BunObject_lazyPropCb_Archive => super::get_archive_constructor,
-        BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
         BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
-        BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
-        BunObject_lazyPropCb_MD4 => Crypto::MD4::getter,
-        BunObject_lazyPropCb_MD5 => Crypto::MD5::getter,
-        BunObject_lazyPropCb_SHA1 => Crypto::SHA1::getter,
-        BunObject_lazyPropCb_SHA224 => Crypto::SHA224::getter,
-        BunObject_lazyPropCb_SHA256 => Crypto::SHA256::getter,
-        BunObject_lazyPropCb_SHA384 => Crypto::SHA384::getter,
-        BunObject_lazyPropCb_SHA512 => Crypto::SHA512::getter,
-        BunObject_lazyPropCb_SHA512_256 => Crypto::SHA512_256::getter,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
@@ -1544,15 +1525,6 @@ fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::archive::Archive>(global_this)
-}
-
-fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: a lazy property callback, entered from JSC with no `JsScope` borrowed.
-    unsafe {
-        JsScope::with(global_this.as_mut_ptr(), |cx| {
-            crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
-        })
-    }
 }
 
 fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

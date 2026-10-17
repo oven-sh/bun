@@ -80,6 +80,18 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
+    /// A `Uint8Array` with a copy of `bytes`.
+    #[inline]
+    pub fn create_uint8_array(&self, bytes: &[u8]) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(ArrayBuffer::create_uint8_array(self.global_object(), bytes))
+    }
+
+    /// A `Buffer` with a copy of `bytes`.
+    #[inline]
+    pub fn create_buffer(&self, bytes: &[u8]) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(ArrayBuffer::create_buffer(self.global_object(), bytes))
+    }
+
     /// A `Uint8Array` that takes over the allocation of `bytes`.
     #[inline]
     pub fn create_uint8_array_from_box(
@@ -361,6 +373,19 @@ impl<'a> JsLocal<'a, BufferSource> {
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
         let array_buffer = self.0.as_array_buffer(heap.global_object());
         let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
+        self.0.ensure_still_alive();
+        result
+    }
+
+    /// As [`with_bytes`](Self::with_bytes), to write them.
+    ///
+    /// # Safety
+    /// `f` uses no other borrow of these bytes, which those of another argument can be.
+    #[inline]
+    pub unsafe fn with_bytes_mut<R>(self, _: &JsHeap<'a>, f: impl FnOnce(&mut [u8]) -> R) -> R {
+        // SAFETY: only JavaScript moves the bytes, which takes the `&mut JsScope` that the heap is borrowed from.
+        let result =
+            f(unsafe { extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.0).get_mut() });
         self.0.ensure_still_alive();
         result
     }

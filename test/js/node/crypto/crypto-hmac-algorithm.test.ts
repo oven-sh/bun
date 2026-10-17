@@ -83,3 +83,10 @@ test("Hmac digest can be called with different encodings", () => {
   expect(base64).toBeString();
   expect(hex).not.toBe(base64);
 });
+
+test.each(["224", "256", "384", "512"])("RSA-SHA3-%s matches the sha3 digest", bits => {
+  const expected = crypto.createHmac(`sha3-${bits}`, "key").update("message").digest("hex");
+  for (const name of [`RSA-SHA3-${bits}`, `rsa-sha3-${bits}`]) {
+    expect(crypto.createHmac(name, "key").update("message").digest("hex")).toBe(expected);
+  }
+});

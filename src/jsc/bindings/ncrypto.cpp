@@ -1632,7 +1632,8 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    auto nameUtf8 = name.utf8();
+    // OpenSSL registers "RSA-SHA3-*" as aliases of "SHA3-*"; BoringSSL does not.
+    auto nameUtf8 = (WTF::startsWithIgnoringASCIICase(name, "rsa-sha3-"_s) ? name.substring(4) : name).utf8();
     return EVP_get_digestbyname(nameUtf8.legacyCStringPointer());
 }
 

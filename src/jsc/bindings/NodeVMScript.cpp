@@ -6,7 +6,6 @@
 
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
@@ -25,7 +24,7 @@ static std::optional<Seconds> timeoutOf(const RunningScriptOptions& options)
     return options.timeout ? std::optional { Seconds::fromMilliseconds(*options.timeout) } : std::nullopt;
 }
 
-bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer)
+bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer, WTF::Vector<uint8_t>& cachedData)
 {
     if (importer) {
         *importer = jsUndefined();
@@ -67,7 +66,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             any = true;
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
+        if (validateCachedData(globalObject, vm, scope, options, cachedData))
             any = true;
         RETURN_IF_EXCEPTION(scope, false);
 
@@ -110,13 +109,14 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     JSValue optionsArg = args.at(1);
     ScriptOptions options(""_s);
     JSValue importer;
+    WTF::Vector<uint8_t> cachedData;
 
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         // `new Script(src, "name")` is a provided filename, "" included.
         options.filenameProvided = true;
-    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
+    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer, cachedData)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
     options.lineOffset = clampOffsetForSource(options.lineOffset, sourceString.length());
@@ -170,39 +170,13 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     }
     RETURN_IF_EXCEPTION(scope, {});
 
-    WTF::Vector<uint8_t>& cachedData = script->cachedData();
-
     if (!cachedData.isEmpty()) {
-        JSC::ProgramExecutable* executable = script->cachedExecutable();
-        if (!executable) {
-            executable = script->createExecutable();
-        }
-        ASSERT(executable);
-
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        Ref<JSC::CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
-        JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
-
-        if (!unlinkedBlock) {
-            script->cachedDataRejected(TriState::True);
-        } else {
-            JSC::JSScope* jsScope = globalObject->globalScope();
-            JSC::CodeBlock* codeBlock = nullptr;
-            {
-                // JSC::ProgramCodeBlock::create() requires GC to be deferred.
-                DeferGC deferGC(vm);
-                codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-            JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
-            if (compilationResult != JSC::CompilationResult::CompilationFailed) {
-                executable->installCode(codeBlock);
-                script->cachedDataRejected(TriState::False);
-            } else {
-                script->cachedDataRejected(TriState::True);
-            }
-        }
+        Ref<JSC::CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(vm, cachedData.span());
+        // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor).
+        bool accepted = !!JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
+        script->cachedDataRejected(accepted ? TriState::False : TriState::True);
     } else if (script->options().produceCachedData)
         script->cacheBytecode();
 
@@ -227,8 +201,7 @@ JSC::UnlinkedProgramCodeBlock* NodeVMScript::unlinkedCodeBlockFor(JSGlobalObject
     if (m_unlinkedCodeBlock && m_unlinkedCodeBlock->codeGenerationMode() == codeGenerationMode)
         return m_unlinkedCodeBlock.get();
 
-    // The CodeCache records the parse on the executable it is given (that changes what the executable keys
-    // later lookups with, so m_cachedExecutable is not used for this); every run links its own anyway.
+    // A throwaway executable: the CodeCache records the parse on the one it is given, and every run links its own.
     JSC::UnlinkedProgramCodeBlock* block = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, m_source), m_source, codeGenerationMode, error);
     if (block)
         m_unlinkedCodeBlock.set(vm, this, block);
@@ -241,13 +214,6 @@ JSValue NodeVMScript::evaluate(JSGlobalObject* globalObject, NakedPtr<JSC::Excep
     // JSC::evaluate reports the failure the way it always has, by compiling itself.
     JSC::ParserError ignoredError;
     return JSC::evaluate(globalObject, m_source, unlinkedCodeBlockFor(globalObject, ignoredError), globalObject, exception);
-}
-
-JSC::ProgramExecutable* NodeVMScript::createExecutable()
-{
-    VM& vm = JSC::getVM(globalObject());
-    m_cachedExecutable.set(vm, this, JSC::ProgramExecutable::create(globalObject(), m_source));
-    return m_cachedExecutable.get();
 }
 
 void NodeVMScript::cacheBytecode()
@@ -289,7 +255,6 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     NodeVMScript* thisObject = uncheckedDowncast<NodeVMScript>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_cachedExecutable);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
     visitor.append(thisObject->m_unlinkedCodeBlock);
     NodeVMScriptFetcher::visitSource(visitor, thisObject->m_source);

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { isCI } from "harness";
 import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../test-utils";
 
 /**
@@ -10,11 +9,19 @@ import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../tes
  * - Blocking operations (BLPOP, BRPOP)
  */
 describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
+  // Every test below works on its own uniquely-named key, so there is no
+  // connection-visible state to reset between them and no need to rebuild a
+  // RedisClient per test. When this file runs on its own (and in CI, which
+  // spawns one process per file) test-utils' beforeAll has already connected
+  // `ctx.redis` and the guard below is a no-op. When the whole unit/ directory
+  // runs in one process, test-utils' hooks attach to whichever file imported
+  // it first and its afterAll may have already closed `ctx.redis`, so we
+  // reconnect once here rather than depending on a sibling having done it.
   beforeEach(() => {
-    if (ctx.redis?.connected) {
-      ctx.redis.close?.();
+    ctx.id++;
+    if (!ctx.redis?.connected) {
+      ctx.redis = createClient(ConnectionType.TCP);
     }
-    ctx.redis = createClient(ConnectionType.TCP);
   });
 
   describe("Basic List Operations", () => {
@@ -43,12 +50,7 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
 
       // Verify the list content (should be left3, left2, left1, left-value, right-value, right1, right2)
       const range = await ctx.redis.send("LRANGE", [key, "0", "-1"]);
-      expect(Array.isArray(range)).toBe(true);
-      expect(range.length).toBe(7);
-      expect(range[0]).toBe("left3");
-      expect(range[3]).toBe("left-value");
-      expect(range[4]).toBe("right-value");
-      expect(range[6]).toBe("right2");
+      expect(range).toEqual(["left3", "left2", "left1", "left-value", "right-value", "right1", "right2"]);
     });
 
     test("LPOP and RPOP commands", async () => {
@@ -67,16 +69,11 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
 
       // Pop multiple elements from left
       const multiLpopResult = await ctx.redis.send("LPOP", [key, "2"]);
-      expect(Array.isArray(multiLpopResult)).toBe(true);
-      expect(multiLpopResult.length).toBe(2);
-      expect(multiLpopResult[0]).toBe("two");
-      expect(multiLpopResult[1]).toBe("three");
+      expect(multiLpopResult).toEqual(["two", "three"]);
 
       // Verify only "four" is left
       const remaining = await ctx.redis.send("LRANGE", [key, "0", "-1"]);
-      expect(Array.isArray(remaining)).toBe(true);
-      expect(remaining.length).toBe(1);
-      expect(remaining[0]).toBe("four");
+      expect(remaining).toEqual(["four"]);
     });
 
     test("LRANGE command", async () => {
@@ -85,8 +82,7 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
       // Set up test list with 10 elements
       await ctx.redis.send("RPUSH", [key, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 
-      // Get full range - using LRANGE command
-      // TODO: When a direct lrange method is implemented, use that instead
+      // Get full range
       const fullRange = await ctx.redis.send("LRANGE", [key, "0", "-1"]);
       expect(Array.isArray(fullRange)).toBe(true);
       expect(fullRange).toMatchInlineSnapshot(`
@@ -159,7 +155,6 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
       await ctx.redis.send("RPUSH", [key, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 
       // Trim the list to keep only elements from index 2 to 7
-      // TODO: When a direct ltrim method is implemented, use that instead
       const trimResult = await ctx.redis.send("LTRIM", [key, "2", "7"]);
       expect(trimResult).toMatchInlineSnapshot(`"OK"`);
 
@@ -246,7 +241,6 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
 
       // Verify the list content
       const content = await ctx.redis.send("LRANGE", [key, "0", "-1"]);
-      expect(Array.isArray(content)).toBe(true);
       expect(content).toEqual(["one", "two", "three", "four", "five"]);
 
       // Insert for non-existent pivot
@@ -271,17 +265,10 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
 
       // Verify the modified list
       const content = await ctx.redis.send("LRANGE", [key, "0", "-1"]);
-      expect(Array.isArray(content)).toBe(true);
       expect(content).toEqual(["a", "B", "c", "D"]);
 
-      // Setting out of range index should error
-      try {
-        await ctx.redis.send("LSET", [key, "100", "value"]);
-        // We should not reach here
-        expect(false).toBe(true);
-      } catch (error) {
-        // Expected error
-      }
+      // Setting an out-of-range index should reject with a server error.
+      await expect(ctx.redis.send("LSET", [key, "100", "value"])).rejects.toThrow(/index out of range/i);
     });
   });
 
@@ -308,12 +295,10 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
 
       // Get all occurrences of "a"
       const allPosA = await ctx.redis.send("LPOS", [key, "a", "COUNT", "0"]);
-      expect(Array.isArray(allPosA)).toBe(true);
       expect(allPosA).toEqual([0, 5, 7]);
 
       // Get first 2 occurrences of "a"
       const twoPos = await ctx.redis.send("LPOS", [key, "a", "COUNT", "2"]);
-      expect(Array.isArray(twoPos)).toBe(true);
       expect(twoPos).toEqual([0, 5]);
 
       // Get position of "a" starting from index 1
@@ -340,12 +325,10 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
 
       // Verify source list
       const sourceContent = await ctx.redis.send("LRANGE", [source, "0", "-1"]);
-      expect(Array.isArray(sourceContent)).toBe(true);
       expect(sourceContent).toEqual(["one", "two"]);
 
       // Verify destination list
       const destContent = await ctx.redis.send("LRANGE", [destination, "0", "-1"]);
-      expect(Array.isArray(destContent)).toBe(true);
       expect(destContent).toEqual(["three", "a", "b"]);
     });
 
@@ -360,75 +343,64 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
       await ctx.redis.send("RPUSH", [destination, "a", "b"]);
 
       // Right to left move
-      try {
-        const rtlResult = await ctx.redis.send("LMOVE", [source, destination, "RIGHT", "LEFT"]);
-        expect(rtlResult).toBe("three");
+      const rtlResult = await ctx.redis.send("LMOVE", [source, destination, "RIGHT", "LEFT"]);
+      expect(rtlResult).toBe("three");
 
-        // Left to right move
-        const ltrResult = await ctx.redis.send("LMOVE", [source, destination, "LEFT", "RIGHT"]);
-        expect(ltrResult).toBe("one");
+      // Left to right move
+      const ltrResult = await ctx.redis.send("LMOVE", [source, destination, "LEFT", "RIGHT"]);
+      expect(ltrResult).toBe("one");
 
-        // Verify source list
-        const sourceContent = await ctx.redis.send("LRANGE", [source, "0", "-1"]);
-        expect(Array.isArray(sourceContent)).toBe(true);
-        expect(sourceContent).toEqual(["two"]);
+      // Verify source list
+      const sourceContent = await ctx.redis.send("LRANGE", [source, "0", "-1"]);
+      expect(sourceContent).toEqual(["two"]);
 
-        // Verify destination list
-        const destContent = await ctx.redis.send("LRANGE", [destination, "0", "-1"]);
-        expect(Array.isArray(destContent)).toBe(true);
-        expect(destContent).toEqual(["three", "a", "b", "one"]);
-      } catch (error) {
-        // Some Redis versions might not support LMOVE
-        console.warn("LMOVE command not supported, skipping test");
-      }
+      // Verify destination list
+      const destContent = await ctx.redis.send("LRANGE", [destination, "0", "-1"]);
+      expect(destContent).toEqual(["three", "a", "b", "one"]);
     });
   });
 
-  describe.skipIf(isCI)("Blocking Operations", () => {
-    // Note: These tests can be problematic in automated test suites
-    // due to the blocking nature. We'll implement with very short timeouts.
+  // These block the shared connection server-side for the timeout duration, so
+  // they stay sequential. Redis >= 6.0 (the docker-unified image is redis:8)
+  // accepts fractional-second timeouts, so 0.1s is enough to exercise the
+  // timeout-returns-null path.
+  describe("Blocking Operations", () => {
     test("BLPOP with timeout", async () => {
       const key = ctx.generateKey("blpop-test");
 
-      // Try to pop from an empty list with 1 second timeout
-      const timeoutResult = await ctx.redis.send("BLPOP", [key, "1"]);
+      // Try to pop from an empty list with a short timeout
+      const timeoutResult = await ctx.redis.send("BLPOP", [key, "0.1"]);
       expect(timeoutResult).toBeNull(); // Should timeout and return null
 
       // Add elements and then try again
       await ctx.redis.send("RPUSH", [key, "value1", "value2"]);
 
       // Now the BLPOP should immediately return
-      const result = await ctx.redis.send("BLPOP", [key, "1"]);
-      expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBe(2);
-      expect(result[0]).toBe(key);
-      expect(result[1]).toBe("value1");
+      const result = await ctx.redis.send("BLPOP", [key, "0.1"]);
+      expect(result).toEqual([key, "value1"]);
     });
 
     test("BRPOP with timeout", async () => {
       const key = ctx.generateKey("brpop-test");
 
-      // Try to pop from an empty list with 1 second timeout
-      const timeoutResult = await ctx.redis.send("BRPOP", [key, "1"]);
+      // Try to pop from an empty list with a short timeout
+      const timeoutResult = await ctx.redis.send("BRPOP", [key, "0.1"]);
       expect(timeoutResult).toBeNull(); // Should timeout and return null
 
       // Add elements and then try again
       await ctx.redis.send("RPUSH", [key, "value1", "value2"]);
 
       // Now the BRPOP should immediately return
-      const result = await ctx.redis.send("BRPOP", [key, "1"]);
-      expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBe(2);
-      expect(result[0]).toBe(key);
-      expect(result[1]).toBe("value2");
+      const result = await ctx.redis.send("BRPOP", [key, "0.1"]);
+      expect(result).toEqual([key, "value2"]);
     });
 
     test("BRPOPLPUSH with timeout", async () => {
       const source = ctx.generateKey("brpoplpush-source");
       const destination = ctx.generateKey("brpoplpush-dest");
 
-      // Try with empty source and 1 second timeout
-      const timeoutResult = await ctx.redis.send("BRPOPLPUSH", [source, destination, "1"]);
+      // Try with empty source and a short timeout
+      const timeoutResult = await ctx.redis.send("BRPOPLPUSH", [source, destination, "0.1"]);
       expect(timeoutResult).toBeNull(); // Should timeout and return null
 
       // Set up source and destination
@@ -436,12 +408,11 @@ describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
       await ctx.redis.send("RPUSH", [destination, "a", "b"]);
 
       // Now should immediately return
-      const result = await ctx.redis.send("BRPOPLPUSH", [source, destination, "1"]);
+      const result = await ctx.redis.send("BRPOPLPUSH", [source, destination, "0.1"]);
       expect(result).toBe("value2");
 
       // Verify destination received the element
       const destContent = await ctx.redis.send("LRANGE", [destination, "0", "-1"]);
-      expect(Array.isArray(destContent)).toBe(true);
       expect(destContent).toEqual(["value2", "a", "b"]);
     });
   });

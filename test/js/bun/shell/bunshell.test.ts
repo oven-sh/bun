@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -815,32 +815,38 @@ describe("bunshell", () => {
         .exitCode(7)
         .runAsTest("fails an && chain");
 
-      // The program closes both pipes, then runs until the test lets it go.
-      // The command is done when the program exits, not when its pipes reach
-      // EOF.
+      // The program closes both pipes, tells the test, and exits when the test
+      // closes the connection. The command is done when the program exits, not
+      // when its pipes reach EOF.
       test("waits for a command that closes its stdout and stderr early", async () => {
         using dir = tempDir("shell-cmd-subst-closer", {
           "closer.js": `
             const fs = require("fs");
-            fs.closeSync(1);
-            fs.closeSync(2);
-            fs.writeFileSync("closed.txt", "");
-            while (!fs.existsSync("go.txt")) Bun.sleepSync(5);
-            process.exit(7);`,
+            const socket = require("net").connect(Number(process.argv[2]), "127.0.0.1", () => {
+              fs.closeSync(1);
+              fs.closeSync(2);
+              socket.write("closed");
+            });
+            socket.on("close", () => process.exit(7));`,
         });
-        const cwd = String(dir);
-        let settled = false;
-        const exitCode = $`$(echo ${BUN} closer.js)`
-          .cwd(cwd)
-          .quiet()
-          .then(result => {
-            settled = true;
-            return result.exitCode;
-          });
-        // A command that ends at the EOF of its pipes settles here.
-        while (!settled && !existsSync(join(cwd, "closed.txt"))) await Bun.sleep(5);
-        writeFileSync(join(cwd, "go.txt"), "");
-        expect(await exitCode).toBe(7);
+        const closed = Promise.withResolvers<Bun.Socket>();
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { data: socket => closed.resolve(socket) },
+        });
+        try {
+          const exitCode = $`$(echo ${BUN} closer.js ${server.port})`
+            .cwd(String(dir))
+            .quiet()
+            .then(result => result.exitCode);
+          // A command that ends at the EOF of its pipes settles first, with 0.
+          const first = await Promise.race([closed.promise, exitCode]);
+          if (typeof first !== "number") first.end();
+          expect(await exitCode).toBe(7);
+        } finally {
+          server.stop(true);
+        }
       });
 
       TestBuilder.command`$(echo false)`.exitCode(1).runAsTest("builtin");

@@ -2399,7 +2399,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 fail!(
                     InvalidPackageResolution,
                     at_item(key_loc, res_info_idx),
-                    b"Invalid package name"
+                    b"invalid package name"
                 );
             }
 

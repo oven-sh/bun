@@ -899,7 +899,7 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "bake.server.js"),
     resolve(cfg.codegenDir, "bake.error.js"),
   ];
-  // The enums of dev_server/mod.rs as TypeScript, written beside the runtime sources that import it. It is the
+  // The enums of dev_server/protocol.rs as TypeScript, written beside the runtime sources that import it. It is the
   // same in every profile, like the declarations in cfg.typesDir.
   const generatedTs = resolve(cfg.cwd, "src", "runtime", "bake", "generated.ts");
 

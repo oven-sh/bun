@@ -1086,15 +1086,12 @@ describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a fi
     symlinkSync(join(String(outside), "secret.txt"), join(folder, "secret.txt"));
     const warnings = (err: string) => err.split("\n").filter(line => line.startsWith("warn:"));
     const leftOut = [
-      "warn: the link vendor/lib/secret.txt is not installed: it leads out of the project",
-      "warn: the link vendor/lib/shared is not installed: a link to a directory has to be relative and stay in the folder",
+      "warn: skipping link vendor/lib/secret.txt: target is outside the project",
+      "warn: skipping link vendor/lib/shared: directory links must be relative and stay inside the folder",
     ];
 
     const first = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: true });
-    expect(warnings(first.err)).toEqual([
-      "warn: the link vendor/lib/gone is not installed: it leads nowhere",
-      ...leftOut,
-    ]);
+    expect(warnings(first.err)).toEqual(["warn: skipping link vendor/lib/gone: target does not exist", ...leftOut]);
     expect(await readdirSorted(copy)).toEqual(["package.json"]);
 
     // Nothing is to be done about them, and nothing is said again.
@@ -3878,7 +3875,7 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
     holder.stdin.end();
     await holder.exited;
 
-    expect(err).toContain("which another linker installed");
+    expect(err).toContain("installed by another linker");
     expect(await Promise.all(names.map(async name => (await file(manifest(name)).json()).name))).toEqual(names);
   });
 
@@ -8353,7 +8350,7 @@ test.concurrent("rejects dependency aliases that traverse outside node_modules",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain('Invalid dependency name "../pwned-by-alias"');
+  expect(stderr).toContain('invalid dependency name "../pwned-by-alias"');
   // Nothing may be created outside of node_modules. `lstatSync` instead of
   // `existsSync` because the escaped artifact would be a dangling symlink.
   expect(() => lstatSync(join(packageDir, "pwned-by-alias"))).toThrow();
@@ -8382,7 +8379,7 @@ test.concurrent("rejects a dependency alias with more than one path component", 
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain('Invalid dependency name "somepkg/lib"');
+  expect(stderr).toContain('invalid dependency name "somepkg/lib"');
   expect(() => lstatSync(join(packageDir, "node_modules", "somepkg", "lib"))).toThrow();
   expect(exitCode).not.toBe(0);
 });

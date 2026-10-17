@@ -15,6 +15,7 @@ import {
   integers,
   type MemberOptions,
   ModuleDefinition,
+  NamespaceDefinition,
   RefType,
   type SignatureOptions,
   StringType,
@@ -29,10 +30,10 @@ export { null_ as null };
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
 
-/** Strict: a number (or BigInt) that is an integer in range. `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. */
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. */
 export const { u8, u16, i32, u32, u64, usize } = integers;
 
-/** Strict: only a number. */
+/** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. */
 export const f64 = new DoubleType();
 
 /** An owned `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. */
@@ -80,6 +81,9 @@ export const fn = (signature: SignatureOptions) => new FunctionDefinition([signa
 
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
+
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions. */
+export const namespace = (functions: Record<string, SignatureOptions>) => new NamespaceDefinition(functions);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
 export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

@@ -2424,7 +2424,7 @@ describe.concurrent("tag", () => {
     "%j is refused as the tag before a request is sent",
     async tag => {
       using mock = mockRegistry();
-      const error = `error: invalid tag "${tag}": a tag cannot be a version or a version range\n`;
+      const error = `error: invalid tag "${tag}": cannot be a version or range\n`;
 
       for (const [fields, flags] of [
         [{}, ["--tag", tag]],
@@ -2450,7 +2450,7 @@ describe.concurrent("tag", () => {
     for (const args of [[], ["./pkg.tgz"], ["--dry-run"]]) {
       const { err, exitCode } = await publish(env, String(dir), ...args);
       expect(err).toBe(
-        'error: a prerelease needs a tag: 2.0.0-beta.1 would become "latest", the version that `bun add` installs\n' +
+        'error: prerelease needs a tag: 2.0.0-beta.1 would become "latest"\n' +
           'note: pass a tag, for example bun publish --tag next, or --tag latest to publish it as "latest" anyway\n',
       );
       expect(exitCode).toBe(1);

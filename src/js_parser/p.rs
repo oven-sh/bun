@@ -284,20 +284,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) import_meta_ref: Ref,
     pub(crate) hmr_api_ref: Ref,
 
-    /// If bake is enabled and this is a server-side file, we want to use
-    /// special `Response` class inside the `bun:app` built-in module to
-    /// support syntax like `return Response(<jsx />, {...})` or `return Response.render("/my-page")`
-    /// or `return Response.redirect("/other")`.
-    ///
-    /// So we'll need to add a `import { Response } from 'bun:app'` to the
-    /// top of the file
-    ///
-    /// We need to declare this `response_ref` upfront
-    pub(crate) response_ref: Ref,
-    /// We also need to declare the namespace ref for `bun:app` and attach
-    /// it to the symbol so the code generated `e_import_identifier`'s
-    pub(crate) bun_app_namespace_ref: Ref,
-
     /// Used to track the `feature` function from `import { feature } from "bun:bundle"`.
     /// When visiting e_call, if the target ref matches this, we replace the call with
     /// a boolean based on whether the feature flag is enabled.
@@ -2391,95 +2377,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn generate_import_stmt_for_bake_response(
-        &mut self,
-        parts: &mut ListManaged<'a, js_ast::Part>,
-    ) -> Result<(), crate::Error> {
-        debug_assert!(!self.response_ref.is_empty());
-        debug_assert!(!self.bun_app_namespace_ref.is_empty());
-        let arena = self.arena;
-
-        let import_path: &'static [u8] = b"bun:app";
-
-        let import_record_i =
-            self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
-
-        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(2)?;
-
-        declared_symbols.append_assume_capacity(DeclaredSymbol {
-            ref_: self.bun_app_namespace_ref,
-            is_top_level: true,
-        });
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let bun_app_ns_ref = self.bun_app_namespace_ref;
-        VecExt::append(&mut self.module_scope_mut().generated, bun_app_ns_ref);
-
-        let response_ref = self.response_ref;
-        let clause_items =
-            arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
-                alias: js_ast::StoreStr::new(b"Response"),
-                original_name: js_ast::StoreStr::new(b"Response"),
-                alias_loc: bun_ast::Loc::default(),
-                name: LocRef {
-                    ref_: response_ref,
-                    loc: bun_ast::Loc::default(),
-                },
-            });
-
-        declared_symbols.append_assume_capacity(DeclaredSymbol {
-            ref_: self.response_ref,
-            is_top_level: true,
-        });
-
-        // ensure every e_import_identifier holds the namespace
-        if self.options.features.hot_module_reloading {
-            let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-            debug_assert!(symbol.namespace_alias.is_some());
-            symbol.namespace_alias.as_mut().unwrap().import_record_index = import_record_i;
-        }
-
-        self.is_import_item.insert(self.response_ref, ());
-        self.named_imports.put(
-            self.response_ref,
-            js_ast::NamedImport {
-                alias: Some(js_ast::StoreStr::new(b"Response")),
-                alias_loc: bun_ast::Loc::default(),
-                namespace_ref: self.bun_app_namespace_ref,
-                import_record_index: import_record_i,
-                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-                alias_is_star: false,
-                is_exported: false,
-            },
-        )?;
-
-        let import_stmt = self.s(
-            S::Import {
-                namespace_ref: self.bun_app_namespace_ref,
-                items: clause_items.into(),
-                import_record_index: import_record_i,
-                is_single_line: true,
-                default_name: None,
-                star_name_loc: bun_ast::Loc::EMPTY,
-                phase_defer: false,
-            },
-            bun_ast::Loc::default(),
-        );
-        let stmts = arena.alloc_slice_fill_with::<Stmt, _>(1, |_| import_stmt);
-
-        // This import is placed in a part before the main code, however
-        // the bundler ends up re-ordering this to be after... The order
-        // does not matter as ESM imports are always hoisted.
-        parts.push(js_ast::Part {
-            stmts: stmts.into(),
-            declared_symbols,
-            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
-            tag: bun_ast::PartTag::Runtime,
-            ..Default::default()
-        });
-        Ok(())
-    }
-
     pub(crate) fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
@@ -3506,25 +3403,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // TODO: these wrapping modes.
                 options::ServerComponents::WrapAnonServerFunctions => {}
                 options::ServerComponents::WrapExportsForServerReference => {}
-            }
-
-            // Server-side components: declare "Response" / "bun:app" upfront.
-            // By-name ambient — see `declare_common_js_symbol`.
-            match self.options.features.server_components {
-                options::ServerComponents::None | options::ServerComponents::ClientSide => {}
-                _ => {
-                    self.response_ref =
-                        self.declare_common_js_symbol(js_ast::symbol::Kind::Import, b"Response")?;
-                    self.bun_app_namespace_ref =
-                        self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app");
-                    let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
-                        namespace_ref: self.bun_app_namespace_ref,
-                        alias: js_ast::StoreStr::new(b"Response"),
-                        was_originally_property_access: false,
-                        import_record_index: u32::MAX,
-                    }));
-                }
             }
         }
 
@@ -5037,7 +4915,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// during visit (writes `module_scope.members[name]`). Use for parser-minted
     /// symbols that user code references as a bare identifier: CJS wrapper vars
     /// (`exports`, `module`, `require`, `__dirname`, `__filename`), jest globals,
-    /// `hmr`, server-components `Response`.
+    /// `hmr`.
     ///
     /// Collision contract when a user binding already owns `name` in
     /// `module_scope.members`:
@@ -5048,8 +4926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   (so generated code referencing it still gets a renamer-unique name)
     ///   and leaves the user's member entry untouched.
     ///
-    /// Callers that only want to emit when the ambient was actually reached
-    /// (e.g. the `Response` → `bun:app` import) check
+    /// Callers that only want to emit when the ambient was actually reached check
     /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed ref
     /// is never recorded by `find_symbol`, so the count stays 0.
     ///
@@ -8654,12 +8531,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_core::todo_panic!("registerServerReference");
         }
 
+        // Dev server only (`ParseTask` rejects production), where the source path is the module id.
         let module_path = self.new_expr(
-            E::String::init(if self.options.jsx.development {
-                self.source.path.pretty
-            } else {
-                bun_core::todo_panic!("unique_key here")
-            }),
+            E::String::init(self.source.path.pretty),
             bun_ast::Loc::EMPTY,
         );
 
@@ -9854,8 +9728,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dirname_ref: Ref::NONE,
             import_meta_ref: Ref::NONE,
             hmr_api_ref: Ref::NONE,
-            response_ref: Ref::NONE,
-            bun_app_namespace_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
             in_branch_condition: false,
             has_classic_runtime_warned: false,

@@ -348,3 +348,69 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// The key of the `-e` or stdin entry module is `<cwd>/[eval]` or `<cwd>/[stdin]`. A `?` in the cwd
+// is part of a directory name. The parent directory has the same file name.
+describe.skipIf(isWindows)("in a cwd with ? in its name", () => {
+  const commonjs = `console.log(require("node:path").basename(__dirname), require.resolve("./config.json").slice(__dirname.length));`;
+  test.each([
+    {
+      title: "bun -e runs a CommonJS script",
+      name: "what?",
+      flag: "-e",
+      script: commonjs,
+      expected: { stdout: "what? /config.json\n", stderr: "", exitCode: 0 },
+    },
+    {
+      title: "bun - runs a CommonJS script",
+      name: "wh?at",
+      flag: "-",
+      script: commonjs,
+      expected: { stdout: "wh?at /config.json\n", stderr: "", exitCode: 0 },
+    },
+    {
+      title: "bun -p prints the value of a CommonJS script",
+      name: "wh?at",
+      flag: "-p",
+      script: `require("node:path").basename(__dirname)`,
+      expected: { stdout: "wh?at\n", stderr: "", exitCode: 0 },
+    },
+    // An import resolves to the file in the cwd. Bun cannot load that file yet: the loader reads the
+    // path up to the `?` (#7928). The parent's file is not loaded.
+    {
+      title: "bun -e resolves a dynamic import in the cwd",
+      name: "what?",
+      flag: "-e",
+      script: `import("./config.json").then(m => console.log(m.default.from), e => console.log(e.message));`,
+      expected: { stdout: `ENOENT reading "<root>/what"\n`, stderr: "", exitCode: 0 },
+    },
+    {
+      title: "bun - resolves a static import in the cwd",
+      name: "wh?at",
+      flag: "-",
+      script: `import config from "./config.json"; console.log(config.from);`,
+      expected: { stdout: "", stderr: `error: ENOENT reading "<root>/wh"`, exitCode: 1 },
+    },
+  ])("$title ($name)", async ({ name, flag, script, expected }) => {
+    using dir = tempDir("run-eval-question-mark-cwd", {
+      "config.json": `{ "from": "parent" }`,
+      [name]: { "config.json": `{ "from": "project" }` },
+    });
+    const root = String(dir);
+    await using proc = Bun.spawn({
+      cmd: flag === "-" ? [bunExe(), "-"] : [bunExe(), flag, script],
+      env: bunEnv,
+      cwd: join(root, name),
+      stdin: flag === "-" ? Buffer.from(script) : "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The first line of stderr is the error.
+    expect({
+      stdout: stdout.replaceAll(root, "<root>"),
+      stderr: stderr.split("\n")[0].replaceAll(root, "<root>"),
+      exitCode,
+    }).toEqual(expected);
+  });
+});

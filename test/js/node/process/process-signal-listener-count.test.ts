@@ -134,3 +134,53 @@ done"
 `);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each(["on", "once", "prependListener", "prependOnceListener"] as const)(
+  "process.emit propagates throwing %s listeners to its caller",
+  async method => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const assert = require("node:assert/strict");
+        const method = ${JSON.stringify(method)};
+        const events = process.platform === "win32" ? ["custom"] : ["custom", "SIGUSR2"];
+        for (const event of events) {
+          for (const error of [new Error("listener failure"), 42, undefined]) {
+            const calls = [];
+            const onError = () => calls.push("error");
+            const listener = () => { calls.push("listener"); throw error; };
+            process.on("error", onError);
+            process[method](event, listener);
+            process.on(event, () => calls.push("after"));
+            let caught = false;
+            try {
+              process.emit(event);
+            } catch (value) {
+              caught = true;
+              assert.equal(value, error);
+            }
+            assert.equal(caught, true);
+            assert.deepEqual(calls, ["listener"]);
+            assert.equal(process.listeners(event).includes(listener), method === "on" || method === "prependListener");
+            process.removeListener(event, listener);
+            assert.equal(process.emit(event), true);
+            assert.deepEqual(calls, ["listener", "after"]);
+            process.removeAllListeners(event);
+            process.removeListener("error", onError);
+          }
+        }
+        console.log("propagated");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("propagated\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+);

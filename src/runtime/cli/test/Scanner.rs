@@ -428,8 +428,7 @@ impl<'a> Scanner<'a> {
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
 
-/// What [`Scanner::could_be_test_file`] takes with `NEEDS_TEST_SUFFIX`, for the
-/// messages that say no test file was found.
+/// The rule of [`Scanner::could_be_test_file`], as the "no test file found" messages print it.
 pub(crate) enum TestFileRule<'a> {
     /// `".test", "_test", ".spec" or "_spec"`
     QuotedSuffixes,
@@ -460,8 +459,7 @@ impl fmt::Display for TestFileRule<'_> {
                 f.write_str("}.{")?;
                 let mut separator = "";
                 for (extension, loader) in options.loaders.iter() {
-                    // `bun_paths::extension` returns one dot and what follows it, so
-                    // the scanner never looks up a key of another shape.
+                    // The scanner looks up `bun_paths::extension(name)`: one dot, then no other dot.
                     let Some((b'.', name)) = extension.split_first() else {
                         continue;
                     };

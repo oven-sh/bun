@@ -5875,17 +5875,17 @@ describe("server names for a connection handed in with server.emit('connection')
         }
       }
 
-      it("is kept for the handshake when it is no more than the early data BoringSSL skips", async () => {
+      it("is kept for the handshake when it is no more than the 16384 bytes BoringSSL skips", async () => {
         // This record is no early data of a session, so BoringSSL fails the handshake on it after the answer.
-        expect(await sendBehindClientHello(1024, false)).toEqual([
+        expect(await sendBehindClientHello(16384 - 5, false)).toEqual([
           "SNICallback pending.test",
           "answer",
           expect.stringMatching(/^tlsClientError ERR_SSL_/),
         ]);
       });
 
-      it("drops the connection when it is more", async () => {
-        expect(await sendBehindClientHello(16384, true)).toEqual([
+      it("drops the connection when it is one byte more", async () => {
+        expect(await sendBehindClientHello(16385 - 5, true)).toEqual([
           "SNICallback pending.test",
           "tlsClientError ECONNRESET",
           "answer",

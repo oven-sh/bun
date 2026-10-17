@@ -202,18 +202,16 @@ impl<'p, 's> Checker<'p, 's> {
         for (declared, name, identity, is_resembled) in reported {
             let mut steps = Vec::new();
             if is_resembled {
-                steps.push(
-                    self.finding_at(
-                        declared,
-                        100073,
-                        vec![
+                steps.push(self.finding_at(
+                    declared,
+                    100073,
+                    vec![
                             name.clone(),
                             marks
                                 .get(&identity)
                                 .map_or_else(Vec::new, |resembled| resembled.name.clone()),
                         ],
-                    ),
-                );
+                ));
             }
             steps.extend(self.steps_to_external_source(&marks, identity, declared));
             found.push(CompilerDiagnostic {
@@ -350,18 +348,16 @@ impl<'p, 's> Checker<'p, 's> {
             let identity = self.type_identity(part);
             let nearby = self.type_declaration_site(part).unwrap_or(at);
             if let Some(resembled) = self.external_type_resembled_by(part) {
-                reasons.push(
-                    self.finding_at(
-                        nearby,
-                        100073,
-                        vec![
+                reasons.push(self.finding_at(
+                    nearby,
+                    100073,
+                    vec![
                             name,
                             marks
                                 .get(&resembled)
                                 .map_or_else(Vec::new, |resembled| resembled.name.clone()),
                         ],
-                    ),
-                );
+                ));
                 reasons.extend(self.steps_to_external_source(marks, resembled, nearby));
             } else if self.is_tainted(part) && marks.contains_key(&identity) {
                 reasons.extend(self.steps_to_external_source(marks, identity, nearby));

@@ -17,7 +17,7 @@
 // project-local package aside before it links it again. If that rename fails it
 // links in place, so the install succeeds either way.
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
@@ -35,8 +35,7 @@ const patch = `diff --git a/index.js b/index.js
 +module.exports = "patched";
 `;
 
-let pkgDir: ReturnType<typeof tempDir> | undefined;
-let tgzBytes: Buffer;
+let tgzBytes: Uint8Array;
 let tgzSha1: string;
 
 beforeAll(async () => {
@@ -50,15 +49,8 @@ beforeAll(async () => {
     "package/bin.exe": randomBytes(2 * 1024 * 1024),
   };
   for (let i = 0; i < 300; i++) files[`package/files/${i}.txt`] = `${i}\n`;
-  pkgDir = tempDir("rename-retry-pkg", files);
-  const tgz = join(String(pkgDir), `${PKG}-1.0.0.tgz`);
-  await Bun.$`tar -czf ${tgz} -C ${String(pkgDir)} package`.quiet();
-  tgzBytes = readFileSync(tgz);
+  tgzBytes = await new Bun.Archive(files, { compress: "gzip" }).bytes();
   tgzSha1 = createHash("sha1").update(tgzBytes).digest("hex");
-});
-
-afterAll(() => {
-  pkgDir?.[Symbol.dispose]();
 });
 
 function serveRegistry(stallTarballUntil?: Promise<void>) {

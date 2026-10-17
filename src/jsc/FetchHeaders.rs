@@ -40,13 +40,6 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void)
     -> *mut FetchHeaders;
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValueNotJS(
-        arg0: *const JSGlobalObject,
-        arg1: *mut StringPointer,
-        arg2: *mut StringPointer,
-        arg3: *const EncodedSlice,
-        arg4: u32,
-    ) -> *mut FetchHeaders;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
     safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
@@ -68,6 +61,11 @@ unsafe extern "C" {
         arg0: &mut FetchHeaders,
         kind: ResponseKind,
         arg2: *mut c_void,
+    );
+    safe fn WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(
+        arg0: &mut FetchHeaders,
+        ssl: bool,
+        arg1: *mut c_void,
     );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
@@ -126,21 +124,6 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
-    /// `fill` validates every name/value pair and throws on an invalid one.
-    pub fn create(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &EncodedSlice,
-        count_: u32,
-    ) -> JsResult<NonNull<FetchHeaders>> {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        crate::call_null_is_throw(global, || unsafe {
-            WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_)
-        })
-    }
-
     pub fn is_empty(&mut self) -> bool {
         WebCore__FetchHeaders__isEmpty(self)
     }
@@ -157,6 +140,11 @@ impl FetchHeaders {
 
     pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {
         WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
+    }
+
+    /// For the 101 response of an HTTP/1 WebSocket upgrade. Skips headers that `upgrade()` writes.
+    pub fn to_uws_response_for_websocket_upgrade(&mut self, ssl: bool, uws_response: *mut c_void) {
+        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, uws_response)
     }
 
     pub fn create_empty() -> NonNull<FetchHeaders> {

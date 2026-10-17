@@ -122,11 +122,22 @@ struct HeaderBlockMeta {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BlockDisposition {
     Deliver,
-    /// HEADERS arrived on a closed stream: answered with RST_STREAM(STREAM_CLOSED).
-    StreamClosed,
+    /// HEADERS on a closed stream (§5.1): no reply, no callback (nghttp2's IGN_HEADER_BLOCK).
+    Ignored,
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+}
+
+/// What a stream id with no `Connection::streams` entry is (RFC 9113 §5.1).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NoEntry {
+    /// The embedder opened it and this is its first inbound frame.
+    Live,
+    /// It was opened before and its entry is gone: a frame on it is dropped.
+    Closed,
+    /// It was never opened: a frame on it is a connection error.
+    Idle,
 }
 
 pub(crate) struct Feed {
@@ -141,6 +152,11 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 /// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (node's streamResetBurst / streamResetRate).
 pub(crate) const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_RATE: u32 = 33;
+
+/// nghttp2's NGHTTP2_DEFAULT_GLITCH_BURST / _RATE:
+/// https://github.com/nghttp2/nghttp2/blob/v1.69.0/lib/nghttp2_session.h#L110-L111
+const IGNORED_BLOCK_BURST: u32 = 10000;
+const IGNORED_BLOCK_RATE: u32 = 330;
 
 #[derive(Clone, Copy)]
 enum ResetBy {
@@ -210,7 +226,7 @@ pub(crate) trait Sink {
 
     // ---- Stream-level (default no-op so simple sinks can ignore them) ----
 
-    /// A new stream was created by an inbound HEADERS (the embedder allocates its JS wrapper).
+    /// A server's inbound HEADERS created a new stream (the embedder allocates its JS wrapper).
     fn on_stream_open(&self, _stream_id: u32) {}
     /// Whether the embedder can afford the state for a new peer-initiated stream (the session
     /// memory budget, node's maxSessionMemory). `false` refuses the HEADERS with RST_STREAM
@@ -255,8 +271,8 @@ pub(crate) trait Sink {
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
-    /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
-    /// inbound frames for it are not treated as frames on an idle stream.
+    /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder) and
+    /// the embedder has not closed it, so inbound frames for it are frames on a live stream.
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
@@ -345,6 +361,8 @@ pub(crate) struct Connection {
     sent_reset_limit: RateLimit,
     /// A bucket ran dry mid-frame; receive() tears the session down between frames.
     reset_flood: bool,
+    /// Header blocks dropped on a closed stream (nghttp2's glitch_ratelim).
+    ignored_block_limit: RateLimit,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -355,6 +373,9 @@ pub(crate) struct Connection {
 
     preface_received: usize,
     pub last_stream_id: u32,
+    /// Highest stream id the peer opened: a request on a server (refused ones too), a promised
+    /// id on a client (nghttp2's last_recv_stream_id).
+    pub last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -389,11 +410,13 @@ impl Connection {
             ),
             sent_reset_limit: RateLimit::new(DEFAULT_STREAM_RESET_BURST, DEFAULT_STREAM_RESET_RATE),
             reset_flood: false,
+            ignored_block_limit: RateLimit::new(IGNORED_BLOCK_BURST, IGNORED_BLOCK_RATE),
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -658,10 +681,7 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
-        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
-        // evicted id re-opens a fresh entry (the parity check still applies); that matches how
-        // trailers-after-close are treated as a new block by the legacy parser as well.
+        // A late frame for an evicted id is `NoEntry::Closed` and is dropped.
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
@@ -881,6 +901,21 @@ impl Connection {
         true
     }
 
+    /// nghttp2 charges each ignored header block to its glitch limit, then ends the session:
+    /// https://github.com/nghttp2/nghttp2/blob/v1.69.0/lib/nghttp2_session.c#L5678-L5683
+    fn note_ignored_block(&mut self, sink: &impl Sink) -> bool {
+        if self.ignored_block_limit.drain() {
+            return false;
+        }
+        self.local_connection_error(
+            sink,
+            ErrorCode::EnhanceYourCalm,
+            wire::lib_error::FLOODED,
+            b"too many header blocks on closed streams",
+        );
+        true
+    }
+
     /// Bound queued PING/SETTINGS ACKs behind a non-reading peer — nghttp2's
     /// obq_flood_counter_ / NGHTTP2_ERR_FLOODED. The counter is only reset by
     /// note_outbound_drained() when the transport actually drains, so detection
@@ -961,6 +996,9 @@ impl Connection {
                 );
                 return true;
             }
+            if self.is_closed_stream(sink, hdr.stream_id) {
+                return false;
+            }
             // Locally-initiated stream RST: close the engine entry and tell the embedder, the
             // same as handle_data's Rst path, so the JS stream learns it was reset and the
             // entry is evicted.
@@ -984,6 +1022,10 @@ impl Connection {
         } else if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
             // 6.9.1: a per-stream overflow is a stream error, not a connection error.
             if s.send_window.increase(increment).is_err() {
+                let state = s.state;
+                if self.is_closed_entry(sink, hdr.stream_id, state) {
+                    return false;
+                }
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
                 if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
                     s.state = State::Closed;
@@ -1039,9 +1081,7 @@ impl Connection {
         let recv_init = self.local_settings.initial_window_size;
         let is_new = !self.streams.contains_key(&hdr.stream_id);
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
-        // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
-        // checked here: a client legitimately receives HEADERS on even promised ids that are
-        // numerically below its own latest odd id.)
+        // would open an even-id stream is a connection PROTOCOL_ERROR.
         if is_new && self.is_server && hdr.stream_id.is_multiple_of(2) {
             self.send_go_away(
                 sink,
@@ -1050,13 +1090,22 @@ impl Connection {
             );
             return true;
         }
-        let refused = is_new && self.is_server && !sink.can_open_stream();
+        // With no entry, only a server's idle id opens a stream (the embedder opens a client's).
+        let absent = if is_new {
+            self.no_entry(sink, hdr.stream_id)
+        } else {
+            NoEntry::Live
+        };
+        let opens = self.is_server && absent == NoEntry::Idle;
+        let refused = opens && !sink.can_open_stream();
         let mut disposition = if refused {
             BlockDisposition::Refused
-        } else {
+        } else if opens || absent == NoEntry::Live {
             BlockDisposition::Deliver
+        } else {
+            BlockDisposition::Ignored
         };
-        if !refused {
+        if disposition == BlockDisposition::Deliver {
             let s = self
                 .streams
                 .entry(hdr.stream_id)
@@ -1088,12 +1137,10 @@ impl Connection {
                     // nghttp2 (session_on_*_headers_received): HEADERS for a stream whose remote
                     // half already ended (half-closed (remote)) is escalated to a CONNECTION error
                     // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
-                    // closed or invalid" and tears the session down. A stream that closed for any
-                    // other reason (e.g. we reset it and the peer's trailers were already in
-                    // flight) keeps the conservative stream-level handling: the block is still
-                    // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
-                    // by finish_header_block.
-                    if cur_state == State::HalfClosedRemote {
+                    // closed or invalid" and tears the session down.
+                    if cur_state == State::HalfClosedRemote
+                        && !self.is_closed_entry(sink, hdr.stream_id, cur_state)
+                    {
                         self.local_connection_error(
                             sink,
                             ErrorCode::StreamClosed,
@@ -1102,19 +1149,23 @@ impl Connection {
                         );
                         return true;
                     }
-                    disposition = BlockDisposition::StreamClosed;
+                    // We reset it, or both halves ended, and the peer's block was in flight.
+                    disposition = BlockDisposition::Ignored;
                 }
             }
         }
-        if is_new {
-            // Must advance even for refused streams: §5.1 treats anything at or below the
-            // high-water mark as having existed, so frames a client pipelined behind the
-            // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
+        if is_new && disposition != BlockDisposition::Ignored {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            if !refused {
-                sink.on_stream_open(hdr.stream_id);
+            if opens {
+                // Must advance even for refused streams: §5.1 treats anything at or below the
+                // high-water mark as having existed, so frames a client pipelined behind the
+                // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
+                self.last_peer_stream_id = hdr.stream_id;
+                if !refused {
+                    sink.on_stream_open(hdr.stream_id);
+                }
             }
         }
 
@@ -1125,10 +1176,8 @@ impl Connection {
             push_parent: None,
             flags: hdr.flags,
             end_stream,
-            // Only a server receives request blocks via HEADERS; on a client every response block
-            // looks "new" (the engine only tracks inbound-created streams), so without this gate it
-            // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
-            is_request: self.is_server && is_new,
+            // Only a server receives request blocks via HEADERS. PUSH_PROMISE sets the flag itself.
+            is_request: opens,
             disposition,
         };
         self.finish_or_park_header_block(sink, hdr, meta)
@@ -1357,16 +1406,8 @@ impl Connection {
                 sink.on_stream_rejected(target);
                 return false;
             }
-            BlockDisposition::StreamClosed => {
-                // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
-                // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
-                self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
-                if let Some(s) = self.streams.get_mut(&target) {
-                    s.state = State::Closed;
-                }
-                sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
-                return false;
-            }
+            // The block was decoded above purely for HPACK-table sync.
+            BlockDisposition::Ignored => return self.note_ignored_block(sink),
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
@@ -1482,30 +1523,30 @@ impl Connection {
             return StreamedDataStart::Fatal;
         }
 
-        if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
-            let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
-            let mut s = Stream::new(send_init, recv_init);
-            s.state = State::Open;
-            self.streams.insert(hdr.stream_id, s);
+        let mut discard = false;
+        if !self.streams.contains_key(&hdr.stream_id) {
+            match self.no_entry(sink, hdr.stream_id) {
+                NoEntry::Live => {
+                    self.open_local_stream(hdr.stream_id);
+                }
+                NoEntry::Closed => discard = true,
+                // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
+                NoEntry::Idle => {
+                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
+                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                    discard = true;
+                }
+            }
         }
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
-        let mut discard = false;
         match self.streams.get_mut(&hdr.stream_id) {
-            None => {
-                self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
-                discard = true;
-            }
+            None => {}
             Some(st) => {
                 if !stream::can_receive_data(st.state) {
-                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                    if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
-                        st2.state = State::Closed;
-                    }
-                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                    let state = st.state;
+                    self.refuse_data(sink, hdr.stream_id, state);
                     discard = true;
                 } else {
                     st.recv_window.on_data(hdr.length as i64);
@@ -1571,6 +1612,71 @@ impl Connection {
         }
     }
 
+    /// Above every id its initiator has opened (nghttp2's session_detect_idle_stream).
+    fn is_idle(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        let peer_initiated = stream_id.is_multiple_of(2) != self.is_server;
+        let opened = if peer_initiated {
+            self.last_peer_stream_id
+        } else {
+            sink.highest_started_stream_id()
+        };
+        stream_id > opened
+    }
+
+    /// Call only after a `streams` lookup missed, so a stream with an entry never pays for it.
+    fn no_entry(&self, sink: &impl Sink, stream_id: u32) -> NoEntry {
+        // A peer's stream has an entry from its first frame until it closes.
+        let peer_initiated = stream_id.is_multiple_of(2) != self.is_server;
+        if self.is_idle(sink, stream_id) {
+            NoEntry::Idle
+        } else if !peer_initiated && sink.is_local_stream(stream_id) {
+            NoEntry::Live
+        } else {
+            NoEntry::Closed
+        }
+    }
+
+    /// The embedder ends its half on the legacy encoder, so only it knows that a client's entry
+    /// whose remote half ended is closed.
+    fn is_closed_entry(&self, sink: &impl Sink, stream_id: u32, state: State) -> bool {
+        state == State::Closed
+            || (!self.is_server
+                && state == State::HalfClosedRemote
+                && !sink.is_local_stream(stream_id))
+    }
+
+    /// RFC 9113 §5.1: a frame on a closed stream is dropped, as nghttp2 does.
+    fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        match self.streams.get(&stream_id).map(|s| s.state) {
+            Some(state) => self.is_closed_entry(sink, stream_id, state),
+            None => self.no_entry(sink, stream_id) == NoEntry::Closed,
+        }
+    }
+
+    /// The entry of a stream the embedder opened, whose HEADERS this engine never saw go out.
+    fn open_local_stream(&mut self, stream_id: u32) -> &mut Stream {
+        let send_init = self.remote_settings.initial_window_size;
+        let recv_init = self.local_settings.initial_window_size;
+        let s = self
+            .streams
+            .entry(stream_id)
+            .or_insert_with(|| Stream::new(send_init, recv_init));
+        s.state = State::Open;
+        s
+    }
+
+    /// DATA on an entry that cannot take it: dropped on a closed stream, else a stream error.
+    fn refuse_data(&mut self, sink: &impl Sink, stream_id: u32, state: State) {
+        if self.is_closed_entry(sink, stream_id, state) {
+            return;
+        }
+        self.send_rst_stream(sink, stream_id, ErrorCode::StreamClosed);
+        if let Some(s) = self.streams.get_mut(&stream_id) {
+            s.state = State::Closed;
+        }
+        sink.on_stream_reset(stream_id, ErrorCode::StreamClosed.as_u32());
+    }
+
     fn handle_data(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let mut off = 0usize;
         let mut end = payload.len();
@@ -1616,28 +1722,32 @@ impl Connection {
         // Per-stream flow control + state check, decided under a scoped borrow so the self.* calls
         // below don't alias the streams map.
         enum DataDecision {
-            Rst(ErrorCode),
+            Refuse(State),
             FlowControlViolation,
             Deliver(u32),
         }
-        // Transition shim: DATA for a stream the embedder opened locally (legacy outbound) — open it
-        // here so it isn't mistaken for a closed/idle stream.
-        if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
-            let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
-            let mut s = Stream::new(send_init, recv_init);
-            s.state = State::Open;
-            self.streams.insert(hdr.stream_id, s);
+        if !self.streams.contains_key(&hdr.stream_id) {
+            match self.no_entry(sink, hdr.stream_id) {
+                NoEntry::Live => {
+                    self.open_local_stream(hdr.stream_id);
+                }
+                NoEntry::Closed => return false,
+                // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
+                NoEntry::Idle => {
+                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
+                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                    return false;
+                }
+            }
         }
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let decision = match self.streams.get_mut(&hdr.stream_id) {
-            // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
-            None => DataDecision::Rst(ErrorCode::StreamClosed),
+            None => return false,
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
-                    DataDecision::Rst(ErrorCode::StreamClosed)
+                    DataDecision::Refuse(s.state)
                 } else {
                     s.recv_window.on_data(consumed);
                     if s.recv_window.is_overflowed_with(recv_limit) {
@@ -1650,13 +1760,8 @@ impl Connection {
             }
         };
         let stream_inc = match decision {
-            DataDecision::Rst(code) => {
-                self.send_rst_stream(sink, hdr.stream_id, code);
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                    s.state = State::Closed;
-                }
-                // Surface the stream error (e.g. a peer protocol violation) to the embedder.
-                sink.on_stream_reset(hdr.stream_id, code.as_u32());
+            DataDecision::Refuse(state) => {
+                self.refuse_data(sink, hdr.stream_id, state);
                 return false;
             }
             DataDecision::FlowControlViolation => {
@@ -1729,42 +1834,23 @@ impl Connection {
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
         let mut charged = false;
-        // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
-        let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
+        match self.streams.get_mut(&hdr.stream_id) {
             Some(s) if s.state != State::Idle => {
                 // nghttp2 exempts every reset after its GOAWAY, but it opens no stream after it.
                 let exempt = sink.goaway_sent() && !s.opened_after_goaway;
                 charged = s.state != State::Closed && !exempt;
                 s.state = State::Closed;
-                false
             }
-            _ => true,
-        };
-        // Transition shim: a stream the embedder opened locally (legacy outbound) is not idle even
-        // though this engine never saw its HEADERS go out.
-        if on_idle && sink.is_local_stream(hdr.stream_id) {
-            let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
-            let s = self
-                .streams
-                .entry(hdr.stream_id)
-                .or_insert_with(|| Stream::new(send_init, recv_init));
-            s.state = State::Closed;
-            on_idle = false;
-        }
-        // §5.1: a stream evicted after full close (per-request memory release) is
-        // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id either layer has started has existed; the embedder's
-        // mark covers locally-initiated streams this engine never saw HEADERS for.
-        if on_idle
-            && (hdr.stream_id <= self.last_stream_id
-                || hdr.stream_id <= sink.highest_started_stream_id())
-        {
-            return false;
-        }
-        if on_idle {
-            self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
-            return true;
+            _ => match self.no_entry(sink, hdr.stream_id) {
+                NoEntry::Live => self.open_local_stream(hdr.stream_id).state = State::Closed,
+                // §5.1: a late RST_STREAM on a closed stream MUST be tolerated.
+                NoEntry::Closed => return false,
+                // §5.1: RST_STREAM on an idle stream is a connection PROTOCOL_ERROR.
+                NoEntry::Idle => {
+                    self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
+                    return true;
+                }
+            },
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
         if charged {
@@ -1855,6 +1941,9 @@ impl Connection {
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
+        if promised > self.last_peer_stream_id {
+            self.last_peer_stream_id = promised;
+        }
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);
@@ -1888,6 +1977,16 @@ impl Connection {
             || (hdr.stream_id != 0 && !origin.is_empty())
         {
             return false;
+        }
+        // nghttp2_session_on_altsvc_received: ignored on a stream that is not open.
+        if hdr.stream_id != 0 {
+            let live = match self.streams.get(&hdr.stream_id).map(|s| s.state) {
+                Some(state) => !self.is_closed_entry(sink, hdr.stream_id, state),
+                None => self.no_entry(sink, hdr.stream_id) == NoEntry::Live,
+            };
+            if !live {
+                return false;
+            }
         }
         sink.on_altsvc(hdr.stream_id, origin, value);
         false
@@ -2044,8 +2143,7 @@ impl Connection {
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
     /// has the same observable behavior as scan-eviction of a Closed stream: late frames
-    /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry.
+    /// for the id are dropped (`NoEntry::Closed`).
     pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }
@@ -2141,6 +2239,10 @@ mod tests {
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         origins: RefCell<Vec<Vec<u8>>>,
+        /// Streams the embedder opened and has not closed, and its highest started id.
+        local: RefCell<Vec<u32>>,
+        started: Cell<u32>,
+        liveness_calls: Cell<u32>,
     }
     impl Sink for CaptureSink {
         fn write(&self, bytes: &[u8]) -> WriteResult {
@@ -2192,6 +2294,13 @@ mod tests {
         }
         fn on_origin(&self, origin: &[u8]) {
             self.origins.borrow_mut().push(origin.to_vec());
+        }
+        fn is_local_stream(&self, id: u32) -> bool {
+            self.liveness_calls.set(self.liveness_calls.get() + 1);
+            self.local.borrow().contains(&id)
+        }
+        fn highest_started_stream_id(&self) -> u32 {
+            self.started.get()
         }
     }
 
@@ -2458,5 +2567,301 @@ mod tests {
         // Only 4 of 10 bytes fit in the window.
         let sent = c.send_data(&sink, 1, b"0123456789", true);
         assert_eq!(sent, 4);
+    }
+
+    const END: u8 = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+
+    fn response_block() -> Vec<u8> {
+        encode_block(&[(b":status", b"200")])
+    }
+
+    fn request_block() -> Vec<u8> {
+        encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ])
+    }
+
+    /// A client whose embedder opened `ids`.
+    fn client_with_streams(sink: &CaptureSink, ids: &[u32]) -> Connection {
+        sink.local.borrow_mut().extend_from_slice(ids);
+        sink.started.set(ids.iter().copied().max().unwrap_or(0));
+        Connection::new(false, Settings::default())
+    }
+
+    fn server() -> Connection {
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        c
+    }
+
+    /// The embedder closed `id` and evicted its entry, as it does before the next read.
+    fn evict(sink: &CaptureSink, c: &mut Connection, id: u32) {
+        sink.local.borrow_mut().retain(|s| *s != id);
+        c.close_stream(id);
+    }
+
+    #[test]
+    fn late_frames_on_evicted_streams_leave_no_state() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[]);
+        let block = response_block();
+        for i in 0..IGNORED_BLOCK_BURST {
+            let id = 1 + 2 * i;
+            sink.local.borrow_mut().push(id);
+            sink.started.set(id);
+            evict(&sink, &mut c, id);
+            let late = [
+                frame(FrameType::Headers, wire::flags::END_HEADERS, id, &block),
+                frame(FrameType::Data, wire::flags::END_STREAM, id, b""),
+            ]
+            .concat();
+            let fed = c.receive(&sink, &late);
+            assert!(!fed.fatal);
+            assert_eq!(fed.consumed, late.len());
+        }
+        assert_eq!(c.streams.len(), 0);
+        assert!(sink.out.borrow().is_empty());
+        assert!(sink.opens.borrow().is_empty());
+        assert!(sink.headers_done.borrow().is_empty());
+        assert!(sink.resets.borrow().is_empty());
+        assert_eq!(c.last_stream_id, 0);
+    }
+
+    #[test]
+    fn a_live_response_costs_one_liveness_call() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[1]);
+        let response = [
+            frame(
+                FrameType::Headers,
+                wire::flags::END_HEADERS,
+                1,
+                &response_block(),
+            ),
+            frame(FrameType::Data, 0, 1, b"a"),
+            frame(FrameType::Data, 0, 1, b"b"),
+            frame(FrameType::Data, wire::flags::END_STREAM, 1, b"c"),
+        ]
+        .concat();
+        assert!(!c.receive(&sink, &response).fatal);
+        assert_eq!(sink.liveness_calls.get(), 1);
+        assert!(sink.opens.borrow().is_empty());
+        assert_eq!(sink.data.borrow().len(), 3);
+        assert_eq!(*sink.ended.borrow(), vec![1]);
+    }
+
+    #[test]
+    fn a_new_server_request_costs_no_liveness_call() {
+        let sink = CaptureSink::default();
+        let mut c = server();
+        let request = frame(FrameType::Headers, END, 1, &request_block());
+        assert!(!c.receive(&sink, &request).fatal);
+        assert_eq!(sink.liveness_calls.get(), 0);
+        assert_eq!(*sink.opens.borrow(), vec![1]);
+        assert_eq!(c.last_peer_stream_id, 1);
+    }
+
+    #[test]
+    fn server_ignores_headers_on_a_closed_or_lower_stream() {
+        let sink = CaptureSink::default();
+        let mut c = server();
+        let request = request_block();
+        assert!(
+            !c.receive(&sink, &frame(FrameType::Headers, END, 5, &request))
+                .fatal
+        );
+        c.close_stream(5);
+        let late = [
+            frame(FrameType::Headers, END, 5, &request),
+            frame(FrameType::Headers, END, 3, &request),
+            frame(FrameType::Data, wire::flags::END_STREAM, 3, b""),
+            frame(FrameType::WindowUpdate, 0, 3, &[0, 0, 0, 0]),
+        ]
+        .concat();
+        let fed = c.receive(&sink, &late);
+        assert!(!fed.fatal);
+        assert_eq!(*sink.opens.borrow(), vec![5]);
+        assert_eq!(*sink.headers_done.borrow(), vec![(5, true)]);
+        assert!(sink.out.borrow().is_empty());
+        assert!(sink.resets.borrow().is_empty());
+        assert_eq!(c.streams.len(), 0);
+        // A higher id is still a new request.
+        assert!(
+            !c.receive(&sink, &frame(FrameType::Headers, END, 7, &request))
+                .fatal
+        );
+        assert_eq!(*sink.opens.borrow(), vec![5, 7]);
+    }
+
+    #[test]
+    fn client_ignores_frames_on_a_stream_the_embedder_closed_in_the_same_read() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[1]);
+        let block = response_block();
+        assert!(
+            !c.receive(&sink, &frame(FrameType::Headers, END, 1, &block))
+                .fatal
+        );
+        assert_eq!(
+            c.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
+        // The embedder closed the stream; its entry here stays until the next read.
+        sink.local.borrow_mut().clear();
+        let late = [
+            frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &block),
+            frame(FrameType::Data, wire::flags::END_STREAM, 1, b""),
+            frame(FrameType::WindowUpdate, 0, 1, &[0, 0, 0, 0]),
+            frame(FrameType::WindowUpdate, 0, 1, &[0x7f, 0xff, 0xff, 0xff]),
+        ]
+        .concat();
+        let fed = c.receive(&sink, &late);
+        assert!(!fed.fatal);
+        assert_eq!(sink.local_error.get(), None);
+        assert!(sink.out.borrow().is_empty());
+        assert!(sink.resets.borrow().is_empty());
+        assert_eq!(*sink.headers_done.borrow(), vec![(1, true)]);
+    }
+
+    #[test]
+    fn headers_on_a_live_half_closed_remote_stream_stay_a_connection_error() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[1]);
+        let block = response_block();
+        let twice = [
+            frame(FrameType::Headers, END, 1, &block),
+            frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &block),
+        ]
+        .concat();
+        assert!(c.receive(&sink, &twice).fatal);
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::STREAM_CLOSED));
+    }
+
+    #[test]
+    fn ignored_blocks_keep_hpack_in_sync() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[1, 3]);
+        evict(&sink, &mut c, 1);
+        // One coder for both blocks: the second refers to the entry the first inserted.
+        let mut coder = hpack::Coder::new(4096);
+        let mut buf = vec![0u8; 256];
+        let mut first = coder
+            .encode(b":status", b"200", false, &mut buf, 0)
+            .unwrap();
+        first += coder
+            .encode(b"x-late", b"1", false, &mut buf, first)
+            .unwrap();
+        let mut second = coder
+            .encode(b":status", b"200", false, &mut buf, first)
+            .unwrap();
+        second += coder
+            .encode(b"x-late", b"1", false, &mut buf, first + second)
+            .unwrap();
+        let wire_bytes = [
+            frame(FrameType::Headers, END, 1, &buf[..first]),
+            frame(FrameType::Headers, END, 3, &buf[first..first + second]),
+        ]
+        .concat();
+        assert!(!c.receive(&sink, &wire_bytes).fatal);
+        assert_eq!(*sink.headers_done.borrow(), vec![(3, true)]);
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 3 && n == b"x-late" && v == b"1")
+        );
+    }
+
+    #[test]
+    fn ignored_block_budget_ends_the_session() {
+        for is_server in [false, true] {
+            let sink = CaptureSink::default();
+            let mut c = if is_server {
+                let mut c = server();
+                let request = frame(FrameType::Headers, END, 1, &request_block());
+                assert!(!c.receive(&sink, &request).fatal);
+                c.close_stream(1);
+                c
+            } else {
+                sink.started.set(1);
+                Connection::new(false, Settings::default())
+            };
+            let late = frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &[0x88]);
+            let mut accepted = 0u32;
+            // The bucket gains IGNORED_BLOCK_RATE per second, so a slow run accepts a few more.
+            while accepted < IGNORED_BLOCK_BURST + 10 * IGNORED_BLOCK_RATE {
+                if c.receive(&sink, &late).fatal {
+                    break;
+                }
+                accepted += 1;
+            }
+            assert!(accepted >= IGNORED_BLOCK_BURST);
+            assert!(accepted < IGNORED_BLOCK_BURST + 10 * IGNORED_BLOCK_RATE);
+            assert_eq!(sink.local_error.get(), Some(wire::lib_error::FLOODED));
+            // The GOAWAY is the only frame this side wrote.
+            let out = sink.out.borrow();
+            assert_eq!(out[3], FrameType::GoAway as u8);
+            assert_eq!(
+                out[wire::FRAME_HEADER_SIZE + 4..wire::FRAME_HEADER_SIZE + 8],
+                ErrorCode::EnhanceYourCalm.as_u32().to_be_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn rst_stream_tells_closed_from_idle_per_parity() {
+        // Server: a reset on a finished request is tolerated, one above every request is not.
+        let sink = CaptureSink::default();
+        let mut c = server();
+        assert!(
+            !c.receive(&sink, &frame(FrameType::Headers, END, 1, &request_block()))
+                .fatal
+        );
+        c.close_stream(1);
+        let cancel = ErrorCode::Cancel.as_u32().to_be_bytes();
+        assert!(
+            !c.receive(&sink, &frame(FrameType::RstStream, 0, 1, &cancel))
+                .fatal
+        );
+        assert!(sink.resets.borrow().is_empty());
+        assert!(
+            c.receive(&sink, &frame(FrameType::RstStream, 0, 3, &cancel))
+                .fatal
+        );
+
+        // Client: an even id that no PUSH_PROMISE reserved is idle, whatever the request ids are.
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[1, 3]);
+        assert!(
+            !c.receive(&sink, &frame(FrameType::RstStream, 0, 3, &cancel))
+                .fatal
+        );
+        assert_eq!(*sink.resets.borrow(), vec![(3, ErrorCode::Cancel.as_u32())]);
+        assert!(
+            c.receive(&sink, &frame(FrameType::RstStream, 0, 2, &cancel))
+                .fatal
+        );
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+    }
+
+    #[test]
+    fn altsvc_is_ignored_on_a_stream_that_is_not_open() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[1, 3]);
+        evict(&sink, &mut c, 1);
+        let mut payload = vec![0u8, 0];
+        payload.extend_from_slice(b"h2=\":443\"");
+        let frames = [
+            frame(FrameType::AltSvc, 0, 1, &payload),
+            frame(FrameType::AltSvc, 0, 3, &payload),
+            frame(FrameType::AltSvc, 0, 5, &payload),
+        ]
+        .concat();
+        assert!(!c.receive(&sink, &frames).fatal);
+        let seen: Vec<u32> = sink.altsvc.borrow().iter().map(|a| a.0).collect();
+        assert_eq!(seen, vec![3]);
     }
 }

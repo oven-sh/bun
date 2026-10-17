@@ -4006,7 +4006,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn is_local_stream(&self, stream_id: u32) -> bool {
         // The legacy outbound created an entry in the legacy streams map for every locally
         // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
-        self.streams.get().contains_key(&stream_id)
+        // A closed stream keeps its entry until the next read.
+        match self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            Some(stream) => unsafe { (*stream).state != StreamState::CLOSED },
+            None => false,
+        }
     }
 
     fn goaway_sent(&self) -> bool {
@@ -6055,7 +6060,9 @@ impl H2FrameParser {
         } else {
             next_stream_id.saturating_sub(2)
         };
-        this.last_stream_id.set(last_stream_id);
+        // Never back (nghttp2_session_set_next_stream_id): ids up to the mark have been used.
+        this.last_stream_id
+            .set(last_stream_id.max(this.last_stream_id.get()));
         Ok(JSValue::UNDEFINED)
     }
 

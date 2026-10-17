@@ -1,4 +1,4 @@
-import { file, spawn, write } from "bun";
+import { $, file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   chmodSync,
@@ -3374,6 +3374,628 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
         ? { errors: ['error: postinstall script from "baz" exited with 1'], exitCode: 1 }
         : { errors: [], exitCode: 0 },
     );
+  });
+});
+
+describe.concurrent("a dependency that Bun names after its own package gets no trust from that name", () => {
+  // `electron-1.0.0.tgz` calls itself "electron". Its preinstall script writes preinstall.txt.
+  const electronTarball = join(import.meta.dir, "registry", "packages", "electron", "electron-1.0.0.tgz");
+  const electronUrl = () => `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+  const scripts = { preinstall: `${bunExe()} -e "require('fs').writeFileSync('preinstall.txt', 'ran')"` };
+  const electronSource = { name: "electron", version: "1.0.0", scripts };
+  const harmlessSource = { name: "harmless", version: "1.0.0", scripts };
+  const refusal = (spec: string) =>
+    `error: "${spec}" has no name of its own, and Bun would name it "electron", which is in trustedDependencies`;
+  const advice = (spec: string, manifest = "package.json") =>
+    `note: a name in trustedDependencies lets a package run its lifecycle scripts. To allow that, write the entry yourself in ${manifest}: "electron": "${spec}". To keep them blocked, write another name.`;
+  const gitEnv = (env: Record<string, string>) => ({
+    ...env,
+    // Set on the asan lanes, where it makes `bun install` kill its own git clones.
+    BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  });
+
+  // GitHub serves `owner/repo` as a tarball with one directory, `<owner>-<repo>-<commit>`.
+  let githubFork: ReturnType<typeof Bun.serve>;
+  beforeAll(async () => {
+    const tarball = await githubTarball("someone-fork-abc1234", { "package.json": JSON.stringify(electronSource) });
+    githubFork = Bun.serve({ port: 0, fetch: () => new Response(tarball) });
+  });
+  afterAll(() => githubFork.stop(true));
+
+  type Env = Record<string, string | undefined>;
+  async function run(ctx: TestCtx, args: string[], cwd = ctx.packageDir, env: Env = ctx.env) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stdin: "ignore", stderr: "pipe", env });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  const ranPreinstall = (dir: string, name = "electron") => exists(join(dir, "node_modules", name, "preinstall.txt"));
+  const member = (packageDir: string, name: string) => join(packageDir, "packages", name);
+  const workspace = (packageDir: string, name: string, fields: Record<string, unknown> = {}) =>
+    write(join(member(packageDir, name), "package.json"), JSON.stringify({ name, version: "1.0.0", ...fields }));
+
+  type Shape = {
+    /** The spec that the refusal names. */
+    spec: string;
+    /** Defaults to `bun add <spec>`. */
+    argv?: string[];
+    cwd?: string;
+    env?: Env;
+    /** More fields for the root package.json. */
+    manifest?: Record<string, unknown>;
+    /** Run `bun install` before the command. The root package.json names "electron" then. */
+    installFirst?: boolean;
+    /** The package.json that the advice names. */
+    advised?: string;
+    /** Every directory that could receive a package.json, a bun.lock or a node_modules. Defaults to the root. */
+    dirs?: string[];
+  };
+  const shapes: [string, (ctx: TestCtx) => Promise<Shape>][] = [
+    ["bun add <tarball URL>", async () => ({ spec: electronUrl() })],
+    ["bun install <tarball URL>", async () => ({ spec: electronUrl(), argv: ["install", electronUrl()] })],
+    [
+      "bun add --no-save <tarball URL>",
+      async () => ({ spec: electronUrl(), argv: ["add", "--no-save", electronUrl()] }),
+    ],
+    [
+      "bun add --ignore-scripts <tarball URL>",
+      async () => ({ spec: electronUrl(), argv: ["add", "--ignore-scripts", electronUrl()] }),
+    ],
+    [
+      "bun add --linker=isolated <tarball URL>",
+      async () => ({ spec: electronUrl(), argv: ["add", "--linker=isolated", electronUrl()] }),
+    ],
+    [
+      "bun add <tarball URL> over the registry package of that name",
+      async () => ({ spec: electronUrl(), manifest: { dependencies: { electron: "1.0.0" } }, installFirst: true }),
+    ],
+    [
+      "bun add <local tarball>",
+      async ({ packageDir }) => {
+        await write(join(packageDir, "electron.tgz"), file(electronTarball));
+        return { spec: "./electron.tgz" };
+      },
+    ],
+    [
+      "bun add <folder>",
+      async ({ packageDir }) => {
+        await write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource));
+        return { spec: "./vendor" };
+      },
+    ],
+    [
+      // The name is saved, and a later version of the package can add scripts.
+      "bun add <folder> of a package with no lifecycle scripts",
+      async ({ packageDir }) => {
+        await write(join(packageDir, "vendor", "package.json"), JSON.stringify({ name: "electron", version: "1.0.0" }));
+        return { spec: "./vendor" };
+      },
+    ],
+    [
+      "bun add <folder> of a package with no name, in a directory that has the name",
+      async ({ packageDir }) => {
+        await write(
+          join(packageDir, "folders", "electron", "package.json"),
+          JSON.stringify({ version: "1.0.0", scripts }),
+        );
+        return { spec: "./folders/electron" };
+      },
+    ],
+    [
+      "bun add <folder> over another folder that a person named",
+      async ({ packageDir }) => {
+        await Promise.all([
+          write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource)),
+          write(join(packageDir, "vendor2", "package.json"), JSON.stringify(electronSource)),
+        ]);
+        return { spec: "./vendor2", manifest: { dependencies: { electron: "file:./vendor" } }, installFirst: true };
+      },
+    ],
+    [
+      "bun add <git URL>",
+      async ({ packageDir, env }) => {
+        const repo = join(packageDir, "repo");
+        await write(join(repo, "package.json"), JSON.stringify(electronSource));
+        await $`git init -q && git add -A && git commit -q -m one --no-gpg-sign`.cwd(repo).env(gitEnv(env)).quiet();
+        return { spec: `git+${pathToFileURL(repo).href}`, env: gitEnv(env) };
+      },
+    ],
+    [
+      "bun add github:<owner>/<repo>",
+      async ({ env }) => ({ spec: "github:someone/fork", env: { ...env, GITHUB_API_URL: githubFork.url.origin } }),
+    ],
+    [
+      "bun add link:<a name that the package no longer has>",
+      async ctx => {
+        const env = { ...ctx.env, BUN_INSTALL: join(ctx.packageDir, "bun-install") };
+        const linked = join(ctx.packageDir, "linked");
+        await write(join(linked, "package.json"), JSON.stringify(harmlessSource));
+        expect((await run(ctx, ["link"], linked, env)).exitCode).toBe(0);
+        await write(join(linked, "package.json"), JSON.stringify(electronSource));
+        return { spec: "link:harmless", env };
+      },
+    ],
+    [
+      "bun add <tarball URL> inside a workspace member",
+      async ({ packageDir }) => {
+        await workspace(packageDir, "a");
+        return {
+          spec: electronUrl(),
+          cwd: member(packageDir, "a"),
+          manifest: { workspaces: ["packages/*"] },
+          advised: "packages/a/package.json",
+          dirs: [packageDir, member(packageDir, "a")],
+        };
+      },
+    ],
+    [
+      "bun add --filter <tarball URL>",
+      async ({ packageDir }) => {
+        await workspace(packageDir, "a");
+        return {
+          spec: electronUrl(),
+          argv: ["add", "--filter", "a", electronUrl()],
+          manifest: { workspaces: ["packages/*"] },
+          advised: "packages/a/package.json",
+          dirs: [packageDir, member(packageDir, "a")],
+        };
+      },
+    ],
+    [
+      "bun add --catalog <tarball URL> inside a workspace member",
+      async ({ packageDir }) => {
+        await workspace(packageDir, "a");
+        return {
+          spec: electronUrl(),
+          argv: ["add", "--catalog", electronUrl()],
+          cwd: member(packageDir, "a"),
+          manifest: { workspaces: ["packages/*"] },
+          advised: "packages/a/package.json",
+          dirs: [packageDir, member(packageDir, "a")],
+        };
+      },
+    ],
+    [
+      "bun add -g <tarball URL>",
+      async ctx => {
+        const globalDir = join(ctx.packageDir, "bun-install", "install", "global");
+        await write(
+          join(globalDir, "package.json"),
+          JSON.stringify({ name: "global", trustedDependencies: ["electron"] }),
+        );
+        return {
+          spec: electronUrl(),
+          argv: ["add", "-g", electronUrl()],
+          env: { ...ctx.env, BUN_INSTALL: join(ctx.packageDir, "bun-install"), BUN_INSTALL_GLOBAL_DIR: globalDir },
+          advised: join(realpathSync(globalDir), "package.json"),
+          dirs: [globalDir],
+        };
+      },
+    ],
+    [
+      "bun install over a package.json entry whose key equals its value",
+      async ({ packageDir }) => {
+        await write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource));
+        return { spec: "./vendor", argv: ["install"], manifest: { dependencies: { "./vendor": "./vendor" } } };
+      },
+    ],
+    [
+      // `--trust` covers the request, not another entry of the same package.json.
+      "bun add --trust <another folder> beside an entry whose key equals its value",
+      async ({ packageDir }) => {
+        await Promise.all([
+          write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource)),
+          write(join(packageDir, "other", "package.json"), JSON.stringify(harmlessSource)),
+        ]);
+        return {
+          spec: "./vendor",
+          argv: ["add", "--trust", "./other"],
+          manifest: { dependencies: { "./vendor": "./vendor" } },
+        };
+      },
+    ],
+    [
+      // A request with a name does not cover an entry that got the same name from its package.
+      "bun add --trust electron@1.0.0 beside an entry whose key equals its value",
+      async ({ packageDir }) => {
+        await write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource));
+        return {
+          spec: "./vendor",
+          argv: ["add", "--trust", "electron@1.0.0"],
+          manifest: { dependencies: { "./vendor": "./vendor" } },
+        };
+      },
+    ],
+    [
+      // `--trust` in one member does not cover the same spec in another member.
+      "bun add --trust <folder> in a member, with the same spec as a key in another member",
+      async ({ packageDir }) => {
+        await Promise.all([
+          workspace(packageDir, "a"),
+          workspace(packageDir, "b", { dependencies: { "./vendor": "./vendor" } }),
+          write(join(member(packageDir, "a"), "vendor", "package.json"), JSON.stringify(harmlessSource)),
+          write(join(member(packageDir, "b"), "vendor", "package.json"), JSON.stringify(electronSource)),
+        ]);
+        return {
+          spec: "./vendor",
+          argv: ["add", "--trust", "./vendor"],
+          cwd: member(packageDir, "a"),
+          manifest: { workspaces: ["packages/*"] },
+          advised: "packages/b/package.json",
+          dirs: [packageDir, member(packageDir, "a"), member(packageDir, "b")],
+        };
+      },
+    ],
+  ];
+
+  test.each(shapes)("%s is refused", async (_, prepare) => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const shape = await prepare(ctx);
+    const { spec, argv = ["add", spec], cwd = packageDir, env = ctx.env, manifest = {}, dirs = [packageDir] } = shape;
+    await write(
+      packageJson,
+      JSON.stringify({ name: "foo", version: "1.0.0", ...manifest, trustedDependencies: ["electron"] }),
+    );
+    if (shape.installFirst) {
+      const installed = await run(ctx, ["install"]);
+      expect(installed.err).toContain("Saved lockfile");
+      expect(await ranPreinstall(packageDir)).toBeTrue();
+      await rm(join(packageDir, "node_modules", "electron", "preinstall.txt"));
+    }
+    // What the refused command must leave as it was.
+    const saved = () =>
+      Promise.all(
+        dirs.flatMap(dir =>
+          ["package.json", "bun.lock"].map(name =>
+            file(join(dir, name))
+              .text()
+              .catch(() => null),
+          ),
+        ),
+      );
+    const savedBefore = await saved();
+
+    const { err, exitCode } = await run(ctx, argv, cwd, env);
+
+    expect(err).toContain(refusal(spec));
+    expect(err).toContain(advice(spec, shape.advised));
+    expect(await Promise.all(dirs.map(dir => ranPreinstall(dir)))).toEqual(dirs.map(() => false));
+    expect(await saved()).toEqual(savedBefore);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a named entry of a workspace member that is gone does not cover a bare add", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource)),
+      workspace(packageDir, "old", { dependencies: { electron: "file:../../vendor" } }),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          trustedDependencies: ["electron"],
+        }),
+      ),
+    ]);
+    const installed = await run(ctx, ["install"]);
+    expect(installed.err).toContain("Saved lockfile");
+    expect(await ranPreinstall(member(packageDir, "old"))).toBeTrue();
+    await rm(member(packageDir, "old"), { recursive: true });
+
+    const { err, exitCode } = await run(ctx, ["add", "./vendor"]);
+
+    expect(err).toContain(refusal("./vendor"));
+    expect(await ranPreinstall(packageDir)).toBeFalse();
+    expect(exitCode).toBe(1);
+  });
+
+  test("a git source that takes a trusted name in a later commit is refused", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const env = gitEnv(ctx.env);
+    const repo = join(packageDir, "repo");
+    const commit = async (source: typeof electronSource) => {
+      await write(join(repo, "package.json"), JSON.stringify(source));
+      await $`git add -A && git commit -q -m next --no-gpg-sign`.cwd(repo).env(env).quiet();
+      return (await $`git rev-parse HEAD`.cwd(repo).env(env).text()).trim();
+    };
+    await mkdir(repo);
+    await $`git init -q`.cwd(repo).env(env).quiet();
+    const url = `git+${pathToFileURL(repo).href}`;
+    const first = await commit(harmlessSource);
+    const second = await commit(electronSource);
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", trustedDependencies: ["electron"] }));
+
+    const added = await run(ctx, ["add", `${url}#${first}`], packageDir, env);
+    expect(added.err).not.toContain("error:");
+    const manifest = await file(packageJson).text();
+    expect(JSON.parse(manifest).dependencies).toEqual({ harmless: `${url}#${first}` });
+    expect(added.exitCode).toBe(0);
+
+    const { err, exitCode } = await run(ctx, ["add", `${url}#${second}`], packageDir, env);
+
+    expect(err).toContain(refusal(`${url}#${second}`));
+    expect(await ranPreinstall(packageDir)).toBeFalse();
+    expect(await file(packageJson).text()).toBe(manifest);
+    expect(exitCode).toBe(1);
+  });
+
+  test("the written name and --trust both run the scripts", async () => {
+    using named = await setupTest();
+    using trusted = await setupTest();
+    const manifest = JSON.stringify({ name: "foo", version: "1.0.0", trustedDependencies: ["electron"] });
+    await Promise.all([write(named.packageJson, manifest), write(trusted.packageJson, manifest)]);
+
+    const [byName, byFlag] = await Promise.all([
+      run(named, ["add", `electron@${electronUrl()}`]),
+      run(trusted, ["add", "--trust", electronUrl()]),
+    ]);
+    for (const [ctx, result] of [
+      [named, byName],
+      [trusted, byFlag],
+    ] as const) {
+      expect(result.err).not.toContain("error:");
+      expect(result.out).not.toContain("Blocked");
+      expect(await ranPreinstall(ctx.packageDir)).toBeTrue();
+      expect(await file(ctx.packageJson).json()).toEqual({
+        name: "foo",
+        version: "1.0.0",
+        trustedDependencies: ["electron"],
+        dependencies: { electron: electronUrl() },
+      });
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
+  test("bun add --filter <member> --trust <tarball URL> runs the scripts", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      workspace(packageDir, "a"),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          trustedDependencies: ["electron"],
+        }),
+      ),
+    ]);
+
+    const { err, exitCode } = await run(ctx, ["add", "--filter", "a", "--trust", electronUrl()]);
+
+    expect(err).not.toContain("error:");
+    expect(await Promise.all([ranPreinstall(packageDir), ranPreinstall(member(packageDir, "a"))])).toContain(true);
+    expect((await file(join(member(packageDir, "a"), "package.json")).json()).dependencies).toEqual({
+      electron: electronUrl(),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a name that is not in trustedDependencies is added with its scripts blocked, until a person lists it", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", trustedDependencies: ["uses-what-bin"] }));
+
+    const added = await run(ctx, ["add", electronUrl()]);
+
+    expect(added.err).not.toContain("error:");
+    expect(added.out).toContain("Blocked 1 postinstall");
+    expect(await ranPreinstall(packageDir)).toBeFalse();
+    const manifest = await file(packageJson).json();
+    expect(manifest.dependencies).toEqual({ electron: electronUrl() });
+    expect(added.exitCode).toBe(0);
+
+    // The documented way to trust it: the person writes the name into the list, then installs again.
+    await Promise.all([
+      write(packageJson, JSON.stringify({ ...manifest, trustedDependencies: ["electron"] })),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    ]);
+    const installed = await run(ctx, ["install"]);
+
+    expect(installed.err).not.toContain("error:");
+    expect(await ranPreinstall(packageDir)).toBeTrue();
+    expect(installed.exitCode).toBe(0);
+  });
+
+  test("a name that the person writes and does not list is added with its scripts blocked", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", trustedDependencies: ["electron"] }));
+
+    const { out, err, exitCode } = await run(ctx, ["add", `electron-fork@${electronUrl()}`]);
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await ranPreinstall(packageDir, "electron-fork")).toBeFalse();
+    expect((await file(packageJson).json()).dependencies).toEqual({ "electron-fork": electronUrl() });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun add <path of a workspace member> is accepted when the name of the member is in trustedDependencies", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      workspace(packageDir, "a"),
+      workspace(packageDir, "electron", { scripts }),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          trustedDependencies: ["electron"],
+        }),
+      ),
+    ]);
+
+    const { err, exitCode } = await run(ctx, ["add", "../electron"], member(packageDir, "a"));
+
+    expect(err).not.toContain("error:");
+    expect(await file(join(member(packageDir, "a"), "package.json")).json()).toEqual({
+      name: "a",
+      version: "1.0.0",
+      dependencies: { electron: "workspace:*" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun install accepts a workspace whose folder has the name of its package, when that name is in trustedDependencies", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(join(packageDir, "electron", "package.json"), JSON.stringify(electronSource)),
+      write(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", workspaces: ["electron"], trustedDependencies: ["electron"] }),
+      ),
+    ]);
+
+    const { err, exitCode } = await run(ctx, ["install"]);
+
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the refusal does not print the credentials of a URL, and does not print a redacted entry to copy", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", trustedDependencies: ["electron"] }));
+    const spec = `http://user:hunter2@localhost:${githubFork.port}/electron.tgz`;
+
+    const { err, exitCode } = await run(ctx, ["add", spec]);
+
+    expect(err).toContain(`and Bun would name it "electron", which is in trustedDependencies`);
+    expect(err).toContain(`write the entry yourself in package.json: "electron": "<the same spec>".`);
+    expect(err).not.toContain("hunter2");
+    expect(await ranPreinstall(packageDir)).toBeFalse();
+    expect(exitCode).toBe(1);
+  });
+
+  test("an npm dependency whose key equals its dist-tag keeps the trust of its registry name", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const source = { name: "tagged", version: "1.0.0", scripts };
+    const tarball = await githubTarball("package", { "package.json": JSON.stringify(source) });
+    using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname.endsWith(".tgz")) return new Response(tarball);
+        const dist = { tarball: `${origin}/tagged/-/tagged-1.0.0.tgz` };
+        return Response.json({
+          name: "tagged",
+          "dist-tags": { latest: "1.0.0", tagged: "1.0.0" },
+          versions: { "1.0.0": { ...source, dist } },
+        });
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: { tagged: "tagged" },
+        trustedDependencies: ["tagged"],
+      }),
+    );
+
+    const { err, exitCode } = await run(ctx, ["install", "--registry", registry.url.href]);
+
+    expect(err).not.toContain("error:");
+    expect(await ranPreinstall(packageDir, "tagged")).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun add link:<name> keeps the trust of the name that the person wrote", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const env = { ...ctx.env, BUN_INSTALL: join(packageDir, "bun-install") };
+    const linked = join(packageDir, "linked");
+    await Promise.all([
+      write(join(linked, "package.json"), JSON.stringify(electronSource)),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", trustedDependencies: ["electron"] })),
+    ]);
+    expect((await run(ctx, ["link"], linked, env)).exitCode).toBe(0);
+
+    const { err, exitCode } = await run(ctx, ["add", "link:electron"], packageDir, env);
+
+    expect(err).not.toContain("error:");
+    expect(await exists(join(linked, "preinstall.txt"))).toBeTrue();
+    expect((await file(packageJson).json()).dependencies).toEqual({ electron: "link:electron" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun add accepts another spelling of a dependency that package.json already names and trusts", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource)),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: { electron: "file:./vendor" },
+          trustedDependencies: ["electron"],
+        }),
+      ),
+    ]);
+    const installed = await run(ctx, ["install"]);
+    expect(installed.err).toContain("Saved lockfile");
+    expect(await ranPreinstall(packageDir)).toBeTrue();
+
+    const added = await run(ctx, ["add", "./vendor"]);
+
+    expect(added.err).not.toContain("error:");
+    expect((await file(packageJson).json()).dependencies).toEqual({ electron: "./vendor" });
+    expect(added.exitCode).toBe(0);
+    const frozen = await run(ctx, ["install", "--frozen-lockfile"]);
+    expect(frozen.err).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+  });
+
+  test("a named entry in another workspace member covers a bare add of the same folder", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(join(packageDir, "vendor", "package.json"), JSON.stringify(electronSource)),
+      workspace(packageDir, "a"),
+      workspace(packageDir, "b", { dependencies: { electron: "file:../../vendor" } }),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          trustedDependencies: ["electron"],
+        }),
+      ),
+    ]);
+    const installed = await run(ctx, ["install"]);
+    expect(installed.err).toContain("Saved lockfile");
+
+    const added = await run(ctx, ["add", "../../vendor"], member(packageDir, "a"));
+
+    expect(added.err).not.toContain("error:");
+    expect((await file(join(member(packageDir, "a"), "package.json")).json()).dependencies).toEqual({
+      electron: "../../vendor",
+    });
+    expect(added.exitCode).toBe(0);
+    const frozen = await run(ctx, ["install", "--frozen-lockfile"]);
+    expect(frozen.err).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
   });
 });
 

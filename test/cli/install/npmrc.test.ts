@@ -2899,6 +2899,11 @@ describe.concurrent("the path of a request to the registry", () => {
       { target: "//npm/no-deps", auth: null },
     ],
     [
+      "a registry whose path starts with //, with credentials in its URL",
+      { files: { ".npmrc": "registry=http://alice:s3cret@HOST//npm/\n" } },
+      { target: "//npm/no-deps", auth: `Basic ${btoa("alice:s3cret")}` },
+    ],
+    [
       "a token keyed to the path of the registry as written",
       { files: { ".npmrc": "registry=http://HOST//npm/\n//HOST//npm/:_authToken=abc\n" } },
       { target: "//npm/no-deps", auth: "Bearer abc" },

@@ -3146,6 +3146,13 @@ it("keeps the leading slashes of the pathname in the request-target", async () =
     expected.push(`GET ${url.pathname}${url.search} HTTP/1.1`);
     await (await fetch(new Request(href))).text();
   }
+  // Through an HTTP proxy the request-target is the absolute URL.
+  for (const tail of tails) {
+    const href = `http://example.test${tail}`;
+    const url = new URL(href);
+    expected.push(`GET ${url.origin}${url.pathname}${url.search} HTTP/1.1`);
+    await (await fetch(href, { proxy: `http://localhost:${port}` })).text();
+  }
   expect(targets).toEqual(expected);
 });
 

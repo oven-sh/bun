@@ -398,7 +398,7 @@ impl<'a> URL<'a> {
         let mut host_with_path = url.hostname().to_owned_slice();
         let pathname = url.pathname();
         let path = pathname.to_utf8();
-        host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
+        host_with_path.extend_from_slice(strings::trim_right(path.slice(), b"/"));
         Some(S3Endpoint {
             host_with_path: host_with_path.into_boxed_slice(),
             is_http,
@@ -500,9 +500,10 @@ impl<'a> URL<'a> {
     }
 
     /// The URL without its userinfo, ending in exactly one `/`: `http://host/`, `http://host/npm/`.
+    /// The leading slashes of the path stay as written: `http://host//npm/`.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
-        let path = strings::trim(self.pathname, b"/");
+        let path = strings::trim_right(self.pathname, b"/");
 
         let mut buf: Vec<u8> =
             Vec::with_capacity(proto.len() + 3 + self.host.len() + 1 + path.len() + 1);
@@ -510,9 +511,11 @@ impl<'a> URL<'a> {
         buf.extend_from_slice(b"://");
         // bun_core::io::Write on Vec<u8> is infallible.
         let _ = buf.print(format_args!("{}", self.display_host()));
-        buf.push(b'/');
+        if !path.starts_with(b"/") {
+            buf.push(b'/');
+        }
+        buf.extend_from_slice(path);
         if !path.is_empty() {
-            buf.extend_from_slice(path);
             buf.push(b'/');
         }
         buf.into_boxed_slice()
@@ -1868,6 +1871,26 @@ mod tests {
         let url = URL::parse(b"http://localhost:3000///#frag");
         assert_eq!(url.pathname, b"///");
         assert_eq!(url.hash, b"#frag");
+    }
+
+    #[test]
+    fn href_without_auth_keeps_the_leading_slashes_and_ends_in_one() {
+        let href = |url: &[u8]| URL::parse(url).href_without_auth();
+        assert_eq!(&*href(b"http://u:p@localhost:3000"), b"http://localhost:3000/");
+        assert_eq!(&*href(b"http://u:p@localhost:3000//"), b"http://localhost:3000/");
+        assert_eq!(&*href(b"http://u:p@localhost:3000/npm"), b"http://localhost:3000/npm/");
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000//npm/"),
+            b"http://localhost:3000//npm/"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_drops_every_trailing_slash() {
+        let host = |url: &[u8]| URL::parse_s3_endpoint(url).unwrap().host_with_path;
+        assert_eq!(&*host(b"https://s3.example.com/"), b"s3.example.com");
+        assert_eq!(&*host(b"https://s3.example.com//"), b"s3.example.com");
+        assert_eq!(&*host(b"https://s3.example.com/prefix//"), b"s3.example.com/prefix");
     }
 
     #[test]

@@ -176,7 +176,7 @@ async function writeFakeReleaseZip(outPath: string, version: string): Promise<vo
   }
 }
 
-type ReleaseServer = Bun.Server<undefined> & { env: Record<string, string> };
+type ReleaseServer = Bun.Server<undefined> & { env: Record<string, string>; requests: string[] };
 
 function startReleaseServer(opts: {
   tagName: string;
@@ -184,13 +184,17 @@ function startReleaseServer(opts: {
   zipPath?: string;
   zipBody?: string;
   digest?: string;
+  /** Appended to the `GITHUB_API_DOMAIN` the server hands out. */
+  domainSuffix?: string;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
+  const requests: string[] = [];
   const server = Bun.serve({
     tls: tls,
     port: 0,
     async fetch(req) {
       const { pathname } = new URL(req.url);
+      requests.push(pathname);
       if (pathname.startsWith("/download/")) {
         if (opts.zipPath) return new Response(Bun.file(opts.zipPath));
         return new Response(opts.zipBody ?? "this is not a real zip archive");
@@ -209,10 +213,11 @@ function startReleaseServer(opts: {
       );
     },
   }) as ReleaseServer;
+  server.requests = requests;
   server.env = {
     ...env,
     NODE_TLS_REJECT_UNAUTHORIZED: "0",
-    GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    GITHUB_API_DOMAIN: `${server.hostname}:${server.port}${opts.domainSuffix ?? ""}`,
     // The upgrade-failure path exits via Global::exit(1) while the HTTP
     // thread and the intentionally-leaked progress/download buffers are
     // still live; LeakSanitizer reports those at exit and abort_on_error
@@ -325,19 +330,7 @@ describe.concurrent(() => {
   });
 
   it("GITHUB_API_DOMAIN with a trailing slash still requests /repos/..., not //repos/...", async () => {
-    const paths: string[] = [];
-    using server = Bun.serve({
-      tls,
-      port: 0,
-      fetch(req) {
-        const { pathname } = new URL(req.url);
-        paths.push(pathname);
-        if (pathname !== "/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest") {
-          return new Response("not found", { status: 404 });
-        }
-        return Response.json({ tag_name: "bun-v9.9.9", assets: [] });
-      },
-    });
+    using server = startReleaseServer({ tagName: "bun-v9.9.9", domainSuffix: "/" });
     using stagingRoot = tempDir("bun-upgrade-domain-slash", {});
     await using proc = spawn({
       cmd: [standInExe, "upgrade", "--stable"],
@@ -345,19 +338,14 @@ describe.concurrent(() => {
       stdout: null,
       stdin: "pipe",
       stderr: "pipe",
-      env: {
-        ...env,
-        NODE_TLS_REJECT_UNAUTHORIZED: "0",
-        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}/`,
-        BUN_TMPDIR: String(stagingRoot),
-        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
     });
 
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(paths).toEqual(["/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest"]);
-    expect(err).toContain("Bun v9.9.9 is out, but not for this platform");
-    expect(exitCode).toBe(0);
+    expect(server.requests[0]).toBe("/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest");
+    expectTargetsRelease(err, "9.9.9");
+    expect(err).toEndWith(unpackFailure);
+    expect(exitCode).toBe(1);
   });
 });
 

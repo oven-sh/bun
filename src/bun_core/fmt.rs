@@ -3134,23 +3134,6 @@ pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
     out
 }
 
-/// `{:0N}` — zero-padded fixed-width decimal of a `u64` into `[u8; N]`.
-/// Decimal sibling of [`u64_hex_fixed`] / [`hex_byte_upper`]. Caller guarantees
-/// `val < 10^N`; excess high digits are silently dropped (debug-asserted).
-#[inline(always)]
-pub fn itoa_padded<const N: usize>(mut val: u64) -> [u8; N] {
-    debug_assert!(N == 0 || val < 10u64.saturating_pow(N as u32));
-    let mut buf = [b'0'; N];
-    let mut i = N;
-    while i > 0 {
-        i -= 1;
-        // val % 10 < 10 ⇒ cast never truncates.
-        buf[i] = b'0' + (val % 10) as u8;
-        val /= 10;
-    }
-    buf
-}
-
 /// `{:x}` — variable-width lower-hex of a u64 (no leading zeros; `0` → `"0"`),
 /// written into the tail of `buf` and returned as a slice borrow.
 #[inline]

@@ -198,6 +198,7 @@ fn is_only_used_for_truthiness<'a>(
     is_assertion_argument_checked: bool,
 ) -> bool {
     let decide = |node: Node<'a>, parent: Node<'a>| match parent {
+        _ if matches!(node, Node::Expr(it) if it.with_jsdoc_cast() != it) => Some(false),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Cond { test, .. } => Some(Node::Expr(test) == node),
             ExprKind::Binary {
@@ -533,13 +534,13 @@ fn tsgolint_get_type_from_call_property<'a>(
 fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     let mut node = expression;
     let (expression, is_unary_not_argument) = loop {
-        let (mut expression, mut is_unary_not_argument) = (node, false);
+        let (mut expression, mut is_unary_not_argument) = (node.with_jsdoc_cast(), false);
         while let ExprKind::Unary {
             op: UnOp::Not,
             operand,
         } = expression.kind()
         {
-            expression = operand;
+            expression = operand.with_jsdoc_cast();
             is_unary_not_argument = !is_unary_not_argument;
         }
 
@@ -633,6 +634,7 @@ fn tsgolint_is_self_explanatory(e: Expr) -> bool {
 }
 
 fn check_node_for_nullish<'a>(node: Expr<'a>, is_assignment_target: bool, cx: &mut Context<'a>) {
+    let node = node.with_jsdoc_cast();
     let Some(ty) = get_resolved_type(node) else {
         return;
     };

@@ -16786,7 +16786,7 @@ describe.concurrent("a long flag the command does not have", () => {
   });
 });
 
-// `bun --bun install` is a habit, not a typo. None of them takes a value, so none leaves one behind.
+// `bun --smol install` is a habit, not a typo. None of them takes a value, so none leaves one behind.
 describe.concurrent("the flags of the runtime that take no value", () => {
   // These have no help text.
   const hidden = [
@@ -16797,8 +16797,9 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     "--trace-exit",
     "--expose-internals",
   ];
-  // What some of these commands have themselves, with another meaning.
-  const taken = ["--help", "--silent", "--prefer-offline", "--no-env-file", "--check", "--interactive"];
+  // What some of these commands have themselves, with another meaning. `--bun` has the same
+  // meaning: the lifecycle scripts run `node` as bun (tested below).
+  const taken = ["--help", "--silent", "--prefer-offline", "--no-env-file", "--check", "--interactive", "--bun"];
   async function runtimeFlags() {
     const { stdout, exitCode } = await bunIn(import.meta.dir, ["--help"]);
     expect(exitCode).toBe(0);
@@ -16842,17 +16843,82 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     expect(await outcome(dependencies, [command, ...args, ...flags])).toEqual(plain);
   });
 
-  it.each(commands)("-b is --bun for bun %s", async (command, dependencies, args) => {
-    const plain = await outcome(dependencies, [command, ...args]);
-    expect(await outcome(dependencies, ["-b", command, ...args])).toEqual(plain);
-    expect(await outcome(dependencies, [command, "-b", ...args])).toEqual(plain);
-  });
-
   it("are errors with a value", async () => {
     using dir = project();
     const { stderr, exitCode } = await bunIn(String(dir), ["add", "--bun=./dep"]);
     expect(stderr).toBe("error: The argument '--bun' does not take a value.\n");
     expect(exitCode).toBe(1);
+  });
+});
+
+// A lifecycle script runs the `node` of PATH. `--bun` and `run.bun` make it run bun as `node`,
+// like `bun run --bun` does, and first on PATH: ahead of a `node` that a package puts in `.bin`.
+describe.concurrent("node in lifecycle scripts", () => {
+  const probe = `node -e "console.log('Bun is ' + typeof Bun)"`;
+  const realNode = Bun.which("node", { PATH: env.PATH ?? "" });
+  const project = (files: Record<string, string> = {}, pkg: Record<string, unknown> = {}) =>
+    tempDir("install-lifecycle-node", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", scripts: { prepare: probe }, ...pkg }),
+      ...files,
+    });
+  // What `typeof Bun` is in the script, or the whole output when it did not print.
+  function ranIn({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof bunIn>>) {
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stdout.match(/^Bun is (\w+)$/m)?.[1] ?? stdout;
+  }
+
+  it("is the node of PATH by default", async () => {
+    using dir = project();
+    expect(ranIn(await bunIn(String(dir), ["install"]))).toBe(realNode ? "undefined" : "object");
+  });
+
+  it.each([
+    [["install", "--bun"]],
+    [["install", "-b"]],
+    [["--bun", "install"]],
+    [["-b", "install"]],
+    [["add", "--bun", "./dep"]],
+  ])("is bun with %j", async cmd => {
+    using dir = project({ "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) });
+    expect(ranIn(await bunIn(String(dir), cmd))).toBe("object");
+  });
+
+  it("is bun with run.bun in bunfig.toml", async () => {
+    using dir = project({ "bunfig.toml": "[run]\nbun = true\n" });
+    expect(ranIn(await bunIn(String(dir), ["install"]))).toBe("object");
+  });
+
+  it("--bun wins over run.bun = false", async () => {
+    using dir = project({ "bunfig.toml": "[run]\nbun = false\n" });
+    expect(ranIn(await bunIn(String(dir), ["install", "--bun"]))).toBe("object");
+  });
+
+  it("is bun in the scripts of a trusted dependency", async () => {
+    // The output of a dependency's script is not shown: write it to a file.
+    const postinstall = `node -e "require('fs').writeFileSync('out.txt', 'Bun is ' + typeof Bun)"`;
+    using dir = project(
+      { "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", scripts: { postinstall } }) },
+      { scripts: {}, dependencies: { dep: "./dep" }, trustedDependencies: ["dep"] },
+    );
+    const { stderr, exitCode } = await bunIn(String(dir), ["install", "--bun"]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await file(join(String(dir), "node_modules", "dep", "out.txt")).text()).toBe("Bun is object");
+  });
+
+  it("is ahead of a node in node_modules/.bin", async () => {
+    const files = {
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", bin: { node: "node.sh" } }),
+      "dep/node.sh": "#!/bin/sh\necho 'Bun is fake'\n",
+    };
+    const pkg = { dependencies: { dep: "./dep" } };
+    if (realNode && !isWindows) {
+      using dir = project(files, pkg);
+      expect(ranIn(await bunIn(String(dir), ["install"]))).toBe("fake");
+    }
+    using dir = project(files, pkg);
+    expect(ranIn(await bunIn(String(dir), ["install", "--bun"]))).toBe("object");
   });
 });
 

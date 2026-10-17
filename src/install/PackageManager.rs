@@ -1146,7 +1146,7 @@ impl PackageManager {
     pub(crate) fn configure_env_for_scripts(
         &mut self,
         ctx: Command::Context,
-    ) -> Result<&mut transpiler::Transpiler<'static>, Error> {
+    ) -> Result<&mut ScriptsEnv, Error> {
         // Compute once and return the cached value on
         // subsequent calls. `Transpiler` is non-`Copy` (and self-referential via
         // `linker.options = &options`), so cache by pointer in a process-static.
@@ -1157,7 +1157,7 @@ impl PackageManager {
             ptr = bun_core::heap::into_raw(Box::new(t));
             CONFIGURE_ENV_FOR_SCRIPTS_ONCE.store(ptr, core::sync::atomic::Ordering::Release);
         }
-        // SAFETY: `ptr` is a leaked `Box<Transpiler>`; main-thread-only so the
+        // SAFETY: `ptr` is a leaked `Box<ScriptsEnv>`; main-thread-only so the
         // `&mut` is exclusive for the caller's scope.
         Ok(unsafe { &mut *ptr })
     }
@@ -1345,14 +1345,22 @@ impl PackageManager {
 // `Transpiler` is non-`Copy` and self-referential, so cache
 // a process-static raw pointer.
 // PORTING.md §Global mutable state: init-once ptr → AtomicPtr.
-static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
-    transpiler::Transpiler<'static>,
-> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<ScriptsEnv> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// The environment every lifecycle script inherits.
+pub(crate) struct ScriptsEnv {
+    pub(crate) transpiler: transpiler::Transpiler<'static>,
+    /// The directory where bun is `node`, with a trailing delimiter. It goes first on the
+    /// script PATH, as `RunCommand::path_for_run` orders it. Empty when the scripts use a
+    /// real `node`.
+    pub(crate) node_shim_path: Vec<u8>,
+}
 
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
     ctx: Command::Context,
-) -> Result<transpiler::Transpiler<'static>, Error> {
+) -> Result<ScriptsEnv, Error> {
     // We need to figure out the PATH and other environment variables
     // to do that, we re-use the code from bun run
     // this is expensive, it traverses the entire directory tree going up to the root
@@ -1360,6 +1368,7 @@ fn configure_env_for_scripts_run(
     // `self.env` is `Option<BackRef<Loader>>`; pass the raw pointer so
     // the shim's `Transpiler::init` reuses the manager's loader instead of
     // allocating a fresh singleton.
+    let run_in_bun = ctx.debug.run_in_bun;
     let env_ptr: Option<*mut dot_env::Loader> = this.env.map(|p| p.as_ptr());
     let this_transpiler = RunCommand::configure_env_for_run(ctx, env_ptr)?;
 
@@ -1394,24 +1403,34 @@ fn configure_env_for_scripts_run(
         }
     }
 
+    // Like `RunCommand::path_for_run`: bun is `node` when `run.bun` asks for it, or when
+    // there is no `node`.
+    let mut node_shim_path: Vec<u8> = Vec::new();
     {
         let mut node_path = bun_paths::path_buffer_pool::get();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
+        let real_node = if run_in_bun {
+            None
+        } else {
+            this.env_mut().get_node_path(paths_fs, &mut node_path)
+        };
+        if let Some(node_path_z) = real_node {
             let _ = this
                 .env_mut()
                 .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
-            'brk: {
-                let current_path = this.env().get(b"PATH").unwrap_or(b"");
-                let mut path_var: Vec<u8> = Vec::with_capacity(current_path.len());
-                path_var.extend_from_slice(current_path);
-                let mut bun_path: &[u8] = b"";
-                if RunCommand::create_fake_temporary_node_executable(&mut path_var, &mut bun_path)
-                    .is_err()
+            let mut bun_path: &[u8] = b"";
+            if RunCommand::create_fake_temporary_node_executable(
+                &mut node_shim_path,
+                &mut bun_path,
+            )
+            .is_ok()
+            {
+                // The Windows arm leaves `bun_path` empty.
+                if bun_path.is_empty()
+                    && let Ok(self_path) = bun_core::self_exe_path()
                 {
-                    break 'brk;
+                    bun_path = self_path.as_bytes();
                 }
-                this.env_mut().map.put(b"PATH", &path_var)?;
                 let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
             }
         }
@@ -1419,7 +1438,10 @@ fn configure_env_for_scripts_run(
 
     package_manager_lifecycle::resolve_bin_dirs_in_path(this.env_mut())?;
 
-    Ok(this_transpiler)
+    Ok(ScriptsEnv {
+        transpiler: this_transpiler,
+        node_shim_path,
+    })
 }
 
 static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
@@ -2728,6 +2750,10 @@ pub fn init(
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
     if !(cli.global && cli.config.is_some()) {
         ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+    }
+    // After `load_config`: the flag wins over `run.bun = false` in bunfig.toml.
+    if cli.run_in_bun {
+        ctx.debug.run_in_bun = true;
     }
     // SAFETY: main-thread global
     unsafe {

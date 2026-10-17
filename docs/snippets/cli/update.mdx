@@ -124,6 +124,11 @@ bun up
   Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
+<ParamField path="--bun" type="boolean">
+  Run lifecycle scripts with bun as <code>node</code>, like <code>bun run --bun</code> and <code>run.bun</code> in{" "}
+  <code>bunfig.toml</code>. Alias: <code>-b</code>
+</ParamField>
+
 ### Installation Controls
 
 <ParamField path="--no-verify" type="boolean">

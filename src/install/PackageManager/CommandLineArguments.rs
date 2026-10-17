@@ -83,8 +83,9 @@ const BACKEND_PARAM: ParamType = clap::param!(
 );
 
 // The valueless flags of `AUTO_PARAMS` (runtime/cli/Arguments.rs) no table here has; ignored.
+// `-b, --bun` is not one of them: it is a real flag of every table that has this param.
 const RUNTIME_FLAGS_PARAM: ParamType = clap::param!(
-    "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--use-system-ca/--use-openssl-ca/--use-bundled-ca/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
+    "--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--use-system-ca/--use-openssl-ca/--use-bundled-ca/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
 );
 
 const SHARED_HEAD_PARAMS: &[ParamType] = &[
@@ -178,6 +179,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     ),
     clap::param!(
         "--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)"
+    ),
+    clap::param!(
+        "-b, --bun                             Run lifecycle scripts with bun as `node`, like `bun run --bun` and `run.bun` in bunfig.toml"
     ),
     clap::param!("-h, --help                            Print this help menu"),
     RUNTIME_FLAGS_PARAM,
@@ -728,6 +732,8 @@ pub struct CommandLineArguments {
     pub lockfile: &'static [u8],
     pub(crate) global: bool,
     pub(crate) config: Option<&'static [u8]>,
+    /// `-b, --bun`: lifecycle scripts see bun as `node`. Sets `ctx.debug.run_in_bun`.
+    pub(crate) run_in_bun: bool,
     pub(crate) network_concurrency: Option<u16>,
     pub(crate) backend: Option<package_install::Method>,
     pub analyze: bool,
@@ -1464,6 +1470,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         cli.lockfile_only = args.flag(b"--lockfile-only");
         cli.env_files = args.options(b"--env-file");
         cli.no_env_file = args.flag(b"--no-env-file");
+        cli.run_in_bun = args.flag(b"--bun");
 
         if let Some(linker) = args.option(b"--linker") {
             cli.node_linker = Some(match Options::NodeLinker::from_str(linker) {

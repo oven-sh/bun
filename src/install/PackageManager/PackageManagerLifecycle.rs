@@ -341,9 +341,9 @@ impl PackageManager {
         if cwd.len() + "/node_modules/.bin".len() >= bun_paths::MAX_PATH_BYTES {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
-        let this_transpiler = self.configure_env_for_scripts(ctx)?;
+        let scripts_env = self.configure_env_for_scripts(ctx)?;
 
-        let env_loader = this_transpiler.env_mut();
+        let env_loader = scripts_env.transpiler.env_mut();
         let mut script_env = env_loader.map.clone_with_allocator()?;
 
         // `script_env.put` below needs `&mut`; copy PATH out so the
@@ -351,8 +351,16 @@ impl PackageManager {
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
         let mut path = EnvPath::init_capacity(
-            original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
+            scripts_env.node_shim_path.len()
+                + original_path.len()
+                + 1
+                + b"node_modules/.bin".len()
+                + cwd.len()
+                + 1,
         )?;
+
+        // First, ahead of any `node` that a package links into a `.bin`.
+        path.append(scripts_env.node_shim_path.as_slice())?;
 
         let mut parent: Option<&[u8]> = Some(cwd);
         // An untrusted package can link a `node` or `sh` into a shared `.bin`: searched last.

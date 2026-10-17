@@ -516,6 +516,7 @@ impl<R> CssRuleList<R> {
     {
         let mut style_rules = StyleRuleKeyMap::default();
         let mut merge_state = StyleRuleMergeState::default();
+        let mut runs = NestedDeclarationsState::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 
         for rule in self.v.iter_mut() {
@@ -539,6 +540,15 @@ impl<R> CssRuleList<R> {
                         if let Some(CssRule::Media(last_rule)) = rules.last_mut()
                             && last_rule.query.eql(&med.query)
                         {
+                            // The runs of `med` place their `:dir()` rules in its own list, so it is minified before the merge.
+                            if med
+                                .rules
+                                .v
+                                .iter()
+                                .any(|rule| matches!(rule, CssRule::NestedDeclarations(_)))
+                            {
+                                med.rules.minify(context, parent_is_unused)?;
+                            }
                             last_rule.rules.v.append(&mut med.rules.v);
                             let _ = last_rule.minify(context, parent_is_unused)?;
                             break 'arm;
@@ -548,7 +558,8 @@ impl<R> CssRuleList<R> {
                         }
                     }
                     CssRule::Supports(supp) => {
-                        if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
+                        if rules.len() != runs.fallback_end
+                            && let Some(CssRule::Supports(last_rule)) = rules.last_mut()
                             && last_rule.condition.eql(&supp.condition)
                         {
                             // Drop the duplicate-condition rule outright.
@@ -599,6 +610,7 @@ impl<R> CssRuleList<R> {
                             &mut rules,
                             &mut style_rules,
                             &mut merge_state,
+                            &mut runs,
                             context,
                             parent_is_unused,
                             enclosing.as_deref_mut(),
@@ -662,6 +674,11 @@ impl<R> CssRuleList<R> {
 
         // The last merge run may still have a pending declaration merge.
         flush_pending_style_merge(&mut rules, &mut style_rules, &mut merge_state, context);
+
+        if !runs.dir_rules.is_empty() {
+            let at = runs.dir_slot.min(rules.len());
+            rules.splice(at..at, runs.dir_rules);
+        }
 
         // The old Vec is dropped on assignment.
         self.v = rules;
@@ -936,12 +953,32 @@ fn split_off_nested_rules<R>(
     }
 }
 
+/// What `CssRuleList::minify` keeps from one nested declarations rule for the rules after it.
+struct NestedDeclarationsState<R> {
+    /// The `:dir()` rules of the runs that are not first in a nested group rule. On main they print at `dir_slot`.
+    dir_rules: Vec<CssRule<R>>,
+    dir_slot: usize,
+    /// The length of the list when it ends in a fallback rule of a run, which no `@supports` rule is a duplicate of.
+    fallback_end: usize,
+}
+
+impl<R> Default for NestedDeclarationsState<R> {
+    fn default() -> Self {
+        Self {
+            dir_rules: Vec::new(),
+            dir_slot: 0,
+            fallback_end: 0,
+        }
+    }
+}
+
 /// The arm for a nested declarations rule. lightningcss does not place the fallback rules: parcel-bundler/lightningcss#1049
 fn minify_nested_declarations_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
     style_rules: &mut StyleRuleKeyMap,
     merge_state: &mut StyleRuleMergeState,
+    runs: &mut NestedDeclarationsState<R>,
     context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
     enclosing: Option<&mut css::PropertyHandlerContext<'_>>,
@@ -957,9 +994,18 @@ fn minify_nested_declarations_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // A flush expects the handler context drained, and the declarations below stage rules in it.
     flush_pending_style_merge(rules, style_rules, merge_state, context);
 
-    let fallbacks = nested.minify::<R>(context, enclosing)?;
+    let is_first = rules.is_empty();
+    let (dir_rules, fallbacks) = nested.minify::<R>(context, enclosing)?;
     let is_empty = nested.declarations.is_empty();
-    if is_empty && fallbacks.is_empty() {
+    if is_empty && dir_rules.is_empty() && fallbacks.is_empty() {
+        return Ok(());
+    }
+    // A rule that is minified again stages its fallback rules again: a run equal to the run before it adds nothing.
+    if dir_rules.is_empty()
+        && fallbacks.is_empty()
+        && let Some(CssRule::NestedDeclarations(last)) = rules.last()
+        && last.declarations.eql(&nested.declarations)
+    {
         return Ok(());
     }
 
@@ -969,7 +1015,18 @@ fn minify_nested_declarations_arm<R: for<'b> css::generics::DeepClone<'b>>(
     if !is_empty {
         rules.push(core::mem::replace(rule, CssRule::Ignored));
     }
-    rules.extend(fallbacks);
+    if is_first {
+        rules.extend(dir_rules);
+    } else {
+        runs.dir_rules.extend(dir_rules);
+    }
+    if !fallbacks.is_empty() {
+        rules.extend(fallbacks);
+        runs.fallback_end = rules.len();
+    }
+    if is_first {
+        runs.dir_slot = rules.len();
+    }
     Ok(())
 }
 

@@ -114,12 +114,12 @@ impl NestedDeclarationsRule {
         Ok(())
     }
 
-    /// Minifies the declarations. Returns the fallback rules they stage, which belong right after this rule.
+    /// Minifies the declarations. Returns the `:dir()` rules they stage in a nested group rule, then their other fallback rules.
     pub(crate) fn minify<R>(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         enclosing: Option<&mut PropertyHandlerContext<'_>>,
-    ) -> Result<Vec<CssRule<R>>, MinifyErr>
+    ) -> Result<(Vec<CssRule<R>>, Vec<CssRule<R>>), MinifyErr>
     where
         R: for<'b> crate::generics::DeepClone<'b>,
     {
@@ -135,12 +135,12 @@ impl NestedDeclarationsRule {
         context.handler_context.context = DeclarationContext::None;
 
         if !context.handler_context.has_staged_rules() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
-        let mut logical = CssRuleList::<R> { v: Vec::new() };
+        // Known gap (parcel-bundler/lightningcss#1179): the `:dir()` rules keep the place they have without this rule type.
+        let mut dir_rules = CssRuleList::<R> { v: Vec::new() };
         match enclosing {
-            // Known gap (parcel-bundler/lightningcss#1179): these `:dir()` rules print before the nested rules.
             Some(enclosing) => {
                 enclosing.ltr.append(&mut context.handler_context.ltr);
                 enclosing.rtl.append(&mut context.handler_context.rtl);
@@ -153,7 +153,7 @@ impl NestedDeclarationsRule {
                 ));
                 context
                     .handler_context
-                    .get_logical_rules(&nesting, self.loc, &mut logical.v);
+                    .get_logical_rules(&nesting, self.loc, &mut dir_rules.v);
             }
         }
         let mut fallbacks = Vec::new();
@@ -168,11 +168,10 @@ impl NestedDeclarationsRule {
         context.handler_context.reset();
 
         // Lowers `:dir()` for the targets, after the reset: minifying a style rule drains the context.
-        if !logical.v.is_empty() {
-            logical.minify(context, false)?;
+        if !dir_rules.v.is_empty() {
+            dir_rules.minify(context, false)?;
         }
-        logical.v.extend(fallbacks);
-        Ok(logical.v)
+        Ok((dir_rules.v, fallbacks))
     }
 
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {

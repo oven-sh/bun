@@ -708,11 +708,12 @@ test("css-module/ComposesConflictAfterNestedAtRule", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("The value of color in the class foo is undefined.");
   // The declaration prints after the at-rule.
-  expect(stdout.indexOf("background: #00f")).toBeGreaterThan(-1);
+  expect(stdout).toContain("background: #00f");
   expect(stdout.indexOf("color: red")).toBeGreaterThan(stdout.indexOf("background: #00f"));
+  expect(exitCode).toBe(0);
 });
 
 // Written directly in a nested at-rule, `composes` stops the build, as it does

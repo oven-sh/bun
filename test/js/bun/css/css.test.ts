@@ -8654,19 +8654,53 @@ describe("css tests", () => {
           firefox60,
           ".a{color:red}.a:dir(ltr){left:2px;right:1px}.a:dir(rtl){left:1px;right:2px}.a .b{color:#00f}.a{color:green}",
         ],
-        // In a nested at-rule they follow the declarations.
+        // In a nested at-rule they print before its nested rules too.
         [
           ".a { @media (min-width: 100px) { .b { color: blue } inset-inline-end: 20px; .c { color: red } } }",
           firefox60,
-          "@media (min-width:100px){.a .b{color:#00f}.a:dir(ltr){right:20px}.a:dir(rtl){left:20px}.a .c{color:red}}",
+          "@media (min-width:100px){.a:dir(ltr){right:20px}.a:dir(rtl){left:20px}.a .b{color:#00f}.a .c{color:red}}",
+        ],
+        // There they come after the declarations that the at-rule starts with, and after their fallback rules.
+        [
+          ".a { @media screen { color: var(--x, lab(50% 20 30)); .b { color: blue } inset-inline-end: 20px } }",
+          firefox60,
+          "@media screen{.a{color:var(--x,#a16945)}@supports (color:lab(0% 0 0)){.a{color:var(--x,lab(50% 20 30))}}" +
+            ".a:dir(ltr){right:20px}.a:dir(rtl){left:20px}.a .b{color:#00f}}",
+        ],
+        // So an earlier rule with one more pseudo-class still wins, as in the source.
+        [
+          ".a { @media screen { &:hover { right: 6px } inset-inline-end: 3px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:3px}.a:dir(rtl){left:3px}.a:hover{right:6px}}",
+        ],
+        // Two at-rules with the same query are merged. The `:dir()` rules of the second one stay after the first one.
+        [
+          ".a { @media screen { .b { color: blue } inset-inline-end: 1px } @media screen { .c { color: red } inset-inline-start: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}.a .b{color:#00f}" +
+            ".a:dir(ltr){left:2px}.a:dir(rtl){right:2px}.a .c{color:red}}",
+        ],
+        // A rule that a later one overrides is removed.
+        [
+          ".a { @media screen { inset-inline-end: 1px } @media screen { inset-inline-end: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:2px}.a:dir(rtl){left:2px}}",
         ],
         // For a target with no `:dir()` they are lowered to `:lang()`.
         [
           ".a { @media (min-width: 100px) { .b { color: blue } inset-inline-end: 20px; .c { color: red } } }",
           safari13,
-          "@media (min-width:100px){.a .b{color:#00f}" +
+          "@media (min-width:100px){" +
             ".a:not(:lang(ae,ar,arc,bcc,bqi,ckb,dv,fa,glk,he,ku,mzn,nqo,pnb,ps,sd,ug,ur,yi)){right:20px}" +
-            ".a:lang(ae,ar,arc,bcc,bqi,ckb,dv,fa,glk,he,ku,mzn,nqo,pnb,ps,sd,ug,ur,yi){left:20px}.a .c{color:red}}",
+            ".a:lang(ae,ar,arc,bcc,bqi,ckb,dv,fa,glk,he,ku,mzn,nqo,pnb,ps,sd,ug,ur,yi){left:20px}" +
+            ".a .b{color:#00f}.a .c{color:red}}",
+        ],
+        // An authored `@supports` rule with the condition of the fallback rule before it is kept.
+        [
+          ".a { .b { color: blue } color: var(--x, lab(50% 20 30)); @supports (color: lab(0% 0 0)) { color: green } }",
+          chrome95,
+          ".a .b{color:#00f}.a{color:var(--x,#a16945)}@supports (color:lab(0% 0 0)){.a{color:var(--x,lab(50% 20 30))}}" +
+            "@supports (color: lab(0% 0 0)){.a{color:green}}",
         ],
         // None of them lands on the rule that follows.
         [
@@ -8682,6 +8716,16 @@ describe("css tests", () => {
       ])("%s", (source, targets, output) => {
         expect(lowered(source, targets)).toBe(output);
         expect(() => kept(output)).not.toThrow();
+      });
+
+      // Two at-rules with the same query are merged and minified again. The declarations
+      // stage their `prefers-color-scheme` rule a second time, and it prints once.
+      test("a fallback rule that is staged twice", () => {
+        const output = lowered(
+          ".a { @media screen { color-scheme: light dark } @media screen { .b { color: red } } }",
+          firefox60,
+        );
+        expect(output).toContain("@media (prefers-color-scheme:dark){.a{--buncss-light: ;--buncss-dark:initial}}");
       });
 
       // Chrome 87 has no `:is()` and no `:where()`, so each of these rules is split per
@@ -8725,16 +8769,16 @@ describe("css tests", () => {
           ".a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}",
         ],
         [
+          "the same in a nested at-rule: 1px wins, not 2px",
+          ".a { @media screen { & { inset-inline-end: 1px } inset-inline-end: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}}",
+        ],
+        [
           "they lose `!important`, and the declaration after the nested rule is the later one: 2px wins, not 1px",
           ".a { inset-inline-end: 1px !important; & { color: red } inset-inline-end: 2px }",
           firefox60,
           ".a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a{color:red}",
-        ],
-        [
-          "in a nested at-rule they print in place and tie with `&:hover`: 3px wins on hover, not 6px",
-          ".a { @media screen { &:hover { right: 6px } inset-inline-end: 3px } }",
-          firefox60,
-          "@media screen{.a:hover{right:6px}.a:dir(ltr){right:3px}.a:dir(rtl){left:3px}}",
         ],
         [
           "in a nested at-rule they are built on `&`: `:is()` for a list, which drops `.d::before`",
@@ -8783,7 +8827,7 @@ describe("css tests", () => {
       test.each<[string, string]>([
         [
           ".a { @media (min-width: 100px) { .b { color: blue } inset-inline-end: 20px; .c { color: red } } }",
-          `@media (min-width:100px){.a .b{color:#00f}${dirRules(".a", "", "right:20px", "left:20px")}.a .c{color:red}}`,
+          `@media (min-width:100px){${dirRules(".a", "", "right:20px", "left:20px")}.a .b{color:#00f}.a .c{color:red}}`,
         ],
         [
           ".a { .b { color: blue } color: var(--x, lab(50% 20 30)); .c { color: red } }",
@@ -8997,7 +9041,7 @@ describe("css tests", () => {
             "@supports (color:lab(0% 0 0)){color:var(--x,lab(50% 20 30))}}}" +
             ".split:where(x){& .c{margin:0}color:green}.k{& .c{margin:0}color:green}" +
             ":-webkit-full-screen{& .f{color:red}color:green}:fullscreen{& .f{color:red}color:green}" +
-            `.media{@media print{& .b{color:#00f}${dirRules("&", "", "right:1px", "left:1px")}}}\n`,
+            `.media{@media print{${dirRules("&", "", "right:1px", "left:1px")}& .b{color:#00f}}}\n`,
         );
         expect(() => kept(text)).not.toThrow();
       });

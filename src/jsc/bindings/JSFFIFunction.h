@@ -75,11 +75,10 @@ public:
 
     const CFFIFunction function() const { return m_function; }
 
-#if OS(WINDOWS)
+    // Only for a function from createForFFI: a later call throws a TypeError.
+    void close();
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES trampoline(JSGlobalObject* globalObject, CallFrame* callFrame);
-
-#endif
 
     void* dataPtr;
     void* symbolFromDynamicLibrary { nullptr };

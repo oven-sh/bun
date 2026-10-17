@@ -1188,7 +1188,9 @@ impl FFI {
         let napi_env = make_napi_env_if_needed(compile_c.symbols.map.values(), global_this);
 
         let obj = JSValue::create_empty_object(global_this, compile_c.symbols.map.len());
-        for function in compile_c.symbols.map.values_mut() {
+        // What `close()` closes. `obj` cannot be that list: JS can change it.
+        let functions = JSValue::create_empty_array(global_this, compile_c.symbols.map.len())?;
+        for (i, function) in (0u32..).zip(compile_c.symbols.map.values_mut()) {
             // Clone the name before `compile(&mut self)` so the
             // immutable borrow of `function.base_name` doesn't overlap.
             let function_name = function.base_name.clone();
@@ -1223,6 +1225,7 @@ impl FFI {
                     );
                     // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global_this, symbol_name, cb);
+                    functions.put_index(global_this, i, cb)?;
                 }
             }
         }
@@ -1237,6 +1240,11 @@ impl FFI {
 
         let js_object = lib.to_js(global_this);
         symbols_value_set_cached(js_object, global_this, obj);
+        crate::generated_classes::js_FFI::functions_value_set_cached(
+            js_object,
+            global_this,
+            functions,
+        );
         Ok(js_object)
     }
 
@@ -1309,8 +1317,26 @@ impl FFI {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn close(&self, _global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            fn Bun__FFI__closeFunctions(global: *const JSGlobalObject, library: JSValue) -> bool;
+        }
         jsc::mark_binding();
+        // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (dynamicDowncast) before use.
+        let is_running = unsafe { Bun__FFI__closeFunctions(global_this, callframe.this()) };
+        if is_running {
+            // The running call returns into the compiled code, so `do_close` must find none to free.
+            self.shared_state.set(None);
+            self.functions.with_mut(|functions| {
+                for function in functions.values_mut() {
+                    function.state = None;
+                }
+            });
+        }
         self.do_close();
         Ok(JSValue::UNDEFINED)
     }
@@ -1323,7 +1349,16 @@ impl FFI {
         if let Some(dylib) = self.dylib.replace(None) {
             dylib.close();
         }
-        if let Some(state) = self.shared_state.take() {
+        // With a `napi_env` the C code can give the engine callbacks into this code, and nothing takes them back.
+        let has_napi_env = self
+            .functions
+            .get()
+            .values()
+            .iter()
+            .any(Function::needs_napi_env);
+        if let Some(state) = self.shared_state.take()
+            && !has_napi_env
+        {
             // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
             unsafe { TCC::State::destroy(state.as_ptr()) };
         }

@@ -6386,3 +6386,92 @@ describe("same-target destructuring with an unstable target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// What `bun build --target=bun --format=cjs` writes: one function expression that the module loader calls.
+describe("a `// @bun @bun-cjs` file", () => {
+  const body = `exports.add = (a, b) => a + b;\nconst os = require("node:os");\nconsole.log(typeof os.platform());\n`;
+  // The five names are the ones that every released version writes.
+  const wrapper = (body, parameters = "exports, require, module, __filename, __dirname") =>
+    `// @bun @bun-cjs\n(function(${parameters}) {${body}})\n`;
+  const notTheWrapper =
+    '"// @bun @bun-cjs" must be followed by the CommonJS wrapper "(function(exports, require, module, __filename, __dirname) {...})"';
+  const codeAfter = 'Unexpected code after the CommonJS wrapper of a "// @bun @bun-cjs" file';
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+
+  it("is transformed as the CommonJS module inside its wrapper", async () => {
+    expect({
+      transformSync: transpiler.transformSync(wrapper(body)),
+      transform: await transpiler.transform(wrapper(body)),
+      noDeadCodeElimination: new Bun.Transpiler({ loader: "js", deadCodeElimination: false }).transformSync(
+        wrapper(body),
+      ),
+      hashbang: transpiler.transformSync("#!/usr/bin/env bun\n" + wrapper(body)),
+      bytecode: transpiler.transformSync(wrapper(body).replace("// @bun @bun-cjs", "// @bun @bytecode @bun-cjs")),
+      typescript: new Bun.Transpiler({ loader: "ts" }).transformSync(wrapper("exports.one = 1 as number;\n")),
+    }).toEqual({
+      transformSync: body,
+      transform: body,
+      noDeadCodeElimination: body,
+      hashbang: body,
+      bytecode: body,
+      typescript: "exports.one = 1;\n",
+    });
+  });
+
+  // The printer writes `import.meta.main` as `require.main == module` only in a CommonJS module.
+  it("is CommonJS also when its body names no CommonJS variable", () => {
+    expect(transpiler.transformSync(wrapper("if (import.meta.main) start();\n"))).toBe(
+      "if (require.main == module)\n  start();\n",
+    );
+  });
+
+  it("is an error when the text below the pragma is not the wrapper that `bun build` writes", async () => {
+    const actual = {};
+    for (const [name, code] of [
+      ["otherParameters", wrapper("c.exports = 1;", "a, b, c")],
+      ["codeBefore", wrapper("module.exports = 1;").replace("\n", "\nvar before = 1;\n")],
+      ["noWrapper", "// @bun @bun-cjs\nmodule.exports = 1;\n"],
+      ["codeAfter", wrapper("module.exports = 1;") + "var after = 1;\n"],
+    ]) {
+      for (const api of ["transformSync", "transform", "scan"]) {
+        try {
+          await transpiler[api](code);
+          actual[`${name} ${api}`] = "did not throw";
+        } catch (e) {
+          actual[`${name} ${api}`] = { name: e.name, message: e.message, line: e.position?.line };
+        }
+      }
+    }
+    const thrown = (message, line) => ({ name: "BuildMessage", message, line });
+    expect(actual).toEqual({
+      "otherParameters transformSync": thrown(notTheWrapper, 2),
+      "otherParameters transform": thrown(notTheWrapper, 2),
+      "otherParameters scan": thrown(notTheWrapper, 2),
+      "codeBefore transformSync": thrown(notTheWrapper, 2),
+      "codeBefore transform": thrown(notTheWrapper, 2),
+      "codeBefore scan": thrown(notTheWrapper, 2),
+      "noWrapper transformSync": thrown(notTheWrapper, 2),
+      "noWrapper transform": thrown(notTheWrapper, 2),
+      "noWrapper scan": thrown(notTheWrapper, 2),
+      "codeAfter transformSync": thrown(codeAfter, 3),
+      "codeAfter transform": thrown(codeAfter, 3),
+      "codeAfter scan": thrown(codeAfter, 3),
+    });
+  });
+
+  it("is scanned as the module inside its wrapper", () => {
+    expect(new Bun.Transpiler({ loader: "js", allowBunRuntime: true }).scan(wrapper(body))).toEqual({
+      exports: [],
+      imports: [{ kind: "require-call", path: "node:os" }],
+    });
+  });
+
+  // `scanImports` does not read the wrapper. It lists the imports of a text that the other APIs refuse.
+  it("is read as it is written by scanImports, and in replMode", () => {
+    expect(transpiler.scanImports(wrapper(body))).toEqual([{ kind: "require-call", path: "node:os" }]);
+    expect(transpiler.scanImports(wrapper(body, "a, require, c"))).toEqual([{ kind: "require-call", path: "node:os" }]);
+    expect(new Bun.Transpiler({ loader: "js", replMode: true }).transformSync(wrapper(body))).toContain(
+      "value: function(exports, require, module, __filename, __dirname) {",
+    );
+  });
+});

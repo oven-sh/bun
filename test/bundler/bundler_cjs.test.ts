@@ -612,6 +612,7 @@ describe("bundler", () => {
   // ============================================================================
   // isNodeMode follows the importer's module type: the file extension first,
   // then the nearest package.json "type". One test per importer kind.
+  // A `// @bun @bun-cjs` file is a CommonJS importer whatever those two say.
   //
   // `dep.cjs` sets the marker with Object.defineProperty, the way TypeScript
   // and Babel emit it. `typeof d` tells the two interops apart: "function" is
@@ -790,6 +791,69 @@ describe("bundler", () => {
     run: {
       file: "/out/entry.js",
       stdout: "object 1",
+    },
+  });
+
+  // A `// @bun @bun-cjs` file (what `bun build --target=bun --format=cjs` writes) is CommonJS for the module
+  // loader whatever its name is. It is the same kind of importer in a bundle: `.mjs` and "type": "module" do
+  // not give its `import()` the node mode.
+  const bunCjsImporter = (specifier: string) =>
+    `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {` +
+    `exports.load = () => import(${JSON.stringify(specifier)});` +
+    `})\n`;
+  const loadThroughBunCjs = (specifier: string) => /* js */ `
+    import { load } from ${JSON.stringify(specifier)};
+    const m = await load();
+    console.log(typeof m.default, m.named);
+  `;
+
+  itBundled("cjs/__toESM_dynamic_import_bun_cjs_importer_named_mjs", {
+    target: "bun",
+    files: {
+      "/entry.ts": loadThroughBunCjs("./lib.mjs"),
+      "/lib.mjs": bunCjsImporter("./dep.cjs"),
+      "/dep.cjs": esModuleDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_dep())");
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  itBundled("cjs/__toESM_dynamic_import_bun_cjs_importer_in_type_module_package", {
+    target: "bun",
+    files: {
+      "/entry.ts": loadThroughBunCjs("./pkg/index.js"),
+      "/pkg/package.json": `{ "name": "pkg", "type": "module" }`,
+      "/pkg/index.js": bunCjsImporter("../dep.cjs"),
+      "/dep.cjs": esModuleDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_dep())");
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  itBundled("cjs/__toESM_splitting_dynamic_import_bun_cjs_importer_named_mjs", {
+    target: "bun",
+    files: {
+      "/entry.ts": loadThroughBunCjs("./lib.mjs"),
+      "/lib.mjs": bunCjsImporter("./dep.cjs"),
+      "/dep.cjs": esModuleDep,
+    },
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__toESM(m.default))");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "function 1",
     },
   });
 

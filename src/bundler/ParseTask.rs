@@ -2508,6 +2508,7 @@ pub mod parse_worker {
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
+        opts.features.unwrap_bun_cjs = true;
         opts.features.unwrap_commonjs_to_esm =
             output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
         opts.features.top_level_await = output_format == options::Format::Esm
@@ -2674,6 +2675,10 @@ pub mod parse_worker {
             if let Some(from_ext) = _resolver::module_type_from_ext(task.path.name().ext) {
                 task.module_type = from_ext;
             }
+        }
+        // The pragma decides, not the extension or package.json, as in the module loader.
+        if loader.is_javascript_like() && js_parser::Parser::has_bun_cjs_pragma(entry_contents) {
+            task.module_type = options::ModuleType::Cjs;
         }
         opts.module_type = task.module_type;
         opts.is_entry_point = task.is_entry_point;

@@ -443,16 +443,14 @@ pub(crate) fn post_process_js_chunk(
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
+            const INPUT: &[u8] = bun_js_parser::bun_cjs_wrapper::HEADER_WITH_BYTECODE;
             j.push_static(INPUT);
             line_offset.advance(INPUT);
         } else if c.options.generate_bytecode_cache {
             j.push_static(b"// @bun @bytecode\n");
             line_offset.advance(b"// @bun @bytecode\n");
         } else if output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
+            const INPUT: &[u8] = bun_js_parser::bun_cjs_wrapper::HEADER;
             j.push_static(INPUT);
             line_offset.advance(INPUT);
         } else {

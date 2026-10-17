@@ -1596,7 +1596,10 @@ describe("db.limits", () => {
       variableNumber: db.limits.variableNumber,
     }).toEqual({ attach: 0, column: 10, variableNumber: 5 });
     expect(() => db.exec("ATTACH DATABASE ':memory:' AS db1")).toThrow(
-      expect.objectContaining({ code: "ERR_SQLITE_ERROR", message: expect.stringMatching(/too many attached databases/) }),
+      expect.objectContaining({
+        code: "ERR_SQLITE_ERROR",
+        message: expect.stringMatching(/too many attached databases/),
+      }),
     );
 
     // Infinity resets to the compile-time maximum, and that reset also survives.

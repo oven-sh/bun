@@ -10,7 +10,7 @@ use bun_jsc::{
 
 use super::env_map::EnvMap;
 use super::interpreter::ShellArgs;
-use super::shell_body::shell_cmd_from_js;
+use super::shell_body::{NulSubject, shell_cmd_from_js, throw_if_nul, throw_if_nul_bytes};
 use super::{EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
@@ -107,6 +107,7 @@ impl ParsedShellScript {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };
         let str = BunString::from_js(str_js, global)?;
+        throw_if_nul(global, NulSubject::Cwd, &str)?;
         self.cwd.set(Some(str));
         Ok(JSValue::UNDEFINED)
     }
@@ -158,6 +159,8 @@ impl ParsedShellScript {
             let keyslice = key.to_owned_slice();
             // errdefer free(keyslice) — Drop on early-return handles this.
             let slice = value.to_bun_string(global)?.to_owned_slice();
+            throw_if_nul_bytes(global, NulSubject::EnvKey, &keyslice)?;
+            throw_if_nul_bytes(global, NulSubject::EnvValue { key: &keyslice }, &slice)?;
             let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
             let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
 

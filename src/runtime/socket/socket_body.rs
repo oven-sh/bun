@@ -1550,40 +1550,39 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // ffi-safe-fn: opaque-ZST `&SSL`/`&SSL_CTX` redecls;
                     // `ssl_ptr` non-null in this branch and `SSL_get_SSL_CTX`
                     // never returns null for a live SSL.
-                    if this.acts_as_tls_server()
-                        && (this.protos.get().is_some()
-                            || !this.get_handlers().on_alpn_callback().is_empty())
-                    {
+                    if this.acts_as_tls_server() {
                         let ssl_ref = boringssl_sys::SSL::opaque_ref(ssl_ptr);
-                        tls_socket_functions::ffi::SSL_set_ex_data(
-                            ssl_ref,
-                            0,
-                            this_ptr.cast::<c_void>(),
-                        );
-                        tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
-                            SSL_CTX::opaque_ref(tls_socket_functions::ffi::SSL_get_SSL_CTX(
+                        if this.protos.get().is_some()
+                            || !this.get_handlers().on_alpn_callback().is_empty()
+                        {
+                            tls_socket_functions::ffi::SSL_set_ex_data(
                                 ssl_ref,
-                            )),
-                            Some(select_alpn_callback),
-                            ptr::null_mut(),
-                        );
-                    }
-                    // A `us_socket_t` has its SNI resolver from its listener or
-                    // from `upgrade_tls_impl`. The TLS engine of a stream or a
-                    // pipe has no `us_socket_t`: it asks
-                    // `us_dispatch_wrapper_server_name`, which reads `this` from
-                    // the SSL like the ALPN selector does.
-                    if this.acts_as_tls_server()
-                        && !this.get_handlers().on_server_name().is_empty()
-                        && !matches!(this.socket.get().socket, uws::InternalSocket::Connected(_))
-                    {
-                        let ssl_ref = boringssl_sys::SSL::opaque_ref(ssl_ptr);
-                        tls_socket_functions::ffi::SSL_set_ex_data(
-                            ssl_ref,
-                            0,
-                            this_ptr.cast::<c_void>(),
-                        );
-                        tls_socket_functions::ffi::us_ssl_wrapper_arm_server_name(ssl_ref);
+                                0,
+                                this_ptr.cast::<c_void>(),
+                            );
+                            tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
+                                SSL_CTX::opaque_ref(tls_socket_functions::ffi::SSL_get_SSL_CTX(
+                                    ssl_ref,
+                                )),
+                                Some(select_alpn_callback),
+                                ptr::null_mut(),
+                            );
+                        }
+                        // A `us_socket_t` has its SNI resolver from its listener or
+                        // from `upgrade_tls_impl`. The TLS engine of a stream or a
+                        // pipe has no `us_socket_t`: it asks
+                        // `us_dispatch_wrapper_server_name`, which reads `this` from
+                        // the SSL like the ALPN selector does.
+                        if !matches!(this.socket.get().socket, uws::InternalSocket::Connected(_))
+                            && !this.get_handlers().on_server_name().is_empty()
+                        {
+                            tls_socket_functions::ffi::SSL_set_ex_data(
+                                ssl_ref,
+                                0,
+                                this_ptr.cast::<c_void>(),
+                            );
+                            tls_socket_functions::ffi::us_ssl_wrapper_arm_server_name(ssl_ref);
+                        }
                     }
                     // A rejecting client must refuse a bad chain DURING the
                     // handshake, like node observably does (its post-verify

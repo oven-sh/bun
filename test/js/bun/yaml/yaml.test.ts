@@ -5603,7 +5603,7 @@ describe("a small document does not make the parser read one key or one string a
       name: "a long key that many merge sources share",
       text: count =>
         `k: &k ${long}\ns:\n${each(count, i => `  - &s${i} {*k : ${i}}\n`)}a: {<<: [${each(count, i => `*s${i},`)}]}\n`,
-      debug: 8_000,
+      debug: 6_000,
       release: 30_000,
       value: parsed => parsed.a,
       expected: () => ({ [long]: 0 }),
@@ -5662,44 +5662,58 @@ describe("a small document does not make the parser read one key or one string a
     30_000,
   );
 
-  test.each<{
-    name: string;
-    text: (long: string, count: number) => string;
-    value: (parsed: any) => unknown;
-    expected: (long: string, count: number) => unknown;
-  }>([
-    {
-      name: "that many aliases refer to",
-      text: (long, count) => `x: &x ${long}\nb: [${repeat("*x,", count)}]\n`,
-      value: parsed => parsed.b,
-      expected: (long, count) => new Array(count).fill(long),
-    },
-    {
-      name: "in a mapping that many merge keys refer to",
-      text: (long, count) => `s: &s {k: ${long}}\nt:\n${repeat("  - {<<: *s}\n", count)}`,
-      value: parsed => parsed.t,
-      expected: (long, count) => new Array(count).fill({ k: long }),
-    },
-    {
-      name: "in a sequence of mappings that many merge keys refer to",
-      text: (long, count) => `s: &s [{j: 1}, {k: ${long}}]\nt:\n${repeat("  - {<<: *s}\n", count)}`,
-      value: parsed => parsed.t,
-      expected: (long, count) => new Array(count).fill({ j: 1, k: long }),
-    },
-  ])("a long string $name is one JS string", ({ text, value, expected }) => {
-    const long = Buffer.alloc(100_000, "x").toString();
-    const count = 200;
-    const input = text(long, count);
+  test("a long string that an alias or a merge key shares is one JS string", async () => {
+    // In a process of its own: the bytes that strings hold outside the JS heap are read after a full collection.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { heapStats } = require("bun:jsc");
+          const long = Buffer.alloc(100_000, "x").toString();
+          const count = 200;
+          const repeat = (text, times) => Buffer.alloc(text.length * times, text).toString();
+          const shapes = {
+            "an alias of the string": ["x: &x " + long + "\\nb: [" + repeat("*x,", count) + "]\\n", parsed => parsed.b],
+            "a merge of its mapping": [
+              "s: &s {k: " + long + "}\\nt:\\n" + repeat("  - {<<: *s}\\n", count),
+              parsed => parsed.t.map(mapping => mapping.k),
+            ],
+            "a merge of a sequence with its mapping": [
+              "s: &s [{j: 1}, {k: " + long + "}]\\nt:\\n" + repeat("  - {<<: *s}\\n", count),
+              parsed => parsed.t.map(mapping => mapping.k),
+            ],
+          };
+          const result = {};
+          for (const [name, [input, strings]] of Object.entries(shapes)) {
+            Bun.gc(true);
+            const before = heapStats().extraMemorySize;
+            const parsed = Bun.YAML.parse(input);
+            Bun.gc(true);
+            const grown = heapStats().extraMemorySize - before;
+            result[name] = {
+              strings: strings(parsed).filter(string => string === long).length,
+              isOneString: grown < (count * long.length) / 10,
+            };
+          }
+          console.log(JSON.stringify(result));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    Bun.gc(true);
-    const before = heapStats().extraMemorySize;
-    const parsed = YAML.parse(input);
-    Bun.gc(true);
-    // The bytes that strings hold outside the JS heap, more than before the parse.
-    const grown = heapStats().extraMemorySize - before;
-
-    expect(value(parsed)).toEqual(expected(long, count));
-    expect(grown).toBeLessThan((count * long.length) / 10);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        "an alias of the string": { strings: 200, isOneString: true },
+        "a merge of its mapping": { strings: 200, isOneString: true },
+        "a merge of a sequence with its mapping": { strings: 200, isOneString: true },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

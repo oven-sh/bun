@@ -31,7 +31,7 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs, Refused, WithoutInclude};
+use bun_sema_driver::{Diagnostic, Libs, Refused, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -544,10 +544,7 @@ fn check_and_lint_in(
         }
     }
     if context.checks_types {
-        for diagnostic in diagnostics
-            .iter()
-            .filter(|it| it.category == Category::Error)
-        {
+        for diagnostic in diagnostics.iter().filter(|it| it.fails()) {
             let at = by_path.get(&diagnostic.path, is_case_sensitive);
             if let Some((result, _)) = at.and_then(|at| results.get_mut(at)?.as_mut()) {
                 result.messages.push(type_error(diagnostic));

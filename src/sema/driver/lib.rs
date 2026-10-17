@@ -1014,6 +1014,13 @@ pub struct Diagnostic {
     pub project: u32,
 }
 
+impl Diagnostic {
+    /// Whether it fails the run: `tsc` fails on whatever it reports (`message TS1450`), and it never reports a suggestion.
+    pub fn fails(&self) -> bool {
+        self.category != Category::Suggestion
+    }
+}
+
 /// A step of a `Plan`, as it ran.
 #[derive(Clone)]
 pub struct StepReport {
@@ -1169,16 +1176,14 @@ pub struct Report {
 }
 
 impl Report {
-    /// Whether the exit code is 0: there are no errors, and nothing was left unchecked.
+    /// Whether the exit code is 0: nothing reported fails the run, and nothing was left unchecked.
     pub fn is_ok(&self) -> bool {
-        self.error_count() == 0 && self.incomplete.is_empty()
+        self.failing().next().is_none() && self.incomplete.is_empty()
     }
 
-    pub fn error_count(&self) -> usize {
-        self.diagnostics
-            .iter()
-            .filter(|d| d.category == Category::Error)
-            .count()
+    /// The diagnostics for which `Diagnostic::fails` holds.
+    pub fn failing(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(|d| d.fails())
     }
 
     /// Adds the result of checking another project. The diagnostics are left unsorted.
@@ -4472,12 +4477,9 @@ fn check_named_files(
                 report.diagnostics.extend(global_errors());
             }
         }
-        // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains suggestions.
-        let is_error = |d: &Diagnostic| d.category == Category::Error;
-        if !stops
-            || emits_despite_errors
-            || !report.diagnostics[always_reported..].iter().any(is_error)
-        {
+        // `GetDiagnosticsOfAnyProgram` collects them itself if nothing else is reported, of whatever category.
+        let mut others = report.diagnostics[always_reported..].iter();
+        if !stops || emits_despite_errors || !others.any(Diagnostic::fails) {
             report.diagnostics.append(&mut emit_diagnostics.lock());
         }
         // `iterateBaseline`: a caller that writes output for every file also does so for the files

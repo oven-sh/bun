@@ -24,6 +24,7 @@
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
+#include "BunHeapSampler.h"
 #if OS(WINDOWS)
 #include <uv.h>
 #else
@@ -89,6 +90,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_startHeapProfileInternal);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopHeapProfileInternal);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal);
 
 // Attributes
@@ -464,6 +467,8 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "getHeapStatistics"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapStatistics, 0 } },
     { "startCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_startCpuProfileInternal, 0 } },
     { "stopCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_stopCpuProfileInternal, 0 } },
+    { "startHeapProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_startHeapProfileInternal, 5 } },
+    { "stopHeapProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_stopHeapProfileInternal, 0 } },
     { "cpuUsageInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_cpuUsageInternal, 0 } },
 };
 
@@ -888,6 +893,68 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     return JSValue::encode(promise);
 }
 
+// startHeapProfileInternal(sampleInterval, stackDepth, forceGC, includeObjectsCollectedByMajorGC,
+// includeObjectsCollectedByMinorGC), validated in node/worker_threads.ts. Resolves with false when the worker's VM is
+// sampling already (ERR_HEAP_PROFILE_HAVE_BEEN_STARTED on the JS side).
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    Bun::HeapSampler::Options options;
+    options.intervalBytes = callFrame->argument(0).asNumber();
+    options.stackDepth = static_cast<unsigned>(callFrame->argument(1).asNumber());
+    options.forceGC = callFrame->argument(2).isTrue();
+    options.includeObjectsCollectedByMajorGC = callFrame->argument(3).isTrue();
+    options.includeObjectsCollectedByMinorGC = callFrame->argument(4).isTrue();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, options, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        bool started = Bun::HeapSampler::start(workerCtx.vm(), options);
+        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, started, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) {
+            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM&, JSGlobalObject*) -> JSValue { return jsBoolean(started); });
+        });
+    });
+    if (!accepted) {
+        worker.contextProxy().takeCrossVMRequest(reqId);
+        rejectWorkerNotRunning(vm, globalObject, promise);
+    }
+    return JSValue::encode(promise);
+}
+
+static constexpr ASCIILiteral kEmptyHeapProfileJSON = "{\"head\":{\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"selfSize\":0,\"id\":1,\"children\":[]},\"samples\":[]}"_s;
+
+// Resolves with the profile as JSON and turns sampling off. An empty profile when sampling was off, or the worker is gone.
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        WTF::String result;
+        auto& workerVM = workerCtx.vm();
+        if (auto* sampler = Bun::HeapSampler::get(workerVM)) {
+            result = sampler->profileJSON();
+            Bun::HeapSampler::stop(workerVM);
+        } else
+            result = kEmptyHeapProfileJSON;
+        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, result); });
+        });
+    });
+    if (!accepted) {
+        worker.contextProxy().takeCrossVMRequest(reqId);
+        promise->resolve(globalObject, vm, jsString(vm, String(kEmptyHeapProfileJSON)));
+    }
+    return JSValue::encode(promise);
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -957,6 +1024,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal, (JSG
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_stopCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "stopCpuProfileInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_startHeapProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_startHeapProfileInternalBody>(*lexicalGlobalObject, *callFrame, "startHeapProfileInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopHeapProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_stopHeapProfileInternalBody>(*lexicalGlobalObject, *callFrame, "stopHeapProfileInternal");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

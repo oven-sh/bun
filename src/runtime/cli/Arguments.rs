@@ -1445,7 +1445,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         } else if heap_prof_v8 || heap_prof_md {
             // --heap-prof-interval is accepted for node CLI parity but unused:
-            // JSC has no allocation-site sampler to configure.
+            // the --heap-prof output is a snapshot of the live heap, not yet a
+            // profile from Bun::HeapSampler.
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {

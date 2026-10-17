@@ -1718,7 +1718,80 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   for (const k in globalThis.Worker.prototype) enumerable.push(k);
   expect(enumerable).not.toContain("startCpuProfileInternal");
   expect(enumerable).not.toContain("stopCpuProfileInternal");
+  expect(enumerable).not.toContain("startHeapProfileInternal");
+  expect(enumerable).not.toContain("stopHeapProfileInternal");
   expect(enumerable).not.toContain("cpuUsageInternal");
+});
+
+describe("startHeapProfile", () => {
+  test("samples the worker's allocations and attributes them to the worker's functions", async () => {
+    const worker = new Worker(
+      /* js */ `
+        import { parentPort } from "node:worker_threads";
+        globalThis.kept = [];
+        function allocateInWorker(count) {
+          for (let i = 0; i < count; i++) globalThis.kept.push({ index: i, a: i + 1, b: i + 2 });
+        }
+        parentPort.on("message", count => {
+          allocateInWorker(count);
+          parentPort.postMessage("done");
+        });
+      `,
+      { eval: true },
+    );
+    try {
+      await once(worker, "online");
+      const handle = await worker.startHeapProfile({ sampleInterval: 1024, stackDepth: 8 });
+      // A second start while one runs is refused, as in node.
+      await expect(worker.startHeapProfile()).rejects.toMatchObject({ code: "ERR_HEAP_PROFILE_HAVE_BEEN_STARTED" });
+      worker.postMessage(20000);
+      await once(worker, "message");
+      const profile = JSON.parse(await handle.stop());
+      expect(profile.head.callFrame).toEqual({
+        functionName: "(root)",
+        scriptId: "0",
+        url: "",
+        lineNumber: -1,
+        columnNumber: -1,
+      });
+      expect(profile.samples.length).toBeGreaterThan(100);
+      for (const sample of profile.samples) {
+        expect(Number.isInteger(sample.size) && sample.size > 0).toBe(true);
+      }
+      const names: string[] = [];
+      const walk = (node: any) => {
+        names.push(node.callFrame.functionName);
+        node.children.forEach(walk);
+      };
+      walk(profile.head);
+      expect(names).toContain("allocateInWorker");
+      // stop() again yields the same profile.
+      expect(await handle.stop()).toBe(await handle.stop());
+      // Sampling is off: a new start is accepted.
+      const again = await worker.startHeapProfile();
+      JSON.parse(await again.stop());
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  test("stop() after the worker exited yields an empty profile", async () => {
+    const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
+    await once(worker, "online");
+    const handle = await worker.startHeapProfile();
+    worker.postMessage("done");
+    await once(worker, "exit");
+    expect(JSON.parse(await handle.stop())).toEqual({
+      head: {
+        callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+        selfSize: 0,
+        id: 1,
+        children: [],
+      },
+      samples: [],
+    });
+    await expect(worker.startHeapProfile()).rejects.toMatchObject({ code: "ERR_WORKER_NOT_RUNNING" });
+  });
 });
 
 test("env: process.env reads in a worker module are evaluated at runtime against the worker's env", async () => {

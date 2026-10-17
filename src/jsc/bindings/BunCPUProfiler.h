@@ -20,4 +20,8 @@ void startCPUProfiler(JSC::VM& vm);
 // Pass non-null pointers for the formats you want. Null pointers are skipped.
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText);
 
+// An absolute file path becomes a `file://` URL, which is what Chrome DevTools
+// expects in a profile's callFrame.url. Anything else is left alone.
+void normalizeProfileURL(WTF::String&);
+
 } // namespace Bun

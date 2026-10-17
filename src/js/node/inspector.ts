@@ -24,6 +24,13 @@ const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
+const startAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startAllocationSampling", 3);
+const getAllocationSamplingProfile = $newCppFunction(
+  "JSInspectorProfiler.cpp",
+  "jsFunction_getAllocationSamplingProfile",
+  0,
+);
+const stopAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopAllocationSampling", 0);
 
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
 // WebSocket server that speaks the V8 Chrome DevTools Protocol (see
@@ -426,6 +433,11 @@ class Session extends EventEmitter {
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
+  #connectedToMainThread = false;
+  // V8's HeapProfiler agent stops the sampling heap profiler on disable() and
+  // on disconnect only when this session started it; stopSampling itself is
+  // isolate-wide.
+  #startedAllocationSampling = false;
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
   #coverageBaseline: Map<string, number> = new Map();
@@ -461,10 +473,15 @@ class Session extends EventEmitter {
       throw $ERR_INSPECTOR_NOT_WORKER();
     }
     this.connect();
+    this.#connectedToMainThread = true;
   }
 
   disconnect() {
     if (!this.#connected) return;
+    if (this.#startedAllocationSampling) {
+      stopAllocationSampling();
+      this.#startedAllocationSampling = false;
+    }
     if (isCPUProfilerRunning()) stopCPUProfiler();
     if (this.#preciseCoverageEnabled) {
       stopPreciseCoverage();
@@ -472,6 +489,7 @@ class Session extends EventEmitter {
     }
     this.#profilerEnabled = false;
     this.#connected = false;
+    this.#connectedToMainThread = false;
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
@@ -641,6 +659,14 @@ class Session extends EventEmitter {
         return { result: buildScriptCoverageList(scripts, false, false) };
       }
 
+      case "HeapProfiler.enable":
+      case "HeapProfiler.disable":
+      case "HeapProfiler.collectGarbage":
+      case "HeapProfiler.startSampling":
+      case "HeapProfiler.getSamplingProfile":
+      case "HeapProfiler.stopSampling":
+        return this.#handleHeapProfilerMethod(method, params as Record<string, unknown> | undefined);
+
       // Configuration-only Debugger commands are forwarded to the inspector
       // server started by inspector.open() (vitest --inspect-brk uses
       // Debugger.enable + Debugger.setBreakpointByUrl to stop at the first
@@ -737,6 +763,65 @@ class Session extends EventEmitter {
 
       default:
         return $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
+    }
+  }
+
+  #handleHeapProfilerMethod(method: string, params?: Record<string, unknown>): any {
+    // The in-process transport of a worker's connectToMainThread() session runs
+    // on the worker's own VM, so sampling through it would profile the wrong
+    // heap.
+    if (this.#connectedToMainThread) {
+      return $ERR_INSPECTOR_COMMAND(`-32000: '${method}' is not supported on a session connected to the main thread`);
+    }
+    switch (method) {
+      case "HeapProfiler.enable":
+        return {};
+
+      case "HeapProfiler.disable":
+        if (this.#startedAllocationSampling) {
+          stopAllocationSampling();
+          this.#startedAllocationSampling = false;
+        }
+        return {};
+
+      case "HeapProfiler.collectGarbage":
+        Bun.gc(true);
+        return {};
+
+      case "HeapProfiler.startSampling": {
+        const samplingInterval = params?.samplingInterval === undefined ? 32768 : params.samplingInterval;
+        const includeMajor =
+          params?.includeObjectsCollectedByMajorGC === undefined ? false : params.includeObjectsCollectedByMajorGC;
+        const includeMinor =
+          params?.includeObjectsCollectedByMinorGC === undefined ? false : params.includeObjectsCollectedByMinorGC;
+        if (
+          typeof samplingInterval !== "number" ||
+          !$isFinite(samplingInterval) ||
+          typeof includeMajor !== "boolean" ||
+          typeof includeMinor !== "boolean"
+        ) {
+          return $ERR_INSPECTOR_COMMAND("-32602: Invalid parameters");
+        }
+        // V8 rejects an interval of 0 or less; a fraction of a byte cannot be
+        // sampled either.
+        if (samplingInterval < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid sampling interval");
+        // A second start while sampling runs keeps the running session and its
+        // interval, as V8 does. The session that started it stays the one that
+        // stops it on disable()/disconnect().
+        if (startAllocationSampling(samplingInterval, includeMajor, includeMinor)) {
+          this.#startedAllocationSampling = true;
+        }
+        return {};
+      }
+
+      case "HeapProfiler.getSamplingProfile":
+      case "HeapProfiler.stopSampling": {
+        const json =
+          method === "HeapProfiler.stopSampling" ? stopAllocationSampling() : getAllocationSamplingProfile();
+        if (json === null) return $ERR_INSPECTOR_COMMAND("-32000: V8 sampling heap profiler was not started.");
+        if (method === "HeapProfiler.stopSampling") this.#startedAllocationSampling = false;
+        return { profile: JSON.parse(json) };
+      }
     }
   }
 }

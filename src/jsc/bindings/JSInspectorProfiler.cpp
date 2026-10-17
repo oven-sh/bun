@@ -1,6 +1,7 @@
 #include "root.h"
 #include "helpers.h"
 #include "BunCPUProfiler.h"
+#include "BunHeapSampler.h"
 #include "NodeValidator.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/VM.h>
@@ -55,6 +56,44 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, CallFrame*))
 {
     return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
+}
+
+// HeapProfiler.startSampling(samplingInterval, includeObjectsCollectedByMajorGC,
+// includeObjectsCollectedByMinorGC). The arguments are validated in
+// node/inspector.ts. False when sampling was already on: V8 keeps the running
+// session then, with its interval.
+JSC_DECLARE_HOST_FUNCTION(jsFunction_startAllocationSampling);
+JSC_DEFINE_HOST_FUNCTION(jsFunction_startAllocationSampling, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    Bun::HeapSampler::Options options;
+    options.intervalBytes = callFrame->argument(0).asNumber();
+    options.includeObjectsCollectedByMajorGC = callFrame->argument(1).isTrue();
+    options.includeObjectsCollectedByMinorGC = callFrame->argument(2).isTrue();
+    return JSValue::encode(jsBoolean(Bun::HeapSampler::start(globalObject->vm(), options)));
+}
+
+// HeapProfiler.getSamplingProfile: the profile as JSON, or null when sampling is off.
+JSC_DECLARE_HOST_FUNCTION(jsFunction_getAllocationSamplingProfile);
+JSC_DEFINE_HOST_FUNCTION(jsFunction_getAllocationSamplingProfile, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    auto* sampler = Bun::HeapSampler::get(vm);
+    if (!sampler)
+        return JSValue::encode(jsNull());
+    return JSValue::encode(jsString(vm, sampler->profileJSON()));
+}
+
+// HeapProfiler.stopSampling: the profile as JSON and sampling off, or null when it was off.
+JSC_DECLARE_HOST_FUNCTION(jsFunction_stopAllocationSampling);
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopAllocationSampling, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    auto* sampler = Bun::HeapSampler::get(vm);
+    if (!sampler)
+        return JSValue::encode(jsNull());
+    WTF::String profile = sampler->profileJSON();
+    Bun::HeapSampler::stop(vm);
+    return JSValue::encode(jsString(vm, profile));
 }
 
 // Precise code coverage via JSC's control-flow profiler. Unlike V8 (which

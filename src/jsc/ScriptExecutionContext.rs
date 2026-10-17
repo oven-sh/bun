@@ -149,6 +149,22 @@ impl ScriptExecutionContext {
         *self.stopped.get()
     }
 
+    /// The `Bun.ModuleGraph` that this context was made for, while that graph is alive.
+    pub fn module_graph(&self) -> Option<JSValue> {
+        unsafe extern "C" {
+            fn WebCore__ScriptExecutionContext__moduleGraph(
+                context: *mut core::ffi::c_void,
+            ) -> JSValue;
+        }
+        let dom_context = self.dom_context.get();
+        if dom_context.is_null() {
+            return None;
+        }
+        // SAFETY: non-null until its destructor releases this one (`dom_context_released`); JS thread.
+        let graph = unsafe { WebCore__ScriptExecutionContext__moduleGraph(dom_context) };
+        (!graph.is_empty()).then_some(graph)
+    }
+
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
     /// its handles and its client sockets.
     pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {

@@ -710,7 +710,7 @@ impl Execution {
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
-                Execution::save_attempt_failure(buntest);
+                Execution::save_attempt_failure(buntest, sequence.result);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -885,12 +885,16 @@ impl Execution {
     }
 
     /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
-    fn save_attempt_failure(buntest: NonNull<BunTest>) {
+    fn save_attempt_failure(buntest: NonNull<BunTest>, result: Result) {
         // SAFETY: as in `discard_junit_failure`.
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
             // SAFETY: as in `discard_junit_failure`.
             let reporter = unsafe { &mut *reporter.as_ptr() };
-            let failure = reporter.test_failure.take().unwrap_or_default();
+            // A timeout throws nothing.
+            let failure = match reporter.test_failure.take() {
+                None if result.is_timeout() => test_command::TestFailure::timed_out(),
+                failure => failure.unwrap_or_default(),
+            };
             reporter.earlier_test_failures.push(failure);
         }
     }

@@ -303,6 +303,14 @@ impl JunitReporter {
 }
 
 impl TestFailure {
+    pub(crate) fn timed_out() -> TestFailure {
+        TestFailure {
+            name: b"TimeoutError".to_vec(),
+            message: b"test timed out".to_vec(),
+            body: Vec::new(),
+        }
+    }
+
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
@@ -902,10 +910,10 @@ impl JunitReporter {
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(
-                    b"  <failure type=\"TimeoutError\" message=\"test timed out\" />\n",
-                );
+                self.write_failure(indent, b"failure", Some(&TestFailure::timed_out()))?;
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"rerunFailure", Some(earlier))?;
+                }
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }

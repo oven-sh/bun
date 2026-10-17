@@ -397,6 +397,63 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
+  it("reports an attempt that timed out like any other failed attempt", async () => {
+    await using tmpDir = tempDir("junit-retry-timeout", {
+      "package.json": "{}",
+      "timeout.test.js": `
+        import { test } from "bun:test";
+        const forever = new Promise(() => {});
+        const attempts = {};
+        const attempt = name => (attempts[name] = (attempts[name] ?? 0) + 1);
+
+        test("times out, then throws", { retry: 1, timeout: 50 }, async () => {
+          if (attempt("a") === 1) await forever;
+          throw new Error("second attempt");
+        });
+        test("throws, then times out", { retry: 1, timeout: 50 }, async () => {
+          if (attempt("b") === 1) throw new Error("first attempt");
+          await forever;
+        });
+        test("times out, then passes", { retry: 1, timeout: 50 }, async () => {
+          if (attempt("c") === 1) await forever;
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const attemptsOf = name =>
+      [
+        ...xmlContent
+          .match(new RegExp(`<testcase[^>]*name="${name}"[^/]*>[\\s\\S]*?</testcase>`))[0]
+          .matchAll(/<(\w+) type="(\w+)" message="([^"]*)"/g),
+      ].map(match => match.slice(1));
+    expect({
+      "times out, then throws": attemptsOf("times out, then throws"),
+      "throws, then times out": attemptsOf("throws, then times out"),
+      "times out, then passes": attemptsOf("times out, then passes"),
+    }).toEqual({
+      "times out, then throws": [
+        ["failure", "Error", "second attempt"],
+        ["rerunFailure", "TimeoutError", "test timed out"],
+      ],
+      "throws, then times out": [
+        ["failure", "TimeoutError", "test timed out"],
+        ["rerunFailure", "Error", "first attempt"],
+      ],
+      "times out, then passes": [["flakyFailure", "TimeoutError", "test timed out"]],
+    });
+    expect(proc.exitCode).toBe(1);
+  });
+
   it("produces well-formed XML when test names contain control characters", async () => {
     await using tmpDir = tempDir("junit-ctrl", {
       "package.json": "{}",

@@ -1586,20 +1586,17 @@ impl Listener {
     }
 }
 
-/// Who dials, and so how the outcome is reported.
+/// How the outcome of a dial is reported.
 #[derive(Clone, Copy)]
 pub(crate) enum Dialer {
-    /// `Bun.connect()` and the fd adoption of node:net: the returned promise
-    /// settles with the socket or the connect error.
+    /// `Bun.connect()` and fd adoption: the returned promise settles.
     Promise,
-    /// node:net's `_handle.connect()` / `connect6()`: the handler table's
-    /// `open` / `connectError` complete `req.oncomplete`, so no promise is made.
+    /// node:net's `_handle.connect()`: the handlers complete `req.oncomplete`, no promise.
     NetHandle,
 }
 
 impl Dialer {
-    /// The connect promise for `Promise`, stored in the handlers cell so the
-    /// socket can settle it. `UNDEFINED` for a handle dial.
+    /// The connect promise, stored in the handlers cell. `UNDEFINED` for a handle dial.
     fn promise(self, cx: &bun_jsc::JsThread<'_>, handlers: Option<&Rc<Handlers>>) -> JSValue {
         match self {
             Dialer::Promise => {

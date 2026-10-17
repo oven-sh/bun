@@ -55,9 +55,7 @@ const { addServerAbortSignalOption } = require("internal/net/server_abort_signal
 
 type SocketHandle = Socket<SocketInstance | ConnectData> & {
   setTypeOfService?(tos: number): number | undefined;
-  // Node's TCPWrap / PipeWrap shape: the peer is positional, the rest of the
-  // dial options ride on `req`. An interceptor that replaces these takes over
-  // the dial.
+  // Node's TCPWrap / PipeWrap shape; interceptors replace these on the handle.
   connect?(req: ConnectReq, address: string, port?: number): number | undefined;
   connect6?(req: ConnectReq, address: string, port: number): number | undefined;
 };
@@ -128,9 +126,7 @@ type SNICallback = (servername: string, callback: (err: unknown, context?: unkno
 type ALPNCallback = (arg: { servername: string | false; protocols: string[] }) => string | undefined;
 type ServerInstance = Omit<NetServer, keyof ServerInternals> & ServerInternals;
 
-// Node's TCPConnectWrap / PipeConnectWrap, and the dial options the native
-// handle reads from it besides the positional peer (`tls`, `pauseOnConnect`,
-// `localAddress`, `localPort`, the handler table and its `data`).
+// Node's TCPConnectWrap / PipeConnectWrap, plus the dial options the handle reads.
 interface ConnectReq {
   oncomplete?: (
     status: number,
@@ -1823,10 +1819,8 @@ const SocketHandlers2 = {
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
     socket.data.req = undefined;
-    // The handle's connect dispatches this synchronously when connect()/bind()
-    // fails at the syscall; surface it as kConnectTcp/Pipe's return value
-    // (callers' Node-derived `if (err)` expects that) instead of re-entering
-    // oncomplete.
+    // A syscall failure inside the handle's connect: endDial returns the errno
+    // like Node's TCPWrap does, instead of re-entering oncomplete.
     if (req.dispatching) {
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
@@ -1897,10 +1891,8 @@ function traceConnectEnd(req) {
   }
 }
 
-// Node dials through the handle (TCPWrap#connect/connect6, PipeWrap#connect)
-// and an interceptor replaces those methods on the handle to take over the
-// dial, so every dial goes through `self._handle.connect*`:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1149-L1158
+// Every dial goes through the handle, as in Node (lib/net.js internalConnect),
+// so a connect()/connect6() replaced on the handle takes over the dial.
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
   const handle = self._handle as DialHandle;
@@ -1928,24 +1920,15 @@ function kConnectPipe(self, req, address) {
 }
 
 function beginDial(self, req) {
-  // The native socket is always half-open: closing it on the peer's FIN
-  // would discard whatever is still buffered on the writable side. The
-  // stream layer implements allowHalfOpen=false (onSocketEnd ends the
-  // writable side, which flushes, sends FIN and destroys), matching Node
-  // where libuv sockets are half-open and the stream layer decides.
+  // Always half-open natively: the stream layer implements allowHalfOpen=false, like Node.
   req.allowHalfOpen = true;
   req.socket = self[khandlers];
   req.data = { self, req };
-  // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
-  // oncomplete; the native connect instead fires connectError inside the
-  // call. Bracket it so connectError hands the errno back through req.errno
-  // instead of re-entering. The caller clears it in a finally: a replacement
-  // that throws after it dialed must not leave a later connectError stashed.
+  // A syscall failure fires connectError inside the call; it stashes req.errno while this is set.
   req.dispatching = true;
 }
 
-// `err` is what the handle's connect returned: 0 from Bun's, an errno or
-// undefined from a replacement.
+// `err` is the handle's return: 0 from Bun's connect, an errno or undefined from a replacement.
 function endDial(req, err) {
   const errno = req.errno;
   if (errno !== undefined) {
@@ -3391,8 +3374,7 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
-  // A listener that destroy()s the socket leaves no handle to dial with. Node
-  // throws on the null handle; the socket already emitted 'close', so return.
+  // A listener destroyed the socket: no handle is left to dial with.
   if (!self.connecting) return;
 
   if (addressType === 6 || addressType === 4) {
@@ -3542,9 +3524,7 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  // The if(err) above covers sync failure; this catches a sync open. Arming
-  // the timer now would capture a stale handle and overwrite the next
-  // attempt's kTimeout.
+  // A sync open: arming the timer now would capture a stale handle.
   if (!self.connecting || context.current !== current + 1) {
     return;
   }

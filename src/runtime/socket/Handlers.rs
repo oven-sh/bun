@@ -629,9 +629,7 @@ impl SocketConfig {
     }
 }
 
-/// The peer of a dial named apart from the options object: node:net's
-/// `_handle.connect(req, address, port)` / `connect(req, path)` pass it
-/// positionally, like Node's TCPWrap and PipeWrap.
+/// The peer of node:net's `_handle.connect(req, address, port)`, passed positionally like Node's TCPWrap.
 pub(crate) enum DialTarget {
     Host { host: Utf8Bytes<'static>, port: u16 },
     Unix(Utf8Bytes<'static>),

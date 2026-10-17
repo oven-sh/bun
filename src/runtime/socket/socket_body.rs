@@ -3276,14 +3276,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `_handle.connect(req, address, port)`, or `connect(req, path)` for a
-    /// pipe: node:net dials through the handle the way Node's TCPWrap and
-    /// PipeWrap do, so code that replaces the method on the handle (an
-    /// interceptor) takes over the dial. The peer is the positional target.
-    /// `req` carries the rest of the dial options (`tls`, `pauseOnConnect`,
-    /// `localAddress`, `localPort`, the handler table and its `data`), and
-    /// the handlers complete `req.oncomplete`. Returns 0: a dial that fails
-    /// at the syscall reports through `connectError` inside this call.
+    /// node:net's `_handle.connect(req, address, port)` / `connect(req, path)`, Node's TCPWrap shape.
+    /// `req` carries the other dial options; the handlers complete `req.oncomplete`. Returns 0.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn connect(
         this: &Self,
@@ -3291,7 +3285,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        // A TLS engine over a user Duplex has no transport of its own to redial.
         if matches!(
             this.socket.get().socket,
             uws::InternalSocket::UpgradedDuplex(_)

@@ -170,9 +170,7 @@ function generate(ssl) {
         fn: "shutdown",
         length: 1,
       },
-      // Node's TCPWrap / PipeWrap dial methods for node:net. An interceptor
-      // replaces them on the handle to take over the dial. connect6 is the
-      // same dial: the address family follows the IP literal net.ts passes.
+      // node:net dials through these (Node's TCPWrap shape); connect6 is the same dial.
       connect: {
         fn: "connect",
         length: 3,

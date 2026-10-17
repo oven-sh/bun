@@ -3170,6 +3170,37 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
   });
 });
 
+test.concurrent("the output of a failed script is printed byte for byte", async () => {
+  using dir = tempDir("lifecycle-output-bytes", {
+    "package.json": JSON.stringify({
+      name: "app",
+      dependencies: { dep: "file:./dep" },
+      trustedDependencies: ["dep"],
+    }),
+    "dep/package.json": JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      scripts: { postinstall: `${bunExe()} fail.js` },
+    }),
+    // "café" in Latin-1, and two bytes that no UTF-8 text has.
+    "dep/fail.js": `process.stdout.write(Buffer.from([0x63, 0x61, 0x66, 0xe9]));
+      process.stderr.write(Buffer.from([0xfe, 0xff]));
+      process.exitCode = 1;`,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: baseEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+  const hex = Buffer.from(err).toString("hex");
+  expect(hex).toContain("636166e90a");
+  expect(hex).toContain("feff0a");
+  expect(exitCode).toBe(1);
+});
+
 // PR_SET_PDEATHSIG. The script holds the write end of `alive`, which ends when the script does, and
 // waits for a line in `gate`, which the test writes once bun is gone.
 test.concurrent.skipIf(!isLinux).each(["hoisted", "isolated"] as const)(

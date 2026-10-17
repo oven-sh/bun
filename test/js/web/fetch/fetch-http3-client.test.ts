@@ -1255,6 +1255,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
       //   "fail":   it answers with Version Negotiation.
       //   "refuse": it answers with CONNECTION_CLOSE, as a server does that
       //             takes no connection now. That says nothing about the next one.
+      //   "hold":   it does not answer.
       //   "live":   it passes the packets on to an HTTP/3 listener.
       const plans = {
         healthy: ["live"],
@@ -1265,6 +1266,9 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
         deadline: ["fail", "live"],
         "refused-once": ["refuse", "live"],
         "refused-twice": ["refuse"],
+        "refused-twice-strict": ["refuse"],
+        "session-close": ["hold", "live"],
+        "session-close-redial": ["refuse", "hold", "live"],
         "redial-unroutable": ["refuse"],
         "redirect-to-refusing": ["refuse", "live"],
         "refusing-site": ["refuse", "live"],
@@ -1280,7 +1284,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
 
         let plan = [...(plans[scenario] ?? ["fail"])];
         // The peer keeps the packets of a connection that it does not serve, and does not answer yet.
-        let holding = ["abort", "session-close", "redial-unroutable"].includes(scenario);
+        let holding = ["abort", "redial-unroutable"].includes(scenario);
         let liveGone = false;
         // Where a 302 of this case leads.
         let elsewhere = "/landed";
@@ -1308,8 +1312,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
               return new Response("alternative");
             },
           });
-        let live =
-          plan.includes("live") || scenario === "moved" || scenario === "session-close" ? listen() : undefined;
+        let live = plan.includes("live") || scenario === "moved" ? listen() : undefined;
         const upstream = await Bun.udpSocket({
           hostname: host,
           socket: {
@@ -1329,6 +1332,10 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
                 const id = m.subarray(7 + m[5], 7 + m[5] + m[6 + m[5]]).toString("hex");
                 if (!treatment.has(id)) treatment.set(id, plan.length > 1 ? plan.shift() : plan[0]);
                 to = treatment.get(id);
+              }
+              if (to === "hold") {
+                initial.resolve();
+                return;
               }
               if (to !== "live") {
                 if (holding) {
@@ -1455,6 +1462,9 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
           case "lax-fails":
             out.fetches = [await send("/0"), await send("/1"), await send("/strict", { tls: { rejectUnauthorized: true } })];
             break;
+          case "refused-twice-strict":
+            out.fetches = [await send("/0"), await send("/strict", { tls: { rejectUnauthorized: true } }), await send("/2")];
+            break;
           case "abort": {
             const learned = await send("/0");
             const controller = new AbortController();
@@ -1468,20 +1478,19 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
             out.fetches = [learned, aborted, await send("/next")];
             break;
           }
-          case "session-close": {
+          case "session-close":
+          case "session-close-redial": {
             const session = new Bun.FetchSession();
             const learned = await send("/0");
             const controller = new AbortController();
             const queued = send("/aborted", { session, signal: controller.signal });
+            // The request is on a connection that gets no answer.
             await Promise.race([initial.promise, queued]);
             controller.abort();
             const aborted = await queued;
             // The session closes its idle connection, which is still in its handshake.
             session.close();
             await drained();
-            // The alternative works from here.
-            holding = false;
-            plan = ["live"];
             out.fetches = [learned, aborted, await send("/next")];
             break;
           }
@@ -1600,7 +1609,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     const alternative = "200 alternative";
 
     // Each case has its own origin and its own UDP peers. The cases share one
-    // process, which has its own time limit: no case waits for another one.
+    // process and run at the same time: no case waits for another one.
     describe("in one process", () => {
       const hosts = isIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"];
       const specs = [
@@ -1610,6 +1619,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
           "stream-body",
           "redirect",
           "session-close",
+          "session-close-redial",
           "healthy",
           "moved",
           "written",
@@ -1619,6 +1629,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
           "lax-fails",
           "refused-once",
           "refused-twice",
+          "refused-twice-strict",
           "redirect-to-refusing",
           "redirect-to-live",
         ].map(scenario => scenario + "@127.0.0.1"),
@@ -1678,6 +1689,14 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
       test("a connection that a FetchSession closes in its handshake does not count", () => {
         const { result, exitCode } = resultOf(shared, "session-close@127.0.0.1");
         expect(result).toEqual({ fetches: [origin, "AbortError", alternative], hits: ["GET /0"], dials: 2 });
+        expect(exitCode).toBe(0);
+      });
+
+      // As above, but the peer refused the first connection of fetch 2, and the
+      // session closes the second one.
+      test("a second connection that a FetchSession closes in its handshake does not count", () => {
+        const { result, exitCode } = resultOf(shared, "session-close-redial@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin, "AbortError", alternative], hits: ["GET /0"], dials: 3 });
         expect(exitCode).toBe(0);
       });
 
@@ -1770,6 +1789,19 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
       test("two connections that the peer closes send the request to the origin", () => {
         const { result, exitCode } = resultOf(shared, "refused-twice@127.0.0.1");
         expect(result).toEqual({ fetches: [origin, origin, origin], hits: ["GET /0", "GET /1", "GET /2"], dials: 2 });
+        expect(exitCode).toBe(0);
+      });
+
+      // Fetch 2 checks the certificate, but the peer closes both of its
+      // connections before it shows one. That is no result of the check, so
+      // it counts for fetch 3 too, which has no check and opens no connection.
+      test("a connection that closes before the certificate check counts for every request", () => {
+        const { result, exitCode } = resultOf(shared, "refused-twice-strict@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, "DEPTH_ZERO_SELF_SIGNED_CERT", origin],
+          hits: ["GET /0", "GET /2"],
+          dials: 2,
+        });
         expect(exitCode).toBe(0);
       });
 

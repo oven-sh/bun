@@ -42,6 +42,8 @@ pub struct ClientSession {
     pub(crate) unreachable: bool,
     /// Dialed for a request whose connection before this one closed before its handshake.
     pub(crate) second_dial: bool,
+    /// `close_if_idle` closed the connection: its close says nothing about the peer.
+    pub(crate) closed_by_us: bool,
     pub(crate) registry_index: u32,
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
@@ -70,6 +72,7 @@ impl ClientSession {
             closed: false,
             unreachable: false,
             second_dial: false,
+            closed_by_us: false,
             registry_index: u32::MAX,
             pending: Vec::new(),
         }))
@@ -111,6 +114,7 @@ impl ClientSession {
         if let Some(qs) = self.qsocket_mut() {
             // No later request may pick a connection that is going away.
             self.closed = true;
+            self.closed_by_us = true;
             qs.close();
         }
     }

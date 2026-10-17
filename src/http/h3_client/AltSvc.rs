@@ -267,7 +267,7 @@ fn broken() -> &'static mut StringHashMap<[i64; 2]> {
 const BROKEN_SECS: i64 = 300;
 
 /// No QUIC connection to `host:port` can be established: `lookup()` skips it for `BROKEN_SECS`.
-pub(crate) fn report_unreachable(host: &[u8], port: u16, reject_unauthorized: bool) {
+pub(crate) fn report_unreachable(host: &[u8], port: u16, strict_only: bool) {
     let mut buf = [0u8; 256 + 8];
     if host.len() > 256 || !crate::h3_alt_svc_enabled() {
         return;
@@ -283,8 +283,8 @@ pub(crate) fn report_unreachable(host: &[u8], port: u16, reject_unauthorized: bo
     let Ok(slot) = broken().get_or_put(k) else {
         return;
     };
-    // What fails with no certificate check fails with one too. The reverse does not hold.
-    let modes = if reject_unauthorized { 1..2 } else { 0..2 };
+    // Index 1 is for requests with the certificate check, index 0 for requests without.
+    let modes = if strict_only { 1..2 } else { 0..2 };
     slot.value_ptr[modes].fill(now + BROKEN_SECS);
     bun_core::scoped_log!(h3_client, "alt-svc broken {}", bstr::BStr::new(k));
 }

@@ -1716,9 +1716,11 @@ describe("multipart upload primitives", () => {
     expect(await response.text()).toContain("<Code>NoSuchUpload</Code>");
     expect(response.status).toBe(404);
     await expect(client.abortMultipartUpload("k", uploadId)).rejects.toMatchObject({ code: "NoSuchUpload" });
-    await expect(client.completeMultipartUpload("k", uploadId, [{ partNumber: 1, etag: '"e"' }])).rejects.toMatchObject({
-      code: "NoSuchUpload",
-    });
+    await expect(client.completeMultipartUpload("k", uploadId, [{ partNumber: 1, etag: '"e"' }])).rejects.toMatchObject(
+      {
+        code: "NoSuchUpload",
+      },
+    );
     // Query delimiters are encoded too.
     expect(client.presign("k", { uploadId: "a&b#c?d" })).toContain("&uploadId=a%26b%23c%3Fd");
   });

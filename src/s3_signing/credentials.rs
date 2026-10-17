@@ -634,10 +634,8 @@ impl S3Credentials {
                         ));
                     }
                     if let Some(ce) = encoded_content_encoding {
-                        query_parts.push(alloc_print!(
-                            "response-content-encoding={}",
-                            BStr::new(ce)
-                        ));
+                        query_parts
+                            .push(alloc_print!("response-content-encoding={}", BStr::new(ce)));
                     }
                     if let Some(ct) = encoded_content_type {
                         query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
@@ -740,10 +738,8 @@ impl S3Credentials {
                     ));
                 }
                 if let Some(ce) = encoded_content_encoding {
-                    url_query_parts.push(alloc_print!(
-                        "response-content-encoding={}",
-                        BStr::new(ce)
-                    ));
+                    url_query_parts
+                        .push(alloc_print!("response-content-encoding={}", BStr::new(ce)));
                 }
                 if let Some(ct) = encoded_content_type {
                     url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));

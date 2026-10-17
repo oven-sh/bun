@@ -89,18 +89,20 @@ impl ProcessAutoKiller {
     fn kill_processes(&mut self, own_scope: Option<u32>) -> u32 {
         let mut count: u32 = 0;
         while let Some(entry) = self.processes.pop() {
-            // SAFETY: every key in `processes` was ref()'d on insert and is
-            // live until the matching deref() below; popped entry is
-            // exclusively owned for this scope so `&mut Process` is unaliased.
-            let p: &mut Process = unsafe { &mut *entry.key };
-            if !p.has_exited() {
-                bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
-                let asked = p.kill(SignalCode::DEFAULT.0).is_ok();
-                count += asked as u32;
-                if asked && own_scope == Some(entry.value) && Self::can_force_kill(p) {
-                    // Its ref moves to `terminating`.
-                    self.terminating.push(entry.key);
-                    continue;
+            {
+                // SAFETY: every key in `processes` was ref()'d on insert and is
+                // live until the matching deref() below; popped entry is
+                // exclusively owned for this scope so `&mut Process` is unaliased.
+                let p: &mut Process = unsafe { &mut *entry.key };
+                if !p.has_exited() {
+                    bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
+                    let asked = p.kill(SignalCode::DEFAULT.0).is_ok();
+                    count += asked as u32;
+                    if asked && own_scope == Some(entry.value) && Self::can_force_kill(p) {
+                        // Its ref moves to `terminating`.
+                        self.terminating.push(entry.key);
+                        continue;
+                    }
                 }
             }
             // SAFETY: key live until this releases the ref taken on insert.
@@ -150,6 +152,9 @@ impl ProcessAutoKiller {
     /// the rest of its grace period, then sends SIGKILL. Turns no event loop and runs no exit
     /// handler.
     pub fn finish_before_exit(&mut self) {
+        if self.terminating.is_empty() {
+            return;
+        }
         #[cfg(unix)]
         {
             let mut step_ms: i64 = 1;
@@ -169,12 +174,15 @@ impl ProcessAutoKiller {
                     }
                     !ended
                 });
+                if self.terminating.is_empty() {
+                    return;
+                }
                 let remaining_ms = self
                     .timer
                     .next
                     .duration(&Timespec::now(TimespecMockMode::ForceRealTime))
                     .ms();
-                if self.terminating.is_empty() || remaining_ms <= 0 {
+                if remaining_ms <= 0 {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(

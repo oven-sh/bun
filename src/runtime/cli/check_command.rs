@@ -632,6 +632,18 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
         .collect()
 }
 
+/// What `PluginImports` has a module of the bundler by (`PluginImport::importer`): the path of its
+/// file in the checker's format, which begins with `/` and is that of `already_read`. What a
+/// plugin provides in a namespace of its own, and a `data:` URL, are in no file: each goes by a
+/// name that no path is.
+fn name_of_module(cwd: &[u8], (namespace, path): (&[u8], &[u8])) -> Vec<u8> {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    match namespace.is_empty() {
+        true => bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path])),
+        false => [b"\0", namespace, b":", path].concat(),
+    }
+}
+
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
     check_for_build(checked, log, true)
@@ -650,6 +662,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         tsconfig,
         conditions,
         loaders,
+        plugin_imports,
         entry_points,
         sources,
     } = checked;
@@ -663,13 +676,37 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         }
         (path, text)
     });
-    let provided = Provided {
-        already_read: already_read(cwd, &mut sources),
-        ..Default::default()
-    };
+    let already_read = already_read(cwd, &mut sources);
     // Not `App.svelte`, which a plugin turns into TypeScript.
     let is_source = |path: &&[u8]| {
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
+    };
+    // The imports of a file follow each other.
+    let mut imports = bun_sema_driver::host::PluginImports::new();
+    let mut importer = None;
+    for import in plugin_imports {
+        let path = name_of_module(cwd, import.imported);
+        // The type checker reads what is TypeScript or JavaScript by its name and is in a file.
+        // The text of a file that a plugin has loaded is among `already_read` only if it is
+        // nowhere else: then it is what the plugin provides.
+        let is_only_of_plugin = import.is_loaded_by_plugin && already_read.contains_key(&path);
+        let is_in_a_file = import.imported.0.is_empty();
+        let is_source = is_in_a_file && is_source(&import.imported.1) && !is_only_of_plugin;
+        if !is_source && !import.is_loaded_by_plugin {
+            continue;
+        }
+        if importer != Some(import.importer) {
+            importer = Some(import.importer);
+            imports.push((name_of_module(cwd, import.importer), Vec::new()));
+        }
+        if let Some((_, of_importer)) = imports.last_mut() {
+            of_importer.push(bun_sema_driver::host::PluginImport { path, is_source });
+        }
+    }
+    let provided = Provided {
+        already_read,
+        plugin_imports: imports,
+        ..Default::default()
     };
     let paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
         .map(<[u8]>::to_vec)

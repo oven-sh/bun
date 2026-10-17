@@ -18,6 +18,30 @@ use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
+/// `Host::plugin_imports`: the `tspath.Path` of a file that imports, and what it imports. Sorted
+/// by that path. A module of a plugin that is in no file goes by a name that no file has.
+pub type PluginImports = Vec<(Vec<u8>, Vec<PluginImport>)>;
+
+/// What the file at `path` imports, in `Host::plugin_imports`.
+pub fn plugin_imports_of<'a>(
+    imports: &'a [(Vec<u8>, Vec<PluginImport>)],
+    path: &[u8],
+) -> &'a [PluginImport] {
+    let found = imports.binary_search_by(|it| it.0.as_slice().cmp(path));
+    found.map_or(&[], |at| &imports[at].1)
+}
+
+/// What the bundler has found for an import.
+pub struct PluginImport {
+    /// What `PluginImports` has the file by.
+    pub path: Vec<u8>,
+    /// TypeScript or JavaScript that the type checker can read: a file of that name is written,
+    /// or the caller has its text. Otherwise it is what only a plugin can read, or what only a
+    /// plugin provides, which is not code of the project: it is not checked, and what it imports
+    /// is followed.
+    pub is_source: bool,
+}
+
 /// The phases of loading a program, for timing. `Discover`, `Link` and `Merge` run on one thread,
 /// and `Aliases` is the time of the thread that waits for it. The others run on all threads in
 /// parallel, and the time of every thread is counted.
@@ -117,6 +141,10 @@ pub trait Host: Sync {
     /// `extraFileExtensions`: the extensions, each with its `.`, of which the host knows the
     /// language, besides those that TypeScript knows. `include` finds the files that have them.
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)];
+    /// The imports that only the bundler can follow, because a plugin of it has loaded the file
+    /// that imports or the file that is imported: `main.ts` imports `App.svelte`, which imports
+    /// `lib.ts`. A file refers to what such a file imports. See `plugin_imports_of`.
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)];
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;

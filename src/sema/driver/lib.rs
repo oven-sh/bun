@@ -31,10 +31,10 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ancestors, contains_path, displayed_path,
+    Host, ModuleDetection, Options, Phase, PluginImport, ancestors, contains_path, displayed_path,
     get_relative_path_from_directory, inside, is_declaration_file_name, is_javascript,
-    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
-    to_path_in, typescript_path,
+    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name,
+    plugin_imports_of, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -1130,6 +1130,9 @@ pub struct Report {
     pub not_installed: Vec<NotInstalled>,
     /// The scripts of pages that checked files import, which are not in the program of those files.
     scripts_elsewhere: Vec<Vec<u8>>,
+    /// `Host::plugin_imports` that the program of the file that imports them does not have, by
+    /// `tspath.Path`.
+    imports_elsewhere: Vec<Vec<u8>>,
     /// `UseCaseSensitiveFileNames`
     pub is_case_sensitive: bool,
     /// `--quiet`, which only a command line can say: no diagnostic is printed.
@@ -1191,6 +1194,7 @@ impl Report {
         self.globals.extend(other.globals);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
+        self.imports_elsewhere.extend(other.imports_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
         self.tasks.extend(other.tasks);
         self.has_bun_types_installed |= other.has_bun_types_installed;
@@ -1423,6 +1427,9 @@ pub fn check_provided_then<R>(
     let mut disk =
         host::Disk::with_already_read(threads, provided.already_read, &project).started_in(&cwd);
     disk.before_read = provided.before_read;
+    if !provided.plugin_imports.is_empty() {
+        disk.take_plugin_imports(provided.plugin_imports);
+    }
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     if let Libs::Bundled(libs) = request.libs {
@@ -2130,7 +2137,35 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 place: (at_once > 1).then_some(&place),
             };
             let (so_far, began) = (Report::default(), Instant::now());
-            let checked = check_project_of(disk, request, &projects, of, so_far, began);
+            let mut checked = check_project_of(disk, request, &projects, of, so_far, began);
+            // What a file imports through `App.svelte` is checked like what it imports itself:
+            // in its project, whatever the project includes. What a project that it references
+            // has is left to that project.
+            let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+            loop {
+                let mut more = std::mem::take(&mut checked.imports_elsewhere);
+                more.retain(|file| seen.insert(file.clone()));
+                if more.is_empty() {
+                    break;
+                }
+                // Without a configuration file the program is what is named, and what that
+                // imports.
+                let roots = match config {
+                    Some(_) => &[][..],
+                    None => files.as_slice(),
+                };
+                let more = more.iter().map(|file| disk.as_written(file));
+                let named: Vec<Vec<u8>> = roots.iter().cloned().chain(more).collect();
+                let of = OfProject {
+                    named: Some((Extent::Project, &named)),
+                    ..of
+                };
+                let (so_far, began) = (Report::default(), Instant::now());
+                checked.merge(check_project_of(
+                    disk, request, &projects, of, so_far, began,
+                ));
+                sort_as_one_project(&mut checked);
+            }
             *reports[index].lock() = Some(checked);
         }
     };
@@ -2457,6 +2492,22 @@ fn check_project_of(
             of.place,
         )
     }
+}
+
+/// The files of a program whose path leads through a link, each with the `tspath.Path` of its
+/// real path. `Host::plugin_imports` has a file by its real path, as the bundler does. A program
+/// has it by the path that it is imported by.
+fn files_through_links(program: &Program, host: &dyn Host) -> Vec<(Vec<u8>, FileId)> {
+    let is_case_sensitive = host.is_case_sensitive();
+    let modules = program.files.modules.iter().enumerate();
+    let modules = modules.filter(|(_, module)| !module.is_lib);
+    let linked = modules.filter_map(|(index, module)| {
+        let real = host.realpath(module.file_name());
+        let real = to_path(&real, is_case_sensitive);
+        let is_linked = *real != *module.path.text;
+        is_linked.then(|| (real.into_owned(), FileId(index as u32)))
+    });
+    linked.collect()
 }
 
 /// `named` is sorted. It has, and `file` is, a `tspath.Path`.
@@ -2795,6 +2846,9 @@ impl Host for WithOutputs<'_> {
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         self.disk.extra_file_extensions()
+    }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
+        self.disk.plugin_imports()
     }
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)
@@ -3798,6 +3852,14 @@ fn check_named_files(
         .map(|i| FileId(i as u32))
         .collect();
     let mut scripts_elsewhere = Vec::new();
+    let plugin_imports = host.plugin_imports();
+    debug_assert!(plugin_imports.is_sorted_by(|a, b| a.0 < b.0));
+    // Only a bundle with plugins asks.
+    let through_links = match plugin_imports.is_empty() {
+        true => Vec::new(),
+        false => files_through_links(program, host),
+    };
+    let mut imports_elsewhere: Vec<Vec<u8>> = Vec::new();
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
         let mut is_reached = vec![false; modules.len()];
@@ -3807,6 +3869,10 @@ fn check_named_files(
         for &i in &to_follow {
             is_reached[i] = true;
         }
+        // What is no file of the program and is followed for what it imports, by
+        // `PluginImport::path`.
+        let mut through: Vec<&[u8]> = Vec::new();
+        let mut is_followed: FxHashSet<&[u8]> = FxHashSet::default();
         while let Some(i) = to_follow.pop() {
             // A page stands for its scripts.
             let specifiers = modules[i].bound.specifiers.iter();
@@ -3830,10 +3896,55 @@ fn check_named_files(
                     to_follow.push(edge.idx());
                 }
             }
+            // What only a plugin can read, like `App.svelte`, stands for what it imports.
+            if plugin_imports.is_empty() {
+                continue;
+            }
+            // The bundler has the file by its real path.
+            let own = plugin_imports_of(plugin_imports, modules[i].path.text);
+            let real = through_links.iter().find(|it| it.1.idx() == i);
+            let real = real.filter(|_| own.is_empty());
+            let own = real.map_or(own, |real| plugin_imports_of(plugin_imports, &real.0));
+            // First what the file imports itself, then what is behind a file that is followed.
+            let mut importer = Some((own, false));
+            let mut next = |through: &mut Vec<&[u8]>| {
+                let own = importer.take();
+                own.or_else(|| Some((plugin_imports_of(plugin_imports, through.pop()?), true)))
+            };
+            while let Some((imports, is_behind)) = next(&mut through) {
+                for import in imports {
+                    let here = match import.is_source {
+                        true => (program.files.by_path.get(&import.path)).or_else(|| {
+                            let linked = through_links.iter().find(|it| it.0 == import.path);
+                            linked.map(|it| it.1)
+                        }),
+                        false => None,
+                    };
+                    match here {
+                        Some(file) => {
+                            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                                to_follow.push(file.idx());
+                            }
+                        }
+                        // The type checker has read the file that imports it, and has not
+                        // taken it: JavaScript without `allowJs`.
+                        None if import.is_source && !is_behind => {}
+                        None => {
+                            if is_followed.insert(&import.path) {
+                                through.push(&import.path);
+                                if import.is_source {
+                                    imports_elsewhere.push(import.path.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         is_reached
     });
     report.scripts_elsewhere = scripts_elsewhere;
+    report.imports_elsewhere = imports_elsewhere;
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
     }

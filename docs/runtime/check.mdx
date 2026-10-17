@@ -372,6 +372,8 @@ bun --check index.html about.html
 
 `bun check` covers all of these if your `tsconfig.json` includes them.
 
+The type checker does not read a file that only a [plugin](/bundler/plugins) can read, such as `App.svelte`. It does not check the code in that file. It follows what the file imports only in [`Bun.build`](#bun-build).
+
 `bun --check index.html` checks once, before the development server starts. The server does not check again when you edit a file.
 
 A few more details:
@@ -418,6 +420,10 @@ note: TS6500: The expected type comes from property 'age' which is declared here
 Pass `check: true` to [`Bun.build`](/bundler). A type error fails the build like any other build error. Each one is a `BuildMessage` whose message starts with the TypeScript error code.
 
 The check uses the `conditions` and `loader` options of the build.
+
+In `Bun.build`, a [plugin](/bundler/plugins) can load a file with `onLoad` that the type checker cannot read, for example `App.svelte`. If a file that Bun checks imports `App.svelte`, Bun also checks the TypeScript files that `App.svelte` imports in the bundle. Bun checks them like imports of the file that imports `App.svelte`, with the `tsconfig.json` of that file. Bun reads a JavaScript file that `App.svelte` imports like a JavaScript entry point.
+
+Bun does not check the code in `App.svelte`. A file that imports a named export of `App.svelte` needs a declaration of that export, for example in `App.svelte.d.ts`. Without the declaration, the check reports TS2614.
 
 ```ts build.ts icon="/icons/typescript.svg"
 const result = await Bun.build({

@@ -2551,6 +2551,58 @@ pub mod bv2_impl {
                     );
                 }
             }
+            // Elsewhere in the graph the type checker follows the imports itself, except into and
+            // out of what a plugin has loaded. A file that is named above for what it imports is
+            // not asked again.
+            let is_named_for_its_imports = |index: usize| {
+                is_named[index] && (loaders[index] == Loader::Html || is_loaded_by_plugin(index))
+            };
+            let is_of_the_project = |index: usize| !sources[index].path.is_node_module();
+            let end = |index: usize| {
+                let path = &sources[index].path;
+                let namespace = match path.is_file() {
+                    true => &b""[..],
+                    false => path.namespace,
+                };
+                (namespace, path.text)
+            };
+            // The next import to look at: of which file, and which one of it.
+            let mut next = match self.plugins {
+                Some(_) => (0, 0),
+                None => (sources.len(), 0),
+            };
+            let mut plugin_imports = core::iter::from_fn(move || {
+                loop {
+                    let (importer, at) = next;
+                    if importer >= sources.len() {
+                        return None;
+                    }
+                    let is_asked =
+                        is_of_the_project(importer) && !is_named_for_its_imports(importer);
+                    let records = import_records[importer].as_slice();
+                    let Some(record) = records.get(at).filter(|_| is_asked) else {
+                        next = (importer + 1, 0);
+                        continue;
+                    };
+                    next.1 += 1;
+                    if !record.source_index.is_valid() {
+                        continue;
+                    }
+                    let imported = record.source_index.get() as usize;
+                    // Into what a plugin has loaded, or out of it to the code of a file.
+                    let is_loaded = is_loaded_by_plugin(imported);
+                    let is_code =
+                        loaders[imported].is_javascript_like() && sources[imported].path.is_file();
+                    let is_followed = is_loaded || is_loaded_by_plugin(importer) && is_code;
+                    if is_followed && is_of_the_project(imported) {
+                        return Some(options::PluginImport {
+                            importer: end(importer),
+                            imported: end(imported),
+                            is_loaded_by_plugin: is_loaded,
+                        });
+                    }
+                }
+            });
             let mut entry_points = (named.iter().copied())
                 .filter(|&index| {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
@@ -2571,6 +2623,7 @@ pub mod bv2_impl {
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
+                plugin_imports: &mut plugin_imports,
                 entry_points: &mut entry_points,
                 sources: &mut sources,
             };

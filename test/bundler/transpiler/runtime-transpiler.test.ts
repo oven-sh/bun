@@ -286,3 +286,66 @@ test.skipIf(isDebug || isASAN)(
     expect(exitCode).toBe(0);
   },
 );
+
+// https://github.com/oven-sh/bun/issues/32167
+describe.concurrent("top-level this", () => {
+  const probe = `export {};
+class A {
+  [String(this)] = 1;
+}
+console.log(typeof this, this === undefined, this === eval("this"), Object.keys(new A())[0], delete this);
+`;
+  const files = {
+    "probe.mjs": probe,
+    "static-import.mjs": `import "./probe.mjs";\n`,
+    "dynamic-import.mjs": `await import("./probe.mjs");\n`,
+    "require.cjs": `require("./probe.mjs");\n`,
+    "worker.mjs": `new Worker(new URL("./probe.mjs", import.meta.url));\n`,
+    // the repro from the issue: an import-only file, `this` captured by an arrow
+    "issue.js": `import { EventEmitter } from "node:events";
+
+class MyEmitter extends EventEmitter {}
+const myEmitter = new MyEmitter();
+
+myEmitter.on("event", () => {
+  console.log(this);
+});
+
+myEmitter.emit("event");
+`,
+    // CommonJS keeps `this === module.exports`, also when an ES module in a
+    // "type": "module" package imports it
+    "package.json": `{ "type": "module" }`,
+    "cjs.cjs": `console.log(typeof this, this === module.exports);\n`,
+    "imports-cjs.js": `import dep from "./dep.cjs";\nconsole.log(dep.kind, dep.isExports);\n`,
+    "dep.cjs": `var self = this;\nmodule.exports = { kind: typeof self, isExports: self === exports };\n`,
+  };
+
+  const esm = "undefined true true undefined true\n";
+  const cases: [name: string, args: string[], expected: string][] = [
+    ["is undefined in an ES module entry file", ["probe.mjs"], esm],
+    ["is undefined in a statically imported ES module", ["static-import.mjs"], esm],
+    ["is undefined in an ES module loaded with import()", ["dynamic-import.mjs"], esm],
+    ["is undefined in an ES module loaded with require()", ["require.cjs"], esm],
+    ["is undefined in an ES module Worker entry", ["worker.mjs"], esm],
+    ["is undefined in ES module code passed to -e", ["-e", probe], esm],
+    ["is undefined in an arrow function in an import-only file", ["issue.js"], "undefined\n"],
+    ["is module.exports in a CommonJS entry file", ["cjs.cjs"], "object true\n"],
+    ["is module.exports in a .cjs file that an ES module imports", ["imports-cjs.js"], "object true\n"],
+  ];
+
+  for (const [name, args, expected] of cases) {
+    test(name, async () => {
+      using dir = tempDir("top-level-this", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: expected, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  }
+});

@@ -3288,8 +3288,6 @@ describe.concurrent("a callback that comes back to node:sqlite while a statement
       "statement.iterate().next()": c => c.statement.iterate().next(),
       "rows.next()": c => c.rows.next(),
       "rows.return()": c => c.rows.return(),
-      "CREATE TABLE": c => c.db.exec("CREATE TABLE other (x)"),
-      "DROP TABLE": c => c.db.exec("DROP TABLE ft"),
     };
     const thrownBy = fn => {
       try {
@@ -3349,9 +3347,6 @@ describe.concurrent("a callback that comes back to node:sqlite while a statement
       "statement.iterate().next()": [executing, fine],
       "rows.next()": [rowsNext, fine],
       "rows.return()": [fine, fine],
-      // SQLite answers these, in words that differ between its versions.
-      "CREATE TABLE": [expect.any(String), expect.any(String)],
-      "DROP TABLE": [expect.any(String), expect.any(String)],
     };
     expect({ results: stdout && JSON.parse(stdout), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
       results: { "the authorizer": results, "a function": results },

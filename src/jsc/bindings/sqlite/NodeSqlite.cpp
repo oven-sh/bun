@@ -76,7 +76,6 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #include <JavaScriptCore/JSIteratorPrototype.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <limits>
@@ -392,10 +391,6 @@ static SqliteFromJS sqliteFromJS(JSGlobalObject* globalObject, ThrowScope& scope
 struct NodeSqliteCallbacks {
     JSGlobalObject* globalObject;
     bool useBigInts;
-    // What calls the function (the DatabaseSync, a statement) holds a reference.
-    NodeSqliteDatabaseRecord* record;
-
-    bool scriptForbidden() const { return record->scriptForbidden || !record->database; }
 
     JSValue toJS(sqlite3_value* value) const { return sqliteToJS(globalObject, SqliteArgument { value }, useBigInts); }
 
@@ -416,11 +411,9 @@ struct NodeSqliteCallbacks {
         }
     }
 
-    struct CallbackScope : JSDatabaseSync::CallbackScope {
-        explicit CallbackScope(const NodeSqliteCallbacks& callbacks)
-            : JSDatabaseSync::CallbackScope(callbacks.record->database)
-        {
-        }
+    // Every entry point holds a JSDatabaseSync::BusyScope already.
+    struct CallbackScope {
+        explicit CallbackScope(const NodeSqliteCallbacks&) {}
     };
     static constexpr bool undefinedKeepsAccumulator = false;
     static JSValue thisOfStartAndResult() { return jsNull(); }
@@ -564,12 +557,10 @@ static void unregisterOpenDatabase(JSDatabaseSync* db)
 
 JSDatabaseSync::~JSDatabaseSync()
 {
-    m_record->database = nullptr;
     // Reachable with a BusyScope still on the stack only when process.exit()
     // was called from inside a UDF/authorizer and the heap is destructed on
     // exit; closing the connection mid-sqlite3_step is a use-after-free.
     if (!isBusy()) {
-        WTF::SetForScope forbidScript { m_record->scriptForbidden, true };
         closeInternal();
         return;
     }
@@ -586,9 +577,9 @@ JSDatabaseSync::~JSDatabaseSync()
 
 void JSDatabaseSync::closeInternal()
 {
-    if (m_db)
-        m_deferredClose = std::exchange(m_db, nullptr);
-    if (m_deferredClose && !isBusy())
+    if (!m_db) return;
+    m_deferredClose = std::exchange(m_db, nullptr);
+    if (!isBusy())
         finishDeferredClose();
 }
 
@@ -645,7 +636,6 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
         // the same use-after-free a busy close() refuses. Leave it alone.
         if (db->isBusy())
             continue;
-        WTF::SetForScope forbidScript { db->record().scriptForbidden, true };
         if (sqlite3* handle = db->connection())
             Bun__sqliteCheckpointForTermination(handle);
         // closeInternal() re-takes openDatabasesLock to unregister, so the
@@ -668,10 +658,8 @@ extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(WebCore::ScriptExecu
     }
     // (dispose() from inside a UDF/authorizer: closeInternal() leaves the connection to the
     // outermost BusyScope, which unwinds here, unlike at process exit.)
-    for (auto* db : toClose) {
-        WTF::SetForScope forbidScript { db->record().scriptForbidden, true };
+    for (auto* db : toClose)
         db->closeInternal();
-    }
 }
 
 void JSDatabaseSync::deleteTrackedSessions()
@@ -1128,7 +1116,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     REQUIRE_DB_OPEN(self);
     auto nameUtf8 = tryUTF8(globalObject, scope, name);
     RETURN_IF_EXCEPTION(scope, {});
-    int r = SqliteUserFunction<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs, &self->record() }, fn);
+    int r = SqliteUserFunction<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs }, fn);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
@@ -1217,7 +1205,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     REQUIRE_DB_OPEN(self);
     auto nameUtf8 = tryUTF8(globalObject, scope, name);
     RETURN_IF_EXCEPTION(scope, {});
-    int r = SqliteUserAggregate<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs, &self->record() }, startV, stepFn, inverseFn, resultFn);
+    int r = SqliteUserAggregate<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs }, startV, stepFn, inverseFn, resultFn);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
@@ -1312,7 +1300,7 @@ struct ApplyChangesetContext {
 static int applyChangesetXConflict(void* pCtx, int eConflict, sqlite3_changeset_iter*)
 {
     auto* ctx = static_cast<ApplyChangesetContext*>(pCtx);
-    if (!ctx->onConflict || ctx->db->record().scriptForbidden) return SQLITE_CHANGESET_ABORT;
+    if (!ctx->onConflict) return SQLITE_CHANGESET_ABORT;
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1344,8 +1332,6 @@ static int applyChangesetXFilter(void* pCtx, const char* zTab)
 {
     auto* ctx = static_cast<ApplyChangesetContext*>(pCtx);
     if (!ctx->filter) return 1;
-    if (ctx->db->record().scriptForbidden) [[unlikely]]
-        return 0;
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1473,8 +1459,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 
 // sqlite3_set_authorizer() callback. Runs from inside sqlite3_prepare_*
 // and sqlite3_exec() — i.e. *between* BusyScope open and close on the
-// JSDatabaseSync — so the db pointer is live for its entire duration,
-// or where script is forbidden and it may not be.
+// JSDatabaseSync — so the db pointer is live for its entire duration.
 // Uses TopExceptionScope for the same reason SqliteUserFunction.h does: the destructor
 // of a nested ThrowScope would simulateThrow(), tripping the next
 // callback's constructor under validateExceptionChecks. A thrown JS
@@ -1483,11 +1468,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 // CHECK_UDF_EXCEPTION observes to surface it over "not authorized".
 static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const char* p1, const char* p2, const char* p3, const char* p4)
 {
-    auto* record = static_cast<NodeSqliteDatabaseRecord*>(userData);
-    // Not SQLITE_OK: what a statement fires is authorized when that statement is compiled, and an index compiles its own at the commit.
-    auto* db = record->database;
-    if (record->scriptForbidden || !db) [[unlikely]]
-        return SQLITE_DENY;
+    auto* db = static_cast<JSDatabaseSync*>(userData);
     auto* globalObject = db->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1514,7 +1495,6 @@ static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const ch
     args.append(toJS(p4));
 
     auto callData = JSC::getCallData(fn);
-    JSDatabaseSync::CallbackScope callbackScope { db };
     JSValue result = JSC::call(globalObject, fn, callData, jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         return SQLITE_DENY;
@@ -1574,7 +1554,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSetAuthorizer, (JSGlobalObject * globalOb
         return throwNodeArgType(globalObject, scope, "callback"_s, "a function or null"_s);
     }
     self->m_authorizer.set(vm, self, arg0.getObject());
-    int r = sqlite3_set_authorizer(self->connection(), nodeSqliteAuthorizerCallback, &self->record());
+    int r = sqlite3_set_authorizer(self->connection(), nodeSqliteAuthorizerCallback, self);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
@@ -2035,7 +2015,6 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
     putNodeInstanceGetter(vm, this, "expandedSQL"_s, jsStatementSyncExpandedSQL);
     m_stmt = stmt;
     m_database.set(vm, this, db);
-    m_databaseRecord = &db->record();
     if (stmt)
         db->trackStatement(*this);
     m_extraMemorySize = stmt ? static_cast<size_t>(sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0)) : 0;
@@ -2052,12 +2031,6 @@ void JSStatementSync::finalizeStatement()
     sqlite3_finalize(std::exchange(m_stmt, nullptr));
 }
 
-int JSStatementSync::reset()
-{
-    SteppingScope stepping { this };
-    return sqlite3_reset(m_stmt);
-}
-
 JSStatementSync::~JSStatementSync()
 {
     // A live SteppingScope here means process.exit() from inside a
@@ -2072,7 +2045,6 @@ JSStatementSync::~JSStatementSync()
     // Do NOT dereference m_database here: GC may have already destroyed
     // the JSDatabaseSync, leaving the WriteBarrier pointing at freed
     // memory (this cell is then off its list).
-    WTF::SetForScope forbidScript { m_databaseRecord->scriptForbidden, true };
     finalizeStatement();
 }
 
@@ -2322,12 +2294,12 @@ JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowUnknownNamedParameters);
     }
 
 struct StatementResetter {
-    JSStatementSync* stmt;
+    sqlite3_stmt* stmt;
     // A write with RETURNING that has rows left commits here, which can fail.
-    int resetNow() { return std::exchange(stmt, nullptr)->reset(); }
+    int resetNow() { return sqlite3_reset(std::exchange(stmt, nullptr)); }
     ~StatementResetter()
     {
-        if (stmt) stmt->reset();
+        if (stmt) sqlite3_reset(stmt);
     }
 };
 
@@ -2338,7 +2310,7 @@ struct StatementResetter {
 
 static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
-    StatementResetter resetter { self };
+    StatementResetter resetter { self->statement() };
     JSStatementSync::SteppingScope stepping { self };
     int r = sqlite3_step(self->statement());
     // As Node: the rows are not read. A write has made all its changes before its
@@ -2377,7 +2349,7 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
 
 static EncodedJSValue statementStepGet(JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
-    StatementResetter resetter { self };
+    StatementResetter resetter { self->statement() };
     JSStatementSync::SteppingScope stepping { self };
     int r = sqlite3_step(self->statement());
     CHECK_UDF_EXCEPTION(scope);
@@ -2403,10 +2375,9 @@ static EncodedJSValue statementStepGet(JSGlobalObject* globalObject, ThrowScope&
 
 static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
-    StatementResetter resetter { self };
+    StatementResetter resetter { self->statement() };
     JSStatementSync::SteppingScope stepping { self };
-    JSArray* rows = constructEmptyArray(globalObject, nullptr, 0);
-    RETURN_IF_EXCEPTION(scope, {});
+    JSArray* rows = JSArray::create(getVM(globalObject), globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
     int r;
     while ((r = sqlite3_step(self->statement())) == SQLITE_ROW) {
         // Read the column count AFTER step(): sqlite3_prepare_v2's
@@ -2438,9 +2409,8 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, Cal
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
-    self->reset();
+    sqlite3_reset(self->statement());
     self->bumpResetGeneration();
-    CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
     RELEASE_AND_RETURN(scope, statementStepRun(vm, globalObject, scope, self));
 }
@@ -2451,9 +2421,8 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, Cal
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
-    self->reset();
+    sqlite3_reset(self->statement());
     self->bumpResetGeneration();
-    CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
     RELEASE_AND_RETURN(scope, statementStepGet(globalObject, scope, self));
 }
@@ -2464,9 +2433,8 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, Cal
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
-    self->reset();
+    sqlite3_reset(self->statement());
     self->bumpResetGeneration();
-    CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
     RELEASE_AND_RETURN(scope, statementStepAll(globalObject, scope, self));
 }
@@ -2477,9 +2445,8 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIterate, (JSGlobalObject * globalObject,
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
-    self->reset();
+    sqlite3_reset(self->statement());
     self->bumpResetGeneration();
-    CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
     // Don't step yet — the iterator pulls rows lazily on next(). Don't
     // reset on scope exit either; the cursor position belongs to the
@@ -2715,7 +2682,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         // calling next() again silently re-yields from row 1 (SQLite
         // auto-resets a halted statement). Treat a failed step as exhausting
         // the iterator instead.
-        stmt->reset();
+        sqlite3_reset(stmt->statement());
         self->setDone();
         CHECK_UDF_EXCEPTION(scope);
         throwSqliteError(globalObject, scope, sqlite3_db_handle(stmt->statement()));
@@ -2730,7 +2697,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(createIterResult(vm, globalObject, false, row));
     }
-    stmt->reset();
+    sqlite3_reset(stmt->statement());
     self->setDone();
     return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
 }
@@ -2762,11 +2729,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     // UDF re-entered return()); sqlite3_reset on a running VDBE is misuse.
     if (!self->done() && stmt && !stmt->isFinalized() && !stmt->isStepping()
         && self->capturedGeneration() == stmt->resetGeneration()) {
-        JSDatabaseSync::BusyScope busy { stmt->database() };
-        stmt->reset();
+        sqlite3_reset(stmt->statement());
     }
     self->setDone();
-    CHECK_UDF_EXCEPTION(scope);
     return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
 }
 
@@ -3303,7 +3268,7 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     // StatementSync's run/get/all correctly ignore it for the same
     // reason.
     sqlite3_stmt* stmt = stmtObj->statement();
-    stmtObj->reset();
+    sqlite3_reset(stmt);
     // Deliberate divergence from Node v26.3.0: Node's SQLTagStore calls raw
     // sqlite3_reset and never bumps the statement's reset_generation_, so an
     // iterator from tag.iterate`…` silently re-yields from row 1 after any
@@ -3311,7 +3276,6 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     // here so that iterator throws ERR_INVALID_STATE instead of returning
     // wrong rows.
     stmtObj->bumpResetGeneration();
-    RETURN_IF_EXCEPTION(scope, nullptr);
     sqlite3_clear_bindings(stmt);
     int paramCount = sqlite3_bind_parameter_count(stmt);
     for (int i = 0; i < static_cast<int>(nParams) && i < paramCount; ++i) {

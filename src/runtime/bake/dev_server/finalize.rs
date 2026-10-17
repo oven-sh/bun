@@ -356,7 +356,6 @@ pub(super) fn finalize_bundle(
             // `code()` does not access it via the `chunk`/`chunks` arguments.
             let io = unsafe { &mut (*chunk_ptr).intermediate_output };
             io.code(
-                None,
                 &bv2.graph,
                 &bv2.linker.graph,
                 b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",

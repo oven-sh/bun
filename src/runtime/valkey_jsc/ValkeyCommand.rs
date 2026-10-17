@@ -78,10 +78,10 @@ impl<'a> Command<'a> {
         counter.count
     }
 
-    pub(crate) fn serialize(&self) -> Result<Box<[u8]>, crate::Error> {
+    pub(crate) fn serialize(&self) -> Box<[u8]> {
         let mut buf: Vec<u8> = Vec::with_capacity(self.byte_length());
-        self.write(&mut buf)?;
-        Ok(buf.into_boxed_slice())
+        self.write(&mut buf).expect("unreachable");
+        buf.into_boxed_slice()
     }
 }
 
@@ -100,14 +100,14 @@ pub(crate) mod entry {
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
-    pub(crate) fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, crate::Error> {
-        Ok(Entry {
-            serialized_data: command.serialize()?,
+    pub(crate) fn create(command: &Command<'_>, promise: Promise) -> Entry {
+        Entry {
+            serialized_data: command.serialize(),
             // We should be calling .check against command here but due
             // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             meta: command.meta,
             promise,
-        })
+        }
     }
 }
 

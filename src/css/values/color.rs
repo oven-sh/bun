@@ -2745,11 +2745,6 @@ const D50: [f32; 3] = [
 // handwritten ones are below; generated ones live in `color_generated.rs`.
 // ──────────────────────────────────────────────────────────────────────────
 
-impl From<RGBA> for SRGB {
-    fn from(rgb: RGBA) -> SRGB {
-        rgb.into_srgb()
-    }
-}
 impl From<SRGB> for RGBA {
     fn from(rgb: SRGB) -> RGBA {
         rgb.into_rgba()

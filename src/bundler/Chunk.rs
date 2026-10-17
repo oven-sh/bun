@@ -480,18 +480,9 @@ impl SourceMapShiftTracking {
     }
 }
 
-// We don't need an allocator vtable here yet. `()` is kept as a token for the
-// caller's `Option<&DynAlloc>` plumbing; the actual
-// allocation goes through `alloc_buf` (global mimalloc) regardless. Real
-// arena threading (page_allocator vs default_allocator) lands when
-// `bun_alloc::Allocator` is a stable trait object.
-type DynAlloc = ();
-
-/// Until `DynAlloc` is a real trait object, route
-/// through the global arena; mimalloc handles large allocations via mmap
-/// already. Returns an empty `Vec` with `n` bytes of capacity for the caller to fill and commit.
+/// Returns an empty `Vec` with `n` bytes of capacity for the caller to fill and commit.
 #[inline]
-fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
+fn alloc_buf(n: usize) -> Result<Vec<u8>, AllocError> {
     let mut v: Vec<u8> = Vec::new();
     v.try_reserve_exact(n).map_err(|_| AllocError)?;
     Ok(v)
@@ -511,12 +502,6 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
 }
 
 impl IntermediateOutput {
-    pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
-        // mimalloc serves large allocations via mmap already, so the global
-        // allocator suffices (see `alloc_buf`).
-        &()
-    }
-
     /// Count occurrences of a closing HTML tag (e.g. `</script`, `</style`) in content.
     /// Used to calculate the extra bytes needed when escaping `</` → `<\/`.
     fn count_closing_tags(content: &[u8], close_tag: &[u8]) -> usize {
@@ -574,7 +559,6 @@ impl IntermediateOutput {
     #[allow(clippy::too_many_arguments)]
     pub fn code<'d>(
         &mut self,
-        allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
@@ -592,7 +576,6 @@ impl IntermediateOutput {
         let display_size: Option<&mut usize> = display_size.into();
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
-                allocator_to_use,
                 parse_graph,
                 linker_graph,
                 import_prefix,
@@ -603,7 +586,6 @@ impl IntermediateOutput {
                 None,
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
-                allocator_to_use,
                 parse_graph,
                 linker_graph,
                 import_prefix,
@@ -623,7 +605,6 @@ impl IntermediateOutput {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn code_standalone<'d>(
         &mut self,
-        allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
@@ -640,7 +621,6 @@ impl IntermediateOutput {
         let display_size: Option<&mut usize> = display_size.into();
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
-                allocator_to_use,
                 parse_graph,
                 linker_graph,
                 import_prefix,
@@ -651,7 +631,6 @@ impl IntermediateOutput {
                 Some(standalone_chunk_contents),
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
-                allocator_to_use,
                 parse_graph,
                 linker_graph,
                 import_prefix,
@@ -667,7 +646,6 @@ impl IntermediateOutput {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
-        allocator_to_use: Option<&DynAlloc>,
         graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
@@ -837,9 +815,8 @@ impl IntermediateOutput {
                     0
                 };
 
-                let arena = allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
                 let total_len = count + debug_id_len;
-                let mut total_buf = alloc_buf(*arena, total_len)?;
+                let mut total_buf = alloc_buf(total_len)?;
                 // SAFETY: the loop below only copies bytes into `remain`; only the prefix it wrote is committed.
                 let mut remain: &mut [u8] =
                     unsafe { &mut bun_core::vec::spare_bytes_mut(&mut total_buf)[..total_len] };
@@ -1072,9 +1049,6 @@ impl IntermediateOutput {
                 })
             }
             IntermediateOutput::Joiner(joiner) => {
-                let arena =
-                    allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(joiner.len));
-
                 if let Some(amt) = display_size {
                     *amt = joiner.len;
                 }
@@ -1091,11 +1065,9 @@ impl IntermediateOutput {
                             }
                         );
 
-                        let _ = arena; // Note: StringJoiner::done* allocates from global mimalloc; arena token is plumbing-only.
                         break 'brk joiner.done_with_end(&debug_id_fmt)?;
                     }
 
-                    let _ = arena;
                     break 'brk joiner.done()?;
                 };
 

@@ -1,15 +1,14 @@
 //! Password hashing for `Bun.password` (argon2 / bcrypt). Neither algorithm is
 //! provided by BoringSSL, so this module implements the API surface that
 //! `PasswordObject` consumes (`str_hash` / `str_verify` / `Params` / `Mode` /
-//! `Encoding`) and routes to the pure-Rust `rust-argon2` (vendored, patched to
+//! `HashOptions`) and routes to the pure-Rust `rust-argon2` (vendored, patched to
 //! verify legacy `m < 8` hashes) and `bcrypt` crates.
 //!
-//!   * argon2: PHC string format only (`str_hash` rejects `.crypt`), 32-byte
+//!   * argon2: PHC string format only, 32-byte
 //!     random salt, 32-byte tag, version 0x13.
 //!   * bcrypt: modular-crypt `$2b$…` 60-byte string for hashing; verification
 //!     additionally accepts the PHC `$bcrypt$…` form (decoded locally — the
-//!     Rust `bcrypt` crate has no PHC codec). `silently_truncate_password` is
-//!     asserted `true` (Bun's only caller never sets `false`).
+//!     Rust `bcrypt` crate has no PHC codec).
 
 use crate::Error;
 
@@ -25,17 +24,8 @@ fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
     Ok(unsafe { core::str::from_utf8_unchecked(s) })
 }
 
-/// Output string encoding.
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum Encoding {
-    /// PHC string format (`$argon2id$v=19$...`).
-    Phc,
-    /// Traditional crypt(3) format (`$2b$...`).
-    Crypt,
-}
-
 pub(crate) mod argon2 {
-    use super::{Encoding, Error};
+    use super::Error;
     use bun_core::strings;
 
     // The `rust-argon2` package exports its lib as crate name `argon2`; refer to
@@ -89,7 +79,6 @@ pub(crate) mod argon2 {
     pub(crate) struct HashOptions {
         pub params: Params,
         pub mode: Mode,
-        pub encoding: Encoding,
     }
 
     /// Options for `str_verify`.
@@ -130,10 +119,6 @@ pub(crate) mod argon2 {
         options: HashOptions,
         out: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
-        if options.encoding != Encoding::Phc {
-            return Err(crate::Error::InvalidEncoding);
-        }
-
         let mut salt = [0u8; DEFAULT_SALT_LEN];
         getrandom::fill(&mut salt).map_err(|_| crate::Error::Unexpected)?;
 
@@ -259,7 +244,7 @@ pub(crate) mod argon2 {
 }
 
 pub(crate) mod bcrypt {
-    use super::{Encoding, Error};
+    use super::Error;
     use bun_core::strings;
 
     use ::bcrypt as vendor;
@@ -274,20 +259,12 @@ pub(crate) mod bcrypt {
     pub(crate) struct Params {
         /// log2 rounds (clamped 4..=31 by caller).
         pub(crate) rounds_log: u8,
-        pub(crate) silently_truncate_password: bool,
     }
 
     /// Options for `str_hash`.
     #[derive(Copy, Clone)]
     pub(crate) struct HashOptions {
         pub params: Params,
-        pub encoding: Encoding,
-    }
-
-    /// Options for `str_verify`.
-    #[derive(Copy, Clone)]
-    pub(crate) struct VerifyOptions {
-        pub silently_truncate_password: bool,
     }
 
     fn map_err(e: &vendor::BcryptError) -> Error {
@@ -311,27 +288,7 @@ pub(crate) mod bcrypt {
         if out.len() < HASH_LENGTH {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
         }
-        // Bun only ever requests `.crypt`. A `.phc` request would need the
-        // `$bcrypt$…` PHC serializer, which the Rust `bcrypt` crate does not
-        // implement; surface that as an encoding error rather than silently
-        // returning the wrong format.
-        if options.encoding != Encoding::Crypt {
-            return Err(crate::Error::InvalidEncoding);
-        }
-
         let cost = u32::from(options.params.rounds_log);
-
-        // A `silently_truncate_password == false` implementation would need to
-        // pre-hash >72-byte passwords via HMAC-SHA512 keyed by the salt without
-        // erroring; the `bcrypt` crate's `non_truncating_*` instead returns
-        // `Err(Truncation)` (and trips at `>=72`, not `>72`). Bun's only caller
-        // (`PasswordObject`) always passes `true` and pre-hashes long passwords
-        // itself, so hard-assert here rather than ship a divergent codepath.
-        debug_assert!(
-            options.params.silently_truncate_password,
-            "bcrypt: silently_truncate_password=false is unreachable from Bun \
-             and not implemented in this shim",
-        );
 
         // `hash_with_result` → `_hash_password(.., err_on_truncation = false)`:
         // null-terminates then clamps to 72 bytes.
@@ -348,22 +305,10 @@ pub(crate) mod bcrypt {
     }
 
     /// Verify a bcrypt hash (modular-crypt or PHC form).
-    pub(crate) fn str_verify(
-        encoded_hash: &[u8],
-        password: &[u8],
-        options: VerifyOptions,
-    ) -> Result<(), Error> {
+    pub(crate) fn str_verify(encoded_hash: &[u8], password: &[u8]) -> Result<(), Error> {
         // Both the modular-crypt and PHC alphabets are pure ASCII; non-ASCII
         // input is a decode failure either way.
         let encoded = super::phc_ascii_str(encoded_hash)?;
-
-        // See `str_hash`: the `false` path's HMAC-SHA512 pre-hash is not
-        // implemented in this shim and is unreachable from Bun.
-        debug_assert!(
-            options.silently_truncate_password,
-            "bcrypt: silently_truncate_password=false is unreachable from Bun \
-             and not implemented in this shim",
-        );
 
         // Dispatch on prefix:
         //   `$2…`      → modular-crypt verify

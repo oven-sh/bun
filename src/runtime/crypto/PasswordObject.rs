@@ -242,7 +242,6 @@ impl PasswordObject {
                         AlgorithmValue::Argon2id(_) => pwhash::argon2::Mode::Argon2id,
                         _ => unreachable!(),
                     },
-                    encoding: pwhash::Encoding::Phc,
                 };
                 // warning: argon2's code may spin up threads if paralellism is set to > 0
                 // we don't expose this option
@@ -271,12 +270,7 @@ impl PasswordObject {
                 }
 
                 let hash_options = pwhash::bcrypt::HashOptions {
-                    params: pwhash::bcrypt::Params {
-                        rounds_log: cost,
-                        silently_truncate_password: true,
-                    },
-                    // allocator dropped
-                    encoding: pwhash::Encoding::Crypt,
+                    params: pwhash::bcrypt::Params { rounds_log: cost },
                 };
                 let out_bytes =
                     pwhash::bcrypt::str_hash(password_to_use, hash_options, outbuf_slice)?;
@@ -327,13 +321,7 @@ impl PasswordObject {
                     sha_512.r#final(&mut outbuf);
                     password_to_use = &outbuf;
                 }
-                match pwhash::bcrypt::str_verify(
-                    previous_hash,
-                    password_to_use,
-                    pwhash::bcrypt::VerifyOptions {
-                        silently_truncate_password: true,
-                    },
-                ) {
+                match pwhash::bcrypt::str_verify(previous_hash, password_to_use) {
                     Ok(()) => Ok(true),
                     Err(crate::Error::PasswordVerificationFailed) => Ok(false),
                     Err(err) => Err(err),

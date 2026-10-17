@@ -868,14 +868,7 @@ where
                         // only buffers the eviction, and the borrow is scoped
                         // to this call so it never overlaps the watchlist
                         // column slices above.
-                        unsafe {
-                            (*ctx).remove_at_index::<false>(
-                                bun_watcher::Kind::File,
-                                event.index,
-                                0,
-                                &[],
-                            )
-                        };
+                        unsafe { (*ctx).remove_at_index::<false>(event.index) };
                     }
 
                     if self.verbose {
@@ -1179,10 +1172,7 @@ where
                                                             // above.
                                                             unsafe {
                                                                 (*ctx).remove_at_index::<false>(
-                                                                    bun_watcher::Kind::File,
                                                                     entry_id as u16,
-                                                                    0,
-                                                                    &[],
                                                                 )
                                                             };
                                                         }

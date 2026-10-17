@@ -1086,15 +1086,6 @@ pub(crate) fn edit(
 
                             if let Some(value) = query.expr.as_property(name) {
                                 if matches!(value.expr.data, bun_ast::ExprData::EString(_)) {
-                                    // `bun update <pkg>` keeps a `catalog:` reference intact.
-                                    let keep_catalog_reference = manager.subcommand
-                                        == Subcommand::Update
-                                        && value.expr.as_utf8_string_literal().is_some_and(
-                                            |version_literal| {
-                                                literal_tag(version_literal)
-                                                    == dependency::Tag::Catalog
-                                            },
-                                        );
                                     let in_target_list =
                                         strings::eql_long(list, dependency_list, true);
 
@@ -1102,7 +1093,6 @@ pub(crate) fn edit(
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && manager.subcommand != Subcommand::Update
                                         && in_target_list
-                                        && !keep_catalog_reference
                                     {
                                         replacing += 1;
                                     } else if move_to_target && !in_target_list {

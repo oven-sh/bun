@@ -98,7 +98,6 @@ impl FunctionIdentities {
         options.features.no_macros = true;
         options.features.top_level_await = kind == Text::Module;
         options.jsc_builtin_syntax = kind == Text::Builtin;
-        options.suppress_warnings_about_weird_code = true;
         let define = crate::Define::default();
         let mut log = bun_ast::Log::init();
         let parser = crate::Parser::init(options, &mut log, &source, &define, &arena).ok()?;

@@ -1595,6 +1595,15 @@ fn fail_file(err: impl bun_core::output::ErrName, action: &str, path: &[u8]) -> 
     Global::crash();
 }
 
+#[cold]
+fn fail_file_resized(change: &str, path: &[u8]) -> ! {
+    Output::err_generic(
+        "file {} while packing: \"{}\"",
+        (change, bun_fmt::escape_control_chars(path)),
+    );
+    Global::crash();
+}
+
 fn expect_archive_ok(archive: &Archive, status: ArchiveResult, action: &str) {
     if matches!(
         status,
@@ -2498,19 +2507,19 @@ fn add_archive_entry(
         };
         // The size of each write reaches the compressor, so it is part of what keeps the bytes stable.
         for chunk in read_buf[..read].chunks(8192) {
-            written += write_archive_data(archive, chunk);
+            let taken = write_archive_data(archive, chunk);
+            written += taken;
+            // libarchive drops bytes past the size in the header.
+            if taken < chunk.len() {
+                fail_file_resized("grew", filename.as_bytes());
+            }
         }
     }
     ctx.stats.unpacked_size += written;
 
-    // libarchive drops bytes past the size in the header, and pads an entry that is too short with
-    // zeros, so a file that shrank has to be caught here.
+    // libarchive pads an entry that is too short with zeros.
     if (written as i64) < stat.st_size as i64 {
-        Output::err_generic(
-            "file shrank while packing: \"{}\"",
-            format_args!("{}", bun_fmt::escape_control_chars(filename.as_bytes())),
-        );
-        Global::crash();
+        fail_file_resized("shrank", filename.as_bytes());
     }
 
     entry.clear()

@@ -1311,16 +1311,38 @@ test.concurrent.each([{}, { files: ["*"] }])("what a killed pack leaves behind i
   expect(exitCode).toBe(0);
 });
 
+// A registry that counts the requests it receives.
+function countingRegistry() {
+  const registry = {
+    requests: 0,
+    bunfig: "",
+    [Symbol.dispose]: () => void server.stop(true),
+  };
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      registry.requests++;
+      return new Response("OK", { status: 200 });
+    },
+  });
+  registry.bunfig = Bun.TOML.stringify({
+    install: { cache: false, registry: { url: `http://localhost:${server.port}`, token: "unused" } },
+  });
+  return registry;
+}
+
 // What a watcher does to its output: truncate it, then write it again. /proc tells how far pack has read.
-test.concurrent.skipIf(!isLinux)("a file that gets shorter while it is read fails the pack", async () => {
-  using dir = tempDir("pack-shorter", {
-    "package.json": JSON.stringify({ name: "pack-shorter", version: "1.0.0" }),
-    "bundle.js": randomBytes(32 * 1024 * 1024),
+async function packWhileFile(change: "shrank" | "grew", command: "pm pack" | "publish", size = 32 * 1024 * 1024) {
+  using registry = countingRegistry();
+  using dir = tempDir(`pack-${change}`, {
+    "package.json": JSON.stringify({ name: `pack-${change}`, version: "1.0.0" }),
+    "bunfig.toml": registry.bunfig,
+    "bundle.js": randomBytes(size),
   });
   const bundle = realpathSync(join(dir, "bundle.js"));
 
   await using proc = spawn({
-    cmd: [bunExe(), "pm", "pack"],
+    cmd: [bunExe(), ...command.split(" ")],
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -1337,13 +1359,40 @@ test.concurrent.skipIf(!isLinux)("a file that gets shorter while it is read fail
     return 0;
   }
   while (proc.exitCode === null && bytesRead() === 0) await new Promise(setImmediate);
-  await truncate(bundle, 1024);
+  if (change === "shrank") {
+    await truncate(bundle, 1024);
+  } else {
+    // pack sees that the file grew only when it reaches the end. While it is stopped it cannot get there first,
+    // and the zeroes that replace the bytes it has not read are quick to pack.
+    proc.kill("SIGSTOP");
+    const stopped = () => /\) T /.test(readFileSync(`/proc/${proc.pid}/stat`, "utf8"));
+    while (proc.exitCode === null && !stopped()) await new Promise(setImmediate);
+    await truncate(bundle, bytesRead());
+    await truncate(bundle, size + 1);
+    proc.kill("SIGCONT");
+  }
 
   const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(err).toBe('error: file shrank while packing: "bundle.js"\n');
-  expect(await sortedNames(dir)).toEqual(["bundle.js", "package.json"]);
+  expect(err).toBe(`error: file ${change} while packing: "bundle.js"\n`);
+  expect(registry.requests).toBe(0);
+  expect(await sortedNames(dir)).toEqual(["bundle.js", "bunfig.toml", "package.json"]);
   expect(exitCode).toBe(1);
-});
+}
+
+test.concurrent.skipIf(!isLinux).each(["pm pack", "publish"] as const)(
+  "a file that gets shorter while it is read fails bun %s",
+  command => packWhileFile("shrank", command),
+);
+
+// Not concurrent: after the file grew, pack still has to read all of it, and that must not wait for other tests.
+// libarchive takes none of the one byte past the first size, and 100 of the last 101 bytes of the second.
+test.skipIf(!isLinux).each([
+  ["pm pack", 32 * 1024 * 1024],
+  ["pm pack", 32 * 1024 * 1024 + 100],
+  ["publish", 32 * 1024 * 1024],
+] as const)("a file that gets longer while it is read fails bun %s (%d bytes)", (command, size) =>
+  packWhileFile("grew", command, size),
+);
 
 // A file of zeroes costs no disk, and --gzip-level=0 stores it, so the tarball is as big as the file.
 test.concurrent("peak memory does not grow with the size of the tarball", async () => {
@@ -5511,26 +5560,6 @@ long syscall(long nr, ...) {
       `package/node_modules/${name}/package.json`,
     ]);
   });
-
-  // A registry that counts the requests it receives.
-  function countingRegistry() {
-    const registry = {
-      requests: 0,
-      bunfig: "",
-      [Symbol.dispose]: () => void server.stop(true),
-    };
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        registry.requests++;
-        return new Response("OK", { status: 200 });
-      },
-    });
-    registry.bunfig = Bun.TOML.stringify({
-      install: { cache: false, registry: { url: `http://localhost:${server.port}`, token: "unused" } },
-    });
-    return registry;
-  }
 
   test.concurrent.each([
     { walk: "the walk of the package", packageJson: {}, dir: "lib" },

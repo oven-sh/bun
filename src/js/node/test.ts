@@ -1404,20 +1404,24 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
 
 let inspect: ((value: unknown, opts?: object) => string) | undefined;
 const isError = Error.isError;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeTrimStart = String.prototype.trimStart;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeIncludes = String.prototype.includes;
 
 type PrintedFailure = Error & { code?: string; failureType?: string; cause?: unknown };
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1802-L1816
 class TestFailure extends Error {
   // True when `cause` is a value that user code threw. The private fields are also the brand (Node's kIsNodeError).
-  #thrown: boolean;
+  #thrown = false;
   // True when that user code was a hook.
   #inHook = false;
   // The Error that bun:test prints, when its stack has to keep the frames of the user code that the runner threw into.
   #printed: PrintedFailure | undefined = undefined;
   code = "ERR_TEST_FAILURE";
-  failureType: string;
-  cause: unknown;
+  failureType = "";
+  cause: unknown = undefined;
 
   constructor(cause: unknown, failureType: string, thrown = false) {
     let message: unknown;
@@ -1500,8 +1504,12 @@ class TestFailure extends Error {
       get() {
         let frames = "";
         try {
-          for (const line of String(printed.stack).split("\n")) {
-            if (line.trimStart().startsWith("at ") && !line.includes("(node:test:")) frames += "\n" + line;
+          const { stack } = printed;
+          const lines = typeof stack === "string" ? StringPrototypeSplit.$call(stack, "\n") : [];
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (!StringPrototypeStartsWith.$call(StringPrototypeTrimStart.$call(line), "at ")) continue;
+            if (!StringPrototypeIncludes.$call(line, "(node:test:")) frames += "\n" + line;
           }
         } catch {}
         return `Error [ERR_TEST_FAILURE]: ${message}${frames}`;
@@ -2617,7 +2625,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       try {
         await runHook(hook, suite, suite.getSuiteCtx());
       } catch (err) {
-        recordSuiteFailure(suite, err);
+        recordSuiteFailure(suite, TestFailure.hook("after", err));
       }
     }
     suite.finished = true;
@@ -2968,7 +2976,7 @@ function before(arg0: unknown, arg1: unknown) {
   beforeAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(TestFailure.printable(err)),
+      err => done(TestFailure.printable(TestFailure.hook("before", err))),
     );
   });
 }
@@ -2984,7 +2992,7 @@ function after(arg0: unknown, arg1: unknown) {
   afterAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(TestFailure.printable(err)),
+      err => done(TestFailure.printable(TestFailure.hook("after", err))),
     );
   });
 }

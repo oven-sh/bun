@@ -400,7 +400,7 @@ describe.concurrent("context.error", () => {
   // [fixture, tests that pass on bun, tests and subtests that pass on node]
   const onBothRuntimes: [string, number, number][] = [
     ["35-context-error.js", 10, 12],
-    ["35b-failure-without-user-code.js", 2, 2],
+    ["35b-failure-without-user-code.js", 3, 3],
     ["38-expect-failure-validator-input.js", 4, 4],
   ];
 
@@ -469,6 +469,17 @@ describe.concurrent("context.error", () => {
     expect(stderr).toContain(`error: test timed out after 5ms\n failureType: "hookFailed"`);
     expect(stderr).toContain(" 0 pass");
     expect({ exitCode, stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining(" 11 fail") });
+  }, 30_000);
+
+  test("bun test prints the failure type of a hook for each hook that times out", async () => {
+    const { exitCode, stderr } = await runTests(["37b-hook-timeout-output.js"]);
+    // The after hook of a suite in a test, then the before hook and the after hook of a top-level suite.
+    expect(stderr.match(/^error: test timed out after 5ms\n failureType: "\w+"/gm)).toEqual([
+      `error: test timed out after 5ms\n failureType: "hookFailed"`,
+      `error: test timed out after 5ms\n failureType: "hookFailed"`,
+      `error: test timed out after 5ms\n failureType: "hookFailed"`,
+    ]);
+    expect(exitCode).toBe(1);
   }, 30_000);
 
   describe("the error of each test:fail event of run()", () => {

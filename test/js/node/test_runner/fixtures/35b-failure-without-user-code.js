@@ -46,3 +46,33 @@ test("a failure does not call a patched Object.defineProperty", async t => {
   assert.strictEqual(calls, 0);
   assert.strictEqual(seen.cause, thrown);
 });
+
+test("the stack of an error that the runner throws does not call patched String methods", (t, done) => {
+  done();
+  let error;
+  try {
+    done();
+  } catch (err) {
+    error = err;
+  }
+  const names = ["split", "trimStart", "startsWith", "includes"];
+  const originals = names.map(name => String.prototype[name]);
+  let calls = 0;
+  let stack;
+  for (const name of names) {
+    String.prototype[name] = function () {
+      calls++;
+      throw new Error(`from the patched String.prototype.${name}`);
+    };
+  }
+  try {
+    stack = error.stack;
+  } finally {
+    names.forEach((name, i) => {
+      String.prototype[name] = originals[i];
+    });
+  }
+  assert.strictEqual(error.code, "ERR_TEST_FAILURE");
+  assert.strictEqual(calls, 0);
+  assert.ok(stack.includes(__filename), stack);
+});

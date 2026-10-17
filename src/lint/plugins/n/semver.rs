@@ -33,15 +33,6 @@ fn gte(version: Version) -> bun_semver::Range {
     }
 }
 
-/// `a || b || ..`
-fn any_of(ranges: impl Iterator<Item = bun_semver::Range>) -> Group {
-    let mut group = Group::default();
-    for range in ranges {
-        handle_oom(group.or_range(&range));
-    }
-    group
-}
-
 impl Range {
     /// `None` where `new Range(text)` throws.
     pub(crate) fn parse(text: &[u8]) -> Option<Range> {
@@ -66,7 +57,7 @@ impl Range {
             .map(|it| bun_semver::Range::caret(version_of(*it)));
         Some(Range {
             raw: Vec::new(),
-            group: any_of(carets.chain(std::iter::once(latest))),
+            group: Group::any_of(carets.chain(std::iter::once(latest))),
         })
     }
 

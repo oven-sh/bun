@@ -46,7 +46,11 @@ impl PropertyRule {
 
             dest.write_str("initial-value:")?;
             dest.whitespace()?;
-            initial_value.to_css(dest)?;
+            // Printed without the targets: they lower `light-dark()` to `var()`, not valid here.
+            let targets = core::mem::take(&mut dest.targets);
+            let result = initial_value.to_css(dest);
+            dest.targets = targets;
+            result?;
 
             if !dest.minify {
                 dest.write_char(b';')?;

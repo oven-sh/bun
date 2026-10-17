@@ -1959,6 +1959,63 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
   });
 });
 
+// Bun installs no node_modules out of a folder or a git checkout, so `n/node_modules/b` is not a part of `n`.
+test.each(["file: folder", "git repository"])("an older bun's nested copy goes below a %s", async kind => {
+  const graph: Record<string, Record<string, object>> = {
+    m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
+    b: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} },
+  };
+  using server = await serveGraph(graph);
+  const { "2.1.0": published, ...before } = graph.b;
+  graph.b = before;
+
+  const n = {
+    "package.json": JSON.stringify({ name: "n", version: "1.0.0", dependencies: { b: "^2.0.0" } }),
+    "index.js": `module.exports = require("b/package.json").version;`,
+  };
+  using repository = tempDir("hoist-older-owner-repository", n);
+  if (kind === "git repository") {
+    for (const args of [
+      ["init", "-q"],
+      ["add", "."],
+      ["commit", "-q", "-m", "n"],
+    ]) {
+      const identity = ["-c", "user.name=n", "-c", "user.email=n@example.com"];
+      expect(Bun.spawnSync({ cmd: ["git", ...identity, ...args], cwd: String(repository) }).exitCode).toBe(0);
+    }
+  }
+  const files = (root: object) => ({
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "vendor/n/package.json": n["package.json"],
+    "vendor/n/index.js": n["index.js"],
+    "package.json": JSON.stringify({
+      name: "app",
+      dependencies: { m: "1.0.0", n: kind === "git repository" ? `git+file://${repository}` : "file:./vendor/n" },
+      ...root,
+    }),
+  });
+  using laptop = tempDir("hoist-older-owner-laptop", files({ devDependencies: { b: "^2.0.0" } }));
+  using machine = tempDir("hoist-older-owner-machine", files({}));
+  const [dev, dir] = [String(laptop), String(machine)];
+  const pull = async () => {
+    await write(join(dir, "package.json"), file(join(dev, "package.json")));
+    await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
+  };
+  await run(dev, "install");
+
+  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["b@1.0.0", "m@1.0.0", "n@1.0.0", "n/b@2.0.0"]);
+  await pull();
+  await run(dir, "install", "--production");
+
+  graph.b = { ...before, "2.1.0": published };
+  await run(dev, "update", "b");
+  await pull();
+  await run(dir, "install", "--production");
+  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
+});
+
 // `x/node_modules/n` is from the older bun. The same run installs `y/node_modules/n`, the same package.
 test("an older bun's nested copy goes while the run installs its owner at another place", async () => {
   using server = await serveGraph({
@@ -2140,6 +2197,49 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     await run(dir, "install", "--omit=dev");
     await run(dir, "add", "runs", "--omit=dev");
     expect(await file(join(dir, "node_modules", "runs", "node_modules", "b", "package.json")).text()).toBe(own);
+  });
+
+  // The folder of a workspace is the user's own. `svc` arrives with a pull, and this run runs its script.
+  test("in the node_modules of a workspace, from its script, with another version than bun.lock has", async () => {
+    const own = JSON.stringify({ name: "b", version: "2.0.5", from: "the script" });
+    using server = await serveGraph({ y: { "1.0.0": {} }, b: { "1.0.0": {}, "2.0.0": {} } });
+    const files = {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: ["pk/*"],
+        dependencies: { y: "1.0.0" },
+        devDependencies: { b: "^2.0.0" },
+      }),
+      "pk/other/package.json": JSON.stringify({ name: "other", dependencies: { b: "^1.0.0" } }),
+    };
+    using laptop = tempDir("hoist-own-workspace-folder-laptop", files);
+    using machine = tempDir("hoist-own-workspace-folder-machine", files);
+    const [dev, dir] = [String(laptop), String(machine)];
+    const installBoth = async () => {
+      await run(dev, "install", "--ignore-scripts");
+      await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
+      await run(dir, "install", "--production");
+    };
+    await installBoth();
+
+    for (const at of [dev, dir]) {
+      await write(
+        join(at, "pk", "svc", "package.json"),
+        JSON.stringify({
+          name: "svc",
+          dependencies: { b: "^2.0.0" },
+          scripts: { postinstall: `${bunExe()} build.js` },
+        }),
+      );
+      await write(
+        join(at, "pk", "svc", "build.js"),
+        `require("fs").mkdirSync("node_modules/b", { recursive: true });
+          require("fs").writeFileSync("node_modules/b/package.json", ${JSON.stringify(own)});`,
+      );
+    }
+    await installBoth();
+    expect(await file(join(dir, "pk", "svc", "node_modules", "b", "package.json")).text()).toBe(own);
   });
 
   test("below a package, from the script of the project, where an older bun nested a copy", async () => {

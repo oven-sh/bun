@@ -1716,9 +1716,10 @@ fn may_ship(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: 
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
     match res.tag {
-        ResolutionTag::Workspace => return false,
+        // Bun installs no `node_modules` out of a workspace, a `file:` folder or a git checkout.
+        ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {}
-        // A git checkout, a folder or a local tarball can hold anything.
+        // A tarball can hold anything.
         _ => return true,
     }
     let name = lockfile.packages.items_name()[pkg_id as usize];
@@ -1810,6 +1811,7 @@ fn remove_from_older_places(
         // skipped. So is a tree inside a package folder that this run created or replaced: nothing
         // in it is left over from an older Bun. Scripts can create anything, so inside a package
         // whose scripts may have run, only a folder that hides the version in bun.lock is removed.
+        // A workspace with scripts is skipped: its folder is the user's own.
         let mut same_version = same_version;
         let mut above = id;
         while above != 0 {
@@ -1819,6 +1821,9 @@ fn remove_from_older_places(
                 break;
             }
             if can_have_run_scripts(lockfile, trees[above].folder_name(deps, buf), owner) {
+                if is_member_tree(lockfile, above) {
+                    break;
+                }
                 same_version = SameVersion::Keep;
             }
             above = trees[above].parent as usize;

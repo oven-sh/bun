@@ -3,7 +3,21 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isFreeBSD,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  libcPathForDlopen,
+  nodeExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -365,11 +379,17 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  // Flaky on Ubuntu & Windows.
-  await Bun.sleep(16);
-  const end2 = process.hrtime();
-
-  expect(end2[1] > start[1]).toBe(true);
+  const sleepMs = 16;
+  await Bun.sleep(sleepMs);
+  const end2 = process.hrtime(start);
+  // Compare whole durations: the nanoseconds field alone wraps to zero at
+  // every second boundary, so it is not ordered across the sleep.
+  const elapsed = end2[0] * 1e9 + end2[1];
+  expect(elapsed).toBeGreaterThan(end[0] * 1e9 + end[1]);
+  // A timer fires once the monotonic clock reaches its deadline, and hrtime reads
+  // the same clock, except on macOS (CLOCK_MONOTONIC against mach_continuous_time),
+  // where the two drift by microseconds. The 1 ms of slack covers that drift.
+  expect(elapsed).toBeGreaterThanOrEqual((sleepMs - 1) * 1e6);
 });
 
 it("process.hrtime.bigint()", () => {
@@ -433,6 +453,87 @@ it("process.hrtime() coerces tuple elements with ToNumber like node", async () =
       symbols: "TypeError",
     }),
     exitCode: 0,
+  });
+});
+
+// The check from the issue: process.hrtime() is the reading of the system monotonic clock, with no
+// per-process origin. uv_hrtime() reads clock_gettime(CLOCK_MONOTONIC) on Linux and FreeBSD. On macOS
+// it reads mach_continuous_time, which is clock_gettime(CLOCK_MONOTONIC_RAW) there.
+// Windows has no clock_gettime. The process, worker and addon tests cover it.
+it.skipIf(isWindows)("process.hrtime() and process.hrtime.bigint() read the system monotonic clock", () => {
+  const clockId = isMacOS || isFreeBSD ? 4 : 1;
+  const libc = dlopen(libcPathForDlopen(), { clock_gettime: { args: ["int", "ptr"], returns: "int" } });
+  try {
+    const timespec = new BigInt64Array(2);
+    const before = process.hrtime.bigint();
+    const [sec, nsec] = process.hrtime();
+    const result = libc.symbols.clock_gettime(clockId, ptr(timespec));
+    const after = process.hrtime.bigint();
+
+    const tuple = BigInt(sec) * 1_000_000_000n + BigInt(nsec);
+    const system = timespec[0] * 1_000_000_000n + timespec[1];
+    const ordered = before <= tuple && tuple <= system && system <= after;
+    expect({ result, before, tuple, system, after, ordered }).toEqual({
+      result: 0,
+      before,
+      tuple,
+      system,
+      after,
+      ordered: true,
+    });
+  } finally {
+    libc.close();
+  }
+});
+
+// Node reads uv_hrtime() with no per-process origin, so a stamp that another process takes between
+// two stamps of this process lands between them. The other process is bun, or node itself.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("process.hrtime() and process.hrtime.bigint() next to a %s process", (runtime, exe) => {
+  // nodeExe() is null on a machine with no node.
+  it.skipIf(!exe)("a stamp of the other process lands between two stamps of this process", async () => {
+    const fixture = /* js */ `
+      process.on("message", () => {
+        const [sec, nsec] = process.hrtime();
+        const bigint = process.hrtime.bigint();
+        process.send({ tuple: String(BigInt(sec) * 1_000_000_000n + BigInt(nsec)), bigint: String(bigint) });
+        process.disconnect();
+      });
+      process.send("ready");
+    `;
+    const ready = Promise.withResolvers();
+    const stamped = Promise.withResolvers();
+    await using proc = Bun.spawn({
+      cmd: [exe, "-e", fixture],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+      serialization: "json",
+      ipc(message) {
+        if (message === "ready") ready.resolve();
+        else stamped.resolve(message);
+      },
+    });
+    const orExit = promise =>
+      Promise.race([
+        promise,
+        proc.exited.then(code => Promise.reject(new Error(`the ${runtime} process exited (${code}) with no answer`))),
+      ]);
+    // The other process is running, so the only thing between the stamps below is the message hop.
+    await orExit(ready.promise);
+
+    const sent = process.hrtime.bigint();
+    proc.send("stamp");
+    const other = await orExit(stamped.promise);
+    const received = process.hrtime.bigint();
+
+    const tuple = BigInt(other.tuple);
+    const bigint = BigInt(other.bigint);
+    const ordered = sent <= tuple && tuple <= bigint && bigint <= received;
+    expect({ sent, tuple, bigint, received, ordered }).toEqual({ sent, tuple, bigint, received, ordered: true });
+    expect(await proc.exited).toBe(0);
   });
 });
 

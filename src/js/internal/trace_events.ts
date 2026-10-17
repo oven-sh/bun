@@ -60,10 +60,8 @@ const kThreadpoolSyncCat = "node,node.threadpoolwork,node.threadpoolwork.sync";
 const kEnvironmentCat = "node,node.environment";
 const kBootstrapCat = "node,node.bootstrap";
 
-function now(): number {
-  // Trace-event timestamps are in microseconds.
-  return Math.round(performance.now() * 1000);
-}
+// Microseconds on the process.hrtime() clock, as in node. Bound by activate(), which runs before any event is stamped.
+let now: () => number;
 
 function setTid(value: number) {
   tid = value;
@@ -202,6 +200,8 @@ function initFromCli(catString: string, pattern: string | null) {
 function activate() {
   if (activated) return;
   activated = true;
+  // First: a 'newListener' handler that process.on() runs below can emit an event.
+  now = $newCppFunction("BunProcess.cpp", "jsFunctionHRTimeMicroseconds", 0);
   initialTitle = process.title;
   process.on("exit", flush);
   installTimerInstrumentation();

@@ -32,6 +32,21 @@ pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
 }
 
+unsafe extern "C" {
+    // The one bun exports to native addons: uv-posix-polyfills.c, or libuv on Windows.
+    safe fn uv_hrtime() -> u64;
+}
+
+// process.hrtime() is node's uv_hrtime(), with no per-process origin: https://github.com/oven-sh/bun/issues/44869
+// HOST_EXPORT(Bun__readHRTime, c)
+pub fn read_hrtime(vm: &VirtualMachine) -> u64 {
+    // bun:test fake timers
+    if let Some(overridden) = vm.overridden_performance_now {
+        return overridden;
+    }
+    uv_hrtime()
+}
+
 // HOST_EXPORT(Bun__readOriginTimer, c)
 pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     // Check if performance.now() is overridden (for fake timers)

@@ -146,6 +146,10 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
+// The process.hrtime() clock for src/js, via $newCppFunction: user code can replace process.hrtime.
+JSC_DECLARE_HOST_FUNCTION(Process_functionHRTimeBigInt);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionHRTimeMicroseconds);
+
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 

@@ -42,3 +42,95 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
   const phases = events.filter(e => e.name === "http.client.request").map(e => e.ph);
   expect({ phases: phases.sort(), exitCode }).toEqual({ phases: ["b", "e"], exitCode: 0 });
 });
+
+// Node stamps a trace event in native code with uv_hrtime() / 1000: the process.hrtime() clock, in
+// microseconds. So a stamp that another process takes between two hrtime readings of this process
+// lands between them, and a process.hrtime that user code replaced does not change it.
+test("a trace event is stamped on the process.hrtime() clock", async () => {
+  using dir = tempDir("trace-events-ts", {
+    "main.mjs": `
+      process.on("message", () => {
+        process.hrtime = () => [0, 5_000_000];
+        console.time("stamp");
+        process.disconnect();
+      });
+      process.send("ready");
+    `,
+  });
+  const traceFile = join(String(dir), "node_trace.log");
+  const ready = Promise.withResolvers<void>();
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--trace-event-categories", "node.console", "--trace-event-file-pattern", traceFile, "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "inherit",
+    stderr: "inherit",
+    ipc: () => ready.resolve(),
+  });
+  // The child is running, so the only thing between the readings below is the message hop.
+  await Promise.race([
+    ready.promise,
+    proc.exited.then(code => Promise.reject(new Error(`the child exited (${code}) before it was ready`))),
+  ]);
+
+  const sent = process.hrtime.bigint() / 1000n;
+  proc.send("stamp");
+  const exitCode = await proc.exited;
+  const received = process.hrtime.bigint() / 1000n;
+
+  const events = JSON.parse(readFileSync(traceFile, "utf8")).traceEvents;
+  const stamps = events.filter(e => e.name === "time::stamp").map(e => BigInt(e.ts));
+  const ordered = stamps.length === 1 && sent <= stamps[0] && stamps[0] <= received;
+  expect({ sent, stamps, received, ordered, exitCode }).toEqual({ sent, stamps, received, ordered: true, exitCode: 0 });
+});
+
+// Every thread stamps with the same clock, so in the merged file the event of a worker lies between
+// an event that the main thread emitted before it and one that the main thread emitted after it.
+test("the trace events of a worker are stamped on the clock of the main thread", async () => {
+  using dir = tempDir("trace-events-worker-ts", {
+    "main.cjs": `
+      const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+      if (isMainThread) {
+        const worker = new Worker(__filename);
+        // The worker is running when it says "ready", so the only thing between "before" and
+        // "worker" is the message hop.
+        worker.once("message", () => {
+          console.time("before");
+          worker.postMessage("stamp");
+        });
+        worker.on("exit", () => console.time("after"));
+      } else {
+        parentPort.once("message", () => {
+          console.time("worker");
+          parentPort.close();
+        });
+        parentPort.postMessage("ready");
+      }
+    `,
+  });
+  const traceFile = join(String(dir), "node_trace.log");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--trace-event-categories", "node.console", "--trace-event-file-pattern", traceFile, "main.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const exitCode = await proc.exited;
+
+  const events = JSON.parse(readFileSync(traceFile, "utf8")).traceEvents;
+  const stamps = (label: string) =>
+    events.filter(e => e.name === "time::" + label).map(e => ({ tid: e.tid, ts: e.ts }));
+  const [before, worker, after] = [stamps("before"), stamps("worker"), stamps("after")];
+  const ordered =
+    before.length === 1 &&
+    worker.length === 1 &&
+    after.length === 1 &&
+    worker[0].tid !== before[0].tid &&
+    after[0].tid === before[0].tid &&
+    before[0].ts <= worker[0].ts &&
+    worker[0].ts <= after[0].ts;
+  expect({ before, worker, after, ordered, exitCode }).toEqual({ before, worker, after, ordered: true, exitCode: 0 });
+});

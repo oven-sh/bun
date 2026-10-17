@@ -205,6 +205,75 @@ it("poll_oneoff waits on a clock subscription and reports the event", () => {
   });
 });
 
+// Node's WASI reads uv_hrtime() in native code: CLOCK_MONOTONIC is the process.hrtime() clock, and a
+// process.hrtime that user code replaced does not change it. So a reading that another process takes
+// between two hrtime readings of this process lands between them.
+it("CLOCK_MONOTONIC is the process.hrtime() clock, also when process.hrtime is replaced", async () => {
+  const fixture = /* js */ `
+    const { WASI } = require("node:wasi");
+    // The injected sleep() returns at once, so the timeout of the poll below costs nothing.
+    const wasi = new WASI({ sleep() {} });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const view = new DataView(wasi.memory.buffer);
+    const WASI_EVENTTYPE_CLOCK = 0;
+    const WASI_CLOCK_MONOTONIC = 1;
+    const timePtr = 1024;
+    const subscriptionPtr = 2048;
+    const eventPtr = 3072;
+    const neventsPtr = 4096;
+    // subscription: userdata u64, tag u8, clock { id u32, timeout u64 (ns), precision u64, flags u16 }
+    view.setUint8(subscriptionPtr + 8, WASI_EVENTTYPE_CLOCK);
+    view.setUint32(subscriptionPtr + 16, WASI_CLOCK_MONOTONIC, true);
+    view.setBigUint64(subscriptionPtr + 24, 1_000_000_000n, true);
+
+    process.on("message", () => {
+      process.hrtime = () => [0, 5_000_000];
+      const errno = wasi.wasiImport.clock_time_get(WASI_CLOCK_MONOTONIC, 0n, timePtr);
+      const time = view.getBigUint64(timePtr, true);
+      const pollErrno = wasi.wasiImport.poll_oneoff(subscriptionPtr, eventPtr, 1, neventsPtr);
+      process.send({ errno, time: String(time), pollErrno });
+      process.disconnect();
+    });
+    process.send("ready");
+  `;
+  const ready = Promise.withResolvers();
+  const stamped = Promise.withResolvers();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+    ipc(message) {
+      if (message === "ready") ready.resolve();
+      else stamped.resolve(message);
+    },
+  });
+  const orExit = promise =>
+    Promise.race([
+      promise,
+      proc.exited.then(code => Promise.reject(new Error(`the child exited (${code}) with no answer`))),
+    ]);
+  // The child is running, so the only thing between the readings below is the message hop.
+  await orExit(ready.promise);
+
+  const sent = process.hrtime.bigint();
+  proc.send("stamp");
+  const guest = await orExit(stamped.promise);
+  const received = process.hrtime.bigint();
+
+  const time = BigInt(guest.time);
+  const ordered = sent <= time && time <= received;
+  expect({ errno: guest.errno, pollErrno: guest.pollErrno, sent, time, received, ordered }).toEqual({
+    errno: 0,
+    pollErrno: 0,
+    sent,
+    time,
+    received,
+    ordered: true,
+  });
+  expect(await proc.exited).toBe(0);
+});
+
 it("fd_pread counts each byte once and reads the next iov from where the last one ended", () => {
   using dir = tempDir("wasi-fd-pread", { "data.txt": "0123456789abcdef" });
   const wasi = new WASI({ preopens: { "/": String(dir) } });

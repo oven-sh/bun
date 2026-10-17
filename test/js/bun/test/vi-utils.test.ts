@@ -1512,6 +1512,23 @@ describe("vi.waitFor", () => {
       expect(Date.now() - start).toBe(200);
     });
 
+    test("an interval of 0 leaves the fake clock where it is", async () => {
+      vi.useFakeTimers();
+      const start = Date.now();
+      const fired: number[] = [];
+      setTimeout(() => fired.push(0), 0);
+      setTimeout(() => fired.push(1), 1);
+      let calls = 0;
+      await vi.waitFor(
+        () => {
+          if (++calls < 3) throw new Error("not yet");
+        },
+        { interval: 0 },
+      );
+      await vi.waitUntil(() => ++calls === 6, { interval: 0 });
+      expect({ calls, fired, moved: Date.now() - start }).toEqual({ calls: 6, fired: [0], moved: 0 });
+    });
+
     test("keeps advancing while the callback's promise is pending", async () => {
       vi.useFakeTimers();
       const start = Date.now();

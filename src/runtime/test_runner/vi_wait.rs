@@ -86,12 +86,24 @@ pub(crate) fn delay_ms(
     let Some(value) = value else {
         return Ok(default);
     };
-    let ms = value.to_number(global)?;
-    Ok(if ms >= 1.0 && ms <= f64::from(i32::MAX) {
+    Ok(clamp_delay(value.to_number(global)?))
+}
+
+fn clamp_delay(ms: f64) -> u32 {
+    if ms >= 1.0 && ms <= f64::from(i32::MAX) {
         ms as u32
     } else {
         1
-    })
+    }
+}
+
+/// A fake clock moves by the interval as given, so 0 stays 0. The real timer between two calls then waits 1 ms.
+pub(crate) fn interval_ms(global: &JSGlobalObject, value: Option<JSValue>) -> JsResult<u32> {
+    let Some(value) = value else {
+        return Ok(50);
+    };
+    let ms = value.to_number(global)?;
+    Ok(if ms == 0.0 { 0 } else { clamp_delay(ms) })
 }
 
 fn thrown_value(global: &JSGlobalObject, err: JsError) -> JsResult<JSValue> {
@@ -125,7 +137,7 @@ impl ViWait {
                 options,
             ));
         };
-        let interval_ms = delay_ms(global, interval, 50)?;
+        let interval_ms = interval_ms(global, interval)?;
         let timeout_ms = delay_ms(global, timeout, 1000)?;
         Self::begin(global, frame, kind, callback, interval_ms, timeout_ms, None)
     }
@@ -195,7 +207,7 @@ impl ViWait {
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };
 
-        if let Err(err) = this.poll(global, this_value) {
+        if let Err(err) = this.poll(global, this_value, true) {
             match thrown_value(global, err) {
                 Ok(error) => this.settle(global, this_value, Err(error))?,
                 Err(err) => {
@@ -218,7 +230,7 @@ impl ViWait {
     }
 
     fn arm(&self, now: &Timespec) {
-        let next_poll = now.add_ms(i64::from(self.interval_ms));
+        let next_poll = now.add_ms(i64::from(self.interval_ms.max(1)));
         let deadline = self.deadline.get();
         let next = if next_poll.order(&deadline).is_lt() {
             next_poll
@@ -327,13 +339,16 @@ impl ViWait {
     }
 
     #[optimize(size)]
-    fn poll(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
-        match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
-            Ok(thrown) if thrown.is_empty() => {}
-            Ok(thrown) => return Err(global.throw_value(thrown)),
-            Err(Stop::Vm(err)) => return Err(err),
-            // Polling again wouldn't help, since at the loop limit the next advance stops on the same queued ticks.
-            Err(Stop::Ticks(thrown)) => return self.settle(global, this_value, Err(thrown)),
+    fn poll(&self, global: &JSGlobalObject, this_value: JSValue, is_first: bool) -> JsResult<()> {
+        // As in Vitest, `waitFor` and `waitUntil` advance a fake clock on every tick of theirs, and `expect.poll` between two attempts.
+        if self.kind != Kind::Poll || !(is_first || self.callback_pending.get()) {
+            match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
+                Ok(thrown) if thrown.is_empty() => {}
+                Ok(thrown) => return Err(global.throw_value(thrown)),
+                Err(Stop::Vm(err)) => return Err(err),
+                // Polling again wouldn't help, since at the loop limit the next advance stops on the same queued ticks.
+                Err(Stop::Ticks(thrown)) => return self.settle(global, this_value, Err(thrown)),
+            }
         }
         if self.callback_pending.get() || !self.is_pending() {
             return Ok(());
@@ -399,7 +414,7 @@ impl ViWait {
             .context_id()
             .map(|context| vm.enter_context(context));
         let result = if self.timer.get().next.order(&self.deadline.get()).is_lt() {
-            self.poll(global, this_value)
+            self.poll(global, this_value, false)
         } else {
             self.time_out(global, this_value)
         };

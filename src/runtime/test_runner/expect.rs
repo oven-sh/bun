@@ -792,7 +792,7 @@ impl Expect {
             return Err(global_this.throw_invalid_argument_type_value("options", "object", options));
         };
         let times = [
-            JSValue::js_number_from_int32(super::vi_wait::delay_ms(global_this, interval, 50)? as i32),
+            JSValue::js_number_from_int32(super::vi_wait::interval_ms(global_this, interval)? as i32),
             JSValue::js_number_from_int32(super::vi_wait::delay_ms(global_this, timeout, 1000)? as i32),
         ];
         let expect_js_value = Self::call_with_flags(

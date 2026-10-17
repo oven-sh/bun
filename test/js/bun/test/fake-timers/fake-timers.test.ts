@@ -2280,7 +2280,11 @@ describe("an error thrown by a faked tick", () => {
     runOnlyPendingTimersAsync: () => vi.runOnlyPendingTimersAsync(),
     waitFor: () => vi.waitFor(() => {}, { interval: 100 }),
     waitUntil: () => vi.waitUntil(() => true, { interval: 100 }),
-    "expect.poll": () => expect.poll(() => 1, { interval: 100 }).toBe(1),
+    // It advances the clock between two attempts.
+    "expect.poll": () => {
+      let attempts = 0;
+      return expect.poll(() => ++attempts, { interval: 100 }).toBe(2);
+    },
   };
   const throws = () => {
     throw new Error("from a tick");
@@ -2387,7 +2391,7 @@ describe("a faked tick that queues itself again", () => {
   const prelude = `
     import { describe, expect, test, vi } from "bun:test";
     const options = { toFake: ["nextTick", "queueMicrotask", "setTimeout", "performance"], loopLimit: 100 };
-    let ticks = 0, timers = 0;
+    let ticks = 0, timers = 0, attempts = 0;
     function count() {
       if (++ticks > 1000) {
         console.log("goes on past the loop limit");
@@ -2418,13 +2422,13 @@ describe("a faked tick that queues itself again", () => {
     ["vi.advanceTimersToNextTimerAsync()", 1],
     ["vi.waitFor(() => {})", 0],
     ["vi.waitUntil(() => true)", 0],
-    ["expect.poll(() => 1).toBe(1)", 0],
+    ["expect.poll(() => ++attempts).toBe(2)", 0],
   ])("%s stops at the loop limit", async (drive, timers) => {
     using dir = tempDir("fake-timers-endless-ticks", {
       "endless.test.ts": `${prelude}
         test.each([again, throwsAndAgain])("%p", async tick => {
           vi.useFakeTimers(options);
-          ticks = timers = 0;
+          ticks = timers = attempts = 0;
           process.nextTick(tick);
           setTimeout(() => timers++, 5);
           let thrown;

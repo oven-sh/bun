@@ -1980,6 +1980,25 @@ describe.concurrent("expect.poll()", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
+  test("advances fake timers between two attempts, and not before the first", async () => {
+    const { stdout, exitCode, signalCode } = await runTests(`
+      test("fake timers", async () => {
+        jest.useFakeTimers();
+        const start = Date.now();
+        let calls = 0;
+        await expect.poll(() => 1, { interval: 10 }).toBe(1);
+        console.log(Date.now() - start);
+        await expect.poll(() => ++calls, { interval: 10 }).toBe(4);
+        console.log(Date.now() - start);
+        await expect.poll(() => ++calls, { interval: 0 }).toBe(8);
+        console.log(Date.now() - start);
+        jest.useRealTimers();
+      });
+    `);
+    expect(stdout).toEqual(["0", "30", "30"]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
   test("throws for unsupported matchers and invalid arguments", async () => {
     const { stdout, exitCode } = await runTests(`
       test("refusals", () => {

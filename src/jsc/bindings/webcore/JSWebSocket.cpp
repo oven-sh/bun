@@ -27,7 +27,6 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
-#include "ZigGeneratedClasses.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -680,6 +679,29 @@ JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_binaryType, (JSGlobalObject * lexicalGlo
     return IDLAttribute<JSWebSocket>::set<setJSWebSocket_binaryTypeSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
 
+// The rest of convertPayload for a value that can hold a Blob. Not inlined, so that convertPayload keeps `value` across no call.
+static NEVER_INLINE std::optional<WebSocket::Payload> convertBlobOrStringPayload(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral functionName)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    const uint8_t* ptr = nullptr;
+    size_t length = 0;
+    switch (Blob__sharedView(JSValue::encode(value), &ptr, &length)) {
+    case BlobBytes::InMemory:
+        return std::span { ptr, length };
+    case BlobBytes::NotInMemory:
+        throwException(&lexicalGlobalObject, throwScope, createError(&lexicalGlobalObject, makeString(functionName, " cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"_s)));
+        return std::nullopt;
+    case BlobBytes::NotABlob:
+        break;
+    }
+
+    auto text = convert<IDLUSVString>(lexicalGlobalObject, value);
+    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+    return text;
+}
+
 // Converts (ArrayBufferView or ArrayBuffer or Blob or USVString). The returned span points into `value` and is empty for a detached buffer.
 // Returns nullopt after throwing. Web IDL rejects shared and resizable buffers, but the `ws` module accepts them.
 static std::optional<WebSocket::Payload> convertPayload(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral functionName, bool allowSharedAndResizable = false)
@@ -704,15 +726,8 @@ static std::optional<WebSocket::Payload> convertPayload(JSGlobalObject& lexicalG
         return impl->span();
     }
 
-    if (auto* blob = dynamicDowncast<JSBlob>(value)) {
-        const uint8_t* ptr = nullptr;
-        size_t length = 0;
-        if (!Blob__sharedView(JSValue::encode(blob), &ptr, &length)) {
-            throwException(&lexicalGlobalObject, throwScope, createError(&lexicalGlobalObject, makeString(functionName, " cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"_s)));
-            return std::nullopt;
-        }
-        return std::span { ptr, length };
-    }
+    if (mayHoldBlob(value)) [[unlikely]]
+        RELEASE_AND_RETURN(throwScope, convertBlobOrStringPayload(lexicalGlobalObject, value, functionName));
 
     auto text = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, std::nullopt);

@@ -1067,7 +1067,7 @@ impl FilesContext {
             let pathname = pathname_z.as_bytes();
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let (Some(patterns), Some(name_buf)) = (&self.glob_patterns, &mut name_buf) {
-                let name = NormalizedName::new(pathname_z, &mut name_buf[..], &mut long_name);
+                let name = GlobName::listed(pathname_z, &mut name_buf[..], &mut long_name);
                 if !match_glob_patterns(patterns, &name) {
                     continue;
                 }
@@ -1269,7 +1269,7 @@ pub(crate) struct GlobPattern {
 
 impl GlobPattern {
     fn new(pattern: &[u8]) -> GlobPattern {
-        // A pattern sees a `NormalizedName`, which has no "./".
+        // Entry names are normalized before the match (`GlobName`), so the pattern is too.
         let pattern = glob::pattern::of_normalized_paths(pattern);
         let positive = pattern.strip_prefix(b"!");
         GlobPattern {
@@ -1279,19 +1279,35 @@ impl GlobPattern {
     }
 }
 
-/// The only name of an entry that a glob pattern sees: the path that `extract()` writes, with no "./", "//" or "\\".
-pub(crate) struct NormalizedName<'a>(&'a bun_core::ZStr);
+/// The only name of an entry that a glob pattern sees.
+pub(crate) struct GlobName<'a>(&'a bun_core::ZStr);
 
-impl<'a> NormalizedName<'a> {
-    /// Borrows `stored` when it is normalized already. Otherwise the name goes to `buf`, or to `spill` when `buf` is too small.
-    fn new(stored: &'a bun_core::ZStr, buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
+impl<'a> GlobName<'a> {
+    /// The path that `extract()` writes, with no "./", "//", "\\" or "..".
+    fn written(stored: &'a bun_core::ZStr, buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
+        Self::new(stored, buf, spill, false)
+    }
+
+    /// As `written`, but a name that `is_safe_path` refuses stays as stored: a key of `files()` has no ".." that its pattern did not match.
+    fn listed(stored: &'a bun_core::ZStr, buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
+        Self::new(stored, buf, spill, true)
+    }
+
+    /// Borrows `stored` when it needs no change. Otherwise the name goes to `buf`, or to `spill` when `buf` is too small.
+    fn new(
+        stored: &'a bun_core::ZStr,
+        buf: &'a mut [u8],
+        spill: &'a mut Vec<u8>,
+        keeps_unsafe: bool,
+    ) -> Self {
         use bun_paths::resolve_path;
-        if resolve_path::is_normalized_posix(stored.as_bytes()) {
+        let name = stored.as_bytes();
+        if resolve_path::is_normalized_posix(name) || keeps_unsafe && !is_safe_path(name) {
             return Self(stored);
         }
         Self(resolve_path::normalize_buf_z_spill::<
             bun_paths::platform::Posix,
-        >(buf, spill, stored.as_bytes()))
+        >(buf, spill, name))
     }
 }
 
@@ -1299,7 +1315,7 @@ impl<'a> NormalizedName<'a> {
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], name: &NormalizedName<'_>) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], name: &GlobName<'_>) -> bool {
     let pathname = name.0.as_bytes();
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
@@ -1385,7 +1401,7 @@ fn extract_to_disk_filtered(
             continue;
         }
         let mut long_name = Vec::new();
-        let name = NormalizedName::new(raw_pathname_z, &mut normalized_buf[..], &mut long_name);
+        let name = GlobName::written(raw_pathname_z, &mut normalized_buf[..], &mut long_name);
         let pathname_z = name.0;
         let pathname = pathname_z.as_bytes();
 

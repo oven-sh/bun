@@ -1732,7 +1732,7 @@ describe("Bun.Archive", () => {
       });
     });
 
-    test('a glob pattern does not see a ".." component or a leading "/" of an entry name', async () => {
+    test('files(glob) matches a name with ".." or a leading "/" as it is stored', async () => {
       const archive = new Bun.Archive(
         buildTarball([
           { name: "src/ok.ts", data: "ok" },
@@ -1751,32 +1751,30 @@ describe("Bun.Archive", () => {
       };
       using dir = tempDir("archive-files-glob-outside", {});
 
-      // The key of an entry in files(), next to the path that extract() writes for it below the destination.
-      const selected: Record<string, Record<string, string>> = {};
+      // The keys of files(), next to the paths that extract() writes below the destination.
+      const selected: Record<string, { keys: string[]; written: string[] }> = {};
       for (const [label, glob] of Object.entries(patterns)) {
         const dest = join(String(dir), String(Object.keys(selected).length));
         await archive.extract(dest, { glob });
-        const written = (existsSync(dest) ? (readdirSync(dest, { recursive: true }) as string[]) : [])
-          .filter(path => statSync(join(dest, path)).isFile())
-          .map(path => [readFileSync(join(dest, path), "utf8"), path.replaceAll("\\", "/")]);
-        const pathOf = Object.fromEntries(written);
-        selected[label] = {};
-        for (const [key, file] of await archive.files(glob)) selected[label][key] = pathOf[await file.text()];
+        selected[label] = {
+          keys: [...(await archive.files(glob)).keys()].sort(),
+          written: (existsSync(dest) ? (readdirSync(dest, { recursive: true }) as string[]) : [])
+            .filter(path => statSync(join(dest, path)).isFile())
+            .map(path => path.replaceAll("\\", "/"))
+            .sort(),
+        };
       }
 
-      const all = {
-        "src/ok.ts": "src/ok.ts",
-        "../src/x.ts": "src/x.ts",
-        "ok/../../src/y.ts": "src/y.ts",
-        "/abs/src/z.ts": "abs/src/z.ts",
-        "../../top.txt": "top.txt",
-      };
+      // extract() writes such an entry below the destination. files() returns its key only for a pattern that has the "..".
       expect(selected).toEqual({
-        "src/*": { "src/ok.ts": "src/ok.ts", "../src/x.ts": "src/x.ts", "ok/../../src/y.ts": "src/y.ts" },
-        "*": { "../../top.txt": "top.txt" },
-        "abs/**": { "/abs/src/z.ts": "abs/src/z.ts" },
-        "../**": {},
-        "**, !**/../**": all,
+        "src/*": { keys: ["src/ok.ts"], written: ["src/ok.ts", "src/x.ts", "src/y.ts"] },
+        "*": { keys: [], written: ["top.txt"] },
+        "abs/**": { keys: [], written: ["abs/src/z.ts"] },
+        "../**": { keys: ["../../top.txt", "../src/x.ts"], written: [] },
+        "**, !**/../**": {
+          keys: ["/abs/src/z.ts", "src/ok.ts"],
+          written: ["abs/src/z.ts", "src/ok.ts", "src/x.ts", "src/y.ts", "top.txt"],
+        },
       });
     });
 
@@ -1795,12 +1793,19 @@ describe("Bun.Archive", () => {
     });
 
     test("files(glob) lists an entry with a name longer than a path", async () => {
-      // No file is made, so the length limit of a path does not apply.
-      const name = Buffer.alloc(5000, "d/").toString() + "payload.txt";
-      const archive = new Bun.Archive(buildPaxTarball([{ name, data: "payload" }]));
+      // No file is made, so the length limit of a path does not apply. The second name is normalized before the match.
+      const archive = new Bun.Archive(
+        buildPaxTarball([
+          { name: Buffer.alloc(5000, "d/").toString() + "payload.txt", data: "as stored" },
+          { name: "./" + Buffer.alloc(5000, "e/").toString() + "payload.txt", data: "normalized" },
+        ]),
+      );
 
-      const files = await archive.files("**/payload.txt");
-      expect(await Promise.all([...files.values()].map(file => file.text()))).toEqual(["payload"]);
+      const files = await archive.files(["d/**/payload.txt", "e/**/payload.txt"]);
+      expect((await Promise.all([...files.values()].map(file => file.text()))).sort()).toEqual([
+        "as stored",
+        "normalized",
+      ]);
     });
 
     test("handles binary data correctly", async () => {

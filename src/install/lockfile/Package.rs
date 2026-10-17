@@ -919,6 +919,9 @@ impl Diff {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
         let frozen = pm.options.enable.frozen_lockfile();
+        // `bun pm fetch` writes nothing but the cache. In a Docker layer that only has the root's
+        // package.json and bun.lock, it downloads what bun.lock has for every workspace.
+        let keeps_missing_workspaces = frozen || pm.subcommand == install::Subcommand::Pm;
         macro_rules! from_buf {
             () => {
                 from_lockfile.buffers.string_bytes.as_slice()
@@ -1076,7 +1079,10 @@ impl Diff {
                     if (from_resolutions[i] as usize) < from_lockfile.packages.len() {
                         missing_workspaces.push(from_resolutions[i]);
                     }
-                    if frozen && !summary.overrides_changed && !summary.catalogs_changed {
+                    if keeps_missing_workspaces
+                        && !summary.overrides_changed
+                        && !summary.catalogs_changed
+                    {
                         summary.pruned_workspaces.push(from_dep.name_hash);
                         continue;
                     }

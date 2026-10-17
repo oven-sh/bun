@@ -8719,13 +8719,15 @@ describe("css tests", () => {
       });
 
       // Two at-rules with the same query are merged and minified again. The declarations
-      // stage their `prefers-color-scheme` rule a second time, and it prints once.
+      // stage their `prefers-color-scheme` rule a second time, and it prints once. The second
+      // pass repeats the two variables of the block, as it does in a top-level `@media`.
       test("a fallback rule that is staged twice", () => {
-        const output = lowered(
-          ".a { @media screen { color-scheme: light dark } @media screen { .b { color: red } } }",
-          firefox60,
+        expect(
+          lowered(".a { @media screen { color-scheme: light dark } @media screen { .b { color: red } } }", firefox60),
+        ).toBe(
+          "@media screen{.a{--buncss-light:initial;--buncss-dark: ;--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}" +
+            "@media (prefers-color-scheme:dark){.a{--buncss-light: ;--buncss-dark:initial}}.a .b{color:red}}",
         );
-        expect(output).toContain("@media (prefers-color-scheme:dark){.a{--buncss-light: ;--buncss-dark:initial}}");
       });
 
       // Chrome 87 has no `:is()` and no `:where()`, so each of these rules is split per
@@ -8779,6 +8781,12 @@ describe("css tests", () => {
           ".a { inset-inline-end: 1px !important; & { color: red } inset-inline-end: 2px }",
           firefox60,
           ".a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a{color:red}",
+        ],
+        [
+          "the same in a nested at-rule: 2px wins, not 1px",
+          ".a { @media screen { inset-inline-end: 1px !important; & { color: red } inset-inline-end: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}.a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a{color:red}}",
         ],
         [
           "in a nested at-rule they are built on `&`: `:is()` for a list, which drops `.d::before`",

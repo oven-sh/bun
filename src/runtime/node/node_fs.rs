@@ -1011,6 +1011,14 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
+        /// The JS error for `err` when node reports this operation's failure with a shape of its own.
+        fn node_error(
+            &self,
+            _global: &JSGlobalObject,
+            _err: &sys::Error,
+        ) -> Option<JsResult<JSValue>> {
+            None
+        }
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
@@ -1039,7 +1047,6 @@ mod _async_tasks {
         args::Readlink<'static>,
         args::Realpath<'static>,
         args::Unlink<'static>,
-        args::Rm<'static>,
         args::RmDir<'static>,
         args::Mkdir<'static>,
         args::MkdirTemp<'static>,
@@ -1050,6 +1057,23 @@ mod _async_tasks {
         args::CopyFile<'static>,
         args::Cp<'static>,
     );
+    // SAFETY: as for `impl_fs_argument!`.
+    unsafe impl ThreadIsolatedArg for args::Rm<'static> {}
+    impl FsArgument for args::Rm<'static> {
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::Rm::from_js(ctx, arguments)
+        }
+        fn node_error(
+            &self,
+            global: &JSGlobalObject,
+            err: &sys::Error,
+        ) -> Option<JsResult<JSValue>> {
+            // Only the directory that `NodeFS::rm` refuses without `recursive` has this errno and tag.
+            (!self.recursive && err.get_errno() == E::EISDIR && err.syscall == sys::Tag::rm)
+                .then(|| rm_is_directory_error(global, &self.path))
+        }
+    }
     impl_fs_argument!(
         args::FdVectorIo,
         args::FTruncate,
@@ -1290,6 +1314,14 @@ mod _async_tasks {
             }
         }
 
+        /// What [`Self::error_to_js`] does for an error value that is already built.
+        pub(crate) fn with_async_stack(&self, global: &JSGlobalObject, error: JSValue) -> JSValue {
+            if let Self::Promise(promise) = self {
+                error.attach_async_stack_from_promise(global, promise.get());
+            }
+            error
+        }
+
         pub(crate) fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
             match self {
                 Self::Promise(promise) => promise.get().resolve(global, value),
@@ -1389,7 +1421,12 @@ mod _async_tasks {
             let success = this.result.is_ok();
             let completion = &js.completion;
             let converted = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
-                Err(err) => completion.error_to_js(global_object, &err),
+                Err(err) => match this.args.node_error(global_object, &err) {
+                    Some(error) => {
+                        error.map(|error| completion.with_async_stack(global_object, error))
+                    }
+                    None => completion.error_to_js(global_object, &err),
+                },
                 Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
             completion.ensure_still_alive();
@@ -7755,6 +7792,11 @@ impl NodeFS {
         let dest = args.path.slice_z(&mut self.sync_error_buf);
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
+            if rm_target_is_directory(dest, e1) {
+                return Err(
+                    sys::Error::from_code(E::EISDIR, sys::Tag::rm).with_path(args.path.slice())
+                );
+            }
             if e1 == E::ENOENT {
                 if args.force {
                     return Ok(());
@@ -9491,6 +9533,54 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
         "IsDir" => E::EISDIR,
         _ => E::EFAULT,
     }
+}
+
+/// Whether the path that `unlink()` did not remove is a directory. Node refuses one without `recursive`.
+fn rm_target_is_directory(path: &ZStr, unlink_errno: E) -> bool {
+    // Linux says so itself. Elsewhere EISDIR can have another cause, and a directory is EPERM.
+    if cfg!(any(target_os = "linux", target_os = "android")) && unlink_errno == E::EISDIR {
+        return true;
+    }
+    // The directories of a compiled executable's embedded files are not on disk.
+    if standalone_module_graph().is_some_and(|graph| graph.find_dir(path.as_bytes())) {
+        return true;
+    }
+    unlink_errno != E::ENOENT
+        && Syscall::lstat(path).is_ok_and(|stat| sys::S::ISDIR(stat.st_mode as _))
+}
+
+/// Node's ERR_FS_EISDIR for `rm`, with the properties `fsEisdirError` in `internal/fs/cp-sync.ts` sets.
+fn rm_is_directory_error(global: &JSGlobalObject, target: &PathLike) -> JsResult<JSValue> {
+    let error = global
+        .err(
+            bun_jsc::ErrorCode::ERR_FS_EISDIR,
+            format_args!(
+                "Path is a directory: rm returned EISDIR (is a directory) {}",
+                ::bstr::BStr::new(target.slice())
+            ),
+        )
+        .to_js();
+    let text = |text: &'static str| BunString::static_(text).to_js(global);
+    let path = bun_jsc::bun_string_jsc::create_utf8_for_js(global, target.slice())?;
+    let syscall = text("rm")?;
+    let errno = JSValue::js_number_from_int32(SystemErrno::EISDIR as i32);
+    let info = JSValue::create_empty_object(global, 5);
+    info.put(global, b"code", text("EISDIR")?);
+    info.put(global, b"message", text("is a directory")?);
+    // Node's `info` keeps the caller's Buffer. Only `error.path` is its string.
+    let info_path = match target {
+        PathLike::Buffer(buffer) => buffer.value,
+        _ => path,
+    };
+    info.put(global, b"path", info_path);
+    info.put(global, b"syscall", syscall);
+    info.put(global, b"errno", errno);
+    error.put(global, b"name", text("SystemError")?);
+    error.put(global, b"info", info);
+    error.put(global, b"errno", errno);
+    error.put(global, b"syscall", syscall);
+    error.put(global, b"path", path);
+    Ok(error)
 }
 
 // `rm` non-recursive unlink/rmdir fallback — narrower table; anything not

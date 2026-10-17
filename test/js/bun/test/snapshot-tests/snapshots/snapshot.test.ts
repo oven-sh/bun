@@ -857,6 +857,29 @@ indentation"
     ]);
     for (const r of settled) if (r.status === "rejected") throw r.reason;
   });
+  it("writes a multi-line JSX element indented like an object", async () => {
+    await tester.test(
+      // prettier-ignore
+      v => /*js*/ `
+        const el = (type, props) => ({ $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props });
+        test("cases", () => {
+          expect(el("div", { children: [el("span", {}), el("b", {})] })).toMatchInlineSnapshot(${v("", bad, `\`
+            <div>
+              <span />
+              <b />
+            </div>
+          \``)});
+          expect(el("div", { children: el("span", {}) })).toMatchInlineSnapshot(${v("", bad, `\`
+            <div>
+              <span />
+            </div>
+          \``)});
+          expect(el("div", {})).toMatchInlineSnapshot(${v("", bad, "`<div />`")});
+          expect(el("p", { children: "hi" })).toMatchInlineSnapshot(${v("", bad, "`<p>hi</p>`")});
+        });
+      `,
+    );
+  });
 });
 test("indented inline snapshots", () => {
   expect("a\nb").toMatchInlineSnapshot(`
@@ -875,6 +898,86 @@ test("indented inline snapshots", () => {
                 }
 `);
   }).toThrow();
+});
+
+function reactElement(type: unknown, props: Record<string, unknown>) {
+  return { $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props };
+}
+
+// jest-snapshot puts a newline on each side of any serialized value that spans several lines
+// (addExtraLineBreaks), whatever its type: a multi-line element is stored as `\n<div>...</div>\n`
+// exactly like an object, while a single-line element is stored bare.
+test("JSX elements", () => {
+  const children = reactElement("div", { children: [reactElement("span", {}), reactElement("b", {})] });
+  const longText = reactElement("p", { children: Buffer.alloc(128, "x").toString() });
+  const objectProp = reactElement("div", { style: { color: "red" } });
+  const selfClosing = reactElement("div", {});
+  const stringProp = reactElement("div", { id: "a" });
+  const shortText = reactElement("p", { children: "hi" });
+  const nested = { el: reactElement("div", { children: reactElement("span", {}) }) };
+
+  expect(children).toMatchSnapshot("children");
+  expect(longText).toMatchSnapshot("long text child");
+  expect(objectProp).toMatchSnapshot("object prop");
+  expect(selfClosing).toMatchSnapshot("self-closing");
+  expect(stringProp).toMatchSnapshot("string prop");
+  expect(shortText).toMatchSnapshot("short text child");
+  expect(nested).toMatchSnapshot("nested in object");
+
+  expect(children).toMatchInlineSnapshot(`
+    <div>
+      <span />
+      <b />
+    </div>
+  `);
+  expect(longText).toMatchInlineSnapshot(`
+    <p>
+      xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    </p>
+  `);
+  expect(objectProp).toMatchInlineSnapshot(`
+    <div style={
+        "color": "red",
+      } />
+  `);
+  expect(selfClosing).toMatchInlineSnapshot(`<div />`);
+  expect(stringProp).toMatchInlineSnapshot(`<div id="a" />`);
+  expect(shortText).toMatchInlineSnapshot(`<p>hi</p>`);
+  expect(nested).toMatchInlineSnapshot(`
+    {
+      "el": <div>
+        <span />
+      </div>,
+    }
+  `);
+});
+
+test("a .snap of a multi-line JSX element written by jest matches", async () => {
+  const snap =
+    "// Jest Snapshot v1, https://jest.dev/docs/expect#tomatchsnapshot\n\n" +
+    "exports[`renders a list 1`] = `\n<ul>\n  <li />\n  <li />\n</ul>\n`;\n";
+  using dir = tempDir("jest-jsx-snap", {
+    "list.test.ts": /*js*/ `
+      import { expect, test } from "bun:test";
+      const el = (type, props) => ({ $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props });
+      test("renders a list", () => {
+        expect(el("ul", { children: [el("li", {}), el("li", {})] })).toMatchSnapshot();
+      });
+    `,
+    "__snapshots__/list.test.ts.snap": snap,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./list.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass\n");
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect(await Bun.file(`${dir}/__snapshots__/list.test.ts.snap`).text()).toBe(snap);
 });
 
 test("error snapshots", () => {

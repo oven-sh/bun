@@ -12,13 +12,14 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     -> FilePoll::on_kqueue_event / on_epoll_event -> FilePoll::on_update
 //       -> __bun_run_file_poll                   (src/runtime/dispatch.rs)
 //         -> Resolver::on_dns_poll               (src/runtime/dns_jsc/dns.rs)
+//         -> memory_pressure::on_poll            (src/runtime/node/memory_pressure.rs)
 //
 // The owner that runs at the bottom of that stack reaches the same slot through
 // the pointer it keeps itself (`FilePollRef`, `PollerPosix::Fd`, the resolver's
 // poll map, and for the DNS frame c-ares' socket-state callback from inside
 // `Channel::process`): a one-shot re-arm reads and clears the `NeedsRearm` that
 // `on_update` just set, and a reader at EOF / an exited process / a closed
-// c-ares socket deinits the slot. Those are accesses through a pointer foreign
+// c-ares socket / a dead PSI trigger deinits the slot. Those are accesses through a pointer foreign
 // to any `&mut self` / `&mut FilePoll` argument still live up the stack, and a
 // reference argument is protected for the whole call under both aliasing models
 // (the same protector rule self-receiver-reclaim.test.ts describes for frees;
@@ -43,11 +44,13 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     coerce to `*mut` and compile. The entry point decodes the tagged pointer
 //     it gets from uSockets, so its pointer is the body's
 //     `let <name>: *mut FilePoll = ..` binding;
-//   - body: no `let` binding is a `&[mut] FilePoll`, or has a `&mut *..` /
-//     `unsafe { ...as_mut()... }` reborrow as its whole initializer, i.e. no
-//     frame holds a reference into the slot beyond a single statement.
-//     Statement-scoped accesses (`(*p).flags`, `(*p).update_flags(..)`) are
-//     the intended shape and are not matched.
+//   - body: no `let` binding is a `&[mut] FilePoll`, and no `let` initializer
+//     starts with a reborrow of the frame's pointer (`&*p`, `&mut *p`,
+//     `&mut (*p)`, `p.as_ref()`, `p.as_mut()`, with or without `unsafe { }`),
+//     i.e. no frame holds a reference into the slot beyond a single statement.
+//     Statement-scoped accesses (`(*p).flags`, `(*p).update_flags(..)`,
+//     `helper(unsafe { &mut *p })`) are the intended shape and are not
+//     matched.
 //
 // A new frame on the chain goes into CHAIN (and into the `handsTo` of the frame
 // above it); a new `__bun_run_file_poll` arm that passes the poll to a handler
@@ -57,8 +60,10 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // writer-parent-mut-borrow.test.ts.
 
 interface Frame {
-  /** Function name; unique across the Rust tree. */
+  /** Function name; unique across the Rust tree unless `file` narrows it. */
   name: string;
+  /** Repo-relative file that defines the frame, for a name other files also use. */
+  file?: string;
   /**
    * How the poll reaches the frame. `receiver`: a method on FilePoll itself.
    * `param`: a free function or a method on something else, with the poll as
@@ -78,15 +83,13 @@ const CHAIN: Frame[] = [
   { name: "on_epoll_event", poll: "receiver", handsTo: ["on_update"] },
   { name: "on_update", poll: "receiver", handsTo: ["__bun_run_file_poll"] },
   // Matches the definition in dispatch.rs and the `extern "Rust"` declaration
-  // in posix_event_loop.rs (declaration: signature only). `on_dns_poll` is the
-  // one arm that passes the poll on to a handler which re-arms or deinits it.
-  { name: "__bun_run_file_poll", poll: "param", handsTo: ["on_dns_poll"] },
+  // in posix_event_loop.rs (declaration: signature only). These two arms pass
+  // the poll on to a handler which re-arms or deinits it; every other arm hands
+  // its owner only `size_or_offset` / `hup`.
+  { name: "__bun_run_file_poll", poll: "param", handsTo: ["memory_pressure::on_poll", "on_dns_poll"] },
   { name: "on_dns_poll", poll: "param", handsTo: [] },
+  { name: "on_poll", file: "src/runtime/node/memory_pressure.rs", poll: "param", handsTo: [] },
 ];
-
-// Documented, ratcheted exceptions: files allowed to report exactly N
-// violations. Empty by design; prefer converting over adding an entry here.
-const ALLOW: Record<string, number> = {};
 
 const POLL_TYPE = String.raw`(?:[\w]+::)*(?:FilePoll|Self)\b`;
 const RAW_POLL_PARAM = new RegExp(String.raw`^\s*(\w+)\s*:\s*\*\s*mut\s+${POLL_TYPE}`);
@@ -101,12 +104,25 @@ const REF_POLL_BINDING = new RegExp(
   String.raw`\blet\s+(?:mut\s+)?\w+\s*:\s*&\s*(?:'\w+\s+)?(?:mut\s+)?${POLL_TYPE}`,
   "g",
 );
-// A reborrow as the whole initializer: `let x = unsafe { &mut *p };`,
-// `let x = &mut *p;`, `let x = unsafe { p.as_mut().unwrap_unchecked() };`.
+// A `&mut` reborrow of any pointer as the whole initializer: `let x = unsafe {
+// &mut *p };`, `let x = &mut *p;`, `let x = unsafe { p.as_mut().unwrap_unchecked() };`.
+// Used when the frame's own pointer is not known (already reported).
 // `unsafe { &*loop_ }.current_ready_event()` and other statement-scoped
 // reborrows continue past the `}` and do not match.
 const REBORROW_BINDING =
   /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;{}]*)?=\s*(?:unsafe\s*\{\s*&mut\s+\*[^;{}]*\}|&mut\s+\*[^;{}]*|unsafe\s*\{[^;{}]*\.as_mut\(\)[^;{}]*\})\s*;/g;
+// A `let` whose initializer starts with a reference derived from the frame's
+// pointer, shared or mutable, however it continues: `let x = unsafe { &*p };`,
+// `let x = unsafe { &mut (*p) };`, `let x = unsafe { p.as_mut() }.unwrap();`,
+// `let x = p.as_ref().unwrap();`. A reborrow passed as an argument inside the
+// initializer (`let n = f(unsafe { &mut *p });`) ends with the statement and
+// does not match.
+function reborrowOf(pointer: string): RegExp {
+  return new RegExp(
+    String.raw`\blet\s+(?:mut\s+)?[^=;]*?=\s*(?:unsafe\s*\{\s*)?(?:&\s*(?:mut\s+)?\(?\s*\*\s*${pointer}\b|\b${pointer}\s*\.\s*as_(?:ref|mut)\s*\(\))[^;]*;`,
+    "g",
+  );
+}
 
 function splitParams(params: string): string[] {
   const out: string[] = [];
@@ -156,6 +172,7 @@ function analyze(source: string, stripped: string): Analysis {
   const found: string[] = [];
   const offenders: string[] = [];
   for (const frame of CHAIN) {
+    if (frame.file !== undefined && frame.file !== source) continue;
     const header = new RegExp(String.raw`\bfn\s+${frame.name}\s*(?:<[^>]*>)?\s*\(`, "g");
     for (const m of stripped.matchAll(header)) {
       const line = lineOf(stripped, m.index);
@@ -200,7 +217,7 @@ function analyze(source: string, stripped: string): Analysis {
       for (const b of body.matchAll(REF_POLL_BINDING)) {
         complain(`line ${bodyLine(b.index)} binds the poll as a reference: ${squash(b[0])}`);
       }
-      for (const b of body.matchAll(REBORROW_BINDING)) {
+      for (const b of body.matchAll(pointer === undefined ? REBORROW_BINDING : reborrowOf(pointer))) {
         complain(`line ${bodyLine(b.index)} keeps a reborrow for the rest of the frame: ${squash(b[0])}`);
       }
 
@@ -251,7 +268,6 @@ const tracked: Set<string> | null = (() => {
 
 const found: string[] = [];
 const offenders: string[] = [];
-const counts: Record<string, number> = {};
 let scanned = 0;
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
@@ -265,8 +281,7 @@ for (const abs of rustSources) {
   if (!CHAIN.some(frame => content.includes(frame.name))) continue;
   const analysis = analyze(source, strip(content));
   found.push(...analysis.found);
-  if (analysis.offenders.length > 0) counts[source] = analysis.offenders.length;
-  offenders.push(...analysis.offenders.slice(ALLOW[source] ?? 0));
+  offenders.push(...analysis.offenders);
 }
 
 test("scans a non-empty set of tracked Rust sources and finds every frame of the chain", () => {
@@ -324,6 +339,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     let poll_ref = unsafe { &mut *poll };
     let owner = poll_ref.owner;
     match owner.tag() {
+        poll_tag::MEMORY_PRESSURE => {
+            crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
+        }
         poll_tag::DNS_RESOLVER => {
             let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
             resolver.on_dns_poll(unsafe { &mut *poll });
@@ -341,9 +359,9 @@ impl Resolver {
 
 // The chain as converted. Exercises a raw `self` receiver, a path-qualified
 // pointee type in the declaration, a return type before the body, the
-// statement-scoped spellings that must not match, and the non-chain arms of
-// `__bun_run_file_poll` (a macro binding, a shared reborrow of the owner, a
-// statement-scoped `&mut *poll` argument to a handler outside the chain).
+// statement-scoped spellings that must not match, and a non-chain arm of
+// `__bun_run_file_poll` (a macro binding and a `&mut *h` reborrow of the
+// owner, which is not the poll).
 const AFTER = strip(`
 unsafe extern "Rust" {
     fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);
@@ -408,7 +426,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     }
     match owner.tag() {
         poll_tag::MEMORY_PRESSURE => {
-            crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
+            unsafe { crate::node::memory_pressure::on_poll(poll, size_or_offset) };
         }
         poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| {
             unsafe { crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup) }
@@ -434,6 +452,37 @@ impl Resolver {
 }
 `);
 
+// The memory-pressure handler, located by file since other owners also have an
+// `on_poll`. Before: the poll arrives by reference. After: statement-scoped
+// reads, a reborrow handed to a helper as an argument (ends with the
+// statement), and an `as_mut()` on a pointer that is not the poll.
+const MP_FILE = "src/runtime/node/memory_pressure.rs";
+const MP_BEFORE = strip(`
+    pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
+        let vm = VirtualMachine::get_mut();
+        if poll.flags.contains(Flags::Eof) || poll.flags.contains(Flags::Hup) {
+            drop(take_watcher(vm));
+            deinit_poll(poll);
+            return;
+        }
+        vm.enqueue_task(super::pressure_task(fflags as i32));
+    }
+`);
+const MP_AFTER = strip(`
+    pub(crate) unsafe fn on_poll(poll: *mut FilePoll, fflags: i64) {
+        let vm = VirtualMachine::get_mut();
+        let dead = unsafe { (*poll).flags.contains(Flags::Eof) || (*poll).flags.contains(Flags::Hup) };
+        if dead {
+            drop(take_watcher(vm));
+            deinit_poll(unsafe { &mut *poll });
+            return;
+        }
+        let watcher = unsafe { raw.cast::<MemoryPressureWatcher>().as_mut() };
+        let fd = unsafe { (*poll).fd };
+        vm.enqueue_task(super::pressure_task(fflags as i32));
+    }
+`);
+
 /** `AFTER` with `from` (which must occur exactly once) replaced by `to`. */
 function mutate(from: string, to: string): string {
   const at = AFTER.indexOf(from);
@@ -450,7 +499,7 @@ test("the analysis reports the pre-conversion chain", () => {
       "before.rs:14: on_epoll_event",
       "before.rs:19: on_update",
       "before.rs:41: __bun_run_file_poll",
-      "before.rs:54: on_dns_poll",
+      "before.rs:57: on_dns_poll",
     ],
     offenders: [
       "before.rs:24: Bun__internal_dispatch_ready_poll: does not bind the decoded poll as `let <name>: *mut FilePoll = ..`",
@@ -463,11 +512,24 @@ test("the analysis reports the pre-conversion chain", () => {
       "before.rs:19: on_update: takes the poll as `&mut self`; it must arrive as `this: *mut FilePoll`",
       "before.rs:19: on_update: has no `*mut FilePoll` parameter",
       "before.rs:41: __bun_run_file_poll: line 42 keeps a reborrow for the rest of the frame: let poll_ref = unsafe { &mut *poll };",
-      "before.rs:41: __bun_run_file_poll: line 47 passes `on_dns_poll` `unsafe { &mut *poll }` first, not `poll`",
-      "before.rs:54: on_dns_poll: parameter `poll: &mut FilePoll` takes the poll by reference",
-      "before.rs:54: on_dns_poll: has no `*mut FilePoll` parameter",
+      "before.rs:41: __bun_run_file_poll: line 46 passes `memory_pressure::on_poll` `unsafe { &mut *poll }` first, not `poll`",
+      "before.rs:41: __bun_run_file_poll: line 50 passes `on_dns_poll` `unsafe { &mut *poll }` first, not `poll`",
+      "before.rs:57: on_dns_poll: parameter `poll: &mut FilePoll` takes the poll by reference",
+      "before.rs:57: on_dns_poll: has no `*mut FilePoll` parameter",
     ],
   });
+});
+
+test("a frame located by file is checked there and nowhere else", () => {
+  expect(analyze(MP_FILE, MP_BEFORE)).toEqual({
+    found: [`${MP_FILE}:2: on_poll`],
+    offenders: [
+      `${MP_FILE}:2: on_poll: parameter \`poll: &mut FilePoll\` takes the poll by reference`,
+      `${MP_FILE}:2: on_poll: has no \`*mut FilePoll\` parameter`,
+    ],
+  });
+  expect(analyze(MP_FILE, MP_AFTER)).toEqual({ found: [`${MP_FILE}:2: on_poll`], offenders: [] });
+  expect(analyze("src/runtime/node/other.rs", MP_BEFORE)).toEqual({ found: [], offenders: [] });
 });
 
 test("the analysis accepts the converted chain", () => {
@@ -525,6 +587,30 @@ test("the analysis reports a reference frame re-introduced anywhere on the chain
     "m.rs:27: on_update: line 33 keeps a reborrow for the rest of the frame: let slot = unsafe { self.as_mut().unwrap_unchecked() };",
   ]);
 
+  // A shared reborrow, a parenthesised deref, and an `as_ref()` whose `unsafe`
+  // block ends before the rest of the initializer.
+  const sharedReborrow = mutate(
+    "unsafe { (*this).update_flags(Flags::from_epoll_event(epoll_event)) };",
+    "let poll = unsafe { &*this };\n        poll.update_flags(Flags::from_epoll_event(epoll_event));",
+  );
+  expect(analyze("m.rs", sharedReborrow).offenders).toEqual([
+    "m.rs:19: on_epoll_event: line 23 keeps a reborrow for the rest of the frame: let poll = unsafe { &*this };",
+  ]);
+  const parenthesised = mutate(
+    'syslog!("onKQueueEvent: {}", unsafe { &*this });',
+    'let poll = unsafe { &mut (*this) };\n        syslog!("onKQueueEvent: {}", poll);',
+  );
+  expect(analyze("m.rs", parenthesised).offenders).toEqual([
+    "m.rs:7: on_kqueue_event: line 10 keeps a reborrow for the rest of the frame: let poll = unsafe { &mut (*this) };",
+  ]);
+  const asRef = mutate(
+    "let fd = unsafe { (*poll).fd.native() };",
+    "let slot = unsafe { poll.as_ref() }.unwrap_unchecked();\n        let fd = slot.fd.native();",
+  );
+  expect(analyze("m.rs", asRef).offenders).toEqual([
+    "m.rs:79: on_dns_poll: line 80 keeps a reborrow for the rest of the frame: let slot = unsafe { poll.as_ref() }.unwrap_unchecked();",
+  ]);
+
   // The entry point has to name the pointer's type for its hand-offs to be checkable.
   const untypedEntry = mutate(
     "let file_poll: *mut FilePoll = tag.as_file_poll();",
@@ -542,12 +628,4 @@ test("the analysis reports a reference frame re-introduced anywhere on the chain
 
 test("every frame of the FilePoll dispatch chain carries the poll as a raw pointer", () => {
   expect(offenders).toEqual([]);
-});
-
-test("allowlisted files still report exactly their documented count", () => {
-  // Ratchet: once an allowlisted frame is converted, delete its entry so a new
-  // violation cannot take its place.
-  for (const [source, n] of Object.entries(ALLOW)) {
-    expect(counts[source] ?? 0).toBe(n);
-  }
 });

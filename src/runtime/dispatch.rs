@@ -798,8 +798,9 @@ pub(crate) fn tick_queue_with_count(
 /// `FileSink` / `DNSResolver` / etc.
 ///
 /// # Safety
-/// `poll` must point at a live [`FilePoll`] for the duration of the call
-/// (guaranteed by `FilePoll::on_update`, the only caller).
+/// `poll` must point at a live [`FilePoll`] on entry (guaranteed by
+/// `FilePoll::on_update`, the only caller). The owner may deinit it; nothing
+/// reads it after the owner returns.
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
@@ -851,8 +852,8 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
         }
         poll_tag::MEMORY_PRESSURE => {
-            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
-            crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
+            // SAFETY: `poll` is live (caller contract).
+            unsafe { crate::node::memory_pressure::on_poll(poll, size_or_offset) };
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);

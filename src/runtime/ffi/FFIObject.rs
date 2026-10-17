@@ -484,6 +484,13 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         ));
     }
 
+    // A fast view's vector moves at DFG tier-up: https://github.com/oven-sh/bun/issues/32054
+    if !value.materialize_array_buffer_view_buffer() {
+        return global_this.throw_out_of_memory_value();
+    }
+    let stable = value.as_array_buffer(global_this).unwrap_or(array_buffer);
+    let addr = (stable.ptr as usize).wrapping_add(addr.wrapping_sub(array_buffer.ptr as usize));
+
     debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
 
     JSValue::from_ptr_address(addr)

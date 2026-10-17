@@ -2361,6 +2361,8 @@ fn bind_row_without_manifest(
             let github_url;
             let url: &[u8] = match res.tag {
                 ResolutionTag::Github => {
+                    // Resolving asks for the ref as written: a dependency has no commit.
+                    debug_assert!(res.github().resolved.is_empty());
                     github_url = this.alloc_github_url(res.github());
                     &github_url
                 }

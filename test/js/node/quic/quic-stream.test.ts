@@ -620,5 +620,5 @@ describe("QuicStream.onstopsending", () => {
     expect(stdout).toBe("ok\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 });

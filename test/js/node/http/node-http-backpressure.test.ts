@@ -14,6 +14,7 @@ import http2 from "node:http2";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { Duplex, duplexPair, finished, Readable } from "node:stream";
 import nodeTls from "node:tls";
@@ -2406,4 +2407,123 @@ describe("backpressure", () => {
 
     expect(totalBytes).toBe(totalSize + smallPayloadSize);
   }, 30_000);
+
+  // One call with more than INT_MAX bytes. The socket layer takes an int length per write, so the bytes leave in
+  // pieces. A second request is pipelined behind the first: its response must start right behind the last body byte.
+  //
+  // What Node.js does depends on libuv: Node.js hands the whole buffer to uv_write(). Up to libuv 1.52 that sends it
+  // on Linux and fails with EINVAL on macOS. From libuv 1.53 uv_write() rejects more than 0x7ffff000 bytes everywhere.
+  describe("a body of more than INT_MAX bytes in one call arrives whole", () => {
+    const size = 2 ** 31; // one past INT_MAX
+
+    // The server is a child process, so its memory stays out of the test runner. The body is zero-filled and
+    // only its two ends are written to ("A" and "Z"): on Linux the pages in between cost no memory.
+    // `wireLength` is the number of bytes the first response has behind its head. Returns its framing header, how
+    // many of those bytes came, the first 16 and the last 16 of them, and the status line and body of the response
+    // behind it.
+    async function pipelined(respond: string, wireLength: number) {
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          `const server = require("node:http").createServer((req, res) => {
+            if (req.url === "/after") return res.end("after");
+            const body = Buffer.alloc(${size});
+            body.fill("A", 0, 32);
+            body.fill("Z", ${size - 32});
+            ${respond}
+            server.unref();
+          });
+          server.listen(0, "127.0.0.1", () => console.log(server.address().port));`,
+        ],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      try {
+        const exited = once(child, "exit");
+        const [portLine] = await Promise.race([
+          once(child.stdout!, "data"),
+          exited.then(([code, signal]) => {
+            throw new Error(`server exited before listening: code ${code}, signal ${signal}`);
+          }),
+        ]);
+        const client = net.connect(Number(portLine.toString()), "127.0.0.1");
+        try {
+          let head: Buffer | undefined = Buffer.alloc(0);
+          let framing: string | undefined;
+          let length = 0;
+          let start = Buffer.alloc(0);
+          let end = Buffer.alloc(0);
+          const after: Buffer[] = [];
+          const count = (chunk: Buffer) => {
+            const left = wireLength - length;
+            if (chunk.length > left) {
+              after.push(chunk.subarray(left));
+              chunk = chunk.subarray(0, left);
+            }
+            if (start.length < 16) start = Buffer.concat([start, chunk.subarray(0, 16 - start.length)]);
+            end = chunk.length >= 16 ? chunk.subarray(-16) : Buffer.concat([end, chunk]).subarray(-16);
+            length += chunk.length;
+          };
+          client.on("data", (chunk: Buffer) => {
+            if (head === undefined) return count(chunk);
+            head = Buffer.concat([head, chunk]);
+            const headEnd = head.indexOf("\r\n\r\n");
+            if (headEnd === -1) return;
+            framing = /^(?:content-length|transfer-encoding): .*$/im.exec(head.latin1Slice(0, headEnd))?.[0];
+            const rest = head.subarray(headEnd + 4);
+            head = undefined;
+            count(rest);
+          });
+          client.write(
+            "GET / HTTP/1.1\r\nHost: localhost\r\n\r\nGET /after HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+          );
+          await once(client, "end");
+          const next = Buffer.concat(after).latin1Slice();
+          return {
+            framing,
+            length,
+            start: start.latin1Slice(),
+            end: end.latin1Slice(),
+            next: [next.slice(0, next.indexOf("\r\n")), next.slice(next.indexOf("\r\n\r\n") + 4)],
+            exit: await exited,
+          };
+        } finally {
+          client.destroy();
+        }
+      } finally {
+        child.kill();
+      }
+    }
+
+    // The server queues a copy of what the kernel does not take at once, about 2 GiB.
+    const memory = Math.min(os.totalmem(), process.constrainedMemory() || Infinity);
+    it.skipIf(memory < 10 * 1024 ** 3)(
+      "res.end(body)",
+      async () => {
+        expect(await pipelined(`res.end(body);`, size)).toEqual({
+          framing: `Content-Length: ${size}`,
+          length: size,
+          start: "AAAAAAAAAAAAAAAA",
+          end: "ZZZZZZZZZZZZZZZZ",
+          next: ["HTTP/1.1 200 OK", "after"],
+          exit: [0, null],
+        });
+      },
+      120_000,
+    );
+
+    // The server keeps the buffer by reference and writes the rest of it as the socket drains. It copies nothing,
+    // so this one needs no memory.
+    it("res.write(body)", async () => {
+      const wireLength = "80000000\r\n".length + size + "\r\n0\r\n\r\n".length;
+      expect(await pipelined(`res.write(body, () => res.end());`, wireLength)).toEqual({
+        framing: "Transfer-Encoding: chunked",
+        length: wireLength,
+        start: "80000000\r\nAAAAAA",
+        end: "ZZZZZZZZZ\r\n0\r\n\r\n",
+        next: ["HTTP/1.1 200 OK", "after"],
+        exit: [0, null],
+      });
+    }, 120_000);
+  });
 });

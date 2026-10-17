@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "path";
 
 test("coverage crash", () => {
@@ -1057,5 +1058,306 @@ test("b", () => {
       hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +\d+\.\d+ \| \d/),
       both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
     });
+  });
+});
+
+// The report names a module by its source URL, relative to the cwd when it is a file.
+const longerThanAPathBuffer = MAX_PATH_BYTES + 64;
+// The start of a name that is an absolute path on this platform: `/virtual/` or `C:\virtual\`.
+const virtualRoot = path.join(path.parse(realpathSync.native(tmpdir())).root, "virtual") + path.sep;
+
+// `virtual` and `urls` are JavaScript expressions: ids of Bun.plugin `build.module()` modules,
+// and URLs to import.
+function namesFixture({
+  virtual = [],
+  urls = [],
+  bunfig = "",
+}: {
+  virtual?: string[];
+  urls?: string[];
+  bunfig?: string;
+}) {
+  return {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = false\n${bunfig}`,
+    "helper.ts": `
+export function helper() {
+  return "helper";
+}
+`,
+    "names.test.ts": `
+import { test, expect } from "bun:test";
+import { helper } from "./helper";
+
+const virtual = [${virtual.join(", ")}];
+const urls = [${urls.join(", ")}];
+
+Bun.plugin({
+  name: "virtual",
+  setup(build) {
+    for (const id of virtual) {
+      build.module(id, () => ({
+        contents: "export function used() { return 1; }\\nexport function unused() { return 0; }\\n",
+        loader: "js",
+      }));
+    }
+  },
+});
+
+test("imports modules that are not files", async () => {
+  for (const id of virtual) expect((await import(id)).used()).toBe(1);
+  for (const url of urls) expect((await import(url)).default).toBe(1);
+  expect(helper()).toBe("helper");
+});
+`,
+  };
+}
+
+const long = (prefix: string, length = longerThanAPathBuffer) =>
+  prefix + Buffer.alloc(length - prefix.length, "x").toString();
+// The same names as expressions for a fixture.
+const longExpr = (prefix: string, length = longerThanAPathBuffer) =>
+  `${JSON.stringify(prefix)} + Buffer.alloc(${length - prefix.length}, "x").toString()`;
+
+async function runCoverage(dir: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", ...args],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
+}
+
+// The rows of the text table with each long name replaced by its label and the column padding
+// removed, and the `SF:` records of lcov.info. Both sorted: the report orders by the full name,
+// which depends on where the temporary directory is.
+function tableRows(stderr: string, names: Record<string, string> = {}) {
+  return stderr
+    .split("\n")
+    .filter(line => line.includes(" | "))
+    .map(line => withLabels(line, names).replace(/ {2,}/g, " "))
+    .sort();
+}
+function lcovSourceFiles(dir: string, names: Record<string, string> = {}) {
+  return readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8")
+    .split("\n")
+    .filter(line => line.startsWith("SF:"))
+    .map(line => withLabels(line, names))
+    .sort();
+}
+function withLabels(line: string, names: Record<string, string>) {
+  for (const [label, name] of Object.entries(names)) line = line.replace(name, label);
+  return line;
+}
+
+describe.concurrent("modules that are not files", () => {
+  test("are reported under their source URL as it is", async () => {
+    const ids = ["virt//dots/../x/./lib", "myns:some//path/../x", "ns:back\\slash", "trailing/"];
+    using dir = tempDir("cov-names", namesFixture({ virtual: ids.map(id => JSON.stringify(id)) }));
+
+    const { stderr, exitCode } = await runCoverage(String(dir), "--coverage-reporter=text", "--coverage-reporter=lcov");
+
+    expect(tableRows(stderr)).toEqual(
+      [
+        "File | % Funcs | % Lines | Uncovered Line #s",
+        "All files | 66.67 | 100.00 |",
+        " helper.ts | 100.00 | 100.00 | ",
+        " names.test.ts | 100.00 | 100.00 | ",
+        ...ids.map(id => ` ${id} | 50.00 | 100.00 | `),
+      ].sort(),
+    );
+    expect(lcovSourceFiles(String(dir))).toEqual(
+      ["helper.ts", "names.test.ts", ...ids].map(name => "SF:" + name).sort(),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("are matched against coveragePathIgnorePatterns by that name", async () => {
+    using dir = tempDir(
+      "cov-names-ignore",
+      namesFixture({
+        virtual: [`"virtual://app/gen.js"`, `"virtual://lib/kept.js"`],
+        bunfig: `coveragePathIgnorePatterns = ["virtual://app/**"]\n`,
+      }),
+    );
+
+    const { stderr, exitCode } = await runCoverage(String(dir), "--coverage-reporter=lcov");
+
+    expect(stderr).toContain(" 1 pass");
+    expect(lcovSourceFiles(String(dir))).toEqual(["SF:helper.ts", "SF:names.test.ts", "SF:virtual://lib/kept.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("are reported when the name is longer than a path buffer", async () => {
+    const names = { "<id>": long("virtual-"), "<abs>": long(virtualRoot) };
+    using dir = tempDir("cov-long", namesFixture({ virtual: [longExpr("virtual-"), longExpr(virtualRoot)] }));
+
+    const { stderr, exitCode } = await runCoverage(String(dir), "--coverage-reporter=text", "--coverage-reporter=lcov");
+
+    expect(tableRows(stderr, names)).toEqual(
+      [
+        "File | % Funcs | % Lines | Uncovered Line #s",
+        "All files | 75.00 | 100.00 |",
+        " helper.ts | 100.00 | 100.00 | ",
+        " names.test.ts | 100.00 | 100.00 | ",
+        " <id> | 50.00 | 100.00 | ",
+        " <abs> | 50.00 | 100.00 | ",
+      ].sort(),
+    );
+    // Such a name does not set the width of the File column.
+    expect(stderr.split("\n").find(line => line.startsWith("File"))).toBe(
+      "File".padEnd("names.test.ts".length + 1) + " | % Funcs | % Lines | Uncovered Line #s",
+    );
+    expect(lcovSourceFiles(String(dir), names)).toEqual(
+      ["SF:helper.ts", "SF:names.test.ts", "SF:<id>", "SF:<abs>"].sort(),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // Every row is fully covered, so the test does not say whether a `data:` module has a row.
+  test("a data: URL longer than a path buffer does not stop the report", async () => {
+    using dir = tempDir("cov-long-data", {
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = false\n`,
+      "helper.ts": `
+export function helper() {
+  return "helper";
+}
+`,
+      "data.test.ts": `
+import { test, expect } from "bun:test";
+import { helper } from "./helper";
+
+test("imports a data: URL", async () => {
+  const url = "data:text/javascript," + encodeURIComponent("export default 1; //") + ${longExpr("")};
+  expect((await import(url)).default).toBe(1);
+  expect(helper()).toBe("helper");
+});
+`,
+    });
+
+    const { stderr, exitCode } = await runCoverage(String(dir), "--coverage-reporter=text", "--coverage-reporter=lcov");
+
+    const notTheUrl = (line: string) => !line.includes("data:text/javascript");
+    expect(tableRows(stderr).filter(notTheUrl)).toEqual(
+      [
+        "File | % Funcs | % Lines | Uncovered Line #s",
+        "All files | 100.00 | 100.00 |",
+        " data.test.ts | 100.00 | 100.00 | ",
+        " helper.ts | 100.00 | 100.00 | ",
+      ].sort(),
+    );
+    expect(lcovSourceFiles(String(dir)).filter(notTheUrl)).toEqual(["SF:data.test.ts", "SF:helper.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("longer than a path buffer are matched against coveragePathIgnorePatterns", async () => {
+    const names = { "<kept>": long("kept-") };
+    using dir = tempDir(
+      "cov-long-ignore",
+      namesFixture({
+        virtual: [longExpr("virtual-"), longExpr("kept-")],
+        bunfig: `coveragePathIgnorePatterns = ["virtual-*"]\n`,
+      }),
+    );
+
+    const { stderr, exitCode } = await runCoverage(String(dir), "--coverage-reporter=lcov");
+
+    expect(stderr).toContain(" 1 pass");
+    expect(lcovSourceFiles(String(dir), names)).toEqual(["SF:helper.ts", "SF:names.test.ts", "SF:<kept>"].sort());
+    expect(exitCode).toBe(0);
+  });
+
+  // The `kept-` module is the only row under the threshold, so the run fails only when a
+  // worker's report of a long name reaches the coordinator.
+  test("longer than a path buffer count toward coverageThreshold under --parallel", async () => {
+    const names = { "<kept>": long("kept-") };
+    using dir = tempDir("cov-long-parallel", {
+      ...namesFixture({
+        virtual: [longExpr("virtual-"), longExpr("kept-")],
+        bunfig: `coveragePathIgnorePatterns = ["virtual-*"]\ncoverageThreshold = { functions = 1.0 }\n`,
+      }),
+      "other.test.ts": `
+import { test, expect } from "bun:test";
+test("other", () => {
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    const { stderr, exitCode } = await runCoverage(
+      String(dir),
+      "--coverage-reporter=text",
+      "--coverage-reporter=lcov",
+      "--parallel=2",
+    );
+
+    expect(tableRows(stderr, names)).toEqual(
+      [
+        "File | % Funcs | % Lines | Uncovered Line #s",
+        "All files | 87.50 | 100.00 |",
+        " helper.ts | 100.00 | 100.00 | ",
+        " names.test.ts | 100.00 | 100.00 | ",
+        " other.test.ts | 100.00 | 100.00 | ",
+        " <kept> | 50.00 | 100.00 | ",
+      ].sort(),
+    );
+    expect(lcovSourceFiles(String(dir), names)).toEqual(
+      ["SF:helper.ts", "SF:names.test.ts", "SF:other.test.ts", "SF:<kept>"].sort(),
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // `relative()` normalizes a POSIX path of up to MAX_PATH_BYTES bytes. A Windows path can
+  // grow by a byte when it is normalized and starts one byte into the buffer.
+  test("that look like a path are made relative up to the longest that relative() takes", async () => {
+    const longest = isWindows ? MAX_PATH_BYTES - 2 : MAX_PATH_BYTES;
+    const lengths = [longest - 1, longest, longest + 1, longest + 2];
+    const ids = lengths.map(length => long(virtualRoot, length));
+    using dir = tempDir("cov-limits", namesFixture({ virtual: lengths.map(length => longExpr(virtualRoot, length)) }));
+
+    const { stderr, exitCode } = await runCoverage(String(dir), "--coverage-reporter=lcov");
+
+    expect(stderr).toContain(" 1 pass");
+    const relative = (id: string) => path.relative(String(dir), id);
+    expect(lcovSourceFiles(String(dir))).toEqual(
+      ["helper.ts", "names.test.ts", relative(ids[0]), relative(ids[1]), ids[2], ids[3]]
+        .map(name => "SF:" + name)
+        .sort(),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // The relative name of this file is longer than a path buffer although both paths fit one.
+  // A Windows path of ASCII names is too short for that: 32,767 characters against 98,302 bytes.
+  test.skipIf(isWindows)("a file far outside a deep cwd keeps its relative name", async () => {
+    using dir = tempDir("cov-deep", {});
+    const root = String(dir);
+    // As many 200-byte names as a path can hold, and enough levels of cwd for the rest.
+    const farNames = Math.floor((MAX_PATH_BYTES - 64 - root.length) / 201);
+    const cwd = path.join(root, ...Array(Math.ceil((MAX_PATH_BYTES + 64 - farNames * 201) / 3)).fill("c"));
+    const farDir = path.join(root, ...Array(farNames).fill(long("f", 200)));
+    const farFile = path.join(farDir, "helper.ts");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(farDir, { recursive: true });
+    writeFileSync(farFile, `export function helper() {\n  return "helper";\n}\n`);
+    writeFileSync(path.join(cwd, "bunfig.toml"), `[test]\ncoverageSkipTestFiles = false\n`);
+    writeFileSync(
+      path.join(cwd, "far.test.ts"),
+      `import { test, expect } from "bun:test";
+import { helper } from ${JSON.stringify(farFile)};
+test("far", () => {
+  expect(helper()).toBe("helper");
+});
+`,
+    );
+    expect(path.relative(cwd, farFile).length).toBeGreaterThan(MAX_PATH_BYTES);
+
+    const { stderr, exitCode } = await runCoverage(cwd, "--coverage-reporter=lcov");
+
+    expect(stderr).toContain(" 1 pass");
+    expect(lcovSourceFiles(cwd)).toEqual(["SF:" + path.relative(cwd, farFile), "SF:far.test.ts"]);
+    expect(exitCode).toBe(0);
   });
 });

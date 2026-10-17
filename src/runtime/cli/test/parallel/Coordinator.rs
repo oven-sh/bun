@@ -201,7 +201,7 @@ impl<'a> Coordinator<'a> {
             for (idx, running_ms) in &running {
                 bun_core::pretty_errorln!(
                     "  {} <d>({}s)<r>",
-                    bstr::BStr::new(self.rel_path(*idx)),
+                    bstr::BStr::new(self.rel_path(*idx, &mut Vec::new())),
                     running_ms / 1000
                 );
             }
@@ -210,7 +210,10 @@ impl<'a> Coordinator<'a> {
                 bun_core::pretty_errorln!("{} file(s) had not started:", not_started);
                 for w in self.workers.iter() {
                     for idx in w.range.lo..w.range.hi {
-                        bun_core::pretty_errorln!("  {}", bstr::BStr::new(self.rel_path(idx)));
+                        bun_core::pretty_errorln!(
+                            "  {}",
+                            bstr::BStr::new(self.rel_path(idx, &mut Vec::new()))
+                        );
                     }
                 }
             }
@@ -363,11 +366,8 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
-        bun_paths::resolve_path::relative(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
-            self.files[file_idx as usize].as_bytes(),
-        )
+    pub(crate) fn rel_path<'s>(&'s self, file_idx: u32, spill: &'s mut Vec<u8>) -> &'s [u8] {
+        rel_path_of(self.files[file_idx as usize].as_bytes(), spill)
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
@@ -386,7 +386,7 @@ impl<'a> Coordinator<'a> {
             header,
             "\n{}{}:\n",
             bstr::BStr::new(file_prefix),
-            bstr::BStr::new(self.rel_path(file_idx))
+            bstr::BStr::new(self.rel_path(file_idx, &mut Vec::new()))
         );
         let _ = Output::error_writer().write_all(&header);
     }
@@ -731,7 +731,7 @@ impl<'a> Coordinator<'a> {
         self.break_dots();
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
-            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(self.rel_path(file_idx, &mut Vec::new())),
             bstr::BStr::new(reason),
         );
         self.reporter.summary().fail += 1;
@@ -755,7 +755,7 @@ impl<'a> Coordinator<'a> {
         self.break_dots();
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
-            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(self.rel_path(file_idx, &mut Vec::new())),
             detail,
         );
         self.reporter.summary().fail += 1;
@@ -782,7 +782,7 @@ impl<'a> Coordinator<'a> {
                 "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
             ),
             bstr::BStr::new(describe_status(&mut buf, status)),
-            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(self.rel_path(file_idx, &mut Vec::new())),
         );
         Output::flush();
         self.terminate_workers_after_panic(b"aborted: worker panicked");
@@ -873,9 +873,9 @@ impl<'a> Coordinator<'a> {
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
                     // Reshaped for borrowck — inline rel_path body
                     // since `self.workers` is mutably borrowed.
-                    bstr::BStr::new(bun_paths::resolve_path::relative(
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
+                    bstr::BStr::new(rel_path_of(
                         self.files[idx as usize].as_bytes(),
+                        &mut Vec::new()
                     )),
                     bstr::BStr::new(reason),
                 );
@@ -918,6 +918,13 @@ impl<'a> Coordinator<'a> {
             Some(job)
         }
     }
+}
+
+/// A test file as the coordinator prints it: relative to the top-level dir.
+fn rel_path_of<'a>(file: &'a [u8], spill: &'a mut Vec<u8>) -> &'a [u8] {
+    use bun_paths::resolve_path::{platform, relative_spill_checked};
+    let top_level_dir = bun_paths::fs::FileSystem::instance().top_level_dir();
+    relative_spill_checked::<platform::Auto>(spill, top_level_dir, file).unwrap_or(file)
 }
 
 /// SIGTERM to the process group a worker leads: the worker and everything it

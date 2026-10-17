@@ -1,7 +1,9 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, MAX_PATH_BYTES, tempDir } from "harness";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, parse, relative, sep } from "node:path";
 
 const xml2js = require("xml2js");
 
@@ -607,6 +609,45 @@ describe("junit reporter", () => {
     expect(sourceUrlCase.failure[0]._).toContain("at fromSourceUrl (webpack://app/./src/x.ts:1:");
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
+  });
+
+  // The relative form has one "../" per level of the cwd in front, so it does not fit a path
+  // buffer although the source URL does.
+  it("makes a stack frame source just short of a path buffer relative in <failure>", async () => {
+    // `/virtual/` or `C:\virtual\`: an absolute path on the drive of the cwd.
+    const virtualRoot = join(parse(realpathSync.native(tmpdir())).root, "virtual") + sep;
+    const padding = MAX_PATH_BYTES - 4 - virtualRoot.length;
+    const sourceURL = virtualRoot + Buffer.alloc(padding, "y").toString();
+
+    await using tmpDir = tempDir("junit-source-url-near-limit", {
+      "package.json": "{}",
+      "near-limit.test.js": `
+        import { test } from "bun:test";
+        test("near the limit", () => {
+          const sourceURL = ${JSON.stringify(virtualRoot)} + Buffer.alloc(${padding}, "y").toString();
+          (0, eval)("(function fromNearLimit() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL)();
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const [nearLimitCase] = result.testsuites.testsuite[0].testcase;
+    // The reporter writes a frame's file with "/" on every platform.
+    const frameFile = relative(String(tmpDir), sourceURL).replaceAll("\\", "/");
+    expect(nearLimitCase.failure[0]._).toContain(`at fromNearLimit (${frameFile}:1:`);
+    expect(exitCode).toBe(1);
   });
 });
 

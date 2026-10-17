@@ -390,7 +390,7 @@ pub mod text {
         writer.write_all(filename)?;
         writer.splat_byte_all(
             b' ',
-            max_filename_length - filename.len() + usize::from(!indent_name),
+            max_filename_length.saturating_sub(filename.len()) + usize::from(!indent_name),
         )?;
         writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
@@ -437,8 +437,9 @@ pub mod text {
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
         let mut filename: &[u8] = &report.source_url;
+        let mut spill = Vec::new();
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            filename = bun_jsc::ZigStackFrame::relative_source_url(base_path, filename, &mut spill);
         }
 
         write_format_with_values::<ENABLE_COLORS>(
@@ -510,8 +511,9 @@ pub mod lcov {
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
         let mut filename: &[u8] = &report.source_url;
+        let mut spill = Vec::new();
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            filename = bun_jsc::ZigStackFrame::relative_source_url(base_path, filename, &mut spill);
         }
 
         // TN: test name

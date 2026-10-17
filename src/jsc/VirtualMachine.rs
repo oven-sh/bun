@@ -7514,7 +7514,9 @@ impl VirtualMachine {
         if let Some(frame) = top_frame {
             if !frame.position.is_invalid() {
                 let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+                let mut spill = Vec::new();
+                let file =
+                    crate::ZigStackFrame::relative_source_url(dir, source_url.slice(), &mut spill);
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
@@ -7579,7 +7581,9 @@ impl VirtualMachine {
             };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+                let mut spill = Vec::new();
+                let file =
+                    crate::ZigStackFrame::relative_source_url(dir, source_url.slice(), &mut spill);
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;

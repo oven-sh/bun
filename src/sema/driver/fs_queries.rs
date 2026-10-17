@@ -17,7 +17,19 @@ pub enum Kind {
 
 impl Kind {
     pub fn from_number(number: u64) -> Option<Kind> {
-        [Kind::Text, Kind::Listing, Kind::IsDirectory, Kind::RealPath, Kind::IsCaseSensitive, Kind::NativeText, Kind::Exists, Kind::Scanned, Kind::Entry].into_iter().find(|&kind| kind as u64 == number)
+        [
+            Kind::Text,
+            Kind::Listing,
+            Kind::IsDirectory,
+            Kind::RealPath,
+            Kind::IsCaseSensitive,
+            Kind::NativeText,
+            Kind::Exists,
+            Kind::Scanned,
+            Kind::Entry,
+        ]
+        .into_iter()
+        .find(|&kind| kind as u64 == number)
     }
 }
 
@@ -48,23 +60,40 @@ pub fn set_working_directory(path: &[u8]) {
 pub(crate) fn child_toward_working_directory(directory: &[u8]) -> Option<Vec<u8>> {
     let working_directory = WORKING_DIRECTORY.lock();
     let below = working_directory.strip_prefix(directory)?;
-    let below = if directory.ends_with(b"/") { below } else { below.strip_prefix(b"/")? };
+    let below = if directory.ends_with(b"/") {
+        below
+    } else {
+        below.strip_prefix(b"/")?
+    };
     let name = bun_core::strings::split(below, b"/").next()?;
     (!name.is_empty()).then(|| name.to_vec())
 }
 
 pub fn begin(hash: Hash) {
-    *RECORDED.lock() = Some(Recording { hash, queries: Vec::new(), is_invalidated: false });
+    *RECORDED.lock() = Some(Recording {
+        hash,
+        queries: Vec::new(),
+        is_invalidated: false,
+    });
     IS_RECORDING.store(true, Ordering::Release);
 }
 
 pub fn end() -> Option<Vec<FsQuery>> {
     IS_RECORDING.store(false, Ordering::Release);
-    let Recording { mut queries, is_invalidated, .. } = RECORDED.lock().take()?;
+    let Recording {
+        mut queries,
+        is_invalidated,
+        ..
+    } = RECORDED.lock().take()?;
     queries.sort_unstable();
     queries.dedup();
-    #[allow(clippy::disallowed_methods, reason = "adjacent-pair check, not a byte search")]
-    let has_conflicting_answers = queries.windows(2).any(|pair| (pair[0].kind, &pair[0].path) == (pair[1].kind, &pair[1].path));
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "adjacent-pair check, not a byte search"
+    )]
+    let has_conflicting_answers = queries
+        .windows(2)
+        .any(|pair| (pair[0].kind, &pair[0].path) == (pair[1].kind, &pair[1].path));
     (!is_invalidated && !has_conflicting_answers).then_some(queries)
 }
 
@@ -95,10 +124,16 @@ pub fn record_query(kind: Kind, path: &[u8], answer: impl FnOnce(Hash) -> u64) {
     if !IS_RECORDING.load(Ordering::Acquire) || IS_RECORDING_SUSPENDED.get() {
         return;
     }
-    let Some(hash) = RECORDED.lock().as_ref().map(|recorded| recorded.hash) else { return };
+    let Some(hash) = RECORDED.lock().as_ref().map(|recorded| recorded.hash) else {
+        return;
+    };
     let answer = answer(hash);
     if let Some(recorded) = RECORDED.lock().as_mut() {
-        recorded.queries.push(FsQuery { kind, path: path.to_vec(), answer });
+        recorded.queries.push(FsQuery {
+            kind,
+            path: path.to_vec(),
+            answer,
+        });
     }
 }
 

@@ -605,16 +605,24 @@ impl Worker {
     pub(crate) fn enter_scan_arena(&mut self) {
         if self.scan_heap.is_none() {
             // SAFETY: the `Worker` is heap-pinned, and `scan_ast_memory_store` is dropped ahead of `scan_heap` wherever either is.
-            let arena: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(self.scan_heap.insert(ThreadLocalArena::new())) };
+            let arena: &'static ThreadLocalArena = unsafe {
+                bun_ptr::detach_lifetime_ref(self.scan_heap.insert(ThreadLocalArena::new()))
+            };
             self.scan_ast_memory_store = Some(bun_ast::ASTMemoryAllocator::borrowing(arena));
         }
         self.ast_memory_store.pop();
-        self.scan_ast_memory_store.as_mut().expect("set above").push();
+        self.scan_ast_memory_store
+            .as_mut()
+            .expect("set above")
+            .push();
         self.is_in_scan_arena = true;
     }
 
     pub(crate) fn leave_scan_arena(&mut self) {
-        self.scan_ast_memory_store.as_mut().expect("set in enter_scan_arena()").pop();
+        self.scan_ast_memory_store
+            .as_mut()
+            .expect("set in enter_scan_arena()")
+            .pop();
         self.ast_memory_store.push();
         self.is_in_scan_arena = false;
     }
@@ -628,7 +636,8 @@ impl Worker {
 
     fn release_scan_arena_callback(task: *mut ThreadPoolLib::Task) {
         // SAFETY: `task` is the `release_scan_arena_task` of a live boxed `Worker`: `release_scan_arena_soon` alone schedules it.
-        let this: *mut Worker = unsafe { bun_core::from_field_ptr!(Worker, release_scan_arena_task, task) };
+        let this: *mut Worker =
+            unsafe { bun_core::from_field_ptr!(Worker, release_scan_arena_task, task) };
         // SAFETY: an idle task runs on the worker's own thread between two tasks, so nothing else borrows the `Worker`.
         unsafe {
             (*this).scan_ast_memory_store = None;

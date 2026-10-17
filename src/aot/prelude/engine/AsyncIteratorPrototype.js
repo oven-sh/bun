@@ -25,25 +25,21 @@
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-%asynciteratorprototype%-@@asyncdispose
 $overriddenName = "[Symbol.asyncDispose]";
-export function asyncDispose()
-{
-    'use strict';
+export function asyncDispose() {
+  "use strict";
 
-    try {
-        var returnMethod = this.return;
-        if ($isUndefinedOrNull(returnMethod))
-            return $newResolvedPromise(undefined);
+  try {
+    var returnMethod = this.return;
+    if ($isUndefinedOrNull(returnMethod)) return $newResolvedPromise(undefined);
 
-        var result = returnMethod.$call(this);
-        var resultWrapper;
-        if ($isPromise(result) && result.constructor === $Promise)
-            resultWrapper = result;
-        else
-            resultWrapper = $newResolvedPromise(result);
-        var promise = $newPromise();
-        $performPromiseThen(resultWrapper, $promiseReturnUndefinedOnFulfilled, undefined, promise);
-        return promise;
-    } catch (e) {
-        return $newRejectedPromise(e);
-    }
+    var result = returnMethod.$call(this);
+    var resultWrapper;
+    if ($isPromise(result) && result.constructor === $Promise) resultWrapper = result;
+    else resultWrapper = $newResolvedPromise(result);
+    var promise = $newPromise();
+    $performPromiseThen(resultWrapper, $promiseReturnUndefinedOnFulfilled, undefined, promise);
+    return promise;
+  } catch (e) {
+    return $newRejectedPromise(e);
+  }
 }

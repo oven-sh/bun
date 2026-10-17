@@ -1564,7 +1564,11 @@ impl Options {
     /// `paths` says, so the file that `paths` has for it is no part of the program. Nothing is known of such a module unless something
     /// declares it.
     pub fn ignore_paths_for_host_modules(&mut self, is_host_module: impl Fn(&[u8]) -> bool) {
-        let (of_host, others): (Paths, Paths) = self.paths.iter().cloned().partition(|path| is_host_module(&path.0));
+        let (of_host, others): (Paths, Paths) = self
+            .paths
+            .iter()
+            .cloned()
+            .partition(|path| is_host_module(&path.0));
         self.paths = std::sync::Arc::new(others);
         self.host_modules_without_paths = of_host.into_iter().map(|path| path.0).collect();
     }
@@ -2637,7 +2641,9 @@ pub(crate) fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
 }
 
 pub(crate) fn is_typed_bundle(path: &[u8]) -> bool {
-    [&b".sound.ts"[..], b".sound.mts", b".sound.cts"].iter().any(|extension| path.ends_with(extension))
+    [&b".sound.ts"[..], b".sound.mts", b".sound.cts"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
 }
 
 /// `GetImpliedNodeFormatForFile`, as far as the extension alone determines it.
@@ -3377,9 +3383,16 @@ impl<'h> Resolver<'h> {
         // `tryLoadModuleUsingBaseUrl`
         let base_urls = match is_relative(spec) {
             true => [&[][..], &[][..]],
-            false => [self.nearest_config_paths(from_dir).map_or(&[][..], |other| &other.base_url[..]), &self.options.base_url[..]],
+            false => [
+                self.nearest_config_paths(from_dir)
+                    .map_or(&[][..], |other| &other.base_url[..]),
+                &self.options.base_url[..],
+            ],
         };
-        for base_url in base_urls.into_iter().filter(|base_url| !base_url.is_empty()) {
+        for base_url in base_urls
+            .into_iter()
+            .filter(|base_url| !base_url.is_empty())
+        {
             let candidate = resolve_path(base_url, spec);
             let found = match self.options.is_classic {
                 true => self.file(&candidate, look),
@@ -3428,7 +3441,10 @@ impl<'h> Resolver<'h> {
         {
             found = Found::of(self.in_type_roots(roots, true, spec, look.for_declarations()));
         }
-        found.file().map(real).map(|found| self.typescript_beside_declarations(found, look))
+        found
+            .file()
+            .map(real)
+            .map(|found| self.typescript_beside_declarations(found, look))
     }
 
     /// `classicNameResolver` of TypeScript 5, after `paths`: a file, in the directory or in one above it. No directory is a
@@ -3511,7 +3527,9 @@ impl<'h> Resolver<'h> {
     pub fn package_directory<'d>(&self, path: &'d [u8]) -> Option<&'d [u8]> {
         let is_narrower_than_module_type = |package: &Package<'h>| !matches!(package.json.as_object(), Some([only]) if only.0 == b"type");
         let directory = dirname::<Posix>(path);
-        ancestors(directory).find(|at| self.package(at).is_some_and(is_narrower_than_module_type)).or_else(|| Some(self.package_scope(directory)?.0))
+        ancestors(directory)
+            .find(|at| self.package(at).is_some_and(is_narrower_than_module_type))
+            .or_else(|| Some(self.package_scope(directory)?.0))
     }
 
     /// `loadSourceFileMetaData`: the `package.json` nearest to the file at `path`
@@ -3753,13 +3771,23 @@ impl<'h> Resolver<'h> {
 
     /// `tryLoadModuleUsingPathsIfEligible`: `tryLoadModuleUsingPaths` with `compilerOptions.paths`.
     fn through_paths(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
-        let own_base = if self.options.paths_base_dir.is_empty() { &self.options.base_dir } else { &self.options.paths_base_dir };
+        let own_base = if self.options.paths_base_dir.is_empty() {
+            &self.options.base_dir
+        } else {
+            &self.options.paths_base_dir
+        };
         self.nearest_config_paths(from_dir)
             .and_then(|other| self.resolve_through_paths(&other.paths, &other.base_dir, spec, look))
             .or_else(|| self.resolve_through_paths(&self.options.paths, own_base, spec, look))
     }
 
-    fn resolve_through_paths(&self, paths: &Paths, base: &[u8], spec: &[u8], look: Look) -> Option<Vec<u8>> {
+    fn resolve_through_paths(
+        &self,
+        paths: &Paths,
+        base: &[u8],
+        spec: &[u8],
+        look: Look,
+    ) -> Option<Vec<u8>> {
         if paths.is_empty() {
             return None;
         }
@@ -3783,29 +3811,42 @@ impl<'h> Resolver<'h> {
         if let Some(&known) = self.config_by_folder.get_ref(folder) {
             return known;
         }
-        let own = [&b"tsconfig.json"[..], b"jsconfig.json"].into_iter().map(|name| join(folder, name)).find(|config| self.is_file(config));
+        let own = [&b"tsconfig.json"[..], b"jsconfig.json"]
+            .into_iter()
+            .map(|name| join(folder, name))
+            .find(|config| self.is_file(config));
         let parent = dirname::<Posix>(folder);
         let found = match own {
             Some(own) => Some(self.keep(&own)),
-            None if parent == folder || parent.is_empty() || folder.ends_with(b"/node_modules") => None,
+            None if parent == folder || parent.is_empty() || folder.ends_with(b"/node_modules") => {
+                None
+            }
             None => self.governing_config(parent),
         };
         *self.config_by_folder.insert_ref(self.keep(folder), found)
     }
 
     fn nearest_config_paths(&self, from_dir: &[u8]) -> Option<&ConfigPaths> {
-        if !self.options.uses_nearest_config_paths || strings::contains(from_dir, b"/node_modules/") {
+        if !self.options.uses_nearest_config_paths || strings::contains(from_dir, b"/node_modules/")
+        {
             return None;
         }
-        let config = self.governing_config(from_dir).filter(|config| dirname::<Posix>(config) != &self.options.base_dir[..])?;
+        let config = self
+            .governing_config(from_dir)
+            .filter(|config| dirname::<Posix>(config) != &self.options.base_dir[..])?;
         if let Some(known) = self.paths_by_config.get_ref(config) {
             return known.as_ref();
         }
-        let found = crate::config::options_for_resolution(self.host, config).map(|options| ConfigPaths {
-            base_dir: if options.paths_base_dir.is_empty() { options.base_dir } else { options.paths_base_dir },
-            paths: options.paths,
-            base_url: options.base_url,
-        });
+        let found =
+            crate::config::options_for_resolution(self.host, config).map(|options| ConfigPaths {
+                base_dir: if options.paths_base_dir.is_empty() {
+                    options.base_dir
+                } else {
+                    options.paths_base_dir
+                },
+                paths: options.paths,
+                base_url: options.base_url,
+            });
         self.paths_by_config.insert_ref(config, found).as_ref()
     }
 
@@ -3914,7 +3955,11 @@ impl<'h> Resolver<'h> {
     /// Resolves the relative specifier `spec` from `from_dir`.
     fn relative(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
         let candidate = normalize_path_for_cjs_resolution(from_dir, spec);
-        let code = if look.typescript { self.typescript_with_js_extension(&candidate, look) } else { None };
+        let code = if look.typescript {
+            self.typescript_with_js_extension(&candidate, look)
+        } else {
+            None
+        };
         code.or_else(|| self.file_or_directory(&candidate, look))
     }
 
@@ -4209,19 +4254,37 @@ impl<'h> Resolver<'h> {
     }
 
     fn typescript_beside_declarations(&self, declarations: Vec<u8>, look: Look) -> Vec<u8> {
-        const EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".d.ts", b".js"), (b".d.mts", b".mjs"), (b".d.cts", b".cjs")];
-        let code = EXTENSIONS.iter().find_map(|(from, to)| Some([declarations.strip_suffix(*from)?, *to].concat()));
-        let is_typescript = |path: &Vec<u8>| look.typescript && self.host.script_kind(path).is_some_and(|kind| !kind.is_javascript());
-        code.filter(is_typescript).filter(|path| self.is_file(path)).unwrap_or(declarations)
+        const EXTENSIONS: [(&[u8], &[u8]); 3] = [
+            (b".d.ts", b".js"),
+            (b".d.mts", b".mjs"),
+            (b".d.cts", b".cjs"),
+        ];
+        let code = EXTENSIONS
+            .iter()
+            .find_map(|(from, to)| Some([declarations.strip_suffix(*from)?, *to].concat()));
+        let is_typescript = |path: &Vec<u8>| {
+            look.typescript
+                && self
+                    .host
+                    .script_kind(path)
+                    .is_some_and(|kind| !kind.is_javascript())
+        };
+        code.filter(is_typescript)
+            .filter(|path| self.is_file(path))
+            .unwrap_or(declarations)
     }
 
     fn typescript_with_js_extension(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
-        [&b""[..], b".js", b".cjs", b".mjs", b"/index.js"].iter().find_map(|ending| {
-            let path = [candidate, *ending].concat();
-            ScriptKind::from_file_name(&path).filter(|kind| kind.is_javascript())?;
-            self.host.script_kind(&path).filter(|kind| !kind.is_javascript())?;
-            self.try_file(&path, look)
-        })
+        [&b""[..], b".js", b".cjs", b".mjs", b"/index.js"]
+            .iter()
+            .find_map(|ending| {
+                let path = [candidate, *ending].concat();
+                ScriptKind::from_file_name(&path).filter(|kind| kind.is_javascript())?;
+                self.host
+                    .script_kind(&path)
+                    .filter(|kind| !kind.is_javascript())?;
+                self.try_file(&path, look)
+            })
     }
 
     /// `loadFileNameFromPackageJSONField`: the file at `path`, which a `package.json` names. A

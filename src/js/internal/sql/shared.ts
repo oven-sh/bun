@@ -2,11 +2,7 @@
 import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = Array;
-const {
-  Query,
-  SQLQueryFlags,
-  stateOf,
-} = require("internal/sql/query");
+const { Query, SQLQueryFlags, stateOf } = require("internal/sql/query");
 
 type ArrayType =
   | "BOOLEAN"

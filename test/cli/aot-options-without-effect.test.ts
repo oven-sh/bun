@@ -10,7 +10,13 @@ const files = {
 };
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -23,9 +29,22 @@ describe.concurrent("an option that configures bytecode is an error with --aot",
     ["--bytecode-order=app.order", "--bytecode-order"],
   ])("bun build --compile --aot %s", async (flag, name) => {
     using dir = tempDir("aot-bytecode-flag", files);
-    const { stdout, stderr, exitCode } = await bun(String(dir), "build", "--compile", "--aot", flag, "app.ts", "--outfile", "out");
+    const { stdout, stderr, exitCode } = await bun(
+      String(dir),
+      "build",
+      "--compile",
+      "--aot",
+      flag,
+      "app.ts",
+      "--outfile",
+      "out",
+    );
     if (unsupported.test(stderr)) return;
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: `error: --aot does not support ${name}\n`, exitCode: 1 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: `error: --aot does not support ${name}\n`,
+      exitCode: 1,
+    });
     expect(existsSync(join(String(dir), isWindows ? "out.exe" : "out"))).toBe(false);
   });
 
@@ -50,14 +69,33 @@ describe.concurrent("an option that configures bytecode is an error with --aot",
 
   test("--bytecode is implied by --aot and may be combined with it", async () => {
     using dir = tempDir("aot-with-bytecode", files);
-    const { stderr, exitCode } = await bun(String(dir), "build", "--compile", "--aot", "--bytecode", "app.ts", "--outfile", "out");
+    const { stderr, exitCode } = await bun(
+      String(dir),
+      "build",
+      "--compile",
+      "--aot",
+      "--bytecode",
+      "app.ts",
+      "--outfile",
+      "out",
+    );
     if (unsupported.test(stderr)) return;
     expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
   }, 60_000);
 
   test("without --aot they are accepted as before", async () => {
     using dir = tempDir("bytecode-flags-without-aot", files);
-    const { stderr, exitCode } = await bun(String(dir), "build", "--compile", "--bytecode", "--format=esm", "--bytecode-depth=1", "app.ts", "--outfile", "out");
+    const { stderr, exitCode } = await bun(
+      String(dir),
+      "build",
+      "--compile",
+      "--bytecode",
+      "--format=esm",
+      "--bytecode-depth=1",
+      "app.ts",
+      "--outfile",
+      "out",
+    );
     expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
   }, 60_000);
 });

@@ -18,6 +18,9 @@ test("without --aot, the error for a new property on a sealed global object does
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr }).toEqual({ stdout: "Attempting to define property on object that is not extensible.\n", stderr: "" });
+  expect({ stdout, stderr }).toEqual({
+    stdout: "Attempting to define property on object that is not extensible.\n",
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });

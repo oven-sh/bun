@@ -25,10 +25,23 @@ pub(super) struct Site {
     pub access: Access,
 }
 
-pub(super) fn find_sites(program: &Program, is_wanted_module: &[bool], in_parallel: InParallel<'_>) -> Vec<Site> {
-    let mut tasks: Vec<(&[Func], Vec<Site>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Vec::new())).collect();
+pub(super) fn find_sites(
+    program: &Program,
+    is_wanted_module: &[bool],
+    in_parallel: InParallel<'_>,
+) -> Vec<Site> {
+    let mut tasks: Vec<(&[Func], Vec<Site>)> = program
+        .funcs
+        .chunks(FUNCTIONS_PER_TASK)
+        .map(|funcs| (funcs, Vec::new()))
+        .collect();
     for_each_mut(&mut tasks, in_parallel, &|(funcs, found)| {
-        let is_searched = |func: &&Func| func.flags & func_flags::IS_TYPED != 0 && func.flags & (func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) == 0 && func.module.is_some() && is_wanted_module[func.module.idx()];
+        let is_searched = |func: &&Func| {
+            func.flags & func_flags::IS_TYPED != 0
+                && func.flags & (func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) == 0
+                && func.module.is_some()
+                && is_wanted_module[func.module.idx()]
+        };
         for func in funcs.iter().filter(is_searched) {
             for value in &func.values {
                 let (obj, name, access) = match value.def {
@@ -38,8 +51,15 @@ pub(super) fn find_sites(program: &Program, is_wanted_module: &[bool], in_parall
                     _ => continue,
                 };
                 let receiver = func.values[obj.idx()].ty;
-                if !matches!(func.op(obj), Some(Op::FreeGet { .. })) && (receiver.is_none() || program.tys.get(receiver).any_object) {
-                    found.push(Site { module: func.module.idx() as u32, pos: value.pos, name, access });
+                if !matches!(func.op(obj), Some(Op::FreeGet { .. }))
+                    && (receiver.is_none() || program.tys.get(receiver).any_object)
+                {
+                    found.push(Site {
+                        module: func.module.idx() as u32,
+                        pos: value.pos,
+                        name,
+                        access,
+                    });
                 }
             }
         }
@@ -59,27 +79,49 @@ pub(super) struct Chain {
     pub begins_with_a_store: bool,
 }
 
-pub(super) fn find_chains(program: &Program, checked: &Checked<'_>, modules: &[FileId], sites: &[Site]) -> Vec<Chain> {
+pub(super) fn find_chains(
+    program: &Program,
+    checked: &Checked<'_>,
+    modules: &[FileId],
+    sites: &[Site],
+) -> Vec<Chain> {
     let mut chains = Vec::new();
     for of_module in sites.chunk_by(|a, b| a.module == b.module) {
         let file = modules[of_module[0].module as usize];
         let (hir, atoms) = (checked.files.hir(file), &checked.files.atoms);
         let site_at = |pos: u32, name: Atom, access: Access| {
-            let site = Site { module: of_module[0].module, pos, name: program.strs.find(atoms.bytes(name))?, access };
+            let site = Site {
+                module: of_module[0].module,
+                pos,
+                name: program.strs.find(atoms.bytes(name))?,
+                access,
+            };
             of_module.binary_search(&site).is_ok().then_some(site)
         };
         let members: Vec<(ExprId, ExprId, Atom, u32, Site)> = (hir.exprs.iter().enumerate())
             .filter_map(|(index, node)| match node.kind {
-                ExprKind::Dot { obj, name, name_pos, .. } => {
+                ExprKind::Dot {
+                    obj,
+                    name,
+                    name_pos,
+                    ..
+                } => {
                     let member = ExprId(index as u32);
                     let at_object = object_pos(hir, member);
-                    let site = site_at(at_object, name, Access::Read).or_else(|| site_at(name_pos, name, Access::Call)).or_else(|| site_at(at_object, name, Access::Store)).or_else(|| site_at(name_pos, name, Access::Store));
+                    let site = site_at(at_object, name, Access::Read)
+                        .or_else(|| site_at(name_pos, name, Access::Call))
+                        .or_else(|| site_at(at_object, name, Access::Store))
+                        .or_else(|| site_at(name_pos, name, Access::Store));
                     Some((member, obj, name, name_pos, site?))
                 }
                 _ => None,
             })
             .collect();
-        let index_of: FxHashMap<ExprId, usize> = members.iter().enumerate().map(|(index, member)| (member.0, index)).collect();
+        let index_of: FxHashMap<ExprId, usize> = members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| (member.0, index))
+            .collect();
         let preceding: Vec<Option<usize>> = (members.iter())
             .map(|member| {
                 let mut origin = skip_assertions(hir, member.1);
@@ -93,9 +135,20 @@ pub(super) fn find_chains(program: &Program, checked: &Checked<'_>, modules: &[F
             })
             .collect();
         let mut chain_of_head: FxHashMap<usize, usize> = FxHashMap::default();
-        for (index, &(_, receiver, name, name_pos, site)) in members.iter().enumerate().filter(|member| preceding[member.0].is_none()) {
+        for (index, &(_, receiver, name, name_pos, site)) in members
+            .iter()
+            .enumerate()
+            .filter(|member| preceding[member.0].is_none())
+        {
             chain_of_head.insert(index, chains.len());
-            chains.push(Chain { file, receiver, name_pos, name: atoms.bytes(name).to_vec(), sites: Vec::new(), begins_with_a_store: site.access == Access::Store });
+            chains.push(Chain {
+                file,
+                receiver,
+                name_pos,
+                name: atoms.bytes(name).to_vec(),
+                sites: Vec::new(),
+                begins_with_a_store: site.access == Access::Store,
+            });
         }
         for (index, member) in members.iter().enumerate() {
             let mut head = index;

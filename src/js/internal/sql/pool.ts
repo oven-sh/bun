@@ -5,11 +5,7 @@ import type { ArrayType, DatabaseAdapter, SQLArrayParameter, TransactionCommands
 
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
-const {
-  SQLQueryFlags,
-  onQuerySettled,
-  stateOf,
-} = require("internal/sql/query");
+const { SQLQueryFlags, onQuerySettled, stateOf } = require("internal/sql/query");
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } = require("internal/sql/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");

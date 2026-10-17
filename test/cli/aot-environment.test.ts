@@ -7,7 +7,16 @@ test.concurrent.each([["--aot"], ["--bytecode"]])(
     using dir = tempDir("aot-build-environment", {
       "app.ts": "console.log(1);\n",
       "package.json": JSON.stringify({ name: "app", type: "module" }),
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] } }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "esnext",
+          moduleResolution: "bundler",
+          target: "esnext",
+          types: [],
+          lib: ["esnext", "dom"],
+        },
+      }),
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", flag, "--format=esm", "app.ts", "--outfile", "app"],

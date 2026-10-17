@@ -4,11 +4,23 @@ import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } fr
 import { join } from "path";
 
 const isUnsupportedHere = (stderr: string) =>
-  /^error: --aot: (ahead-of-time compilation (only supports|is not available)|this build of Bun does not include)/m.test(stderr);
+  /^error: --aot: (ahead-of-time compilation (only supports|is not available)|this build of Bun does not include)/m.test(
+    stderr,
+  );
 
 async function build(dir: string, executablePath: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "--compile-executable-path", executablePath, "entry.ts", "--outfile", "out"],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--compile-executable-path",
+      executablePath,
+      "entry.ts",
+      "--outfile",
+      "out",
+    ],
     cwd: dir,
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",
@@ -49,31 +61,39 @@ test.skipIf(!isLinux)("--compile-executable-path with --aot refuses another buil
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-test.skipIf(!isLinux)("an executable whose compiled code has the stamp of another build says so and runs none of it", async () => {
-  using dir = tempDir("aot-another-stamp", files);
-  const { stderr, exitCode } = await build(String(dir), bunExe());
-  if (isUnsupportedHere(stderr)) return;
-  expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  await using asked = Bun.spawn({ cmd: [bunExe(), "--aot-stamp"], env: { ...bunEnv, BUN_BE_BUN: "1" }, stdout: "pipe", stderr: "pipe" });
-  const stamp = Buffer.from((await asked.stdout.text()).trim(), "hex").reverse();
-  expect(stamp.length).toBe(8);
-  const executable = readFileSync(join(String(dir), "out"));
-  let places = 0;
-  for (let at = executable.indexOf(stamp); at >= 0; at = executable.indexOf(stamp, at + 8)) {
-    executable[at] ^= 0xff;
-    places++;
-  }
-  expect(places).toBeGreaterThan(0);
-  writeFileSync(join(String(dir), "changed"), executable);
-  chmodSync(join(String(dir), "changed"), 0o755);
-  await using run = Bun.spawn({ cmd: [join(String(dir), "changed")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, runStderr, runExitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect({ stdout, stderr: runStderr, exitCode: runExitCode }).toEqual({
-    stdout: "",
-    stderr: "error: this program's compiled code cannot be used: it was compiled for another build of the engine\n",
-    exitCode: 1,
-  });
-});
+test.skipIf(!isLinux)(
+  "an executable whose compiled code has the stamp of another build says so and runs none of it",
+  async () => {
+    using dir = tempDir("aot-another-stamp", files);
+    const { stderr, exitCode } = await build(String(dir), bunExe());
+    if (isUnsupportedHere(stderr)) return;
+    expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    await using asked = Bun.spawn({
+      cmd: [bunExe(), "--aot-stamp"],
+      env: { ...bunEnv, BUN_BE_BUN: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stamp = Buffer.from((await asked.stdout.text()).trim(), "hex").reverse();
+    expect(stamp.length).toBe(8);
+    const executable = readFileSync(join(String(dir), "out"));
+    let places = 0;
+    for (let at = executable.indexOf(stamp); at >= 0; at = executable.indexOf(stamp, at + 8)) {
+      executable[at] ^= 0xff;
+      places++;
+    }
+    expect(places).toBeGreaterThan(0);
+    writeFileSync(join(String(dir), "changed"), executable);
+    chmodSync(join(String(dir), "changed"), 0o755);
+    await using run = Bun.spawn({ cmd: [join(String(dir), "changed")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, runStderr, runExitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout, stderr: runStderr, exitCode: runExitCode }).toEqual({
+      stdout: "",
+      stderr: "error: this program's compiled code cannot be used: it was compiled for another build of the engine\n",
+      exitCode: 1,
+    });
+  },
+);
 
 test("--compile-executable-path with --aot refuses a file that is not a Bun", async () => {
   using dir = tempDir("aot-executable-path-other", { ...files, "no-bun": "#!/bin/sh\nexit 0\n" });

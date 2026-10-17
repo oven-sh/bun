@@ -1,13 +1,15 @@
 // JSON.stringify of a typed value hands objects made by a spread and untyped data to the runtime's writer. A string there that does
 // not fit in 8 bits used to make that writer give up, and with it the whole call: the answer was then written again from the start.
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "main.ts": `
     interface Comment { id: number; body: string; at: Date }
     interface CommentNode extends Comment { replies: CommentNode[] }

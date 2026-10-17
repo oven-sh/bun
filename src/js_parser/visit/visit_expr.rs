@@ -1709,7 +1709,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_spread = true;
             }
 
-            if in_.assign_target != js_ast::AssignTarget::None && property.flags.contains(Flags::Property::WasShorthand) {
+            if in_.assign_target != js_ast::AssignTarget::None
+                && property.flags.contains(Flags::Property::WasShorthand)
+            {
                 property.value = property.value.map(bun_ast::audited::unmarked);
             }
 
@@ -1913,7 +1915,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && !p.is_unreachable()
                     && let [argument] = e_.args.slice()
                 {
-                    p.single_argument_identifier_calls.push((ident.ref_, *argument));
+                    p.single_argument_identifier_calls
+                        .push((ident.ref_, *argument));
                 }
                 if ident.call_can_be_unwrapped_if_unused()
                     && e_.can_be_unwrapped_if_unused == E::CallUnwrap::Never
@@ -2560,18 +2563,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Data::EIdentifier(identifier) => identifier.ref_.eql(self.dirname_ref).then(Vec::new),
             Data::EBinary(sum) if sum.op == Op::BinAdd => {
                 let mut text = self.path_after_dirname(&sum.left)?;
-                let Data::EString(more) = sum.right.data else { return None };
+                let Data::EString(more) = sum.right.data else {
+                    return None;
+                };
                 text.extend(text_of(&more)?);
                 Some(text)
             }
             Data::ETemplate(template) if template.tag.is_none() => {
-                let E::TemplateContents::Cooked(head) = &template.head else { return None };
+                let E::TemplateContents::Cooked(head) = &template.head else {
+                    return None;
+                };
                 let (first, rest) = template.parts().split_first()?;
                 if head.len() != 0 || !rest.is_empty() {
                     return None;
                 }
                 let mut text = self.path_after_dirname(&first.value)?;
-                let E::TemplateContents::Cooked(tail) = &first.tail else { return None };
+                let E::TemplateContents::Cooked(tail) = &first.tail else {
+                    return None;
+                };
                 text.extend(text_of(tail)?);
                 Some(text)
             }
@@ -2580,22 +2589,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn with_dirname_folded(&mut self, specifier: Expr) -> Expr {
-        if !self.options.bundle || matches!(specifier.data, Data::EString(..) | Data::EIdentifier(..)) {
+        if !self.options.bundle
+            || matches!(specifier.data, Data::EString(..) | Data::EIdentifier(..))
+        {
             return specifier;
         }
-        let Some(text) = self.path_after_dirname(&specifier).filter(|text| text.first() == Some(&b'/')) else {
+        let Some(text) = self
+            .path_after_dirname(&specifier)
+            .filter(|text| text.first() == Some(&b'/'))
+        else {
             return specifier;
         };
         self.ignore_usage(self.dirname_ref);
-        let folded: &'a [u8] = self.arena.alloc_slice_copy(&[b".".as_slice(), &text].concat());
-        self.new_expr(E::String { data: folded.into(), ..Default::default() }, specifier.loc)
+        let folded: &'a [u8] = self
+            .arena
+            .alloc_slice_copy(&[b".".as_slice(), &text].concat());
+        self.new_expr(
+            E::String {
+                data: folded.into(),
+                ..Default::default()
+            },
+            specifier.loc,
+        )
     }
 
     pub(crate) fn add_referenced_files_in(&mut self, specifier: &Expr) {
         match specifier.data {
             Data::EString(string) => {
                 if let Ok(text) = string.string(self.arena) {
-                    let index = self.add_import_record(bun_ast::ImportKind::Require, specifier.loc, text);
+                    let index =
+                        self.add_import_record(bun_ast::ImportKind::Require, specifier.loc, text);
                     self.import_records.items_mut()[index as usize]
                         .flags
                         .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
@@ -2621,7 +2644,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         };
         let is_import_meta = |e: &Expr, names: &[&[u8]]| match e.data {
-            Data::EDot(dot) => matches!(dot.target.data, Data::EImportMeta(..)) && names.contains(&dot.name.slice()),
+            Data::EDot(dot) => {
+                matches!(dot.target.data, Data::EImportMeta(..))
+                    && names.contains(&dot.name.slice())
+            }
             _ => false,
         };
         match argument.data {
@@ -2634,7 +2660,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn is_own_create_require(&self, visited: &Expr, receives_own_file_path: bool) -> bool {
+    pub(crate) fn is_own_create_require(
+        &self,
+        visited: &Expr,
+        receives_own_file_path: bool,
+    ) -> bool {
         let Data::ECall(call) = visited.data else {
             return false;
         };
@@ -2644,14 +2674,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_among(callee.ref_, &self.create_require_refs)
                     || self.node_module_refs.iter().any(|namespace| {
                         let items = self.import_items_for_namespace.get(namespace);
-                        items.and_then(|items| items.get(b"createRequire".as_slice())).is_some_and(|item| item.ref_.eql(callee.ref_))
+                        items
+                            .and_then(|items| items.get(b"createRequire".as_slice()))
+                            .is_some_and(|item| item.ref_.eql(callee.ref_))
                     })
             }
             Data::EIdentifier(callee) => is_among(callee.ref_, &self.create_require_refs),
             Data::EDot(callee) => {
                 callee.name.slice() == b"createRequire"
                     && match callee.target.data {
-                        Data::EImportIdentifier(module) => is_among(module.ref_, &self.node_module_refs),
+                        Data::EImportIdentifier(module) => {
+                            is_among(module.ref_, &self.node_module_refs)
+                        }
                         Data::EIdentifier(module) => is_among(module.ref_, &self.node_module_refs),
                         _ => false,
                     }

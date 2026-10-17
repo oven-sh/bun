@@ -1,14 +1,15 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { describe, test } from "./supported";
 
 const here = process.platform;
 
 function large(name: string) {
   const lines = [`function ${name}(text) {`, `  var x = text.length | 0;`];
-  for (let i = 0; i < 2000; i++) lines.push(`  x = (x * ${i + 3} + text.length + ${i * 7 + 1}) % 1000003; if (x === ${i + 5}) console.log(x);`);
+  for (let i = 0; i < 2000; i++)
+    lines.push(`  x = (x * ${i + 3} + text.length + ${i * 7 + 1}) % 1000003; if (x === ${i + 5}) console.log(x);`);
   lines.push(`  return x;`, `}`);
   return lines.join("\n") + "\n";
 }
@@ -40,10 +41,22 @@ test("a function that only an export nobody reads leads to is left out, however 
   const sizes: Record<string, number> = {};
   for (const name of Object.keys(servers)) {
     using dir = tempDir("stored-to-once", { ...files, "server.cjs": servers[name] });
-    const build = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"], String(dir), bunEnv);
-    expect({ name, stderr: build.stderr, exitCode: build.exitCode }).toEqual({ name, stderr: expect.any(String), exitCode: 0 });
+    const build = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"],
+      String(dir),
+      bunEnv,
+    );
+    expect({ name, stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+      name,
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
     const compiled = await run([join(String(dir), "program")], String(dir), env);
-    expect({ name, stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ name, stdout: "3  modern legacy\n", exitCode: 0 });
+    expect({ name, stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      name,
+      stdout: "3  modern legacy\n",
+      exitCode: 0,
+    });
     sizes[name] = statSync(join(String(dir), isWindows ? "program.exe" : "program")).size;
   }
   for (const name of Object.keys(servers)) {
@@ -128,7 +141,11 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     const inPlace = await run([bunExe(), "run", "--debug-aot", entry], String(dir), env);
     expect(inPlace.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: inPlace.stdout, exitCode: inPlace.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    const build = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], String(dir), bunEnv);
+    const build = await run(
+      [bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"],
+      String(dir),
+      bunEnv,
+    );
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
     const compiled = await run([join(String(dir), "program")], String(dir), env);
     expect(compiled.stderr).not.toContain("crashIfInterpreterIsUsed");

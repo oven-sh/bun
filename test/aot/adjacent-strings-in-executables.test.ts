@@ -26,7 +26,23 @@ describe.skipIf(!!unsupported)("compile/aot/adjacent-strings-in-executables", ()
   test("two texts do not read as one word", async () => {
     await slot(async () => {
       const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "--minify", "--no-compile-function-source", "./entry.ts", "--outfile", executable], folder, bunEnv));
+      built(
+        await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            "--minify",
+            "--no-compile-function-source",
+            "./entry.ts",
+            "--outfile",
+            executable,
+          ],
+          folder,
+          bunEnv,
+        ),
+      );
       const run = await spawned([executable], folder, bunEnv);
       const bytes = readFileSync(executable);
       rmSync(executable);

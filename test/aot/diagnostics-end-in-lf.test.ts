@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 // All that Bun prints ends its lines in LF, on Windows too. The "[aot] .." lines go through the C runtime, whose descriptor 2 is
 // in text mode there: they ended in CR LF, and a pattern such as /^\[aot\] (.*)$/ on a line split at "\n" matched none of them.

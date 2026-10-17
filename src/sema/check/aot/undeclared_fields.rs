@@ -33,20 +33,33 @@ impl<'p, 's> Checker<'p, 's> {
         if !stores.is_empty() && !self.is_instance_type(ty) {
             let mut extended = FxHashSet::default();
             self.add_base_types(ty, &mut extended);
-            let own: FxHashSet<Atom> = self.members(ty).map_or_else(Default::default, |members| members.shape().props.iter().map(|prop| prop.name).collect());
+            let own: FxHashSet<Atom> = self.members(ty).map_or_else(Default::default, |members| {
+                members.shape().props.iter().map(|prop| prop.name).collect()
+            });
             for &(constructed, declaring, name) in stores.iter() {
-                if extended.contains(&constructed) && !own.contains(&name) && found.iter().all(|field| field.0 != name) {
+                if extended.contains(&constructed)
+                    && !own.contains(&name)
+                    && found.iter().all(|field| field.0 != name)
+                {
                     found.push((name, declaring));
                 }
             }
             found.sort_by(|a, b| self.atoms().bytes(a.0).cmp(self.atoms().bytes(b.0)));
         }
         let found = Rc::new(found);
-        self.aot.undeclared_fields.fields.insert(ty, Rc::clone(&found));
+        self.aot
+            .undeclared_fields
+            .fields
+            .insert(ty, Rc::clone(&found));
         found
     }
 
-    pub(super) fn add_undeclared_fields_to(&mut self, facts: &mut Facts, ty: TypeId, stored: &FxHashSet<Atom>) {
+    pub(super) fn add_undeclared_fields_to(
+        &mut self,
+        facts: &mut Facts,
+        ty: TypeId,
+        stored: &FxHashSet<Atom>,
+    ) {
         let fields = self.undeclared_fields_for(ty);
         if fields.is_empty() {
             return;
@@ -58,16 +71,30 @@ impl<'p, 's> Checker<'p, 's> {
             all.into_boxed_slice()
         };
         facts.declared = with(&facts.declared, &mut fields.iter().map(|field| field.0.0));
-        facts.live = with(&facts.live, &mut fields.iter().filter(|field| stored.contains(&field.0)).map(|field| field.0.0));
+        facts.live = with(
+            &facts.live,
+            &mut fields
+                .iter()
+                .filter(|field| stored.contains(&field.0))
+                .map(|field| field.0.0),
+        );
     }
 
     pub(super) fn this_cast_to_any(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
         let hir = self.hir(file);
-        let ExprKind::As { expr, .. } = hir[e].kind else { return None };
-        (matches!(hir[expr].kind, ExprKind::This) && self.type_of_expr(file, e) == TypeId::ANY).then_some(expr)
+        let ExprKind::As { expr, .. } = hir[e].kind else {
+            return None;
+        };
+        (matches!(hir[expr].kind, ExprKind::This) && self.type_of_expr(file, e) == TypeId::ANY)
+            .then_some(expr)
     }
 
-    pub(super) fn count_first_stores_to_fields(&mut self, file: FileId, func: FnId, stores: &[FirstStore]) -> usize {
+    pub(super) fn count_first_stores_to_fields(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        stores: &[FirstStore],
+    ) -> usize {
         let hir = self.hir(file);
         let is_through_any = |store: &FirstStore| matches!(hir[store.target].kind, ExprKind::Dot { obj, .. } if obj != store.this);
         if !stores.iter().any(is_through_any) {
@@ -77,12 +104,18 @@ impl<'p, 's> Checker<'p, 's> {
             Some(constructed) => self.undeclared_fields_for(constructed),
             None => Default::default(),
         };
-        stores.iter().position(|store| is_through_any(store) && fields.iter().all(|field| field.0 != store.name)).unwrap_or(stores.len())
+        stores
+            .iter()
+            .position(|store| {
+                is_through_any(store) && fields.iter().all(|field| field.0 != store.name)
+            })
+            .unwrap_or(stores.len())
     }
 
     fn constructor_function_this_type(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
         let hir = self.hir(file);
-        if !matches!(hir[func].kind, FnKind::Decl | FnKind::Expr) || hir[func].this_param.is_none() {
+        if !matches!(hir[func].kind, FnKind::Decl | FnKind::Expr) || hir[func].this_param.is_none()
+        {
             return None;
         }
         let this = self.this_type_in_fn(file, func)?;
@@ -95,10 +128,17 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let extended: Vec<TypeId> = match *self.data(ty) {
-            TypeData::Ref { target, .. } if self.is_created_by_program(ty) => match self.members(ty) {
-                Some(members) => self.base_types(target).into_vec().into_iter().map(|base| self.instantiate(base, members.mapper)).collect(),
-                None => Vec::new(),
-            },
+            TypeData::Ref { target, .. } if self.is_created_by_program(ty) => {
+                match self.members(ty) {
+                    Some(members) => self
+                        .base_types(target)
+                        .into_vec()
+                        .into_iter()
+                        .map(|base| self.instantiate(base, members.mapper))
+                        .collect(),
+                    None => Vec::new(),
+                }
+            }
             TypeData::Intersection(ref parts) => parts.to_vec(),
             _ => Vec::new(),
         };
@@ -113,16 +153,27 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = &self.aot.undeclared_fields.stores {
             return Rc::clone(known);
         }
-        let files: &'p [FileId] = self.p.aot.undeclared_fields.typed_files.get_or_init(|| self.files_declaring_classes().into_iter().filter(|&file| self.is_compiled(file) && !self.hir(file).is_js).collect());
+        let files: &'p [FileId] = self.p.aot.undeclared_fields.typed_files.get_or_init(|| {
+            self.files_declaring_classes()
+                .into_iter()
+                .filter(|&file| self.is_compiled(file) && !self.hir(file).is_js)
+                .collect()
+        });
         let mut stores: Vec<Store> = Vec::new();
         for &(file, func) in self.functions_storing_through_assertions(files) {
-            let Some(constructed) = self.constructor_function_this_type(file, func) else { continue };
+            let Some(constructed) = self.constructor_function_this_type(file, func) else {
+                continue;
+            };
             let hir = self.hir(file);
             for store in self.syntactic_first_stores(file, func) {
-                if matches!(hir[store.target].kind, ExprKind::Dot { obj, .. } if obj == store.this) {
+                if matches!(hir[store.target].kind, ExprKind::Dot { obj, .. } if obj == store.this)
+                {
                     continue;
                 }
-                let Some(declaring) = self.declaring_interface(files, constructed, store.name) else { break };
+                let Some(declaring) = self.declaring_interface(files, constructed, store.name)
+                else {
+                    break;
+                };
                 stores.push((constructed, declaring, store.name));
             }
         }
@@ -152,7 +203,12 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    fn declaring_interface(&mut self, files: &[FileId], extended: TypeId, name: Atom) -> Option<TypeId> {
+    fn declaring_interface(
+        &mut self,
+        files: &[FileId],
+        extended: TypeId,
+        name: Atom,
+    ) -> Option<TypeId> {
         if self.type_of_property(extended, name).is_some() {
             return None;
         }
@@ -160,18 +216,29 @@ impl<'p, 's> Checker<'p, 's> {
         for &file in files {
             let (hir, bound) = (self.hir(file), self.bound(file));
             for (index, interface) in hir.interfaces.iter().enumerate() {
-                let declares = interface.type_params.is_empty() && interface.members.iter().any(|member| hir[member].kind == MemberKind::Property && hir[member].key.name() == Some(name));
+                let declares = interface.type_params.is_empty()
+                    && interface.members.iter().any(|member| {
+                        hir[member].kind == MemberKind::Property
+                            && hir[member].key.name() == Some(name)
+                    });
                 if !declares {
                     continue;
                 }
-                let declared = self.declared_type(Sym { file, id: bound.interface_symbol[index] });
-                let Some(declaring) = self.layout_type_of(declared) else { continue };
+                let declared = self.declared_type(Sym {
+                    file,
+                    id: bound.interface_symbol[index],
+                });
+                let Some(declaring) = self.layout_type_of(declared) else {
+                    continue;
+                };
                 let mut supertypes = FxHashSet::default();
                 self.add_base_types(declaring, &mut supertypes);
                 if declaring == extended || !supertypes.contains(&extended) {
                     continue;
                 }
-                let Some(ty) = self.type_of_property(declaring, name) else { continue };
+                let Some(ty) = self.type_of_property(declaring, name) else {
+                    continue;
+                };
                 match found {
                     Some((_, other)) if other != ty => return None,
                     Some(_) => {}

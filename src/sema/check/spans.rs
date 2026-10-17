@@ -53,7 +53,9 @@ pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
     while i < text.len() {
         if let Some(&bytes) = text[i..].first_chunk::<8>() {
             let word = u64::from_le_bytes(bytes);
-            let found = zero_bytes(word ^ (ONES * 0x0A)) | zero_bytes(word ^ (ONES * 0x0D)) | zero_bytes(word ^ (ONES * 0xE2));
+            let found = zero_bytes(word ^ (ONES * 0x0A))
+                | zero_bytes(word ^ (ONES * 0x0D))
+                | zero_bytes(word ^ (ONES * 0xE2));
             if found == 0 {
                 i += 8;
                 continue;

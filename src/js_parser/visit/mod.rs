@@ -353,7 +353,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                let receives_own_file_path = self.imports_create_require() && Self::is_call_with_import_meta_path(&val);
+                let receives_own_file_path =
+                    self.imports_create_require() && Self::is_call_with_import_meta_path(&val);
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -366,11 +367,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.react_compiler_candidate_name = None;
                 self.react_compiler_in_react_hoc = false;
                 if self.options.compiles_ahead_of_time
-                    && let (BData::BObject(pattern), ExprData::ERequireString(required)) = (decl.binding.data, val.data)
-                    && matches!(self.import_records.items()[required.import_record_index as usize].path.text, b"module" | b"node:module")
+                    && let (BData::BObject(pattern), ExprData::ERequireString(required)) =
+                        (decl.binding.data, val.data)
+                    && matches!(
+                        self.import_records.items()[required.import_record_index as usize]
+                            .path
+                            .text,
+                        b"module" | b"node:module"
+                    )
                 {
                     for property in pattern.properties.slice() {
-                        if let (ExprData::EString(key), BData::BIdentifier(id)) = (property.key.data, property.value.data)
+                        if let (ExprData::EString(key), BData::BIdentifier(id)) =
+                            (property.key.data, property.value.data)
                             && key.eql_comptime(b"createRequire")
                         {
                             self.create_require_refs.push(id.r#ref);
@@ -1992,7 +2000,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // and the usage.
                     let would_be_tail_call = p.options.features.audited.is_some()
                         && matches!(stmt.data, StmtData::SReturn(_))
-                        && matches!(bun_ast::audited::unmarked(replacement).data, ExprData::ECall(_));
+                        && matches!(
+                            bun_ast::audited::unmarked(replacement).data,
+                            ExprData::ECall(_)
+                        );
                     if symbol.use_count_estimate == 1
                         && !would_be_tail_call
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)

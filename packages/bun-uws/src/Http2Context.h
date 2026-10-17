@@ -1928,7 +1928,8 @@ inline bool Http2Response::drain() {
 inline Http2Response *Http2Response::pause() {
     if (paused) return this;
     paused = true;
-    /* Like HTTP/1: a request the app has paused doesn't idle out. */
+    /* A request the app has paused doesn't idle out. HTTP/1 differs:
+     * HttpResponse::pause() leaves the idle timer running. */
     pausedTimeoutS = timeoutS;
     timeoutS = 0;
     conn->recomputeIdleTimeout();

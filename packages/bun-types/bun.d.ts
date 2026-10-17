@@ -5405,7 +5405,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null`; it is garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
+  function mmap(path: string, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
   /**
    * Write to stdout

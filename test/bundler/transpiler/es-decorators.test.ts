@@ -1466,6 +1466,46 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("a write to the name of a class with a class decorator throws as it does natively", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const replace = (cls) => class extends cls {};
+        const out = [];
+        @replace class C {
+          static self = () => C;
+          static { try { C = 1; } catch (e) { out.push(e.constructor.name); } }
+          static set(v) { C = v; }
+          static inc() { C++; }
+          static destructure() { [C] = [1]; }
+        }
+        for (const f of ["set", "inc", "destructure"]) { try { C[f](2); out.push("no throw"); } catch (e) { out.push(e.constructor.name); } }
+        const E = @replace class Foo { static set(v) { Foo = v; } };
+        try { E.set(1); out.push("no throw"); } catch (e) { out.push(e.constructor.name); }
+        console.log(out.join(","), C.self() === C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("TypeError,TypeError,TypeError,TypeError,TypeError true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a read of the class name before its class decorators run is undefined", async () => {
+      // Natively this read throws a ReferenceError: the inner binding is not
+      // initialized yet. The binding the lowering declares in front of the
+      // class is initialized, so the read gives undefined, as in tsc's output.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const replace = (cls) => class extends cls {};
+        const seen = [];
+        const capture = (v) => { seen.push(v); return () => {}; };
+        @replace class C {
+          @capture(C) field = 1;
+          static [(seen.push(C), "key")] = 2;
+        }
+        console.log(seen.map((v) => typeof v).join(","), C.key);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined,undefined 2\n");
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("a decorated class in a loop binds its name once per evaluation", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const replace = (cls) => class extends cls {};
@@ -1495,22 +1535,28 @@ describe("ES Decorators", () => {
           const replace = (cls) => class extends cls {};
           export default @replace class Def { static self = () => Def; m() { return Def; } }
         `,
+        "model.js": `export default class Model {}`,
         "entry.js": `
           import { Named } from "./named.js";
           import Def from "./def.js";
+          import Base from "./model.js";
+          const replace = (cls) => class extends cls {};
+          // The bundle prints the import as "Model" too: the class keeps its own name.
+          const Expr = @replace class Model extends Base { static self = () => Model; static base = Base.name; };
           console.log(Named.self() === Named, new Named().m() === Named);
           console.log(Def.self() === Def, new Def().m() === Def);
+          console.log(Expr.self() === Expr, Expr.base, Object.getPrototypeOf(Object.getPrototypeOf(Expr)) === Base);
         `,
       });
       const run = await runIn(String(dir), ["entry.js"]);
       expect(filterStderr(run.stderr)).toBe("");
-      expect(run.stdout).toBe("true true\ntrue true\n");
+      expect(run.stdout).toBe("true true\ntrue true\ntrue Model true\n");
       expect(run.exitCode).toBe(0);
       const build = await runIn(String(dir), ["build", "--target=browser", "entry.js", "--outfile=out.js"]);
       expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const bundled = await runIn(String(dir), ["out.js"]);
       expect(filterStderr(bundled.stderr)).toBe("");
-      expect(bundled.stdout).toBe("true true\ntrue true\n");
+      expect(bundled.stdout).toBe("true true\ntrue true\ntrue Model true\n");
       expect(bundled.exitCode).toBe(0);
     });
 

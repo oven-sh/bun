@@ -1022,10 +1022,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
         //
-        // When class decorators are lowered, the body names the class by
-        // `inner_class_ref` instead. The lowering declares it next to the
-        // class and assigns what the decorators return to it, because the
-        // spec initializes the inner binding with the decorated class.
+        // With lowered class decorators the body reads the class through
+        // `inner_class_ref`, which the lowering sets to what the decorators
+        // return (the spec initializes the inner binding with that class).
         let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
@@ -1039,6 +1038,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .as_bytes();
                     let inner_ref = self.generate_temp_var(inner_name);
                     class.inner_class_ref = inner_ref;
+                    self.decorated_class_names.push((inner_ref, name_ref));
+                    // The name of a class expression is declared nowhere else:
+                    // the renamer still has to number it around its neighbors.
+                    if is_expr {
+                        VecExt::append(&mut self.vis_scope().generated, name_ref);
+                    }
                     inner_ref
                 } else {
                     name_ref
@@ -1497,6 +1502,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+        if class.inner_class_ref.is_symbol() {
+            self.decorated_class_names.pop();
+        }
 
         shadow_ref
     }

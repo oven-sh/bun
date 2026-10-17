@@ -40,9 +40,8 @@ type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 struct LoweredClass {
     /// `var` statement for the temporaries the class body now refers to.
     temps: Option<Stmt>,
-    /// `let` statement for the binding the body names the class by, when its
-    /// class decorators can replace the class. It is block scoped so that a
-    /// class evaluated in a loop gets a fresh binding each time.
+    /// `let` statement for `inner_class_ref`. Block scoped, so that a class
+    /// evaluated in a loop gets a fresh binding each time.
     inner_binding: Option<Stmt>,
     class_decorators: Option<ClassDecorators>,
 }
@@ -1196,8 +1195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice(),
                     None => name_from_context.unwrap_or(b""),
                 };
-                // A named class already has the binding its body resolves the
-                // name to (`visit_class`). What the decorators return goes there.
+                // A named class has the binding its body reads (`visit_class`).
                 let decorated_ref = if class.inner_class_ref.is_symbol() {
                     class.inner_class_ref
                 } else {

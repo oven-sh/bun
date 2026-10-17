@@ -63,9 +63,8 @@ pub struct Class {
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
-    /// The symbol the class body names the class by when its standard (TC39)
-    /// class decorators are lowered: the lowering assigns what the decorators
-    /// return to it, so the body sees the decorated class as the spec says.
+    /// What the body reads the class name as when standard (TC39) class
+    /// decorators are lowered: the lowering assigns the decorated class to it.
     /// `Ref::NONE` otherwise, including for TypeScript experimental decorators.
     pub inner_class_ref: Ref,
 }

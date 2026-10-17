@@ -3,9 +3,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // A class decorator that returns a new class replaces the class binding inside
 // the class body too. The argument of a member decorator read it through the
-// original class in 1.4.3 (a regression from 1.4.2). The static field case
-// never worked.
-test("a decorated class body sees the class its class decorator returns", async () => {
+// original class in 1.4.3 (a regression from 1.4.2). The other body positions
+// are covered in test/bundler/transpiler/es-decorators.test.ts.
+test("a member decorator argument sees the class its class decorator returns", async () => {
   using dir = tempDir("issue-44915", {
     "repro.ts": `
       function replace(cls: any, _ctx: ClassDecoratorContext) {
@@ -20,14 +20,11 @@ test("a decorated class body sees the class its class decorator returns", async 
 
       @replace
       class Model {
-        static self = () => Model;
-
         @capture(() => Model)
         field = 1;
       }
 
       console.log("decorator argument:", thunk() === Model);
-      console.log("static field:", Model.self() === Model);
     `,
   });
 
@@ -39,6 +36,6 @@ test("a decorated class body sees the class its class decorator returns", async 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("decorator argument: true\nstatic field: true\n");
+  expect(stdout).toBe("decorator argument: true\n");
   expect(exitCode).toBe(0);
 });

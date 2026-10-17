@@ -6,6 +6,11 @@ import { tmpdir } from "os";
 import { join } from "path";
 test("bun-file-exists", async () => {
   expect(await Bun.file(import.meta.path).exists()).toBeTrue();
+  expect(
+    await Bun.file(import.meta.path)
+      .slice(0, 4)
+      .exists(),
+  ).toBeTrue();
   expect(await Bun.file(import.meta.path + "boop").exists()).toBeFalse();
   expect(await Bun.file(import.meta.dir).exists()).toBeFalse();
   expect(await Bun.file(import.meta.dir + "/").exists()).toBeFalse();
@@ -30,4 +35,18 @@ test.each([
   expect(await file.exists()).toBeFalse();
   writeFileSync(file.name, "boop");
   expect(await file.exists()).toBeTrue();
+  expect({ size: file.size, text: await file.text() }).toEqual({ size: 4, text: "boop" });
+});
+
+// A slice has a size before any stat, so exists() is the only call that stats the file for it.
+test.each([
+  ["a slice", path => Bun.file(path).slice(0, 4)],
+  ["a structuredClone() of a slice", path => structuredClone(Bun.file(path).slice(0, 4))],
+])("exists() on %s sees a file that is created after it found none", async (_, make) => {
+  using dir = tempDir("bun-file-exists-slice-later", {});
+  const path = join(String(dir), "later.txt");
+  const slice = make(path);
+  expect([await slice.exists(), await slice.exists()]).toEqual([false, false]);
+  writeFileSync(path, "boop!");
+  expect({ exists: await slice.exists(), text: await slice.text() }).toEqual({ exists: true, text: "boop" });
 });

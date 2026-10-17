@@ -346,3 +346,17 @@ expectType<BunConsumerConvenienceMethods>();
   expectType(a.slice()).is<Blob>();
   expectType(a.slice(1, 2, "text/plain")).is<Blob>();
 }
+
+new PromiseRejectionEvent("unhandledrejection", { promise: Promise.resolve(), reason: 1 });
+addEventListener("unhandledrejection", event => {
+  expectType<PromiseRejectionEvent>(event);
+  expectType<Promise<any>>(event.promise);
+  event.preventDefault();
+});
+addEventListener("rejectionhandled", event => {
+  expectType<PromiseRejectionEvent>(event);
+});
+onunhandledrejection = event => {
+  expectType<PromiseRejectionEvent>(event);
+};
+onrejectionhandled = null;

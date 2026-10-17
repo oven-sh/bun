@@ -241,6 +241,27 @@ worker.addEventListener("close", event => {
 
 This event does not exist in browsers.
 
+### `"unhandledrejection"`
+
+An unhandled promise rejection inside a worker ends the worker with exit code 1, and the main thread receives an `"error"` event. The worker can intercept the rejection first with an `"unhandledrejection"` listener on its global scope, with the same `PromiseRejectionEvent` contract as browsers. The event has `promise` and `reason`. Call `event.preventDefault()` to mark the rejection as handled. The worker then keeps running.
+
+```ts worker.ts icon="/icons/typescript.svg"
+self.addEventListener("unhandledrejection", event => {
+  console.log("unhandled rejection:", event.reason);
+  event.preventDefault();
+});
+// or use the setter:
+// self.onunhandledrejection = fn
+
+Promise.reject(new Error("boom")); // the worker stays alive
+```
+
+A `"rejectionhandled"` event follows when a handler attaches to a promise after it was reported as unhandled. Both events also fire on the main thread's `globalThis`.
+
+`event.preventDefault()` has the same effect as a `process.on("unhandledRejection")` listener. With `--unhandled-rejections=strict`, Bun raises the uncaught exception before either one runs. With `--unhandled-rejections=warn`, the warning still prints. Under `bun test`, neither one runs: the test runner reports the rejection itself.
+
+The worker-scope `"error"` event for an uncaught exception is not cancelable. `preventDefault()` on it does not keep the worker alive.
+
 ## Managing lifetime
 
 By default, an active `Worker` keeps the main (spawning) process alive, so async tasks like `setTimeout` and promises keep the process alive. Attaching `message` listeners also keeps the `Worker` alive.

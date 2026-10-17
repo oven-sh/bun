@@ -539,6 +539,29 @@ declare var ErrorEvent: {
   new (type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
 };
 
+/**
+ * The event dispatched on the global scope when a `Promise` is rejected and no
+ * handler is attached (`unhandledrejection`), or when a handler is attached to
+ * a `Promise` that was reported as unhandled (`rejectionhandled`).
+ *
+ * Call `event.preventDefault()` in an `unhandledrejection` listener to mark
+ * the rejection as handled. This has the same effect as a
+ * `process.on("unhandledRejection")` listener. With
+ * `--unhandled-rejections=strict`, Bun raises the uncaught exception before
+ * the listener runs. With `--unhandled-rejections=warn`, the warning still
+ * prints. Under `bun test`, the event is not dispatched: the test runner
+ * reports the rejection itself.
+ */
+interface PromiseRejectionEvent extends Event {
+  readonly promise: Promise<any>;
+  readonly reason: any;
+}
+
+declare var PromiseRejectionEvent: {
+  prototype: PromiseRejectionEvent;
+  new (type: string, eventInitDict: Bun.PromiseRejectionEventInit): PromiseRejectionEvent;
+};
+
 /** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
 interface CloseEvent extends Event {
   /** Returns the WebSocket connection close code provided by the server. */
@@ -593,6 +616,8 @@ interface EventMap {
   fetch: FetchEvent;
   message: MessageEvent;
   messageerror: MessageEvent;
+  unhandledrejection: PromiseRejectionEvent;
+  rejectionhandled: PromiseRejectionEvent;
   // exit: Event;
 }
 

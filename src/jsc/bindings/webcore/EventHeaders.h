@@ -36,5 +36,7 @@
 #include "JSErrorEvent.h"
 #include "MessageEvent.h"
 #include "JSMessageEvent.h"
+#include "PromiseRejectionEvent.h"
+#include "JSPromiseRejectionEvent.h"
 
 #endif // EventHeaders_h

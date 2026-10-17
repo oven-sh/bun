@@ -143,7 +143,7 @@ strings-every-length: 8 layouts, 0 given, 0 open, places 236 of 248, reads 45 of
 strings-in-order: 0 layouts, 0 given, 0 open, places 109 of 119, reads 2 of 14
 strings-read-in-loops: 0 layouts, 0 given, 1 open, places 143 of 166, reads 29 of 36
 strings-used-at-many-sites: 0 layouts, 0 given, 0 open, places 166 of 203, reads 30 of 40
-substring-and-trim-around-loops: 3 layouts, 7 given, 5 open, places 282 of 332, reads 23 of 99
+substring-and-trim-around-loops: 3 layouts, 7 given, 6 open, places 354 of 426, reads 24 of 106
 substring-flattened-between-reads: 0 layouts, 7 given, 0 open, places 69 of 95, reads 11 of 30
 substring-operations-outside-loops: 0 layouts, 0 given, 0 open, places 11 of 19, reads 1 of 17
 substrings-and-code-units-at-ends: 0 layouts, 0 given, 0 open, places 29 of 37, reads 10 of 16
@@ -160,7 +160,7 @@ trim: 1 layouts, 0 given, 2 open, places 76 of 102, reads 16 of 28
 try-await-yield-in-string-loops-2: 0 layouts, 0 given, 1 open, places 92 of 111, reads 10 of 17
 try-await-yield-in-string-loops: 0 layouts, 0 given, 1 open, places 92 of 111, reads 9 of 15
 two-character-substrings: 0 layouts, 0 given, 0 open, places 28 of 36, reads 8 of 17
-two-strings-compared: 3 layouts, 7 given, 4 open, places 160 of 182, reads 26 of 79
+two-strings-compared: 3 layouts, 7 given, 4 open, places 165 of 187, reads 28 of 81
 unicode-property-classes-at-block-edges: 0 layouts, 0 given, 0 open, places 51 of 59, reads 9 of 15
 unicode-regexps-surrogates: 0 layouts, 0 given, 0 open, places 61 of 70, reads 20 of 32
 union-discriminants-compared-with-literals-2: 3 layouts, 16 given, 0 open, places 65 of 102, reads 10 of 45

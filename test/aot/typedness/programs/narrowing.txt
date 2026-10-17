@@ -2,7 +2,7 @@ constant-conditions-match-ecmascript: 2 layouts, 0 given, 1 open, places 47 of 7
 evolving-let-counted: 3 layouts, 0 given, 1 open, places 32 of 56, reads 8 of 16
 evolving-let: 1 layouts, 0 given, 1 open, places 31 of 43, reads 2 of 7
 falsy-object-is-nullish: 1 layouts, 0 given, 2 open, places 36 of 46, reads 8 of 19
-large-object-union: 1 layouts, 30 given, 1 open, places 37 of 83, reads 0 of 16
+large-object-union: 1 layouts, 30 given, 1 open, places 22 of 53, reads 0 of 16
 narrowed-by-initializer-closure-store: 6 layouts, 0 given, 0 open, places 42 of 59, reads 7 of 12
 narrowed-store-back-untyped-params: 5 layouts, 0 given, 0 open, places 44 of 58, reads 11 of 24
 narrowed-store-back: 5 layouts, 0 given, 0 open, places 44 of 54, reads 11 of 24
@@ -18,5 +18,5 @@ switch-on-union-tag: 3 layouts, 0 given, 0 open, places 7 of 15, reads 3 of 5
 union-constant-kind-per-member: 5 layouts, 0 given, 9 open, places 54 of 63, reads 16 of 29
 union-member-chosen-at-runtime: 5 layouts, 0 given, 0 open, places 17 of 25, reads 4 of 5
 union-members-same-fields: 4 layouts, 0 given, 0 open, places 13 of 21, reads 6 of 8
-union-passed-between-modules: 0 layouts, 48 given, 0 open, places 67 of 173, reads 0 of 25
-union-shares-only-discriminant: 5 layouts, 29 given, 0 open, places 40 of 79, reads 3 of 10
+union-passed-between-modules: 0 layouts, 48 given, 0 open, places 20 of 87, reads 0 of 25
+union-shares-only-discriminant: 5 layouts, 29 given, 0 open, places 36 of 71, reads 3 of 10

@@ -44,5 +44,5 @@ static-after-closure: 1 layouts, 0 given, 0 open, places 1 of 10, reads 1 of 8
 static-methods-named-bind-call-apply: 9 layouts, 0 given, 2 open, places 52 of 109, reads 9 of 39
 structural-subtypes-cleared: 5 layouts, 0 given, 5 open, places 36 of 48, reads 6 of 35
 structural-subtypes: 5 layouts, 0 given, 5 open, places 33 of 45, reads 4 of 23
-typed-classes-constructed-untyped: 24 layouts, 0 given, 9 open, places 97 of 216, reads 17 of 66
+typed-classes-constructed-untyped: 24 layouts, 0 given, 10 open, places 97 of 216, reads 17 of 66
 variables-assigned-only-before-capture: 4 layouts, 0 given, 0 open, places 180 of 203, reads 8 of 13

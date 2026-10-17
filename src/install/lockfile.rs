@@ -2155,8 +2155,14 @@ fn write_in_place(filename: &ZStr, bytes: &[u8]) -> sys::Result<()> {
         sys::ftruncate(file.handle, bytes.len() as i64)
     };
     let written = overwrite(bytes);
-    if written.is_err() {
-        let _ = overwrite(&old);
+    if written.is_err()
+        && let Err(restore) = overwrite(&old)
+    {
+        Output::err(
+            &restore,
+            "failed to restore {}, the file may be incomplete",
+            (bstr::BStr::new(filename.as_bytes()),),
+        );
     }
     written
 }

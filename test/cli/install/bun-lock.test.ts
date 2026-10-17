@@ -5858,17 +5858,18 @@ int unlink(const char *path) {
   return next(path);
 }
 
-// With FAKE_MOUNT_WRITE_FAILS set, the first ftruncate of a mount point fails: a write into it
-// that stops part-way.
+// The first FAKE_MOUNT_WRITE_FAILS calls of ftruncate on a mount point fail: writes into it that
+// stop part-way.
 int ftruncate(int fd, off_t length) {
   static int failed;
+  const char *failures = getenv("FAKE_MOUNT_WRITE_FAILS");
   char link[64], path[4096];
   snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
   ssize_t len = readlink(link, path, sizeof path - 1);
-  if (getenv("FAKE_MOUNT_WRITE_FAILS") && !failed && len > 0) {
+  if (failures && failed < atoi(failures) && len > 0) {
     path[len] = 0;
     if (is_mount_point(path)) {
-      failed = 1;
+      failed++;
       errno = EIO;
       return -1;
     }
@@ -5925,7 +5926,7 @@ describe.skipIf(!isLinux || isMusl || !cc)("a lockfile that is a mount point", (
 
   afterAll(() => fixtures?.[Symbol.dispose]());
 
-  type Result = { stderr: string; exitCode: number };
+  type Result = { stdout: string; stderr: string; exitCode: number };
   type Which = "plain" | "mounted";
   type Project = { cwd: string; bun: (...args: string[]) => Promise<Result> };
   type Steps = (project: Project) => Promise<Result>;
@@ -5944,11 +5945,11 @@ describe.skipIf(!isLinux || isMusl || !cc)("a lockfile that is a mount point", (
         }),
         ...extraEnv,
       },
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
   }
 
   // An installed project and its cache are made once, as `project` and `cache` in the directory this
@@ -6021,7 +6022,7 @@ describe.skipIf(!isLinux || isMusl || !cc)("a lockfile that is a mount point", (
         cwd,
         bun: (...args) => bunIn(cwd, args, which === "mounted" ? mountPoints : [], extraEnv),
       });
-      return { state: state(cwd, result), stderr: result.stderr, sameInode: Bun.deepEquals(inodes(which), before) };
+      return { state: state(cwd, result), ...result, sameInode: Bun.deepEquals(inodes(which), before) };
     };
 
     return {
@@ -6199,6 +6200,34 @@ describe.skipIf(!isLinux || isMusl || !cc)("a lockfile that is a mount point", (
     expect({ ino: after.ino, mtimeNs: after.mtimeNs }).toEqual({ ino: before.ino, mtimeNs: before.mtimeNs });
   });
 
+  // stdout of `--lockfile-only` ends with a line that says what it saved. That line names bun.lock
+  // when a text lockfile was asked for, so it says nothing of a bun.lockb saved without packages.
+  it.each([
+    { lockfile: "bun.lock", bunfig: undefined, flags: [], summary: "Saved bun.lock (1 package)" },
+    {
+      lockfile: "bun.lockb",
+      bunfig: binaryLockfile,
+      flags: ["--save-text-lockfile"],
+      summary: "Checked 1 package (no changes)",
+    },
+  ])("bun install --lockfile-only that empties a $lockfile ends with: $summary", async row => {
+    const { lockfile, bunfig, flags, summary } = row;
+    await using project = await twoProjects(installedProject([A1], bunfig), [lockfile]);
+    const [plain, mounted] = await project.both(({ cwd, bun }) => {
+      writeFileSync(join(cwd, "package.json"), packageJson([]));
+      return bun("install", "--lockfile-only", ...flags);
+    });
+
+    expect(plain.state).toMatchObject({ exitCode: 0, errors: [], [lockfile]: null });
+    expect(plain.stdout).toContain("Checked 1 package (no changes)");
+    expect(mounted.state).toEqual({
+      ...plain.state,
+      files: [lockfile, ...plain.state.files],
+      [lockfile]: lockfile === "bun.lock" ? emptiedLockfile : expect.stringContaining("bun-lockfile-format"),
+    });
+    expect(mounted.stdout).toContain(summary);
+  });
+
   it("--save-text-lockfile warns when it cannot delete bun.lockb", async () => {
     await using project = await twoProjects(installedProject([A1], binaryLockfile), ["bun.lockb"]);
     const lockb = readFileSync(join(project.dir("mounted"), "bun.lockb"), "latin1");
@@ -6220,6 +6249,8 @@ describe.skipIf(!isLinux || isMusl || !cc)("a lockfile that is a mount point", (
     expect(again.state).toEqual(mounted.state);
   });
 
+  const replaceFailed = "EIO: Input/output error: Failed to replace old lockfile with new lockfile on disk (ftruncate)";
+
   it("a write into the mount point that fails puts the old lockfile back", async () => {
     await using project = await twoProjects(installedProject([A1]), ["bun.lock"]);
     const lockfile = readFileSync(join(project.dir("mounted"), "bun.lock"), "latin1");
@@ -6227,11 +6258,29 @@ describe.skipIf(!isLinux || isMusl || !cc)("a lockfile that is a mount point", (
 
     expect(state).toMatchObject({
       exitCode: 1,
-      errors: ["EIO: Input/output error: Failed to replace old lockfile with new lockfile on disk (ftruncate)"],
+      errors: [replaceFailed],
       locked: [A1],
       files: ["bun.lock", "node_modules", "package.json"],
       "bun.lock": lockfile,
     });
+  });
+
+  it("bun says that bun.lock may be incomplete when it cannot put the old lockfile back", async () => {
+    await using project = await twoProjects(installedProject([A1]), ["bun.lock"]);
+    const lockfile = readFileSync(join(project.dir("mounted"), "bun.lock"), "latin1");
+    const { state } = await project.run("mounted", ({ bun }) => bun("add", tgz(B1)), { FAKE_MOUNT_WRITE_FAILS: "2" });
+
+    expect(state).toMatchObject({
+      exitCode: 1,
+      errors: [
+        "EIO: Input/output error: failed to restore bun.lock, the file may be incomplete (ftruncate)",
+        replaceFailed,
+      ],
+      files: ["bun.lock", "node_modules", "package.json"],
+    });
+    // The old bytes are back, but the file keeps the length of the longer new lockfile.
+    expect(state["bun.lock"]).toStartWith(lockfile);
+    expect(state["bun.lock"]).not.toBe(lockfile);
   });
 });
 

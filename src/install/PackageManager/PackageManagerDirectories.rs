@@ -1328,7 +1328,8 @@ pub fn save_lockfile(
                                 bun_core::pretty_errorln!("Saved lockfile");
                                 Output::flush();
                             }
-                            return Ok(false);
+                            // `--lockfile-only` names the file of `save_format` as the one it saved.
+                            return Ok(wrote && delete_format == save_format);
                         }
 
                         if log_level != LogLevel::Silent {
@@ -1416,9 +1417,8 @@ pub fn save_lockfile(
             if err.get_errno() != sys::E::ENOENT && log_level != LogLevel::Silent {
                 bun_core::warn!(
                     "failed to delete bun.lockb after saving bun.lock: {}",
-                    bstr::BStr::new(err.name()),
+                    bun_fmt::s(err.name()),
                 );
-                Output::flush();
             }
         }
     }

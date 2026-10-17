@@ -37,6 +37,21 @@ IGNORE_WARNINGS_BEGIN("implicit-fallthrough")
 // Older versions of gperf like to use the `register` keyword.
 #define register
 
+// In place of gperf's own, which takes both strings through a table a byte at a time. `word` is one of the names below.
+#define GPERF_DOWNCASE 1
+#define GPERF_CASE_MEMCMP 1
+static inline int gperf_case_memcmp(const char* name, const char* word, size_t length)
+{
+    if (!memcmp(name, word, length))
+        return 0;
+    for (size_t i = 0; i < length; i++) {
+        unsigned char difference = static_cast<unsigned char>(name[i]) ^ static_cast<unsigned char>(word[i]);
+        if (difference && (difference != 0x20 || !isASCIIAlpha(word[i])))
+            return 1;
+    }
+    return 0;
+}
+
 namespace WebCore {
 
 static const struct HeaderNameString {
@@ -145,7 +160,7 @@ static const struct HeaderNameString {
 %language=C++
 %readonly-tables
 %global-table
-%compare-strncmp
+%compare-lengths
 %ignore-case
 %struct-type
 struct HeaderNameHashEntry {

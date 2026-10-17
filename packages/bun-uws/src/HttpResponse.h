@@ -73,15 +73,6 @@ public:
         return (size_t) length;
     }
 
-    /* Write an unsigned 64-bit integer */
-    void writeUnsigned64(uint64_t value) {
-        char buf[utils::U64_MAX_DIGITS];
-        int length = utils::u64toa(value, buf);
-
-        /* For now we do this copy */
-        Super::write(buf, length);
-    }
-
     /* Called only once per request */
     void writeMark() {
         if (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER) {
@@ -316,9 +307,8 @@ public:
                     /* WebSocket upgrades does not allow content-length */
                     if (allowContentLength) {
                         /* Even zero is a valid content-length */
-                        Super::write("Content-Length: ", 16);
-                        writeUnsigned64(totalSize);
-                        Super::write("\r\n\r\n", 4);
+                        char digits[utils::U64_MAX_DIGITS];
+                        Super::writeParts({"Content-Length: ", {digits, (size_t) utils::u64toa(totalSize, digits)}, "\r\n\r\n"});
                         httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                     } else {
                         Super::write("\r\n", 2);
@@ -633,9 +623,7 @@ public:
         /* Update status */
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_STATUS_CALLED;
 
-        Super::write("HTTP/1.1 ", 9);
-        Super::write(status.data(), (int) status.length());
-        Super::write("\r\n", 2);
+        Super::writeParts({"HTTP/1.1 ", status, "\r\n"});
         return this;
     }
 
@@ -643,10 +631,7 @@ public:
     HttpResponse *writeHeader(std::string_view key, std::string_view value) {
         writeStatus(HTTP_200_OK);
 
-        Super::write(key.data(), (int) key.length());
-        Super::write(": ", 2);
-        Super::write(value.data(), (int) value.length());
-        Super::write("\r\n", 2);
+        Super::writeParts({key, ": ", value, "\r\n"});
         return this;
     }
 
@@ -660,10 +645,8 @@ public:
             return this;
         }
 
-        Super::write(key.data(), (int) key.length());
-        Super::write(": ", 2);
-        writeUnsigned64(value);
-        Super::write("\r\n", 2);
+        char digits[utils::U64_MAX_DIGITS];
+        Super::writeParts({key, ": ", {digits, (size_t) utils::u64toa(value, digits)}, "\r\n"});
         return this;
     }
 

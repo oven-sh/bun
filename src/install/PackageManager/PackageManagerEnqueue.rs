@@ -344,6 +344,8 @@ fn enqueue_download(
         offline_miss(this, task_id, "", name, is_required);
         return Err(ForTarballError::Offline);
     }
+    // Only a linker records the integrity of what it downloads for a row.
+    let pins_row = is_asked_by_linker(&task_context);
     if !push_task_callback(this, task_id, task_context) {
         return Ok(());
     }
@@ -358,6 +360,7 @@ fn enqueue_download(
         dependency_id,
         &package,
         authorization,
+        pins_row,
     )? {
         // reshaped for borrowck — `task: &mut NetworkTask` borrows
         // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
@@ -2413,6 +2416,7 @@ fn bind_row_without_manifest(
                         ..Package::default()
                     },
                     Authorization::NoAuthorization,
+                    true,
                 ) {
                     // --offline miss: already reported (if required) / skipped (if optional)
                     Err(ForTarballError::Offline) => return Ok(()),
@@ -3180,6 +3184,7 @@ fn tarball_task(
         dependency_id,
         package,
         Authorization::AllowAuthorization,
+        true,
     )?;
     Ok(Some(ResolvedPackageTask::NetworkTask(
         task.expect("unreachable"),

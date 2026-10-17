@@ -36,6 +36,7 @@ import {
   setContextHandler,
   setGithubRepository,
   setUglifyJsRepository,
+  uglifyJsCacheEntry,
   type TestContext,
 } from "./dummy.registry.js";
 import { constructStdCollision } from "./wyhash-std-collision.js";
@@ -6191,17 +6192,19 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        "@GH@mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry(),
         "uglify",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache", "uglify"))).toEqual([
-        "mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry().slice("@GH@".length),
       ]);
       expect(
         resolve(
-          await readlink(join(ctx.package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1")),
+          await readlink(
+            join(ctx.package_dir, "node_modules", ".cache", "uglify", uglifyJsCacheEntry().slice("@GH@".length)),
+          ),
         ),
-      ).toBe(join(ctx.package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
+      ).toBe(join(ctx.package_dir, "node_modules", ".cache", uglifyJsCacheEntry()));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
         ".bun-tag",
         ".gitattributes",
@@ -6261,17 +6264,19 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        "@GH@mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry(),
         "uglify",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache", "uglify"))).toEqual([
-        "mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry().slice("@GH@".length),
       ]);
       expect(
         resolve(
-          await readlink(join(ctx.package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1")),
+          await readlink(
+            join(ctx.package_dir, "node_modules", ".cache", "uglify", uglifyJsCacheEntry().slice("@GH@".length)),
+          ),
         ),
-      ).toBe(join(ctx.package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
+      ).toBe(join(ctx.package_dir, "node_modules", ".cache", uglifyJsCacheEntry()));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
         ".bun-tag",
         ".gitattributes",
@@ -6526,17 +6531,19 @@ describe.concurrent("bun-install", () => {
         join("..", "uglify", "bin", "uglifyjs"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        "@GH@mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry(),
         "uglify",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache", "uglify"))).toEqual([
-        "mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry().slice("@GH@".length),
       ]);
       expect(
         resolve(
-          await readlink(join(ctx.package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1")),
+          await readlink(
+            join(ctx.package_dir, "node_modules", ".cache", "uglify", uglifyJsCacheEntry().slice("@GH@".length)),
+          ),
         ),
-      ).toBe(join(ctx.package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
+      ).toBe(join(ctx.package_dir, "node_modules", ".cache", uglifyJsCacheEntry()));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
         ".bun-tag",
         ".gitattributes",
@@ -6658,17 +6665,19 @@ describe.concurrent("bun-install", () => {
         join("..", "uglify", "bin", "uglifyjs"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
-        "@GH@mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry(),
         "uglify",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache", "uglify"))).toEqual([
-        "mishoo-UglifyJS-e219a9a@@@1",
+        uglifyJsCacheEntry().slice("@GH@".length),
       ]);
       expect(
         resolve(
-          await readlink(join(ctx.package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1")),
+          await readlink(
+            join(ctx.package_dir, "node_modules", ".cache", "uglify", uglifyJsCacheEntry().slice("@GH@".length)),
+          ),
         ),
-      ).toBe(join(ctx.package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
+      ).toBe(join(ctx.package_dir, "node_modules", ".cache", uglifyJsCacheEntry()));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
         ".bun-tag",
         ".gitattributes",

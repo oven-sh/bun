@@ -2131,8 +2131,14 @@ describe.concurrent("bun pm cache prune", () => {
       "@T@sha512-00112233445566778899aabbccddeeff@@@1",
       "@T@85f77fa09e18a07f@@@1",
       "pkg@1.0.0@@localhost__0123456789abcdef@@@1",
+      // Named by the commit and the integrity in bun.lock.
+      "@GH@owner-repo-abc1234+sha512-00112233445566778899aabbccddeeff@@@1",
     ];
-    const recent = ["@T@sha512-ffeeddccbbaa99887766554433221100@@@1", "pkg@2.0.0@@localhost__0123456789abcdef@@@1"];
+    const recent = [
+      "@T@sha512-ffeeddccbbaa99887766554433221100@@@1",
+      "pkg@2.0.0@@localhost__0123456789abcdef@@@1",
+      "@GH@owner-repo-abc1234+sha512-ffeeddccbbaa99887766554433221100@@@1",
+    ];
     using dir = tempDir("pm-cache-prune-names", {
       "package.json": JSON.stringify({ name: "cache-prune-names" }),
       cache: Object.fromEntries([...stale, ...recent].map(entry => [entry, { "package.json": "{}" }])),
@@ -2141,7 +2147,7 @@ describe.concurrent("bun pm cache prune", () => {
     for (const entry of stale) utimesSync(join(cache, entry), daysAgo(40), daysAgo(40));
 
     expect(await prune(String(dir), cache)).toEqual({
-      stdout: "Removed 3 packages older than 30 days (6 bytes)\n",
+      stdout: "Removed 4 packages older than 30 days (8 bytes)\n",
       stderr: "",
       exitCode: 0,
     });

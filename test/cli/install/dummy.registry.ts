@@ -28,7 +28,7 @@
  * ```
  */
 import { file, Server } from "bun";
-import { githubTarball, tmpdirSync } from "harness";
+import { githubCacheEntry, githubTarball, tmpdirSync } from "harness";
 
 let expect: (typeof import("bun:test"))["expect"];
 
@@ -126,6 +126,14 @@ export const uglifyJsRepositoryFiles = {
 /** Registers `uglifyJsRepositoryFiles` as mishoo/UglifyJS at tag v3.14.1 (commit e219a9a). */
 export function setUglifyJsRepository() {
   return setGithubRepository("mishoo", "UglifyJS", "e219a9a", ["", "v3.14.1", "e219a9a"], uglifyJsRepositoryFiles);
+}
+
+/**
+ * The install cache folder of the tarball `setUglifyJsRepository` registered. The tarball is
+ * built anew by every run, so the name is derived from the bytes that are served.
+ */
+export function uglifyJsCacheEntry() {
+  return githubCacheEntry("mishoo-UglifyJS-e219a9a", githubTarballs.get("/repos/mishoo/UglifyJS/tarball/e219a9a")!);
 }
 
 // ============================================================================

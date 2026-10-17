@@ -1779,13 +1779,19 @@ pub(crate) fn install_isolated_packages(
             // The integrity too: the store path `name@version` is not unique across registries.
             let hash_entry = |seed: u64, id: store::entry::Id| {
                 let mut h = Wyhash::init(seed);
+                let pkg_id = store.ids(id).pkg_id as usize;
+                // An older version's entry for a pinned GitHub row holds unchecked bytes.
+                let pinned_github = pkg_resolutions[pkg_id].tag == ResolutionTag::Github
+                    && pkg_metas[pkg_id].integrity.tag.is_supported();
                 // `no_verify` is hashed so that a verified install never shares an entry whose
                 // bytes were not checked.
-                h.update(&[GLOBAL_STORE_LAYOUT, u8::from(no_verify)]);
+                h.update(&[
+                    GLOBAL_STORE_LAYOUT,
+                    u8::from(no_verify) | u8::from(pinned_github) << 1,
+                ]);
                 let path = store::entry::fmt_store_path(id, &store, lockfile);
                 // The path is the only input without a fixed length, so a NUL marks its end.
                 write!(WyhashWriter { hasher: &mut h }, "{path}\0").expect("unreachable");
-                let pkg_id = store.ids(id).pkg_id as usize;
                 h.update(bun_core::bytes_of(&pkg_metas[pkg_id].integrity));
                 h
             };
@@ -2417,23 +2423,31 @@ pub(crate) fn install_isolated_packages(
                             store_path.append(pkg_name.slice(string_buf)).assume_ok();
                             let package_len = store_path.len();
                             let mut hash_buf: install::BuntagHashBuf = Default::default();
-                            store_path
-                                .append(installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf))
-                                .assume_ok();
+                            let marker = installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf);
+                            // Like the hoisted linker, replace a copy that holds other bytes than bun.lock pins.
+                            let integrity = &pkgs.items_meta()[pkg_id as usize].integrity;
+                            let reads_tag = matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball)
+                                || (pkg_res.tag == ResolutionTag::Github && integrity.tag.is_supported());
+                            // The read below finds a missing `.bun-tag` too.
+                            let marker_is_read = reads_tag && marker == crate::package_install::BUN_TAG;
+                            store_path.append(marker).assume_ok();
                             // `exists` follows the link of an entry that left the global store.
-                            if !sys::exists_z(store_path.slice_z()) {
+                            if !marker_is_read && !sys::exists_z(store_path.slice_z()) {
                                 break 'needs_install true;
                             }
-                            // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.
-                            if matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball) {
+                            if reads_tag {
                                 store_path.set_length(package_len);
                                 store_path.append(crate::package_install::BUN_TAG).assume_ok();
-                                let is_current = sys::File::read_from(Fd::cwd(), store_path.slice()).is_ok_and(|tag| {
-                                    crate::package_install::tarball_tag_matches(
-                                        &tag,
-                                        &pkgs.items_meta()[pkg_id as usize].integrity,
-                                        installer.manager().skips_verify(pkg_res.tag),
-                                    )
+                                let skips_verify = installer.manager().skips_verify(pkg_res.tag);
+                                let tag = sys::File::openat(Fd::cwd(), store_path.slice(), sys::O::RDONLY, 0)
+                                    .and_then(|file| file.read_to_end_small());
+                                let is_current = tag.is_ok_and(|tag| {
+                                    if pkg_res.tag == ResolutionTag::Github {
+                                        let resolved = pkg_res.github().resolved.slice(string_buf);
+                                        crate::package_install::github_tag_matches(&tag, resolved, integrity, skips_verify)
+                                    } else {
+                                        crate::package_install::tarball_tag_matches(&tag, integrity, skips_verify)
+                                    }
                                 });
                                 if !is_current {
                                     break 'needs_install true;

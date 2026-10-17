@@ -157,10 +157,12 @@ fn read_contained_package_json(package_dir: &[u8], folder: &[u8]) -> bun_sys::Ma
 
 impl PackageManager {
     /// Appends `package` and queues its dependencies, or reuses one of its name and resolution.
+    /// `repins`: see `waiter_repins_github`.
     fn append_extracted_package(
         &mut self,
         mut package: Package,
         data: &ExtractData,
+        repins: bool,
         package_id: &mut PackageID,
     ) -> Package {
         if let Some(existing_id) =
@@ -170,19 +172,31 @@ impl PackageManager {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
+            let changed = existing.meta.integrity != data.integrity;
             let moved = match existing.resolution.tag {
                 // A nested git ref can move, so `bun update` resolves the dependencies again.
-                ResolutionTag::Git | ResolutionTag::Github => self.to_update,
-                // Only `repins_tarball` reads one again that bun.lock has.
-                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                    existing.meta.integrity != data.integrity
+                ResolutionTag::Git => self.to_update,
+                // Likewise. Only the first dependency read again brings bytes other than the pin.
+                ResolutionTag::Github => {
+                    self.to_update
+                        && (!changed
+                            || (repins
+                                && !self
+                                    .reread_github_rows
+                                    .contains(&self.reread_key(&existing))))
                 }
+                // Only `repins_tarball` reads one again that bun.lock has.
+                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => changed,
                 _ => false,
             };
             if !(from_lockfile && moved) {
                 return existing;
             }
-            if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
+            if existing.resolution.tag == ResolutionTag::Github {
+                let key = self.reread_key(&existing);
+                self.reread_github_rows.push(key);
+            }
+            if changed && existing.meta.integrity.tag.is_supported() {
                 let name = self.lockfile.str(&existing.name).to_vec();
                 self.log_mut().add_warning_fmt(
                     None,
@@ -215,6 +229,10 @@ impl PackageManager {
             }
             package = self.lockfile.append_package(&package).expect("unreachable");
             *package_id = package.meta.id;
+            if self.to_update && package.resolution.tag == ResolutionTag::Github {
+                let key = self.reread_key(&package);
+                self.reread_github_rows.push(key);
+            }
         }
 
         bun_core::handle_oom(
@@ -409,6 +427,7 @@ impl PackageManager {
         package_id: &mut PackageID,
         resolution: &Resolution,
         data: &ExtractData,
+        repins: bool,
         log_level: LogLevel,
     ) -> Option<Package> {
         match resolution.tag {
@@ -467,7 +486,7 @@ impl PackageManager {
                     pkg
                 };
 
-                Some(self.append_extracted_package(package, data, package_id))
+                Some(self.append_extracted_package(package, data, repins, package_id))
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let json = data.json.as_ref().unwrap();
@@ -490,7 +509,7 @@ impl PackageManager {
                     self.crash();
                 }
 
-                Some(self.append_extracted_package(package, data, package_id))
+                Some(self.append_extracted_package(package, data, repins, package_id))
             }
             _ => None,
         }
@@ -604,10 +623,12 @@ impl PackageManager {
 
         let mut package_id = INVALID_PACKAGE_ID;
         let log_level = self.options.log_level;
+        let repins = self.waiter_repins_github(task_id);
         let Some(package) = self.process_extracted_tarball_package(
             &mut package_id,
             &arrived.resolution,
             &arrived.data,
+            repins,
             log_level,
         ) else {
             return true;
@@ -623,11 +644,42 @@ impl PackageManager {
             let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
             enqueue::add_dependency_error(self, &dependency, err);
         }
+        self.set_extracted(package_id, &arrived.resolution, &arrived.data);
+        true
+    }
+
+    /// Names a GitHub row in `reread_github_rows`. A clean of the lockfile gives it another id.
+    fn reread_key(&self, package: &Package) -> u64 {
+        let resolved = self.lockfile.str(&package.resolution.github().resolved);
+        bun_wyhash::hash_with_seed(package.name_hash, resolved)
+    }
+
+    /// Whether a dependency that waits for `task_id` is one that `bun update` reads again.
+    pub(crate) fn waiter_repins_github(&self, task_id: Task::Id) -> bool {
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        self.task_queue.get(&task_id).is_some_and(|waiting| {
+            waiting.iter().any(|waiter| match *waiter {
+                TaskCallbackContext::Dependency(id) | TaskCallbackContext::RootDependency(id) => {
+                    self.repins_tarball(&self.lockfile.buffers.dependencies[id as usize], buf, true)
+                }
+                _ => false,
+            })
+        })
+    }
+
+    /// Marks the package as cached, unless it is a GitHub row that pins other bytes than `data`.
+    pub(crate) fn set_extracted(
+        &mut self,
+        package_id: PackageID,
+        resolution: &Resolution,
+        data: &ExtractData,
+    ) {
+        let pins_other_bytes = resolution.tag == ResolutionTag::Github
+            && self.lockfile.packages.items_meta()[package_id as usize].integrity != data.integrity;
         // A git checkout is not a tarball that the linker would otherwise extract again.
-        if arrived.resolution.tag != ResolutionTag::Git {
+        if resolution.tag != ResolutionTag::Git && !pins_other_bytes {
             self.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }
-        true
     }
 
     pub(crate) fn process_dependency_list_item(

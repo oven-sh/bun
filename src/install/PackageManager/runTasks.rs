@@ -1376,6 +1376,7 @@ fn run_tasks_erased(
                     // shared `&task` here coexists with the field-disjoint
                     // `&task.request` borrow held via `resolution` above.
                     task.data_extract(),
+                    manager.waiter_repins_github(task.id),
                     log_level,
                 ) {
                     resolve_waiters_and_notify(
@@ -1399,7 +1400,7 @@ fn run_tasks_erased(
                     }
                 }
 
-                manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                manager.set_extracted(package_id, resolution, task.data_extract());
 
                 name_progress(manager, alias, EXTRACT);
             }
@@ -1669,6 +1670,7 @@ fn run_tasks_erased(
                     // `&task` here coexists with the field-disjoint
                     // `&task.request` borrow held via `git_checkout` above.
                     task.data_git_checkout(),
+                    false,
                     log_level,
                 ) {
                     resolve_waiters_and_notify(
@@ -2051,6 +2053,8 @@ pub fn generate_network_task_for_tarball<'a>(
     dependency_id: DependencyID,
     package: &Package,
     authorization: Authorization,
+    // Whether the one who asks gives a row of the lockfile the integrity of this download.
+    pins_row: bool,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
@@ -2121,7 +2125,8 @@ pub fn generate_network_task_for_tarball<'a>(
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,
-        stays_unpinned: package.meta.id != bun_install::invalid_package_id && !this.pins_tarballs(),
+        stays_unpinned: package.meta.id != bun_install::invalid_package_id
+            && !(pins_row && this.pins_tarballs()),
         url: stored_string(url),
         // Copied here: extract workers must not read lockfile buffers.
         github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {

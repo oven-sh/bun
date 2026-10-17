@@ -1150,6 +1150,44 @@ test.concurrent(
   30_000,
 );
 
+// A row without integrity is read from the cache folder that its commit names,
+// which is what those versions filled. Nothing is downloaded for it, so the
+// branch that moved is not asked and the lockfile stays as it is.
+for (const linker of ["hoisted", "isolated"] as const) {
+  test.concurrent(
+    `${linker} linker installs a bun.lockb from Bun 1.3.9 from the cache of that version after a branch moved`,
+    async () => {
+      using dir = tempDir(`github-lockb-${linker}-older-cache`, {});
+      const root = String(dir);
+      await using github = await serveGithub();
+      const project = writeProject(root, { a: "github:testowner/testrepo#main" });
+      writeFileSync(join(project, "bunfig.toml"), binaryLockfile);
+      const fixture = join(import.meta.dir, "fixtures", "github-branch-1.3.9.lockb");
+      copyFileSync(fixture, join(project, "bun.lockb"));
+      const cache = join(root, "cache");
+      // the hoisted linker puts gh-leaf in the root node_modules
+      const leaf = linker === "isolated" ? ghLeafOfGhDep : "gh-leaf";
+
+      // an install that cannot save the lockfile fills the folders that those versions filled
+      const older = await runInstall(project, cache, github.env, "--frozen-lockfile", `--linker=${linker}`);
+      expect(diagnostics(older.stderr)).toEqual([]);
+      const entries = readdirSync(cache).filter(entry => entry.startsWith("@GH@"));
+      expect(entries.sort()).toEqual(["@GH@testowner-leaf-bbbbbbb@@@1", "@GH@testowner-testrepo-aaaaaaa@@@1"]);
+      expect(older.exitCode).toBe(0);
+
+      rmSync(join(project, "node_modules"), { recursive: true });
+      github.heads.leaf = "ccccccc";
+      github.downloads.length = 0;
+      const { stderr, exitCode } = await runInstall(project, cache, github.env, `--linker=${linker}`);
+      expect(diagnostics(stderr)).toEqual([]);
+      expect(github.downloads).toEqual([]);
+      expect(await installedVersions(project, ["a", leaf])).toEqual({ a: "gh-dep", [leaf]: "gh-leaf" });
+      expect(readFileSync(join(project, "bun.lockb"))).toEqual(readFileSync(fixture));
+      expect(exitCode).toBe(0);
+    },
+  );
+}
+
 // `bun add` and `bun update <name>` download the ref again for the dependency
 // that they name. Another dependency on that ref keeps the commit that
 // bun.lockb pins, and its download asked for the same URL: it joined the

@@ -505,9 +505,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public saslprep: boolean | undefined;
   /// One login is finding out which form the server has. Nothing else is dialed until it has settled.
   #dialsHeld = false;
-  /// Dials in a row that did not establish, and when the last one failed, see #dial().
-  #failedDials = 0;
-  #failedDialAt = 0;
+  /// The most connections it has had open at once since a dial last failed, when that was, and how many have failed
+  /// since the last login, see #dialForQueued().
+  #most = 0;
+  #refusedAt = -Infinity;
+  #refusals = 0;
   public readonly generation: number = hotReloadGeneration();
   /// see retireUnusedPools()
   public asked: boolean = false;
@@ -654,7 +656,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   /// For the callers that wait. If no connection is ready, the pool is started: it dials until `max` is reached.
-  /// Otherwise it grows by one dial for each waiting caller that no dial in flight covers.
+  /// Otherwise it grows by one dial for each waiting caller that no dial in flight covers: back to what it has had
+  /// since a dial last failed, and by one more after a pause that doubles with each failure, up to 1 s.
   #dialForQueued() {
     if (this.queue.length !== 0) {
       this.#dial(this.readyConnections.size === 0);
@@ -663,17 +666,13 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   #dial(start: boolean) {
     const connections = this.connections;
-    // The server has refused a dial and let none in since. While the callers have a connection to wait for, it is
-    // asked again with one dial at a time, after a pause that doubles up to 1 s.
-    const retry = this.#failedDials !== 0 && connections.length !== 0;
-    if (retry && monotonicNowMs() - this.#failedDialAt < Math.min(20 * 2 ** this.#failedDials, 1000)) {
-      return;
-    }
+    const pause = Math.min(20 * 2 ** this.#refusals, 1000);
+    const limit = start ? 0 : this.#most + (monotonicNowMs() - this.#refusedAt < pause ? 0 : 1);
     while (
       !this.#dialsHeld &&
       connections.length < this.#max &&
       this.#closing === null &&
-      (retry ? this.#connecting() === 0 : start || this.#connecting() < this.queue.length)
+      (start || (connections.length < limit && this.#connecting() < this.queue.length))
     ) {
       if (!this.#adopt()) {
         const connection = new PooledConnection(this);
@@ -823,9 +822,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   connectionOpened(connection: PooledConnection) {
     this.saslprep = connection.saslprep;
-    if (connection.connectStartedAt > this.#failedDialAt) {
-      this.#failedDials = 0;
-    }
+    this.#most = Math.max(this.#most, this.connections.length - this.#connecting());
+    this.#refusals = 0;
     this.readyConnections.add(connection);
     if (this.#dialsHeld) {
       this.#dialsHeld = false;
@@ -843,12 +841,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.#dialsHeld = false;
     }
     this.readyConnections.delete(connection);
-    if (established) {
-      // its place on the server may be free
-      this.#failedDialAt = 0;
-    } else {
-      this.#failedDials++;
-      this.#failedDialAt = monotonicNowMs();
+    if (!established) {
+      this.#most = connections.length - this.#connecting();
+      this.#refusedAt = monotonicNowMs();
+      this.#refusals++;
     }
     const closeHandlers = connection.closeHandlers;
     for (const onClose of closeHandlers) {

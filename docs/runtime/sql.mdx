@@ -1409,7 +1409,7 @@ await Promise.all([
 - `sql.begin` and `sql.reserve` need a connection of their own, so they wait for an idle one.
 - Bun serves the callers that wait for a connection oldest first.
 - A pool that lost some of its connections opens new ones when queries have to wait.
-- When Bun cannot open a new connection, callers wait for the connections that are open. They reject with the error of that attempt only when the pool has no connection left. While the pool has one, Bun tries again with one connection at a time, after a pause that doubles from 40 ms to 1 second, or as soon as one of its connections closes.
+- When Bun cannot open a new connection, callers wait for the connections that are open. They reject with the error of that attempt only when the pool has no connection left. A caller that finds every open connection reserved makes Bun try again at once. While an open connection can still take queries, Bun adds at most one connection at a time for the queries that wait, and after each failed attempt it pauses before the next: a few tens of milliseconds at first, then twice as long each time, up to 1 second.
 - Bun closes a connection that goes back to the pool inside a transaction, and the server rolls that transaction back. That covers a reserved connection that you release after a manual `BEGIN`, and a query that leaves a transaction open or failed, such as `SELECT 1; BEGIN`. Queries of other callers that Bun already sent behind such a query are rolled back with it. With `max: 1`, where a manual `BEGIN` is allowed, a query can leave its transaction open.
 
 ### Hot reloading

@@ -1186,13 +1186,13 @@ describe.each(scripted)("$adapter, scripted server", script => {
     await using server = await serverOf((socket, nth) => (nth === 1 ? serving(socket) : refuseLogin(socket)));
     const closed = new Calls();
     await using sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
-    const reservation = sql.reserve();
+    const holder = await sql.reserve();
+    await closed.reached(1);
     const waiting = outcome(call(sql));
-    const holder = await reservation;
-    expect(await unlessPending(waiting, closed.reached(1).then(nextTurn))).toBe("pending");
+    expect(await unlessPending(waiting, closed.reached(2).then(nextTurn))).toBe("pending");
     holder.release();
     expect(await waiting).toBe("resolved");
-    expect(server.sockets.length).toBe(2);
+    expect(server.sockets.length).toBe(3);
   });
 
   test.concurrent("queries on a cold pool are served by the one connection that comes up", async () => {
@@ -1248,21 +1248,110 @@ describe.each(scripted)("$adapter, scripted server", script => {
     expect(await outcome(later)).toBe("resolved");
   });
 
-  describe("a server that has no place left, while the pool has a connection to wait for", () => {
+  describe("a caller that finds no connection ready is dialed for, whatever the server said before", () => {
+    const query = (sql: SQL) => sql.unsafe("select 1").simple();
+
+    describe.each([2, 10])("max: %d, one place when the pool starts, then room", max => {
+      test.concurrent.each([
+        [
+          "reserve()",
+          async (sql: SQL) => {
+            using _ = await sql.reserve();
+            await query(sql);
+          },
+        ],
+        ["begin()", (sql: SQL) => sql.begin(() => query(sql))],
+      ])("a query of the pool inside %s", async (_, nested) => {
+        let answerWith = (socket: net.Socket, nth: number) => (nth === 1 ? serving(socket) : refuseLogin(socket));
+        await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+        const closed = new Calls();
+        await using sql = new SQL({ url: url(server.port), max, onclose: closed.hit });
+        await query(sql);
+        await closed.reached(max - 1);
+        answerWith = serving;
+        expect(await outcome(nested(sql))).toBe("resolved");
+      });
+    });
+
+    test.concurrent("when one dial of the start was refused and the other gets no answer", async () => {
+      await using server = await serverOf((socket, nth) => {
+        if (nth === 1) refuseLogin(socket);
+        if (nth > 2) serving(socket);
+      });
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 2, connectionTimeout: 0, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      const first = outcome(query(sql));
+      await closed.reached(1);
+      expect([await outcome(query(sql)), await first]).toEqual(["resolved", "resolved"]);
+      expect(server.sockets.length).toBe(3);
+    });
+
+    test.concurrent("when its only connection is reserved and an earlier dial gets no answer", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth === 1 ? serving(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 3, connectionTimeout: 0, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      using held = await sql.reserve();
+      await closed.reached(2);
+      // The first caller's dials: one gets no answer, the other is refused.
+      const before = server.sockets.length;
+      answerWith = (socket, nth) => void (nth > before + 1 && refuseLogin(socket));
+      const first = outcome(query(sql));
+      await closed.reached(3);
+      answerWith = serving;
+      expect([await outcome(query(sql)), await first]).toEqual(["resolved", "resolved"]);
+    });
+
+    test.concurrent("the callers that wait when every connection is cut get a pool of `max` again", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth <= 3 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 6, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await Promise.all([connected.reached(3), closed.reached(3)]);
+      answerWith = ready;
+      // Two for each connection, six wait.
+      for (let i = 0; i < 12; i++) void outcome(sql.unsafe("select 1").execute());
+      for (const socket of server.sockets.slice(0, 3)) socket.destroy();
+      await connected.reached(9);
+      expect(await server.dials()).toBe(12);
+    });
+  });
+
+  describe("while a connection is ready, the pool grows with care", () => {
     const waits = (sql: SQL) => void outcome(sql.unsafe("select 1").execute());
 
-    test.concurrent("callers that wait do not cost a login each", async () => {
+    test.concurrent.each([1, 4])("a pool that lost %d of 5 connections has 5 again", async lost => {
+      await using server = await serverOf(ready);
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 5, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await connected.reached(5);
+      for (const socket of server.sockets.slice(0, lost)) socket.destroy();
+      await closed.reached(lost);
+      for (let i = 0; i < 5; i++) waits(sql);
+      await connected.reached(5 + lost);
+      expect(await server.dials()).toBe(5 + lost);
+    });
+
+    test.concurrent("callers that wait at a server without a place do not cost a login each", async () => {
       await using server = await serverOf((socket, nth) => (nth === 1 ? serving(socket) : refuseLogin(socket)));
       await using sql = new SQL({ url: url(server.port), max: 5 });
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 40; i++) {
         // The second one has to wait.
         await Promise.all([sql.unsafe("select 1").simple(), sql.unsafe("select 1").simple()]);
       }
       // Five for the start of the pool, then one after each pause.
-      expect(server.sockets.length).toBeLessThan(15);
+      expect(server.sockets.length).toBeLessThan(25);
     });
 
-    test.concurrent("it is asked again with one dial at a time", async () => {
+    test.concurrent("after a failed dial it asks for one more at a time", async () => {
       let answerWith: (socket: net.Socket) => void = ready;
       await using server = await serverOf(socket => answerWith(socket));
       const connected = new Calls();
@@ -1288,43 +1377,37 @@ describe.each(scripted)("$adapter, scripted server", script => {
       expect(await server.dials()).toBe(7);
     });
 
-    test.concurrent(
-      "a connection that closes leaves a place: one dial at once, and then the pool grows as before",
-      async () => {
-        let answerWith = (socket: net.Socket, nth: number) => (nth <= 2 ? ready(socket) : refuseLogin(socket));
-        await using server = await serverOf((socket, nth) => answerWith(socket, nth));
-        const closed = new Calls();
-        const sql = new SQL({ url: url(server.port), max: 12, onclose: closed.hit });
-        await using _ = unanswered(sql);
-        await sql.connect();
-        await closed.reached(10);
-        waits(sql);
-        waits(sql);
-        const waiting = [1, 2].map(() => outcome(sql.reserve().then(reserved => reserved.release())));
-        answerWith = ready;
-        server.sockets[1].destroy();
-        expect(await Promise.all(waiting)).toEqual(["resolved", "resolved"]);
-        expect(await server.dials()).toBe(13);
-
-        // One gets the connection that is idle, three wait.
-        answerWith = () => {};
-        const kept = [1, 2, 3, 4].map(() => sql.reserve());
-        kept.forEach(outcome);
-        expect(await server.dials()).toBe(16);
-      },
-    );
-
-    test.concurrent("a login that was on its way when the others were refused says nothing", async () => {
+    test.concurrent("a pool that started at a server with one place grows when there is room", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth === 1 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const connected = new Calls();
       const closed = new Calls();
-      await using server = await serverOf((socket, nth) =>
-        nth === 1 ? void closed.reached(4).then(() => ready(socket)) : refuseLogin(socket),
-      );
-      const sql = new SQL({ url: url(server.port), max: 5, onclose: closed.hit });
+      const sql = new SQL({ url: url(server.port), max: 4, onconnect: connected.hit, onclose: closed.hit });
       await using _ = unanswered(sql);
       await sql.connect();
-      for (let i = 0; i < 5; i++) waits(sql);
-      // Five for the start of the pool, and one more if the pause is over by now.
-      expect(await server.dials()).toBeLessThanOrEqual(6);
+      await closed.reached(3);
+      answerWith = ready;
+      while (connected.count < 4) {
+        waits(sql);
+        await nextTurn();
+      }
+      expect(await server.dials()).toBe(7);
+    });
+
+    test.concurrent("a connection that it loses is replaced at once, whatever the server said before", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth <= 2 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 12, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await closed.reached(10);
+      answerWith = ready;
+      waits(sql);
+      waits(sql);
+      const waiting = [1, 2].map(() => outcome(sql.reserve().then(reserved => reserved.release())));
+      server.sockets[1].destroy();
+      expect(await Promise.all(waiting)).toEqual(["resolved", "resolved"]);
     });
   });
 

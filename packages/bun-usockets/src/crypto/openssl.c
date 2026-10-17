@@ -1686,6 +1686,13 @@ SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
   return ctx;
 }
 
+/* The request_cert and reject_unauthorized that us_ssl_ctx_build_raw() turned into the verify mode of `ctx`. */
+void us_ssl_ctx_get_client_cert_policy(SSL_CTX *ctx, int *request_cert, int *reject_unauthorized) {
+  int mode = SSL_CTX_get_verify_mode(ctx);
+  *request_cert = (mode & SSL_VERIFY_PEER) != 0;
+  *reject_unauthorized = (mode & SSL_VERIFY_FAIL_IF_NO_PEER_CERT) != 0;
+}
+
 /* SSL_CTX's own refcount IS the refcount; SSL_new() takes one more per socket
  * internally, so a socket outlives its SecureContext without help from us.
  * Exported so context.c / socket.c stay free of OpenSSL headers. */

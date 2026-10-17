@@ -2886,7 +2886,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return JSValue::ZERO;
             };
 
-            app = match uws_sys::NewApp::<SSL>::create(&ssl_options) {
+            let created = match this_ref.config.ssl_ctx.as_ref() {
+                // Built when the node:http server was constructed.
+                Some(ctx) => uws_sys::NewApp::<SSL>::create_with_ssl_ctx(ctx),
+                None => uws_sys::NewApp::<SSL>::create(&ssl_options),
+            };
+            app = match created {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {

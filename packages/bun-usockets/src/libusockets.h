@@ -564,6 +564,8 @@ enum create_bun_socket_error_t {
 struct ssl_ctx_st *us_ssl_ctx_from_options(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
+/* The client-certificate policy `ssl_ctx` was built with, for uWS App.h when it adopts a context. */
+void us_ssl_ctx_get_client_cert_policy(struct ssl_ctx_st *ssl_ctx, int *request_cert, int *reject_unauthorized);
 /* SSL_CTX_up_ref / SSL_CTX_free without an OpenSSL include — for C++ callers
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);

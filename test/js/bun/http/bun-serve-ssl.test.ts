@@ -681,3 +681,72 @@ describe.concurrent("client certificate policy", () => {
     });
   });
 });
+
+// node:http builds the TLS context of a server when the server is constructed, and hands it to Bun.serve() in place
+// of key material. Only a server with `onNodeHTTPRequest`, the handler of node:http, takes it, and serves it as it is.
+describe("tls.secureContext from a node:http server", () => {
+  const pem = (name: string) => readFileSync(join(import.meta.dir, "../../node/test/fixtures/keys", name), "utf8");
+  const agent1 = { key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") };
+  const native = () => (tls.createSecureContext(agent1) as any).context;
+  const serve = (options: object) =>
+    Bun.serve({ port: 0, hostname: "127.0.0.1", onNodeHTTPRequest() {}, ...options } as any);
+  const invalidValue = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+
+  test("alone makes the server TLS, with the certificate of the context", async () => {
+    using server = serve({ tls: { secureContext: native() } });
+    expect(server.url.protocol).toBe("https:");
+
+    const client = tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    const presented = client.getPeerCertificate().subject.CN;
+    client.destroy();
+    expect(presented).toBe("agent1");
+  });
+
+  test.each<[string, unknown]>([
+    ["a plain object", {}],
+    ["a string", "x"],
+    ["the node:tls wrapper", tls.createSecureContext(agent1)],
+  ])("throws for %s, also next to a key and a certificate", (_, secureContext) => {
+    const notAContext = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => serve({ tls: { secureContext } })).toThrow(notAContext);
+    expect(() => serve({ tls: { ...agent1, secureContext } })).toThrow(notAContext);
+  });
+
+  // The context is served as it is: an option next to it would name a certificate or a policy that the server does not apply.
+  test.each<[string, object]>([
+    ["a key and a certificate", agent1],
+    ["ca", { ca: pem("ca1-cert.pem") }],
+    ["requestCert", { requestCert: true }],
+    ["rejectUnauthorized", { rejectUnauthorized: false }],
+    ["serverName", { serverName: "agent1" }],
+  ])("throws next to %s", (_, option) => {
+    expect(() => serve({ tls: { ...option, secureContext: native() } })).toThrow(invalidValue);
+  });
+
+  test.each<[string, object]>([
+    ["in an array of tls options", { tls: [{ ...agent1 }, { serverName: "agent1", secureContext: native() }] }],
+    ["with http3", { http3: true, tls: { secureContext: native() } }],
+  ])("throws %s", (_, options) => {
+    expect(() => serve(options)).toThrow(invalidValue);
+  });
+
+  // No other server reads the key. With no TLS option next to it, such a server would listen without TLS.
+  test.each<[string, unknown]>([
+    ["alone", { secureContext: native() }],
+    ["alone in an array of tls options", [{ secureContext: native() }]],
+    ["that is not a context", { secureContext: tls.createSecureContext(agent1) }],
+  ])("throws from a server without `onNodeHTTPRequest`, %s", (_, options) => {
+    const listener = { port: 0, hostname: "127.0.0.1", tls: options } as any;
+    expect(() => Bun.serve({ ...listener, fetch: () => new Response("ok") })).toThrow(invalidValue);
+    expect(() => Bun.serve({ ...listener, routes: { "/": new Response("ok") } })).toThrow(invalidValue);
+  });
+
+  test.each<[string, object]>([
+    ["next to a key and a certificate", { ...agent1, secureContext: native() }],
+    ["that is false", { ...agent1, secureContext: false }],
+  ])("a server without `onNodeHTTPRequest` does not read it %s", (_, options) => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: options, fetch: () => new Response("ok") } as any);
+    expect(server.url.protocol).toBe("https:");
+  });
+});

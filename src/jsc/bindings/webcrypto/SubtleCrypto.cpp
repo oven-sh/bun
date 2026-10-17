@@ -1557,7 +1557,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     keyData = bytes;
                     break;
                 case SubtleCrypto::KeyFormat::Jwk: {
-                    String jwkString(bytes.span());
+                    String jwkString(byteCast<Latin1Character>(bytes.span()));
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);

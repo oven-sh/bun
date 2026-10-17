@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = a
+  ? "_o("
+      .concat(f(t, e), ",")
+      .concat(e.onceId++, ",")
+      .concat(o, ")")
+  : b;
+y = a ? "_o(".concat(f(t, e), ",").concat(onceId++, ",").concat(o, ")") : b;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = a
+  ? "_o("
+      .concat(f(t, e), ",")
+      .concat(e.onceId++, ",")
+      .concat(o, ")")
+  : b;
+y = a ? "_o(".concat(f(t, e), ",").concat(onceId++, ",").concat(o, ")") : b;
+
+===================== End =====================

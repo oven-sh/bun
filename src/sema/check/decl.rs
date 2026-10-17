@@ -4,6 +4,7 @@ use super::errors_enums_names::{Location, is_ambient_enum, is_declared_before_us
 use super::errors_names_and_exports::fully_qualified_name_of;
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -25,6 +26,15 @@ impl Predicate {
 
 /// `signature.thisParameter` in `Checker::resolved_parameter_types`.
 const THIS_PARAMETER: u32 = u32::MAX;
+
+/// The parameters whose types `sig_params_of_declaration` instantiates, besides a rest parameter.
+#[derive(Copy, Clone)]
+enum Read {
+    /// See `sig_params_with_first`.
+    First(usize),
+    /// The one at the index, and the result has no other.
+    Only(usize),
+}
 
 /// The enclosing type parameters that a piece of type syntax may reference.
 #[derive(Default)]
@@ -402,102 +412,206 @@ impl Evaluated {
             ..Evaluated::default()
         }
     }
+
+    /// The result for a `PrefixUnaryExpression`, from that for its operand.
+    fn prefix_unary(self, op: UnOp) -> Evaluated {
+        let value = match (op, self.value) {
+            (UnOp::Plus, Some(EnumValue::Number(n))) => Some(f64::from_bits(n)),
+            (UnOp::Minus, Some(EnumValue::Number(n))) => Some(-f64::from_bits(n)),
+            (UnOp::BitNot, Some(EnumValue::Number(n))) => {
+                Some(f64::from(!to_int32(f64::from_bits(n))))
+            }
+            _ => None,
+        };
+        Evaluated {
+            value: value.and_then(|n| Evaluated::number(n).value),
+            is_syntactically_string: false,
+            ..self
+        }
+    }
+}
+
+/// An expression that `evaluate` has begun: what it goes on with once the operand that is in
+/// evaluation has a result.
+enum Evaluating {
+    PrefixUnary(UnOp),
+    /// The left operand of a `BinaryExpression` is in evaluation, this right one is next. No
+    /// operator: one that yields no value.
+    Left(Option<BinOp>, ExprId),
+    /// The right operand is in evaluation. With the result for the left one.
+    Right(Option<BinOp>, Evaluated),
+    /// `evaluateTemplateExpression`: the span at `index` of `exprs` is in evaluation. `text`: what
+    /// comes before it.
+    TemplateSpan {
+        exprs: IdList<ExprId>,
+        index: usize,
+        text: Vec<u8>,
+        result: Evaluated,
+    },
+    /// The initializer of a constant is in evaluation, for a use of the constant at this location.
+    Initializer(Location),
+}
+
+/// What `evaluateEntity` returns.
+enum Entity {
+    Result(Evaluated),
+    /// The result of `evaluate(declaration.Initializer(), declaration)` for this constant.
+    Constant(FileId, VarDeclId),
 }
 
 impl<'p, 's> Checker<'p, 's> {
     /// `evaluate`. `location`: the declaration `e` is evaluated for, the enum member or constant
     /// whose initializer it is (part of), or else the queried expression. Parentheses are not in
-    /// the HIR, and nothing else is skipped.
+    /// the HIR, and nothing else is skipped. It recurses only to compute the values of another
+    /// enum: constants can refer to one another thousands of times in a row.
     pub(super) fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
         if self.is_stack_low() {
             self.bailed_out();
             return Evaluated::default();
         }
-        let hir = self.hir(file);
-        match hir[e].kind {
-            // A `PrefixUnaryExpression`, which `typeof`, `void` and `delete` are not.
-            ExprKind::Unary {
-                op:
-                    op @ (UnOp::Plus
-                    | UnOp::Minus
-                    | UnOp::BitNot
-                    | UnOp::Not
-                    | UnOp::PreInc
-                    | UnOp::PreDec),
-                operand,
-            } => {
-                let result = self.evaluate(file, operand, location);
-                let value = match (op, result.value) {
-                    (UnOp::Plus, Some(EnumValue::Number(n))) => Some(f64::from_bits(n)),
-                    (UnOp::Minus, Some(EnumValue::Number(n))) => Some(-f64::from_bits(n)),
-                    (UnOp::BitNot, Some(EnumValue::Number(n))) => {
-                        Some(f64::from(!to_int32(f64::from_bits(n))))
-                    }
-                    _ => None,
-                };
-                Evaluated {
-                    value: value.and_then(|n| Evaluated::number(n).value),
-                    is_syntactically_string: false,
-                    ..result
+        let (mut file, mut e, mut location) = (file, e, location);
+        let mut begun: SmallVec<[Evaluating; 4]> = SmallVec::new();
+        'operand: loop {
+            let hir = self.hir(file);
+            let mut result = match hir[e].kind {
+                // A `PrefixUnaryExpression`, which `typeof`, `void` and `delete` are not.
+                ExprKind::Unary {
+                    op:
+                        op @ (UnOp::Plus
+                        | UnOp::Minus
+                        | UnOp::BitNot
+                        | UnOp::Not
+                        | UnOp::PreInc
+                        | UnOp::PreDec),
+                    operand,
+                } => {
+                    begun.push(Evaluating::PrefixUnary(op));
+                    e = operand;
+                    continue;
                 }
-            }
-            ExprKind::Binary { op, left, right } => {
-                self.evaluate_binary(file, Some(op), left, right, location)
-            }
-            // An assignment is a `BinaryExpression` with an operator that yields no value.
-            ExprKind::Assign { target, value, .. } => {
-                self.evaluate_binary(file, None, target, value, location)
-            }
-            ExprKind::String(text) => Evaluated {
-                value: Some(EnumValue::String(text)),
-                is_syntactically_string: true,
-                ..Evaluated::default()
-            },
-            // `evaluateTemplateExpression`
-            ExprKind::Template { exprs } => {
-                let (atoms, texts) = (&self.atoms(), hir.template_texts(exprs));
-                let mut text = atoms.bytes(hir.id_at(texts, 0)).to_vec();
-                let mut result = Evaluated {
+                ExprKind::Binary { op, left, right } => {
+                    begun.push(Evaluating::Left(Some(op), right));
+                    e = left;
+                    continue;
+                }
+                // An assignment is a `BinaryExpression` with an operator that yields no value.
+                ExprKind::Assign { target, value, .. } => {
+                    begun.push(Evaluating::Left(None, value));
+                    e = target;
+                    continue;
+                }
+                ExprKind::String(text) => Evaluated {
+                    value: Some(EnumValue::String(text)),
                     is_syntactically_string: true,
                     ..Evaluated::default()
-                };
-                for (i, span) in hir.ids(exprs).enumerate() {
-                    let of_span = self.evaluate(file, span, location);
-                    let Some(value) = of_span.value else {
-                        return Evaluated {
-                            is_syntactically_string: true,
-                            ..Evaluated::default()
-                        };
+                },
+                ExprKind::Template { exprs } => {
+                    let head = hir.id_at(hir.template_texts(exprs), 0);
+                    let result = Evaluated {
+                        is_syntactically_string: true,
+                        ..Evaluated::default()
                     };
-                    text.extend_from_slice(self.constant_text(value));
-                    text.extend_from_slice(atoms.bytes(hir.id_at(texts, i + 1)));
-                    result.resolved_other_files |= of_span.resolved_other_files;
-                    result.has_external_references |= of_span.has_external_references;
+                    if !exprs.is_empty() {
+                        begun.push(Evaluating::TemplateSpan {
+                            exprs,
+                            index: 0,
+                            text: self.atoms().bytes(head).to_vec(),
+                            result,
+                        });
+                        e = hir.id_at(exprs, 0);
+                        continue;
+                    }
+                    Evaluated {
+                        value: Some(EnumValue::String(head)),
+                        ..result
+                    }
                 }
-                result.value = Some(EnumValue::String(atoms.intern(&text)));
-                result
+                ExprKind::Number(n) => Evaluated::number(hir.numbers[n as usize]),
+                ExprKind::Dot { .. } if !is_property_access_entity_name_expression(hir, e) => {
+                    Evaluated::default()
+                }
+                ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::Dot { .. } => {
+                    match self.evaluate_entity(file, e, location) {
+                        Entity::Result(result) => result,
+                        Entity::Constant(of, d) => {
+                            self.constants_in_evaluation.push((of, d));
+                            begun.push(Evaluating::Initializer(location));
+                            (file, e) = (of, self.hir(of)[d].init);
+                            location = Location::Variable(of, d);
+                            continue;
+                        }
+                    }
+                }
+                _ => Evaluated::default(),
+            };
+            loop {
+                let Some(outer) = begun.pop() else {
+                    return result;
+                };
+                match outer {
+                    Evaluating::PrefixUnary(op) => result = result.prefix_unary(op),
+                    Evaluating::Left(op, right) => {
+                        begun.push(Evaluating::Right(op, result));
+                        e = right;
+                        continue 'operand;
+                    }
+                    Evaluating::Right(op, left) => result = self.evaluate_binary(op, left, result),
+                    Evaluating::TemplateSpan {
+                        exprs,
+                        index,
+                        mut text,
+                        result: mut of_template,
+                    } => {
+                        let Some(value) = result.value else {
+                            result = Evaluated {
+                                is_syntactically_string: true,
+                                ..Evaluated::default()
+                            };
+                            continue;
+                        };
+                        let (hir, index) = (self.hir(file), index + 1);
+                        let literal = hir.id_at(hir.template_texts(exprs), index);
+                        text.extend_from_slice(self.constant_text(value));
+                        text.extend_from_slice(self.atoms().bytes(literal));
+                        of_template.resolved_other_files |= result.resolved_other_files;
+                        of_template.has_external_references |= result.has_external_references;
+                        if index < exprs.len() {
+                            e = hir.id_at(exprs, index);
+                            begun.push(Evaluating::TemplateSpan {
+                                exprs,
+                                index,
+                                text,
+                                result: of_template,
+                            });
+                            continue 'operand;
+                        }
+                        of_template.value = Some(EnumValue::String(self.atoms().intern(&text)));
+                        result = of_template;
+                    }
+                    Evaluating::Initializer(used_at) => {
+                        self.constants_in_evaluation.pop();
+                        result = if used_at.file() != file {
+                            Evaluated {
+                                value: result.value,
+                                is_syntactically_string: false,
+                                resolved_other_files: true,
+                                has_external_references: true,
+                            }
+                        } else {
+                            Evaluated {
+                                has_external_references: true,
+                                ..result
+                            }
+                        };
+                        (file, location) = (used_at.file(), used_at);
+                    }
+                }
             }
-            ExprKind::Number(n) => Evaluated::number(hir.numbers[n as usize]),
-            ExprKind::Ident(_) | ExprKind::Index { .. } => self.evaluate_entity(file, e, location),
-            ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
-                self.evaluate_entity(file, e, location)
-            }
-            _ => Evaluated::default(),
         }
     }
 
-    fn evaluate_binary(
-        &mut self,
-        file: FileId,
-        op: Option<BinOp>,
-        left: ExprId,
-        right: ExprId,
-        location: Location,
-    ) -> Evaluated {
-        let (l, r) = (
-            self.evaluate(file, left, location),
-            self.evaluate(file, right, location),
-        );
+    /// The result for a `BinaryExpression`, from those for its operands.
+    fn evaluate_binary(&self, op: Option<BinOp>, l: Evaluated, r: Evaluated) -> Evaluated {
         let value = match (l.value, r.value, op) {
             (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => {
                 number_operation(op, f64::from_bits(a), f64::from_bits(b))
@@ -519,31 +633,31 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `evaluateEntity`: by the symbols the names resolve to, never by the type of the expression.
-    fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
+    fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Entity {
         let (hir, files) = (self.hir(file), self.files());
+        let no_value = Entity::Result(Evaluated::default());
         if let ExprKind::Index { obj, index, .. } = hir[e].kind {
             let name = match hir[index].kind {
                 ExprKind::String(name) => name,
                 ExprKind::Template { exprs } if exprs.is_empty() => {
                     hir.id_at(hir.template_texts(exprs), 0)
                 }
-                _ => return Evaluated::default(),
+                _ => return no_value,
             };
             // Neither `(a)["b"]` nor `a[("b")]`.
             if is_parenthesized(hir, index) || !is_entity_name_expression(hir, obj) {
-                return Evaluated::default();
+                return no_value;
             }
             if let Some(root) = self.resolve_entity_name_expression(file, obj, SymFlags::VALUE)
                 && files.flags(root).intersects(SymFlags::ENUM)
                 && let Some(member) = files.export(root, name)
-                && files.flags(member).contains(SymFlags::ENUM_MEMBER)
             {
-                return self.evaluate_enum_member(file, e, member, location);
+                return Entity::Result(self.evaluate_enum_member(file, e, member, location));
             }
-            return Evaluated::default();
+            return no_value;
         }
         let Some(symbol) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE) else {
-            return Evaluated::default();
+            return no_value;
         };
         // `Infinity` and `NaN`, unless they are shadowed.
         if let ExprKind::Ident(name) = hir[e].kind
@@ -554,33 +668,19 @@ impl<'p, 's> Checker<'p, 's> {
             }
             && files.global(name, SymFlags::VALUE) == Some(symbol)
         {
-            return Evaluated::number(n);
+            return Entity::Result(Evaluated::number(n));
         }
         if files.flags(symbol).contains(SymFlags::ENUM_MEMBER) {
-            return self.evaluate_enum_member(file, e, symbol, location);
+            return Entity::Result(self.evaluate_enum_member(file, e, symbol, location));
         }
         // There is no declaration order between files: constants of two files may be initialized
         // with each other.
-        if let Some((of, d)) = self.constant_variable_declaration(symbol, location)
-            && !self.constants_in_evaluation.contains(&(of, d))
-        {
-            self.constants_in_evaluation.push((of, d));
-            let result = self.evaluate(of, self.hir(of)[d].init, Location::Variable(of, d));
-            self.constants_in_evaluation.pop();
-            if location.file() != of {
-                return Evaluated {
-                    value: result.value,
-                    is_syntactically_string: false,
-                    resolved_other_files: true,
-                    has_external_references: true,
-                };
+        match self.constant_variable_declaration(symbol, location) {
+            Some((of, d)) if !self.constants_in_evaluation.contains(&(of, d)) => {
+                Entity::Constant(of, d)
             }
-            return Evaluated {
-                has_external_references: true,
-                ..result
-            };
+            _ => no_value,
         }
-        Evaluated::default()
     }
 
     /// `evaluateEnumMember`
@@ -591,27 +691,24 @@ impl<'p, 's> Checker<'p, 's> {
         symbol: Sym,
         location: Location,
     ) -> Evaluated {
-        // `symbol.ValueDeclaration`
-        let declaration = self
-            .files()
-            .decls_of(symbol)
-            .iter()
-            .find_map(|&(of, decl)| match decl {
-                Decl::EnumMember(member) => Some((of, member)),
-                _ => None,
-            });
-        let Some((of, member)) =
-            declaration.filter(|&(of, member)| Location::Member(of, member) != location)
-        else {
+        let used = (location.file(), location.node(self.hir(location.file())));
+        let declaration = self.files().value_declaration(symbol);
+        let declaration = declaration.map(|(of, decl)| (decl, (of, self.hir(of).node(decl))));
+        let Some((declaration, declared @ (of, _))) = declaration.filter(|it| it.1 != used) else {
             let at = self.place_of_expr(file, e);
             self.error_at(at, 2565, &[Arg::Sym(symbol)]);
             return Evaluated::default();
         };
-        if !is_declared_before_use(self, Location::Member(of, member), location) {
+        if !is_declared_before_use(self, declared, location) {
             let at = self.place_of_expr(file, e);
             self.error_at(at, 2651, &[]);
             return Evaluated::number(0.0);
         }
+        // `E["x"]` is any export of `E`. `getEnumMemberValue` of what a merged namespace exports
+        // panics.
+        let Decl::EnumMember(member) = declaration else {
+            return Evaluated::default();
+        };
         let value = self.enum_member_value_at(of, member, location);
         // `location.Parent != declaration.Parent`
         let owner = &self.bound(of).enum_member_owner;
@@ -749,7 +846,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        own.sort_unstable_by_key(|own| own.0);
+        own.shared_sort_unstable_by_key(|own| own.0);
         let this = match s.kind {
             ScopeKind::Class(c) => Some(self.files().sym(file, bound.class_symbol[c.idx()])),
             ScopeKind::Interface(i) => {
@@ -1086,18 +1183,7 @@ impl<'p, 's> Checker<'p, 's> {
                 candidates: self.type_param_names_in_scope(file, scope),
                 ..Mentioned::default()
             };
-            // `containsReference`
-            let mut left = vec![hir.node(e)];
-            while let Some(node) = left.pop() {
-                if let NodeData::Type(written) = hir.data(node) {
-                    self.collect_mentions(file, written, &mut mentioned);
-                    continue;
-                }
-                hir.for_each_child(node, &mut |child| {
-                    left.push(child);
-                    false
-                });
-            }
+            self.collect_mentions_in_node(file, hir.node(e), &mut mentioned);
             declared = self.identity_mapper_of_mentioned(file, scope, hir[e].pos, &mentioned);
         }
         self.with_adopted_type_params(declared, file, scope, hir[e].pos)
@@ -1310,23 +1396,30 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `containsReference` for a node that need not be a type node.
     fn collect_mentions_in_node(&self, file: FileId, node: Node, out: &mut Mentioned) {
-        if out.everything {
-            return;
-        }
         let hir = self.hir(file);
-        let is_method = match hir.data(node) {
-            NodeData::Type(t) => return self.collect_mentions(file, t, out),
-            NodeData::Member(m) => hir[m].kind == MemberKind::Method,
-            NodeData::Prop(p) => hir[p].kind == PropKind::Method,
-            _ => false,
-        };
-        if is_method && hir.function_of(node).is_some() {
-            return self.collect_fn_mentions(file, hir.function_of(node), out);
+        let mut left = SmallVec::<[Node; 16]>::new();
+        left.push(node);
+        while let Some(node) = left.pop()
+            && !out.everything
+        {
+            let is_method = match hir.data(node) {
+                NodeData::Type(t) => {
+                    self.collect_mentions(file, t, out);
+                    continue;
+                }
+                NodeData::Member(m) => hir[m].kind == MemberKind::Method,
+                NodeData::Prop(p) => hir[p].kind == PropKind::Method,
+                _ => false,
+            };
+            if is_method && hir.function_of(node).is_some() {
+                self.collect_fn_mentions(file, hir.function_of(node), out);
+                continue;
+            }
+            hir.for_each_child(node, &mut |child| {
+                left.push(child);
+                false
+            });
         }
-        hir.for_each_child(node, &mut |child| {
-            self.collect_mentions_in_node(file, child, out);
-            out.everything
-        });
     }
 
     fn collect_mentions(&self, file: FileId, node: TypeNodeId, out: &mut Mentioned) {
@@ -1341,12 +1434,12 @@ impl<'p, 's> Checker<'p, 's> {
         };
         match hir[node].kind {
             TypeNodeKind::Error
-            | TypeNodeKind::Heritage(_)
             | TypeNodeKind::StringLit(_)
             | TypeNodeKind::NumberLit(_)
             | TypeNodeKind::BigIntLit { .. }
             | TypeNodeKind::BoolLit(_)
             | TypeNodeKind::UniqueSymbol => {}
+            TypeNodeKind::Heritage { args, .. } => list(self, args, out),
             TypeNodeKind::Keyword(keyword) => out.this |= keyword == Keyword::This,
             TypeNodeKind::Ref { name, args } => {
                 if name.len() == 1 && args.is_empty() {
@@ -1669,6 +1762,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintOfTypeParameter`. Returns `None` for a circular constraint.
     pub fn constraint_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&param);
+        }
         if let Some(kept) = self.p.type_param_constraints.get(&self.task, &param) {
             return kept;
         }
@@ -1717,6 +1813,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintFromTypeParameter`: the same, whether or not it is circular.
     pub(super) fn constraint_from_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&param);
+        }
         let (file, tp, around) = match *self.data(param) {
             TypeData::TypeParam(file, tp, around) => (file, tp, around),
             TypeData::ThisParam(sym) => return Some(self.declared_type(sym)),
@@ -1770,7 +1869,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// declaration. Those with the same name in the declarations of a class or an interface are one
     /// type parameter: a result from another declaration is returned with the type parameters of
     /// that declaration and of this one.
-    fn type_param_declaration_with(
+    pub(super) fn type_param_declaration_with(
         &self,
         file: FileId,
         tp: TypeParamId,
@@ -1852,6 +1951,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `instantiateSignatureEx`, the mapper assigned to a cloned type parameter: the mappings of
     /// `around`, plus the clones for the type parameters declared in the same list as `tp`.
+    /// `getUniqueTypeParameters`: its mapper has the renamed type parameters only. The others are
+    /// the clones for `around` without the new names.
     fn clone_mapper(&self, file: FileId, tp: TypeParamId, around: MapperId) -> MapperId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let scope = bound.type_param_scope[tp.idx()];
@@ -1861,14 +1962,33 @@ impl<'p, 's> Checker<'p, 's> {
             Some(ScopeKind::Interface(i)) => hir[i].type_params,
             _ => Span::new(tp.0, 1),
         };
+        let mapping = self.types().mapping(around);
+        // The entries of a renamed clone: its new name, and the serial that tells its clones apart
+        // (`renamed_type_param`, `unique_type_params`).
+        let is_new_name = |pair: &(TypeId, TypeId)| {
+            matches!(
+                self.data(pair.0),
+                TypeData::StringLit { .. } | TypeData::NumberLit { .. }
+            )
+        };
+        let before_renaming = if mapping.iter().any(is_new_name) {
+            let kept = (mapping.iter().copied())
+                .filter(|pair| !is_new_name(pair))
+                .collect();
+            self.types().mapper(kept)
+        } else {
+            around
+        };
         let fresh: SmallVec<[(TypeId, TypeId); 4]> = list
             .iter()
             .map(|t| {
                 let declared = self.type_param(file, t);
+                let keeps_name = before_renaming != around
+                    && self.new_type_param_name(hir[t].name, around).is_none();
+                let around = if keeps_name { before_renaming } else { around };
                 (declared, self.cloned_type_param(file, t, around))
             })
             .collect();
-        let mapping = self.types().mapping(around);
         let mut pairs = Vec::with_capacity(mapping.len() + fresh.len());
         pairs.extend(
             mapping
@@ -2200,7 +2320,16 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::UNRESOLVED
             };
         }
-        let ty = self.declared_type_uncached(sym);
+        let flags = self.files().flags(sym);
+        let is_type_alias = flags.contains(SymFlags::TYPE_ALIAS);
+        // Where `declared_type_uncached` comes to `getDeclaredTypeOfEnum`, which assigns the declared types of the members too.
+        let is_enum = flags.intersects(SymFlags::ENUM)
+            && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE | SymFlags::TYPE_ALIAS);
+        let (ty, member_types) = if is_enum {
+            self.get_declared_type_of_enum(sym)
+        } else {
+            (self.declared_type_uncached(sym), Vec::new())
+        };
         let left = self.leave(Query::Declared(sym));
         // `getDeclaredTypeOfTypeAlias`: `popTypeResolution` fails.
         if self.left_a_cycle {
@@ -2211,22 +2340,45 @@ impl<'p, 's> Checker<'p, 's> {
                 let err = self.new_diagnostic(at, 2456, &[Arg::Sym(sym)]);
                 self.add_diagnostic_of(Some(Query::Declared(sym)), err);
             }
-            // The value of an inner evaluation above a `resolution_start` barrier stays, if one was stored. It gets the flag.
-            let known = self.p.declared_types.get(&self.task, &sym);
-            let ty = known.map_or(TypeId::ERROR, |(known, _)| known);
-            return self
-                .p
-                .declared_types
-                .rewrite(&self.task, sym, (ty, true), stored)
-                .0;
+            // `if links.declaredType == nil`: the value of an inner evaluation above a `resolution_start` barrier stays, and
+            // `links.typeParameters` stays as that evaluation left it.
+            return match self.p.declared_types.get(&self.task, &sym) {
+                Some((known, _)) => known,
+                None => {
+                    let error = (TypeId::ERROR, true);
+                    self.p
+                        .declared_types
+                        .insert(&self.task, sym, error, stored)
+                        .0
+                }
+            };
         }
         match left {
-            // `getDeclaredTypeOfEnum` assigns `links.declaredType` whatever a nested call has
-            // assigned.
-            Ok(stored) if self.files().flags(sym).intersects(SymFlags::ENUM) => {
+            // `getDeclaredTypeOfEnum` assigns `declaredType` of the enum and of each of its members, whatever a nested
+            // call has assigned.
+            Ok(stored) if is_enum => {
+                for &(member, member_type) in &member_types {
+                    (self.p.declared_types).rewrite(
+                        &self.task,
+                        member,
+                        (member_type, false),
+                        stored,
+                    );
+                }
                 self.p
                     .declared_types
                     .rewrite(&self.task, sym, (ty, false), stored);
+            }
+            // `getDeclaredTypeOfTypeAlias` assigns `links.typeParameters` after a `popTypeResolution` that succeeds, and
+            // keeps the `declaredType` of an inner evaluation above a `resolution_start` barrier.
+            Ok(stored) if is_type_alias => {
+                if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {
+                    (self.p.declared_types).rewrite(&self.task, sym, (known, false), stored);
+                    return known;
+                }
+                self.p
+                    .declared_types
+                    .insert(&self.task, sym, (ty, false), stored);
             }
             Ok(stored) => {
                 self.p
@@ -2234,6 +2386,12 @@ impl<'p, 's> Checker<'p, 's> {
                     .insert(&self.task, sym, (ty, false), stored);
             }
             Err(open) => self.cache_provisionally(Query::Declared(sym), u64::from(ty.0), open),
+        }
+        // `getDeclaredTypeOfClassOrInterface` asks `isThislessInterface` once `links.declaredType`
+        // is assigned: in a cycle of `extends` the answers depend on which interface is created
+        // first.
+        if self.files().flags(sym).contains(SymFlags::INTERFACE) {
+            self.has_this_type(sym);
         }
         ty
     }
@@ -2288,8 +2446,34 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getDeclaredTypeOfEnum`: the union of its member types. An enum without members gets a
     /// distinct type.
     pub fn enum_type(&mut self, sym: Sym) -> TypeId {
-        let mut members = Vec::new();
-        let mut values = crate::util::FxHashSet::default();
+        self.get_declared_type_of_enum(sym).0
+    }
+
+    /// `getEnumLiteralType`: one type for each value of an enum, named after the member that asks for it first.
+    fn get_enum_literal_type(&mut self, value: EnumValue, enum_symbol: Sym, symbol: Sym) -> TypeId {
+        let key = (enum_symbol, enum_value_key(value));
+        if let Some(&known) = self.enum_literal_types.get(&key) {
+            return known;
+        }
+        // What a run of another task, whose results are published, assigned to the member for the value.
+        let assigned = (self.p.declared_types.get(&self.task, &symbol)).filter(|&(assigned, _)| {
+            matches!(*self.data(assigned), TypeData::EnumLit { value: of, .. } if enum_value_key(of) == key.1)
+        });
+        let ty = match assigned {
+            Some((assigned, _)) => assigned,
+            None => self.intern(TypeData::EnumLit {
+                member: symbol,
+                value,
+                fresh: false,
+            }),
+        };
+        self.enum_literal_types.insert(key, ty);
+        ty
+    }
+
+    /// `getDeclaredTypeOfEnum`, with what it assigns to `declaredType` of each member, in its regular form.
+    fn get_declared_type_of_enum(&mut self, sym: Sym) -> (TypeId, Vec<(Sym, TypeId)>) {
+        let mut member_types = Vec::new();
         for (file, decl) in declarations_of(self.files(), sym) {
             let Decl::Enum(e) = decl else { continue };
             for m in self.hir(file)[e].members.iter() {
@@ -2300,40 +2484,34 @@ impl<'p, 's> Checker<'p, 's> {
                 let member = self
                     .files()
                     .sym(file, self.bound(file).enum_member_symbol[m.idx()]);
-                match self.enum_member_value(file, m) {
-                    // `getEnumLiteralType`: members with the same value share one type, which is
-                    // named after the first of them.
-                    Some(value) => {
-                        if values.insert(enum_value_key(value)) {
-                            members.push(self.intern(TypeData::EnumLit {
-                                member,
-                                value,
-                                fresh: false,
-                            }));
-                        }
-                    }
+                let member_type = match self.enum_member_value(file, m) {
+                    Some(value) => self.get_enum_literal_type(value, sym, member),
                     // `createComputedEnumType`
-                    None => members.push(self.intern(TypeData::Enum {
+                    None => self.intern(TypeData::Enum {
                         symbol: member,
                         fresh: false,
-                    })),
-                }
+                    }),
+                };
+                member_types.push((member, member_type));
             }
         }
-        if members.is_empty() {
-            return self.intern(TypeData::Enum {
+        if member_types.is_empty() {
+            let enum_type = self.intern(TypeData::Enum {
                 symbol: sym,
                 fresh: false,
             });
+            return (enum_type, member_types);
         }
+        let members: Vec<TypeId> = member_types.iter().map(|it| it.1).collect();
         let union = self.union(&members);
-        if self.is_union(union) {
+        let enum_type = if self.is_union(union) {
             // `getUnionKey`
             self.get_symbol_id(sym);
             self.with_alias(union, sym, &[])
         } else {
             union
-        }
+        };
+        (enum_type, member_types)
     }
 
     /// `getBaseTypeOfEnumLikeType`: the enum type that `member` belongs to.
@@ -2355,43 +2533,48 @@ impl<'p, 's> Checker<'p, 's> {
         self.declared_type(parent)
     }
 
-    /// `getDeclaredTypeOfEnumMember`, in its regular form.
+    /// `getDeclaredTypeOfEnumMember`, in its regular form. Only `getDeclaredTypeOfEnum` assigns it.
     pub fn enum_member_type(&mut self, member: Sym) -> TypeId {
+        if let Some((known, _)) = self.p.declared_types.get(&self.task, &member) {
+            return known;
+        }
         for (file, decl) in declarations_of(self.files(), member) {
-            if let Decl::EnumMember(m) = decl {
-                // `getDeclaredTypeOfEnum` skips a member without a bindable name
-                // (`hasBindableName`), which gets the type of the enum.
-                if self.hir(file)[m].name.is_none() {
-                    return self.enum_type_of_member(member);
-                }
-                // `createComputedEnumType`: a member without a value gets a distinct type.
-                let Some(value) = self.enum_member_value(file, m) else {
-                    return self.intern(TypeData::Enum {
-                        symbol: member,
-                        fresh: false,
-                    });
-                };
-                // `getEnumLiteralType`: the type the enum has for the value.
-                let key = enum_value_key(value);
-                let owner = self.enum_type_of_member(member);
-                let shared =
-                    self.parts(owner)
-                        .iter()
-                        .copied()
-                        .find(|&part| match *self.data(part) {
-                            TypeData::EnumLit { value, .. } => enum_value_key(value) == key,
-                            _ => false,
-                        });
-                return shared.unwrap_or_else(|| {
-                    self.intern(TypeData::EnumLit {
-                        member,
-                        value,
-                        fresh: false,
-                    })
-                });
+            let Decl::EnumMember(m) = decl else { continue };
+            let enum_type = self.enum_type_of_member(member);
+            if let Some((known, _)) = self.p.declared_types.get(&self.task, &member) {
+                return known;
             }
+            // `hasBindableName`: `links.declaredType = enumType`
+            if self.hir(file)[m].name.is_none() {
+                return enum_type;
+            }
+            // Nothing that the run assigned is stored: its result is provisional, or a class, an interface or an alias has
+            // the name of the enum. What it assigned to the member is among the constituents.
+            let parts = self.parts(enum_type);
+            let computed = parts.iter().copied().find(|&part| {
+                matches!(*self.data(part), TypeData::Enum { symbol, .. } if symbol == member)
+            });
+            if let Some(computed) = computed {
+                return computed;
+            }
+            let value = self.enum_member_value(file, m).map(enum_value_key);
+            let literal = parts.iter().copied().find(|&part| match *self.data(part) {
+                TypeData::EnumLit { value: of_part, .. } => Some(enum_value_key(of_part)) == value,
+                _ => false,
+            });
+            return literal.unwrap_or(enum_type);
         }
         TypeId::UNRESOLVED
+    }
+
+    /// `getEnumMemberValue(ast.GetDeclarationOfKind(symbol, ast.KindEnumMember)).Value`
+    pub(super) fn enum_member_value_of_symbol(&mut self, member: Sym) -> Option<EnumValue> {
+        let (file, m) =
+            declarations_of(self.files(), member).find_map(|(file, decl)| match decl {
+                Decl::EnumMember(m) => Some((file, m)),
+                _ => None,
+            })?;
+        self.enum_member_value(file, m)
     }
 
     pub fn enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Option<EnumValue> {
@@ -2433,7 +2616,14 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(known) => known,
                 None if self.enter(Query::Enum(file, member)) => {
                     let result = self.compute_enum_member_value(file, member, auto_value, previous);
-                    if let Ok(stored) = self.leave(Query::Enum(file, member)) {
+                    let q = Query::Enum(file, member);
+                    // `computeEnumMemberValues` assigns the value whatever `flowLoopStack` holds, and
+                    // `NodeCheckFlagsEnumValuesComputed` keeps the initializer from being checked again.
+                    let stored = match self.leave(q) {
+                        Ok(stored) => Some(stored),
+                        Err(_) => self.incomplete_flow_result(q),
+                    };
+                    if let Some(stored) = stored {
                         self.p
                             .enum_values
                             .insert(&self.task, (file, member), result, stored);
@@ -2585,11 +2775,10 @@ impl<'p, 's> Checker<'p, 's> {
         let PatParent::Var(d) = self.bound(of).pat_parent[pat.idx()] else {
             return None;
         };
-        let declaration = &self.hir(of)[d];
-        let declared = Location::Variable(of, d);
+        let (declaration, declared) = (&self.hir(of)[d], (of, self.hir(of).node(d)));
         (declaration.ty.is_none()
             && declaration.init.is_some()
-            && declared != location
+            && Location::Variable(of, d) != location
             && is_declared_before_use(self, declared, location))
         .then_some((of, d))
     }
@@ -2608,7 +2797,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `resolveName(e, name, meaning)`. The binder has already resolved the value meaning of
             // an identifier.
             ExprKind::Ident(name) if meaning == SymFlags::VALUE => {
-                self.symbol_of_identifier(file, e, name)?
+                self.resolve_identifier(file, e, name, false).ok()??
             }
             ExprKind::Ident(name) => {
                 let scope = self.enclosing_scope_of_expr(file, e);
@@ -2650,18 +2839,65 @@ impl<'p, 's> Checker<'p, 's> {
         self.resolve_type_from_node(file, node)
     }
 
+    /// `resolutions_below` for a type node: the frames down to the nearest one that is neither a
+    /// type resolution nor a type node, a conditional type or a declaration whose name is a
+    /// pattern. `getTypeFromTypeNode` and `getConditionalType` push nothing, and nothing between
+    /// a resolution and the node calls `checkExpressionCached`.
+    fn resolutions_below_type_node(&self) -> (usize, usize) {
+        let passes = |q: Query| {
+            matches!(q, Query::TypeNode(..) | Query::Cond(..) | Query::Pat(..))
+                || self.is_resolution(q)
+        };
+        let mut frames = self.stack.iter();
+        let from = frames.rposition(|&q| !passes(q)).map_or(0, |i| i + 1);
+        (from, self.stack.len())
+    }
+
     #[inline(never)]
     fn resolve_type_from_node(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
-        if let Some(raw) = self.provisional(Query::TypeNode(file, node)) {
+        let q = Query::TypeNode(file, node);
+        let is_type_query = matches!(self.hir(file)[node].kind, TypeNodeKind::Typeof { .. });
+        // `getTypeFromTypeQueryNode` has no re-entrancy guard, and its operand is checked with
+        // `flowLoopStack` as it is: a back edge of a loop that leads to the node again ends at
+        // that loop, as in `recheck_in_flow_loop`.
+        let in_flow_loop = is_type_query && self.is_flow_loop_or_exhaustive_state_in_progress();
+        if in_flow_loop {
+            let resolutions = self.resolutions_below_type_node();
+            self.quick_initializers.push(resolutions);
+        }
+        let provisional = self.provisional(q);
+        let pushed_at = match provisional {
+            None if in_flow_loop && self.may_be_in_flight(q) => {
+                let first = self.stack.iter().rposition(|&it| it == q);
+                first.and_then(|first| self.flow_loop_pushed_since(first))
+            }
+            _ => None,
+        };
+        let resolution_start = self.resolution_start;
+        if pushed_at.is_some() {
+            self.resolution_start = self.stack.len();
+        }
+        let entered = provisional.is_none() && self.enter(q);
+        self.resolution_start = resolution_start;
+        if entered && let Some(pushed_at) = pushed_at {
+            self.taint_from(pushed_at);
+        }
+        if in_flow_loop {
+            self.quick_initializers.pop();
+        }
+        if let Some(raw) = provisional {
             return TypeId(raw as u32);
         }
-        if !self.enter(Query::TypeNode(file, node)) {
+        if !entered {
             // `getTypeFromTypeNode` does not detect re-entry: tsgo recurses until it hits an instantiation limit.
             return self.excessively_deep();
         }
         let ty = self.type_from_node_uncached(file, node);
         let ty = self.conditional_flow_type_of_type(file, ty, node);
         let ty = self.with_alias_for_type_node(file, node, ty);
+        if self.is_innermost_tainted() {
+            self.keep_type_of_annotation_in_cycle(ty);
+        }
         match self.leave(Query::TypeNode(file, node)) {
             // Where the node was in progress several times, the outermost is the last to store.
             Ok(stored) => {
@@ -2670,10 +2906,62 @@ impl<'p, 's> Checker<'p, 's> {
                     .rewrite(&self.task, (file, node), ty, stored);
             }
             Err(open) => {
-                self.cache_provisionally(Query::TypeNode(file, node), u64::from(ty.0), open);
+                // `getTypeFromTypeQueryNode` assigns `links.resolvedType` whatever `flowLoopStack`
+                // holds, and so does the function of every node around it: `(typeof x)["a"]`.
+                let left_frame = self.left_frame;
+                let stored = self.incomplete_flow_result(Query::TypeNode(file, node));
+                match stored {
+                    Some(stored) => {
+                        self.p
+                            .type_node_types
+                            .rewrite(&self.task, (file, node), ty, stored);
+                    }
+                    None => {
+                        self.left_frame = left_frame;
+                        let q = Query::TypeNode(file, node);
+                        self.cache_provisionally(q, u64::from(ty.0), open);
+                    }
+                }
             }
         }
         ty
+    }
+
+    /// `getTypeFromTypeNode` assigns `links.resolvedType` whatever is in progress. Where
+    /// `popTypeResolution` finds a cycle, `getTypeOfAccessors`, `getWriteTypeOfAccessors` and
+    /// `getReturnTypeOfSignature` resolve to `anyType`, and their annotation keeps what followed
+    /// from the `errorType` of the `pushTypeResolution` that failed. Computed again it would follow
+    /// from `anyType`. So the innermost frame, of a type node that resolves to `ty`, is final if it
+    /// is directly under such a resolution and depends on no more than cycles.
+    #[cold]
+    #[inline(never)]
+    fn keep_type_of_annotation_in_cycle(&mut self, ty: TypeId) {
+        let [.., resolution, annotation] = &self.frames[..] else {
+            return;
+        };
+        let since = |at: u64| at >= annotation.serial;
+        if !resolution.circular
+            || annotation.incomplete_flow
+            || since(self.limit_at)
+            || since(self.refused_at)
+            || since(self.any_signature_read_at)
+            || !self.inference_contexts.is_empty()
+            || (self.types().object_flags(ty)).contains(ObjectFlags::HAS_UNRESOLVED)
+        {
+            return;
+        }
+        let resolves_to_any = match self.stack[self.stack.len() - 2] {
+            Query::Return(..)
+            | Query::ReturnOfSignature(_)
+            | Query::WriteType(..)
+            | Query::LiteralProp(..) => true,
+            Query::Symbol(symbol) => self.files().flags(symbol).intersects(SymFlags::ACCESSOR),
+            _ => false,
+        };
+        if resolves_to_any && let Some(annotation) = self.frames.last_mut() {
+            annotation.tainted = false;
+            annotation.drops_reported = false;
+        }
     }
 
     /// `globalReadonlyArrayType`, which is `globalArrayType` if there is no `ReadonlyArray`, or
@@ -2825,7 +3113,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let scope = self.bound(file).type_scope[node.idx()];
         match hir[node].kind {
-            TypeNodeKind::Error | TypeNodeKind::Heritage(_) => TypeId::UNRESOLVED,
+            TypeNodeKind::Error | TypeNodeKind::Heritage { .. } => TypeId::UNRESOLVED,
             TypeNodeKind::Keyword(k) => match k {
                 Keyword::Any => TypeId::ANY,
                 Keyword::Unknown => TypeId::UNKNOWN,
@@ -3003,7 +3291,12 @@ impl<'p, 's> Checker<'p, 's> {
                 expr,
             } => {
                 // `getTypeFromTypeQueryNode`: `getRegularTypeOfLiteralType(getWidenedType(t))`
+                // `checkExpressionWithTypeArguments` is no `checkExpressionCached`: the resolutions
+                // that ask for the node hide no loop from the operand.
+                let resolutions = self.resolutions_below_type_node();
+                self.quick_initializers.push(resolutions);
                 let narrowed = self.type_of_expr(file, expr);
+                self.quick_initializers.pop();
                 let narrowed = self.get_widened_type(narrowed);
                 // `checkPropertyAccessExpressionOrQualifiedName`: the missing name of `typeof a.`
                 // resolves to no property, so the result is the error type.
@@ -3069,7 +3362,11 @@ impl<'p, 's> Checker<'p, 's> {
         if is_typeof {
             let ty = self.type_of_alias_target(symbol);
             // `getInstantiationExpressionType`: `typeArguments == nil`
-            if args.is_empty() {
+            if args.is_empty()
+                && self
+                    .empty_type_argument_list_of_import_type(file, node)
+                    .is_none()
+            {
                 return ty;
             }
             let args = self.types_from_nodes(file, args);
@@ -3160,7 +3457,7 @@ impl<'p, 's> Checker<'p, 's> {
                     next = Some(AliasTarget::Property(
                         ty,
                         text,
-                        self.type_of_prop(prop, mapper),
+                        Some(self.type_of_prop(prop, mapper)),
                     ));
                 }
             }
@@ -3189,7 +3486,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Sym> {
         let found = self.resolve_entity_name(file, scope, name, SymFlags::TYPE, ignore_errors)?;
         // `resolveEntityName` resolves an alias to the first symbol in the chain that has a type meaning.
-        let target = match self.combined_symbol_of_alias(found) {
+        let target = match self.combined_symbol_of_resolved_alias(found) {
             Some(combined) => combined,
             None => self.files().resolve_alias_as(found, SymFlags::TYPE)?,
         };
@@ -3252,6 +3549,23 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `getDeclaredTypeOfSymbol(sym)` for a type alias, then `typeAliasLinks.Get(sym)`: `declaredType`, and whether
+    /// `typeParameters` is nil whatever the alias declares. `getDeclaredTypeOfTypeAlias` assigns it after a
+    /// `popTypeResolution` that succeeds: not while the alias is being resolved, and not after a cycle.
+    fn type_alias_links(&mut self, sym: Sym) -> (TypeId, bool) {
+        let declared = self.declared_type(sym);
+        let has_no_type_parameters = match self.p.declared_types.get(&self.task, &sym) {
+            Some((_, has_no_type_parameters)) => has_no_type_parameters,
+            // `pushTypeResolution` has just failed.
+            None => {
+                declared == TypeId::ERROR
+                    && self.found_cycle
+                    && self.is_resolving(Query::Declared(sym))
+            }
+        };
+        (declared, has_no_type_parameters)
+    }
+
     /// The type argument count checks of `getTypeFromClassOrInterfaceReference`,
     /// `getTypeFromTypeAliasReference` and `checkNoTypeArguments`. Returns the number of type
     /// parameters of `sym`. `None`: `actual` is not a valid number of type arguments, and the
@@ -3266,13 +3580,11 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<usize> {
         let flags = self.files().flags(sym);
         let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
-        // `getDeclaredTypeOfTypeAlias`: a circular alias (2456) never gets its type parameters.
-        let is_cycle = !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) && {
-            self.declared_type(sym);
-            let declared = self.p.declared_types.get(&self.task, &sym);
-            declared.is_some_and(|(_, is_circular)| is_circular)
-        };
-        let (least, most) = if is_cycle {
+        // `getTypeFromTypeAliasReference`: without `links.typeParameters` it comes to `checkNoTypeArguments`.
+        let has_no_type_parameters = !is_class_or_interface
+            && flags.contains(SymFlags::TYPE_ALIAS)
+            && self.type_alias_links(sym).1;
+        let (least, most) = if has_no_type_parameters {
             (0, 0)
         } else {
             self.type_argument_arity(sym)
@@ -3287,7 +3599,10 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(most);
         }
         let at = match node {
-            Ok(node) => (file, hir[node].pos, self.end_of_type_node(file, node)),
+            Ok(node) => {
+                let (start, end) = self.get_error_range_for_node(file, hir.node(node));
+                (file, start, end)
+            }
             // Type arguments from an `@extends` tag are located elsewhere in the source.
             Err(class) => {
                 let start = self.start_of(file, hir[class].extends);
@@ -3324,18 +3639,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let name = if is_class_or_interface {
             let declared = self.declared_type(sym);
-            // `TypeFormatFlagsWriteArrayAsGenericType`
-            match self.array_element(declared) {
-                Some(element) => {
-                    cat!(
-                        self.symbol_to_string(sym),
-                        b"<",
-                        self.type_to_string(element),
-                        b">"
-                    )
-                }
-                None => self.type_to_string(declared),
-            }
+            self.type_to_string_with_generic_arrays(declared)
         } else {
             self.symbol_to_string(sym)
         };
@@ -3475,8 +3779,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(sym) if self.has_this_type(sym) => self.intern(TypeData::ThisParam(sym)),
             Some(_) => TypeId::ERROR,
             None => {
-                let at = self.place_of_token(file, self.hir(file)[node].pos);
-                self.error_at(at, 2526, &[]);
+                self.error(file, node, 2526, &[]);
                 TypeId::ERROR
             }
         }
@@ -3637,8 +3940,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(alias)
     }
 
-    /// `type_reference` for a type reference node.
-    fn type_reference_of_node(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
+    /// `type_reference` for a type reference node, or for the `extends` clause of a class.
+    pub(super) fn type_reference_of_node(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
         if !self
             .files()
             .flags(sym)
@@ -3817,7 +4120,11 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
-            let params = self.local_type_params_of_symbol(sym);
+            let (declared, has_no_type_parameters) = self.type_alias_links(sym);
+            let params = match has_no_type_parameters {
+                true => SmallVec::new(),
+                false => self.local_type_params_of_symbol(sym),
+            };
             if params.is_empty() {
                 // `getDeclaredTypeOfTypeAlias`: `type BuiltinIteratorReturn = intrinsic`
                 if self.is_declared_intrinsic(sym)
@@ -3829,7 +4136,7 @@ impl<'p, 's> Checker<'p, 's> {
                         TypeId::ANY
                     };
                 }
-                return self.declared_type(sym);
+                return declared;
             }
             let args = self.fill_type_args(&params, args);
             if let Some(kind) = self.intrinsic_alias(sym) {
@@ -4169,8 +4476,15 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        let crate::bind::FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
-            return true;
+        // The parent of a method or an accessor of an object literal is the literal, for which
+        // `getContextualType` has no case.
+        let e = match bound.fns[func.idx()].owner {
+            crate::bind::FnOwner::Expr(e)
+                if matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow) =>
+            {
+                e
+            }
+            _ => return true,
         };
         if let Some(known) = (self.p.untyped_signatures_in_js).get(&self.task, &(file, func)) {
             return known;
@@ -4183,11 +4497,54 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     pub fn sig_params(&mut self, sig: SigId) -> List<'p, SigParam> {
+        self.sig_params_with_first(sig, usize::MAX)
+    }
+
+    /// `sig_params` for a caller that reads the types of the first `count` parameters and of a rest
+    /// parameter. tsgo instantiates the type of a parameter when it is asked for
+    /// (`getTypeOfInstantiatedSymbol`), so a limit that the type of another parameter reaches is
+    /// no error. Such a type is `UNRESOLVED` unless it is known, and a list that has one is in
+    /// `partial_sig_params`.
+    #[inline]
+    pub(super) fn sig_params_with_first(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         let recent = self.recent_sig_params[sig.0 as usize % RECENT_SIGS];
         if recent.0 == sig {
             return List::Kept(recent.1);
         }
-        self.sig_params_not_recent(sig)
+        self.sig_params_not_recent(sig, count)
+    }
+
+    /// `param_type_at`, where `params` is such a list for `sig`: a type that it lacks is asked for.
+    pub(super) fn param_type_asked_at(
+        &mut self,
+        sig: SigId,
+        params: &[SigParam],
+        index: usize,
+    ) -> Option<TypeId> {
+        match params.get(index) {
+            Some(param) if param.ty == TypeId::UNRESOLVED && !param.rest => {
+                self.get_type_of_parameter(param);
+                Some(self.type_of_parameter_asked_for(sig, index))
+            }
+            _ => self.param_type_at(params, index),
+        }
+    }
+
+    /// `getTypeOfSymbol(sig.parameters[index])`
+    fn type_of_parameter_asked_for(&mut self, sig: SigId, index: usize) -> TypeId {
+        if let Some(declared) = self.default_construct_base_sig(sig)
+            && let SigData::Decl { file, func, mapper }
+            | SigData::Construct {
+                file, func, mapper, ..
+            } = *self.types().sig(declared)
+            && index < self.hir(file)[func].params.len()
+        {
+            let target = self.instantiated_target(declared);
+            let read = Read::Only(index);
+            let only = self.sig_params_of_declaration(file, func, mapper, target, read);
+            return only.first().map_or(TypeId::UNRESOLVED, |param| param.ty);
+        }
+        TypeId::UNRESOLVED
     }
 
     /// `sig_params` for a caller at a point where tsgo requests the types of the first `count`
@@ -4205,9 +4562,69 @@ impl<'p, 's> Checker<'p, 's> {
                 self.type_of_param(file, p);
             }
         }
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, count);
         self.note_parameter_types_resolved(sig, &params, count);
         params
+    }
+
+    /// The same request for `getParameterCount` and `getEffectiveRestType`, which resolve the type
+    /// of a rest parameter and of no other.
+    pub(super) fn request_type_of_rest_parameter(&mut self, sig: SigId) {
+        if self.recent_sig_params[sig.0 as usize % RECENT_SIGS].0 != sig
+            && let Some(declared) = self.default_construct_base_sig(sig)
+            && let SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } =
+                *self.types().sig(declared)
+            && let Some(rest) = self.hir(file)[func].params.iter().next_back()
+            && self.hir(file)[rest].flags.contains(Flags::REST)
+            && self.p.sig_params.get_ref(&self.task, &declared).is_none()
+        {
+            self.type_of_param(file, rest);
+        }
+    }
+
+    /// `sig_params_up_to` for `assignContextualParameterTypes(.., sig)`: tsgo requests the type at
+    /// the position of every parameter of `func` that has no annotation (`tryGetTypeAtPosition`,
+    /// `getRestTypeAtPosition`), while `c.currentNode` is `func`.
+    pub(super) fn sig_params_assigned_to(
+        &mut self,
+        sig: SigId,
+        file: FileId,
+        func: FnId,
+    ) -> List<'p, SigParam> {
+        if self.recent_sig_params[sig.0 as usize % RECENT_SIGS].0 != sig
+            && let Some(declared) = self.default_construct_base_sig(sig)
+            && let SigData::Decl {
+                file: of,
+                func: context,
+                ..
+            } = *self.types().sig(declared)
+            && self.p.sig_params.get_ref(&self.task, &declared).is_none()
+        {
+            let (hir, declaring) = (self.hir(file), self.hir(of));
+            let (own, params) = (hir[func].params, declaring[context].params);
+            let rest = params.iter().next_back();
+            let rest = rest.filter(|&p| declaring[p].flags.contains(Flags::REST));
+            for (i, p) in own.iter().enumerate() {
+                if hir[p].ty.is_some() {
+                    continue;
+                }
+                let is_rest = hir[p].flags.contains(Flags::REST) && i + 1 == own.len();
+                let end = if is_rest { params.len() } else { 0 };
+                for position in i..end.max(i + 1) {
+                    if let Some(parameter) = params.iter().nth(position).or(rest) {
+                        self.type_of_param(of, parameter);
+                    }
+                }
+            }
+        }
+        self.sig_params(sig)
+    }
+
+    /// The same request for one parameter of a list that `sig_params` could not store.
+    pub(super) fn request_type_of_parameter(&mut self, parameter: &SigParam) {
+        if let Some((file, p)) = parameter.declaration {
+            self.type_of_param(file, p);
+        }
     }
 
     /// tsgo has assigned `links.resolvedType` of the first `count` of `params`, the parameters of
@@ -4235,7 +4652,11 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         for (i, param) in params.iter().enumerate().take(count) {
-            if !self.could_contain_type_variables(param.ty)
+            let ty = match param.ty {
+                TypeId::UNRESOLVED => self.type_of_parameter_asked_for(sig, i),
+                known => known,
+            };
+            if !self.could_contain_type_variables(ty)
                 && let Some((of, declaration)) = param.declaration
                 && let declared = self.type_of_param(of, declaration)
                 && self.has_type_variables(declared)
@@ -4296,7 +4717,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         self.resolved_parameter_types.contains(&(sig, index as u32))
             || params[index].rest
-            || index < Self::min_args(params) && index + 1 >= self.min_argument_count(params)
+            || index < Self::min_args(params)
+                && index + 1 >= self.min_argument_count_asked(Some(sig), params)
     }
 
     /// `kept` is the stored result of `sig_params(sig)`.
@@ -4305,15 +4727,17 @@ impl<'p, 's> Checker<'p, 's> {
         List::Kept(kept)
     }
 
-    /// `sig_params` for a signature that was not queried recently.
-    fn sig_params_not_recent(&mut self, sig: SigId) -> List<'p, SigParam> {
+    /// `sig_params_with_first` for a signature that was not queried recently.
+    fn sig_params_not_recent(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.types().sig(sig) {
-            SigData::WithReturn { sig: inner, .. } => return self.sig_params(*inner),
+            SigData::WithReturn { sig: inner, .. } => {
+                return self.sig_params_with_first(*inner, count);
+            }
             SigData::Synth { params, .. } => return self.cached_sig_params(sig, params),
             // Nothing is cached for these.
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
-                    Some(base) => self.sig_params(base),
+                    Some(base) => self.sig_params_with_first(base, count),
                     None => List::default(),
                 };
             }
@@ -4325,14 +4749,49 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(kept) = self.p.sig_params.get_ref(&self.task, &sig) {
             return self.cached_sig_params(sig, kept);
         }
+        if count != usize::MAX
+            && let Some(&(first, partial)) = self.partial_sig_params.get(&sig)
+            && count.min(partial.len()) <= first
+        {
+            return List::Kept(partial);
+        }
         let scope = self.begin_scope();
         let target = self.instantiated_target(sig);
-        let params = self.sig_params_of_declaration(file, func, mapper, target);
-        if let Ok(stored) = self.end_scope_by_counters(scope) {
-            let kept = (self.p.sig_params).insert_ref(&self.task, sig, params.into(), stored);
-            return self.cached_sig_params(sig, kept.1);
+        let read = Read::First(count);
+        let params = self.sig_params_of_declaration(file, func, mapper, target, read);
+        let first = (params.iter()).position(|param| param.ty == TypeId::UNRESOLVED);
+        match (self.end_scope_by_counters(scope), first) {
+            (Ok(_), Some(first)) if count != usize::MAX => {
+                let partial: &'p [SigParam] = params.leak();
+                self.partial_sig_params.insert(sig, (first, partial));
+                List::Kept(partial)
+            }
+            (Ok(stored), _) => {
+                let kept = (self.p.sig_params).insert_ref(&self.task, sig, params.into(), stored);
+                self.cached_sig_params(sig, kept.1)
+            }
+            (Err(_), _) => List::Own(params.to_vec()),
         }
-        List::Own(params.to_vec())
+    }
+
+    /// `getSignatureFromDeclaration`: "Include parameter symbol instead of property symbol in the
+    /// signature". `param.Symbol()` of a parameter property is the property, so `resolveName` looks
+    /// its name up from `param`, in the locals of the constructor `func`: that is the first
+    /// parameter of that name. Returns the declaration of the symbol in the signature.
+    fn declaration_of_parameter_symbol(&self, file: FileId, func: FnId, param: ParamId) -> ParamId {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir[param].flags.contains(Flags::PARAMETER_PROPERTY)
+            && hir[func].kind == FnKind::Constructor
+            && let PatKind::Ident(name) = hir[hir[param].pat].kind
+            && let locals = bound.scopes[bound.fns[func.idx()].scope.idx()].locals
+            && let Some(resolved) = bound.lookup(locals, name)
+            && let resolved = &bound.symbols[resolved.idx()]
+            && let Some(&Decl::Param(pat)) = resolved.decls.get(resolved.value_declaration as usize)
+            && let PatParent::Param(declaration) = bound.pat_parent[pat.idx()]
+        {
+            return declaration;
+        }
+        param
     }
 
     /// `target`: see `instantiated_target`.
@@ -4343,9 +4802,14 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
         mapper: MapperId,
         target: Option<SigId>,
+        read: Read,
     ) -> Vec<SigParam, &'s Arena> {
         let hir = self.hir(file);
-        let mut out = Vec::with_capacity_in(hir[func].params.len(), self.arena);
+        let (indices, count) = match read {
+            Read::First(count) => (0..hir[func].params.len(), count),
+            Read::Only(index) => (index..index + 1, 0),
+        };
+        let mut out = Vec::with_capacity_in(indices.len(), self.arena);
         // `getImmediatelyInvokedFunctionExpression`: the argument count of the call of an
         // immediately invoked function expression.
         let bound = self.bound(file);
@@ -4360,13 +4824,17 @@ impl<'p, 's> Checker<'p, 's> {
             &[(source, _)] if matches!(self.data(source), TypeData::ThisParam(_))
         );
         // `instantiateSignatureEx` instantiates the parameters of `signature.target`.
-        let target = target.map(|target| (target, self.sig_params(target)));
-        for (i, p) in hir[func].params.iter().enumerate() {
-            let param = &hir[p];
+        let target = target.map(|target| (target, self.sig_params_with_first(target, count)));
+        for i in indices {
+            let node = hir[func].params.at(i);
+            let param = &hir[node];
             let name = match hir[param.pat].kind {
                 PatKind::Ident(name) => name,
                 _ => Atom::NONE,
             };
+            // `paramSymbol.ValueDeclaration`
+            let p = self.declaration_of_parameter_symbol(file, func, node);
+            let value_declaration = &hir[p];
             // TypeScript resolves the type of a parameter when there is an argument to check
             // against it.
             // The one caller of an immediately invoked function expression has `actual` of them.
@@ -4385,8 +4853,11 @@ impl<'p, 's> Checker<'p, 's> {
                 && !param.flags.contains(Flags::REST);
             let optional =
                 param.flags.contains(Flags::OPTIONAL) || param.default.is_some() || is_omitted;
-            // For callers, an optional parameter also accepts `undefined`.
-            let declared = if optional {
+            // `getTypeOfParameter`: for callers, an optional parameter also accepts `undefined`.
+            let declared = if value_declaration.flags.contains(Flags::OPTIONAL)
+                || value_declaration.default.is_some()
+                || is_omitted
+            {
                 self.optional(declared)
             } else {
                 declared
@@ -4394,20 +4865,27 @@ impl<'p, 's> Checker<'p, 's> {
             // `instantiateSymbol` returns a symbol that `isThisless` itself, whatever its type is:
             // `isThislessVariableLikeDeclaration`.
             let is_kept = maps_this_only
-                && match param.ty.is_some() {
-                    true => super::errors_unused::is_thisless_type(hir, param.ty),
-                    false => param.default.is_none(),
+                && match value_declaration.ty.is_some() {
+                    true => super::errors_unused::is_thisless_type(hir, value_declaration.ty),
+                    false => value_declaration.default.is_none(),
                 };
             let mut ty = if is_kept {
                 declared
-            } else {
+            } else if i < count
+                || matches!(read, Read::Only(_))
+                || param.flags.contains(Flags::REST)
+            {
                 self.instantiate(declared, mapper)
+            } else {
+                self.instantiation_if_known(declared, mapper)
+                    .unwrap_or(TypeId::UNRESOLVED)
             };
             // And one whose type is resolved and cannot contain type variables. Of any other it
             // goes back to the declared parameter and combines the mappers.
             if let Some((target, of_target)) = &target
                 && let Some(open) = of_target.get(i).map(|open| open.ty)
                 && open != ty
+                && open != TypeId::UNRESOLVED
                 && !self.could_contain_type_variables(open)
                 && self.is_parameter_type_resolved(*target, of_target, i)
             {
@@ -4432,15 +4910,39 @@ impl<'p, 's> Checker<'p, 's> {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 is_union,
+                ref type_params,
                 ..
             } if of.len() > 1 => self.resolve_return_type(sig, |c| {
                 let returns: Vec<TypeId> = of.iter().map(|&member| c.sig_return(member)).collect();
-                if is_union {
+                let combined = if is_union {
                     c.union_reduced(&returns)
                 } else {
                     c.intersection(&returns)
+                };
+                // `sig.mapper`, the `paramMapper` of `combineUnionOrIntersectionMemberSignatures`:
+                // the type parameters of each later signature become those of the first. Applied
+                // after the union is reduced, so `Promise<A> | PromiseLike<B>` stays two types.
+                let mut pairs = Vec::new();
+                for &member in of.iter() {
+                    let own = c.sig_type_params(member);
+                    if !own.is_empty() && !type_params.is_empty() && own[..] != type_params[..] {
+                        pairs.extend(own.iter().copied().zip(type_params.iter().copied()));
+                    }
+                }
+                if pairs.is_empty() {
+                    combined
+                } else {
+                    let mapper = c.types().mapper(pairs);
+                    c.instantiate(combined, mapper)
                 }
             }),
+            // `getOptionalCallSignature`: the clone has no `resolvedReturnType`.
+            SigData::WithReturn {
+                sig: of,
+                ret: TypeId::UNRESOLVED,
+            } if self.is_optional_call_signature_of(of) => {
+                self.resolve_return_type(sig, |c| c.return_type_of_optional_call_signature(of))
+            }
             SigData::Synth { ret, .. } | SigData::WithReturn { ret, .. } => ret,
             // `case sig.target != nil`
             SigData::Decl { file, func, mapper } if self.is_instantiating(mapper) => self
@@ -4458,6 +4960,64 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiate(declared, mapper)
             }
         }
+    }
+
+    /// `getOptionalCallSignature`: `cloneSignature(sig)`, which has the declaration of `sig` and no
+    /// `resolvedReturnType`, so `sig_return` resolves it under an entry of its own. Only for the
+    /// declared signature or an instantiation of it: the clone of any other gets its return type
+    /// from `sig.target`, as `sig` does.
+    /// Whether `WithReturn { sig: of, ret: UNRESOLVED }` is the clone that `optional_call_signature`
+    /// makes, which is of a call signature. With a construct signature it is that of a mixin
+    /// whose return type was refused, and stays unresolved.
+    pub(super) fn is_optional_call_signature_of(&self, of: SigId) -> bool {
+        matches!(*self.types().sig(of), SigData::Decl { file, func, .. }
+        if !matches!(
+            self.hir(file)[func].kind,
+            FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType
+        ))
+    }
+
+    pub(super) fn optional_call_signature(&self, sig: SigId) -> SigId {
+        if let SigData::Decl { file, func, mapper } = *self.types().sig(sig)
+            && self.is_of_declared_signature(file, func, mapper)
+        {
+            return self.types().intern_sig(SigData::WithReturn {
+                sig,
+                ret: TypeId::UNRESOLVED,
+            });
+        }
+        sig
+    }
+
+    /// Whether the signature of `func` that has `mapper` is the declared one (`sig.target == nil`)
+    /// or an instantiation of it: no outer type parameter is mapped to another type.
+    fn is_of_declared_signature(&self, file: FileId, func: FnId, mapper: MapperId) -> bool {
+        let own = self.hir(file)[func].type_params;
+        let mapping = self.types().mapping(mapper);
+        (mapping.iter()).all(|&(from, to)| from == to || self.is_declared_among(from, file, own))
+    }
+
+    /// `getReturnTypeOfSignature` between `pushTypeResolution` and `popTypeResolution`, for the
+    /// clone of `of` that `getOptionalCallSignature` makes.
+    fn return_type_of_optional_call_signature(&mut self, of: SigId) -> TypeId {
+        if let SigData::Decl { file, func, mapper } = *self.types().sig(of)
+            && self.is_of_declared_signature(file, func, mapper)
+        {
+            let declared = if self.is_instantiating(mapper) {
+                // `instantiateSignatureEx` of a candidate: `sig.target` is the clone of the
+                // declared signature.
+                let target = self.sig_of_fn(file, func);
+                let target = self.optional_call_signature(target);
+                self.sig_return(target)
+            } else {
+                // `getReturnTypeFromAnnotation`, else `getReturnTypeFromBody` once more: the
+                // declared signature, which may be in progress below, is not entered.
+                self.return_type_of_fn_uncached(file, func, CheckMode::empty())
+            };
+            return self.instantiate_result_of_sig(declared, file, func, mapper);
+        }
+        // The clone has `sig.target` and `sig.composite` of the original.
+        self.sig_return(of)
     }
 
     /// `getReturnTypeOfSignature` for a signature that is not the declared signature of a
@@ -4579,7 +5139,15 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
             SigData::Synth {
                 ref of, is_union, ..
-            } if of.len() > 1 => return self.union_or_intersection_type_predicate(of, is_union),
+            } => {
+                return match of[..] {
+                    [] => None,
+                    // `cloneSignature`, `instantiateSignatureEx`: the declaration, the target and
+                    // the mapper are those of the signature it was made from.
+                    [only] => self.sig_predicate(only),
+                    _ => self.union_or_intersection_type_predicate(of, is_union),
+                };
+            }
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };
@@ -4595,8 +5163,9 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeNodeKind::Predicate { param, ty, asserts } = hir[f.ret].kind else {
             return None;
         };
-        // `IsTypePredicateNode(typeNode)`: a `ParenthesizedType`, which has no node, is none.
-        if (self.parenthesized_types_around(file, f.ret, f.start))
+        // `IsTypePredicateNode(typeNode)`: a `ParenthesizedType`, which has no node, is none. The
+        // type of a `@returns` tag comes before the function.
+        if (self.parenthesized_types_around(file, f.ret, 0))
             .next()
             .is_some()
         {
@@ -4709,13 +5278,16 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.rest_element_type(rest, offset))
     }
 
-    /// The type of element `offset` of the array or tuple type a rest parameter is declared with.
+    /// `getIndexedAccessType(rest, getNumberLiteralType(offset))` for the type `rest` of a rest
+    /// parameter. FOR SPEED: an array or a tuple is not searched for a property named `offset`,
+    /// unless an array can have one that is not an element.
     pub fn rest_element_type(&mut self, rest: TypeId, offset: usize) -> TypeId {
-        if let Some(element) = self.array_element(rest) {
+        let has_elements_only = !self.files().arrays_have_numeric_members;
+        if has_elements_only && let Some(element) = self.array_element(rest) {
             return element;
         }
         match self.data(rest) {
-            TypeData::Tuple { flags, .. } => {
+            TypeData::Tuple { flags, .. } if has_elements_only => {
                 let elems = self.type_arguments(rest);
                 if let Some(&e) = elems.get(offset)
                     && !flags[..=offset]

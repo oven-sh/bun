@@ -188,6 +188,21 @@ impl Packed for (Option<crate::types::TypeId>, bool) {
     }
 }
 
+impl Packed for (Option<crate::types::SigId>, bool) {
+    type Cell = AtomicU32;
+    #[inline]
+    fn pack(self) -> u32 {
+        self.0.pack() << 1 | u32::from(self.1)
+    }
+    #[inline]
+    fn unpack(raw: u32) -> Self {
+        (
+            <Option<crate::types::SigId>>::unpack(raw >> 1),
+            raw & 1 != 0,
+        )
+    }
+}
+
 /// A dense id: an index counted from zero without significant gaps.
 pub trait Id: Copy {
     fn number(self) -> u32;
@@ -246,6 +261,13 @@ macro_rules! packed_ids {
 /// Files and nodes are numbered before the first step. For `ByKey` keys that contain one alongside
 /// an id.
 impl MaybeLocal for FileId {
+    #[inline]
+    fn is_local(&self) -> bool {
+        false
+    }
+}
+
+impl MaybeLocal for Sym {
     #[inline]
     fn is_local(&self) -> bool {
         false
@@ -992,6 +1014,32 @@ where
         if self.published(spread, &key).is_none() {
             (task.buffer().typed_or_new(&self.slot)).replace(spread, key, value);
         }
+    }
+
+    /// `get`. `Err`: the hash of `key`, for `insert_absent` and `rewrite_absent`.
+    #[inline]
+    pub fn get_or_hash(&self, task: &Task<'s>, key: &K) -> Result<V, u64> {
+        let spread = spread_hash(key);
+        if let Some(value) = self.published(spread, key) {
+            return Ok(value);
+        }
+        let own = task.buffer().typed(&self.slot);
+        own.and_then(|own| own.get(spread, key))
+            .copied()
+            .ok_or(spread)
+    }
+
+    /// `insert`, for a key for which `get_or_hash` has returned `spread` in this task: nothing is
+    /// published during a step, so it is still not among the published entries.
+    #[inline]
+    pub fn insert_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, _: Stored) -> V {
+        *(task.buffer().typed_or_new(&self.slot)).insert(spread, key, value)
+    }
+
+    /// `rewrite`, likewise.
+    #[inline]
+    pub fn rewrite_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, _: Stored) {
+        (task.buffer().typed_or_new(&self.slot)).replace(spread, key, value);
     }
 }
 

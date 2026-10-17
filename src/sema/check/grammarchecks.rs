@@ -179,23 +179,26 @@ impl Checker<'_, '_> {
             || self.check_grammar_for_use_strict_simple_parameter_list(file, func)
     }
 
-    /// `checkGrammarTypeParameterList`: `<>`. Before an arrow function the parser rejects it.
+    /// `checkGrammarTypeParameterList`: `<>`. Before an arrow function the parser rejects it. The
+    /// list is not stored: it is what precedes `anchor`, the token at which `parseParameters`
+    /// starts, a `(` or not. A signature that the reparser makes of JSDoc tags has none.
     fn check_grammar_type_parameter_list(&mut self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let (text, f) = (&hir.text[..], &hir[func]);
-        if !f.type_params.is_empty()
-            || f.kind == FnKind::Arrow
-            || text.get(f.anchor as usize) != Some(&b'(')
+        if !f.type_params.is_empty() || f.kind == FnKind::Arrow || f.flags.contains(Flags::REPARSED)
         {
             return false;
         }
-        let close = skip_trivia_back(text, f.anchor as usize);
+        let close = skip_trivia_back(text, hir.skip_trivia_of_node_at(f.anchor) as usize);
         if !text[..close].ends_with(b">") {
             return false;
         }
-        let open = skip_trivia_back(text, close - 1);
-        text[..open].ends_with(b"<")
-            && self.grammar_error_at((file, open as u32 - 1, close as u32), 1098, &[])
+        // `typeParameters.Pos()`, which is its `End()`.
+        let greater_than = hir.skip_trivia_of_node_at(close as u32 - 1);
+        let pos = skip_trivia_back(text, greater_than as usize);
+        let end = skip_trivia(text, pos) + 1;
+        text[..pos].ends_with(b"<")
+            && self.grammar_error_at((file, pos as u32 - 1, end as u32), 1098, &[])
     }
 
     /// `checkGrammarParameterList`
@@ -771,9 +774,7 @@ impl Checker<'_, '_> {
             // A name that declares nothing (`getDeclarationName`) is not stored.
             PropKey::None if is_private_name_at(hir, pos) => self.declaration_name_at(file, pos),
             PropKey::None if is_bigint_literal_at(hir, pos) => {
-                let mut text = self.declaration_name_at(file, pos);
-                text.retain(|&digit| digit != b'_');
-                text
+                crate::json::bigint_token_value(&self.declaration_name_at(file, pos))
             }
             PropKey::None => return None,
         };

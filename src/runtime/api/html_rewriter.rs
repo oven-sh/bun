@@ -1009,7 +1009,7 @@ impl RewriterPipe {
     /// Output emitted but not yet taken by a reader.
     fn unread_output(&self) -> BlobSizeType {
         let staged = self.output_buffer.get().len();
-        let queued = self.output.get().map_or(0, |out| out.buffer.get().len());
+        let queued = self.output.get().map_or(0, |out| out.buffered.held_len());
         (staged + queued) as BlobSizeType
     }
 
@@ -1250,9 +1250,7 @@ impl RewriterPipe {
             if this.feed(bytes) {
                 this.end_rewrite();
             }
-            // `blob::Any` has no `Drop`; release the WTFStringImpl/Blob `+1`
-            // transferred by `use_as_any_blob`. A suspended lol-html has
-            // already copied the unconsumed tail into its arena.
+            // A suspended lol-html has already copied the unconsumed tail into its arena.
             any_blob.detach();
             return;
         };

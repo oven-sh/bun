@@ -6,6 +6,7 @@ use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// The names of the discriminant properties of a union, each with the type of the value given for
@@ -27,7 +28,49 @@ pub(super) enum ReportErrors {
     Yes,
 }
 
+/// `indexOfNode`: where `e` is among `items`, which are in the order of the text.
+pub(super) fn index_of_node(hir: &File, items: IdList<ExprId>, e: ExprId) -> Option<usize> {
+    let pos = hir[e].pos;
+    let (mut low, mut high) = (0, items.len());
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if hir[hir.id_at(items, middle)].pos < pos {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    // Where nothing is written several begin at one place.
+    (low..items.len())
+        .take_while(|&i| hir[hir.id_at(items, i)].pos == pos)
+        .find(|&i| hir.id_at(items, i) == e)
+        .or_else(|| hir.ids(items).position(|i| i == e))
+}
+
 impl<'p, 's> Checker<'p, 's> {
+    /// `getSpreadIndices`: the first and the last spread among `items`, which are the elements of the array literal or the
+    /// arguments of the call `owner`.
+    pub(super) fn spread_indices(
+        &mut self,
+        file: FileId,
+        owner: ExprId,
+        items: IdList<ExprId>,
+    ) -> Option<(usize, usize)> {
+        let hir = self.hir(file);
+        let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
+        let find = || {
+            let first = hir.ids(items).position(is_spread)?;
+            Some((first, hir.ids(items).rposition(is_spread)?))
+        };
+        if items.len() <= 16 {
+            return find();
+        }
+        *self
+            .spread_indices_of_many
+            .entry((file, owner))
+            .or_insert_with(find)
+    }
+
     /// `getContainingFunctionOrClassStaticBlock`
     #[inline]
     pub fn enclosing_fn_of_expr(&self, file: FileId, e: ExprId) -> Option<FnId> {
@@ -122,6 +165,10 @@ impl<'p, 's> Checker<'p, 's> {
                             && self.p.calls.get(&self.task, &(file, parent)).is_none()
                             && !self.stack.contains(&Query::Call(file, parent))
                         {
+                            // No query is entered on the way up through calls in arguments of calls, so nothing else looks at the stack.
+                            if self.is_stack_low() {
+                                return;
+                            }
                             // The call may be an argument itself: resolve the outermost enclosing call first. As the outermost query,
                             // `resolved_signature` does that itself. Doing it twice doubles the work per nesting level if the enclosing
                             // calls are non-cacheable.
@@ -299,6 +346,9 @@ impl<'p, 's> Checker<'p, 's> {
         for_context: IncludePatternInType,
         report_errors: ReportErrors,
     ) -> Option<TypeId> {
+        if self.is_stack_low() {
+            return Some(TypeId::UNRESOLVED);
+        }
         let hir = self.hir(file);
         match hir[pat].kind {
             PatKind::Missing | PatKind::Ident(_) => None,
@@ -346,12 +396,31 @@ impl<'p, 's> Checker<'p, 's> {
                         ElemFlags::REQUIRED
                     });
                 }
-                Some(self.tuple(&types, &flags, false))
+                let result = self.tuple(&types, &flags, false);
+                if for_context == IncludePatternInType::No {
+                    return Some(result);
+                }
+                // `cloneTypeReference`, `patternForType`
+                Some(self.types().intern_key_with(
+                    TypeKey::Data(self.data(result)),
+                    &ProvenanceKey {
+                        alias: None,
+                        origin: OriginKey::None,
+                        is_enum: false,
+                        stored_under: None,
+                        is_array_literal: false,
+                        is_array_pattern: true,
+                        has_other_instantiation: false,
+                    },
+                ))
             }
             // `getTypeFromObjectBindingPattern`
             PatKind::Object(props) => {
                 let mut shape = Shape::new_in(self.arena);
                 let mut has_computed_names = false;
+                // Where the property of a name is in `shape.props`, if the pattern has many.
+                let has_many = props.len() > 16;
+                let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
                 for p in props.iter() {
                     let prop = &hir[p];
                     if prop.is_rest {
@@ -388,17 +457,28 @@ impl<'p, 's> Checker<'p, 's> {
                         flags,
                         source: PropSource::Type(ty),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     };
-                    match shape.props.iter_mut().find(|p| p.name == name) {
-                        Some(earlier) => *earlier = implied,
-                        None => shape.props.push(implied),
+                    let earlier = if has_many {
+                        places.get(&name).copied()
+                    } else {
+                        shape.props.iter().position(|p| p.name == name)
+                    };
+                    match earlier {
+                        Some(earlier) => shape.props[earlier] = implied,
+                        None => {
+                            if has_many {
+                                places.insert(name, shape.props.len());
+                            }
+                            shape.props.push(implied);
+                        }
                     }
                 }
                 // `getNamedMembers`: members without a declaration are ordered by name.
                 let atoms = &self.atoms();
                 shape
                     .props
-                    .sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
+                    .shared_sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
                 // `patternForType`
                 if for_context == IncludePatternInType::Yes {
                     shape.literal = if has_computed_names {
@@ -411,6 +491,7 @@ impl<'p, 's> Checker<'p, 's> {
                     (shape.literal, shape.is_regular) = (Literalness::Literal, true);
                 }
                 shape.has_no_instantiable_symbol = true;
+                shape.pattern_at = Some((file, hir[pat].pos));
                 Some(self.synth(shape))
             }
         }
@@ -430,20 +511,25 @@ impl<'p, 's> Checker<'p, 's> {
             let contextual_type = self
                 .context_implied_by_pattern(file, pat)
                 .unwrap_or(TypeId::UNKNOWN);
-            let ty = self.check_expression_with_contextual_type(
-                file,
-                default,
-                contextual_type,
-                None,
-                CheckMode::empty(),
-            );
-            // `checkDeclarationInitializer`: under a parameter, the type of a default is padded
-            // with the members its own pattern has defaults for.
-            let ty = match root_declaration(self.bound(file), pat) {
-                PatParent::Param(root) => {
-                    self.note_checked_with_contextual_type(file, root, default);
-                    self.padded_for_pattern(file, pat, ty)
+            // `checkDeclarationInitializer(element, CheckModeNormal, contextualType)`
+            let root = root_declaration(self.bound(file), pat);
+            let ty = match self.quick_type_of_expr(file, default) {
+                Some(quick) => quick,
+                None => {
+                    if let PatParent::Param(root) = root {
+                        self.note_checked_with_contextual_type(file, root, default);
+                    }
+                    self.check_expression_with_contextual_type(
+                        file,
+                        default,
+                        contextual_type,
+                        None,
+                        CheckMode::empty(),
+                    )
                 }
+            };
+            let ty = match root {
+                PatParent::Param(_) => self.padded_for_pattern(file, pat, ty),
                 _ => ty,
             };
             let ty = self.get_widened_literal_type_for_initializer(file, pat, ty);
@@ -478,7 +564,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
-            } if self.is_definite_assignment_target(file, e) => {
+            } if self.is_assignment_target(file, e) => {
                 let hir = self.hir(file);
                 let ExprKind::Object(props) = hir[e].kind else {
                     return None;
@@ -499,56 +585,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether `ty` is such a type, or a tuple or a union that contains one.
-    fn has_pattern_mark(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Synth(shape) => matches!(
-                shape.literal,
-                Literalness::Pattern | Literalness::PatternWithComputedNames
-            ),
-            TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, ..),
-                ..
-            } => self.is_definite_assignment_target(*file, *e),
-            // A type from a type node has no mark.
-            TypeData::Tuple {
-                elems: TypeArguments::Given(parts),
-                ..
-            }
-            | TypeData::Union(parts) => parts.iter().any(|&p| self.has_pattern_mark(p)),
-            _ => false,
-        }
-    }
-
-    /// `getCovariantInference` ends in `getWidenedType`: an inference from the implied type of a
-    /// pattern is an ordinary type, which is not in `patternForType`.
-    fn without_pattern_marks(&mut self, ty: TypeId) -> TypeId {
-        if self.has_pattern_mark(ty) {
-            self.get_widened_type(ty)
-        } else {
-            ty
-        }
-    }
-
-    /// `patternForType[t] != nil` for `t`, the contextual type of `e`.
-    fn is_expected_by_pattern(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        t: TypeId,
-        context_flags: ContextFlags,
-    ) -> bool {
-        if self.pattern_of_type(t).is_some() {
-            return true;
-        }
-        // A tuple carries no mark. It was created from an array pattern if it differs from the
-        // contextual type computed with binding patterns skipped.
-        if !self.is_tuple(t) || context_flags.contains(ContextFlags::SKIP_BINDING_PATTERNS) {
-            return false;
-        }
-        let regardless =
-            self.contextual_type(file, e, context_flags | ContextFlags::SKIP_BINDING_PATTERNS);
-        regardless != Some(t)
+    /// `patternForType[t] != nil`
+    fn is_expected_by_pattern(&mut self, t: TypeId) -> bool {
+        self.types().is_array_pattern(t) || self.pattern_of_type(t).is_some()
     }
 
     fn type_implied_by_pattern_with_elements(
@@ -626,17 +665,7 @@ impl<'p, 's> Checker<'p, 's> {
             return info.t;
         }
         let ty = self.contextual_type_from_parent(file, e, context_flags)?;
-        if ty == TypeId::UNRESOLVED {
-            return None;
-        }
-        // The contextual type of a call is only used for inference. A call of an immediately
-        // invoked function passes it on to the function's `return`s.
-        if let ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) = hir[e].kind
-            && !matches!(hir[hir[c].callee].kind, ExprKind::Fn(_))
-        {
-            return Some(self.without_pattern_marks(ty));
-        }
-        Some(ty)
+        (ty != TypeId::UNRESOLVED).then_some(ty)
     }
 
     fn contextual_type_from_parent(
@@ -1174,7 +1203,7 @@ impl<'p, 's> Checker<'p, 's> {
         // An index past the fixed prefix of a tuple falls in the part covered by its rest element.
         if let TypeData::Tuple { flags, .. } = self.data(part)
             && self.is_numeric_name(name)
-            && crate::atom::parse_number(self.atoms().bytes(name)).is_some_and(|n| n >= 0.0)
+            && bun_core::fmt::parse_f64(self.atoms().bytes(name)).is_some_and(|n| n >= 0.0)
         {
             let elems = self.type_arguments(part);
             let fixed = Self::fixed_length(flags);
@@ -1182,7 +1211,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(rest);
             }
         }
-        let members = self.members(part)?;
+        let members = self.structured_members(part)?;
         let info = match name_type {
             Some(key) => self.applicable_index_info(&members, key),
             // A symbol name uses the index signature for symbols.
@@ -1202,7 +1231,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut types = Vec::new();
         for &part in self.parts(context) {
-            if let Some(members) = self.members(part)
+            if let Some(members) = self.structured_members(part)
                 && let Some(info) = self.applicable_index_info(&members, key)
             {
                 types.push(info.value);
@@ -1669,7 +1698,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `getPropertiesOfUnionOrIntersectionType`: a property that all members have is a
             // property of the first member without index signatures.
-            if members.shape().index.is_empty() {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
             visited.push(members);
@@ -1772,7 +1801,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let yielded = types.y.unwrap_or(TypeId::SILENT_NEVER);
                 let returned = self
                     .contextual_type(file, parent, context_flags)
-                    .map_or(TypeId::SILENT_NEVER, |t| self.without_pattern_marks(t));
+                    .unwrap_or(TypeId::SILENT_NEVER);
                 let next = types.n.unwrap_or(TypeId::UNKNOWN);
                 let generator = self.generator_of(yielded, returned, next, false);
                 if is_async {
@@ -1783,11 +1812,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::Array(items) => {
                 let context = self.apparent_type_of_contextual_type(file, parent, context_flags)?;
-                let index = hir.ids(items).position(|i| i == e)?;
-                // `getSpreadIndices`
-                let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-                let first = hir.ids(items).position(is_spread);
-                let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
+                let index = index_of_node(hir, items, e)?;
+                let (first, last) = self.spread_indices(file, parent, items).unzip();
                 self.contextual_element_at(context, index, Some(items.len()), first, last)
             }
             // An expression spread into an array or an argument list has no contextual type. A
@@ -1810,11 +1836,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // type of the left operand is.
                 BinOp::Or | BinOp::Nullish => {
                     let context = self.contextual_type(file, parent, context_flags);
-                    if e == right
-                        && context.is_none_or(|t| {
-                            self.is_expected_by_pattern(file, parent, t, context_flags)
-                        })
-                    {
+                    if e == right && context.is_none_or(|t| self.is_expected_by_pattern(t)) {
                         return Some(self.get_type_of_expression(file, left));
                     }
                     context
@@ -1868,7 +1890,6 @@ impl<'p, 's> Checker<'p, 's> {
             // `getContextualTypeForAwaitOperand`
             ExprKind::Await(_) => {
                 let context = self.contextual_type(file, parent, context_flags)?;
-                let context = self.without_pattern_marks(context);
                 self.awaited_or_promise_like(context)
             }
             // `getContextualTypeForArgumentAtIndex`: for an `import()`, a string, an
@@ -1880,9 +1901,14 @@ impl<'p, 's> Checker<'p, 's> {
                 if hir.ids(args).nth(1) != Some(e) {
                     return Some(TypeId::ANY);
                 }
-                let name = self.atoms().lookup(b"ImportCallOptions")?;
-                let sym = self.global_type_symbol(name)?;
-                Some(self.declared_type(sym))
+                // `getGlobalImportCallOptionsType`
+                let name = self.atoms().lookup(b"ImportCallOptions");
+                Some(
+                    match name.and_then(|name| self.get_global_type(name, 0, false)) {
+                        Some(sym) => self.declared_type(sym),
+                        None => TypeId::EMPTY_OBJECT,
+                    },
+                )
             }
             // `getContextualTypeForChildJsxExpression`
             ExprKind::Jsx(j) => {
@@ -2006,24 +2032,7 @@ impl<'p, 's> Checker<'p, 's> {
                         return None;
                     }
                 }
-                // `this.x = value`, where `x` is declared without an annotation: its type comes
-                // from the assignments.
                 ExprKind::This => {
-                    // In JavaScript the assignment may be the declaration of the property
-                    // (`binary.Symbol != nil`): it has no contextual type, unless the first
-                    // declaration has an annotation (`binary.Symbol.ValueDeclaration.Type()`).
-                    let symbol = bound.symbol_of_declaration(Decl::ThisProperty(assignment));
-                    if symbol.is_some()
-                        && let Some((of, Decl::ThisProperty(first))) = self
-                            .files()
-                            .value_declaration(self.files().sym(file, symbol))
-                        && (self.hir(of).jsdoc_type(JsDocTypeOwner::Assign(first))).is_none()
-                    {
-                        return None;
-                    }
-                    if self.declares_member_of_object_literal(file, assignment, obj) {
-                        return None;
-                    }
                     let this = self.get_type_of_expression(file, obj);
                     let this = self.apparent_type(this);
                     let name = match hir[target].kind {
@@ -2039,6 +2048,8 @@ impl<'p, 's> Checker<'p, 's> {
                         && let PropSource::Symbol(sym) = prop.source
                         && let Some((of, Decl::Member(m))) = self.files().value_declaration(sym)
                     {
+                        // "No contextual type for 'this.xxx = expr', where xxx is declared as a
+                        // property with no type annotation or initializer."
                         let member = &self.hir(of)[m];
                         if member.kind == MemberKind::Property
                             && member.ty.is_none()
@@ -2047,60 +2058,25 @@ impl<'p, 's> Checker<'p, 's> {
                             return None;
                         }
                     }
+                    // "We have an assignment declaration 'this.xxx = expr' with no (synthetic) type
+                    // annotation"
+                    let symbol = bound.symbol_of_declaration(Decl::ThisProperty(assignment));
+                    let symbol = bound.computed_symbol_in_table(symbol);
+                    if symbol.is_some()
+                        && let Some((of, declaration)) = self
+                            .files()
+                            .value_declaration(self.files().sym(file, symbol))
+                        && self.type_node_of_declaration(of, declaration).is_none()
+                    {
+                        return None;
+                    }
                 }
                 _ => {}
             }
         }
-        // `getTypeOfExpression(left)`
-        Some(self.get_type_of_expression(file, target))
-    }
-
-    /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`: whether `assignment`, which assigns to a property of `this`, is in
-    /// a method or an accessor of an object literal in JavaScript. It declares a member of the symbol of the literal then
-    /// (`binary.Symbol != nil`). Not if a property of that name has a type of its own (`ValueDeclaration.Type() != nil`).
-    fn declares_member_of_object_literal(
-        &self,
-        file: FileId,
-        assignment: ExprId,
-        this: ExprId,
-    ) -> bool {
-        use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if assignment_declaration_kind(hir, assignment) != JsDeclarationKind::ThisProperty {
-            return false;
-        }
-        let ExprKind::Assign { target, .. } = hir[assignment].kind else {
-            return false;
-        };
-        let name = match hir[target].kind {
-            // `this.#name = value` declares nothing.
-            ExprKind::Dot { name_pos, .. } if is_private_name_at(hir, name_pos) => {
-                return false;
-            }
-            ExprKind::Dot { name, .. } => name,
-            _ => Atom::NONE,
-        };
-        let Some(Ok(func)) = self.this_container(file, this) else {
-            return false;
-        };
-        if !matches!(
-            hir[func].kind,
-            FnKind::Method | FnKind::Getter | FnKind::Setter
-        ) {
-            return false;
-        }
-        let FnOwner::Expr(owner) = bound.fns[func.idx()].owner else {
-            return false;
-        };
-        let Parent::Prop(p) = bound.expr_parent[owner.idx()] else {
-            return false;
-        };
-        let ExprKind::Object(props) = hir[bound.prop_owner[p.idx()]].kind else {
-            return false;
-        };
-        !props.iter().any(|x| {
-            hir[x].key == PropKey::Name(name) && hir.jsdoc_type(JsDocTypeOwner::Prop(x)).is_some()
-        })
+        let ty = self.get_type_of_expression(file, target);
+        self.requested_assignment_target = Some((file, target));
+        Some(ty)
     }
 
     /// `getContextualTypeForElementExpression`. `length`: the number of elements, if known.
@@ -2360,7 +2336,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return params.len() < required;
             }
         }
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, 0);
         !self.has_effective_rest_parameter(&params) && self.parameter_count(&params) < required
     }
 
@@ -2419,6 +2395,27 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
         index: usize,
     ) -> Option<TypeId> {
+        self.contextual_param_type_from(file, func, index, true)
+    }
+
+    /// `getContextuallyTypedParameterType` as `getTypeForVariableLikeDeclaration` calls it while
+    /// `links.resolvedType` of the parameter is nil: with `getContextualSignature` as it is now.
+    pub(super) fn get_contextually_typed_parameter_type(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+    ) -> Option<TypeId> {
+        self.contextual_param_type_from(file, func, index, false)
+    }
+
+    fn contextual_param_type_from(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+        is_assigned: bool,
+    ) -> Option<TypeId> {
         // `isContextSensitiveFunctionOrObjectLiteralMethod`
         let owner = self.takes_context(file, func)?;
         if !self.is_context_sensitive(file, owner) {
@@ -2427,7 +2424,10 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(actual) = self.iife_param_type(file, func, index) {
             return actual;
         }
-        let sig = self.assigned_contextual_signature(file, func)?;
+        let sig = match is_assigned {
+            true => self.assigned_contextual_signature(file, func)?,
+            false => self.contextual_signature(file, func)?,
+        };
         self.contextual_param_type_in(file, func, index, sig)
     }
 
@@ -2474,7 +2474,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_resolving_return_type(sig)
             && !self.is_at_first_look(sig)
         {
-            let expected = self.sig_return(sig);
+            let expected = self.return_type_not_in_resolution(sig);
             let (is_generator, is_async) = (
                 f.flags.contains(Flags::GENERATOR),
                 f.flags.contains(Flags::ASYNC),

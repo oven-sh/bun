@@ -3,7 +3,7 @@
 // things at the same time. One entry per kind of callback; add one when adding an API that calls back.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunExe, tempDir } from "harness";
+import { bunExe, tempDir, tls as tlsCerts } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
@@ -30,6 +30,7 @@ const dir = String(
       import { EventEmitter, once } from "node:events";
       import { pipeline } from "node:stream/promises";
       import timersPromises from "node:timers/promises";
+      import { WebSocketServer } from "ws";
 
       const data = import.meta.dir + "/data.txt";
       const defer = () => Promise.withResolvers();
@@ -156,6 +157,14 @@ const dir = String(
             ws.addEventListener("message", () => { seen("message"); ws.close(); });
             ws.addEventListener("close", () => { seen("close"); resolve(); });
           }),
+        webSocketCheckServerIdentity: (seen, env) =>
+          new Promise(resolve => {
+            const ws = new WebSocket("wss://localhost:" + env.httpsPort + "/ws", {
+              tls: { ca: env.ca, checkServerIdentity() { seen("checkServerIdentity"); } },
+            });
+            ws.onopen = () => ws.close();
+            ws.onclose = resolve;
+          }),
         bunServe: async seen => {
           const closed = defer();
           const server = Bun.serve({
@@ -189,6 +198,20 @@ const dir = String(
               response.on("end", () => { seen("client end"); resolve(); });
             });
           });
+          await new Promise(resolve => server.close(resolve));
+        },
+        wsServer: async seen => {
+          const server = http.createServer();
+          const closed = defer();
+          new WebSocketServer({ server }).on("connection", ws => {
+            seen("connection");
+            ws.on("message", message => { seen("message"); ws.send(String(message)); });
+            ws.on("ping", () => seen("ping"));
+            ws.on("close", () => { seen("close"); closed.resolve(); });
+          });
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          await new Promise(resolve => { const ws = new WebSocket("ws://127.0.0.1:" + server.address().port); ws.onopen = () => { ws.ping(); ws.send("x"); }; ws.onmessage = () => ws.close(); ws.onclose = resolve; });
+          await closed.promise;
           await new Promise(resolve => server.close(resolve));
         },
 
@@ -273,8 +296,15 @@ const dir = String(
 );
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-let hostHttp: Bun.Server;
+let hostHttp: Bun.Server<undefined>;
+let hostHttps: Bun.Server<undefined>;
 beforeAll(() => {
+  hostHttps = Bun.serve({
+    port: 0,
+    tls: tlsCerts,
+    fetch: (request, server) => (server.upgrade(request) ? undefined : new Response("no", { status: 400 })),
+    websocket: { message() {} },
+  });
   hostHttp = Bun.serve({
     port: 0,
     fetch(request, server) {
@@ -297,7 +327,10 @@ beforeAll(() => {
     websocket: { message: (ws, message) => void ws.send(message) },
   });
 });
-afterAll(() => hostHttp.stop(true));
+afterAll(() => {
+  hostHttp.stop(true);
+  hostHttps.stop(true);
+});
 
 test("every callback of several graphs and the host, all running at once, finds its own graph's context", async () => {
   const storage = new AsyncLocalStorage<string>();
@@ -325,7 +358,13 @@ test("every callback of several graphs and the host, all running at once, finds 
     runners.flatMap(({ tag, graph, app }) =>
       names.map(name => {
         const seen = (event: string) => record(name + ": " + event, tag);
-        const env: Record<string, unknown> = { tag, httpPort: hostHttp.port, bun: bunExe() };
+        const env: Record<string, unknown> = {
+          tag,
+          httpPort: hostHttp.port,
+          httpsPort: hostHttps.port,
+          ca: tlsCerts.cert,
+          bun: bunExe(),
+        };
         if (name === "hostTarget") {
           const labels = [`host listener (dispatched from ${tag})`, `host abort listener (aborted from ${tag})`];
           hostListenerLabels.push(...labels);

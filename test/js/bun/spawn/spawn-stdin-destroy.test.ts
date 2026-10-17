@@ -11,7 +11,12 @@ test("stdin destroy after exit crash", async () => {
       stdin: "pipe",
     });
 
-    await Bun.sleep(80);
+    // The child must be gone before `child.stdin` is first touched. That is
+    // the path this test covers: the lazily created stdin sink sees an
+    // already exited process. With a fixed sleep instead, a slow machine
+    // creates the sink while the child is still alive, and the in-flight
+    // write fails with EPIPE on Windows when the child exits.
+    await child.exited;
     await child.stdin.write("dylan\n");
     await child.stdin.write("999\n");
     await child.stdin.flush();

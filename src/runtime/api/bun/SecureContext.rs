@@ -20,6 +20,7 @@ use bun_boringssl_sys as boringssl;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
+use bun_jsc::StringJsc as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 use core::cell::Cell;
@@ -215,21 +216,22 @@ impl SecureContext {
         Ok(result)
     }
 
-    /// `SecureContext.dhParamBits(dhparam)` - the bit length of the prime in
-    /// a PKCS#3 "DH PARAMETERS" PEM given as a string or a buffer, or -1 when
-    /// the value does not parse, which node:tls ignores the way Node's
-    /// `SecureContext::SetDHParam` does. BoringSSL has no parser for the
-    /// "X9.42 DH PARAMETERS" form (`openssl dhparam -dsaparam`), so that form
-    /// is also -1 here while Node's OpenSSL reads it. Same codegen shim
-    /// arrangement as `intern` (no `#[host_fn]` attribute here).
-    pub(crate) fn dh_param_bits(
+    /// `SecureContext.validateDHParam(dhparam)` - the size policy of Node's
+    /// `SecureContext::SetDHParam` for a PKCS#3 "DH PARAMETERS" PEM given as a
+    /// string or a buffer: a prime under 1024 bits throws, one under 2048 bits
+    /// returns the SecurityWarning text, and a value that does not parse is
+    /// ignored (returns undefined). BoringSSL has no parser for the "X9.42 DH
+    /// PARAMETERS" form (`openssl dhparam -dsaparam`), so that form is also
+    /// ignored here while Node's OpenSSL reads it. BoringSSL has no DHE
+    /// suites, so nothing is set on an SSL_CTX. Same codegen shim arrangement
+    /// as `intern` (no `#[host_fn]` attribute here).
+    pub(crate) fn validate_dh_param(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let not_dh = JSValue::js_number_from_int32(-1);
         let args = callframe.arguments();
         let Some(&value) = args.first() else {
-            return Ok(not_dh);
+            return Ok(JSValue::UNDEFINED);
         };
         let view;
         let string;
@@ -242,16 +244,16 @@ impl SecureContext {
                 string = value.to_utf8(global)?;
                 string.slice()
             }
-            None => return Ok(not_dh),
+            None => return Ok(JSValue::UNDEFINED),
         };
         if bytes.is_empty() || bytes.len() > core::ffi::c_int::MAX as usize {
-            return Ok(not_dh);
+            return Ok(JSValue::UNDEFINED);
         }
         // SAFETY: `bytes` outlives `bio`; BoringSSL only reads from it.
         let bio =
             unsafe { boringssl::BIO_new_mem_buf(bytes.as_ptr().cast(), bytes.len() as isize) };
         if bio.is_null() {
-            return Ok(not_dh);
+            return Ok(JSValue::UNDEFINED);
         }
         // SAFETY: `bio` is live; no out-pointer and no password callback.
         let dh = unsafe {
@@ -268,7 +270,7 @@ impl SecureContext {
         // surface from the next unrelated BoringSSL call.
         boringssl::ERR_clear_error();
         if dh.is_null() {
-            return Ok(not_dh);
+            return Ok(JSValue::UNDEFINED);
         }
         // SAFETY: `dh` is the parsed group, owned here until `DH_free`.
         let bits = unsafe {
@@ -276,7 +278,18 @@ impl SecureContext {
             boringssl::DH_free(dh);
             bits
         };
-        Ok(JSValue::js_number_from_uint64(bits as u64))
+        if bits < 1024 {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("DH parameter is less than 1024 bits"),
+                )
+                .throw());
+        }
+        if bits < 2048 {
+            return bun_core::String::static_("DH parameter is less than 2048 bits").to_js(global);
+        }
+        Ok(JSValue::UNDEFINED)
     }
 
     /// `tls.createSecureContext()` / `new tls.SecureContext()` entry - builds a context that owns its

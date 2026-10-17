@@ -227,16 +227,6 @@ function validateSecureContextOptions(options) {
       }
     }
   }
-  // clientCertEngine must be a string (engine name); a provided engine then
-  // fails because BoringSSL (which Bun always uses) has no OpenSSL ENGINE
-  // support, matching Node's setClientCertEngine. Node:
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L296
-  if (clientCertEngine !== undefined && clientCertEngine !== null) {
-    if (typeof clientCertEngine !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
-    }
-    throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
-  }
   // BoringSSL (always used by Bun) has no automatic DH parameter selection.
   // Matches Node's setDHParam('auto') throwing ERR_CRYPTO_UNSUPPORTED_OPERATION.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L254
@@ -247,22 +237,19 @@ function validateSecureContextOptions(options) {
     if (typeof dhparam !== "string" && !isArrayBufferView(dhparam)) {
       throw $ERR_INVALID_ARG_TYPE("options.dhparam", ["string", "Buffer", "TypedArray", "DataView"], dhparam);
     }
-    // Node's SecureContext::SetDHParam: a value that does not parse as a DH
-    // PEM is ignored, a prime under 1024 bits throws, one under 2048 warns.
-    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1978-L2028
     NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
-    const bits = NativeSecureContext.dhParamBits(dhparam);
-    if (bits !== -1) {
-      if (bits < 1024) {
-        // Not $ERR_INVALID_ARG_VALUE: that formats "The argument 'x' is invalid";
-        // Node's native THROW_ERR_INVALID_ARG_VALUE takes the bare message.
-        const err = new TypeError("DH parameter is less than 1024 bits") as TypeError & { code: string };
-        err.code = "ERR_INVALID_ARG_VALUE";
-        throw err;
-      } else if (bits < 2048) {
-        process.emitWarning("DH parameter is less than 2048 bits", "SecurityWarning");
-      }
+    const warning = NativeSecureContext.validateDHParam(dhparam);
+    if (warning) process.emitWarning(warning, "SecurityWarning");
+  }
+  // clientCertEngine must be a string (engine name); a provided engine then
+  // fails because BoringSSL (which Bun always uses) has no OpenSSL ENGINE
+  // support, matching Node's setClientCertEngine. Node:
+  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L296
+  if (clientCertEngine !== undefined && clientCertEngine !== null) {
+    if (typeof clientCertEngine !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
     }
+    throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
   }
   if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
     throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(minVersion), "minimum");

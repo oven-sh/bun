@@ -267,6 +267,96 @@ test("pbkdf2 keeps the callback alive across GC until the job completes", async 
   expect(results.filter(r => r === "PBKDF2 derivation failed")).toHaveLength(count);
 });
 
+test("pbkdf2 copies password and salt at call time, so the caller can zero them right after the call", async () => {
+  const password = Buffer.alloc(4096, "p");
+  const salt = Buffer.alloc(16, "s");
+  const expected = crypto.pbkdf2Sync(password, salt, 1, 32, "sha256").toString("hex");
+  const results: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    password.fill("p");
+    salt.fill("s");
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    crypto.pbkdf2(password, salt, 1, 32, "sha256", (err, key) => (err ? reject(err) : resolve(key.toString("hex"))));
+    password.fill(0);
+    salt.fill(0);
+    results.push(await promise);
+  }
+  expect(results).toEqual(Array(20).fill(expected));
+});
+
+test("pbkdf2 copies the salt buffer only after every argument has been coerced", async () => {
+  const salt = new Uint8Array(64).fill(3);
+  const password = new String("password");
+  password.toString = () => {
+    structuredClone(salt.buffer, { transfer: [salt.buffer] });
+    Bun.gc(true);
+    return "password";
+  };
+  const key = await promisify(crypto.pbkdf2)(password, salt, 1, 32, "sha256");
+  expect(salt.byteLength).toBe(0);
+  expect(key).toStrictEqual(crypto.pbkdf2Sync("password", new Uint8Array(0), 1, 32, "sha256"));
+});
+
+test("pbkdf2 does not read a resizable ArrayBuffer that shrinks after the call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const crypto = require("crypto");
+        const expected = crypto.pbkdf2Sync(Buffer.alloc(65536, 0x41), "salt", 1, 32, "sha256").toString("hex");
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(65536, { maxByteLength: 1 << 20 });
+          new Uint8Array(ab).fill(0x41);
+          const { promise, resolve, reject } = Promise.withResolvers();
+          crypto.pbkdf2(new Uint8Array(ab), "salt", 1, 32, "sha256", (err, key) => (err ? reject(err) : resolve(key.toString("hex"))));
+          ab.resize(0);
+          if ((await promise) !== expected) wrong++;
+        }
+        console.log("wrong:", wrong);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("wrong: 0\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+test("pbkdf2 copies the salt buffer after a later argument's toString resized it to 0", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const crypto = require("crypto");
+        const expected = crypto.pbkdf2Sync("password", new Uint8Array(0), 1, 32, "sha256").toString("hex");
+        const salt = new Uint8Array(new ArrayBuffer(65536, { maxByteLength: 65536 })).fill(0x41);
+        const password = new String("password");
+        password.toString = () => {
+          salt.buffer.resize(0);
+          return "password";
+        };
+        crypto.pbkdf2(password, salt, 1, 32, "sha256", (err, key) => {
+          if (err) throw err;
+          console.log(key.toString("hex") === expected ? "ok" : "wrong");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("ok\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("pbkdf2 works with util.promisify", async () => {
   const key = await promisify(crypto.pbkdf2)("pw", "salt", 1, 8, "sha256");
   expect(Buffer.isBuffer(key)).toBe(true);

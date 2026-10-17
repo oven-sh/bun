@@ -1477,7 +1477,8 @@ describe("hoisted", () => {
       expect(edited).not.toBe(pruned);
       await write(join(packageDir, "bun.lock"), edited);
 
-      await frozenFails(packageDir, linker, frozenFailure(changedSectionNote("dependencies")));
+      const note = `${changedSectionNote("dependencies")}: a-dep in packages/app is 1.0.1, was 1.0.0`;
+      await frozenFails(packageDir, linker, frozenFailure(note));
       expect(await lockText(packageDir)).toBe(edited);
       expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
 

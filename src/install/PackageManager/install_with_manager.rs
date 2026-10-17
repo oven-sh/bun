@@ -817,11 +817,24 @@ pub fn install_with_manager(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
                 if let Some(section) = changed_section {
-                    bun_core::note!(
-                        "{} in package.json changed since {} was saved",
-                        section,
-                        loaded_lockfile_name(&load_result)
-                    );
+                    let lockfile_name = loaded_lockfile_name(&load_result);
+                    match &manager.summary.first_change {
+                        Some(change) if section == "dependencies" => {
+                            bun_core::note!(
+                                "{} in package.json changed since {} was saved: {}",
+                                section,
+                                lockfile_name,
+                                change
+                            );
+                        }
+                        _ => {
+                            bun_core::note!(
+                                "{} in package.json changed since {} was saved",
+                                section,
+                                lockfile_name
+                            );
+                        }
+                    }
                 }
                 bun_core::note!(
                     "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"

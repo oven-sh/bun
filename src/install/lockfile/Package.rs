@@ -816,10 +816,49 @@ pub(crate) struct DroppedRow {
     pub(crate) package: PackageID,
 }
 
+/// A dependency that differs between a package.json and the lockfile.
+pub(crate) struct ChangedDependency {
+    name: Box<[u8]>,
+    /// The folder of the workspace whose package.json has it. Empty for the root.
+    workspace: Box<[u8]>,
+    change: DependencyChange,
+}
+
+enum DependencyChange {
+    Added,
+    Removed,
+    /// From `dependencies` to `devDependencies`, for example.
+    Moved,
+    Range {
+        now: Box<[u8]>,
+        before: Box<[u8]>,
+    },
+}
+
+impl core::fmt::Display for ChangedDependency {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use bun_core::fmt::escape_control_chars as text;
+        write!(f, "{}", text(&self.name))?;
+        if !self.workspace.is_empty() {
+            write!(f, " in {}", text(&self.workspace))?;
+        }
+        match &self.change {
+            DependencyChange::Added => f.write_str(" was added"),
+            DependencyChange::Removed => f.write_str(" was removed"),
+            DependencyChange::Moved => f.write_str(" moved to another dependency group"),
+            DependencyChange::Range { now, before } => {
+                write!(f, " is {}, was {}", text(now), text(before))
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
+    /// Set for a frozen install only, which names it in its error.
+    pub(crate) first_change: Option<ChangedDependency>,
     /// The dependencies removed from the package.json of the root and of each workspace.
     pub(crate) dropped_rows: Vec<DroppedRow>,
     pub(crate) update: u32,
@@ -849,6 +888,22 @@ pub struct DiffSummary {
 }
 
 impl DiffSummary {
+    /// `owner` is the package in the lockfile that `buf` belongs to.
+    fn note_change(&mut self, owner: &Package, buf: &[u8], name: &[u8], change: DependencyChange) {
+        if self.first_change.is_some() {
+            return;
+        }
+        let workspace: &[u8] = match owner.resolution.tag {
+            ResolutionTag::Workspace => owner.resolution.workspace().slice(buf),
+            _ => b"",
+        };
+        self.first_change = Some(ChangedDependency {
+            name: name.into(),
+            workspace: workspace.into(),
+            change,
+        });
+    }
+
     #[inline]
     pub(crate) fn changes_resolutions(&self) -> bool {
         self.add > 0
@@ -1089,13 +1144,20 @@ impl Diff {
                 if !removed_names.contains(&from_dep.name_hash) {
                     removed_names.push(from_dep.name_hash);
                 }
+                let is_still_listed = to_deps!().iter().any(|to_dep| {
+                    to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
+                });
+                if frozen {
+                    let change = match is_still_listed {
+                        true => DependencyChange::Moved,
+                        false => DependencyChange::Removed,
+                    };
+                    let name = from_dep.name.slice(from_buf!());
+                    summary.note_change(from, from_buf!(), name, change);
+                }
                 // The root's implicit dependency on a workspace listed in "workspaces" is skipped:
                 // the isolated linker creates no link for it, so there is none to remove.
-                if !from_dep.behavior.is_workspace()
-                    && !to_deps!().iter().any(|to_dep| {
-                        to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
-                    })
-                {
+                if !from_dep.behavior.is_workspace() && !is_still_listed {
                     summary.dropped_rows.push(DroppedRow {
                         owner: from.meta.id,
                         name: from_dep.name,
@@ -1249,6 +1311,9 @@ impl Diff {
                         removed_names,
                     )?;
                     summary.dropped_rows.append(&mut diff.dropped_rows);
+                    if summary.first_change.is_none() {
+                        summary.first_change = diff.first_change.take();
+                    }
                     // Both calls may have grown `to_lockfile.buffers.dependencies`.
                     to_deps = to
                         .dependencies
@@ -1331,7 +1396,16 @@ impl Diff {
             let recorded_request = (from_dep.version.tag == dependency::version::Tag::DistTag
                 || from_dep.version.literal.is_empty())
                 && still_satisfied();
-            summary.script_only_updates += (retyped || recorded_request || range_link) as u32;
+            let keeps_dependencies = retyped || recorded_request || range_link;
+            summary.script_only_updates += keeps_dependencies as u32;
+            if frozen && !keeps_dependencies {
+                let change = DependencyChange::Range {
+                    now: (to_deps!()[cur_to_i].version.literal.slice(to_buf!())).into(),
+                    before: from_dep.version.literal.slice(from_buf!()).into(),
+                };
+                let name = from_dep.name.slice(from_buf!());
+                summary.note_change(from, from_buf!(), name, change);
+            }
         }
 
         if is_root {
@@ -1356,17 +1430,21 @@ impl Diff {
                 .collect();
         }
         // An older bun.lock lacks the `*` optional peer of a name only `peerDependenciesMeta` has.
-        summary.add = to_deps!()
-            .iter()
-            .enumerate()
+        let added: Vec<&Dependency> = (to_deps!().iter().enumerate())
             .filter(|(to_i, to_dep)| {
                 !paired.is_set(*to_i)
                     && !(frozen
                         && to_dep.behavior.is_optional_peer()
                         && to_dep.version.literal.slice(to_buf!()) == b"*")
+                    && !summary.members_left_out.contains(&(*to_i as u32))
             })
-            .count() as u32
-            - summary.members_left_out.len() as u32;
+            .map(|(_, to_dep)| to_dep)
+            .collect();
+        summary.add = added.len() as u32;
+        if frozen && let Some(added) = added.first() {
+            let name = added.name.slice(to_buf!());
+            summary.note_change(from, from_buf!(), name, DependencyChange::Added);
+        }
         if is_root {
             summary.remove = removed_names.len() as u32;
             // After the loop: it adds each workspace's `trustedDependencies` to `to_lockfile`.

@@ -2125,17 +2125,16 @@ pub(crate) mod strings_impl {
             return Some((0, npm_secret_len));
         }
 
-        if let Some(r) = find_url_password(str) {
+        if let Some(r) = find_url_userinfo(str) {
             return Some(r);
         }
 
         None
     }
 
-    /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
-    /// `(offset, len)` of the password segment, or None.
-    /// `s` must start with a URL (`https://`, `git+ssh://`, ...); rejects empty pw.
-    pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
+    /// Returns the `(offset, len)` of the URL's userinfo (`user:password`) that must be redacted
+    /// before printing, or None. `s` must start with a URL (`https://`, `git+ssh://`, ...).
+    pub(crate) fn find_url_userinfo(s: &[u8]) -> Option<(usize, usize)> {
         // RFC 3986 scheme (`git+https` is one scheme) followed by `://`.
         if !s.first().is_some_and(u8::is_ascii_alphabetic) {
             return None;
@@ -2145,7 +2144,7 @@ pub(crate) mod strings_impl {
             return None;
         }
         let scheme_end = scheme_len + b"://".len();
-        let (offset, len) = find_authority_password(&s[scheme_end..])?;
+        let (offset, len) = find_authority_userinfo(&s[scheme_end..])?;
         Some((scheme_end + offset, len))
     }
 
@@ -2153,26 +2152,20 @@ pub(crate) mod strings_impl {
         b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
     }
 
-    /// [`find_url_password`] for what follows `scheme://`; userinfo ends at the last '@'.
-    pub(crate) fn find_authority_password(mut rest: &[u8]) -> Option<(usize, usize)> {
-        if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
-            rest = &rest[..nl];
-        }
-        if let Some(end) = crate::strings::index_of_any(rest, b"/?#") {
+    /// Same as [`find_url_userinfo`], but `rest` starts right after `scheme://`. The userinfo ends
+    /// at the last '@'. All of it is redacted, user name included, unless it is the ssh user `git`.
+    pub(crate) fn find_authority_userinfo(mut rest: &[u8]) -> Option<(usize, usize)> {
+        // The URL ends at whitespace, so a `name@version` later in the message is not part of it.
+        if let Some(end) = crate::strings::index_of_any(rest, b"/?# \t\r\n") {
             rest = &rest[..end];
         }
         let at = crate::strings::last_index_of_char(rest, b'@')?;
-        let userinfo = &rest[..at];
-        let colon = crate::strings::index_of_char_usize(userinfo, b':')?;
-        // Reject empty password (`user:@host`).
-        if colon == at - 1 {
-            return None;
-        }
-        Some((colon + 1, at - colon - 1))
+        (at > 0 && &rest[..at] != b"git").then_some((0, at))
     }
 
-    /// [`find_url_password`] for the first URL at or after `from` that has one; offset into `s`.
-    pub(crate) fn next_url_password(s: &[u8], mut from: usize) -> Option<(usize, usize)> {
+    /// Runs [`find_url_userinfo`] on each URL at or after `from` and returns the first match. The
+    /// returned offset is relative to the start of `s`.
+    pub(crate) fn next_url_userinfo(s: &[u8], mut from: usize) -> Option<(usize, usize)> {
         while let Some(separator) = crate::strings::index_of(&s[from..], b"://") {
             let separator = from + separator;
             let scheme_len = s[from..separator]
@@ -2186,7 +2179,7 @@ pub(crate) mod strings_impl {
                 .take_while(|b| !b.is_ascii_alphabetic())
                 .count();
             let start = separator - scheme_len + not_letters;
-            if let Some((offset, len)) = find_url_password(&s[start..]) {
+            if let Some((offset, len)) = find_url_userinfo(&s[start..]) {
                 return Some((start + offset, len));
             }
             from = separator + b"://".len();
@@ -2876,6 +2869,7 @@ pub mod asan {
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_ignore_object(ptr: *const c_void);
+        safe fn __lsan_disable();
     }
 
     #[inline]
@@ -2928,6 +2922,13 @@ pub mod asan {
         __lsan_ignore_object(ptr);
         #[cfg(not(bun_asan))]
         let _ = ptr;
+    }
+    /// Exclude all future allocations on the calling thread from leak reports.
+    /// For threads that are never joined and never free their state.
+    #[inline]
+    pub fn disable_leak_checks_on_current_thread() {
+        #[cfg(bun_asan)]
+        __lsan_disable();
     }
 }
 

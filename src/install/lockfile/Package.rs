@@ -149,7 +149,7 @@ fn warn_ignored_patched_dependencies(
     key_loc: bun_ast::Loc,
 ) {
     const TEXT: &[u8] =
-        b"\"patchedDependencies\" is ignored in a workspace package. Move it to the root package.json";
+        b"ignoring \"patchedDependencies\" in workspace package, move it to the root package.json";
     let warned = log.msgs.iter().any(|msg| {
         *msg.data.text == *TEXT
             && (msg.data.location.as_ref())
@@ -289,7 +289,8 @@ pub trait ResolverContext {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    /// Name to store when the package.json has none.
+    /// Name to store when the package.json has no name, or has one that is not safe to use as a
+    /// bun.lock `packages` key.
     fn fallback_name(&self) -> Option<Vec<u8>> {
         None
     }
@@ -492,7 +493,11 @@ impl Package<u64> {
                 &mut new.buffers.dependencies[prev_len as usize..end as usize];
             debug_assert_eq!(old_dependencies.len(), dependencies.len());
             for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
-                *new_dep = old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?;
+                *new_dep = old_dep.clone_in(
+                    &mut crate::lockfile::override_map::NoAliases,
+                    old_string_buf,
+                    &mut *builder,
+                )?;
             }
         }
 
@@ -546,9 +551,9 @@ impl Package<u64> {
     }
 
     pub(crate) fn from_npm(
-        pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
+        log_level: crate::LogLevel,
         manifest: &Npm::PackageManifest,
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
@@ -661,17 +666,19 @@ impl Package<u64> {
                     if key.slice(&manifest.string_buf).is_empty()
                         || dependency::nameless_npm_alias(declared).is_some()
                     {
-                        log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Skipped a dependency of {}@{} that names no package (\"{}\" in \"{}\")",
-                                bun_core::fmt::escape_control_chars(manifest.name()),
-                                version.fmt(&manifest.string_buf),
-                                bun_core::fmt::escape_control_chars(declared),
-                                bstr::BStr::new(group.prop),
-                            ),
-                        );
+                        if log_level.is_verbose() {
+                            log.add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "skipping unnamed dependency of {}@{} (\"{}\" in \"{}\")",
+                                    bun_core::fmt::escape_control_chars(manifest.name()),
+                                    version.fmt(&manifest.string_buf),
+                                    bun_core::fmt::escape_control_chars(declared),
+                                    bstr::BStr::new(group.prop),
+                                ),
+                            );
+                        }
                         continue 'list;
                     }
 
@@ -730,7 +737,9 @@ impl Package<u64> {
                             sliced.slice,
                             &sliced,
                             Some(&mut *log),
-                            Some(&mut *pm),
+                            // An `npm:` alias in a registry manifest applies to this dependency
+                            // only, so it is not registered as one of the project's aliases.
+                            None,
                         )
                         .unwrap_or_default(),
                     };
@@ -799,10 +808,20 @@ impl Package<u64> {
 
 pub(crate) struct Diff;
 
+/// A dependency that was removed from a package.json: `owner` no longer depends on `name`, which
+/// had resolved to `package`. All three fields refer to the lockfile as it was loaded.
+pub(crate) struct DroppedRow {
+    pub(crate) owner: PackageID,
+    pub(crate) name: String,
+    pub(crate) package: PackageID,
+}
+
 #[derive(Default)]
 pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
+    /// The dependencies removed from the package.json of the root and of each workspace.
+    pub(crate) dropped_rows: Vec<DroppedRow>,
     pub(crate) update: u32,
     /// Of `update`: the ones that leave every dependency as it is.
     pub(crate) script_only_updates: u32,
@@ -810,6 +829,9 @@ pub struct DiffSummary {
     pub(crate) catalogs_changed: bool,
     /// Set after the differ, by `Lockfile::reconcile_package_extensions`.
     pub(crate) package_extensions_changed: bool,
+    /// Also set by `Lockfile::reconcile_package_extensions`: the dependencies that no
+    /// `packageExtensions` rule adds anymore, as `(Lockfile::package_extension_key, name hash)`.
+    pub(crate) removed_extension_rows: Vec<(u64, PackageNameHash)>,
 
     /// Trusted now, not when the lockfile was saved: an installed package's blocked scripts run.
     pub(crate) added_trusted_dependencies: TrustedDependenciesSet,
@@ -821,6 +843,9 @@ pub struct DiffSummary {
     pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
+    /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
+    /// older has no entry for, because the root also depends on a registry version of that name.
+    pub(crate) members_left_out: Vec<u32>,
 }
 
 impl DiffSummary {
@@ -1060,6 +1085,19 @@ impl Diff {
                 if !removed_names.contains(&from_dep.name_hash) {
                     removed_names.push(from_dep.name_hash);
                 }
+                // The root's implicit dependency on a workspace listed in "workspaces" is skipped:
+                // the isolated linker creates no link for it, so there is none to remove.
+                if !from_dep.behavior.is_workspace()
+                    && !to_deps!().iter().any(|to_dep| {
+                        to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
+                    })
+                {
+                    summary.dropped_rows.push(DroppedRow {
+                        owner: from.meta.id,
+                        name: from_dep.name,
+                        package: from_resolutions[i],
+                    });
+                }
                 continue;
             };
             to_i = cur_to_i + 1;
@@ -1076,6 +1114,13 @@ impl Diff {
             let retyped = same
                 && !from_dep.behavior.is_workspace()
                 && !(to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
+            // Parsing package.json links a dependency to a workspace whenever its range matches.
+            // The lockfile can differ for a peer or an overridden name, which is not a change.
+            let range_link = !same
+                && to_version.tag == dependency::version::Tag::Workspace
+                && (from_dep.behavior.is_peer()
+                    || to_lockfile.overrides.has_rule_for_name(from_dep.name_hash))
+                && (to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
             let is_explicit_update_target = update_requests.is_some_and(|updates| {
                 updates.is_empty()
                     || (named_update_here
@@ -1188,7 +1233,7 @@ impl Diff {
                         recorded: from_pkg.dependencies,
                     });
 
-                    let diff = Self::generate_inner(
+                    let mut diff = Self::generate_inner(
                         pm,
                         log,
                         from_lockfile,
@@ -1199,6 +1244,7 @@ impl Diff {
                         None,
                         removed_names,
                     )?;
+                    summary.dropped_rows.append(&mut diff.dropped_rows);
                     // Both calls may have grown `to_lockfile.buffers.dependencies`.
                     to_deps = to
                         .dependencies
@@ -1281,9 +1327,30 @@ impl Diff {
             let recorded_request = (from_dep.version.tag == dependency::version::Tag::DistTag
                 || from_dep.version.literal.is_empty())
                 && still_satisfied();
-            summary.script_only_updates += (retyped || recorded_request) as u32;
+            summary.script_only_updates += (retyped || recorded_request || range_link) as u32;
         }
 
+        if is_root {
+            summary.members_left_out = (to_deps!().iter().enumerate())
+                .filter(|(to_i, member)| {
+                    // Bun 1.4 and older replaced the root's entry for a workspace with the root's
+                    // own dependency of that name if the workspace did not satisfy its range.
+                    member.behavior.is_workspace()
+                        && !paired.is_set(*to_i)
+                        && to_lockfile.workspace_versions.contains(&member.name_hash)
+                        && (to_deps!().iter().enumerate()).any(|(own_i, own)| {
+                            own.name_hash == member.name_hash
+                                && paired.is_set(own_i)
+                                && !own.behavior.is_workspace()
+                                && own.version.try_npm().is_some_and(|npm| {
+                                    semver::string::Builder::string_hash(npm.name.slice(to_buf!()))
+                                        == member.name_hash
+                                })
+                        })
+                })
+                .map(|(to_i, _)| to_i as u32)
+                .collect();
+        }
         // An older bun.lock lacks the `*` optional peer of a name only `peerDependenciesMeta` has.
         summary.add = to_deps!()
             .iter()
@@ -1294,7 +1361,8 @@ impl Diff {
                         && to_dep.behavior.is_optional_peer()
                         && to_dep.version.literal.slice(to_buf!()) == b"*")
             })
-            .count() as u32;
+            .count() as u32
+            - summary.members_left_out.len() as u32;
         if is_root {
             summary.remove = removed_names.len() as u32;
             // After the loop: it adds each workspace's `trustedDependencies` to `to_lockfile`.
@@ -1452,8 +1520,8 @@ impl Diff {
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "the dependencies in {}/package.json changed since the lockfile was saved (run 'bun install' to update it)",
-                bstr::BStr::new(
+                "dependencies in {}/package.json changed since lockfile was saved (run 'bun install')",
+                bun_core::fmt::escape_control_chars(
                     lockfile.packages.items_resolution()[folder as usize]
                         .folder()
                         .slice(lockfile.buffers.string_bytes.as_slice())
@@ -1463,7 +1531,7 @@ impl Diff {
     }
 
     /// npm's sticky rule: `to_dep` names the package `locked` and its range accepts that version.
-    fn locked_version_satisfies(
+    pub(crate) fn locked_version_satisfies(
         from_lockfile: &Lockfile,
         locked: PackageID,
         to_dep: &Dependency,
@@ -1512,7 +1580,9 @@ impl Diff {
             && !(npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
             // A name in two groups gets one version, which only has to fit one of the ranges.
             && (to_deps.iter())
-                .filter(|other| other.name_hash == to_dep.name_hash)
+                .filter(|other| {
+                    other.name_hash == to_dep.name_hash && !other.behavior.is_workspace()
+                })
                 .count()
                 == 1
     }
@@ -1656,6 +1726,7 @@ impl Package<u64> {
     fn parse_dependency(
         workspace_paths: &mut lockfile::NameHashMap,
         workspace_versions: &mut lockfile::VersionHashMap,
+        linked_members: &mut lockfile::LinkedMembers,
         duplicate_checker_map: &mut lockfile::DuplicateCheckerMap,
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
@@ -1678,7 +1749,7 @@ impl Package<u64> {
                     source,
                     key_loc,
                     format_args!(
-                        "Skipped a dependency that names no package (\"{}\" in \"{}\")",
+                        "skipping unnamed dependency (\"{}\" in \"{}\")",
                         bun_core::fmt::escape_control_chars(version),
                         bstr::BStr::new(group.prop),
                     ),
@@ -1699,7 +1770,7 @@ impl Package<u64> {
                     source,
                     key_loc,
                     format_args!(
-                        "Dependency name cannot be empty (in \"{}\")",
+                        "empty dependency name (in \"{}\")",
                         bstr::BStr::new(group.prop)
                     ),
                 ),
@@ -1751,7 +1822,9 @@ impl Package<u64> {
             tag,
             &sliced,
             Some(&mut *log),
-            Some(&mut *pm),
+            // Only the project's own `npm:` aliases are registered. An alias that another package
+            // declares applies to that dependency only.
+            (features.is_main || features.is_workspace).then_some(&mut *pm),
         )
         .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;
@@ -1815,7 +1888,7 @@ impl Package<u64> {
                 value_loc_of(source, key_loc),
                 format_args!(
                     "Dependency \"{}\" has an unsafe folder path",
-                    bstr::BStr::new(external_alias.slice(buf)),
+                    bun_core::fmt::escape_control_chars(external_alias.slice(buf)),
                 ),
             );
             crate::Error::InstallFailed
@@ -1860,6 +1933,19 @@ impl Package<u64> {
                     dependency_version.value.workspace = path;
                 }
             }
+            // The workspace also wins over a dist-tag of its own name, such as `"foo": "latest"`,
+            // because only the registry knows which version a tag refers to.
+            dependency::version::Tag::DistTag => {
+                if let Some(path) = workspace_path
+                    && (dependency_version.dist_tag().name).eql(external_alias.value, buf, buf)
+                    && package_dependencies
+                        .iter()
+                        .any(|dep| dep.name_hash == name_hash && dep.behavior.is_workspace())
+                {
+                    dependency_version.tag = dependency::version::Tag::Workspace;
+                    dependency_version.value.workspace = path;
+                }
+            }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_path) = lockfile::linked_workspace_path(
                     pm.options.link_workspace_packages,
@@ -1884,38 +1970,40 @@ impl Package<u64> {
                         dep.literal = dependency_version.literal;
                         dependency_version = dep;
                     }
-                } else if workspace_version.is_some() && external_alias.hash == name_hash {
-                    // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
-                    // An alias installs in `node_modules/<alias>`: the workspace stays in place.
-                    for dep in package_dependencies.iter_mut() {
-                        if dep.name_hash == name_hash && dep.behavior.is_workspace() {
-                            *dep = Dependency {
-                                behavior: group.behavior,
-                                name: external_alias.value,
-                                name_hash: external_alias.hash,
-                                version: dependency_version,
-                            };
-                            return Ok(None);
-                        }
-                    }
                 }
             }
             dependency::version::Tag::Workspace => 'workspace: {
+                // The dependency names the root package. The root is not a workspace member, so it
+                // is not added to `workspace_paths`.
+                let mut version_buf: &[u8] = buf;
+                if workspace_path.is_none()
+                    && (features.is_main || features.is_workspace)
+                    && tag.is_none()
+                    && name_hash != 0
+                    && name_hash == pm.workspace_root_name_hash
+                {
+                    workspace_path = Some(string_builder.append::<String>(b"."));
+                    version_buf = &pm.workspace_root_version;
+                    let parsed = SemverVersion::parse_utf8(version_buf);
+                    workspace_version = (parsed.valid && parsed.wildcard == Wildcard::None)
+                        .then(|| parsed.version.min());
+                }
                 if let Some(path) = workspace_path {
                     if let Some(range) = &workspace_range {
                         if let Some(ver) = workspace_version {
-                            if range.satisfies(ver, buf, buf) {
+                            if range.satisfies(ver, buf, version_buf) {
                                 dependency_version.value.workspace = path;
                                 break 'workspace;
                             }
                         }
 
-                        // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
+                        // `foo@      `, `foo@^`, `foo@~` and `../foo` do not name a version, so
+                        // they link the workspace whatever its version is, like `workspace:^`.
                         // SAFETY: `range.input` borrows `lockfile.buffers.string_bytes`
                         // (set by `semver::query::parse` above), which is live here.
                         let version_literal =
                             strings::trim(unsafe { &*range.input }, &strings::WHITESPACE_CHARS);
-                        if version_literal.is_empty()
+                        if range.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)
                             || features.unchecked_workspace_ranges
@@ -1942,11 +2030,6 @@ impl Package<u64> {
 
                     dependency_version.value.workspace = path;
                 } else if features.is_main || features.is_workspace {
-                    // The root package by its name. It is no member: nothing to register.
-                    if tag.is_none() && name_hash != 0 && name_hash == pm.workspace_root_name_hash {
-                        dependency_version.value.workspace = string_builder.append::<String>(b".");
-                        break 'workspace;
-                    }
                     let workspace_str = *dependency_version.workspace();
                     let workspace = workspace_str.slice(buf);
                     let mut relative_buf;
@@ -1975,6 +2058,12 @@ impl Package<u64> {
                     // The root package again, by its path.
                     if path.slice(buf) == b"." {
                         break 'workspace;
+                    }
+
+                    // With a `tag`, the path comes from "workspaces", and the caller has already
+                    // checked whether that path goes through a symlink.
+                    if tag.is_none() && relative != b"*" {
+                        linked_members.look_at(relative);
                     }
 
                     let workspace_entry = workspace_paths.get_or_put(name_hash)?;
@@ -2050,7 +2139,9 @@ impl Package<u64> {
                 // duplicate dependencies are allowed in optionalDependencies
                 if group.behavior.is_optional() {
                     for package_dep in package_dependencies.iter_mut() {
-                        if package_dep.name_hash == this_dep.name_hash {
+                        if package_dep.name_hash == this_dep.name_hash
+                            && !package_dep.behavior.is_workspace()
+                        {
                             *package_dep = this_dep;
                             break;
                         }
@@ -2065,7 +2156,7 @@ impl Package<u64> {
                         let _ = write!(
                             &mut text,
                             "\"{}\" originally specified here",
-                            bstr::BStr::new(external_alias.slice(buf))
+                            bun_core::fmt::escape_control_chars(external_alias.slice(buf))
                         );
                     }
                     notes.push(bun_ast::Data {
@@ -2083,7 +2174,7 @@ impl Package<u64> {
                         notes.into(),
                         format_args!(
                             "Duplicate dependency: \"{}\" specified in package.json",
-                            bstr::BStr::new(external_alias.slice(buf))
+                            bun_core::fmt::escape_control_chars(external_alias.slice(buf))
                         ),
                     );
                 }
@@ -2128,15 +2219,20 @@ impl Package<u64> {
                 if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
                         // Non-root names become bun.lock `packages` keys, read back only if safe.
-                        if !FEATURES.is_main && !dependency::is_safe_lockfile_package_name(name) {
+                        if FEATURES.is_main || dependency::is_safe_lockfile_package_name(name) {
+                            break 'name name;
+                        }
+                        if resolver.fallback_name().is_none() {
                             log.add_error_fmt(
                                 source,
                                 value_loc_of(source, name_q.loc),
-                                format_args!("Invalid package name {}", bun_core::fmt::quote(name)),
+                                format_args!(
+                                    "invalid package name {}",
+                                    bun_core::fmt::EscapeControlChars(bun_core::fmt::quote(name))
+                                ),
                             );
                             return Err(crate::Error::InvalidPackageJSON);
                         }
-                        break 'name name;
                     }
                 }
             }
@@ -2268,7 +2364,9 @@ impl Package<u64> {
             }
         }
 
-        let missing_workspace = if pm.options.enable.frozen_lockfile() {
+        let missing_workspace = if pm.options.runtime_auto_install {
+            workspace_map::MissingWorkspace::SkipEmptyToo
+        } else if pm.options.enable.frozen_lockfile() {
             workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
         } else {
             workspace_map::MissingWorkspace::Error
@@ -2387,7 +2485,9 @@ impl Package<u64> {
                                         q.expr.loc,
                                         format_args!(
                                             "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
-                                            bstr::BStr::new(unmatched)
+                                            bun_core::fmt::EscapeControlChars(bstr::BStr::new(
+                                                unmatched
+                                            ))
                                         ),
                                     );
                                 }
@@ -2678,6 +2778,8 @@ impl Package<u64> {
 
         if FEATURES.is_main {
             pm.workspace_root_name_hash = self.name_hash;
+            let version = json.get(b"version").and_then(|v| v.as_utf8(&bump));
+            pm.workspace_root_version = version.unwrap_or_default().into();
         }
 
         for group in &dependency_groups {
@@ -2783,7 +2885,7 @@ impl Package<u64> {
                             notes.into(),
                             format_args!(
                                 "Workspace name \"{}\" already exists",
-                                bstr::BStr::new(&entry.name),
+                                bun_core::fmt::escape_control_chars(&entry.name),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -2797,6 +2899,7 @@ impl Package<u64> {
                             .self_contained_workspaces
                             .put(external_name.hash, ())?;
                     }
+                    lockfile.linked_members.see(path_, entry.is_behind_link);
                     if let Some(v) = &entry.unsupported_hoisting_limits {
                         log.add_warning_fmt(
                             Some(source),
@@ -2804,7 +2907,7 @@ impl Package<u64> {
                             format_args!(
                                 "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" and \"none\" are); ignoring",
                                 bstr::BStr::new(&entry.name),
-                                bstr::BStr::new(v),
+                                bun_core::fmt::EscapeControlChars(bstr::BStr::new(v)),
                             ),
                         );
                     }
@@ -2828,6 +2931,7 @@ impl Package<u64> {
                     if let Some(dep_) = Self::parse_dependency(
                         &mut lockfile.workspace_paths,
                         &mut lockfile.workspace_versions,
+                        &mut lockfile.linked_members,
                         &mut lockfile.scratch.duplicate_checker_map,
                         pm,
                         log,
@@ -2873,6 +2977,7 @@ impl Package<u64> {
                         if let Some(dep_) = Self::parse_dependency(
                             &mut lockfile.workspace_paths,
                             &mut lockfile.workspace_versions,
+                            &mut lockfile.linked_members,
                             &mut lockfile.scratch.duplicate_checker_map,
                             pm,
                             log,
@@ -2924,6 +3029,7 @@ impl Package<u64> {
             if let Some(dep_) = Self::parse_dependency(
                 &mut lockfile.workspace_paths,
                 &mut lockfile.workspace_versions,
+                &mut lockfile.linked_members,
                 &mut lockfile.scratch.duplicate_checker_map,
                 pm,
                 log,
@@ -3000,6 +3106,14 @@ impl Package<u64> {
                         .catalogs
                         .parse_append(pm, log, source, json, &mut string_builder)?;
             }
+            lockfile.overrides.warn_missing_catalog_entries(
+                &lockfile.catalogs,
+                string_builder.string_bytes.as_slice(),
+                log,
+                source,
+                &json,
+                has_workspaces,
+            );
         }
 
         string_builder.clamp();

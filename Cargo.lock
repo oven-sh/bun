@@ -660,6 +660,7 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
+ "bun_errno",
  "bun_highway",
  "bun_http",
  "bun_http_types",

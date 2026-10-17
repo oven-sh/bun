@@ -2,6 +2,7 @@ import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
+import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
 import {
   bunEnv,
@@ -5965,82 +5966,21 @@ describe.concurrent("close() error after the peer resets the connection", () => 
   const readReset = { reported: true, code: "ECONNRESET", syscall: "read" };
 
   describe.each(["tcp", "tls"] as const)("%s", transport => {
-    // The peer lives in a child process that is killed while data it never read sits
-    // in its receive buffer: the kernel then closes its socket with an RST, and
-    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset.
-    // The second test resets from inside this process with terminate() instead.
-    const peerSource = `
-      await Bun.connect({
-        hostname: "127.0.0.1",
-        port: Number(process.argv[2]),
-        tls: ${transport === "tls" ? JSON.stringify({ ca: tls.cert }) : "undefined"},
-        socket: {
-          data(socket) {
-            // The greeting arrived, so both sides are fully open. Stop reading: what
-            // the server writes next stays unread in this process's receive buffer.
-            socket.pause();
-            socket.write("ready");
-          },
-          close() {},
-          error() {},
-        },
-      });
-      await Bun.stdin.text(); // keeps the process alive until the test kills it
-    `;
-
-    it("the accepted socket reports the reset as read ECONNRESET", async () => {
-      const ready = Promise.withResolvers<Socket>();
-      const closedWith = Promise.withResolvers<CloseError>();
-      let received = "";
-      const greet = (socket: Socket) => socket.write("greeting");
-      using listener = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: transport === "tls" ? tls : undefined,
-        socket: {
-          open(socket) {
-            if (transport === "tcp") greet(socket);
-          },
-          handshake(socket, success, authorizationError) {
-            if (success) greet(socket);
-            else ready.reject(authorizationError ?? new Error("server handshake failed"));
-          },
-          data(socket, chunk) {
-            received += chunk.toString();
-            if (received.includes("ready")) ready.resolve(socket);
-          },
-          close(_socket, error) {
-            ready.reject(new Error("the accepted socket closed before the peer was ready"));
-            closedWith.resolve(error as CloseError);
-          },
-        },
-      });
-      using dir = tempDir("socket-peer-reset", { "peer.ts": peerSource });
-      await using peer = Bun.spawn({
-        cmd: [bunExe(), "peer.ts", String(listener.port)],
-        cwd: String(dir),
-        env: bunEnv,
-        stdin: "pipe",
-      });
-      // A peer that dies before it connects would otherwise leave `ready` pending.
-      // Once `ready` is settled, the exit caused by the kill below is ignored.
-      peer.exited.then(code => ready.reject(new Error(`the peer exited before it was ready (exit code ${code})`)));
-
-      const accepted = await ready.promise;
-      accepted.write("left unread in the peer's receive buffer");
-      peer.kill("SIGKILL");
-
-      expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
-    });
-
-    it("a connected socket reports the accepted socket's terminate() the same way", async () => {
-      // terminate() queues nothing ahead of the RST. For tls that means no close_notify:
-      // a reading peer takes a close_notify as a clean end (close() without an error),
-      // and on POSIX the queued alert is delivered before the reset behind it.
+    // terminate() queues nothing ahead of the RST. For tls that means no close_notify:
+    // a reading peer takes a close_notify as a clean end (close() without an error),
+    // and on POSIX the queued alert is delivered before the reset behind it.
+    it.each(["accepted", "connected"] as const)("the %s socket reports its peer's terminate()", async reporter => {
       const accepted = Promise.withResolvers<Socket>();
+      const greeted = Promise.withResolvers<Socket>();
+      const closedWith = Promise.withResolvers<CloseError>();
       const greet = (socket: Socket) => {
         accepted.resolve(socket);
         socket.write("greeting");
+      };
+      const closed = (side: typeof reporter, error: unknown) => {
+        if (side !== reporter) return;
+        greeted.reject(new Error(`the ${side} socket closed before the greeting arrived`));
+        closedWith.resolve(error as CloseError);
       };
       using listener = Bun.listen({
         hostname: "127.0.0.1",
@@ -6055,30 +5995,24 @@ describe.concurrent("close() error after the peer resets the connection", () => 
             else accepted.reject(authorizationError ?? new Error("server handshake failed"));
           },
           data() {},
-          close() {},
+          close: (_socket, error) => closed("accepted", error),
         },
       });
-
-      const greeted = Promise.withResolvers<void>();
-      const closedWith = Promise.withResolvers<CloseError>();
       await Bun.connect({
         hostname: "127.0.0.1",
         port: listener.port,
         tls: transport === "tls" ? { ca: tls.cert } : undefined,
         socket: {
-          data: () => greeted.resolve(),
+          data: socket => greeted.resolve(socket),
           error: (_socket, error) => greeted.reject(error),
           connectError: (_socket, error) => greeted.reject(error),
-          close(_socket, error) {
-            greeted.reject(new Error("the connected socket closed before the greeting arrived"));
-            closedWith.resolve(error as CloseError);
-          },
+          close: (_socket, error) => closed("connected", error),
         },
       });
 
-      const server = await accepted.promise;
-      await greeted.promise;
-      server.terminate();
+      // The greeting arrived, so both sides are fully open.
+      const peer = { accepted: await greeted.promise, connected: await accepted.promise }[reporter];
+      peer.terminate();
 
       expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
     });
@@ -6544,4 +6478,77 @@ describe.concurrent("Bun.listen() with tls.secureContext and the client certific
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     );
   });
+});
+
+it("socket and tls options are not read from Object.prototype", async () => {
+  const polluted: Record<string, unknown> = {
+    port: 1,
+    hostname: "256.256.256.256",
+    unix: "/nonexistent/socket",
+    tls: true,
+    passphrase: 5,
+    ca: 5,
+  };
+  Object.assign(Object.prototype, polluted);
+  try {
+    expect(() => Bun.listen({ socket: { data() {} } } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: 'Expected either "hostname" or "unix"' }),
+    );
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    expect(server.port).toBeGreaterThan(1);
+    expect(server.hostname).toBe("127.0.0.1");
+    using secure = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { ...tls } });
+    expect(secure.port).toBeGreaterThan(1);
+  } finally {
+    for (const name of Object.keys(polluted)) delete (Object.prototype as any)[name];
+  }
+});
+
+it("a view of part of a buffer as a tls option is read as the view", () => {
+  const { privateKey: otherKey } = generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const listen = (key: unknown) =>
+    Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { key, cert: tls.cert } as any });
+  // OpenSSL reads the first key it finds, which does not go with the certificate.
+  const both = Buffer.concat([Buffer.from(otherKey), Buffer.from(tls.key)]);
+  expect(() => listen(both)).toThrow("KEY_TYPE_MISMATCH");
+  const [offset, length] = [both.byteOffset + Buffer.byteLength(otherKey), Buffer.byteLength(tls.key)];
+  for (const view of [
+    both.subarray(Buffer.byteLength(otherKey)),
+    new Uint8Array(both.buffer, offset, length),
+    new DataView(both.buffer, offset, length),
+  ]) {
+    for (const key of [view, [view]]) {
+      using listener = listen(key);
+      expect(listener.port).toBeGreaterThan(0);
+    }
+  }
+});
+
+it("Array.prototype as a tls option is none of the types one takes", () => {
+  for (const name of ["key", "cert", "ca", "crl"]) {
+    expect(() =>
+      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
+      }),
+    );
+  }
+});
+
+it("a view of shared memory as a tls option is refused", () => {
+  const shared = new SharedArrayBuffer(8);
+  const values = [shared, new Uint8Array(shared), new DataView(shared), Buffer.from(shared), [new Uint8Array(shared)]];
+  for (const name of ["key", "cert", "ca", "crl", "ALPNProtocols"]) {
+    for (const value of values) {
+      expect(() =>
+        Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: value } as any }),
+      ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+    }
+  }
 });

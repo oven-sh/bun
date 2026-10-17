@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -3640,10 +3640,18 @@ describe("bundler", () => {
     },
   });
   // Diamond-shaped DAG (half the modules have two importers). The code-
-  // splitting reachability pass tracks min distance-from-entry for each file;
-  // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this
-  // guards that the pass stays O(V+E). Plain fs writes because itBundled's
-  // fixture pipeline is too slow at this scale under debug+ASAN.
+  // splitting reachability pass used to track the min distance from an entry
+  // point for each file; its LIFO walk with distance relaxation did O(V*E)
+  // re-visits here, so this guards that the pass stays O(V+E). Plain fs writes
+  // because itBundled's fixture pipeline is too slow at this scale under
+  // debug+ASAN.
+  //
+  // The build gets 60 s: of wall clock on a release build, of user CPU time on
+  // a debug or ASAN build. On those the parse threads can spend most of the
+  // wall clock in the kernel: on one machine the same build took 40 s to 90 s
+  // of wall clock for 15 s to 25 s of user CPU time. The walk runs in user
+  // mode: with the old one the build takes about 125 s of user CPU time.
+  const dagBuildOnCpuClock = isDebug || isASAN;
   test.concurrent(
     "edgecase/DeepImportDiamondDAG",
     async () => {
@@ -3667,10 +3675,11 @@ describe("bundler", () => {
         cwd: root,
         env: bunEnv,
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 60_000,
+        timeout: dagBuildOnCpuClock ? 240_000 : 60_000,
       });
       const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
       expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+      if (dagBuildOnCpuClock) expect(Number(build.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(60);
 
       await using run = Bun.spawn({
         cmd: [bunExe(), "out.js"],
@@ -3685,7 +3694,7 @@ describe("bundler", () => {
         exitCode: 0,
       });
     },
-    120_000,
+    dagBuildOnCpuClock ? 300_000 : 120_000,
   );
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {

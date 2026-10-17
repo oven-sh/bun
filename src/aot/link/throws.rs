@@ -1386,7 +1386,15 @@ impl<'a> Flow<'a> {
         };
         match func.op(strip_casts(func, condition)) {
             Some(&Op::Not(inner)) => {
-                return self.add_condition_facts(index, func, keys, facts, inner, !sense, depth + 1);
+                return self.add_condition_facts(
+                    index,
+                    func,
+                    keys,
+                    facts,
+                    inner,
+                    !sense,
+                    depth + 1,
+                );
             }
             Some(&Op::Truthy(inner)) => {
                 return self.add_condition_facts(index, func, keys, facts, inner, sense, depth + 1);

@@ -1296,8 +1296,7 @@ impl AlignHandler {
             }
             Property::Unparsed(val) => {
                 self.flush(dest, context);
-                // `Property` has no blanket `Clone` yet; reconstruct from
-                // the matched payload (same as flex.rs).
+                // `Property` has no blanket `Clone` yet; reconstruct from the matched payload.
                 let bump = dest.bump();
                 dest.push(Property::Unparsed(val.deep_clone(bump)));
             }

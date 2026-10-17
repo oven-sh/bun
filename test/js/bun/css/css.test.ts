@@ -8302,10 +8302,7 @@ describe("css tests", () => {
   });
 
   describe("each declaration goes to the handler of its property", () => {
-    // `zoom` has no handler, so it is printed where it is written. A handler
-    // prints the declarations it holds when the rule ends, or before a value
-    // that did not parse. A declaration that does not go to its handler is
-    // printed in a different place.
+    // A handler prints what it holds after `zoom`, which has no handler. The order shows who got a declaration.
     const declarations = (rule: string) =>
       minify_test_with_options(rule, "").slice(".a{".length, -"}".length).split(";");
 

@@ -69,8 +69,7 @@ impl Owner {
     }
 }
 
-/// One row for each property: `Tag => Owner`. A property with no row does
-/// not compile.
+/// One `Tag => Owner` row for each property. A property with no row does not compile.
 macro_rules! property_tags {
     ($($Variant:ident => $Owner:ident,)+) => {
         /// Discriminant-only tag for [`Property`] / [`PropertyId`].
@@ -81,11 +80,7 @@ macro_rules! property_tags {
         }
 
         impl PropertyIdTag {
-            /// The handler that `DeclarationHandler::handle_property` gives a
-            /// declaration of this property to, typed or unparsed. No other
-            /// handler sees the declaration. A handler that has to react to
-            /// a name with no row needs a row for that name, or a call in the
-            /// `Owner::Custom` arm of `DeclarationHandler::offer`.
+            /// The one handler that gets a declaration of this property, typed or unparsed.
             pub(crate) const fn owner(self) -> Owner {
                 match self {
                     $(Self::$Variant => Owner::$Owner,)+
@@ -102,11 +97,7 @@ macro_rules! property_tags {
         }
 
         impl Property {
-            /// The tag of this variant. Unlike [`Property::property_id`], an
-            /// `Unparsed` declaration is `PropertyIdTag::Unparsed`, not the
-            /// tag of the property it was written for. Handlers that project
-            /// a parsed payload by tag (`SizeHandler` in `margin_padding.rs`)
-            /// rely on that.
+            /// The tag of the variant: `Unparsed` for an unparsed declaration, not its property.
             #[inline(always)]
             pub(crate) fn variant_tag(&self) -> PropertyIdTag {
                 match self {

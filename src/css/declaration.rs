@@ -464,8 +464,7 @@ impl<'bump> DeclarationHandler<'bump> {
         property: &css::Property,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // lightningcss offers the declaration to each handler in turn. Here
-        // only the owner of the property gets it.
+        // Unlike lightningcss, which asks each handler in turn, only the owner gets the declaration.
         let (tag, typed) = match property {
             css::Property::Unparsed(unparsed) => (unparsed.property_id.tag(), false),
             _ => (property.variant_tag(), true),
@@ -515,15 +514,13 @@ impl<'bump> DeclarationHandler<'bump> {
             Owner::BoxShadow => self.box_shadow.handle_property(property, decls, context),
             Owner::ColorScheme => self.color_scheme.handle_property(property, decls, context),
             Owner::Fallback => self.fallback.handle_property(property, decls, context),
-            // A handler that has to see custom properties and unknown names
-            // is called here.
+            // The place to call a handler that has to see custom and unknown names.
             Owner::Custom => false,
             Owner::Passthrough => false,
         }
     }
 
-    /// A handler has arms only for the properties whose row names it. That
-    /// is why the owner alone gets the declaration.
+    /// The dispatch is correct only while no handler has an arm for a property of another owner.
     #[cfg(debug_assertions)]
     fn assert_others_decline(
         &mut self,

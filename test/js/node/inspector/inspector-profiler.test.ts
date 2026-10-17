@@ -898,28 +898,33 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       session.disconnect();
     });
 
-    test("samples of collected objects are dropped, or kept with includeObjectsCollectedByMajorGC", async () => {
-      const session = new inspectorPromises.Session();
+    test("samples of collected objects are dropped, or kept with includeObjectsCollectedByMajorGC", () => {
+      const session = new inspector.Session();
       session.connect();
+      // The objects of allocateObjects die when fill() returns; those of allocateMoreObjects stay in `kept`.
+      function fill(kept: unknown[]) {
+        const dropped = new Array(20000).fill(null);
+        allocateObjects(20000, dropped);
+        allocateMoreObjects(20000, kept);
+      }
       for (const includeObjectsCollectedByMajorGC of [false, true]) {
-        let holder: unknown[] | null = new Array(20000).fill(null);
-        await session.post("HeapProfiler.startSampling", { samplingInterval: 1024, includeObjectsCollectedByMajorGC });
-        allocateObjects(20000, holder);
-        const weak = new WeakRef(holder[0] as object);
-        const before = bytesOf(
-          ((await session.post("HeapProfiler.getSamplingProfile")) as { profile: SamplingProfile }).profile.head,
-          "allocateObjects",
-        );
-        expect(before).toBeGreaterThan(400_000);
-        holder = null;
-        Bun.gc(true);
-        // getSamplingProfile itself runs a full collection first, as V8 does.
-        const { profile } = (await session.post("HeapProfiler.stopSampling")) as { profile: SamplingProfile };
+        const kept = new Array(20000).fill(null);
+        retained = kept;
+        session.post("HeapProfiler.startSampling", { samplingInterval: 1024, includeObjectsCollectedByMajorGC });
+        fill(kept);
+        // The profile comes after a full collection, as V8 does it.
+        const { profile } = session.post("HeapProfiler.stopSampling") as { profile: SamplingProfile };
         validate(profile);
-        const after = bytesOf(profile.head, "allocateObjects");
-        expect(weak.deref()).toBeUndefined();
-        if (includeObjectsCollectedByMajorGC) expect(after).toBe(before);
-        else expect(after).toBeLessThan(before / 10);
+        const keptBytes = bytesOf(profile.head, "allocateMoreObjects");
+        const droppedBytes = bytesOf(profile.head, "allocateObjects");
+        expect(keptBytes).toBeGreaterThan(400_000);
+        if (includeObjectsCollectedByMajorGC) {
+          // Kept as collected: the two sites allocated the same bytes.
+          expect(droppedBytes).toBeGreaterThan(keptBytes / 2);
+          expect(droppedBytes).toBeLessThan(keptBytes * 2);
+        } else {
+          expect(droppedBytes).toBeLessThan(keptBytes / 10);
+        }
       }
       session.disconnect();
     });

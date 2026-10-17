@@ -8,7 +8,12 @@
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
-#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/CallFrameInlines.h>
+#include <JavaScriptCore/CodeBlockSet.h>
+#include <JavaScriptCore/CodeOrigin.h>
+#include <JavaScriptCore/InlineCallFrame.h>
+#include <wtf/StackBounds.h>
+#include <wtf/Threading.h>
 #include <JavaScriptCore/VM.h>
 #include <wtf/JSONValues.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -118,39 +123,64 @@ unsigned HeapSampler::takeSamplesOfCell(void* cell)
     return index;
 }
 
+// The CodeBlocks of the JS frames on the stack, innermost first, inlined frames expanded. Like the
+// SamplingProfiler's FrameWalker: an allocation can happen from C++ that no frame tracer covers (a JIT
+// finalization in the LLInt prologue, for one), and there vm.topCallFrame is a frame that has returned, or
+// the poison an ASSERT build leaves. So nothing is dereferenced until it is checked: a frame pointer must
+// be on this thread's stack, and a CodeBlock must be in the heap's set of live CodeBlocks. Garbage ends the
+// walk with the frames found so far.
+SUPPRESS_ASAN static void collectJSFrames(JSC::VM& vm, unsigned depth, WTF::Vector<JSC::CodeBlock*, 32>& frames)
+{
+    JSC::CallFrame* callFrame = vm.topCallFrame;
+    JSC::EntryFrame* entryFrame = vm.topEntryFrame;
+    const WTF::StackBounds& stack = WTF::Thread::currentSingleton().stack();
+    if (!entryFrame || !stack.contains(callFrame))
+        return;
+    auto& codeBlockSet = vm.heap.codeBlockSet();
+    WTF::Locker locker { codeBlockSet.getLock() };
+    while (callFrame && frames.size() < depth) {
+        if (!stack.contains(callFrame))
+            return;
+        JSC::CodeBlock* codeBlock = callFrame->unsafeCallee().isNativeCallee() ? nullptr : callFrame->unsafeCodeBlock();
+        if (codeBlock) {
+            if (!codeBlockSet.contains(locker, codeBlock))
+                return;
+            JSC::CallSiteIndex callSiteIndex = callFrame->unsafeCallSiteIndex();
+            if (codeBlock->hasCodeOrigins() && codeBlock->canGetCodeOrigin(callSiteIndex)) {
+                codeBlock->codeOrigin(callSiteIndex).walkUpInlineStack([&](const JSC::CodeOrigin& origin) {
+                    auto* inlineCallFrame = origin.inlineCallFrame();
+                    frames.append(inlineCallFrame ? inlineCallFrame->baselineCodeBlock.get() : codeBlock);
+                });
+            } else
+                frames.append(codeBlock);
+        }
+        callFrame = callFrame->unsafeCallerFrame(entryFrame);
+    }
+}
+
 // The node of the innermost JS frame on the stack, created along with its ancestors as needed. Nodes are keyed by the
 // function that allocated (its source and start position), so every allocation in one function from one call path
 // lands on one node, whatever the line inside the function.
 unsigned HeapSampler::nodeForCurrentStack()
 {
-    struct Frame {
-        JSC::SourceProvider* provider;
-        unsigned line;
-        unsigned column;
-        JSC::CodeBlock* codeBlock;
-    };
-    WTF::Vector<Frame, 32> frames;
-    if (JSC::CallFrame* top = m_vm.topCallFrame) {
-        unsigned depth = m_options.stackDepth;
-        JSC::StackVisitor::visit(top, m_vm, [&](JSC::StackVisitor& visitor) -> IterationStatus {
-            auto* codeBlock = visitor->codeBlock();
-            if (!codeBlock)
-                return IterationStatus::Continue;
-            auto* executable = codeBlock->ownerExecutable();
-            frames.append(Frame { executable->source().provider(), static_cast<unsigned>(executable->firstLine()), executable->startColumn(), codeBlock });
-            return frames.size() >= depth ? IterationStatus::Done : IterationStatus::Continue;
-        });
-    }
+    WTF::Vector<JSC::CodeBlock*, 32> frames;
+    collectJSFrames(m_vm, m_options.stackDepth, frames);
+    if (frames.size() > m_options.stackDepth)
+        frames.shrink(m_options.stackDepth);
 
     unsigned parent = 0;
     for (size_t i = frames.size(); i--;) {
-        const Frame& frame = frames[i];
-        auto result = m_nodeIndex.add(std::make_tuple(parent + 1, frame.provider, frame.line, frame.column), m_nodes.size());
+        JSC::CodeBlock* codeBlock = frames[i];
+        auto* executable = codeBlock->ownerExecutable();
+        JSC::SourceProvider* provider = executable->source().provider();
+        unsigned line = static_cast<unsigned>(executable->firstLine());
+        unsigned column = executable->startColumn();
+        auto result = m_nodeIndex.add(std::make_tuple(parent + 1, provider, line, column), m_nodes.size());
         if (result.isNewEntry) {
             WTF::String functionName;
-            if (frame.codeBlock->codeType() == JSC::FunctionCode)
-                functionName = static_cast<JSC::FunctionExecutable*>(frame.codeBlock->ownerExecutable())->ecmaName().string();
-            m_nodes.append(Node { WTF::move(functionName), frame.provider, frame.line, frame.column, {} });
+            if (codeBlock->codeType() == JSC::FunctionCode)
+                functionName = static_cast<JSC::FunctionExecutable*>(executable)->ecmaName().string();
+            m_nodes.append(Node { WTF::move(functionName), provider, line, column, {} });
             m_nodes[parent].children.append(result.iterator->value);
         }
         parent = result.iterator->value;
@@ -196,7 +226,7 @@ WTF::String HeapSampler::profileJSON()
     if (m_options.forceGC)
         m_vm.heap.collectSync(JSC::CollectionScope::Full);
 
-    WTF::Vector<double> selfSizes(m_nodes.size(), 0.0);
+    WTF::Vector<double> selfSizes(m_nodes.size(), [](size_t) { return 0.0; });
     auto samples = JSON::Array::create();
     for (const auto& sample : m_samples) {
         if (sample.cell == voidSample)

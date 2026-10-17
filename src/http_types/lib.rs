@@ -10,6 +10,8 @@ pub mod URLPath;
 pub mod h2;
 pub mod mime_type_list_enum;
 mod mime_type_list_sorted;
+#[cfg(test)]
+mod parse_int_tests;
 pub use ETag::wtf;
 
 // `mime_type_list_enum::MimeTypeList` is a hand-generated `&'static str`

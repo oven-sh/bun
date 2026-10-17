@@ -891,37 +891,102 @@ impl ParseIntError {
     }
 }
 
+/// The value of `c` as a digit in `radix`.
+#[inline(always)]
+fn digit_value(c: u8, radix: u8) -> Option<u8> {
+    let d = match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'z' => c - b'a' + 10,
+        b'A'..=b'Z' => c - b'A' + 10,
+        _ => return None,
+    };
+    if d < radix { Some(d) } else { None }
+}
+
+enum Narrow<'a> {
+    Fits(u64),
+    /// The value before the first digit that overflows a `u64`, and the digits from that one on.
+    Overflows(u64, &'a [u8]),
+}
+
 /// Shared digit loop behind [`parse_int`] / [`parse_unsigned`]. `digits` has
 /// any sign already stripped; `radix` is post-auto-detect (2..=36). Skips
 /// embedded `_` separators, rejects leading/trailing `_`, accumulates in
-/// `u128` with checked overflow.
+/// `u64` and stops at the first digit that overflows it.
 #[inline]
-fn parse_with_sign(digits: &[u8], radix: u8) -> Result<u128, ParseIntError> {
+fn parse_with_sign(digits: &[u8], radix: u8) -> Result<Narrow<'_>, ParseIntError> {
     debug_assert!((2..=36).contains(&radix));
     if digits.is_empty() || digits[0] == b'_' || *digits.last().unwrap() == b'_' {
         return Err(ParseIntError::InvalidCharacter);
     }
+    let mut acc: u64 = 0;
+    let mut rest = digits;
+    while let [c, tail @ ..] = rest {
+        if *c != b'_' {
+            let Some(d) = digit_value(*c, radix) else {
+                return Err(ParseIntError::InvalidCharacter);
+            };
+            match acc
+                .checked_mul(radix as u64)
+                .and_then(|v| v.checked_add(d as u64))
+            {
+                Some(v) => acc = v,
+                None => return Ok(Narrow::Overflows(acc, rest)),
+            }
+        }
+        rest = tail;
+    }
+    Ok(Narrow::Fits(acc))
+}
+
+/// [`parse_with_sign`] past `u64::MAX`: the same loop in `u128`, continued from `acc`.
+#[cold]
+#[inline(never)]
+fn parse_with_sign_wide(mut acc: u128, digits: &[u8], radix: u8) -> Result<u128, ParseIntError> {
     let radix_u = radix as u128;
-    let mut acc: u128 = 0;
     for &c in digits {
         if c == b'_' {
             continue;
         }
-        let d = match c {
-            b'0'..=b'9' => (c - b'0') as u128,
-            b'a'..=b'z' => (c - b'a' + 10) as u128,
-            b'A'..=b'Z' => (c - b'A' + 10) as u128,
-            _ => return Err(ParseIntError::InvalidCharacter),
-        };
-        if d >= radix_u {
+        let Some(d) = digit_value(c, radix) else {
             return Err(ParseIntError::InvalidCharacter);
-        }
+        };
         acc = acc
             .checked_mul(radix_u)
-            .and_then(|v| v.checked_add(d))
+            .and_then(|v| v.checked_add(d as u128))
             .ok_or(ParseIntError::Overflow)?;
     }
     Ok(acc)
+}
+
+/// Range-checks the magnitude `acc`, negated when `neg`, into `T`.
+#[inline]
+fn from_magnitude<T>(neg: bool, acc: u128) -> Result<T, ParseIntError>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    if neg {
+        let signed: i128 = if acc == (i128::MAX as u128) + 1 {
+            i128::MIN
+        } else if acc > i128::MAX as u128 {
+            return Err(ParseIntError::Overflow);
+        } else {
+            -(acc as i128)
+        };
+        T::try_from(signed).map_err(|_| ParseIntError::Overflow)
+    } else {
+        T::try_from(acc).map_err(|_| ParseIntError::Overflow)
+    }
+}
+
+/// The rest of a parse whose value passed `u64::MAX`.
+#[cold]
+#[inline(never)]
+fn parse_wide<T>(neg: bool, acc: u64, digits: &[u8], radix: u8) -> Result<T, ParseIntError>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    from_magnitude(neg, parse_with_sign_wide(acc as u128, digits, radix)?)
 }
 
 /// Strip an optional `0x`/`0o`/`0b` prefix when `radix == 0`; otherwise pass
@@ -964,18 +1029,9 @@ where
         _ => (false, buf),
     };
     let (digits, radix) = auto_radix(rest, radix);
-    let acc = parse_with_sign(digits, radix)?;
-    if neg {
-        let signed: i128 = if acc == (i128::MAX as u128) + 1 {
-            i128::MIN
-        } else if acc > i128::MAX as u128 {
-            return Err(ParseIntError::Overflow);
-        } else {
-            -(acc as i128)
-        };
-        T::try_from(signed).map_err(|_| ParseIntError::Overflow)
-    } else {
-        T::try_from(acc).map_err(|_| ParseIntError::Overflow)
+    match parse_with_sign(digits, radix)? {
+        Narrow::Fits(acc) => from_magnitude(neg, acc as u128),
+        Narrow::Overflows(acc, rest) => parse_wide(neg, acc, rest, radix),
     }
 }
 
@@ -989,8 +1045,10 @@ where
     T: TryFrom<i128> + TryFrom<u128>,
 {
     let (digits, radix) = auto_radix(buf, radix);
-    let acc = parse_with_sign(digits, radix)?;
-    T::try_from(acc).map_err(|_| ParseIntError::Overflow)
+    match parse_with_sign(digits, radix)? {
+        Narrow::Fits(acc) => T::try_from(acc as u128).map_err(|_| ParseIntError::Overflow),
+        Narrow::Overflows(acc, rest) => parse_wide(false, acc, rest, radix),
+    }
 }
 
 /// Decimal convenience wrapper over

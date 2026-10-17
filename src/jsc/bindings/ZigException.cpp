@@ -277,12 +277,12 @@ public:
         StringView line = stack.substring(start, end - start);
         offset = end;
 
-        // the proper singular spelling is parenthesis
-        auto openingParentheses = line.reverseFind('(');
-        auto closingParentheses = line.reverseFind(')');
-
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
+        // A path can have parentheses of its own. The location is in parentheses only if the line ends with one,
+        // and they open after the function's name.
+        auto closingParentheses = line.endsWith(')') ? line.length() - 1 : WTF::notFound;
+        auto openingParentheses = closingParentheses == WTF::notFound ? WTF::notFound : line.find(" ("_s);
+        if (openingParentheses != WTF::notFound)
+            openingParentheses++;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             // Special case: "unknown" frames don't have parentheses but are valid

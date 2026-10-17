@@ -1036,7 +1036,7 @@ describe.each([
     api.useFakeTimers({ now: 50_000 });
     api.advanceTimersByTime(250);
     expect([Date.now(), performance.now()]).toEqual([50_250, 250]);
-    expect(spies.map(spy => spy.mock.calls.length)).toEqual([0, 0]);
+    expect(spies.map(spy => spy.mock.calls.length)).toEqual([api === vi ? 1 : 0, 0]);
     api.useRealTimers();
     expect([Date.now(), performance.now()]).toEqual([1000, 7]);
   });
@@ -1091,6 +1091,95 @@ describe.each([
     api.restoreAllMocks();
     expect(descriptors()).toEqual(untouched);
   });
+});
+
+describe.each([
+  [`vi of "vitest"`, vi],
+  [`vi of "bun:test"`, bunVi],
+])("the fake clock starts at what Date.now() returns, %s", (_, vi) => {
+  const builtin = Date.now;
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    Date.now = builtin;
+  });
+
+  test("the value of a spy, which is called once", () => {
+    const spy = vi.spyOn(Date, "now").mockReturnValue(1000);
+    vi.useFakeTimers();
+    expect([Date.now(), new Date().getTime(), spy.mock.calls.length]).toEqual([1000, 1000, 1]);
+    vi.advanceTimersByTime(500);
+    expect(Date.now()).toBe(1500);
+    vi.useRealTimers();
+    expect(Date.now()).toBe(1000);
+  });
+
+  test("each time, when a spy stays on for the whole file", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(3_600_000);
+    expect(Date.now()).toBe(3_601_000);
+    vi.useRealTimers();
+    vi.useFakeTimers();
+    expect(Date.now()).toBe(1000);
+  });
+
+  test("the value of a function that was assigned", () => {
+    Date.now = () => 1234;
+    vi.useFakeTimers();
+    expect(Date.now()).toBe(1234);
+  });
+
+  test("the previous fake clock's time", () => {
+    const spy = vi.spyOn(Date, "now").mockReturnValue(1000);
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(500);
+    vi.useFakeTimers();
+    expect([Date.now(), spy.mock.calls.length]).toEqual([1500, 1]);
+  });
+
+  test("the `now` option and an earlier setSystemTime() come first", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    vi.useFakeTimers({ now: 5000 });
+    expect(Date.now()).toBe(5000);
+    vi.useRealTimers();
+    vi.setSystemTime(3000);
+    vi.useFakeTimers();
+    expect(Date.now()).toBe(3000);
+  });
+
+  test("an error from it leaves the real timers on", () => {
+    vi.spyOn(Date, "now").mockImplementation(() => {
+      throw new Error("from the spy");
+    });
+    expect(() => vi.useFakeTimers()).toThrow("from the spy");
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+
+  test.each([
+    ["a fraction", 1000.7, 1000],
+    ["a negative time", -5000, -5000],
+    ["a Date", new Date(4000), 4000],
+    ["undefined", undefined, 0],
+    ["NaN", NaN, 0],
+  ])("%s", (_, returned, start) => {
+    vi.spyOn(Date, "now").mockReturnValue(returned as number);
+    vi.useFakeTimers();
+    expect(Date.now()).toBe(start);
+  });
+});
+
+test("jest.useFakeTimers() starts at the real time whatever is on Date.now, like Jest", () => {
+  const before = Date.now();
+  const spy = jest.spyOn(Date, "now").mockReturnValue(1000);
+  try {
+    jest.useFakeTimers();
+    expect(Date.now()).toBeGreaterThanOrEqual(before);
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    jest.useRealTimers();
+    spy.mockRestore();
+  }
 });
 
 describe("useFakeTimers with options", () => {

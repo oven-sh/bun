@@ -1575,6 +1575,34 @@ fn vitest_use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     use_fake_timers_with_default(global, frame, Flavor::Vi, faked, true)
 }
 
+/// What Vitest starts its clock from: `setSystemTime()`, else `Date.now()`, which can be the previous fake clock's or a test's own spy.
+#[optimize(size)]
+fn date_now_of_script(global: &JSGlobalObject) -> JsResult<f64> {
+    let builtin = || bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global);
+    let date = Api::Date.owner(global);
+    if !date.is_object()
+        || (!is_active() && !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan())
+    {
+        return Ok(builtin());
+    }
+    let Some(now) = date
+        .get(global, "now")?
+        .filter(|now| now.is_callable() && !Bun__FakeTimers__isNativeFunction(*now))
+    else {
+        return Ok(builtin());
+    };
+    let returned = now.call(global, date, &[])?;
+    let ms = if returned.is_date() {
+        returned.get_unix_timestamp()
+    } else if returned.is_number() {
+        returned.as_number().floor()
+    } else {
+        0.0
+    };
+    // @sinonjs/fake-timers treats anything falsy as 0.
+    Ok(if ms.is_finite() { ms } else { 0.0 })
+}
+
 #[optimize(size)]
 fn use_fake_timers_with_default(
     global: &JSGlobalObject,
@@ -1586,11 +1614,16 @@ fn use_fake_timers_with_default(
     let mut options = Options::from_js(global, frame.argument(0), flavor, faked)?;
     options.fakes_abort_signal_timeout = !is_of_vitest;
     options.system_time_moves_time_origin = !is_of_vitest;
-    let date_now = options.now.unwrap_or_else(|| match flavor {
-        // vitest starts from the current `Date.now()`, mocked or not (`setSystemTime()`, the previous fake clock).
-        Flavor::Vi => bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global),
-        Flavor::Jest => JSMock__getCurrentUnixTimeMs(),
-    });
+    let date_now = match flavor {
+        // Vitest calls `Date.now()` even when there's a `now` option.
+        Flavor::Vi => {
+            let date_now = date_now_of_script(global)?;
+            options.now.unwrap_or(date_now)
+        }
+        Flavor::Jest => options
+            .now
+            .unwrap_or_else(|| JSMock__getCurrentUnixTimeMs()),
+    };
     error_if_reading_globals(global)?;
     let ended = FakeTimers::install(global, &options, date_now)?;
     AsyncDrive::settle_all(global, ended)?;

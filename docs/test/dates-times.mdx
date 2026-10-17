@@ -101,6 +101,8 @@ Use it to read the mocked time without creating a new `Date` object.
 
 `useFakeTimers()` replaces `setTimeout`, `setInterval`, `clearTimeout` and `clearInterval` on `globalThis` with versions that run on a fake clock. `Date`, `performance.now()` and `process.hrtime()` read the same clock. The fake clock only moves when your test advances it. `jest` and `vi` have the same functions.
 
+The clock starts at the `now` option if you pass one. Otherwise, `vi.useFakeTimers()` starts at the time you set with `setSystemTime()`, or else at what `Date.now()` returns, so a spy on `Date.now` sets the start. `jest.useFakeTimers()` starts at the real time. While the clock is faked, that spy is out of the way. It's back after `useRealTimers()`.
+
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, jest } from "bun:test";
 

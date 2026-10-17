@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -2142,6 +2142,59 @@ c {
       `,
     },
     outfile: "/out.css",
+  });
+
+  // A default build keeps a strict bound strict: `(width < 1024px)` and
+  // `(width >= 1024px)` never both match at 1024px. Default targets without range
+  // syntax get the bound as a negation with the value as written. Default targets with
+  // range syntax get the query as written.
+  itBundled("css/MediaRangeStrictBoundDefaultTarget", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "https://example.com/narrow.css" (width < 1024px);
+        @import "./tablet.css" screen and (640px <= width < 1024px);
+        @media (width < 1024px) { .nav { display: none } }
+        @media (width >= 1024px) { .burger { display: none } }
+        @media (width > 1280px) { .wide { color: red } }
+        @media (width < 64rem) { .rem { color: red } }
+      `,
+      "/tablet.css": /* css */ `.tablet { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const rule = (prelude: string, selector: string, declaration: string) =>
+        [`@media ${prelude} {`, `  ${selector} {`, `    ${declaration};`, "  }", "}", ""].join("\n");
+      const lowered = [
+        '@import "https://example.com/narrow.css" not all and (min-width: 1024px);',
+        "",
+        "/* tablet.css */",
+        "@media screen and (min-width: 640px) {",
+        "  @media not all and (min-width: 1024px) {",
+        "    .tablet {",
+        "      color: red;",
+        "    }",
+        "  }",
+        "}",
+        "",
+        "/* entry.css */",
+        rule("not all and (min-width: 1024px)", ".nav", "display: none"),
+        rule("(min-width: 1024px)", ".burger", "display: none"),
+        rule("not all and (max-width: 1280px)", ".wide", "color: red"),
+        rule("not all and (min-width: 64rem)", ".rem", "color: red"),
+      ].join("\n");
+      const asWritten = [
+        '@import "https://example.com/narrow.css" (width < 1024px);',
+        "",
+        "/* tablet.css */",
+        rule("screen and (640px <= width < 1024px)", ".tablet", "color: red"),
+        "/* entry.css */",
+        rule("(width < 1024px)", ".nav", "display: none"),
+        rule("(width >= 1024px)", ".burger", "display: none"),
+        rule("(width > 1280px)", ".wide", "color: red"),
+        rule("(width < 64rem)", ".rem", "color: red"),
+      ].join("\n");
+      expect([lowered, asWritten]).toContain(api.readFile("/out.css"));
+    },
   });
 
   // This test mainly just makes sure that this scenario doesn't crash

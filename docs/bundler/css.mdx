@@ -652,7 +652,7 @@ Media query range syntax expresses breakpoints with comparison operators (`<`, `
 }
 ```
 
-Bun's CSS bundler converts range queries to traditional media query syntax for compatibility with all browsers:
+When a target browser has no range syntax (before Chrome 104 and Safari 16.4), Bun's CSS bundler converts range queries to traditional media query syntax:
 
 ```css title="styles.css" icon="file-code"
 /* Converted to traditional min/max syntax */
@@ -668,12 +668,24 @@ Bun's CSS bundler converts range queries to traditional media query syntax for c
   }
 }
 
-@media (min-width: 321px) and (max-width: 767px) {
-  .mobile-only {
-    display: block;
+/* Exclusive bounds: "not at most 320px" and "not at least 768px" */
+@media not all and (max-width: 320px) {
+  @media not all and (min-width: 768px) {
+    .mobile-only {
+      display: block;
+    }
   }
 }
 ```
+
+The `min-` and `max-` prefixes are inclusive. Bun writes an exclusive bound (`<` or `>`) as the negation of the opposite inclusive bound, so the bound stays exclusive and nothing is added to its value. A query with an exclusive bound and other conditions becomes nested `@media` rules, and a `not` query becomes a comma-separated list. An integer feature has an exact inclusive neighbor: `(color > 2)` becomes `(min-color: 3)`.
+
+Bun keeps an exclusive bound as written in these cases. Browsers without range syntax then skip the rule:
+
+- The bound is under `or`, or under a `not` together with other conditions.
+- An `@import` query has other conditions beside the bound.
+- The query list needs more than 8 nested rules.
+- The query is a `@custom-media` definition.
 
 ### Shorthands
 

@@ -673,6 +673,20 @@ impl MediaList {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // A prelude has no block to nest in, so it can print only a single clause.
+        if let Some(clauses) = self.lowered_clauses(&dest.targets)
+            && clauses.count() == 1
+        {
+            return clauses.write(0, dest);
+        }
+        self.to_css_as_written(dest)
+    }
+
+    /// Writes each query as it is. A strict range bound stays a range.
+    pub(crate) fn to_css_as_written(
+        &self,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
         if self.media_queries.is_empty() {
             return dest.write_str("not all");
         }
@@ -695,37 +709,44 @@ impl MediaQuery {
             && self.condition.is_none()
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    /// Whether the query starts with a qualifier or a media type other than `all`.
+    fn has_type(&self) -> bool {
+        self.qualifier.is_some() || !matches!(self.media_type, MediaType::All)
+    }
+
+    /// Writes the qualifier and the media type.
+    fn write_type(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if let Some(qual) = self.qualifier {
             qual.to_css(dest)?;
             dest.write_char(b' ')?;
         }
 
         match &self.media_type {
-            MediaType::All => {
-                // We need to print "all" if there's a qualifier, or there's
-                // just an empty list of expressions.
-                //
-                // Otherwise, we'd serialize media queries like "(min-width:
-                // 40px)" in "all (min-width: 40px)", which is unexpected.
-                if self.qualifier.is_some() || self.condition.is_none() {
-                    dest.write_str("all")?;
-                }
-            }
-            MediaType::Print => dest.write_str("print")?,
-            MediaType::Screen => dest.write_str("screen")?,
+            MediaType::All => dest.write_str("all"),
+            MediaType::Print => dest.write_str("print"),
+            MediaType::Screen => dest.write_str("screen"),
             MediaType::Custom(desc) => {
                 // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.serialize_identifier(unsafe { crate::arena_str(*desc) })?;
+                dest.serialize_identifier(unsafe { crate::arena_str(*desc) })
             }
+        }
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // We need to print "all" if there's a qualifier, or there's
+        // just an empty list of expressions.
+        //
+        // Otherwise, we'd serialize media queries like "(min-width:
+        // 40px)" in "all (min-width: 40px)", which is unexpected.
+        if self.has_type() || self.condition.is_none() {
+            self.write_type(dest)?;
         }
 
         let Some(condition) = &self.condition else {
             return Ok(());
         };
 
-        let needs_parens = if !matches!(self.media_type, MediaType::All) || self.qualifier.is_some()
-        {
+        let needs_parens = if self.has_type() {
             dest.write_str(" and ")?;
             matches!(
                 condition,
@@ -1052,6 +1073,31 @@ impl MediaFeatureComparison {
             MediaFeatureComparison::Equal => MediaFeatureComparison::Equal,
         }
     }
+
+    /// How `name <self> value` is stated with `min-`/`max-` features, which are inclusive.
+    fn to_legacy(self, value: &MediaFeatureValue) -> LegacyComparison {
+        // An integer bound has an exact inclusive neighbour: `(color > 2)` is
+        // `(min-color: 3)`. At the end of the integer range it has none.
+        let step = |by: CSSInteger| match value {
+            MediaFeatureValue::Integer(int) => int.checked_add(by),
+            _ => None,
+        };
+        match self {
+            MediaFeatureComparison::Equal => LegacyComparison::Is(LegacyBound::Exact, None),
+            MediaFeatureComparison::GreaterThanEqual => {
+                LegacyComparison::Is(LegacyBound::Min, None)
+            }
+            MediaFeatureComparison::LessThanEqual => LegacyComparison::Is(LegacyBound::Max, None),
+            MediaFeatureComparison::GreaterThan => match step(1) {
+                Some(int) => LegacyComparison::Is(LegacyBound::Min, Some(int)),
+                None => LegacyComparison::IsNot(LegacyBound::Max),
+            },
+            MediaFeatureComparison::LessThan => match step(-1) {
+                Some(int) => LegacyComparison::Is(LegacyBound::Max, Some(int)),
+                None => LegacyComparison::IsNot(LegacyBound::Min),
+            },
+        }
+    }
 }
 
 impl MediaFeatureValue {
@@ -1071,27 +1117,6 @@ impl MediaFeatureValue {
             MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
             MediaFeatureValue::Ident(id) => id.to_css(dest),
             MediaFeatureValue::Env(env) => env.to_css(dest, false),
-        }
-    }
-
-    /// Adjust by `other` for strict-inequality → min/max
-    /// boundary lowering. Consumes `self`.
-    fn add_f32(self, other: f32) -> MediaFeatureValue {
-        match self {
-            MediaFeatureValue::Length(len) => MediaFeatureValue::Length(len.add(Length::px(other))),
-            MediaFeatureValue::Number(num) => MediaFeatureValue::Number(num + other),
-            MediaFeatureValue::Integer(num) => {
-                MediaFeatureValue::Integer(num + if other.is_sign_positive() { 1 } else { -1 })
-            }
-            MediaFeatureValue::Boolean(v) => MediaFeatureValue::Boolean(v),
-            MediaFeatureValue::Resolution(res) => MediaFeatureValue::Resolution(res.add_f32(other)),
-            MediaFeatureValue::Ratio(ratio) => MediaFeatureValue::Ratio(ratio.add_f32(other)),
-            MediaFeatureValue::Ident(id) => MediaFeatureValue::Ident(id),
-            // env() values pass through unchanged — the calc-lattice add
-            // (wrapping the env() reference in a calc() to apply the
-            // strict-inequality boundary adjustment) is not implemented, so
-            // range bounds on env() values lose the +/-0.001 nudge.
-            MediaFeatureValue::Env(env) => MediaFeatureValue::Env(env),
         }
     }
 
@@ -1195,44 +1220,501 @@ impl MediaFeatureValue {
     }
 }
 
-/// Lower a range/interval comparator to legacy
-/// `min-`/`max-` prefixed plain feature.
+/// The inclusive bound that a `min-`/`max-` prefixed or bare feature states.
+#[derive(Clone, Copy)]
+enum LegacyBound {
+    /// `(min-name: value)`: `name >= value`.
+    Min,
+    /// `(max-name: value)`: `name <= value`.
+    Max,
+    /// `(name: value)`: `name = value`.
+    Exact,
+}
+
+impl LegacyBound {
+    fn comparison(self) -> MediaFeatureComparison {
+        match self {
+            LegacyBound::Min => MediaFeatureComparison::GreaterThanEqual,
+            LegacyBound::Max => MediaFeatureComparison::LessThanEqual,
+            LegacyBound::Exact => MediaFeatureComparison::Equal,
+        }
+    }
+}
+
+/// A range comparison stated with a `min-`/`max-` feature.
+enum LegacyComparison {
+    /// The feature holds. The integer, when present, replaces the value.
+    Is(LegacyBound, Option<CSSInteger>),
+    /// The feature does not hold: `(width < V)` is "not `(min-width: V)`".
+    IsNot(LegacyBound),
+}
+
+/// Writes `min-name:`, `max-name:` or `name:`. A strict bound has no such name, so
+/// there is none to pass.
+fn write_min_max_name<FeatureId: FeatureIdTrait>(
+    bound: LegacyBound,
+    name: &MediaFeatureName<FeatureId>,
+    dest: &mut Printer,
+) -> core::result::Result<(), PrintErr> {
+    match bound {
+        LegacyBound::Min => name.to_css_with_prefix("min-", dest)?,
+        LegacyBound::Max => name.to_css_with_prefix("max-", dest)?,
+        LegacyBound::Exact => name.to_css(dest)?,
+    }
+    dest.delim(b':', false)
+}
+
+/// Lower a range/interval comparator to legacy `min-`/`max-` prefixed plain feature.
+/// Writes what follows the `(`. No such feature states a strict bound, so that one
+/// stays a range here: `MediaList::lowered_clauses` lowers it where a whole query can
+/// be negated.
 fn write_min_max<FeatureId: FeatureIdTrait>(
     operator: MediaFeatureComparison,
     name: &MediaFeatureName<FeatureId>,
     value: &MediaFeatureValue,
     dest: &mut Printer,
 ) -> core::result::Result<(), PrintErr> {
-    let prefix = match operator {
-        MediaFeatureComparison::GreaterThan | MediaFeatureComparison::GreaterThanEqual => {
-            Some("min-")
+    match operator.to_legacy(value) {
+        LegacyComparison::Is(bound, int) => {
+            write_min_max_name(bound, name, dest)?;
+            match int {
+                Some(int) => css::to_css::integer(int, dest)?,
+                None => write_min_max_value(value, dest)?,
+            }
         }
-        MediaFeatureComparison::LessThan | MediaFeatureComparison::LessThanEqual => Some("max-"),
-        MediaFeatureComparison::Equal => None,
-    };
-
-    if let Some(p) = prefix {
-        name.to_css_with_prefix(p, dest)?;
-    } else {
-        name.to_css(dest)?;
+        LegacyComparison::IsNot(_) => {
+            name.to_css(dest)?;
+            operator.to_css(dest)?;
+            value.to_css(dest)?;
+        }
     }
-
-    dest.delim(b':', false)?;
-
-    // `MediaFeatureValue: Clone`, so clone-by-value before adjusting.
-    let adjusted: Option<MediaFeatureValue> = match operator {
-        MediaFeatureComparison::GreaterThan => Some(value.clone().add_f32(0.001)),
-        MediaFeatureComparison::LessThan => Some(value.clone().add_f32(-0.001)),
-        _ => None,
-    };
-
-    if let Some(val) = adjusted {
-        val.to_css(dest)?;
-    } else {
-        value.to_css(dest)?;
-    }
-
     dest.write_char(b')')
+}
+
+/// Writes the value of a `min-`/`max-` feature. Chrome before 110 rejects a ratio that
+/// is a single number, and a query with a rejected feature is `not all`, negated or
+/// not. So a ratio is written with both terms.
+#[inline]
+fn write_min_max_value(
+    value: &MediaFeatureValue,
+    dest: &mut Printer,
+) -> core::result::Result<(), PrintErr> {
+    match value {
+        MediaFeatureValue::Ratio(ratio) => ratio.to_css_both_terms(dest),
+        _ => value.to_css(dest),
+    }
+}
+
+// ───────────────────────── strict bounds as negation ─────────────────────────
+// A `min-`/`max-` feature is inclusive, so `(width < V)` is "not `(min-width: V)`".
+// Browsers without range syntax also lack `not (..)` inside a condition: both shipped
+// in Chrome 104 and Safari 16.4. There `not` can only negate a whole query,
+// `not all and (min-width: V)`. A query with a strict bound and other parts is then a
+// conjunction of query lists ("clauses"):
+//   screen and (width < V)   is   `screen`  AND  `not all and (min-width: V)`
+// and a list of such queries distributes into clauses the same way. `MediaRule` nests
+// one `@media` per clause. A prelude with no block prints a list only when it is a
+// single clause. Nothing is added to the value.
+//
+// Only the top level of a query is read this way: its `and` chain, and a `not (..)`
+// that is the whole query. A `not` or an `or` below that prints as it is written.
+
+/// Most clauses a list lowers to. A list that needs more prints as it is written.
+const MAX_LOWERED_CLAUSES: u32 = 8;
+
+/// One `and`-ed part of a query whose strict bounds are lowered.
+enum QueryPart<'a> {
+    /// A condition that prints as it is written.
+    Keep(&'a MediaCondition),
+    /// A comparison that a `min-`/`max-` feature states.
+    Is(
+        &'a MediaFeatureName<MediaFeatureId>,
+        MediaFeatureComparison,
+        &'a MediaFeatureValue,
+    ),
+    /// A strict bound: the negation of the feature with this bound.
+    IsNot(
+        &'a MediaFeatureName<MediaFeatureId>,
+        LegacyBound,
+        &'a MediaFeatureValue,
+    ),
+}
+
+/// Receives the parts of a query. A trait object, so that the walk over a condition is
+/// compiled once and not once per caller.
+type PartSink<'a, 'f> = dyn FnMut(QueryPart<'a>) -> core::result::Result<(), PrintErr> + 'f;
+
+impl MediaFeature {
+    /// Whether the feature has a strict bound that no `min-`/`max-` feature states.
+    fn has_strict_bound(&self) -> bool {
+        let is_strict = |operator: MediaFeatureComparison, value| {
+            matches!(operator.to_legacy(value), LegacyComparison::IsNot(_))
+        };
+        match self {
+            QueryFeature::Range {
+                operator, value, ..
+            } => is_strict(*operator, value),
+            QueryFeature::Interval {
+                start,
+                start_operator,
+                end,
+                end_operator,
+                ..
+            } => is_strict(start_operator.opposite(), start) || is_strict(*end_operator, end),
+            QueryFeature::Plain { .. } | QueryFeature::Boolean { .. } => false,
+        }
+    }
+}
+
+impl MediaCondition {
+    fn has_strict_bound(&self) -> bool {
+        match self {
+            MediaCondition::Feature(feature) => feature.has_strict_bound(),
+            MediaCondition::Not(inner) => inner.has_strict_bound(),
+            MediaCondition::Operation { conditions, .. } => {
+                conditions.iter().any(Self::has_strict_bound)
+            }
+        }
+    }
+
+    /// Calls `sink` with each part of the top-level `and` chain, in source order, with
+    /// the strict bounds split out. `interval` says that intervals are lowered too.
+    /// Returns `false` when a strict bound is where no whole-query negation reaches it:
+    /// under `or`, or under a `not` that holds more than the one bound.
+    fn each_lowered_part<'a>(
+        &'a self,
+        interval: bool,
+        sink: &mut PartSink<'a, '_>,
+    ) -> core::result::Result<bool, PrintErr> {
+        match self {
+            MediaCondition::Operation {
+                operator: Operator::And,
+                conditions,
+            } => {
+                for condition in conditions {
+                    if !condition.each_lowered_part(interval, sink)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            MediaCondition::Feature(feature) => {
+                match &**feature {
+                    QueryFeature::Range {
+                        name,
+                        operator,
+                        value,
+                    } => match operator.to_legacy(value) {
+                        LegacyComparison::IsNot(bound) => {
+                            sink(QueryPart::IsNot(name, bound, value))?;
+                        }
+                        LegacyComparison::Is(..) => sink(QueryPart::Keep(self))?,
+                    },
+                    QueryFeature::Interval {
+                        name,
+                        start,
+                        start_operator,
+                        end,
+                        end_operator,
+                    } if interval => {
+                        for (operator, value) in
+                            [(start_operator.opposite(), start), (*end_operator, end)]
+                        {
+                            match operator.to_legacy(value) {
+                                LegacyComparison::IsNot(bound) => {
+                                    sink(QueryPart::IsNot(name, bound, value))?;
+                                }
+                                LegacyComparison::Is(..) => {
+                                    sink(QueryPart::Is(name, operator, value))?;
+                                }
+                            }
+                        }
+                    }
+                    _ => sink(QueryPart::Keep(self))?,
+                }
+                Ok(true)
+            }
+            MediaCondition::Not(inner) => {
+                if let MediaCondition::Feature(feature) = &**inner
+                    && let QueryFeature::Range {
+                        name,
+                        operator,
+                        value,
+                    } = &**feature
+                    && let LegacyComparison::IsNot(bound) = operator.to_legacy(value)
+                {
+                    // `not (width < V)` is `(width >= V)`: the feature the bound negates.
+                    sink(QueryPart::Is(name, bound.comparison(), value))?;
+                    return Ok(true);
+                }
+                if inner.has_strict_bound() {
+                    return Ok(false);
+                }
+                sink(QueryPart::Keep(self))?;
+                Ok(true)
+            }
+            MediaCondition::Operation { .. } => {
+                if self.has_strict_bound() {
+                    return Ok(false);
+                }
+                sink(QueryPart::Keep(self))?;
+                Ok(true)
+            }
+        }
+    }
+}
+
+impl MediaQuery {
+    /// Whether the query can print differently once lowered: it has a strict bound, or
+    /// it is a `not (..)` with no media type.
+    #[inline]
+    fn may_lower(&self) -> bool {
+        self.condition.as_ref().is_some_and(|condition| {
+            (!self.has_type() && matches!(condition, MediaCondition::Not(_)))
+                || condition.has_strict_bound()
+        })
+    }
+
+    /// The conjunction the query states, and whether the query negates it. `not (C)`
+    /// with no media type is read as `not all and C`, which says the same in the
+    /// syntax that every browser has.
+    fn conjunction(&self) -> (bool, Option<&MediaCondition>) {
+        if !self.has_type()
+            && let Some(MediaCondition::Not(inner)) = &self.condition
+            && matches!(
+                **inner,
+                MediaCondition::Feature(_)
+                    | MediaCondition::Operation {
+                        operator: Operator::And,
+                        ..
+                    }
+            )
+        {
+            return (true, Some(&**inner));
+        }
+        (
+            self.qualifier == Some(Qualifier::Not),
+            self.condition.as_ref(),
+        )
+    }
+
+    /// `(strict bounds, whether the query has any other part)` when the query prints
+    /// differently once lowered. `None` when it prints as it is written.
+    fn lowered_shape(&self, interval: bool) -> Option<(u32, bool)> {
+        let (negated, condition) = self.conjunction();
+        let condition = condition?;
+        let reread = negated && self.qualifier.is_none();
+        let mut strict: u32 = 0;
+        let mut stated = false;
+        let mut kept = false;
+        let split = condition.each_lowered_part(interval, &mut |part| {
+            match part {
+                QueryPart::IsNot(..) => strict += 1,
+                QueryPart::Is(..) => stated = true,
+                QueryPart::Keep(_) => kept = true,
+            }
+            Ok(())
+        });
+        if !matches!(split, Ok(true)) || (strict == 0 && !stated && !reread) {
+            return None;
+        }
+        // A bare `all` adds nothing to a conjunction.
+        let typed =
+            self.qualifier == Some(Qualifier::Only) || !matches!(self.media_type, MediaType::All);
+        Some((strict, kept || stated || typed))
+    }
+
+    /// Writes the query without its strict bounds.
+    fn write_lowered_rest(
+        &self,
+        interval: bool,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        let targets = dest.targets;
+        let (negated, condition) = self.conjunction();
+        let reread = negated && self.qualifier.is_none();
+        let mut first = !self.has_type() && !reread;
+        if reread {
+            dest.write_str("not all")?;
+        } else if !first {
+            self.write_type(dest)?;
+        }
+        let Some(condition) = condition else {
+            return Ok(());
+        };
+        condition.each_lowered_part(interval, &mut |part| {
+            if matches!(part, QueryPart::IsNot(..)) {
+                return Ok(());
+            }
+            if !core::mem::replace(&mut first, false) {
+                dest.write_str(" and ")?;
+            }
+            match part {
+                QueryPart::Keep(condition) => {
+                    let parens = condition.needs_parens(Some(Operator::And), &targets);
+                    to_css_with_parens_if_needed(condition, dest, parens)
+                }
+                QueryPart::Is(name, operator, value) => {
+                    dest.write_char(b'(')?;
+                    write_min_max(operator, name, value, dest)
+                }
+                QueryPart::IsNot(..) => Ok(()),
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Calls `f` with the number of each strict bound, from 0, and with the feature
+    /// that the bound negates.
+    fn each_strict_bound<'a>(
+        &'a self,
+        interval: bool,
+        f: &mut dyn FnMut(
+            u32,
+            LegacyBound,
+            &'a MediaFeatureName<MediaFeatureId>,
+            &'a MediaFeatureValue,
+        ) -> core::result::Result<(), PrintErr>,
+    ) -> core::result::Result<(), PrintErr> {
+        let Some(condition) = self.conjunction().1 else {
+            return Ok(());
+        };
+        let mut count: u32 = 0;
+        condition.each_lowered_part(interval, &mut |part| {
+            let QueryPart::IsNot(name, bound, value) = part else {
+                return Ok(());
+            };
+            count += 1;
+            f(count - 1, bound, name, value)
+        })?;
+        Ok(())
+    }
+}
+
+/// Writes the `min-`/`max-` feature that a strict bound negates.
+fn write_negated_feature(
+    bound: LegacyBound,
+    name: &MediaFeatureName<MediaFeatureId>,
+    value: &MediaFeatureValue,
+    dest: &mut Printer,
+) -> core::result::Result<(), PrintErr> {
+    dest.write_char(b'(')?;
+    write_min_max_name(bound, name, dest)?;
+    write_min_max_value(value, dest)?;
+    dest.write_char(b')')
+}
+
+/// The clauses that a media query list lowers to. See `MediaList::lowered_clauses`.
+pub(crate) struct LoweredClauses<'a> {
+    list: &'a MediaList,
+    count: u32,
+    interval: bool,
+}
+
+impl LoweredClauses<'_> {
+    pub(crate) fn count(&self) -> u32 {
+        self.count
+    }
+
+    /// Writes clause number `clause` (below `count`) as a query list. A query that
+    /// splits into several parts gives one part to each clause: `clause` is the
+    /// mixed-radix number of those choices.
+    pub(crate) fn write(
+        &self,
+        mut clause: u32,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
+        let interval = self.interval;
+        let mut first = true;
+        let separate = |first: &mut bool, dest: &mut Printer| {
+            if core::mem::replace(first, false) {
+                Ok(())
+            } else {
+                dest.delim(b',', false)
+            }
+        };
+        for query in &self.list.media_queries {
+            let Some((strict, rest)) = query.lowered_shape(interval) else {
+                separate(&mut first, dest)?;
+                query.to_css(dest)?;
+                continue;
+            };
+            if query.conjunction().0 {
+                // `not (T and not B)` is `not T` or `B`: one clause for any number of bounds.
+                if rest {
+                    separate(&mut first, dest)?;
+                    query.write_lowered_rest(interval, dest)?;
+                }
+                query.each_strict_bound(interval, &mut |_, bound, name, value| {
+                    separate(&mut first, dest)?;
+                    write_negated_feature(bound, name, value, dest)
+                })?;
+                continue;
+            }
+            let parts = strict + u32::from(rest);
+            let part = clause % parts;
+            clause /= parts;
+            separate(&mut first, dest)?;
+            if rest && part == 0 {
+                query.write_lowered_rest(interval, dest)?;
+                continue;
+            }
+            let index = part - u32::from(rest);
+            dest.write_str("not all and ")?;
+            query.each_strict_bound(interval, &mut |at, bound, name, value| {
+                if at == index {
+                    write_negated_feature(bound, name, value, dest)?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl MediaList {
+    /// The clauses this list lowers to for `targets`. `None` when it prints as it is
+    /// written: it has nothing to lower, or it needs more than `MAX_LOWERED_CLAUSES`.
+    #[inline]
+    pub(crate) fn lowered_clauses(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> Option<LoweredClauses<'_>> {
+        // Most lists have nothing to lower, and the scan that finds that out is cheaper
+        // than a compat gate. So the gates come second.
+        if !self.media_queries.iter().any(MediaQuery::may_lower) {
+            return None;
+        }
+        self.compute_lowered_clauses(targets)
+    }
+
+    #[cold]
+    fn compute_lowered_clauses(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> Option<LoweredClauses<'_>> {
+        if !targets.should_compile_same(css::compat::Feature::MediaRangeSyntax) {
+            return None;
+        }
+        let interval = targets.should_compile_same(css::compat::Feature::MediaIntervalSyntax);
+
+        let mut count: u32 = 1;
+        let mut lowered = false;
+        for query in &self.media_queries {
+            let Some((strict, rest)) = query.lowered_shape(interval) else {
+                continue;
+            };
+            lowered = true;
+            if !query.conjunction().0 {
+                count = count.saturating_mul(strict + u32::from(rest));
+            }
+        }
+        (lowered && count <= MAX_LOWERED_CLAUSES).then_some(LoweredClauses {
+            list: self,
+            count,
+            interval,
+        })
+    }
 }
 
 // ───────────────────────── deep_clone ─────────────────────────

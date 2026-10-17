@@ -78,12 +78,4 @@ impl Resolution {
 
         css::serializer::serialize_dimension(value, unit, dest)
     }
-
-    pub(crate) fn add_f32(self, other: f32) -> Resolution {
-        match self {
-            Resolution::Dpi(dpi) => Resolution::Dpi(dpi + other),
-            Resolution::Dpcm(dpcm) => Resolution::Dpcm(dpcm + other),
-            Resolution::Dppx(dppx) => Resolution::Dppx(dppx + other),
-        }
-    }
 }

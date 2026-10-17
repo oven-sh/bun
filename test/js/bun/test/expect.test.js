@@ -1204,6 +1204,16 @@ describe("expect()", () => {
     }
   });
 
+  test("toThrow() leaves a promise that was rejected before the call to whoever handles it", async () => {
+    const handledInTheCall = Promise.reject(new Error("handled in the call"));
+    expect(() => void handledInTheCall.catch(() => {})).not.toThrow();
+
+    const handledAfterTheCall = Promise.reject(new Error("handled after the call"));
+    expect(() => {}).not.toThrow();
+    expect(() => expect(() => {}).not.toThrow()).not.toThrow();
+    await expect(handledAfterTheCall).rejects.toThrow("handled after the call");
+  });
+
   test("toThrow asymmetric matchers", () => {
     expect(() => {
       const err = new Error("foo");

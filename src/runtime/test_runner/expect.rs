@@ -927,6 +927,30 @@ pub(crate) enum Received {
     Thrown(JSValue),
 }
 
+unsafe extern "C" {
+    safe fn Bun__holdRejectedPromises(global: &JSGlobalObject) -> usize;
+    safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
+}
+
+/// `toThrow()` takes a rejection that nothing handles during the call for what the function threw. What was rejected
+/// before the call isn't the function's, and can still get its handler, so it waits here until the call is over.
+struct EarlierRejections<'a> {
+    global: &'a JSGlobalObject,
+    mark: usize,
+}
+
+impl<'a> EarlierRejections<'a> {
+    fn hold(global: &'a JSGlobalObject) -> Self {
+        Self { global, mark: Bun__holdRejectedPromises(global) }
+    }
+}
+
+impl Drop for EarlierRejections<'_> {
+    fn drop(&mut self) {
+        Bun__releaseRejectedPromises(self.global, self.mark);
+    }
+}
+
 pub(crate) struct TrimResult<'a> {
     pub(crate) trimmed: &'a [u8],
     pub(crate) start_indent: Option<&'a [u8]>,
@@ -953,8 +977,7 @@ impl Expect {
         let mut reported = FirstReport { value: JSValue::ZERO, is_calling: true, outer: vm.unhandled_rejection_scope() };
         let question = Question { asked: Asked::Call, who: JSValue::UNDEFINED, what: value };
         let return_value_from_function = Pass::once(global_this, question, &mut || {
-            // Drain existing unhandled rejections
-            let _ = vm.global().handle_rejected_promises();
+            let _earlier = EarlierRejections::hold(vm.global());
 
             reported.outer = vm.unhandled_rejection_scope();
             vm.on_unhandled_rejection_ctx = Some((&raw mut reported).cast());

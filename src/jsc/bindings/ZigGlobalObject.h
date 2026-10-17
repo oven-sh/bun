@@ -339,6 +339,8 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
+    void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
     ALWAYS_INLINE void initGeneratedLazyClasses();
 
     template<typename Visitor>

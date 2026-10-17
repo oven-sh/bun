@@ -5,7 +5,8 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
@@ -875,15 +876,27 @@ interface TestOptions {
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
 type AotTests = "all" | "a tenth";
 
-const aotSources =
-  /^(?:src\/aot\/|src\/sema\/|src\/builtin_syntax\/|packages\/bun-sound\/|test\/aot\/|scripts\/build\/deps\/webkit\.ts$)/;
+const aotSources = ["src/aot/", "src/sema/", "src/builtin_syntax/", "packages/bun-sound/", "test/aot/", "scripts/build/deps/webkit.ts"];
 const aotGroupsOfLinuxX64 = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
 const aotGroupsOfTheCompiler = [...aotGroupsOfLinuxX64, "aot/startup-scaling/", "aot/variant-"];
+
+// The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
+function git(...args: string[]): string | undefined {
+  const { status, stdout } = spawnSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  return status === 0 ? stdout : undefined;
+}
+
+let aotChanges: boolean | undefined;
+function hasAotChanges({ changedFiles }: PipelineOptions): boolean {
+  return (aotChanges ??= changedFiles?.length
+    ? changedFiles.some(file => aotSources.some(source => file.startsWith(source)))
+    : !!git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...aotSources)?.trim());
+}
 
 function getAotTests(platform: Platform, options: PipelineOptions): AotTests | undefined {
   const { os, arch, distro, profile, tier } = platform;
   if (options.testFiles?.length || distro === "ubuntu" || tier === "beta") return undefined;
-  if (!options.changedFiles?.some(file => aotSources.test(file))) {
+  if (!hasAotChanges(options)) {
     return distro === "debian" && !profile ? "a tenth" : undefined;
   }
   return (os === "darwin" && arch === "x64") || (os === "windows" && arch === "aarch64") ? "a tenth" : "all";
@@ -894,11 +907,13 @@ function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): str
   return arch === "x64" && distro === "debian" && !profile ? [] : aotGroupsOfLinuxX64;
 }
 
+let expectedDurations: string | undefined;
 function getAotParallelism(platform: Platform, aot: AotTests): number {
   const { os, arch, abi, profile } = platform;
   const windows = arch === "x64" ? "windows" : "windows-aarch64";
   const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
-  const table = readFileSync(join(process.cwd(), "test", "expected-durations.json"), "utf8");
+  const table = (expectedDurations ??= git("show", "HEAD:test/expected-durations.json") ?? "");
+  if (!table) return aot === "a tenth" ? 3 : os === "darwin" ? 4 : 20;
   const excludes = getAotExcludes(platform, aot);
   let milliseconds = 0;
   for (const [path, durations] of Object.entries(JSON.parse(table) as Record<string, Record<string, number>>)) {

@@ -1144,6 +1144,10 @@ pub(crate) struct H2FrameParser {
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
     has_nonnative_backpressure: Cell<bool>,
+    /// `park_cork()` moved corked bytes to `write_buffer`, and no transport event is coming
+    /// for them: the session lost the cork slot without a write. The auto-flush registration
+    /// is what sends them, so `uncork()` must not cancel it. `flush()` clears this.
+    cork_parked: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
     js_socket_flushing: Cell<bool>,
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
@@ -2508,12 +2512,54 @@ impl H2FrameParser {
             // force uncork
             // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser; valid until matching deref() in uncork
             unsafe { (*corked.cast_const()).uncork() };
+            // That flush runs the other session's transport, which is user JS for a JS-backed
+            // socket (h2-over-h2 tunnels, createConnection). It can serialize a frame on any
+            // session, so the slot is read again here: the pointer from before it ran is stale.
+            match Self::corked() {
+                // JS corked for us. Its frames stay where they are; the caller's frame goes
+                // behind them.
+                Some(corked) if std::ptr::eq(corked, self.as_ctx_ptr()) => return,
+                // JS corked for a third session (or for the one just flushed). Set its bytes
+                // aside without writing them, so taking the slot cannot discard them.
+                // SAFETY: as above; the slot still holds that parser's ref.
+                Some(corked) => unsafe { (*corked.cast_const()).park_cork() },
+                None => {}
+            }
         }
         // cork
-        Self::set_corked(Some(self.ref_guard()));
+        let previous = Self::set_corked(Some(self.ref_guard()));
+        debug_assert!(previous.is_none(), "cork slot taken over an occupied slot");
         self.register_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "cork {:p}", self);
         CORK_OFFSET.with(|c| c.set(0));
+    }
+
+    /// Give up the cork slot without writing, so without running JS: the corked bytes move to
+    /// the end of this parser's own `write_buffer`, where a write under backpressure would have
+    /// put them, and its own flush sends them.
+    #[cold]
+    fn park_cork(&self) {
+        debug_assert_eq!(Self::corked(), Some(self.as_ctx_ptr()));
+        // Non-empty only between the back-to-back chunks of one producer, never across sessions.
+        debug_assert!(BATCH_BUFFER.with_borrow(|b| b.is_empty()));
+        bun_output::scoped_log!(H2FrameParser, "park cork {:p}", self);
+        let offset = CORK_OFFSET.with(|c| c.replace(0)) as usize;
+        if offset != 0 {
+            CORK_BUFFER.with_borrow(|buf| {
+                let _ = self.write_buffer.with_mut(|wb| wb.write(&buf[0..offset]));
+            });
+            self.global().vm().deprecated_report_extra_memory(offset);
+            if matches!(self.native_socket.get(), BunSocket::None) {
+                // Later `_write` calls queue behind these bytes instead of overtaking them.
+                self.has_nonnative_backpressure.set(true);
+            }
+            // No transport event follows a park, so the auto flush is the only thing left that
+            // sends these bytes: uncork() reads this and keeps the registration.
+            self.cork_parked.set(true);
+            self.register_auto_flush();
+        }
+        // The slot's ref on self, released now that its bytes are this session's own.
+        let _slot_ref = Self::set_corked(None);
     }
 
     /// Takes the pending bytes out for the write: JS re-entering under it would send them again.
@@ -2710,9 +2756,10 @@ impl H2FrameParser {
             let mut it = StreamResumableIterator::init(self);
             something_was_flushed = false;
             while let Some(stream) = it.next() {
-                // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the
-                // map entry exists. Separate heap allocation from `self`, so no aliasing.
-                let stream = unsafe { &mut *stream };
+                // Each queued frame reaches the transport, and that write runs user JS on a
+                // JS-backed socket or when it hands the cork over. That JS can close this
+                // stream, which flush_queue reads after the write.
+                let mut stream = self.enter_stream_dispatch(stream);
                 // reach backpressure
                 let result = stream.flush_queue(self, &mut written);
                 match result {
@@ -2742,6 +2789,9 @@ impl H2FrameParser {
         // Keep `self` alive across the re-entrant JS calls below.
         let _keepalive = self.keepalive();
 
+        // This flush is what parked bytes waited for, so the registration is no longer owed to
+        // them. Cleared before uncork(), which reads it.
+        self.cork_parked.set(false);
         let mut written = self.uncork();
         written += match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
@@ -2929,7 +2979,11 @@ impl H2FrameParser {
             // takes it.
             return 0;
         }
-        self.unregister_auto_flush();
+        if !self.cork_parked.get() {
+            // Parked bytes are sent by the auto flush and by nothing else, so the
+            // registration stays until a flush takes them (see `park_cork`).
+            self.unregister_auto_flush();
+        }
         bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
         // The slot's ref on `self`, released once the corked bytes are written.
         let _slot_ref = Self::set_corked(None);
@@ -3097,6 +3151,21 @@ impl H2FrameParser {
             return false;
         }
         let _ = self.flush();
+        // Normally the flush's uncork() releases the registration. It does not when this
+        // parser no longer holds the cork: it was parked (`park_cork`), and the flush above
+        // is what its bytes waited for, or a hand-over left it registered with nothing owed.
+        // Anything still buffered is owed to a transport event (writable, 'drain', connect),
+        // so another pass over the deferred queue would find nothing to do.
+        if self.auto_flusher.get().registered.get()
+            && Self::corked() != Some(self.as_ctx_ptr())
+            && !self.cork_parked.get()
+            && !self.pending_header_compression_error.get()
+            && !self.transport_write_fatal.get()
+        {
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            return false;
+        }
         // we will unregister ourselves when the buffer is empty
         true
     }
@@ -5446,15 +5515,17 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
+        // The empty DATA frame below reaches the transport, and that write runs user JS on a
+        // JS-backed socket or when it hands the cork over. That JS can close this stream, and
+        // the close tail of send_data reads it after the write.
+        let mut stream = this.enter_stream_dispatch(stream_ptr);
 
         stream.wait_for_trailers = false;
         let _ = this.send_data(
-            stream,
+            &mut stream,
             b"",
             JSValue::UNDEFINED,
             SendDataOptions {
@@ -7541,6 +7612,7 @@ impl H2FrameParser {
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
+            cork_parked: Cell::new(false),
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
@@ -7786,6 +7858,7 @@ impl H2FrameParser {
         // Free the allocation, not just the length: detach() is reachable from JS without a
         // following `deinit`, so the capacity must be released here.
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        self.cork_parked.set(false);
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());

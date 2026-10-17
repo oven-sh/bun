@@ -5932,6 +5932,106 @@ it("http2 server sends each session's frames to its own peer under interleaved r
   }
 });
 
+// Three HTTP/2 sessions, each tunnelled by CONNECT through one HTTP/2 connection to a proxy, so
+// the transport of an inner session is a stream of the carrier session. When the next inner
+// session takes the thread's cork, the previous one is flushed through its tunnel stream, and
+// the carrier corks a DATA frame from inside that hand-over. The session taking the cork used
+// to take it over that frame, which then never reached the proxy.
+describe("http2 sessions tunnelled through one http2 connection", () => {
+  const TUNNELS = 3;
+  const whole = Array.from({ length: TUNNELS }, (_, i) => ({ status: 200, body: `body-${i}` }));
+
+  async function postThroughTunnels(sameTick) {
+    // The origin echoes each request body, so a response body is what the origin received.
+    const arrived = Array.from({ length: TUNNELS }, () => Promise.withResolvers());
+    const origin = http2.createServer();
+    origin.on("sessionError", () => {});
+    origin.on("stream", (stream, headers) => {
+      arrived[+headers[":path"].slice(1)].resolve();
+      const chunks = [];
+      stream.on("error", () => {});
+      stream.on("data", chunk => chunks.push(chunk));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end(Buffer.concat(chunks));
+      });
+    });
+    // The proxy pipes each CONNECT stream to its own TCP connection to the origin.
+    const proxy = http2.createServer();
+    proxy.on("sessionError", () => {});
+    proxy.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      const upstream = net.connect(+headers[":authority"].split(":")[1], "127.0.0.1", () => {
+        stream.respond({ ":status": 200 });
+        upstream.pipe(stream);
+        stream.pipe(upstream);
+      });
+      upstream.on("error", () => stream.destroy());
+    });
+    await Promise.all([origin, proxy].map(server => new Promise(resolve => server.listen(0, "127.0.0.1", resolve))));
+    const authority = `127.0.0.1:${origin.address().port}`;
+    const carrier = http2.connect(`http://127.0.0.1:${proxy.address().port}`);
+    carrier.on("error", () => {});
+    try {
+      const sessions = [];
+      for (let i = 0; i < TUNNELS; i++) {
+        const tunnel = carrier.request({ ":method": "CONNECT", ":authority": authority });
+        tunnel.on("error", () => {});
+        await once(tunnel, "response");
+        const session = http2.connect(`http://${authority}`, { createConnection: () => tunnel });
+        session.on("error", () => {});
+        await once(session, "remoteSettings");
+        sessions.push(session);
+      }
+
+      const requests = [];
+      const results = [];
+      const open = i => {
+        const req = sessions[i].request({ ":path": `/${i}`, ":method": "POST" });
+        requests.push(req);
+        results.push(
+          new Promise(resolve => {
+            let status;
+            let body = "";
+            let error;
+            req.setEncoding("utf8");
+            req.on("response", headers => (status = headers[":status"]));
+            req.on("data", chunk => (body += chunk));
+            req.on("error", e => (error = e.code));
+            req.on("close", () => resolve(error ? { error } : { status, body }));
+          }),
+        );
+      };
+      const write = req => new Promise(resolve => req.write("bo", resolve));
+
+      if (sameTick === "HEADERS") {
+        for (let i = 0; i < TUNNELS; i++) open(i);
+        for (const req of requests) await write(req);
+      } else {
+        for (let i = 0; i < TUNNELS; i++) {
+          open(i);
+          await arrived[i].promise;
+        }
+        await Promise.all(requests.map(write));
+      }
+      for (const [i, req] of requests.entries()) await new Promise(resolve => req.end(`dy-${i}`, resolve));
+      return await Promise.all(results);
+    } finally {
+      carrier.destroy();
+      proxy.close();
+      origin.close();
+    }
+  }
+
+  it("delivers the HEADERS frames the inner sessions serialize in one tick", async () => {
+    expect(await postThroughTunnels("HEADERS")).toEqual(whole);
+  });
+
+  it("delivers the DATA frames the inner sessions serialize in one tick", async () => {
+    expect(await postThroughTunnels("DATA")).toEqual(whole);
+  });
+});
+
 it("fails the whole session when an outbound header block cannot be encoded", async () => {
   // A header block the HPACK encoder cannot emit is a COMPRESSION_ERROR (9) against the
   // session in node, so the session and the in-flight request both see
@@ -6227,6 +6327,74 @@ it("sendTrailers({}) ends the stream without a trailer block", async () => {
     client?.close();
     server.close();
   }
+});
+
+// sendTrailers({}) ends the stream with an empty DATA frame, and that frame reaches the
+// transport inside the call. Over a user Duplex the transport is user JS, and a cork hand-over
+// runs another session's transport JS as well: either can feed this session a RST_STREAM that
+// frees the stream. The native call read the freed stream after the write (ASAN only).
+it.skipIf(!isASAN)("sendTrailers({}) keeps its stream while the transport write runs JS", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+      const { once } = require("node:events");
+      function frame(type, flags, streamId, body = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(body.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, body]);
+      }
+      const errorCode = code => { const b = Buffer.alloc(4); b.writeUInt32BE(code); return b; };
+      function connect(onWrite) {
+        const transport = new Duplex({ read() {}, write(chunk, enc, cb) { onWrite?.(); cb(); } });
+        const session = http2.connect("http://localhost:1", { createConnection: () => transport });
+        session.on("error", () => {});
+        // The peer's SETTINGS and its ack of ours.
+        session.on("connect", () => transport.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)])));
+        return { session, transport };
+      }
+      let armed = false;
+      let req;
+      const subject = connect();
+      const other = connect(() => {
+        if (!armed) return;
+        armed = false;
+        // RST_STREAM frees the stream; the PING is one more frame in the same read, so the
+        // free is drained before sendTrailers() reads the stream again.
+        subject.transport.push(frame(3, 0, req.id, errorCode(8)));
+        subject.transport.push(frame(6, 0, 0, Buffer.alloc(8)));
+      });
+      await Promise.all([subject, other].map(s => once(s.session, "remoteSettings")));
+      req = subject.session.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      const closed = once(req, "close");
+      const wantTrailers = once(req, "wantTrailers");
+      req.end();
+      await wantTrailers;
+      await new Promise(resolve => setImmediate(resolve));
+      // One tick: the other session corks, sendTrailers takes the cork and flushes it.
+      other.session.ping(Buffer.from("CORKED-O"), () => {});
+      armed = true;
+      req.sendTrailers({});
+      await closed;
+      console.log("ok");
+      process.exit(0);
+    `,
+    ],
+    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("AddressSanitizer");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
 });
 
 it("client connects over a user Duplex that already has a 'data' listener", async () => {
@@ -6680,6 +6848,203 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       }
     },
   );
+
+  // A session over a user Duplex with no peer. `onWrite` runs inside the Duplex write, and
+  // `hold` withholds the write callback, so the transport reports backpressure.
+  function duplexSession(onWrite, options) {
+    const chunks = [];
+    const handed = [];
+    const held = [];
+    const state = { hold: false };
+    const transport = new Duplex({
+      ...options,
+      read() {},
+      write(chunk, enc, cb) {
+        chunks.push(Buffer.from(chunk));
+        onWrite?.();
+        if (state.hold) held.push(cb);
+        else cb();
+      },
+    });
+    // What the session hands the socket, which a saturated Writable buffers before _write.
+    const write = transport.write;
+    transport.write = function (chunk, ...rest) {
+      handed.push(Buffer.from(chunk));
+      return write.call(this, chunk, ...rest);
+    };
+    const session = http2.connect("http://localhost:1", { createConnection: () => transport });
+    session.on("error", () => {});
+    const named = source => (from = 0) =>
+      parseFrames(Buffer.concat(source.slice(from)))
+        .frames.filter(f => f.type !== FRAME.SETTINGS)
+        .map(f => (f.type === FRAME.PING ? f.payload.toString() : Object.keys(FRAME).find(k => FRAME[k] === f.type)));
+    return {
+      session,
+      state,
+      held,
+      // Frames the transport received since `from`. A PING is named by its payload.
+      frames: named(chunks),
+      handedFrames: named(handed),
+      mark: () => chunks.length,
+      handedMark: () => handed.length,
+    };
+  }
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  async function until(condition, turns = 50) {
+    for (let i = 0; i < turns && !condition(); i++) await turn();
+    return condition();
+  }
+
+  // Two sessions share the thread's cork. When B takes it, A's corked frame is flushed through
+  // A's transport first, and that _write issues one more frame: on B, which is in the middle of
+  // taking the cork, or on A, which has just given it up. B used to take the cork over that frame.
+  it.each(["taking", "giving up"])("nested ping() on the session %s the cork while it changes hands", async role => {
+    let armed = false;
+    let issued = false;
+    const a = duplexSession(() => {
+      if (!armed || issued) return;
+      issued = true;
+      (role === "taking" ? b : a).session.ping(Buffer.from("NESTPING"), () => {});
+    });
+    const b = duplexSession();
+    try {
+      await Promise.all([once(a.session, "connect"), once(b.session, "connect")]);
+      await turn();
+      const marks = { a: a.mark(), b: b.mark() };
+      // Same tick: A corks a PING, then B's PING takes the cork.
+      a.session.ping(Buffer.from("CORKED-A"), () => {});
+      armed = true;
+      b.session.ping(Buffer.from("TAKES--B"), () => {});
+      expect(issued).toBe(true);
+
+      await until(() => a.frames(marks.a).length + b.frames(marks.b).length >= 3);
+      expect({ a: a.frames(marks.a), b: b.frames(marks.b) }).toEqual(
+        role === "taking"
+          ? { a: ["CORKED-A"], b: ["NESTPING", "TAKES--B"] }
+          : { a: ["CORKED-A", "NESTPING"], b: ["TAKES--B"] },
+      );
+    } finally {
+      a.session.destroy();
+      b.session.destroy();
+    }
+  });
+
+  // The session whose frame was set aside by the hand-over gets no transport event for it: its
+  // own deferred flush is what sends it. A second hand-over in the same tick used to cancel
+  // that flush, and the frames stayed in the session for good.
+  it.each(["ping", "request"])("a second %s on the session set aside by the hand-over", async second => {
+    let armed = false;
+    const a = duplexSession(() => {
+      if (!armed) return;
+      armed = false;
+      d.session.ping(Buffer.from("NESTED-D"), () => {});
+    });
+    const d = duplexSession();
+    const q = duplexSession();
+    try {
+      await Promise.all([a, d, q].map(s => once(s.session, "connect")));
+      await turn();
+      const mark = d.mark();
+      // One tick: Q takes the cork from A, A's transport JS corks for D, Q sets D aside.
+      a.session.ping(Buffer.from("CORKED-A"), () => {});
+      armed = true;
+      q.session.ping(Buffer.from("TAKES-Q1"), () => {});
+      // D corks again and loses the cork again, now with its set-aside frame still unsent.
+      if (second === "ping") d.session.ping(Buffer.from("SECOND-D"), () => {});
+      else d.session.request({ ":method": "POST", ":path": "/d" }, { endStream: false }).on("error", () => {});
+      q.session.ping(Buffer.from("TAKES-Q2"), () => {});
+
+      await until(() => d.frames(mark).length >= 2);
+      expect(d.frames(mark)).toEqual(second === "ping" ? ["NESTED-D", "SECOND-D"] : ["NESTED-D", "HEADERS"]);
+    } finally {
+      for (const s of [a, d, q]) s.session.destroy();
+    }
+  });
+
+  // The set-aside frame waits in its session, so what the session writes next waits behind it
+  // and the transport receives them in order, even while it completes no write.
+  it("keeps the order of a set-aside frame and the write that follows it", async () => {
+    let armed = false;
+    const a = duplexSession(() => {
+      if (!armed) return;
+      armed = false;
+      d.session.ping(Buffer.from("NESTED-D"), () => {});
+    });
+    // A 1-byte high-water mark makes every write report backpressure.
+    const d = duplexSession(null, { writableHighWaterMark: 1 });
+    const q = duplexSession();
+    try {
+      await Promise.all([a, d, q].map(s => once(s.session, "connect")));
+      await turn();
+      const req = d.session.request({ ":method": "POST", ":path": "/d" }, { endStream: false });
+      req.on("error", () => {});
+      expect(await until(() => d.frames().includes("HEADERS"))).toBe(true);
+      // D's transport stops completing its writes.
+      d.state.hold = true;
+      d.session.ping(Buffer.from("HELD-P1!"), () => {});
+      expect(await until(() => d.held.length === 1)).toBe(true);
+      const marks = { received: d.mark(), handed: d.handedMark() };
+      // One tick: Q takes the cork from A, A's transport JS corks for D, Q sets D aside.
+      a.session.ping(Buffer.from("CORKED-A"), () => {});
+      armed = true;
+      q.session.ping(Buffer.from("TAKES-Q1"), () => {});
+
+      req.write("x");
+      for (let i = 0; i < 5; i++) await turn();
+      // The DATA frame waits for the set-aside PING, which waits for the transport.
+      const handedWhileHeld = d.handedFrames(marks.handed);
+      d.state.hold = false;
+      for (const cb of d.held.splice(0)) cb();
+
+      expect(await until(() => d.frames(marks.received).includes("DATA"), 200)).toBe(true);
+      expect({ handedWhileHeld, received: d.frames(marks.received) }).toEqual({
+        handedWhileHeld: ["NESTED-D"],
+        received: ["NESTED-D", "DATA"],
+      });
+    } finally {
+      for (const s of [a, d, q]) s.session.destroy();
+    }
+  });
+
+  // Taking the cork runs the previous owner's transport write once. That write can issue a
+  // frame on a session whose own transport write issues one back, so the hand-over must not
+  // run a transport write per frame the last one produced.
+  it("runs one transport write per cork hand-over, whatever that write issues", async () => {
+    let depth = 0;
+    let deepest = 0;
+    const issued = [];
+    const nest = other => () => {
+      deepest = Math.max(deepest, ++depth);
+      // Bounded, so that a hand-over which writes per nested frame fails the depth check
+      // below instead of running away.
+      if (issued.length < 5) {
+        const payload = `NEST-00${issued.push("") && issued.length}`;
+        issued[issued.length - 1] = payload;
+        other().session.ping(Buffer.from(payload), () => {});
+      }
+      depth--;
+    };
+    const b = duplexSession(nest(() => c));
+    const c = duplexSession(nest(() => b));
+    const a = duplexSession();
+    try {
+      await Promise.all([a, b, c].map(s => once(s.session, "connect")));
+      await turn();
+      depth = 0;
+      deepest = 0;
+      b.session.ping(Buffer.from("CORKED-B"), () => {});
+      // Takes the cork from B: B's write pings C, C's write pings B, and so on.
+      a.session.ping(Buffer.from("TAKES--A"), () => {});
+      expect(issued.length).toBeGreaterThan(0);
+
+      const sent = () => [...b.frames(), ...c.frames()];
+      const missing = () => issued.filter(payload => !sent().includes(payload));
+      await until(() => missing().length === 0);
+      expect({ deepest, missing: missing() }).toEqual({ deepest: 1, missing: [] });
+    } finally {
+      for (const s of [a, b, c]) s.session.destroy();
+    }
+  });
 });
 
 it("originSet is undefined on a destroyed TLS session that never read it", async () => {

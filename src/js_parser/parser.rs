@@ -1300,6 +1300,9 @@ pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
     pub(crate) is_inside_switch: bool,
     pub(crate) is_outside_fn_or_arrow: bool,
+    /// How many `await` and how many `yield` expressions of this function were visited.
+    pub(crate) await_count: u32,
+    pub(crate) yield_count: u32,
 
     /// This is used to silence unresolvable imports due to "require" calls inside
     /// a try/catch statement. The assumption is that the try/catch statement is

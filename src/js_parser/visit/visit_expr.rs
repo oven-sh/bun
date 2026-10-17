@@ -6,6 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 
 use crate::lexer as js_lexer;
+use crate::lower::lower_decorators::Suspends;
 use crate::p::P;
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
@@ -117,6 +118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
+            p.fn_or_arrow_data_visit.await_count += 1;
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }
@@ -124,6 +126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_yield(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EYield(mut e_) = e.data {
+            p.fn_or_arrow_data_visit.yield_count += 1;
             if let Some(val) = e_.value.as_mut() {
                 p.visit_expr(val);
             }
@@ -1675,6 +1678,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_spread = false;
         let mut has_proto = false;
         for property in e_.properties.slice_mut() {
+            let mut sets_prototype = false;
             if property.kind != G::PropertyKind::Spread {
                 p.visit_expr(
                     property
@@ -1695,6 +1699,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .expect("infallible: variant checked")
                         .eql_comptime(b"__proto__")
                 {
+                    sets_prototype = true;
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);
                         p.log().add_range_error(
@@ -1725,32 +1730,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if let Some(value) = &mut property.value {
-                // Propagate name from property key for decorated anonymous class expressions
-                // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
-                if in_.assign_target == js_ast::AssignTarget::None
-                    && matches!(value.data, Data::EClass(..))
-                    && value
-                        .data
-                        .e_class()
-                        .unwrap()
-                        .should_lower_standard_decorators
-                    && value
-                        .data
-                        .e_class()
-                        .expect("infallible: variant checked")
-                        .class_name
-                        .is_none()
-                    && let Some(key) = property.key
-                    && matches!(key.data, Data::EString(..))
-                {
-                    let key_str = key.data.e_string().expect("infallible: variant checked");
-                    // While E.rs has duplicate impls (E0034), reach the bytes directly
-                    // — class-name keys are parser-produced (UTF-8, no rope).
-                    p.decorator_class_name = if !key_str.is_utf16 {
-                        Some(key_str.data.slice())
-                    } else {
-                        None
-                    };
+                // `{ Foo: class {} }` names the class "Foo". `__proto__: class {}` names nothing.
+                if in_.assign_target == js_ast::AssignTarget::None && !sets_prototype {
+                    (p.decorator_class_name, p.decorator_class_name_is_computed) =
+                        p.decorator_class_name_from_key(property.key, value);
                 }
                 p.visit_expr_in_out(
                     value,
@@ -1760,6 +1743,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
                 p.decorator_class_name = None;
+                p.decorator_class_name_is_computed = false;
             }
 
             if property.initializer.is_some() {
@@ -2783,12 +2767,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Save name from assignment context before visiting (nested visits may overwrite it)
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
+        let name_is_computed = core::mem::take(&mut p.decorator_class_name_is_computed);
 
+        let suspensions = (
+            p.fn_or_arrow_data_visit.await_count,
+            p.fn_or_arrow_data_visit.yield_count,
+        );
         let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
-            *e = p.lower_standard_decorators_expr(expr, &mut e_, decorator_name_from_context);
+            // An `await` or a `yield` in a key, a decorator or the `extends` clause.
+            let suspends = if p.fn_or_arrow_data_visit.yield_count != suspensions.1 {
+                Suspends::Yields
+            } else if p.fn_or_arrow_data_visit.await_count != suspensions.0 {
+                Suspends::Awaits
+            } else {
+                Suspends::No
+            };
+            *e = p.lower_standard_decorators_expr(
+                expr,
+                &mut e_,
+                decorator_name_from_context,
+                name_is_computed,
+                suspends,
+            );
             return;
         }
 

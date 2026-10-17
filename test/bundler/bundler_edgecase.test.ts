@@ -4189,8 +4189,8 @@ describe("bundler", () => {
     run: { file: "/check.js", stdout: `{"x":1} true` },
   });
 
-  // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
-  // accessor or `#private` next to each class. Every class needs its own.
+  // Standard decorator lowering declares `var _init` and `var _dec` next to each
+  // class. Every class needs its own.
   itBundled("edgecase/StandardDecoratorTemporariesPerClass", {
     files: {
       "/entry.js": /* js */ `
@@ -4276,22 +4276,26 @@ describe("bundler", () => {
     },
     run: { stdout: "f g" },
   });
-  // `recv.#m()` on a lowered private method captures the receiver in a `var _obj`
-  // inside the calling method.
-  itBundled("edgecase/StandardDecoratorReceiverTemporaryVsUserBinding", {
+  // A user binding keeps its value and its name next to the temporary `_m_fn`
+  // of a decorated `#private` method and the parameters `o` and `v` of the
+  // functions that the lowering adds.
+  itBundled("edgecase/StandardDecoratorTemporaryVsUserBinding", {
     files: {
       "/entry.js": /* js */ `
-        const _obj = "user";
+        const _m_fn = "user";
         function dec(_, _c) {}
         class A {
           @dec #m() { return "m"; }
-          call(o) { return o.get().#m() + " " + _obj; }
+          @dec #f = 1;
+          accessor x = 1;
+          call(o) { return o.get().#m() + " " + _m_fn; }
+          names() { function v() {} class o {} return v.name + " " + o.name; }
         }
         const a = new A();
-        console.log(a.call({ get: () => a }));
+        console.log(a.call({ get: () => a }), a.names());
       `,
     },
-    run: { stdout: "m user" },
+    run: { stdout: "m user v o" },
   });
 });
 

@@ -708,9 +708,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Name from assignment context for anonymous decorated class expressions.
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub(crate) decorator_class_name: Option<&'a [u8]>,
-    /// The body scope of the class `visit_class` just returned from. Its
-    /// lowering declares the `#private` storage of `accessor` members there.
+    /// A computed key names that class, so only the engine knows the name.
+    pub(crate) decorator_class_name_is_computed: bool,
+    /// The body scope of the class `visit_class` just returned from, for standard decorator lowering.
     pub(crate) visited_class_body: Option<js_ast::StoreRef<Scope>>,
+    /// The expression being visited can run more often than `nearest_stmt_list`, as a parameter default does.
+    pub(crate) nearest_stmt_list_is_shared: bool,
 }
 
 // `binding::ToExprWrapper` type-erases `*P` (which is generic over
@@ -9821,7 +9824,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
+            decorator_class_name_is_computed: false,
             visited_class_body: None,
+            nearest_stmt_list_is_shared: false,
 
             jsx_transform,
 
@@ -9948,11 +9953,16 @@ impl LowerUsingDeclarationsContext {
                     continue;
                 }
                 js_ast::StmtData::SClass(mut c) => {
-                    // An exported class leaves the try block unless it has static blocks or computed keys.
+                    // An exported class leaves the try block unless it has static blocks, computed keys or a `static accessor` value.
                     let runs_code = c.is_export
                         && c.class.properties.slice().iter().any(|property| {
                             property.kind == js_ast::g::PropertyKind::ClassStaticBlock
                                 || property.flags.contains(js_ast::flags::Property::IsComputed)
+                                || (property
+                                    .flags
+                                    .contains(js_ast::flags::Property::IsAccessorStorage)
+                                    && property.flags.contains(js_ast::flags::Property::IsStatic)
+                                    && property.initializer.is_some())
                         });
                     if c.is_export && !runs_code {
                         result.push(stmt);

@@ -257,6 +257,41 @@ describe("Bun.Transpiler", () => {
       ]);
       expect(exitCode).toBe(0);
     });
+    it("bails out when the key names an anonymous function or class", () => {
+      // `({ f: () => {} }).f.name` is "f". The bare value has no name, or takes
+      // the name of whatever it is assigned to.
+      ts.expectPrintedMin_("x = ({ f: () => {} }).f", "x = { f: () => {} }.f");
+      ts.expectPrintedMin_("x = ({ f: async () => {} }).f", "x = { f: async () => {} }.f");
+      ts.expectPrintedMin_("x = ({ f: function() {} }).f", "x = { f: function() {} }.f");
+      ts.expectPrintedMin_("x = ({ f: class {} }).f", "x = { f: class {\n} }.f");
+      ts.expectPrintedMin_('x = ({ f: () => {} })["f"]', "x = { f: () => {} }.f");
+      ts.expectPrintedMin_('x = ({ "a-b": () => {} })["a-b"]', 'x = { "a-b": () => {} }["a-b"]');
+      ts.expectPrintedMin_("x = new ({ f: class {} }).f()", "x = new { f: class {\n} }.f");
+
+      // A value that has a name of its own is still inlined.
+      ts.expectPrintedMin_("x = ({ f: function g() {} }).f", "x = function g() {}");
+      ts.expectPrintedMin_("x = ({ f: class C {} }).f", "x = class C {\n}");
+      ts.expectPrintedMin_("x = ({ f: [() => {}] }).f", "x = [() => {}]");
+    });
+    it("keeps the name an object literal key gives an anonymous function or class", async () => {
+      const src = `
+        const a = ({ aa: async () => {} }).aa;
+        function f() { return ({ bb: () => {} }).bb; }
+        const c = ({ "c-c": function () {} })["c-c"];
+        const d = ({ dd: class {} }).dd;
+        const e = ({ ee: function own() {} }).ee;
+        console.log(JSON.stringify([a.name, f().name, c.name, d.name, e.name, ({ h: () => {} }).h.name]));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["aa", "bb", "c-c", "dd", "own", "h"]);
+      expect(exitCode).toBe(0);
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);

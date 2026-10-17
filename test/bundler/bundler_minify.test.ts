@@ -20,6 +20,28 @@ describe("bundler", () => {
     run: { stdout: "top fn" },
   });
 
+  // A direct eval keeps the `#private` names it can see as they are written.
+  // The renamer must not give one of them to a `#private` name of a class
+  // inside, which would hide it there: `a.#e` in `Inner` read the renamed
+  // `#y` and threw.
+  itBundled("minify/DirectEvalKeepsPrivateNameFromNestedClass", {
+    files: {
+      "/entry.js": /* js */ `
+        class Outer {
+          #e = "outer";
+          static Inner = class {
+            #y = "inner";
+            static read(a, b) { return [a.#e, b.#y]; }
+          };
+          peek() { return eval("this.#e"); }
+        }
+        console.log(new Outer().peek(), Outer.Inner.read(new Outer(), new Outer.Inner()).join());
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "outer outer,inner" },
+  });
+
   // A symbol read through a `with` body keeps its original name. The renamer
   // must not give that name to another symbol the body can see, such as the
   // parameter of the enclosing function: `function f(obj) { var t = 1; with

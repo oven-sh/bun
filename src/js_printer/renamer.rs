@@ -468,9 +468,7 @@ impl MinifyRenamer {
 
                 // Make sure we never generate a reserved name. We only have to worry
                 // about collisions with reserved identifiers for normal symbols, and we
-                // only have to worry about collisions with keywords for labels. We do
-                // not have to worry about either for private names because they start
-                // with a "#" character.
+                // only worry about keywords for labels, and about the names a direct "eval" pins for private names.
                 match ns {
                     symbol::SlotNamespace::Default => {
                         while self.reserved_names.contains_key(name_buf.as_slice()) {
@@ -493,6 +491,11 @@ impl MinifyRenamer {
                     }
                     symbol::SlotNamespace::PrivateName => {
                         name_buf.insert(0, b'#');
+                        while self.reserved_names.contains_key(name_buf.as_slice()) {
+                            name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
+                            next_name += 1;
+                            name_buf.insert(0, b'#');
+                        }
                     }
                     _ => {}
                 }

@@ -65,7 +65,7 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-/// Version 36: `accessor` storage and decorated `#private` fields are native fields.
+/// Version 36: `accessor` storage and decorated `#private` members are members of the class.
 const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk

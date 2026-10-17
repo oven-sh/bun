@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -1058,4 +1058,94 @@ test("b", () => {
       both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
     });
   });
+});
+
+// Only a function that the transpiler adds is left out of the count. A
+// function of the source that never ran is counted, also where its one
+// mapping is on its last byte (`x => x`), or is the mapping of what is before
+// it (an arrow function that is a template tag).
+async function functionsOf(dir: string, testFile: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", testFile],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  expect(await proc.exited).toBe(0);
+
+  const functions: Record<string, string> = {};
+  for (const record of readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8").split("end_of_record")) {
+    const file = /^SF:(.*)$/m.exec(record)?.[1].replaceAll("\\", "/");
+    // A debug build also lists the test file.
+    if (file && !file.endsWith(".test.js")) {
+      functions[file] = `${/^FNH:(\d+)$/m.exec(record)![1]} of ${/^FNF:(\d+)$/m.exec(record)![1]}`;
+    }
+  }
+  return functions;
+}
+
+test("a function of the source that never ran is counted", async () => {
+  using dir = tempDir("cov-never-ran", {
+    "plain.js": `
+export function pick(flag) {
+  if (flag) return [() => 1, x => x, async () => 1, (x => x)\`a\`, { m() { return 1; } }, { get g() { return 1; } }];
+  return 1;
+}
+`,
+    // The same next to an accessor, whose getter and setter the transpiler adds.
+    "members.js": `
+const dec = (value, ctx) => {};
+export class A {
+  @dec accessor a = 1;
+  accessor b = 2;
+  static arrow = () => 1;
+  static identity = x => x;
+  static later = async () => 1;
+  method() { return 1; }
+  get getter() { return 1; }
+  read() { return this.a + this.b; }
+}
+`,
+    "run.test.js": `
+import { expect, test } from "bun:test";
+import { pick } from "./plain.js";
+import { A } from "./members.js";
+test("one function of each file runs", () => {
+  expect([pick(false), new A().read()]).toEqual([1, 3]);
+});
+`,
+  });
+  expect(await functionsOf(String(dir), "./run.test.js")).toEqual({
+    "plain.js": "1 of 7",
+    "members.js": "5 of 10",
+  });
+});
+
+// A report through a source map takes seconds in a debug build.
+test.skipIf(isDebug)("a function of a bundle that never ran is counted through its source map", async () => {
+  using dir = tempDir("cov-never-ran-bundle", {
+    "src/identity.js": `export default x => x;\n`,
+    "src/index.js": `
+export { default as identity } from "./identity.js";
+export function used() {
+  return 1;
+}
+`,
+    "run.test.js": `
+import { expect, test } from "bun:test";
+import { used } from "./dist/index.js";
+test("one function of the bundle runs", () => {
+  expect(used()).toBe(1);
+});
+`,
+  });
+  const build = await Bun.build({
+    entrypoints: [path.join(String(dir), "src", "index.js")],
+    outdir: path.join(String(dir), "dist"),
+    target: "bun",
+    sourcemap: "linked",
+  });
+  expect(build.success).toBe(true);
+  expect(await functionsOf(String(dir), "./run.test.js")).toEqual({ "dist/index.js": "1 of 2" });
 });

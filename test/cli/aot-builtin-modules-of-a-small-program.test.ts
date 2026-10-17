@@ -56,7 +56,7 @@ test("nor do they make bun run --aot compile every built-in module", async () =>
     seconds[entry] = Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
   }
   for (const entry of Object.keys(programs)) {
-    expect({ entry, seconds: seconds[entry], plain: seconds["plain.cjs"], costsAsMuchAsADoor: seconds[entry] > 3 * seconds["plain.cjs"] }).toEqual({
+    expect({ entry, seconds: seconds[entry], plain: seconds["plain.cjs"], costsAsMuchAsADoor: seconds[entry] > 3 * Math.max(seconds["plain.cjs"], 0.1) }).toEqual({
       entry,
       seconds: expect.any(Number),
       plain: expect.any(Number),

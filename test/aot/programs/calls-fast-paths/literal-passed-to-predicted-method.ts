@@ -1,5 +1,6 @@
-// A method of a class of the program is called on a receiver that is only expected to be of that class: it comes out of a call through a variable typed by an ambient function declaration. The argument is an object literal. Where the callee is the method that is expected, the literal is what the parameter's type says; where it is another function, that one gets a plain object. In code that runs once.
-// IR= 1 effect IsClosureOf
+// A method of a class of the program is called on a receiver that is only expected to be of that class: it comes out of a call through a variable typed by an ambient function declaration. The argument is an object literal. The literal is made once, as what the parameter's type says, whichever function is called; another function sees an object that behaves as a plain one. In code that runs once.
+// IR= 1 effect NewObjectWithShape
+// IR= 0 effect IsClosureOf
 type Fn = (n: number) => number;
 type T = { a: string; b: Fn; c: Fn | undefined; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number };
 class Control { #host: T | null = null; attachPart(host: T): void { this.#host = host; } show(): string { const h = this.#host; return h ? h.a + h.b(1) + (h.c ? h.c(2) : "-") + (h.o10 ?? "-") : "none"; } }

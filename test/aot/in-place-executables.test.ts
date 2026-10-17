@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { mkdirSync, renameSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -125,6 +125,39 @@ console.log(import.meta.require(path.join(folder, "..", name)).kept, (await impo
   expect(await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(plain);
   renameSync(app, join(String(dir), "moved-away"));
   expect(await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual({ ...plain, stdout: plain.stdout.replace("false true\n", "false false\n") });
+}, 120_000);
+
+test("an asset is opened and streamed as a file of the disk is", async () => {
+  using dir = tempDir("aot-in-place-opened-asset", {
+    "app/public/hello.txt": "a public file\n",
+    "app/start.cjs": `const fs = require("node:fs");
+const path = require("node:path");
+const file = path.join(__dirname, "public", "hello.txt");
+const text = stream => new Promise((done, fail) => {
+  let all = "";
+  stream.setEncoding("utf8").on("data", part => (all += part)).on("end", () => done(JSON.stringify(all))).on("error", fail);
+});
+(async () => {
+  const fd = fs.openSync(file, "r");
+  const part = Buffer.alloc(4);
+  console.log(fs.readSync(fd, part, 0, 4, 2), part.toString(), fs.fstatSync(fd).size);
+  fs.closeSync(fd);
+  const handle = await fs.promises.open(file, "r");
+  console.log((await handle.stat()).size, JSON.stringify(await handle.readFile("utf8")));
+  await handle.close();
+  console.log(await text(fs.createReadStream(file)), await text(fs.createReadStream(file, { start: 2, end: 5 })));
+  console.log(path.basename(fs.realpathSync.native(file)), path.basename(await fs.promises.realpath(file)));
+})();
+`,
+  });
+  const app = join(String(dir), "app");
+  const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
+  expect(plain).toEqual({ stdout: `4 publ 14\n14 "a public file\\n"\n"a public file\\n" "publ"\nhello.txt hello.txt\n`, stderr: "", exitCode: 0 });
+  const built = await build(app, "./start.cjs", "--asset", "./public");
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
+  renameSync(app, join(String(dir), "moved-away"));
+  expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
 }, 120_000);
 
 test("the folders inside the executable do not show at the root of the disk", async () => {
@@ -254,7 +287,7 @@ const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.wh
 const compileAddon = (to: string) => [
   systemCC!,
   "-shared",
-  "-fPIC",
+  ...(isWindows ? [] : ["-fPIC"]),
   ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
   "-I" + resolve(import.meta.dir, "../../src/runtime/napi"),
   "addon.c",
@@ -262,24 +295,31 @@ const compileAddon = (to: string) => [
   to,
 ];
 const addonSource = `#include <node_api.h>
+#ifdef _WIN32
+#include <windows.h>
+#define HOST(function) ((__typeof__(&function))GetProcAddress(GetModuleHandleW(NULL), #function))
+#else
+#define HOST(function) function
+#endif
 static napi_value hello(napi_env env, napi_callback_info info) {
   napi_value text;
-  napi_create_string_utf8(env, "from a native addon", NAPI_AUTO_LENGTH, &text);
+  HOST(napi_create_string_utf8)(env, "from a native addon", NAPI_AUTO_LENGTH, &text);
   return text;
 }
 NAPI_MODULE_INIT() {
   napi_value function;
-  napi_create_function(env, "hello", NAPI_AUTO_LENGTH, hello, NULL, &function);
-  napi_set_named_property(env, exports, "hello", function);
+  HOST(napi_create_function)(env, "hello", NAPI_AUTO_LENGTH, hello, NULL, &function);
+  HOST(napi_set_named_property)(env, exports, "hello", function);
   return exports;
 }
 `;
 
 test.skipIf(!systemCC)("a native addon finds the library that lay beside it", async () => {
   const isDarwin = process.platform === "darwin";
-  const library = isDarwin ? "libgreeting.dylib" : "libgreeting.so";
+  const library = isDarwin ? "libgreeting.dylib" : isWindows ? "greeting.dll" : "libgreeting.so";
+  const libraryFolder = isWindows ? "vendor/addon" : "vendor/lib";
   using dir = tempDir("aot-in-place-addon-with-a-library", {
-    "app/greeting.c": `const char* greeting(void) { return "from a library beside the addon"; }\n`,
+    "app/greeting.c": `${isWindows ? "__declspec(dllexport) " : ""}const char* greeting(void) { return "from a library beside the addon"; }\n`,
     "app/addon.c": "const char* greeting(void);\n" + addonSource.replace(`"from a native addon"`, "greeting()"),
     "app/start.cjs": `const path = require("node:path");
 console.log(require(path.join(__dirname, "vendor", "addon", ["addon", "node"].join("."))).hello());
@@ -289,8 +329,8 @@ console.log(require(path.join(__dirname, "vendor", "addon", ["addon", "node"].jo
   mkdirSync(join(app, "vendor", "lib"), { recursive: true });
   mkdirSync(join(app, "vendor", "addon"));
   for (const command of [
-    [systemCC!, "-shared", "-fPIC", "greeting.c", "-o", `vendor/lib/${library}`, ...(isDarwin ? ["-install_name", `@rpath/${library}`] : [])],
-    [...compileAddon("vendor/addon/addon.node"), "-Lvendor/lib", "-lgreeting", `-Wl,-rpath,${isDarwin ? "@loader_path" : "$ORIGIN"}/../lib`],
+    [systemCC!, "-shared", ...(isWindows ? [] : ["-fPIC"]), "greeting.c", "-o", `${libraryFolder}/${library}`, ...(isDarwin ? ["-install_name", `@rpath/${library}`] : [])],
+    [...compileAddon("vendor/addon/addon.node"), `-L${libraryFolder}`, "-lgreeting", ...(isWindows ? [] : [`-Wl,-rpath,${isDarwin ? "@loader_path" : "$ORIGIN"}/../lib`])],
   ]) {
     const compiled = await run(app, command);
     expect({ stderr: compiled.exitCode ? compiled.stderr : "", exitCode: compiled.exitCode }).toEqual({ stderr: "", exitCode: 0 });
@@ -330,7 +370,7 @@ test.skipIf(!systemCC)("a native addon that is given as an asset is loaded out o
     "app/start.cjs": `const fs = require("node:fs");
 const path = require("node:path");
 const folder = path.join(__dirname, "prebuilds");
-for (const file of fs.readdirSync(folder)) console.log(file, require(path.join(folder, file)).hello());
+for (const file of fs.readdirSync(folder).filter(file => file.endsWith(".node"))) console.log(file, require(path.join(folder, file)).hello());
 `,
   });
   const app = join(String(dir), "app");

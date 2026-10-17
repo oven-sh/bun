@@ -1,16 +1,20 @@
 #include "root.h"
 #include <JavaScriptCore/InitializeThreading.h>
 
-extern "C" void Bun__installCompilers()
+extern "C" NEVER_INLINE void Bun__installCompilers()
 {
     JSC::installCompilers();
 }
 
-extern "C" bool Bun__AOT__hasCompiler()
+extern "C" NEVER_INLINE bool Bun__AOT__hasCompiler()
 {
 #if ENABLE(AOT)
-    return true;
+    bool hasCompiler = true;
 #else
-    return false;
+    bool hasCompiler = false;
 #endif
+#if !OS(WINDOWS)
+    asm volatile("" : "+r"(hasCompiler));
+#endif
+    return hasCompiler;
 }

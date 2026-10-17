@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
-test.skipIf(isWindows)("compiling and running a one-line program takes little memory", async () => {
+test("compiling and running a one-line program takes little memory", async () => {
   using folder = tempDir("aot-memory-of-small-programs", { "program.ts": `console.log("one line");\n` });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run", "--debug-aot", "program.ts"],

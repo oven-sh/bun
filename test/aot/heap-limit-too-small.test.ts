@@ -1,12 +1,12 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 // The first 16 MB of the range of address space that holds the objects of an ahead-of-time compiled program are left unused. A range that is
 // no larger has room for no object: the program says so and ends, it does not crash.
 
-test.skipIf(isWindows).concurrent.each(["16", "1"])(
+test.concurrent.each(["16", "1"])(
   "a compiled program whose range of address space for objects is %s MB says that it is too small",
   async size => {
     using folder = tempDir("aot-heap-limit-too-small", { "program.ts": `console.log("ran");\n` });

@@ -2,6 +2,7 @@ feature tools the Bun command line, the type checker, the linter, the formatter 
 feature jit the just-in-time compilers
 door tools exit ^bun_runtime::cli::command::(exec_\w+|bun_info|bun_create|bun_getcompletes|which|tag_print_help)$
 door tools return ^Bun__AOT__hasCompiler$
+door tools return ^Bun__hasTypeChecker$
 door tools return ^JSC::installImageCompiler\(\)$
 door tools exit ^__bun_runtime_start_early_analysis$
 door tools exit ^__bun_runtime_analyze_early_sources$

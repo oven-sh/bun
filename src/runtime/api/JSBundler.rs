@@ -1025,6 +1025,18 @@ pub(crate) mod js_bundler {
             if let Some(dts) = config.get_boolean_loose(global_this, "dts")? {
                 this.dts = dts;
             }
+            #[cfg(not(windows))]
+            if this.check || this.dts {
+                unsafe extern "C" {
+                    safe fn Bun__hasTypeChecker() -> bool;
+                }
+                if !Bun__hasTypeChecker() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "{}: this executable was built with --compile-trim-runtime, without the type checker",
+                        if this.check { "check" } else { "dts" }
+                    )));
+                }
+            }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =
                     config.get_boolean_loose(global_this, "foldChunksForTesting")?

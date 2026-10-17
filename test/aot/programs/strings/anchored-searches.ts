@@ -5,7 +5,7 @@
 // CALLS- lastIndexOfBelowZero ReverseFind|LastIndexOf
 // CALLS+ lastIndexOfOne operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
 // CALLS+ lastIndexOfAnywhere operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
-// CALLS+ oldEndsWith operationAOTTypedStringFind8|operationAOTTypedStringIndexOf
+// CALLS+ oldEndsWith StringFindString
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

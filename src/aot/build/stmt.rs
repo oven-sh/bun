@@ -1831,7 +1831,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             names.retain(|&name| self.c.is_referenced_in_tdz(name));
             self.declare(fx, &names);
         }
-        let value = self.expr(fx, expr);
+        let value = self.lower_scalar_iterable(fx, expr);
         if opened {
             self.close_env(fx);
         }

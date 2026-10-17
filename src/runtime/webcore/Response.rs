@@ -1310,12 +1310,17 @@ pub(crate) struct InitParts {
 }
 
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn Response__ensureFetchHeaders(response: &Response, global_this: &JSGlobalObject) -> *mut FetchHeaders {
+    response.get_or_create_headers(global_this).map_or(core::ptr::null_mut(), |headers| headers.as_ptr())
+}
+
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn Response__createFromResponse(global_this: &JSGlobalObject, other: JSValue) -> JSValue {
     bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_response(global_this, other))
 }
 
 /// # Safety
-/// `header_names_and_values` must point to `2 * header_count` values; each even one is a string.
+/// `header_names_and_values` must point to `2 * header_count` values; each even one is the number of an `HTTPHeaderName` or a string that is a token and not one of those names.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Response__createFromParts(
     global_this: &JSGlobalObject,
@@ -1331,7 +1336,7 @@ pub(crate) unsafe extern "C" fn Response__createFromParts(
 }
 
 /// # Safety
-/// `header_names_and_values` must point to `2 * header_count` values; each even one is a string.
+/// `header_names_and_values` must point to `2 * header_count` values; each even one is the number of an `HTTPHeaderName` or a string that is a token and not one of those names.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Response__createJSONFromParts(
     global_this: &JSGlobalObject,

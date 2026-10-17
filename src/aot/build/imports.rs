@@ -1138,6 +1138,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let text = self.imported_text(file, specifier).unwrap_or_default();
                 return self.emit_asset_value(fx, file, specifier, text);
             }
+            ImportSource::External { specifier, name: None | Some(known::default) } if self.is_bun_object_of_a_module_graph(fx.file, specifier) => return self.external_module(fx, specifier),
             ImportSource::External { specifier, name: None } if self.c.atoms().bytes(specifier) == b"bun" => {
                 let bun = self.out.strs.intern(b"Bun");
                 return self.emit_throwing(fx, Op::FreeGet { name: bun, is_typeof: false });

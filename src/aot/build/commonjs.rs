@@ -1681,7 +1681,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn dynamic_require_base_path(&self, file: FileId) -> Option<Vec<u8>> {
         let finds_entry_points_by_path = self.shared.constants.source_path_to_url.is_none() && self.shared.bundle.is_some() && self.shared.entry_points().len() > 1;
-        (finds_entry_points_by_path && !self.files.module(file).file_loader_entry_points.is_empty()).then(|| crate::original_path(self.files.module(file).file_name()).to_vec())
+        (finds_entry_points_by_path && !self.files.module(file).file_loader_entry_points.is_empty()).then(|| crate::runtime_path(crate::original_path(self.files.module(file).file_name())))
     }
 
     fn require_function_path(&mut self, file: FileId) -> Option<Vec<u8>> {
@@ -2002,6 +2002,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if self.is_bundle_only_import(fx.file, specifier) {
                 return Some(self.unsupported(fx, hir[c.callee].pos, "a `require` of a file that is neither code nor a constant"));
             }
+            if self.is_bun_object_of_a_module_graph(fx.file, specifier) {
+                return Some(self.fetch_external_module(fx, fx.file, specifier));
+            }
             let text = self.c.atoms().bytes(specifier);
             let is_path = text.starts_with(b"./") || text.starts_with(b"../") || text.starts_with(b"/");
             let require = if is_path || !super::imports::is_builtin_specifier(text) { self.own_require_function(fx) } else { None };
@@ -2080,9 +2083,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.branch(fx, is_missing, first, there);
             fx.b.seal(first);
             fx.b.switch_to(first);
-            let requested = self.host_resolved_specifier(fx.file, specifier);
-            let requested = self.str(requested);
-            let namespace = self.emit_throwing(fx, Op::ExternalModule(requested));
+            let namespace = self.fetch_external_module(fx, fx.file, specifier);
             self.emit(fx, Op::GlobalSet(global, namespace));
             fx.b.jump(there);
             fx.b.seal(there);

@@ -1393,6 +1393,10 @@ impl<'p, 's> Checker<'p, 's> {
                 let own = self.type_of_expr(file, e);
                 return self.with_unknown_elements(own);
             }
+            ExprKind::Dot { obj, .. } if self.is_string_by_type_that_may_be_a_number(file, obj) => {
+                let own = self.type_of_expr(file, e);
+                return self.union(&[own, TypeId::UNDEFINED]);
+            }
             ExprKind::Dot { .. } => {
                 return match self.coerced_property_read(file, e) {
                     Some((found, target)) => self.coerced_type(found, target),
@@ -2067,7 +2071,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_external_element(&mut self, file: FileId, element: ExprId) -> bool {
         match self.hir(file)[element].kind {
             ExprKind::Spread(operand) => self.is_derived_from_prediction(file, operand, 0) || self.holds_unknown_elements(file, operand) || self.is_predicted(file, operand),
-            _ => self.is_derived_from_prediction(file, element, 0) || self.holds_unknown_elements(file, element),
+            _ => self.is_derived_from_prediction(file, element, 0) || self.holds_unknown_elements(file, element) || self.is_string_by_type_that_may_be_a_number(file, element),
         }
     }
 
@@ -4663,7 +4667,8 @@ impl<'p, 's> Checker<'p, 's> {
                 if declared != TypeId::UNRESOLVED && self.reads_container_with_unknown_elements(file, e, obj, name) {
                     declared = self.with_unknown_elements(declared);
                 }
-                let may_be_undefined = matches!(found, Some((_, Found::ByIndex))) || field.is_some_and(|field| self.field_may_be_uninitialized(field));
+                let is_undefined_on_a_number = self.is_string_by_type_that_may_be_a_number(file, obj) && self.type_of_property_of_type(TypeId::NUMBER, name).is_none();
+                let may_be_undefined = is_undefined_on_a_number || matches!(found, Some((_, Found::ByIndex))) || field.is_some_and(|field| self.field_may_be_uninitialized(field));
                 Some(ReferenceRead { declared, is_narrowing_reliable: false, may_be_undefined, is_asserted: false })
             }
             ExprKind::Index { obj, index, .. } if !matches!(hir[obj].kind, ExprKind::Super) => {
@@ -5002,6 +5007,18 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => false,
         }
+    }
+
+    pub(super) fn is_string_by_type_that_may_be_a_number(&mut self, file: FileId, e: ExprId) -> bool {
+        if e.is_none() {
+            return false;
+        }
+        let checked = self.type_of_expr(file, e);
+        if self.is_uninformative(checked) || !self.every_type(checked, |c, part| c.is_string_like(part) || c.is_nullish(part)) {
+            return false;
+        }
+        let produced = self.result_type_of(file, e);
+        self.some_type(produced, |_, part| part == TypeId::NUMBER)
     }
 
     fn is_assigned_a_sum_that_may_be_a_number(&mut self, file: FileId, sym: Sym, declared: TypeId) -> bool {
@@ -6530,6 +6547,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn refers_to_global(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
         self.bound(file).expr_symbol[e.idx()].is_none()
+            && !self.module_graph_may_replace_in(file, name)
             && self.symbol_of_identifier(file, e, name).is_some_and(|found| self.hir(found.file).kind == FileKind::Declaration)
     }
 

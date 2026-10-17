@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { writeFileSync } from "fs";
 import { join } from "path";
 
 const python = Bun.which("python3");
+const pythonHasFcntlAndResource = !isWindows;
 
 function report(lines: [number, string, string][]) {
   return lines.map(([samples, dso, symbol]) => `${String(samples).padStart(8)}  ${dso.padEnd(18)}[.] ${symbol}\n`).join("");
@@ -67,7 +68,7 @@ test.skipIf(!python)("measure/layers.py charges every sample to the layer that o
   const shares = run.stdout
     .toString()
     .trim()
-    .split("\n")
+    .split(/\r?\n/)
     .slice(2)
     .map(line => line.split(" | ").slice(-5).join(" ").replace(/ \|$/, "").replace(/\s+/g, " ").trim());
   expect(shares).toEqual([
@@ -142,7 +143,7 @@ test.skipIf(!python)("measure/compare.py prints no number for a row that was rea
   expect(printed).not.toContain("7777");
 });
 
-test.skipIf(!python)("measure/measure.py runs every column from a copy whose path has the same length", () => {
+test.skipIf(!python || !pythonHasFcntlAndResource)("measure/measure.py runs every column from a copy whose path has the same length", () => {
   using dir = tempDir("aot-servers-copies", {});
   const paths = python3(
     String(dir),

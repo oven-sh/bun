@@ -43,7 +43,7 @@ inline JSC::JSObject* getDOMConstructor(JSC::VM& vm, const Zig::GlobalObject& gl
     Zig::GlobalObject& mutableGlobalObject = const_cast<Zig::GlobalObject&>(globalObject);
     mutableGlobalObject.constructors().array()[static_cast<unsigned>(constructorID)].set(vm, &globalObject, constructor);
 #if ENABLE(AOT)
-    static_assert(JSC::AOT::Typed::firstDOMConstructorHostClass + numberOfDOMConstructors <= JSC::AOT::Typed::maxNumberOfHostClasses && static_cast<unsigned>(DOMConstructorID::DOMURL) == 11);
+    static_assert(JSC::AOT::Typed::firstDOMConstructorHostClass + numberOfDOMConstructors <= JSC::AOT::Typed::maxNumberOfHostClasses && static_cast<unsigned>(DOMConstructorID::DOMURL) == 11 && static_cast<unsigned>(DOMConstructorID::URLSearchParams) == 41);
     JSC::AOT::Typed::didCreateHostClassStructure(&mutableGlobalObject, JSC::AOT::Typed::firstDOMConstructorHostClass + static_cast<unsigned>(constructorID), constructor->structure());
 #endif
     return constructor;

@@ -50,7 +50,7 @@ function againstCodePoints(text, i) {
   let answers = "";
   for (let k = 0; k < 4; k++) {
     const c = String(text).codePointAt(k);
-    answers += " " + +(i < c) + +(i <= c) + +(i > c) + +(i >= c) + +(c < i) + +(c <= i) + +(c > i) + +(c >= i);
+    answers += " " + (i < c ? 1 : 0) + (i <= c ? 1 : 0) + (i > c ? 1 : 0) + (i >= c ? 1 : 0) + (c < i ? 1 : 0) + (c <= i ? 1 : 0) + (c > i ? 1 : 0) + (c >= i ? 1 : 0);
   }
   return answers;
 }

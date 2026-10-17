@@ -5,7 +5,7 @@
 // the object looks like afterwards, and what an object that nobody touched looks like. There --aot may differ from plain Bun in
 // two ways only: the call fails with an error and leaves the object untouched, or typed code that reads the object afterwards throws.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
+import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
 import { built, slot, spawned, unsupported } from "./run-programs";
@@ -13,19 +13,28 @@ import { built, slot, spawned, unsupported } from "./run-programs";
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const programs = join(import.meta.dir, "napi-addon");
 
-if (!isWindows && !systemCC) console.error("SKIPPED: test/aot/napi-addon.test.ts: there is no C compiler: not in $CC, no cc, gcc or clang");
+if (!systemCC) console.error("SKIPPED: test/aot/napi-addon.test.ts: there is no C compiler: not in $CC, no cc, gcc or clang");
 
-describe.skipIf(isWindows || !systemCC || !!unsupported)("compile/aot/napi-addon", () => {
+describe.skipIf(!systemCC || !!unsupported)("compile/aot/napi-addon", () => {
   const folder = String(tempDir("aot-napi-addon", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const addon = join(folder, "addon.node");
 
   beforeAll(async () => {
+    const functionsOfTheHost = join(folder, "functions-of-the-host.h");
+    if (isWindows) {
+      const called = new Set(readFileSync(join(programs, "addon.c"), "utf8").match(/\bnapi_\w+(?=\()/g));
+      writeFileSync(
+        functionsOfTheHost,
+        `#include <node_api.h>\nvoid* GetModuleHandleW(const void*);\nvoid* GetProcAddress(void*, const char*);\n#define HOST(function) ((__typeof__(&function))GetProcAddress(GetModuleHandleW(NULL), #function))\n` +
+          [...called].map(name => `#define ${name} HOST(${name})\n`).join(""),
+      );
+    }
     const compile = await spawned(
       [
         systemCC!,
         "-shared",
-        "-fPIC",
+        ...(isWindows ? ["-include", functionsOfTheHost] : ["-fPIC"]),
         ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
         "-I" + resolve(import.meta.dir, "../../src/runtime/napi"),
         join(programs, "addon.c"),

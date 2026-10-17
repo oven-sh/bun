@@ -1020,6 +1020,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Ident(written) = self.hir(file)[e].kind else { return false };
         self.bound(file).expr_symbol[e.idx()].is_none()
             && self.atoms().bytes(written) == name
+            && !self.module_graph_may_replace_in(file, written)
             && self.symbol_of_identifier(file, e, written).is_some_and(|found| self.hir(found.file).kind == FileKind::Declaration)
     }
 

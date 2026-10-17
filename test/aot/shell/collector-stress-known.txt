@@ -1,10 +1,16 @@
 # Programs that collector-stress.py does not judge, and why.
+data-from-outside/objects-with-their-own-prototype-pass-an-open-type-without-the-runtime    counts calls into the runtime
+data-from-outside/casts-of-objects-with-their-own-prototype-do-not-enter-the-runtime    counts calls into the runtime
+strings/a-loop-over-a-substring-does-not-flatten-it    counts calls into the runtime
+async-and-generators/many-generator-closures-called-in-turn-find-their-structure-at-once    counts calls into the runtime
+data-from-outside/objects-with-their-own-prototype-pass-a-cast-without-the-whole-check    counts calls into the runtime
 data-from-outside/objects-born-by-a-spread-are-copied-without-the-runtime    counts calls into the runtime
 data-from-outside/fresh-literals-with-literal-fields-are-copied-without-the-runtime    counts calls into the runtime
 data-from-outside/union-members-and-literal-fields-convert-without-the-runtime    counts calls into the runtime
 data-from-outside/conversion-plans-cover-field-kinds    counts calls into the runtime
 data-from-outside/fresh-literals-are-copied-into-their-record-type    counts calls into the runtime
 data-from-outside/plain-objects-holding-references-convert-quickly    counts calls into the runtime
+data-from-outside/json-parse-shares-values-that-come-again    counts cells of the heap
 calls-fast-paths/class-objects-not-materialized    counts cells of the heap
 calls-fast-paths/classes-that-extend-builtins    counts cells of the heap
 classes-and-closures/property-stores-on-new-functions    counts calls into the runtime

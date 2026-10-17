@@ -4,7 +4,7 @@
 // run real files and show their real paths.
 import { expect } from "bun:test";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./run-programs";
 import { describe, test } from "./supported";
@@ -107,7 +107,12 @@ function project() {
 }
 
 // What plain Bun prints, with the build's folder replaced by the root of the executable's own files.
-const inExecutable = (text: string, app: string) => text.replaceAll(join(app, "..") + "/above.ts", "/$bunfs/root/_.._/above.ts").replaceAll(app, "/$bunfs/root");
+const inExecutable = (text: string, app: string) =>
+  text
+    .replaceAll(join(app, "..", "above.ts"), "/$bunfs/root/_.._/above.ts")
+    .replaceAll(app, "/$bunfs/root")
+    .replaceAll(JSON.stringify(app).slice(1, -1), "/$bunfs/root")
+    .replace(/\/\$bunfs\/root[^\s:)",]*/g, path => path.replace(/\\+/g, "/"));
 
 describe.concurrent("the file of a stack frame", () => {
   test("in an executable: /$bunfs/root/ and the path from the build's folder", async () => {
@@ -119,7 +124,7 @@ describe.concurrent("the file of a stack frame", () => {
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: inExecutable(plain.stdout, at.app), exitCode: 0 });
     expect(compiled.stdout).toContain("typed: at viaTyped (/$bunfs/root/src/deep/typed.ts:4:");
     expect(compiled.stdout).toContain("package: at viaPackage (/$bunfs/root/node_modules/frames-of-a-package/lib/index.js:1:");
-    expect(readFileSync(join(at.app, "../program")).includes(at.app)).toBe(false);
+    expect(readFileSync(join(at.app, isWindows ? "../program.exe" : "../program")).includes(at.app)).toBe(false);
   }, 120_000);
 
   test("in an executable: what packages do with the file of a frame", async () => {
@@ -172,6 +177,6 @@ describe.concurrent("the file of a stack frame", () => {
     if (build) built(await spawned([bunExe(), ...build], at.app, bunEnv));
     const ran = await spawned(build ? [join(at.app, "../program")] : [bunExe(), "run", "--aot", "main.ts"], at.app, bunEnv);
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    expect(ran.stdout).toContain(`typed: at viaTyped (${at.app}/src/deep/typed.ts:4:`);
+    expect(ran.stdout).toContain(`typed: at viaTyped (${join(at.app, "src", "deep", "typed.ts")}:4:`);
   }, 120_000);
 });

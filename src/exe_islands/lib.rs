@@ -3,6 +3,7 @@ mod elf;
 mod macho;
 
 use bun_collections::index_sort::sort_slice_by_key;
+use bun_core::strings;
 use core::ops::Range;
 
 use bytes::{slice, slice_mut, u16_at, u32_at, u64_at, usize_at};
@@ -154,7 +155,7 @@ fn hexadecimal(text: &[u8]) -> Result<u64> {
 
 impl<'a> Table<'a> {
     fn parse(text: &'a [u8]) -> Result<Table<'a>> {
-        let mut lines = text.split(|byte| *byte == b'\n');
+        let mut lines = strings::split(text, b"\n");
         if lines.next() != Some(b"bun-islands 1") {
             return Err(Error::NoIslands);
         }
@@ -165,7 +166,7 @@ impl<'a> Table<'a> {
             doors: Vec::new(),
         };
         for line in lines {
-            let mut words = line.split(|byte| *byte == b' ');
+            let mut words = strings::split(line, b" ");
             let kind = words.next().unwrap_or_default();
             let mut word = || words.next().ok_or(Error::InvalidExecutable);
             match kind {
@@ -173,8 +174,7 @@ impl<'a> Table<'a> {
                 b"feature" => table.features.push(word()?),
                 b"island" => {
                     let addresses = hexadecimal(word()?)?..hexadecimal(word()?)?;
-                    let needed_by = word()?
-                        .split(|byte| *byte == b',')
+                    let needed_by = strings::split(word()?, b",")
                         .map(|name| table.feature(name))
                         .collect::<Result<Vec<usize>>>()?;
                     table.islands.push(Island { addresses, needed_by });

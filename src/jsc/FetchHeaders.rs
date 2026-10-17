@@ -118,7 +118,7 @@ impl FetchHeaders {
     }
 
     /// # Safety
-    /// `names_and_values` must point to `2 * count` values; each even one is a string.
+    /// `names_and_values` must point to `2 * count` values; each even one is the number of an `HTTPHeaderName` or a string that is a token and not one of those names.
     pub unsafe fn create_from_names_and_values(
         global: &JSGlobalObject,
         count: u32,

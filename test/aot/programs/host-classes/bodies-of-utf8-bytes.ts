@@ -1,4 +1,4 @@
-// request.json(), response.json() and blob.json() on bodies of bytes: whatever the bytes are, twice each, so that the second goes by what the first has taught.
+// request.json(), response.json() and blob.json() on bodies of bytes: whatever the bytes are, twice each. The parser that expects keys tries a text once sixteen that begin like it have gone by, and while texts that begin so serve it well: so sixteen go by first, and four plain bodies are read before every other.
 function describe(value: unknown): string {
   if (value === null || typeof value !== "object") return typeof value + ":" + String(value);
   if (Array.isArray(value)) return "[" + value.map(describe).join() + "]";
@@ -36,9 +36,16 @@ const readers: [string, (body: Uint8Array<ArrayBuffer>) => Promise<unknown>][] =
   ["response", body => new Response(body).json()],
   ["blob", body => new Blob([body]).json()],
 ];
+const plain = bodies[0]![1];
+const beginsLikePlain = (body: Uint8Array<ArrayBuffer>) => plain.subarray(0, 8).every((byte, at) => body[at] === byte);
+for (const [, body] of bodies) {
+  if (body !== plain && beginsLikePlain(body)) continue;
+  for (let turn = 0; turn < 16; turn++) await new Response(body).json().catch(() => {});
+}
 for (const [reader, read] of readers) {
   for (const [label, body] of bodies) {
     for (let turn = 0; turn < 2; turn++) {
+      for (let earned = 0; earned < 4; earned++) await read(plain);
       try {
         const value = (await read(body)) as { customer?: { name?: string } };
         console.log(reader, label, turn, describe(value), typeof value?.customer?.name === "string" ? codes(value.customer.name) : "");

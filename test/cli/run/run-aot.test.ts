@@ -77,7 +77,7 @@ describe.skipIf(!supported)("a file that is imported for its path", () => {
       import { read } from "./helper.ts";
       console.log(read(first));
       console.log(read(second));
-      console.log(first === second, [first, second].map(path => path.split("/").pop()!.slice(0, 5)).join());
+      console.log(first === second, [first, second].map(path => path.split(/[\\\\/]/).pop()!.slice(0, 5)).join());
     `,
     "worker.ts": `
       import first from "./first.bin" with { type: "file" };
@@ -293,7 +293,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
       },
       "entry.cjs",
     );
-    expect(stdout).toMatch(
+    expect(stdout.replaceAll("\\", "/")).toMatch(
       /^Error: thrown\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at load \(\/entry\.cjs:4:23\)\n    at <anonymous> \(\/entry\.cjs:9:\d+\)\n$/,
     );
   });
@@ -435,7 +435,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
     const { stdout } = await expectSameAsBunRun(
       {
         "entry.ts": `
-          const worker = new Worker(new URL("./worker.ts", import.meta.url).href, { preload: [new URL("./preload.ts", import.meta.url).pathname] });
+          const worker = new Worker(new URL("./worker.ts", import.meta.url).href, { preload: [Bun.fileURLToPath(new URL("./preload.ts", import.meta.url))] });
           worker.addEventListener("error", event => { console.log("error:", event.message.includes("thrown behind an await")); });
           worker.addEventListener("close", () => { console.log("closed"); });
         `,
@@ -483,7 +483,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         const extensions = require.extensions as Record<string, (module: any, filename: string) => void>;
         const { ".js": js, ".ts": ts } = extensions;
         const seen: string[] = [];
-        const nameOf = (filename: string) => filename.slice(filename.lastIndexOf("/") + 1);
+        const nameOf = (filename: string) => filename.split(/[\\\\/]/).pop()!;
         extensions[".js"] = (module, filename) => (seen.push(nameOf(filename)), js(module, filename));
         extensions[".ts"] = (module, filename) => (seen.push(nameOf(filename)), ts(module, filename));
         console.log(require("./common"), require("./module.ts").name, seen.join());
@@ -515,7 +515,8 @@ describe.skipIf(!supported)("bun run --aot", () => {
         }
         for (let i = 0; i < 4; i++) {
           storeTyped(process.env, "v" + i);
-          const child = Bun.spawnSync({ cmd: ["/bin/sh", "-c", "echo $STORED_BY_A_TYPED_SITE"], env: process.env as Record<string, string> });
+          const echo = process.platform === "win32" ? ["cmd.exe", "/c", "echo %STORED_BY_A_TYPED_SITE%"] : ["/bin/sh", "-c", "echo $STORED_BY_A_TYPED_SITE"];
+          const child = Bun.spawnSync({ cmd: echo, env: process.env as Record<string, string> });
           lines.push(process.env.STORED_BY_A_TYPED_SITE + " " + child.stdout.toString().trim());
         }
         console.log(lines.join("\\n"));
@@ -724,7 +725,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         "entry.ts": `
           import { name } from "./imported.ts";
           const [imported, later, failing] = ["./imported.ts", "./later.ts", "./failing.ts"].map(path => require.resolve(path));
-          const names = () => Object.keys(require.cache).map(key => key.slice(key.lastIndexOf("/") + 1)).sort().join();
+          const names = () => Object.keys(require.cache).map(key => key.split(/[\\\\/]/).pop()!).sort().join();
           console.log(name, names(), imported in require.cache, require.cache[imported]?.exports?.name, import.meta.path in require.cache);
           console.log(later in require.cache);
           await import("./later.ts");
@@ -969,6 +970,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
     using dir = tempDir("run-aot", {
       "package.json": JSON.stringify({ name: "app", scripts: { start: "echo the script ran" } }),
       "node_modules/.bin/tool": "#!/bin/sh\necho the tool ran\n",
+      "node_modules/.bin/tool.cmd": "@echo the tool ran\r\n",
       "script.sh": "echo the shell script ran\n",
     });
     chmodSync(join(String(dir), "node_modules/.bin/tool"), 0o755);
@@ -984,7 +986,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
       "app.ts": `console.log("the executable runs", Object.isFrozen(Array.prototype));`,
       "build.ts": `
         const results = await Promise.all(
-          [1, 2].map(n => Bun.build({ entrypoints: ["./app.ts"], compile: { aot: true, outfile: process.argv[2] + "/app" + n } })),
+          [1, 2].map(n => Bun.build({ entrypoints: ["./app.ts"], compile: { aot: true, outfile: process.argv[2] + "/app" + n + ".exe" } })),
         );
         console.log(results.map(result => result.success).join());
       `,
@@ -994,9 +996,9 @@ describe.skipIf(!supported)("bun run --aot", () => {
       expect({ stdout, exitCode }).toEqual({ stdout: "true,true\n", exitCode: 0 });
     }
     const hashOf = async (path: string) => Bun.hash(await Bun.file(join(String(dir), path)).bytes());
-    expect(await hashOf("compiled/app1")).toBe(await hashOf("plain/app1"));
-    expect(await hashOf("compiled/app2")).toBe(await hashOf("plain/app2"));
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "compiled/app1")], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    expect(await hashOf("compiled/app1.exe")).toBe(await hashOf("plain/app1.exe"));
+    expect(await hashOf("compiled/app2.exe")).toBe(await hashOf("plain/app2.exe"));
+    await using proc = Bun.spawn({ cmd: [join(String(dir), "compiled/app1.exe")], env: bunEnv, stdout: "pipe", stderr: "inherit" });
     expect(await proc.stdout.text()).toBe("the executable runs true\n");
     expect(await proc.exited).toBe(0);
   });

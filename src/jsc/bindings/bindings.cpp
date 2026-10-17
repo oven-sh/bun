@@ -134,6 +134,8 @@
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "HTTPParsers.h"
+#include "AOTHTTPHeaderNames.h"
+#include "JavaScriptCore/AOTFunction.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
 
@@ -2453,20 +2455,21 @@ extern "C" WebCore::FetchHeaders* WebCore__FetchHeaders__createFromNamesAndValue
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (!count)
         return nullptr;
-    Vector<KeyValuePair<String, String>> record;
-    record.reserveInitialCapacity(count);
+    Vector<String, 8> values;
+    values.reserveInitialCapacity(count);
     for (unsigned i = 0; i < count; ++i) {
-        String name = JSC::asString(JSC::JSValue::decode(namesAndValues[2 * i]))->value(globalObject);
+        values.append(JSC::JSValue::decode(namesAndValues[2 * i + 1]).toWTFString(globalObject));
         RETURN_IF_EXCEPTION(scope, nullptr);
-        String value = JSC::JSValue::decode(namesAndValues[2 * i + 1]).toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        record.append(KeyValuePair<String, String>(WTF::move(name), WTF::move(value)));
     }
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    WebCore::propagateException(*globalObject, scope, headers->fill(WebCore::FetchHeaders::Init(WTF::move(record))));
-    if (scope.exception()) {
-        headers->deref();
-        return nullptr;
+    for (unsigned i = 0; i < count; ++i) {
+        JSC::JSValue name = JSC::JSValue::decode(namesAndValues[2 * i]);
+        auto result = name.isInt32() ? headers->append(static_cast<WebCore::HTTPHeaderName>(name.asInt32()), values[i]) : headers->appendUncommonToken(JSC::asString(name)->value(globalObject).data, values[i]);
+        if (result.hasException()) [[unlikely]] {
+            WebCore::propagateException(*globalObject, scope, WTF::move(result));
+            headers->deref();
+            return nullptr;
+        }
     }
     return headers;
 }
@@ -2713,26 +2716,58 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 }
 extern "C" WebCore::FetchHeaders* Request__fetchHeadersOrParsedRequest(void* request, void** parsedRequest);
 extern "C" WebCore::FetchHeaders* Request__ensureFetchHeaders(void* request, JSC::JSGlobalObject*);
+extern "C" WebCore::FetchHeaders* Response__ensureFetchHeaders(void* response, JSC::JSGlobalObject*);
+static_assert(OBJECT_OFFSETOF(WebCore::JSResponse, m_headers) == sizeof(JSC::JSDestructibleObject) + JSC::AOT::Typed::offsetOfCachedHeaders);
+static_assert(OBJECT_OFFSETOF(WebCore::JSRequest, m_headers) == sizeof(JSC::JSDestructibleObject) + JSC::AOT::Typed::offsetOfCachedHeaders);
 
-extern "C" JSC::EncodedJSValue Request__getHeader(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedRequest, JSC::EncodedJSValue encodedName)
+static const String* uncommonHeaderValue(const WebCore::FetchHeaders& headers, StringView name)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* request = dynamicDowncast<WebCore::JSRequest>(JSC::JSValue::decode(encodedRequest).asCell());
-    RELEASE_ASSERT(request);
+    for (auto& header : headers.internalHeaders().uncommonHeaders()) {
+        if (equalIgnoringASCIICase(header.key, name))
+            return &header.value;
+    }
+    return nullptr;
+}
+
+static JSC::JSValue headerByKnownName(JSC::VM& vm, const WebCore::FetchHeaders& headers, StringView name, uint32_t knownName)
+{
+    String value;
+    if (knownName != JSC::AOT::Typed::uncommonHeaderName)
+        value = headers.fastGet(static_cast<WebCore::HTTPHeaderName>(knownName));
+    else if (auto* found = uncommonHeaderValue(headers, name))
+        value = *found;
+    return value.isNull() ? JSC::jsNull() : JSC::jsStringWithCache(vm, value);
+}
+
+static JSC::EncodedJSValue headerOfHolder(JSC::JSGlobalObject*, WebCore::JSResponse*, WebCore::JSRequest*, WebCore::FetchHeaders*, JSC::EncodedJSValue encodedName, uint32_t knownName);
+
+extern "C" JSC::EncodedJSValue Bun__getRequestOrResponseHeader(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedHolder, JSC::EncodedJSValue encodedName, uint32_t knownName)
+{
+    JSC::JSCell* holder = JSC::JSValue::decode(encodedHolder).asCell();
+    auto* response = dynamicDowncast<WebCore::JSResponse>(holder);
+    auto* request = response ? nullptr : dynamicDowncast<WebCore::JSRequest>(holder);
+    RELEASE_ASSERT(response || request);
     WebCore::FetchHeaders* headers = nullptr;
-    if (JSC::JSValue existing = request->m_headers.get()) {
+    if (JSC::JSValue existing = response ? response->m_headers.get() : request->m_headers.get()) {
         if (!existing.isCell() || existing.asCell()->structure() != defaultGlobalObject(globalObject)->domStructure(WebCore::DOMStructureSlot::JSFetchHeaders))
             return JSC::JSValue::encode(JSC::jsUndefined());
         headers = &uncheckedDowncast<WebCore::JSFetchHeaders>(existing.asCell())->wrapped();
     }
+    return headerOfHolder(globalObject, response, request, headers, encodedName, knownName);
+}
+
+static JSC::EncodedJSValue headerOfHolder(JSC::JSGlobalObject* globalObject, WebCore::JSResponse* response, WebCore::JSRequest* request, WebCore::FetchHeaders* headers, JSC::EncodedJSValue encodedName, uint32_t knownName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* nameString = JSC::JSValue::decode(encodedName).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     const auto ownedName = nameString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     StringView name = ownedName;
+    bool isKnownToken = knownName != JSC::AOT::Typed::unknownHeaderName;
     void* parsedRequest = nullptr;
-    if (!headers)
+    if (!headers && request)
         headers = Request__fetchHeadersOrParsedRequest(request->wrapped(), &parsedRequest);
     if (auto* parsed = static_cast<uWS::HttpRequest*>(parsedRequest)) {
         std::optional<std::string_view> found;
@@ -2747,14 +2782,101 @@ extern "C" JSC::EncodedJSValue Request__getHeader(JSC::JSGlobalObject* globalObj
         }
         if (found && !isRepeated && !found->empty())
             return JSC::JSValue::encode(JSC::jsString(vm, String(std::span { reinterpret_cast<const Latin1Character*>(found->data()), found->length() })));
-        if (!found && WebCore::isValidHTTPToken(name))
+        if (!found && (isKnownToken || WebCore::isValidHTTPToken(name)))
             return JSC::JSValue::encode(JSC::jsNull());
     }
     if (!headers) {
-        headers = Request__ensureFetchHeaders(request->wrapped(), globalObject);
+        headers = response ? Response__ensureFetchHeaders(response->wrapped(), globalObject) : Request__ensureFetchHeaders(request->wrapped(), globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(WebCore::toJS<WebCore::IDLNullable<WebCore::IDLDOMString>>(*globalObject, scope, headers->get(name))));
+    if (!isKnownToken)
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(WebCore::toJS<WebCore::IDLNullable<WebCore::IDLDOMString>>(*globalObject, scope, headers->get(name))));
+    return JSC::JSValue::encode(headerByKnownName(vm, *headers, name, knownName));
+}
+
+extern "C" JSC::EncodedJSValue Bun__callHeadersMethod(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedHeadersOrHolder, JSC::EncodedJSValue encodedName, JSC::EncodedJSValue encodedValue, uint32_t methodAndKnownName)
+{
+    using JSC::AOT::Typed::HeadersMethod;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto method = static_cast<HeadersMethod>(methodAndKnownName >> JSC::AOT::Typed::headersMethodShift);
+    uint32_t knownName = methodAndKnownName & ((1u << JSC::AOT::Typed::headersMethodShift) - 1);
+    JSC::EnsureStillAliveScope headersOrHolder = JSC::JSValue::decode(encodedHeadersOrHolder);
+    JSC::JSCell* cell = headersOrHolder.value().asCell();
+    const JSC::ClassInfo* classInfo = cell->classInfo();
+    WebCore::FetchHeaders* headers = nullptr;
+    if (classInfo == WebCore::JSFetchHeaders::info())
+        headers = &uncheckedDowncast<WebCore::JSFetchHeaders>(cell)->wrapped();
+    else {
+        auto* response = classInfo == WebCore::JSResponse::info() ? uncheckedDowncast<WebCore::JSResponse>(cell) : nullptr;
+        auto* request = response ? nullptr : uncheckedDowncast<WebCore::JSRequest>(cell);
+        if (method == HeadersMethod::Get)
+            RELEASE_AND_RETURN(scope, headerOfHolder(globalObject, response, request, nullptr, encodedName, knownName));
+        headers = response ? Response__ensureFetchHeaders(response->wrapped(), globalObject) : Request__ensureFetchHeaders(request->wrapped(), globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    Ref protectedHeaders { *headers };
+    bool isKnownToken = knownName != JSC::AOT::Typed::unknownHeaderName;
+    bool isCommon = knownName < JSC::AOT::Typed::uncommonHeaderName;
+    auto commonName = static_cast<WebCore::HTTPHeaderName>(knownName);
+
+    if (method == HeadersMethod::Set || method == HeadersMethod::Append) {
+        String name;
+        if (!isCommon) {
+            name = JSC::JSValue::decode(encodedName).toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        String value = JSC::JSValue::decode(encodedValue).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto result = [&]() -> WebCore::ExceptionOr<void> {
+            if (method == HeadersMethod::Set) {
+                if (isCommon)
+                    return headers->set(commonName, value);
+                return isKnownToken ? headers->setUncommonToken(name, value) : headers->set(name, value);
+            }
+            if (isCommon)
+                return headers->append(commonName, value);
+            return isKnownToken ? headers->appendUncommonToken(name, value) : headers->append(name, value);
+        }();
+        if (result.hasException()) [[unlikely]] {
+            if (method == HeadersMethod::Set && isCommon)
+                result = headers->set(JSC::JSValue::decode(encodedName).toWTFString(globalObject), value);
+            WebCore::propagateException(*globalObject, scope, WTF::move(result));
+            return {};
+        }
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto* nameString = JSC::JSValue::decode(encodedName).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    const auto ownedName = nameString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    StringView name = ownedName;
+    switch (method) {
+    case HeadersMethod::Get:
+        if (isKnownToken)
+            return JSC::JSValue::encode(headerByKnownName(vm, *headers, name, knownName));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(WebCore::toJS<WebCore::IDLNullable<WebCore::IDLDOMString>>(*globalObject, scope, headers->get(name))));
+    case HeadersMethod::Has:
+        if (isKnownToken)
+            return JSC::JSValue::encode(JSC::jsBoolean(isCommon ? headers->fastHas(commonName) : !!uncommonHeaderValue(*headers, name)));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(WebCore::toJS<WebCore::IDLBoolean>(*globalObject, scope, headers->has(name))));
+    case HeadersMethod::Delete: {
+        if (isCommon)
+            headers->remove(commonName);
+        else if (isKnownToken)
+            headers->removeUncommonToken(name);
+        else if (auto result = headers->remove(name); result.hasException()) [[unlikely]] {
+            WebCore::propagateException(*globalObject, scope, WTF::move(result));
+            return {};
+        }
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    case HeadersMethod::Set:
+    case HeadersMethod::Append:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)

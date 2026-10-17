@@ -983,7 +983,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn import_literal_specifier(&mut self, fx: &mut Fx, e: ExprId, text: Atom, literal: Option<ExprId>, options: Option<ExprId>) -> V {
         if options.is_none() && self.c.atoms().bytes(text) == b"bun" && self.imported_file(fx.file, text).is_none() {
             let (bun, promise, resolve) = (self.out.strs.intern(b"Bun"), self.out.strs.intern(b"Promise"), self.out.strs.intern(b"resolve"));
-            let bun = self.emit_throwing(fx, Op::FreeGet { name: bun, is_typeof: false });
+            let bun = if self.is_bun_object_of_a_module_graph(fx.file, text) { self.fetch_external_module(fx, fx.file, text) } else { self.emit_throwing(fx, Op::FreeGet { name: bun, is_typeof: false }) };
             let promise = self.emit_throwing(fx, Op::FreeGet { name: promise, is_typeof: false });
             let value = self.emit_throwing(fx, Op::CallMethod { obj: promise, name: resolve, args: [bun].into_iter().collect() });
             return if literal.is_some() { self.coerce_to_expr_type(fx, value, e) } else { value };
@@ -1334,10 +1334,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             b"NaN" => self.emit(fx, Op::Double(f64::NAN.to_bits())),
             b"Infinity" => self.emit(fx, Op::Double(f64::INFINITY.to_bits())),
             _ => {
-                let name = self.str(name);
+                let name = self.free_name(fx.file, name);
                 self.emit_throwing(fx, Op::FreeGet { name, is_typeof })
             }
         }
+    }
+
+    fn free_name(&mut self, file: FileId, name: Atom) -> StrId {
+        if !self.is_builtin_file(file) && self.c.builtins_given_to_module_graphs().contains(&name) {
+            return self.out.strs.intern(&[&b"graph "[..], self.c.atoms().bytes(name)].concat());
+        }
+        self.str(name)
     }
 
     pub(crate) fn dynamic_import_function(&mut self, imported: FileId, is_node_mode: bool) -> FuncId {
@@ -1383,13 +1390,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.branch(fx, is_missing, first, there);
         fx.b.seal(first);
         fx.b.switch_to(first);
-        let requested = self.host_resolved_specifier(importer, specifier);
-        let requested = self.str(requested);
-        let namespace = self.emit_throwing(fx, Op::ExternalModule(requested));
+        let namespace = self.fetch_external_module(fx, importer, specifier);
         self.emit(fx, Op::GlobalSet(global, namespace));
         fx.b.jump(there);
         fx.b.seal(there);
         fx.b.switch_to(there);
+    }
+
+    pub(crate) fn fetch_external_module(&mut self, fx: &mut Fx, importer: FileId, specifier: Atom) -> V {
+        let requested = self.host_resolved_specifier(importer, specifier);
+        if self.is_bun_object_of_a_module_graph(importer, requested) {
+            let (global_this, bun) = (self.out.strs.intern(b"globalThis"), self.out.strs.intern(b"Bun"));
+            let obj = self.emit_throwing(fx, Op::FreeGet { name: global_this, is_typeof: false });
+            return self.emit_throwing(fx, Op::PropGet { obj, name: bun });
+        }
+        let requested = self.str(requested);
+        self.emit_throwing(fx, Op::ExternalModule(requested))
+    }
+
+    pub(crate) fn is_bun_object_of_a_module_graph(&self, importer: FileId, specifier: Atom) -> bool {
+        self.c.atoms().bytes(specifier) == b"bun" && !self.is_builtin_file(importer) && self.c.names_module_graph()
     }
 
     pub(crate) fn external_module_global(&mut self, file: FileId, specifier: Atom) -> GlobalId {
@@ -2339,6 +2359,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn object_literal(&mut self, fx: &mut Fx, e: ExprId, props: Span<PropId>) -> V {
+        self.read_builtins_given_to_a_module_graph(fx, props);
         let created = self.make_object_literal(fx, e, props);
         let has_fixed_layout = matches!(fx.b.func.op(created), Some(Op::New(_) | Op::NewWith { .. }));
         if fx.is_typed && !has_fixed_layout && props.iter().any(|p| matches!(self.hir(fx.file)[p].kind, PropKind::Getter | PropKind::Setter)) {
@@ -2346,6 +2367,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.c.record_object_without_layout(own);
         }
         created
+    }
+
+    fn read_builtins_given_to_a_module_graph(&mut self, fx: &mut Fx, options: Span<PropId>) {
+        if self.c.builtins_given_to_module_graphs().is_empty() || self.is_builtin_file(fx.file) {
+            return;
+        }
+        let hir = self.hir(fx.file);
+        if !options.iter().any(|option| matches!(hir[option].kind, PropKind::Init | PropKind::Shorthand) && hir[option].key.name().is_some_and(|name| self.c.atoms().bytes(name) == b"globals")) {
+            return;
+        }
+        let mut names: Vec<Atom> = self.c.builtins_given_to_module_graphs().iter().copied().collect();
+        names.sort_by(|&a, &b| self.c.atoms().bytes(a).cmp(self.c.atoms().bytes(b)));
+        for name in names {
+            let name = self.free_name(fx.file, name);
+            self.emit_throwing(fx, Op::FreeGet { name, is_typeof: false });
+        }
     }
 
     fn make_object_literal(&mut self, fx: &mut Fx, e: ExprId, props: Span<PropId>) -> V {
@@ -2589,7 +2626,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 return true;
             }
         }
-        self.c.is_inside_any_context(fx.file, e) || self.may_be_overridden_by_spread(fx, e) || matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) && self.c.is_host_bound(fx.file, e)
+        self.c.is_inside_any_context(fx.file, e) || self.may_be_overridden_by_spread(fx, e) || matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) && self.c.is_host_bound(fx.file, e) && !(self.is_expected_as_record_of_program(fx, e) && !self.c.is_handed_to_what_is_only_declared(fx.file, e))
+    }
+
+    fn is_expected_as_record_of_program(&mut self, fx: &Fx, e: ExprId) -> bool {
+        let Some(expected) = self.c.contextual_type_of_literal(fx.file, e) else { return false };
+        let own = self.c.type_of_expr(fx.file, e);
+        self.c.parts(expected).to_vec().into_iter().any(|part| self.is_record_type(part) && self.record_layout(part).is_some() && self.c.is_provably_assignable(own, part))
     }
 
     pub(crate) fn may_be_overridden_by_spread(&mut self, fx: &Fx, e: ExprId) -> bool {
@@ -3731,7 +3774,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit(fx, Op::StrictEq { a: found, b: status })
             }
             Ok(Some(Macro::BundleError)) => self.unsupported(fx, pos, "`$bundleError` in code that is not eliminated"),
-            Ok(None) | Err(_) => self.unsupported(fx, pos, "a macro whose arguments the manifest does not know"),
+            Ok(Some(Macro::OnlyArgument) | None) | Err(_) => self.unsupported(fx, pos, "a macro whose arguments the manifest does not know"),
         }
     }
 
@@ -4987,13 +5030,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn branch_on_value(&mut self, fx: &mut Fx, value: V, e: ExprId, then: BlockId, otherwise: BlockId, retained: Option<ConditionResult>) {
-        let Some(retained) = retained else { return self.branch(fx, value, then, otherwise) };
+        let outer = std::mem::replace(&mut fx.b.pos, self.hir(fx.file)[e].pos);
+        let Some(retained) = retained else {
+            self.branch(fx, value, then, otherwise);
+            fx.b.pos = outer;
+            return;
+        };
         let edge = fx.b.new_block();
         if retained.when {
             self.branch(fx, value, edge, otherwise);
         } else {
             self.branch(fx, value, then, edge);
         }
+        fx.b.pos = outer;
         fx.b.seal(edge);
         fx.b.switch_to(edge);
         let value = if retained.is_tested { value } else { self.coerce_tested_value(fx, value, e) };
@@ -5109,7 +5158,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn boolean_call_operand(&mut self, fx: &Fx, call: CallId) -> Option<ExprId> {
         let hir = self.hir(fx.file);
         let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return None };
-        if hir[call].chain != Chain::No || self.c.atoms().bytes(name) != b"Boolean" {
+        if hir[call].chain != Chain::No || self.c.atoms().bytes(name) != b"Boolean" || self.c.module_graph_may_replace_in(fx.file, name) {
             return None;
         }
         let mut args = hir.ids(hir[call].args);
@@ -5367,7 +5416,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::Ident(name) => match self.ident_symbol(fx.file, target, name) {
                 Some(sym) if !self.is_ambient(sym) => self.assign_sym(fx, sym, value, target),
                 _ => {
-                    let name = self.str(name);
+                    let name = self.free_name(fx.file, name);
                     self.emit_throwing(fx, Op::FreeSet { name, value });
                 }
             },

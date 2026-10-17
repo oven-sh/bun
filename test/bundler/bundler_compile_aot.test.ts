@@ -1254,24 +1254,136 @@ describe("Bun.ModuleGraph with --aot", () => {
     ).toEqual(everywhere(["xxx", "yyy", "xxx", "xx", "yy", "undefined"]));
   });
 
-  test.concurrent("globals cannot replace an existing global", async () => {
+  const readersOfGlobals = `
+        import * as bunNamespace from "bun";
+        import bunDefault, { version as bunVersion } from "bun";
+        import realProcess from "node:process";
+        import { setTimeout as realSetTimeout } from "node:timers";
+        import { setTimeout as sleep } from "node:timers/promises";
+        declare const self: typeof globalThis;
+        const whenLoaded = process.env.TENANT;
+        export const ownNames = () => [process.env.TENANT, whenLoaded, process.title === realProcess.title, setTimeout(() => {}, 0), clearImmediate(undefined), AbortSignal.abort(), fetch("http://localhost/"), Bun.version, console.log("not printed"), typeof postMessage, typeof Bun.file].join();
+        export function ownNamesInLoop() { let all = ""; for (let i = 0; i < 3; i++) all += process.env.TENANT + String(setTimeout(() => {}, 0)); return all; }
+        export class Reader { read() { return process.env.TENANT; } static async later() { await 1; return Bun.version; } }
+        export function* eachOwn() { yield process.env.TENANT; yield typeof postMessage; }
+        export const realOnes = () => [globalThis.setTimeout === setTimeout, globalThis.setTimeout === realSetTimeout, globalThis.process === process, globalThis.process === realProcess, "postMessage" in globalThis, typeof globalThis.postMessage, globalThis.Bun === Bun].join();
+        export const importedFromBun = () => [bunNamespace === globalThis.Bun, bunDefault === globalThis.Bun, bunVersion === globalThis.Bun.version, bunNamespace === Bun].join();
+        export const builtinModulesKeepTheirs = async () => [await sleep(1, "slept"), typeof realProcess.hrtime, realSetTimeout === setTimeout].join();
+        export const callHere = (f: () => unknown) => f();
+        export const throughTheObject = () => [(globalThis as any).own, (global as any).own, (self as any).own, "own" in globalThis, globalThis.Math.floor(1.5), new globalThis.Map().size, globalThis.parseInt("7"), globalThis === global, typeof globalThis, ((globalThis as any).stored = 1), "stored" in globalThis].join();
+        export function throughTheObjectInLoop() { let sum = 0; for (let i = 0; i < 3; i++) sum += globalThis.Math.floor(1.5); return sum; }
+        export const evaluated = () => [eval("tag"), eval("typeof postMessage"), eval("process.env.TENANT"), eval("spare = spare + 1"), eval("spare"), (0, eval)("typeof tag"), new Function("return typeof tag")()].join();
+      `;
+
+  test.concurrent("a host gives each graph its own process, timers, fetch, Bun and console", async () => {
     expect(
       await run(`
-        const results = [];
-        for (const globals of [{ fresh: 1 }, { Math: {} }, { console: {} }]) {
+        const make = (tag: string) => ({
+          tag,
+          spare: tag.length,
+          process: Object.create(process, { env: { value: { TENANT: tag }, enumerable: true } }),
+          setTimeout: () => "timer of " + tag,
+          clearImmediate: () => "cleared by " + tag,
+          AbortSignal: class { static abort() { return "aborted by " + tag; } },
+          fetch: () => "fetched by " + tag,
+          Bun: Object.create(Bun, { version: { value: "version of " + tag } }),
+          console: Object.create(console, { log: { value: () => "logged by " + tag } }),
+          postMessage: undefined,
+        });
+        const [x, y] = await Promise.all(["x", "y"].map(tag => new Bun.ModuleGraph({ globals: make(tag) }).import(url)));
+        const host = await import(url);
+        return [
+          x.ownNames(), y.ownNames(), x.ownNamesInLoop(), new y.Reader().read(), await x.Reader.later(), [...y.eachOwn()].join(),
+          x.realOnes(), host.realOnes(), x.importedFromBun(), host.importedFromBun(), await x.builtinModulesKeepTheirs(), await host.builtinModulesKeepTheirs(),
+          y.callHere(x.ownNames) === x.ownNames(), host.callHere(y.ownNames) === y.ownNames(), x.callHere(host.realOnes) === host.realOnes(), [0].map(x.ownNames)[0] === x.ownNames(),
+          x.evaluated(), y.evaluated(), x.ownNames() === y.ownNames(),
+        ];
+      `, readersOfGlobals),
+    ).toEqual(
+      everywhere([
+        "x,x,true,timer of x,cleared by x,aborted by x,fetched by x,version of x,logged by x,undefined,function",
+        "y,y,true,timer of y,cleared by y,aborted by y,fetched by y,version of y,logged by y,undefined,function",
+        "xtimer of xxtimer of xxtimer of x", "y", "version of x", "y,undefined",
+        "false,true,false,true,true,function,false", "true,true,true,true,true,function,true", "true,true,true,false", "true,true,true,true",
+        "slept,function,false", "slept,function,true", true, true, true, true,
+        "x,undefined,x,2,2,undefined,undefined", "y,undefined,y,2,2,undefined,undefined", false,
+      ]),
+    );
+  });
+
+  test.concurrent("a host gives a graph its own globalThis, global and self", async () => {
+    expect(
+      await run(`
+        const asked: string[] = [];
+        const view = new Proxy(globalThis, {
+          get: (target, key) => (asked.push(String(key)), key === "own" ? "the view's" : Reflect.get(target, key)),
+          has: (target, key) => key === "own" || Reflect.has(target, key),
+          set: (target, key) => (asked.push("set " + String(key)), true),
+        });
+        const a = await new Bun.ModuleGraph({ globals: { globalThis: view, global: view, self: view } }).import(url);
+        const plain = await new Bun.ModuleGraph({ globals: { globalThis: { own: "the object's", Math: { floor: () => 41 }, Map: class extends Map { override get size() { return 41; } }, parseInt: () => 41, Bun: { version: "the object's" } } } }).import(url);
+        const host = await import(url);
+        return [a.throughTheObject(), a.throughTheObjectInLoop(), asked.filter(key => key !== "Bun").join(), plain.throughTheObject(), plain.throughTheObjectInLoop(), plain.importedFromBun(), host.throughTheObject(), host.throughTheObjectInLoop()];
+      `, readersOfGlobals),
+    ).toEqual(
+      everywhere([
+        "the view's,the view's,the view's,true,1,0,7,true,object,1,false", 3, "own,own,own,Math,Map,parseInt,set stored,Math,Math,Math",
+        "the object's,,,true,41,41,41,false,object,1,true", 123, "true,true,true,false", ",,,false,1,0,7,true,object,1,true", 3,
+      ]),
+    );
+  });
+
+  test.concurrent("globals cannot replace a built-in of the language", async () => {
+    expect(
+      await run(`
+        const language = new Set("Infinity NaN undefined AggregateError Array ArrayBuffer AsyncDisposableStack Atomics BigInt BigInt64Array BigUint64Array Boolean DataView Date DisposableStack Error EvalError FinalizationRegistry Float16Array Float32Array Float64Array Function Int16Array Int32Array Int8Array Intl Iterator JSON Map Math Number Object Promise Proxy RangeError ReferenceError Reflect RegExp Set ShadowRealm SharedArrayBuffer String SuppressedError Symbol SyntaxError Temporal TypeError URIError Uint16Array Uint32Array Uint8Array Uint8ClampedArray WeakMap WeakRef WeakSet WebAssembly decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval isFinite isNaN parseFloat parseInt unescape".split(" "));
+        const wrong: string[] = [];
+        let said = "";
+        for (const name of [...Object.getOwnPropertyNames(globalThis), "fresh", "toString"]) {
           try {
-            results.push(typeof (await new Bun.ModuleGraph({ globals }).import(url)).count);
+            await new Bun.ModuleGraph({ globals: { [name]: 1 } }).import(url);
+            if (language.has(name)) wrong.push(name + " is accepted");
           } catch (error) {
-            results.push((error as Error).name + ": " + (error as Error).message.split(" (bun --aot")[0]);
+            if (!language.has(name)) wrong.push(name + " is refused");
+            if (name === "Math") said = (error as Error).name + ": " + (error as Error).message.split(" (bun --aot")[0];
           }
         }
-        return results;
+        return [wrong, said];
+      `),
+    ).toEqual(everywhere([[], 'TypeError: The `globals` of a Bun.ModuleGraph cannot replace the global "Math" for a module that was compiled ahead of time']));
+  });
+
+  test.concurrent("globals replace a built-in of the language whose name is written there", async () => {
+    expect(
+      await run(`
+        const seeded = Object.create(Math, { random: { value: () => 0.5 }, floor: { value: () => 41 } });
+        class Clock extends Date { override getTime() { return 41; } static override now() { return 42; } }
+        const a = await new Bun.ModuleGraph({ globals: { Math: seeded, Date: Clock, parseInt: () => 43 } }).import(url);
+        const b = await new Bun.ModuleGraph({ globals: { Math: undefined } }).import(url);
+        const globals = { isNaN: () => "own isNaN" };
+        const c = await new Bun.ModuleGraph({ globals }).import(url);
+        const none = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        const tried = (f: () => unknown) => { try { return f(); } catch (error) { return (error as Error).name; } };
+        const notSeen = await new Bun.ModuleGraph({ globals: { ["JS" + "ON"]: {} } }).import(url).then(() => "accepted", error => error.name);
+        return [
+          a.builtins(), tried(b.builtins), none.builtins(), host.builtins(), a.builtinsInLoop(), host.builtinsInLoop(),
+          [new a.Stamp().at, a.Stamp.floor(1.5), new host.Stamp().at, host.Stamp.floor(1.5), a.held(), host.held()].join(),
+          host.call(() => a.Stamp.floor(1.5)), [1.5].map(a.Stamp.floor)[0], await a.notByName(), await host.notByName(), c.viaVariable(), host.viaVariable(), notSeen,
+        ];
+      `, `
+        export const builtins = () => [Math.random() === 0.5, Math.floor(1.5), Math.ceil(1.5), Math.PI > 3, Date.now() === 42, new Date(5).getTime(), new Date(5) instanceof Date, parseInt("7"), typeof Math, typeof JSON, globalThis.Math.floor(1.5), [1.5].map(Math.floor)[0]].join();
+        export function builtinsInLoop() { let sum = 0; for (let i = 0; i < 4; i++) sum += Math.floor(i / 2) + parseInt("1"); return sum; }
+        export class Stamp { at = Date.now() === 42; static floor(value: number) { return Math.floor(value); } }
+        export const held = () => { const { floor } = Math; return floor(1.5); };
+        export const notByName = async () => [[3, 1, 2].sort().join(""), JSON.stringify({ a: [1] }), (await Promise.resolve(5)) + 1, "" + 1.5, new Date(5).getTime() === new (Object.getPrototypeOf(Date.prototype).constructor === Object ? Date : Object.getPrototypeOf(Date))(5).getTime()].join();
+        export const viaVariable = () => [isNaN(1), Boolean(0)].join();
       `),
     ).toEqual(
       everywhere([
-        "function",
-        'TypeError: The `globals` of a Bun.ModuleGraph cannot replace the global "Math" for a module that was compiled ahead of time',
-        'TypeError: The `globals` of a Bun.ModuleGraph cannot replace the global "console" for a module that was compiled ahead of time',
+        "true,41,2,true,true,41,true,43,object,object,1,41", "TypeError",
+        "false,1,2,true,false,5,true,7,object,object,1,1", "false,1,2,true,false,5,true,7,object,object,1,1", 336, 6,
+        "true,41,false,1,41,1", 4101, 41, '123,{"a":[1]},6,1.5,false', '123,{"a":[1]},6,1.5,true', "own isNaN,false", "false,false", "TypeError",
       ]),
     );
   });
@@ -1300,6 +1412,269 @@ describe("Bun.ModuleGraph with --aot", () => {
         return [b.movePoint(point), a.movePoint(point), point.x];
       `),
     ).toEqual(everywhere([32, 42, 4]));
+  });
+
+  const hops = `
+        export type Hop = (hops: Hop[], at: number) => unknown;
+        let label = "";
+        const letters: string[] = [];
+        export function setLabel(name: string) { label = name; letters.push(...name); }
+        const said = (error: unknown) => label + letters.length + new Uint8Array(letters.length).length + " caught " + (error instanceof Error ? error.message : error);
+        export const tail: Hop = (hops, at) => hops[at]!(hops, at + 1);
+        export const plain: Hop = (hops, at) => { const result = hops[at]!(hops, at + 1); n++; return result; };
+        export const guarded: Hop = (hops, at) => { try { return hops[at]!(hops, at + 1); } finally { n += letters.length; } };
+        export const rethrows: Hop = (hops, at) => { try { return hops[at]!(hops, at + 1); } catch (error) { n += letters.length; throw error; } };
+        export const applies: Hop = (hops, at) => Reflect.apply(hops[at]!, undefined, [hops, at + 1]);
+        export const spreads: Hop = (hops, at) => hops[at]!(...([hops, at + 1] as [Hop[], number]));
+        export const catches: Hop = (hops, at) => { try { return hops[at]!(hops, at + 1); } catch (error) { return said(error); } };
+        export const throws: Hop = () => { throw new Error(label); };
+        export const descends: Hop = (hops, at) => 1 + (hops[at]!(hops, at + 1) as number);
+        export const restarts: Hop = hops => hops[0]!(hops, 1);
+        export async function runsLater(hops: Hop[]) { await 1; return hops[0]!(hops, 1); }
+        export async function catchesLater(hops: Hop[]) { const bytes = new Uint8Array(letters.length); try { await 1; return hops[0]!(hops, 1); } catch (error) { return said(error) + bytes.length; } }
+        export function* yields(hops: Hop[]) { try { yield label; yield hops[0]!(hops, 1); } finally { n += letters.length; } }
+        export const steps = (iterator: Iterator<unknown>) => iterator.next();
+        export const throwsInto = (iterator: Iterator<unknown>) => iterator.throw!(new Error(label));
+      `;
+  const threeGraphs = `
+        const graphs: Record<string, any> = { host: await import(url), a: await new Bun.ModuleGraph().import(url), b: await new Bun.ModuleGraph().import(url) };
+        for (const name in graphs) graphs[name].setLabel(name);
+        const { host, a, b } = graphs;
+        const catchesHere = (hops: any[], at: number) => { try { return hops[at](hops, at + 1); } catch (error: any) { return "entry" + url.slice(-7) + " caught " + error.message; } };
+      `;
+
+  test.concurrent("an exception that leaves several graphs at once is caught with the catcher's own variables", async () => {
+    expect(
+      await run(
+        `${threeGraphs}
+        const all = Object.values(graphs).flatMap(graph => ["tail", "plain", "guarded", "rethrows", "applies", "spreads"].map(kind => graph[kind]));
+        const catchers: [string, any][] = [["entry/app.js", catchesHere], ["host44", host.catches], ["a11", a.catches], ["b11", b.catches]];
+        const wrong: unknown[] = [];
+        let chains = 0;
+        for (const [catcherSays, catcher] of catchers)
+          for (const first of all)
+            for (const second of all)
+              for (const third of [undefined, ...all])
+                for (const thrower in graphs) {
+                  const result = catcher([first, second, ...(third ? [third] : []), graphs[thrower].throws], 0);
+                  chains++;
+                  if (result !== catcherSays + " caught " + thrower) wrong.push(result);
+                }
+        return [wrong.slice(0, 3), chains, catchesHere([b.tail, a.tail, b.tail, host.tail, a.tail, b.throws], 0)];
+      `,
+        hops,
+      ),
+    ).toEqual(everywhere([[], 73872, "entry/app.js caught b"]));
+  });
+
+  test.concurrent("an exception that leaves several graphs at once reaches an async function with its own variables", async () => {
+    expect(
+      await run(
+        `${threeGraphs}
+        async function catchesLaterHere(hops: any[]) {
+          const bytes = new Uint8Array(4);
+          try { await 1; return hops[0](hops, 1); } catch (error: any) { bytes[1] = url.length ? 1 : 2; return "entry" + bytes.join("") + " caught " + error.message; }
+        }
+        async function runsLaterHere(hops: any[]) { await 1; return hops[0](hops, 1); }
+        const rejected = (error: any) => "rejected with " + error.message + url.slice(-7);
+        return [
+          await catchesLaterHere([b.tail, a.throws]), await catchesLaterHere([a.tail, b.tail, host.throws]),
+          await runsLaterHere([b.tail, a.throws]).catch(rejected), await a.runsLater([b.tail, host.tail, a.throws]).catch(rejected), await b.runsLater([host.tail, a.throws]).catch(a.catches.bind(null, [a.throws], 0)),
+          await a.catchesLater([b.tail, host.throws]), await host.catchesLater([a.tail, b.throws]), await b.catchesLater([host.tail, a.tail, b.throws]),
+        ];
+      `,
+        hops,
+      ),
+    ).toEqual(
+      everywhere([
+        "entry0100 caught a", "entry0100 caught host",
+        "rejected with a/app.js", "rejected with a/app.js", "a11 caught a",
+        "a11 caught host1", "host44 caught b4", "b11 caught b1",
+      ]),
+    );
+  });
+
+  test.concurrent("what a built-in function throws, and a stack overflow, leave several graphs at once", async () => {
+    expect(
+      await run(
+        `${threeGraphs}
+        const named = (hops: any[]) => { try { return hops[0](hops, 1); } catch (error: any) { return error.name + url.slice(-7); } };
+        return [
+          named([b.tail, a.tail, Object.defineProperty]), named([a.tail, b.tail, host.tail, JSON.parse]),
+          named([a.descends, b.tail, a.restarts]), named([b.tail, a.descends, b.tail, host.restarts]),
+          a.catches([b.tail, host.tail, Object.defineProperty], 0).slice(0, 10), b.count(),
+        ];
+      `,
+        hops,
+      ),
+    ).toEqual(everywhere(["TypeError/app.js", "SyntaxError/app.js", "RangeError/app.js", "RangeError/app.js", "a11 caught", 1]));
+  });
+
+  test.concurrent("an exception leaves a generator that another graph steps in tail position", async () => {
+    expect(
+      await run(
+        `${threeGraphs}
+        const out: unknown[] = [];
+        for (const [owner, stepper, thrower] of [[a, b, a], [a, b, host], [host, a, b], [b, host, a]]) {
+          const running = owner.yields([stepper.tail, thrower.throws]);
+          out.push(stepper.steps(running).value, catchesHere([() => stepper.steps(running)], 0), stepper.catches([() => owner.steps(running).done], 0));
+          const waiting = owner.yields([]);
+          stepper.steps(waiting);
+          out.push(catchesHere([() => stepper.throwsInto(waiting)], 0), thrower.catches([stepper.tail, () => stepper.throwsInto(waiting)], 0));
+        }
+        return [out.join(), a.current(), b.current(), host.current()];
+      `,
+        hops,
+      ),
+    ).toEqual(
+      everywhere([
+        [
+          ["a", "entry/app.js caught a", true, "entry/app.js caught b", "a11 caught b"],
+          ["a", "entry/app.js caught host", true, "entry/app.js caught b", "host44 caught b"],
+          ["host", "entry/app.js caught b", true, "entry/app.js caught a", "b11 caught a"],
+          ["b", "entry/app.js caught a", true, "entry/app.js caught host", "a11 caught host"],
+        ].join(),
+        4,
+        2,
+        8,
+      ]),
+    );
+  });
+
+  test.concurrent("maps and sets with string keys grow in a graph's code and survive a collection", async () => {
+    expect(
+      await run(
+        `
+        const host = await import(url);
+        const [a, b] = await Promise.all([1, 2].map(() => new Bun.ModuleGraph().import(url)));
+        const out: unknown[] = [];
+        for (const graph of [a, host, b, a]) {
+          const filled = graph.fill(20, 40);
+          Bun.gc(true);
+          out.push(graph.total(filled), host.total(filled), b.total(filled));
+        }
+        const late = await new Bun.ModuleGraph().import(url);
+        const filled = late.fill(20, 40);
+        Bun.gc(true);
+        out.push(late.total(filled), a.total(filled), late.total(a.fill(3, 100)));
+        return out;
+      `,
+        `
+        export function fill(count: number, keys: number) {
+          const maps: Map<string, number>[] = [];
+          const sets: Set<string>[] = [];
+          for (let i = 0; i < count; i++) {
+            const map = new Map<string, number>();
+            const set = new Set<string>();
+            for (let k = 0; k < keys; k++) { map.set("key" + k, k + i); set.add("member" + k); }
+            maps.push(map);
+            sets.push(set);
+          }
+          return { maps, sets };
+        }
+        export function total({ maps, sets }: ReturnType<typeof fill>) {
+          let sum = 0;
+          for (const map of maps) for (const [key, value] of map) sum += value + key.length;
+          for (const set of sets) for (const member of set) sum += member.length;
+          for (const map of maps) { sum += map.get("key3")! + map.size + [...map.keys()].length; map.forEach(value => { sum += value; }); }
+          return sum;
+        }
+      `,
+      ),
+    ).toEqual(everywhere([...Array(14).fill(58250), 34752]));
+  });
+
+  test.concurrent("a closure over the object it is stored in belongs to the graph that stored it, whoever reads it first", async () => {
+    expect(
+      await run(
+        `
+        const graphs: Record<string, any> = { host: await import(url), a: await new Bun.ModuleGraph().import(url), b: await new Bun.ModuleGraph().import(url) };
+        for (const name in graphs) graphs[name].setOwner(name);
+        const wrong: string[] = [];
+        let rows = 0;
+        for (const maker in graphs)
+          for (const reader in graphs)
+            for (const kind in graphs[maker].makers)
+              for (const how in graphs[reader].readers) {
+                const object = graphs[maker].makers[kind](how);
+                const read = graphs[reader].readers[how](object);
+                const said = [typeof read === "function" ? read() : read, object.who(), graphs[maker].readers.call(object), graphs[reader].readers.take(object)()].join();
+                rows++;
+                if (said !== Array(4).fill(maker + ":" + how).join()) wrong.push([maker, reader, kind, how, said].join(" "));
+              }
+        Bun.gc(true);
+        return [wrong.slice(0, 3), rows];
+      `,
+        `
+        let owner = "";
+        export function setOwner(name: string) { owner = name; }
+        class Assigned {
+          who: () => string;
+          constructor(public tag: string) { this.who = () => owner + ":" + this.tag; }
+        }
+        class Field {
+          who = () => owner + ":" + this.tag;
+          constructor(public tag: string) {}
+        }
+        function Old(this: any, tag: string) { this.tag = tag; this.who = () => owner + ":" + this.tag; }
+        export const makers: Record<string, (tag: string) => any> = {
+          literal(tag) { const self: { tag: string; who?: () => string } = { tag }; self.who = () => owner + ":" + self.tag; return self; },
+          untyped(tag) { const self: any = {}; self.tag = tag; self.who = () => owner + ":" + self.tag; return self; },
+          assigned: tag => new Assigned(tag),
+          field: tag => new Field(tag),
+          old: tag => new (Old as any)(tag),
+        };
+        export const readers: Record<string, (object: any) => any> = {
+          call: object => object.who(),
+          take: object => object.who,
+          typed: (object: Assigned) => object.who(),
+          stringify: object => (JSON.stringify(object), object.who()),
+          spread: object => ({ ...object }).who(),
+          entries: object => (Object.entries(object).find(([key]) => key === "who")![1] as () => string)(),
+          assign: object => Object.assign({}, object).who(),
+          reflect: object => Reflect.get(object, "who")(),
+          descriptor: object => Object.getOwnPropertyDescriptor(object, "who")!.value(),
+          destructure: ({ who }) => who(),
+          computed: object => object["w" + "ho".slice(0)](),
+        };
+      `,
+      ),
+    ).toEqual(everywhere([[], 495]));
+  });
+
+  test.concurrent("getters of the host's classes are read in the host and in graphs, in either order", async () => {
+    expect(
+      await run(
+        `
+        const host = await import(url);
+        const [a, b] = await Promise.all([1, 2].map(() => new Bun.ModuleGraph().import(url)));
+        const out: string[] = [];
+        for (const order of [[host, a, b], [b, host, a]])
+          for (const graph of order) for (let i = 0; i < 3; i++) out.push(graph.readAll());
+        Bun.gc(true);
+        const late = await new Bun.ModuleGraph().import(url);
+        out.push(late.readAll(), host.readAll(), a.readAll());
+        return [...new Set(out)];
+      `,
+        `
+        const read = (object: any, name: string) => object[name];
+        const status = (response: any) => response.status;
+        const method = (request: any) => request.method;
+        const href = (url: any) => url.href;
+        const size = (blob: any) => blob.size;
+        const nameOf = (error: any) => error.name;
+        const aborted = (controller: any) => controller.signal.aborted;
+        export function readAll() {
+          let thrown = "";
+          try { structuredClone(() => 1); } catch (error) { thrown = (error as Error).name; }
+          return [
+            status(new Response("x", { status: 201 })), method(new Request("http://x/", { method: "PUT" })), href(new URL("http://x/y")), size(new Blob(["abc"])),
+            nameOf(new DOMException("m", "AbortError")), aborted(new AbortController()), thrown, read(new Response("x"), "ok"), read(new URL("http://x/y?z"), "search"),
+          ].join();
+        }
+      `,
+      ),
+    ).toEqual(everywhere(["201,PUT,http://x/y,3,AbortError,false,DataCloneError,true,?z"]));
   });
 
   test.concurrent("600 graphs at once", async () => {

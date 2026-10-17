@@ -44,7 +44,7 @@ async function run(cmd: string[], cwd: string) {
 
 for (const { kind, declaration, differs } of [
   { kind: "an interface", declaration: "export interface Message {\n  text: string;\n}\n", differs: false },
-  { kind: "a class", declaration: "export declare class Message {\n  text: string;\n}\n", differs: true },
+  { kind: "a class", declaration: "export declare class Message {\n  text: string;\n}\n", differs: false },
 ])
   describe(`${kind} that a package re-exports only as a type (the shape of code in h3)`, () => {
     let executable: { stdout: string; exitCode: number } | undefined;

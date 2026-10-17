@@ -78,7 +78,16 @@ async function whereItIsRefused(executable: string, directory: string, onLinux: 
   return run([executable]);
 }
 
-describe.skipIf(!isSupported)("an executable needs no permission to make memory executable", () => {
+// A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so nothing can be shown.
+async function isRefusedNowhere() {
+  if (!isMacOS || !isSupported) return false;
+  using dir = tempDir("aot-without-executable-memory-control", {});
+  return (await whereItIsRefused(await build(control, String(dir)), String(dir))).stdout === "granted\n";
+}
+const refusedNowhere = await isRefusedNowhere();
+if (refusedNowhere) console.error("SKIPPED: test/aot/without-executable-memory.test.ts: this machine does not enforce the hardened runtime: an executable signed with it, without the entitlement, is granted memory for generated code");
+
+describe.skipIf(!isSupported || refusedNowhere)("an executable needs no permission to make memory executable", () => {
   test("the control: what asks for executable memory gets it, and is refused it there", async () => {
     using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refusesOnLinux });
     const executable = await build(control, String(dir));

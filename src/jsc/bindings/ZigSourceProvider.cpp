@@ -412,7 +412,7 @@ extern "C" bool Bun__BytecodeLinkEncoder__addModule(JSC::BytecodeLinkEncoder* en
     return true;
 }
 
-extern "C" bool Bun__BytecodeLinkEncoder__setTypedProgram(JSC::BytecodeLinkEncoder* encoder, const uint8_t* program, size_t size, const uint32_t* modules, size_t numberOfModules, const uint8_t* replacedStrings, size_t replacedStringsSize)
+extern "C" NEVER_INLINE bool Bun__BytecodeLinkEncoder__setTypedProgram(JSC::BytecodeLinkEncoder* encoder, const uint8_t* program, size_t size, const uint32_t* modules, size_t numberOfModules, const uint8_t* replacedStrings, size_t replacedStringsSize)
 {
     return encoder->setTypedProgram({ program, size }, std::span { modules, numberOfModules }, { replacedStrings, replacedStringsSize });
 }
@@ -736,7 +736,7 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
     if (!verbose)
         return;
     fprintf(stderr, "[aot] program data: %zu bytes\n", use.programDataSize);
-    fprintf(stderr, "[aot] image: %zu bytes, %zu of code at %p, %u regular expressions\n", length, use.codeSizeInBytes, use.code, JSC::aotImageRegExpCount({ bytes, length }).value_or(0));
+    fprintf(stderr, "[aot] image: %zu bytes, %zu of code at 0x%zx, %u regular expressions\n", length, use.codeSizeInBytes, reinterpret_cast<size_t>(use.code), JSC::aotImageRegExpCount({ bytes, length }).value_or(0));
 #if !OS(WINDOWS)
     if (!strcmp(verbose, "2") && use.codeSizeInBytes > 4096) {
         auto* start = static_cast<const uint8_t*>(use.code);

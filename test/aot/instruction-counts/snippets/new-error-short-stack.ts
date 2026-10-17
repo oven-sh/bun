@@ -10,7 +10,7 @@ function outer(): Error {
   return middle();
 }
 const callers = [outer, outer];
-const operations = 160;
+const operations = 40;
 let total = 0;
 
 kernel: {

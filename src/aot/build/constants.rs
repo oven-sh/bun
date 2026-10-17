@@ -85,7 +85,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return None;
         }
         let (holder, name) = match self.hir(file)[e].kind {
-            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) => (global_object(), name),
+            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) && !self.c.module_graph_may_replace(name) => (global_object(), name),
             ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => (self.resolve_locked_builtin(file, obj)?, name),
             _ => return None,
         };
@@ -94,7 +94,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn resolve_locked_builtin(&mut self, file: FileId, e: ExprId) -> Option<&'static Builtin> {
         match self.hir(file)[e].kind {
-            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) => global_object().object_at(self.c.atoms().bytes(name)),
+            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) && !self.c.module_graph_may_replace(name) => global_object().object_at(self.c.atoms().bytes(name)),
             ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => self.resolve_locked_builtin(file, obj)?.object_at(self.c.atoms().bytes(name)),
             _ => None,
         }

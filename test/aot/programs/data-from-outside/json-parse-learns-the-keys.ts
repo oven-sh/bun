@@ -1,14 +1,16 @@
-// JSON.parse without a reviver goes by the keys it has seen at each place, from the second text on that begins with the same eight characters. What stays on that path, which objects are filled member by member, and which values go to the general parser.
+// JSON.parse without a reviver goes by the keys it has seen at each place, once sixteen texts that begin with the same eight characters have gone by. What stays on that path, which objects are filled member by member, and which values go to the general parser.
 declare const aotOperationCount: (name: string) => number;
 const names = ["jsonParsedWithLearnedShapes", "jsonObjectParsedMemberByMember", "jsonValueParsedWithoutShape"];
 const order = '{"customer":{"id":1,"name":"n"},"items":[{"sku":"a","quantity":2},{"sku":"b","quantity":3}],"coupon":"c"}';
 function measure(label: string, text: string, parse: (text: string) => unknown = text => JSON.parse(text), isSeenBefore = true) {
-  try {
-    if (isSeenBefore) {
-      for (let turn = 0; turn < 4; turn++) JSON.parse(order);
-      JSON.parse(text);
+  if (isSeenBefore) {
+    for (let turn = 0; turn < 4; turn++) JSON.parse(order);
+    for (let turn = text.startsWith('{"customer"') ? 1 : 16; turn > 0; turn--) {
+      try {
+        JSON.parse(text);
+      } catch {}
     }
-  } catch {}
+  }
   const before = names.map(name => aotOperationCount(name));
   let seen: string;
   try {
@@ -21,7 +23,10 @@ function measure(label: string, text: string, parse: (text: string) => unknown =
 }
 measure("a text that begins as none before", order, undefined, false);
 measure("the second that begins so", order, undefined, false);
-measure("the third", order, undefined, false);
+for (let turn = 0; turn < 13; turn++) JSON.parse(order);
+measure("the sixteenth", order, undefined, false);
+measure("the seventeenth", order, undefined, false);
+measure("the eighteenth", order, undefined, false);
 measure("indented", JSON.stringify(JSON.parse(order), null, 2));
 measure("another order of keys", '{"items":[{"quantity":2,"sku":"a"}],"coupon":"c","customer":{"name":"n","id":1}}');
 measure("a key is absent", '{"customer":{"id":1},"items":[]}');

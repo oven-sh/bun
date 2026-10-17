@@ -32,7 +32,7 @@ function whereItDeparts(aot: string, plain: string) {
   const theirs = plain.split("\n");
   const lines = aot.split("\n").filter((line, i) => line !== theirs[i]);
   // A long number is a time or an address.
-  return [...lines.slice(0, 4).map(line => line.slice(0, 160).replace(/\d{10,}/g, "<number>")), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
+  return [...lines.slice(0, 4).map(line => line.replaceAll("program.exe", "program").slice(0, 160).replace(/\d{10,}/g, "<number>")), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
 }
 
 /**

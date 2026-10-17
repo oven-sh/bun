@@ -1551,9 +1551,7 @@ pub(crate) fn collect_compile_assets(
     };
     let entry_name = bun_paths::basename(outfile);
 
-    #[cfg(unix)]
     let also_at_real_paths: Vec<Box<[u8]>>;
-    #[cfg(unix)]
     let assets = if in_place {
         let mut all = assets.to_vec();
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -1563,7 +1561,9 @@ pub(crate) fn collect_compile_assets(
             for asset in assets {
                 let Ok(real) = bun_sys::realpath(&bun_core::ZBox::from_bytes(asset), &mut real_buf) else { continue };
                 let as_written = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(working_directory.as_bytes(), &mut absolute_buf[..], &[&asset[..]]);
-                if strings::without_trailing_slash(as_written) != real {
+                let as_written = strings::without_trailing_slash(as_written);
+                let is_real = if cfg!(windows) { as_written.eq_ignore_ascii_case(real) } else { as_written == real };
+                if !is_real {
                     all.push(Box::from(real));
                 }
             }
@@ -1635,7 +1635,9 @@ pub(crate) fn collect_compile_assets(
                 return Err("failed to read the working directory".to_string());
             };
             let absolute = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(working_directory.as_bytes(), &mut absolute_buf[..], &[asset_trimmed]);
-            held = [b".held".as_slice(), absolute].concat();
+            let mut name = [b".held".as_slice(), absolute].concat();
+            resolve_path::platform_to_posix_in_place::<u8>(&mut name);
+            held = name;
             &held
         } else {
             base

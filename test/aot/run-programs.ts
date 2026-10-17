@@ -232,9 +232,9 @@ export function programs(topic: string, part = 1, parts = 1) {
 /**
  * Runs the quick subset of all topics once more, built with a JavaScriptCore option that forces the compiler down a path which
  * small programs otherwise never take. AOT_PROGRAMS=<text> selects other programs, as above. `runEnv` is set where the executable runs.
- * It is split into `parts` as a large folder is. A build with a sanitizer takes a third of them.
+ * It is split into `parts` as a large folder is. A build with a sanitizer takes a third of them. The program `always` is taken in any case.
  */
-export function variant(label: string, buildEnv: Record<string, string>, runEnv: Record<string, string> = {}, part = 1, parts = 1) {
+export function variant(label: string, buildEnv: Record<string, string>, runEnv: Record<string, string> = {}, part = 1, parts = 1, always = "") {
   const all: string[] = [];
   find(root, all);
   define(
@@ -242,9 +242,13 @@ export function variant(label: string, buildEnv: Record<string, string>, runEnv:
     all
       // A file directly in ./programs is a helper, not a program.
       .filter(path => /[\\/]/.test(relative(root, path)))
-      .filter(path => (wanted === "" || wanted === "quick" ? isQuick(path) : relative(root, path).includes(wanted)))
-      .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
-      .filter(path => !isASAN || (hash(path) >> 32n) % 3n === 0n)
+      .filter(
+        path =>
+          (always && besideOf(relative(root, path)).replaceAll("\\", "/") === always) ||
+          ((wanted === "" || wanted === "quick" ? isQuick(path) : relative(root, path).includes(wanted)) &&
+            Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 &&
+            (!isASAN || (hash(path) >> 32n) % 3n === 0n)),
+      )
       // Nothing is compiled for a program that the build rejects.
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt"))
       .filter(path => !existsSync(besideOf(path) + ".json") || !JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipInVariants),

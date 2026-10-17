@@ -3310,18 +3310,20 @@ pub mod bv2_impl {
             } else if self.transpiler.options.compiles_ahead_of_time() && self.graph.entry_points.as_slice().len() > 1 {
                 let entry_point_paths = || self.graph.entry_points.as_slice().iter().map(|index| &all_sources[index.get() as usize]).filter(|source| source.path.is_file()).map(|source| source.path.text);
                 let entry_points: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = entry_point_paths().collect();
-                let application_dir = entry_point_paths().next().map_or(&b""[..], |path| &path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)]);
-                let mut asked: std::collections::BTreeSet<(&[u8], &[u8])> = Default::default();
+                let application_dir = entry_point_paths().next().map_or(&b""[..], |path| &path[..bun_core::strings::last_index_of_char(path, bun_paths::SEP).unwrap_or(0)]);
+                let mut asked: std::collections::BTreeSet<(&[u8], Box<[u8]>)> = Default::default();
+                let installed = [bun_paths::SEP_STR.as_bytes(), b"node_modules", bun_paths::SEP_STR.as_bytes()].concat();
                 for &path in &entry_points {
-                    let Some(at) = bun_core::strings::last_index_of(path, b"/node_modules/") else { continue };
-                    let inside = &path[at + 14..];
-                    let mut slashes = inside.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
+                    let Some(at) = bun_core::strings::last_index_of(path, &installed) else { continue };
+                    let inside = &path[at + installed.len()..];
+                    let mut slashes = inside.iter().enumerate().filter(|(_, c)| **c == bun_paths::SEP).map(|(at, _)| at);
                     let Some(end) = (if inside.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { continue };
-                    asked.insert((&path[..at], &inside[..end]));
-                    asked.insert((application_dir, &inside[..end]));
+                    asked.insert((&path[..at], super::held_name(b"", &inside[..end])));
+                    asked.insert((application_dir, super::held_name(b"", &inside[..end])));
                 }
                 let mut resolutions: Vec<u8> = Vec::new();
-                for (folder, package) in asked {
+                for (folder, package) in &asked {
+                    let (folder, package) = (*folder, &package[..]);
                     for (kind, how) in [(ImportKind::Require, &b"r"[..]), (ImportKind::Stmt, &b"i"[..])] {
                         if let Ok(found) = self.transpiler.resolver.resolve(folder, package, kind)
                             && let Some(path) = found.path_const()
@@ -4237,6 +4239,8 @@ pub mod bv2_impl {
             for (path, text, is_typescript) in files {
                 self.laid.map.put(&path, text).expect("oom");
                 if is_typescript {
+                    #[cfg(windows)]
+                    self.shipped_as_typescript.insert(super::native_separators(path.to_vec()).into_boxed_slice(), ());
                     self.shipped_as_typescript.insert(path, ());
                 }
             }
@@ -6552,24 +6556,20 @@ pub mod bv2_impl {
                         ..Default::default()
                     }));
                 }
-                #[cfg(unix)]
-                {
-
-                    for (source, loader) in self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()) {
-                        if *loader != Loader::Napi || !source.path.is_file() {
-                            continue;
-                        }
-                        let Ok(addon) = bun_sys::File::read_from(bun_core::Fd::cwd(), source.path.text) else { continue };
-                        data_files.push(options::OutputFile::init(crate::output_file::Options {
-                            data: crate::output_file::OptionsData::Buffer { data: addon.into_boxed_slice() },
-                            output_path: [b".held".as_slice(), source.path.text].concat().into_boxed_slice(),
-                            input_loader: Loader::File,
-                            output_kind: crate::options::OutputKind::Asset,
-                            loader: Loader::File,
-                            side: Some(crate::options::Side::Server),
-                            ..Default::default()
-                        }));
+                for (source, loader) in self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()) {
+                    if *loader != Loader::Napi || !source.path.is_file() {
+                        continue;
                     }
+                    let Ok(addon) = bun_sys::File::read_from(bun_core::Fd::cwd(), source.path.text) else { continue };
+                    data_files.push(options::OutputFile::init(crate::output_file::Options {
+                        data: crate::output_file::OptionsData::Buffer { data: addon.into_boxed_slice() },
+                        output_path: super::held_name(b".held", source.path.text),
+                        input_loader: Loader::File,
+                        output_kind: crate::options::OutputKind::Asset,
+                        loader: Loader::File,
+                        side: Some(crate::options::Side::Server),
+                        ..Default::default()
+                    }));
                 }
                 {
                     let mut package_dirs: std::collections::BTreeSet<&[u8]> = Default::default();

@@ -2656,10 +2656,15 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         }
         let referenced_outputs = projects.outputs_of_referenced_projects(disk, request, owners.iter().flatten().chain(&above));
         let agreed_options = (owner.is_none() && owners.len() > 1).then(|| projects.options_that_all_agree_on(disk, request, &owners)).flatten();
+        let mut files_of_other_owners: Vec<Vec<u8>> = Vec::new();
+        for other in owners.iter().flatten().filter(|other| Some(*other) != owner.as_ref()) {
+            files_of_other_owners.extend(projects.load(disk, request, other).into_iter().flat_map(|project| project.files.iter().cloned()));
+        }
         let of = OfProject {
             config: owner.as_deref(),
             agreed_options: agreed_options.as_deref(),
             referenced_outputs: &referenced_outputs,
+            files_of_other_owners: &files_of_other_owners,
             named: Some((Extent::Project, paths.as_slice())),
             elsewhere: None,
             // SAFETY: both places that put an `EarlyRun` into a request do so inside the closure of
@@ -2677,6 +2682,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                     config: Some(&config),
                     agreed_options: None,
                     referenced_outputs: &[],
+                    files_of_other_owners: &[],
                     named: None,
                     elsewhere: None,
                     run: None,
@@ -2886,6 +2892,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 config: config.as_deref(),
                 agreed_options: None,
                 referenced_outputs: &[],
+                files_of_other_owners: &[],
                 named: Some((*extent, files.as_slice())),
                 elsewhere: (!is_one).then_some(&elsewhere),
                 run: (run.as_ref()).filter(|_| for_the_rest.is_none() || *config != for_the_rest),
@@ -2951,6 +2958,7 @@ struct OfProject<'a, 'u> {
     config: Option<&'a [u8]>,
     agreed_options: Option<&'a [(Vec<u8>, Json)]>,
     referenced_outputs: &'a [(Vec<u8>, Vec<u8>)],
+    files_of_other_owners: &'a [Vec<u8>],
     /// `None`: all of its files.
     named: Option<(Extent, &'a [Vec<u8>])>,
     /// The files that are checked in another project, by `tspath.Path`. This one may import them.
@@ -3174,6 +3182,10 @@ fn check_project_of(
         }
     };
     let is_case_sensitive = disk.is_case_sensitive();
+    if !of.files_of_other_owners.is_empty() {
+        let mut seen: FxHashSet<Vec<u8>> = project.files.iter().map(|file| to_path(file, is_case_sensitive).into_owned()).collect();
+        project.files.extend(of.files_of_other_owners.iter().filter(|file| seen.insert(to_path(file, is_case_sensitive).into_owned())).cloned());
+    }
     let wait_for_deferred_sources = disk.wait_for_deferred_sources.lock().take().filter(|_| request.is_one_program);
     let listed_project_files: FxHashMap<Vec<u8>, usize> = match wait_for_deferred_sources {
         Some(_) => project.files.iter().enumerate().map(|(at, file)| (to_path(file, is_case_sensitive).into_owned(), at)).collect(),

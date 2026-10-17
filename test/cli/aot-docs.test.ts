@@ -3,10 +3,11 @@
 import { describe, expect, test } from "bun:test";
 import { unsupported } from "../aot/run-programs";
 import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 
 const compiles = !unsupported;
+const hasTheShellOfThePages = !isWindows;
 
 type Example = { line: number; commands: string; printed: string; filesAbove: Record<string, string> };
 
@@ -41,7 +42,7 @@ const withoutTimes = (text: string) =>
     .split("\n")
     .map(line => line.replace(/ *\[\d+(\.\d+)?m?s\]/, "").trimEnd());
 
-describe.skipIf(!compiles).each(["aot-adoption.mdx", "aot-debugging.mdx"])("docs/bundler/%s", name => {
+describe.skipIf(!compiles || !hasTheShellOfThePages).each(["aot-adoption.mdx", "aot-debugging.mdx"])("docs/bundler/%s", name => {
   const page = readFileSync(join(import.meta.dir, "..", "..", "docs", "bundler", name), "utf8");
   const { files, examples } = examplesOf(page);
 

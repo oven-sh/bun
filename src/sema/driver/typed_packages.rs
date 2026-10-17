@@ -31,7 +31,8 @@ fn typed_package_under(root: &[u8], defines: Option<&Defines>, directory: &[u8],
     let Some((home, is_shipped_with_the_package)) = typed_package_home(root, directory, &name) else {
         return (Vec::new(), None);
     };
-    let shown = home.strip_prefix(root).map_or(&home[..], |inside| &inside[1..]);
+    let shown: Vec<u8> = home.strip_prefix(root).map_or(&home[..], |inside| &inside[1..]).iter().map(|&byte| if is_separator(byte) { b'/' } else { byte }).collect();
+    let shown = &shown[..];
     let found = match is_shipped_with_the_package {
         true => shipped_files(directory),
         false => files_of(root, defines, &home, directory, &name, 0),

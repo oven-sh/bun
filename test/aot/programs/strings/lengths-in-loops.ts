@@ -2,7 +2,8 @@
 // CALLS- counted Flatten
 // CALLS- greater Flatten
 // CALLS- nested Flatten
-// CALLS+ lengthAndCharacters Flatten
+// CALLS- lengthAndCharacters Flatten
+// CALLS+ lengthAndCharacters RopeCharacters
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

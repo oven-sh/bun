@@ -1146,6 +1146,10 @@ impl TypedPackages {
         let installed: &[u8] = if cfg!(windows) { b"\\node_modules\\" } else { b"/node_modules/" };
         let laid_before = self.laid.len();
         for path in paths {
+            #[cfg(windows)]
+            let native = bun_core::strings::replace_owned(path, b"/", b"\\");
+            #[cfg(windows)]
+            let path = &native[..];
             let Some(at) = bun_core::strings::last_index_of(path, installed).map(|at| at + installed.len()) else { continue };
             let mut parts = path[at..].split(|&byte| byte == std::path::MAIN_SEPARATOR as u8);
             let Some(first) = parts.next() else { continue };
@@ -2219,7 +2223,6 @@ fn find_entry_points_reaching_errors(cwd: &[u8], entry_points: &[Vec<u8>], impor
 }
 
 /// What the form of `AuditFound::said` depends on.
-#[cfg(unix)]
 pub(crate) fn diagnostic_format_key() -> [bool; 4] {
     let to = Destination::stderr();
     [to.is_tty, to.colors, Output::is_ai_agent(), Output::is_github_action()]
@@ -2230,17 +2233,12 @@ pub(crate) enum Audited<'a> {
     Whole,
     WholeProgramInBackground,
     Alone { path: &'a [u8], text: &'a [u8], is_quiet: bool },
-    #[cfg(unix)]
     Changed { paths: &'a [Vec<u8>], public_declarations: &'a [(Vec<u8>, u64, Vec<u8>)] },
 }
 
 impl Audited<'_> {
     fn is_changed(self) -> bool {
-        match self {
-            #[cfg(unix)]
-            Audited::Changed { .. } => true,
-            _ => false,
-        }
+        matches!(self, Audited::Changed { .. })
     }
 }
 
@@ -2289,7 +2287,6 @@ pub(crate) fn audit_before(
             provided.already_read.insert(from_native(path), bun_core::strings::without_utf8_bom(text).to_vec().into());
             Some(vec![from_native(path)])
         }
-        #[cfg(unix)]
         Audited::Changed { paths, public_declarations } => {
             for (path, _, declarations) in public_declarations.iter().filter(|it| !paths.contains(&it.0)) {
                 provided.already_read.insert(from_native(path), declarations.clone().into());
@@ -2391,7 +2388,6 @@ pub(crate) fn audit_before(
                 found.lock().modules.extend(with_sources(bun_aot::audit::table(&of_fragment, false, &text_of, in_parallel)));
             }
             found.lock().has_errors = !errors.is_empty();
-            #[cfg(unix)]
             if let Audited::Changed { paths, public_declarations: before } = audited {
                 let mut found = found.lock();
                 found.public_declarations = core::mem::take(&mut *public_declarations.lock());
@@ -2453,7 +2449,6 @@ pub(crate) fn audit_before(
         only: only.as_deref(),
         threads: match audited {
             Audited::Whole => 0,
-            #[cfg(unix)]
             Audited::Changed { .. } => 0,
             Audited::WholeProgramInBackground => usize::from(bun_core::get_thread_count()).div_ceil(2),
             Audited::Alone { .. } => usize::from(bun_core::get_thread_count()).min(8),

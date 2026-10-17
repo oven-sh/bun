@@ -55,6 +55,7 @@ struct node_module;
 
 #include "root.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/AOTFunction.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
@@ -169,6 +170,10 @@ public:
         m_domStructures[static_cast<size_t>(slot)].set(vm(), this, structure);
         if (slot == WebCore::DOMStructureSlot::JSDOMURL || slot == WebCore::DOMStructureSlot::JSURLSearchParams || slot == WebCore::DOMStructureSlot::JSFetchHeaders)
             lockHostClassPrototype(structure->storedPrototypeObject());
+#if ENABLE(AOT)
+        if (slot == WebCore::DOMStructureSlot::JSFetchHeaders)
+            JSC::AOT::Typed::didCreateHostClassStructure(this, JSC::AOT::Typed::headersHostClass, structure);
+#endif
         return structure;
     }
     const WebCore::DOMConstructors& constructors() const

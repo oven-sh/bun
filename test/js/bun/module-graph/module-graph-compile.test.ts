@@ -190,16 +190,6 @@ const instanceRun = (tag: string | null, n: number, made: number, cjsN: number) 
   req: [tag ?? "host", true, true],
 });
 
-// Code that is compiled ahead of time is bound to the real `process`: a graph's `globals` cannot replace it there (a TypeError says so).
-// So under --aot each graph carries its tag in a binding of its own, and everything else is the same program.
-const tagOfGraph = '(typeof __tag !== "undefined" ? __tag : undefined)';
-function withTagInItsOwnBinding(text: string, isTypeScript: boolean): string {
-  const changed = text
-    .replaceAll(/process: Object\.create\(process, \{ env: \{ value: \{ \.\.\.process\.env, TAG: ([^}]+?) \}, enumerable: true \} \}\)/g, "__tag: $1")
-    .replaceAll("process.env.TAG", tagOfGraph);
-  return isTypeScript && changed.includes("__tag !==") ? "declare var __tag: string | undefined;\n" + changed : changed;
-}
-
 type Combo = { name: string; args: string[] };
 const combos: Combo[] = [
   { name: "esm+splitting", args: ["--format=esm", "--splitting"] },
@@ -211,12 +201,10 @@ const combos: Combo[] = [
 
 // All executables are built up front, concurrently; each describe awaits its own.
 async function build(combo: Combo) {
-  const isAot = combo.args.includes("--aot");
-  const written = (name: string, text: string) => (isAot ? withTagInItsOwnBinding(text, name.endsWith(".ts")) : text);
   const dir = tempDir("module-graph-compile-" + combo.name.replace(/\W/g, "_"), {
-    ...Object.fromEntries(Object.entries(sources).map(([name, text]) => [name, written(name, text)])),
+    ...sources,
     // not embedded: loaded from disk by the compiled program
-    "external.mjs": written("external.mjs", `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`),
+    "external.mjs": `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`,
   });
   const exe = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
   await using proc = Bun.spawn({
@@ -280,8 +268,7 @@ for (const [index, combo] of combos.entries()) {
     });
 
     const isAot = combo.args.includes("--aot");
-    // TODO(aot): two differences of compiled code, each a bug: import() in a graph that has been disposed of still resolves;
-    // import() in direct eval goes through the host's loader.
+    // TODO(aot): a difference of compiled code, and a bug: import() in a graph that has been disposed of still resolves.
     const testButForAot = isAot ? test.failing : test;
 
     test("build", () => {
@@ -290,9 +277,7 @@ for (const [index, combo] of combos.entries()) {
 
     test("a graph's own `process`", async () => {
       expect(await run("process")).toEqual({
-        parsed: isAot
-          ? 'TypeError: The `globals` of a Bun.ModuleGraph cannot replace the global "process" for a module that was compiled ahead of time'
-          : "TAG",
+        parsed: "TAG",
         exitCode: 0,
         stderr: "",
       });
@@ -325,7 +310,7 @@ for (const [index, combo] of combos.entries()) {
       "viaEval",
       "viaFunction",
     ] as const) {
-      const testOrdering = ordering === "disposeMiddle" || ordering === "viaEval" ? testButForAot : test;
+      const testOrdering = ordering === "disposeMiddle" ? testButForAot : test;
       testOrdering(`dynamic import() of a lazily loaded embedded chunk × ${ordering}`, async () => {
         const tags = ["l0", "l1", "l2"];
         const skipped = (i: number) => ordering === "onlySome" && i === 1;

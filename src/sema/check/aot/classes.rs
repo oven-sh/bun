@@ -687,8 +687,28 @@ impl<'p, 's> Checker<'p, 's> {
         declarations.iter().any(|(_, decl)| matches!(decl, Decl::Interface(_)))
             && declarations.into_iter().all(|(file, decl)| {
                 let hir = self.hir(file);
-                !matches!(decl, Decl::Class(_)) && (hir.kind == FileKind::Declaration || hir.is_ambient(hir.node(decl)))
+                !matches!(decl, Decl::Class(_)) && (hir.kind == FileKind::Declaration || hir.is_ambient(hir.node(decl)) && !self.is_within_namespaces_of_types(interface))
             })
+    }
+
+    fn is_within_namespaces_of_types(&self, declared: Sym) -> bool {
+        let files = self.files();
+        let mut around = files.symbol_parent(declared);
+        while let Some(container) = around {
+            let blocks = files.decls(container);
+            if blocks.iter().any(|(_, decl)| matches!(decl, Decl::File)) {
+                return self.hir(container.file).has_module_syntax;
+            }
+            let is_named_block = |&(file, decl): &(FileId, Decl)| match decl {
+                Decl::Module(block) => self.hir(file).kind != FileKind::Declaration && matches!(self.hir(file)[block].name, crate::hir::ModuleName::Ident(_)),
+                _ => true,
+            };
+            if files.flags(container).contains(SymFlags::VALUE_MODULE) || !files.flags(container).contains(SymFlags::NAMESPACE_MODULE) || !blocks.iter().all(is_named_block) {
+                return false;
+            }
+            around = files.symbol_parent(container);
+        }
+        false
     }
 
     pub fn is_declared_ambient(&self, sym: Sym) -> bool {

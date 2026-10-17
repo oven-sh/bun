@@ -317,6 +317,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 );
             }
+            Macro::OnlyArgument => {
+                let &[argument] = call.args.slice() else {
+                    self.log().add_error_fmt(
+                        Some(self.source),
+                        loc,
+                        format_args!("\"${}\" takes one value", BStr::new(name)),
+                    );
+                    return false;
+                };
+                *e = argument;
+            }
             Macro::BundleError => {
                 if !self.is_control_flow_dead {
                     let message: &[u8] = match literals.first() {

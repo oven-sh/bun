@@ -191,10 +191,10 @@ impl<'p, 's> Checker<'p, 's> {
                     return None;
                 }
                 let receiver = self.type_of_expr(file, obj);
-                (self.is_predicted(file, obj) || self.is_property_claimed(receiver, name) || self.is_class_prototype_object(file, e, name) || self.has_ambient_index_signature(receiver) || self.is_primitive_read_after_cast(file, e)).then_some(Claim::Property)
+                (self.is_predicted(file, obj) || self.is_string_by_type_that_may_be_a_number(file, obj) && self.type_of_property_of_type(TypeId::NUMBER, name).is_some() || self.is_property_claimed(receiver, name) || self.is_class_prototype_object(file, e, name) || self.has_ambient_index_signature(receiver) || self.is_primitive_read_after_cast(file, e)).then_some(Claim::Property)
             }
             ExprKind::Index { obj, index, .. } => {
-                if self.is_predicted(file, obj) {
+                if self.is_predicted(file, obj) || self.is_string_by_type_that_may_be_a_number(file, obj) {
                     return Some(Claim::Property);
                 }
                 let receiver = self.type_of_expr(file, obj);
@@ -477,6 +477,51 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_uninformative(promised)
     }
 
+    pub fn is_handed_to_what_is_only_declared(&mut self, file: FileId, mut e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            let parent = match bound.expr_parent[e.idx()] {
+                Parent::Prop(prop) if bound.prop_owner[prop.idx()].is_some() => {
+                    e = bound.prop_owner[prop.idx()];
+                    continue;
+                }
+                Parent::Expr(parent) if parent.is_some() => parent,
+                _ => return true,
+            };
+            match hir[parent].kind {
+                ExprKind::Call(call) | ExprKind::New(call) => {
+                    let is_written_in_typed_code = self.resolved_signature(file, parent).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, declared, _)| {
+                        let declaring = self.hir(of);
+                        !self.is_declaration_only(of) && !self.is_untyped_file(of) && !declaring.is_ambient(declaring.node(declared))
+                    });
+                    return !is_written_in_typed_code || self.is_reached_from_ambient_binding(file, hir[call].callee, 0);
+                }
+                ExprKind::Assign { op: None, target, value } if value == e => return self.is_reached_from_ambient_binding(file, target, 0),
+                ExprKind::Array(_) | ExprKind::Cond { .. } | ExprKind::Binary { .. } => e = parent,
+                _ => return true,
+            }
+        }
+    }
+
+    fn is_reached_from_ambient_binding(&mut self, file: FileId, e: ExprId, depth: u32) -> bool {
+        if depth > 8 {
+            return true;
+        }
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Ident(name) => {
+                let Some(sym) = self.symbol_of_identifier(file, e, name) else { return true };
+                let Some(sym) = (if self.files.flags(sym).contains(SymFlags::ALIAS) { self.files.resolve_alias(sym) } else { Some(sym) }) else { return true };
+                self.is_ambient_value(sym) || self.initializer_of_const(sym).is_some_and(|(of, initializer)| self.is_reached_from_ambient_binding(of, initializer, depth + 1))
+            }
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => self.is_reached_from_ambient_binding(file, obj, depth + 1),
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => self.is_reached_from_ambient_binding(file, hir[call].callee, depth + 1),
+            ExprKind::NonNull(inner) | ExprKind::Await(inner) | ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } => self.is_reached_from_ambient_binding(file, inner, depth + 1),
+            ExprKind::Binary { left, right, .. } | ExprKind::Cond { yes: left, no: right, .. } => self.is_reached_from_ambient_binding(file, left, depth + 1) || self.is_reached_from_ambient_binding(file, right, depth + 1),
+            _ => false,
+        }
+    }
+
     fn is_ambient_function_declaration(&mut self, of: FileId, declared: FnId) -> bool {
         if self.hir(of)[declared].kind != FnKind::Decl {
             return false;
@@ -517,7 +562,7 @@ impl<'p, 's> Checker<'p, 's> {
         if name.is_none() || self.files.parent_of_symbol(sym).is_some() {
             return false;
         }
-        is_engine_global(self.atoms().bytes(name))
+        is_engine_global(self.atoms().bytes(name)) && !self.module_graph_may_replace(name)
     }
 
     fn is_unlisted_property(&mut self, receiver: TypeId, name: Atom) -> bool {
@@ -588,7 +633,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let Some(&Prop { source: PropSource::Literal(file, declared), .. }) = Self::written_member_behind(prop) else { return false };
         let value = self.hir(file)[declared].value;
-        value.is_some() && self.is_predicted(file, value) || self.is_inferred_from_first_value(prop) || self.may_be_overridden_by_spread(file, declared)
+        value.is_some() && (self.is_predicted(file, value) || self.is_string_by_type_that_may_be_a_number(file, value)) || self.is_inferred_from_first_value(prop) || self.may_be_overridden_by_spread(file, declared)
     }
 
     fn spreads_unnamed_members(&mut self, file: FileId, literal: ExprId) -> bool {
@@ -761,7 +806,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Some((file, Decl::ParameterProperty(parameter))) if self.hir(file)[parameter].ty.is_none() => (file, self.hir(file)[parameter].default),
                 _ => return false,
             };
-            if initializer.1.is_some() && self.is_derived_from_prediction(initializer.0, initializer.1, 0) {
+            if initializer.1.is_some() && (self.is_derived_from_prediction(initializer.0, initializer.1, 0) || self.is_string_by_type_that_may_be_a_number(initializer.0, initializer.1)) {
                 return true;
             }
             if let Some((file, Decl::ParameterProperty(parameter))) = self.files().value_declaration(field)
@@ -783,7 +828,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let stored = if matches!(op, None | Some(BinOp::And | BinOp::Or | BinOp::Nullish)) { value } else { assignment };
-            if self.is_derived_from_prediction(file, stored, 0) {
+            if self.is_derived_from_prediction(file, stored, 0) || self.is_string_by_type_that_may_be_a_number(file, stored) {
                 return true;
             }
         }

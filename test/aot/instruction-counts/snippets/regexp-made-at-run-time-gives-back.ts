@@ -1,7 +1,8 @@
 // tests a line against a pattern that is made at run time and whose runs must give back
 const operations = 100;
 let marks = "";
-for (const code of [35, 35, 35, 35, 35, 35]) marks += String.fromCharCode(code + (Date.now() < 0 ? 1 : 0));
+const codes = [35, 35, 35, 35, 35, 35];
+for (let i = 0; i < codes.length; i++) marks += String.fromCharCode(codes[i] + (Date.now() < 0 ? 1 : 0));
 const mark = marks.charAt(3);
 const heading = new RegExp("^(" + mark + "{1,6})[ \\t]+(.+?)[ \\t]*" + mark + "*[ \\t]*$");
 const lines: string[] = [];

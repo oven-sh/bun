@@ -19,6 +19,7 @@ function seenThroughLoose(o: Loose): string { return String(o.y) + " " + String(
 const point: Point = { x: 1, y: 2.5, on: true, many: 7 };
 const loose: Loose = { x: 3 };
 console.log(getNumberThroughPoint(point), getBooleanThroughPoint(point), seenThroughLoose(point), "|", seenThroughLoose(loose), Object.keys(loose).join());
+putNumberThroughPoint(point, 2.5);
 for (const n of [3.5, NaN, -0, 1e300, 4]) { putNumberThroughPoint(point, n); console.log(Object.is(getNumberThroughPoint(point), n), seenThroughLoose(point)) }
 putBooleanThroughPoint(point, false); putNumberThroughLoose(loose, 0.5); putNumberThroughLoose(point, 9.5);
 console.log(getNumberThroughPoint(point), getBooleanThroughPoint(point), seenThroughLoose(loose), Object.keys(point).join(), Object.keys(loose).join(), JSON.stringify(point), JSON.stringify(loose));

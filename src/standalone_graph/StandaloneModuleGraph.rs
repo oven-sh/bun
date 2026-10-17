@@ -227,6 +227,7 @@ impl StandaloneModuleGraph {
         if is_bun_standalone_file_path(name) {
             return Some(name);
         }
+        let name = strings::paths::without_nt_prefix::<u8>(name);
         let root = PRESERVED_PATHS_ROOT.as_bytes();
         if !self.flags.intersects(flags) || !bun_paths::is_fully_qualified(name) || root.len() + name.len() > buf.len() {
             return None;
@@ -303,6 +304,7 @@ impl StandaloneModuleGraph {
     /// `Some(is_folder)` where `path` is a file of the compiled program or a folder above one. The text of such a file is not in
     /// the executable. For a path that the disk does not have.
     pub fn compiled_program_files(&self, path: &[u8]) -> Option<bool> {
+        let path = strings::paths::without_nt_prefix::<u8>(path);
         if !self.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS) || is_bun_standalone_file_path(path) {
             return None;
         }
@@ -354,7 +356,11 @@ impl StandaloneModuleGraph {
         self.files.values().iter().filter_map(|file| {
             let path = file.name.strip_prefix(PRESERVED_PATHS_ROOT.as_bytes())?;
             let name = bun_paths::basename(path);
-            let is_one = name.ends_with(b".so") || name.ends_with(b".dylib") || strings::contains(name, b".so.");
+            let is_one = if cfg!(windows) {
+                name.len() > 4 && name[name.len() - 4..].eq_ignore_ascii_case(b".dll")
+            } else {
+                name.ends_with(b".so") || name.ends_with(b".dylib") || strings::contains(name, b".so.")
+            };
             is_one.then(|| (path, file.contents.as_bytes()))
         })
     }
@@ -517,6 +523,18 @@ fn native_separators(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let mut path = path.to_vec();
     path::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
     path.into()
+}
+
+fn preserved_path_of(file: &File) -> &'static [u8] {
+    let path = &file.name[PRESERVED_PATHS_ROOT.len()..];
+    #[cfg(windows)]
+    {
+        static NATIVE_PATHS: std::sync::Mutex<std::collections::BTreeMap<&'static [u8], &'static [u8]>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+        let mut native_paths = NATIVE_PATHS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        return *native_paths.entry(path).or_insert_with(|| Box::leak(native_separators(path).into_owned().into_boxed_slice()));
+    }
+    #[cfg(not(windows))]
+    path
 }
 
 fn is_folder_on_disk(path: &[u8]) -> bool {
@@ -687,7 +705,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
                 if !is_bun_standalone_file_path(&key)
                     && let Some(file) = self.find_ref(&key)
                 {
-                    return Some(&file.name[PRESERVED_PATHS_ROOT.len()..]);
+                    return Some(preserved_path_of(file));
                 }
             }
             None

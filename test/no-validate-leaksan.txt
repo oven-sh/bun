@@ -11,6 +11,12 @@ test/aot/frameworks/sveltekit.test.ts
 test/aot/backend-packages/programs-2.test.ts
 test/aot/backend-packages/programs-4.test.ts
 
+# Before its first check LeakSanitizer forks a child that tries ptrace, and ignores
+# what waitpid returns. The signal storm test's SIGALRM (every 20 ms, no SA_RESTART)
+# interrupts that wait about every second time, and the status nothing wrote prints
+# "Child exited with signal 42" on a stderr that must be empty.
+test/js/web/timers/setTimeout.test.js
+
 test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
 test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
 

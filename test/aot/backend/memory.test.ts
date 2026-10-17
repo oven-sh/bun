@@ -24,7 +24,7 @@ test.skipIf(!python)("measure/memory_kinds.py gives a page to the nearest frame 
   writeFileSync(join(String(dir), "faults.txt.gz"), Bun.gzipSync(Buffer.from(faults)));
   const run = Bun.spawnSync([python!, join(import.meta.dir, "measure", "memory_kinds.py"), "table", `server=${String(dir)}`], { cwd: String(dir) });
   expect(run.stderr.toString()).toBe("");
-  const lines = run.stdout.toString().split("\n");
+  const lines = run.stdout.toString().split(/\r?\n/);
   expect(lines).toContain("| **all** | **0.0** |");
   const counts = Bun.spawnSync(
     [

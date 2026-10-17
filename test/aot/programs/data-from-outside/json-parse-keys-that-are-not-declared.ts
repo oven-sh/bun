@@ -9,13 +9,27 @@ interface Tree {
   label: string;
   children: Tree[];
 }
+const beginningsSeen = new Set<string>();
+function letSixteenGoBy(text: string) {
+  const beginning = text.slice(0, 8);
+  if (beginningsSeen.has(beginning) || text.length > 10000) return;
+  beginningsSeen.add(beginning);
+  for (let turn = 0; turn < 16; turn++) {
+    try {
+      JSON.parse(text);
+    } catch {}
+  }
+}
 function point(text: string): Point {
+  letSixteenGoBy(text);
   return JSON.parse(text);
 }
 function points(text: string): Point[] {
+  letSixteenGoBy(text);
   return JSON.parse(text);
 }
 function tree(text: string): Tree {
+  letSixteenGoBy(text);
   return JSON.parse(text);
 }
 function show(label: string, value: unknown) {

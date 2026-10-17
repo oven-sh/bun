@@ -57,7 +57,6 @@ static STARTS_IMMEDIATELY: AtomicBool = AtomicBool::new(false);
 static HAS_BUILD_BLOCKING_ERROR: AtomicBool = AtomicBool::new(false);
 static RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 static REFUSED_CHANGES: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
-#[cfg(unix)]
 const STOPS: &[u8] = b"what stops a build\0";
 
 fn log_verbose(text: &str) {
@@ -81,12 +80,17 @@ static IS_STOPPED: AtomicBool = AtomicBool::new(false);
 static SINGLE_FILE_ANALYSES_IN_FLIGHT: Guarded<std::collections::BTreeSet<Vec<u8>>> = Guarded::new(std::collections::BTreeSet::new());
 static SINGLE_FILE_ANALYSIS_DONE: bun_threading::Condvar = bun_threading::Condvar::new();
 #[cfg(unix)]
+type PassedFile = i32;
+#[cfg(windows)]
+type PassedFile = isize;
+#[cfg(unix)]
 static CHILD: Guarded<i32> = Guarded::new(0);
+#[cfg(windows)]
+static CHILD: Guarded<isize> = Guarded::new(0);
 
 const HELPER: &str = include_str!("aot_audit.js");
 #[cfg(unix)]
 const AUDIT_FD_ENV: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_FD";
-#[cfg(unix)]
 const AUDIT_PASS_FD_ENV: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_PASS_FD";
 
 unsafe extern "C" {
@@ -267,7 +271,6 @@ impl State {
         audited
     }
 
-    #[cfg(unix)]
     fn merge(&mut self, found: State) {
         let State { files, described, shapes, code, .. } = found;
         for path in code {
@@ -422,7 +425,6 @@ fn analyze_whole_program(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[V
     !found.has_build_blocking_error && !found.has_errors && SKIPPED_TEST_FILES.lock().is_empty()
 }
 
-#[cfg(unix)]
 mod retained {
     use bun_sema_driver::fs_queries::{Kind, FsQuery};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -441,13 +443,27 @@ mod retained {
         pub(super) public_declarations: Vec<(Vec<u8>, u64, Vec<u8>)>,
     }
 
+    #[cfg(windows)]
+    struct Found {
+        st_size: u64,
+        st_mtime: u64,
+        st_mtime_nsec: u32,
+    }
+
+    #[cfg(windows)]
+    fn stat(path: &[u8]) -> Option<Found> {
+        let found = std::fs::metadata(core::str::from_utf8(path).ok()?).ok()?;
+        let modified = found.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+        Some(Found { st_size: found.len(), st_mtime: modified.as_secs(), st_mtime_nsec: modified.subsec_nanos() })
+    }
+
     pub(super) fn hash(bytes: &[u8]) -> u64 {
         bun_wyhash::hash(bytes)
     }
 
     fn folder() -> Option<Vec<u8>> {
         use bun_core::env_var;
-        let inside = |parts: &[&[u8]]| Some(parts.join(&b"/"[..])).filter(|path| path.starts_with(b"/"));
+        let inside = |parts: &[&[u8]]| Some(parts.join(bun_paths::SEP_STR.as_bytes())).filter(|path| bun_paths::is_absolute(path));
         if let Some(folder) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
             return if folder.is_empty() || folder == b"0" { None } else { inside(&[folder, b"@aot@"]) };
         }
@@ -455,7 +471,7 @@ mod retained {
             return inside(&[folder, b"bun", b"@aot@"]);
         }
         let home = env_var::HOME.get()?;
-        if cfg!(target_os = "macos") { inside(&[home, b"Library/Caches/bun", b"@aot@"]) } else { inside(&[home, b".bun/install/cache", b"@aot@"]) }
+        if cfg!(target_os = "macos") { inside(&[home, b"Library/Caches/bun", b"@aot@"]) } else { inside(&[home, b".bun", b"install", b"cache", b"@aot@"]) }
     }
 
     pub(super) struct Start {
@@ -468,8 +484,12 @@ mod retained {
         pub(super) fn new(entry_points: &[Vec<u8>], is_for_tests: bool, is_enforcing: bool) -> Option<Start> {
             let folder = folder()?;
             let executable = bun_core::self_exe_path().ok()?;
+            #[cfg(windows)]
+            let found = stat(executable.as_bytes())?;
+            #[cfg(unix)]
             // SAFETY: `stat` is plain data for which all zeros is a valid value.
             let mut found: libc::stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+            #[cfg(unix)]
             // SAFETY: the path is NUL-terminated and `found` is a valid out-param.
             if unsafe { libc::stat(executable.as_ptr().cast(), &raw mut found) } != 0 {
                 return None;
@@ -497,10 +517,11 @@ mod retained {
                 key.extend_from_slice(path);
                 key.push(0);
             }
-            let path = [&folder[..], format!("/{:02x}.look", hash(&key) & 63).as_bytes()].concat();
-            let mut settings = vec![[&cwd[..], b"/bunfig.toml"].concat()];
+            let separator = bun_paths::SEP_STR.as_bytes();
+            let path = [&folder[..], separator, format!("{:02x}.look", hash(&key) & 63).as_bytes()].concat();
+            let mut settings = vec![[&cwd[..], separator, b"bunfig.toml"].concat()];
             for home in [bun_core::env_var::HOME.get(), bun_core::env_var::XDG_CONFIG_HOME.get()].into_iter().flatten() {
-                settings.push([home, b"/.bunfig.toml"].concat());
+                settings.push([home, separator, b".bunfig.toml"].concat());
             }
             Some(Start { key, path, settings })
         }
@@ -549,7 +570,14 @@ mod retained {
                 changed.push(path);
             }
             let read = queries.into_iter().filter(|query| query.kind == Kind::Text).map(|query| query.path).collect();
-            Some(Taken { read, said, tables: rest.to_vec(), changed, public_declarations, holds })
+            Some(Taken {
+                read,
+                said,
+                tables: rest.to_vec(),
+                changed,
+                public_declarations,
+                holds,
+            })
         }
 
         pub(super) fn record_settings(&self) {
@@ -565,8 +593,18 @@ mod retained {
 
         pub(super) fn write_ticket(&self) {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |it| it.as_nanos());
-            let Ok(path) = std::ffi::CString::new(self.ticket_path()) else { return };
             let ticket = format!("{} {now}", std::process::id());
+            #[cfg(windows)]
+            if let Ok(path) = String::from_utf8(self.ticket_path()) {
+                let _ = std::fs::write(path, ticket);
+            }
+            #[cfg(unix)]
+            self.write_ticket_file(&ticket);
+        }
+
+        #[cfg(unix)]
+        fn write_ticket_file(&self, ticket: &str) {
+            let Ok(path) = std::ffi::CString::new(self.ticket_path()) else { return };
             // SAFETY: the path is NUL-terminated.
             let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_CLOEXEC, 0o600) };
             if fd >= 0 {
@@ -586,17 +624,24 @@ mod retained {
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(200));
                     if read() != mine && !IS_WRITING.load(Ordering::Acquire) {
-                        // SAFETY: _exit(2) has no preconditions.
-                        unsafe { libc::_exit(0) };
+                        super::exit_at_once(0);
                     }
                 }
             });
         }
 
+        #[cfg(unix)]
         pub(super) fn forget(&self) {
             if let Ok(path) = std::ffi::CString::new(&self.path[..]) {
                 // SAFETY: the path is NUL-terminated.
                 unsafe { libc::unlink(path.as_ptr()) };
+            }
+        }
+
+        #[cfg(windows)]
+        pub(super) fn forget(&self) {
+            if let Ok(path) = core::str::from_utf8(&self.path) {
+                let _ = std::fs::remove_file(path);
             }
         }
 
@@ -622,6 +667,27 @@ mod retained {
             bytes(&mut rest, said);
             rest.extend_from_slice(tables);
             let head = [&MAGIC[..], &hash(&rest).to_le_bytes()].concat();
+            self.write(&head, &rest);
+        }
+
+        #[cfg(windows)]
+        fn write(&self, head: &[u8], rest: &[u8]) {
+            use std::io::Write as _;
+            let Ok(path) = core::str::from_utf8(&self.path) else { return };
+            let Some(folder) = std::path::Path::new(path).parent() else { return };
+            let _ = std::fs::create_dir_all(folder);
+            let temporary = format!("{path}.{:06x}", bun_core::fast_random() & 0xff_ffff);
+            IS_WRITING.store(true, Ordering::Release);
+            let is_written = std::fs::File::create(&temporary).and_then(|mut file| file.write_all(head).and_then(|()| file.write_all(rest))).is_ok();
+            if !is_written || std::fs::rename(&temporary, path).is_err() {
+                let _ = std::fs::remove_file(&temporary);
+            }
+            IS_WRITING.store(false, Ordering::Release);
+            self.evict_old_entries();
+        }
+
+        #[cfg(unix)]
+        fn write(&self, head: &[u8], rest: &[u8]) {
             for (at, _) in self.path.iter().enumerate().filter(|&(at, &byte)| at > 0 && byte == b'/') {
                 let Ok(folder) = std::ffi::CString::new(&self.path[..at]) else { return };
                 // SAFETY: the path is NUL-terminated.
@@ -636,7 +702,7 @@ mod retained {
             }
             IS_WRITING.store(true, Ordering::Release);
             let mut is_written = true;
-            for part in [&head[..], &rest[..]] {
+            for part in [head, rest] {
                 let mut at = 0;
                 while is_written && at < part.len() {
                     // SAFETY: the rest of `part` is readable for that many bytes.
@@ -656,6 +722,41 @@ mod retained {
             self.evict_old_entries();
         }
 
+        #[cfg(windows)]
+        fn evict_old_entries(&self) {
+            let Ok(own) = core::str::from_utf8(&self.path) else { return };
+            let own = std::path::Path::new(own);
+            let Some(entries) = own.parent().and_then(|folder| std::fs::read_dir(folder).ok()) else { return };
+            let now = std::time::SystemTime::now();
+            let mut retained = Vec::new();
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.as_encoded_bytes();
+                let is_kept = name.ends_with(b".look");
+                if !is_kept && !bun_core::strings::contains(name, b".look.") {
+                    continue;
+                }
+                let Some((modified, size)) = entry.metadata().ok().and_then(|found| Some((found.modified().ok()?, found.len()))) else { continue };
+                if is_kept {
+                    retained.push((modified, size, entry.path()));
+                } else if now.duration_since(modified).is_ok_and(|age| age.as_secs() > 600) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+            retained.sort();
+            let mut all: u64 = retained.iter().map(|it| it.1).sum();
+            for (_, size, path) in retained {
+                if all <= MAX_CACHE_BYTES {
+                    break;
+                }
+                if path != own {
+                    let _ = std::fs::remove_file(&path);
+                    all -= size;
+                }
+            }
+        }
+
+        #[cfg(unix)]
         fn evict_old_entries(&self) {
             let Some(slash) = bun_core::strings::last_index_of_char(&self.path, b'/') else { return };
             let Ok(folder) = std::ffi::CString::new(&self.path[..slash]) else { return };
@@ -745,22 +846,61 @@ fn analyze_whole_program_in_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) ->
             *running = 0;
             let _ = child.wait();
         }
-        let bytes = read_fd_to_end(fd)?;
-        if let Some(said) = bytes.strip_prefix(STOPS) {
-            if is_enforcing() {
-                let _ = bun_core::Output::error_writer().write_all(said);
-                bun_core::Output::flush();
-                if !IS_WATCH_MODE.load(Ordering::Acquire) {
-                    bun_core::Global::exit(1);
-                }
-            }
-            return None;
-        }
-        State::from_bytes(&bytes)
+        state_from_child(&read_fd_to_end(fd)?)
     })();
     // SAFETY: `fd` is ours, from `anonymous_file_with`, and is not used again.
     unsafe { libc::close(fd) };
     found
+}
+
+#[cfg(windows)]
+fn analyze_whole_program_in_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> Option<State> {
+    use std::os::windows::io::AsRawHandle as _;
+    use std::os::windows::process::CommandExt as _;
+    const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x4000;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const HANDLE_FLAG_INHERIT: u32 = 1;
+    unsafe extern "system" {
+        fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
+    }
+    let asked: Vec<Vec<u8>> = (entry_points.iter().map(|it| [&b"E"[..], &it[..]].concat())).chain(code.iter().map(|it| [&b"C"[..], &it[..]].concat())).collect();
+    let file = anonymous_file_with(&asked.join(&0u8))?;
+    let found = (|| {
+        let executable = bun_core::self_exe_path().ok()?;
+        let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+        #[allow(clippy::disallowed_types)]
+        let mut command = std::process::Command::new(text(executable.as_bytes()));
+        command.args(bun_core::argv().into_iter().skip(1).filter(|it| !matches!(*it, b"--watch" | b"--hot")).map(text));
+        command.env(AUDIT_PASS_FD_ENV.to_str().ok()?, file.to_string());
+        command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        command.creation_flags(BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW);
+        // SAFETY: `file` is an open handle of ours.
+        let set_inheritance = |flags: u32| unsafe { SetHandleInformation(file as *mut core::ffi::c_void, HANDLE_FLAG_INHERIT, flags) };
+        set_inheritance(HANDLE_FLAG_INHERIT);
+        let child = command.spawn();
+        set_inheritance(0);
+        let mut child = child.ok()?;
+        *CHILD.lock() = child.as_raw_handle() as isize;
+        let _ = child.wait();
+        *CHILD.lock() = 0;
+        state_from_child(&read_fd_to_end(file)?)
+    })();
+    drop(core::mem::ManuallyDrop::into_inner(passed_file(file)));
+    found
+}
+
+fn state_from_child(bytes: &[u8]) -> Option<State> {
+    if let Some(said) = bytes.strip_prefix(STOPS) {
+        if is_enforcing() {
+            let _ = bun_core::Output::error_writer().write_all(said);
+            bun_core::Output::flush();
+            if !IS_WATCH_MODE.load(Ordering::Acquire) {
+                bun_core::Global::exit(1);
+            }
+        }
+        return None;
+    }
+    State::from_bytes(bytes)
 }
 
 #[cfg(unix)]
@@ -774,8 +914,33 @@ fn kill_child() {
     *running = 0;
 }
 
-#[cfg(not(unix))]
-fn kill_child() {}
+#[cfg(windows)]
+fn kill_child() {
+    unsafe extern "system" {
+        safe fn TerminateProcess(process: *mut core::ffi::c_void, code: u32) -> i32;
+    }
+    let mut running = CHILD.lock();
+    if *running != 0 {
+        TerminateProcess(*running as *mut core::ffi::c_void, 1);
+    }
+    *running = 0;
+}
+
+fn exit_at_once(code: i32) -> ! {
+    #[cfg(unix)]
+    // SAFETY: _exit(2) has no preconditions.
+    unsafe {
+        libc::_exit(code)
+    }
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            safe fn TerminateProcess(process: *mut core::ffi::c_void, code: u32) -> i32;
+        }
+        TerminateProcess(bun_core::windows_sys::kernel32::GetCurrentProcess(), code as u32);
+        unreachable!()
+    }
+}
 
 fn analyze_whole_program_in_background() {
     kill_child();
@@ -789,22 +954,16 @@ fn analyze_whole_program_in_background() {
             while !STARTS_IMMEDIATELY.load(Ordering::Acquire) && milliseconds().saturating_sub(LAST_REQUEST_MS.load(Ordering::Acquire)) < 300 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            let Some((entry_points, code, is_for_tests)) = STATE.lock().as_mut().map(|state| {
+            let Some((entry_points, code)) = STATE.lock().as_mut().map(|state| {
                 state.awaits_whole_program_analysis = false;
-                (state.entry_points.clone(), state.code.clone(), state.is_for_tests)
+                (state.entry_points.clone(), state.code.clone())
             }) else {
                 break;
             };
-            #[cfg(unix)]
-            {
-                let _ = is_for_tests;
-                let found = analyze_whole_program_in_child(&entry_points, &code);
-                if let (Some(found), Some(state)) = (found, STATE.lock().as_mut()) {
-                    state.merge(found);
-                }
+            let found = analyze_whole_program_in_child(&entry_points, &code);
+            if let (Some(found), Some(state)) = (found, STATE.lock().as_mut()) {
+                state.merge(found);
             }
-            #[cfg(not(unix))]
-            analyze_whole_program(&entry_points, &code, &[], is_for_tests, None, Audited::WholeProgramInBackground);
         }
         bun_core::Output::flush();
         IS_ANALYZING_WHOLE_PROGRAM.store(false, Ordering::Release);
@@ -946,7 +1105,6 @@ impl State {
         matches!(bun_paths::extension(path), b".ts" | b".tsx" | b".mts" | b".cts")
     }
 
-    #[cfg(unix)]
     fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         let number = |out: &mut Vec<u8>, value: u64| out.extend_from_slice(&value.to_le_bytes());
@@ -999,7 +1157,6 @@ impl State {
         out
     }
 
-    #[cfg(unix)]
     fn from_bytes(mut input: &[u8]) -> Option<State> {
         fn number(input: &mut &[u8]) -> Option<u64> {
             let (value, rest) = input.split_first_chunk::<8>()?;
@@ -1102,6 +1259,69 @@ fn anonymous_file_with(bytes: &[u8]) -> Option<i32> {
     Some(fd)
 }
 
+#[cfg(windows)]
+fn passed_file(handle: PassedFile) -> core::mem::ManuallyDrop<std::fs::File> {
+    use std::os::windows::io::FromRawHandle as _;
+    // SAFETY: the handle is open, from `anonymous_file_with` in this process or in its parent. It is closed by whoever takes the file out.
+    core::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(handle as *mut core::ffi::c_void) })
+}
+
+#[cfg(windows)]
+fn anonymous_file_with(bytes: &[u8]) -> Option<PassedFile> {
+    use std::io::Write as _;
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::IntoRawHandle as _;
+    const FILE_SHARE_READ_WRITE_DELETE: u32 = 7;
+    const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x100;
+    const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x0400_0000;
+    let folder = core::str::from_utf8(bun_bundler::bun_fs::RealFS::tmpdir_path()).ok()?;
+    let path = std::path::Path::new(folder).join(format!("bun-aot-audit-{:x}-{:x}", std::process::id(), bun_core::fast_random()));
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+        .attributes(FILE_ATTRIBUTE_TEMPORARY)
+        .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+        .open(path)
+        .ok()?;
+    file.write_all(bytes).ok()?;
+    Some(file.into_raw_handle() as PassedFile)
+}
+
+#[cfg(windows)]
+fn read_fd_to_end(handle: PassedFile) -> Option<Vec<u8>> {
+    use std::io::{Read as _, Seek as _};
+    let mut file = passed_file(handle);
+    let mut bytes = Vec::new();
+    file.rewind().ok()?;
+    file.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+#[cfg(windows)]
+fn replace_contents(handle: PassedFile, bytes: &[u8]) -> bool {
+    use std::io::{Seek as _, Write as _};
+    let mut file = passed_file(handle);
+    file.set_len(0).and_then(|()| file.rewind()).and_then(|()| file.write_all(bytes)).is_ok()
+}
+
+#[cfg(unix)]
+fn replace_contents(fd: PassedFile, bytes: &[u8]) -> bool {
+    let mut at = 0;
+    // SAFETY: ftruncate(2) takes no pointers.
+    unsafe { libc::ftruncate(fd, 0) };
+    while at < bytes.len() {
+        // SAFETY: the rest of `bytes` is readable for that many bytes.
+        let written = unsafe { libc::pwrite(fd, bytes[at..].as_ptr().cast(), bytes.len() - at, at as libc::off_t) };
+        if written <= 0 {
+            return false;
+        }
+        at += written as usize;
+    }
+    true
+}
+
 #[cfg(unix)]
 fn pass_state_to_child() {
     kill_child();
@@ -1148,7 +1368,6 @@ fn read_fd_to_end(fd: i32) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-#[cfg(unix)]
 fn analyze_for_parent_process(is_for_tests: bool) {
     // SAFETY: getenv only reads, and the name is NUL-terminated.
     let number = unsafe { libc::getenv(AUDIT_PASS_FD_ENV.as_ptr()) };
@@ -1156,7 +1375,7 @@ fn analyze_for_parent_process(is_for_tests: bool) {
         return;
     }
     // SAFETY: not null, so a NUL-terminated string, which nothing changes.
-    let Some(fd) = unsafe { core::ffi::CStr::from_ptr(number) }.to_str().ok().and_then(|it| it.parse::<i32>().ok()) else { return };
+    let Some(fd) = unsafe { core::ffi::CStr::from_ptr(number) }.to_str().ok().and_then(|it| it.parse::<PassedFile>().ok()) else { return };
     let asked = read_fd_to_end(fd).unwrap_or_default();
     let of_kind = |kind: u8| -> Vec<Vec<u8>> { bun_core::strings::split(&asked, b"\0").filter(|it| it.first() == Some(&kind)).map(|it| it[1..].to_vec()).collect() };
     let (entry_points, code) = (of_kind(b'E'), of_kind(b'C'));
@@ -1184,20 +1403,7 @@ fn analyze_for_parent_process(is_for_tests: bool) {
         }
         _ => bytes,
     };
-    let mut at = 0;
-    // SAFETY: ftruncate(2) takes no pointers.
-    unsafe { libc::ftruncate(fd, 0) };
-    while at < bytes.len() {
-        // SAFETY: the rest of `bytes` is readable for that many bytes.
-        let written = unsafe { libc::pwrite(fd, bytes[at..].as_ptr().cast(), bytes.len() - at, at as libc::off_t) };
-        if written <= 0 {
-            // SAFETY: _exit(2) has no preconditions.
-            unsafe { libc::_exit(1) };
-        }
-        at += written as usize;
-    }
-    // SAFETY: _exit(2) has no preconditions.
-    unsafe { libc::_exit(0) };
+    exit_at_once(if replace_contents(fd, &bytes) { 0 } else { 1 });
 }
 
 #[cfg(not(unix))]
@@ -1224,25 +1430,18 @@ pub(crate) fn preload_paths(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -
 
 pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_driver::host::BeforeRead>, is_for_tests: bool) -> bool {
     IS_WATCH_MODE.store(before_read.is_some(), Ordering::Release);
-    #[cfg(unix)]
     analyze_for_parent_process(is_for_tests);
     let paths: Vec<Vec<u8>> = entry_points.iter().map(|it| it.path.to_vec()).collect();
     let handed_over = take_inherited_state().filter(|_| !is_enforcing());
     let is_inherited = handed_over.is_some();
     let mut awaits_whole_program_analysis = false;
-    #[cfg(unix)]
     let start = retained::Start::new(&paths, is_for_tests, is_enforcing());
-    #[cfg(unix)]
     let taken = start.as_ref().and_then(retained::Start::take);
-    #[cfg(unix)]
     let mut retained = taken.as_ref().and_then(|taken| State::from_bytes(&taken.tables));
-    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut hinted: Vec<Vec<u8>> = Vec::new();
-    #[cfg(unix)]
     if taken.as_ref().is_some_and(|taken| !taken.holds) {
         hinted = retained.take().map_or_else(Vec::new, |state| state.code);
     }
-    #[cfg(unix)]
     if let (Some(state), Some(taken)) = (&mut retained, &taken)
         && !taken.changed.is_empty()
     {
@@ -1264,10 +1463,7 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
             log_verbose(&format!("incremental check: {} changed, exported types unchanged", taken.changed.len()));
         }
     }
-    #[cfg(not(unix))]
-    let retained: Option<State> = None;
     let is_kept = retained.is_some();
-    #[cfg(unix)]
     if let (true, Some(taken)) = (is_kept, &taken) {
         if let Some(before_read) = &before_read {
             taken.read.iter().for_each(|path| before_read(path));
@@ -1286,13 +1482,11 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         ..handed_over.or(retained).unwrap_or_default()
     });
     if !is_inherited && !is_kept {
-        #[cfg(unix)]
         if let Some(start) = &start {
             bun_sema_driver::fs_queries::begin(retained::hash);
             start.record_settings();
         }
         let is_result_cacheable = run_on_new_thread(|| analyze_whole_program(&paths, &[], &hinted, is_for_tests, before_read, Audited::Whole));
-        #[cfg(unix)]
         if let Some(start) = &start
             && let Some(queries) = bun_sema_driver::fs_queries::end()
             && is_result_cacheable
@@ -1300,8 +1494,6 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         {
             start.put(&queries, &PUBLIC_DECLARATIONS.lock(), &RENDERED_DIAGNOSTICS.lock(), &tables);
         }
-        #[cfg(not(unix))]
-        let _ = is_result_cacheable;
     }
     LAST_REQUEST_MS.store(milliseconds(), Ordering::Release);
     bun_ast::audited::set_finish(finish);
@@ -1311,12 +1503,10 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
     }
     if awaits_whole_program_analysis {
         STARTS_IMMEDIATELY.store(is_kept, Ordering::Release);
-        #[cfg(unix)]
         if let Some(start) = &start {
             start.write_ticket();
         }
         analyze_whole_program_in_background();
-        #[cfg(unix)]
         for _ in 0..200 {
             if !is_kept || *CHILD.lock() != 0 {
                 break;

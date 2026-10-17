@@ -1,5 +1,5 @@
 // `request.headers.get(name)` on the requests of a server, with and without a route, and on everything that only looks like one.
-// IR+ CallBuiltin GetRequestHeader
+// IR+ CallBuiltin GetRequestOrResponseHeader
 const constantName = (request: Request) => request.headers.get("x-a");
 const givenName = (request: Request, name: string) => request.headers.get(name);
 const anyName = (request: Request, name: unknown) => request.headers.get(name as string);

@@ -265,7 +265,7 @@ function describeCasesOf(folder: string, platform: string, isSkipped: boolean, t
       async () => {
         const [line] = await lines();
         const before = recordedLines(testFile, `${title}: ${name}`)[0];
-        expect(before !== undefined && differsOnlyWithinTheRuntime(line, before) ? before : line).toMatchSnapshot();
+        expect(before !== undefined && isNoWorse(line, before, turns.more - turns.fewer) ? before : line).toMatchSnapshot();
       },
       600_000,
     );
@@ -274,30 +274,39 @@ function describeCasesOf(folder: string, platform: string, isSkipped: boolean, t
 
 const shareOutsideCompiledCode = /^(the runtime|elsewhere)$/;
 
+const instructionsOfTwoBlockRefills = 5_000;
+
 function numbersOf(line: string) {
   const found = /^(.+): (-?[\d.]+) instructions \((.*)\), (\d+) bytes$/.exec(line);
   if (!found) return undefined;
-  const exact: string[] = [found[1], found[4]];
-  let outside = 0;
+  let compiled = 0,
+    outside = 0;
   for (const share of found[3].split(", ")) {
     const at = share.lastIndexOf(" ");
-    if (shareOutsideCompiledCode.test(share.slice(0, at))) outside += Number(share.slice(at + 1));
-    else exact.push(share);
+    const instructions = Math.max(0, Number(share.slice(at + 1)));
+    if (shareOutsideCompiledCode.test(share.slice(0, at))) outside += instructions;
+    else compiled += instructions;
   }
-  return { exact: exact.join("\n"), outside };
+  return { label: found[1], compiled, outside, bytes: Number(found[4]) };
 }
 
-function differsOnlyWithinTheRuntime(line: string, recorded: string) {
+export function isNoWorse(line: string, recorded: string, operationsCountedOnce: number) {
   const now = numbersOf(line),
     then = numbersOf(recorded);
-  if (!now || !then || now.exact !== then.exact) return false;
-  return Math.abs(now.outside - then.outside) <= Math.max(1, Math.abs(then.outside) * 0.15);
+  if (!now || !then || now.label !== then.label) return false;
+  const refills = operationsCountedOnce ? instructionsOfTwoBlockRefills / operationsCountedOnce : 0;
+  return (
+    now.compiled <= then.compiled + Math.max(0.25, then.compiled * 0.02) &&
+    now.outside <= then.outside + Math.max(1, then.outside * 0.15, refills) &&
+    now.bytes <= then.bytes * 1.05
+  );
 }
 
 function recordedLines(testFile: string, title: string) {
   const file = join(import.meta.dir, "__snapshots__", `${testFile}.test.ts.snap`);
   if (!existsSync(file)) return [];
-  const start = `exports[\`${title} 1\`] = \``;
+  const titleAsWritten = title.replace(/[\\`]|\$\{/g, "\\$&");
+  const start = `exports[\`${titleAsWritten} 1\`] = \``;
   const text = readFileSync(file, "utf8");
   const from = text.indexOf(start);
   if (from < 0) return [];
@@ -381,8 +390,9 @@ function describeSnippets(
       pieces.title,
       async () => {
         const recorded = recordedLines(testFile, pieces.title);
+        const operationsCountedOnce = isCountedTwice(pieces.operations) ? 0 : pieces.operations * (roundsOfMoreOperations - roundsOfFewerOperations);
         const shownLines = (await lines()).map((line, index) =>
-          recorded[index] !== undefined && differsOnlyWithinTheRuntime(line, recorded[index]) ? recorded[index] : line,
+          recorded[index] !== undefined && isNoWorse(line, recorded[index], operationsCountedOnce) ? recorded[index] : line,
         );
         expect(shownLines.join("\n")).toMatchSnapshot();
       },

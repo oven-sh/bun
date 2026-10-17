@@ -1,1 +1,0 @@
-The field of an unannotated literal and the element of an unannotated array are typed string, as TypeScript infers them: storing the NaN throws a TypeError; plain Bun stores it.

@@ -23,7 +23,7 @@ For each test, $LOADED_STARTS (3) times over, with the order of the columns turn
     many seconds have passed. rate_curve keeps seconds:requests per second for every window, so that one can see where the rate
     stopped rising. With $SPARE_CORES (a list of cores; only where the server has one core) the columns take that long load side by
     side, each on a spare core, and are moved back to the server's core before they are read: a card takes half the time.
-    Then the column is stopped (SIGSTOP). early_requests_a_second is the rate over the first 10,000 requests of the
+    Then the column is stopped (SIGSTOP), once none of its threads has run for 100 ms. early_requests_a_second is the rate over the first 10,000 requests of the
     process (the first two windows, counters off): what a deployment that starts a process per burst of traffic sees.
     UNDER CONTINUOUS LOAD ($CONTINUOUS=yes): a column that is stopped between its windows idles, and a JIT pays for that when it goes
     on (its next window can cost several percent more instructions). So here nothing is ever stopped. A column is a fresh process
@@ -254,7 +254,24 @@ class Server:
         for p in self.processes:
             p.send_signal(what)
 
+    def run_time_ns(self):
+        total = 0
+        try:
+            for pid in self.pids():
+                for thread in os.listdir('/proc/%d/task' % pid):
+                    total += int(open('/proc/%d/task/%s/schedstat' % (pid, thread)).read().split()[0])
+        except (OSError, ValueError, IndexError):
+            pass
+        return total
+
     def stop(self):
+        """Stops the column once none of its threads has run for 100 ms: behind the collections that a Bun server runs when the load
+        ends. A stop right behind the load fell before them, into them or behind them, and peak RSS went by which."""
+        deadline, quiet_polls, before = time.perf_counter() + 3, 0, self.run_time_ns()
+        while quiet_polls < 10 and time.perf_counter() < deadline:
+            time.sleep(0.01)
+            now = self.run_time_ns()
+            quiet_polls, before = (quiet_polls + 1 if now - before < 50000 else 0), now
         self.signal(signal.SIGSTOP)
 
     def go_on(self):

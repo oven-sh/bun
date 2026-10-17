@@ -73,6 +73,7 @@ pub enum Macro {
     Assert,
     PromiseStatus(u32),
     BundleError,
+    OnlyArgument,
 }
 
 pub enum MacroError {
@@ -220,6 +221,7 @@ impl Manifest {
             b"isPromisePending" => Macro::PromiseStatus(0),
             b"isPromiseFulfilled" => Macro::PromiseStatus(1),
             b"isPromiseRejected" => Macro::PromiseStatus(2),
+            b"likely" | b"unlikely" => Macro::OnlyArgument,
             b"cpp" | b"rust" | b"newCppFunction" | b"newRustFunction" | b"bindgen" => {
                 let [Literal::String(file), Literal::String(symbol), ..] = arguments else {
                     return Err(MacroError::ArgumentsNotLiteral);
@@ -501,6 +503,8 @@ fn is_macro_name(name: &[u8]) -> bool {
             | b"isPromisePending"
             | b"isPromiseFulfilled"
             | b"isPromiseRejected"
+            | b"likely"
+            | b"unlikely"
             | b"cpp"
             | b"rust"
             | b"newCppFunction"

@@ -296,6 +296,29 @@ pub(crate) fn reject_unknown_flags(is_build: bool, passed_through: usize) {
 }
 
 pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: bool) -> ! {
+    let args = build_arguments(ctx, entry_points, for_tests);
+    let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
+    #[cfg(windows)]
+    Global::exit(run_build_then_program(&args, true) as u32);
+    #[cfg(unix)]
+    {
+        let errno = bun_core::exec_self(&args, None);
+        pretty_errorln!(
+            "<r><red>error<r>: failed to start the build for <b>--aot<r>: errno {}",
+            errno
+        );
+        Global::exit(1);
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn build_for_this_process(ctx: &ContextData, entry_points: &[&[u8]]) -> i32 {
+    let args = build_arguments(ctx, entry_points, false);
+    let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
+    run_build_then_program(&args, false)
+}
+
+fn build_arguments(ctx: &ContextData, entry_points: &[&[u8]], for_tests: bool) -> Vec<Vec<u8>> {
     if let Some(why) = unsupported_reason(&CompileTarget::default()) {
         pretty_errorln!("<r><red>error<r>: <b>--aot<r>: {}", why);
         Global::exit(1);
@@ -469,22 +492,11 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
             args.push(path.to_vec());
         }
     }
-    let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
-    #[cfg(windows)]
-    run_build_then_program(&args);
-    #[cfg(unix)]
-    {
-        let errno = bun_core::exec_self(&args, None);
-        pretty_errorln!(
-            "<r><red>error<r>: failed to start the build for <b>--aot<r>: errno {}",
-            errno
-        );
-        Global::exit(1);
-    }
+    args
 }
 
 #[cfg(windows)]
-fn run_build_then_program(args: &[&[u8]]) -> ! {
+fn run_build_then_program(args: &[&[u8]], starts_program: bool) -> i32 {
     use std::os::windows::fs::OpenOptionsExt as _;
     use std::os::windows::io::AsRawHandle as _;
     const GENERIC_READ_WRITE_EXECUTE: u32 = 0x8000_0000 | 0x4000_0000 | 0x2000_0000;
@@ -516,7 +528,8 @@ fn run_build_then_program(args: &[&[u8]]) -> ! {
     };
     let handle = file.as_raw_handle();
     // SAFETY: `handle` is the open handle of `file`, which lives until the process exits.
-    if unsafe { SetHandleInformation(handle.cast(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) } == 0 {
+    let set_inheritance = |flags: u32| unsafe { SetHandleInformation(handle.cast(), HANDLE_FLAG_INHERIT, flags) };
+    if set_inheritance(HANDLE_FLAG_INHERIT) == 0 {
         fail("hand on a temporary file", std::io::Error::last_os_error());
     }
     // SAFETY: no arguments; it only marks the standard handles inheritable.
@@ -549,6 +562,13 @@ fn run_build_then_program(args: &[&[u8]]) -> ! {
     let code = run(build, "start the build");
     if code != 0 {
         Global::exit(code);
+    }
+    if !starts_program {
+        set_inheritance(0);
+        // SAFETY: no arguments; it only marks the standard handles as not inheritable.
+        unsafe { bun_sys::windows::libuv::uv_disable_stdio_inheritance() };
+        core::mem::forget(file);
+        return handle as isize as i32;
     }
     let program = args.iter().filter_map(|arg| arg.strip_prefix(RUN_ARG)).map(|arg| with_handle(arg)).collect();
     Global::exit(run(program, "start the program"));

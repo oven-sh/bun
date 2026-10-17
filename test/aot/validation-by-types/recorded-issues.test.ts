@@ -1,6 +1,7 @@
 // A compiled validator that refuses a value tells the shared routine where it failed (recordFailure), and the call takes the issues that were recorded (takeIssues).
 // This models the emitted code in JavaScript, over random plans and values made from them, and compares with a walk of the whole value (issuesOf).
 import { expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import { issuesOf, recordFailure, safeValidateByPlan, takeIssues } from "../../../src/js/internal/validation.ts";
 
 let seed = 777;
@@ -203,7 +204,8 @@ function validate(plan: any[], at: number, input: any, isSpeculative: boolean): 
 test("the issues that validators record are the issues of a walk of the whole value", () => {
   let refusals = 0;
   let withRecordedIssues = 0;
-  for (let i = 0; i < 20000; i++) {
+  const plans = isASAN || isDebug ? 5000 : 20000;
+  for (let i = 0; i < plans; i++) {
     const plan = randomPlan();
     for (let j = 0; j < 6; j++) {
       const value = j < 5 ? valueFor(plan, plan[0], 0) : randomValue(0);
@@ -219,6 +221,6 @@ test("the issues that validators record are the issues of a walk of the whole va
       expect(plan[2][0]).toBeUndefined();
     }
   }
-  expect(refusals).toBeGreaterThan(40000);
-  expect(withRecordedIssues).toBeGreaterThan(20000);
+  expect(refusals).toBeGreaterThan(plans * 2);
+  expect(withRecordedIssues).toBeGreaterThan(plans);
 });

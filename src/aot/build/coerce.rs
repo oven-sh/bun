@@ -306,7 +306,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if described == self.out.tys.anything || self.out.tys.get(described).is_never() {
             return value;
         }
-        let described = Declared { prims: self.out.tys.get(described).prims & !prim::NULLISH, ..self.out.tys.get(described).clone() };
+        let mut described = Declared { prims: self.out.tys.get(described).prims & !prim::NULLISH, ..self.out.tys.get(described).clone() };
+        if described.parts.is_empty() && described.prims != 0 {
+            (described.any_object, described.any_function) = (false, false);
+        }
         let described = self.out.tys.intern(described);
         let integers = match computes {
             _ if self.out.tys.get(described).prims & prim::NUMBER == 0 => None,
@@ -328,7 +331,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn as_checked_primitive(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
         let have = self.ty(fx, value);
         let described = self.out.tys.get(have);
-        if !fx.is_typed || !described.has_objects() || described.prims == 0 && described.ints.is_none() || have == self.out.tys.anything || fx.b.func.prediction(value) != Prediction::None {
+        if !fx.is_typed || described.prims == 0 && described.ints.is_none() || have == self.out.tys.anything || fx.b.func.prediction(value) != Prediction::None {
+            return value;
+        }
+        if !described.has_objects() {
+            if described.prims & prim::STRING != 0 && described.prims & !(prim::NULLISH | prim::STRING) != 0 {
+                let written = self.c.type_of_expr(fx.file, e);
+                let written = self.ty_of(written);
+                let written = self.out.tys.get(written);
+                if written.prims & !prim::NULLISH == prim::STRING && !written.has_objects() {
+                    fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(self.known.string));
+                }
+            }
             return value;
         }
         if !self.c.is_primitive_by_type(fx.file, e) {

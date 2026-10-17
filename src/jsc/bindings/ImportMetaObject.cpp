@@ -537,7 +537,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+        auto key = makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark());
+#if OS(WINDOWS)
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && makeStringByReplacingAll(mainKey.data, '/', '\\') == makeStringByReplacingAll(key, '/', '\\')));
+#else
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == key));
+#endif
     }
 
     if (!globalObject->scriptExecutionContext()->isMainThread())

@@ -26,6 +26,7 @@ language/array-subclass-iteration    TODO: has none in the plain engine: a gette
 type-rules/out-of-bounds-array-reads    has one in the plain engine too
 typed-objects/absent-fields-under-another-prototype    has one in the plain engine too
 typed-objects/index-on-array-prototype-object    has one in the plain engine too
+typed-objects/several-first-stores-under-another-prototype    has one in the plain engine too
 untyped-code/constant-array-literals    means it: "A BAD TIME" in program.js
 untyped-code/array-species-and-large-arrays    has one in the plain engine too
 untyped-code/inlined-constructors-meet-setters    has one in the plain engine too

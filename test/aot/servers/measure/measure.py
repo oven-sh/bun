@@ -35,10 +35,19 @@ executable that was made for it, in /dev/shm (nothing is written to a disk), und
   1. Each column is started and polled until the first correct response (time to first response is the median of
      `--first-responses` starts). RSS is read at that point. On the POST routes the invalid orders from ../answers.ts are sent.
   2. It is warmed up with at least `--warm-up` requests, until instructions per request of the last three windows are within 2%
-     of each other, and then paused with SIGSTOP.
+     of each other, and then paused with SIGSTOP, once none of its threads has run for 100 ms (behind the collections that follow the load).
   3. For `--rounds` rounds, each column in turn is resumed, loaded and paused again, so all columns are measured seconds apart.
      A round more than 10% below the best round of the same process is treated as disturbed and dropped. Rounds are added, up
      to `--max-rounds`, until every column has three rounds within 3% of its best.
+
+Where the compiled code lies matters as well, and that is fixed when the executable is built: two builds of Bun that make a server
+do the same work have differed by 3% in cycles per request on the small routes of `effect`, start after start, because the code of
+one lay elsewhere. Two builds compared in one layout each cannot resolve a change below that. `--layouts 5` builds every --aot
+column five times, each with other padding around its code (BUN_AOT_LAYOUT_SEED=1 to 5, read by `bun build --compile --aot` alone),
+as the columns NAME.1 to NAME.5; layouts.py takes the mean over them, and their spread is the error bar:
+
+    python3 measure.py --layouts 5 --starts 2 --column new=/path/to/new/bun:--aot --column previous=/path/to/previous/bun:--aot --servers effect --out rows.jsonl
+    python3 layouts.py rows.jsonl new previous
 
 The column order rotates from start to start. Every response is compared with the expected one, byte for byte.
 `--servers go,rust` measures ../go (net/http) and ../rust (axum), which implement six of the routes, for comparison. They are
@@ -85,6 +94,7 @@ counters. The Buns must not be stripped.
     first_response_ms, ready_rss_mb                         from process start to the first correct response
     peak_rss_mb                                             VmHWM at the end
     private_mb                                              Anonymous minus LazyFree in smaps_rollup, the maximum of samples 50 ms apart
+    alive_mb                                                alive after a full collection under load: one start more, not timed, in which every collection is a full one
     idle_anon_mb, load_anon_mb, after_anon_mb               RssAnon after the first response, its maximum under load, and two seconds after the last request
 """
 import argparse, fcntl, glob, json, multiprocessing, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, tempfile, threading, time
@@ -187,7 +197,25 @@ class Server:
         if os.path.exists(self.copy):
             os.remove(self.copy)
 
+    def run_time_ns(self):
+        total = 0
+        try:
+            for thread in os.listdir("/proc/%d/task" % self.process.pid):
+                total += int(open("/proc/%d/task/%s/schedstat" % (self.process.pid, thread)).read().split()[0])
+        except (OSError, ValueError, IndexError):
+            pass
+        return total
+
     def pause(self):
+        """Stops the server once none of its threads has run for 100 ms. When the load ends, a Bun server runs a young and a full
+        collection. A SIGSTOP right behind the load fell before them, into them or behind them, and the next full collection
+        is put off by the square root of the last one's length by the clock: one executable's starts ranged from 48 to 63 MB
+        of peak RSS. Now the stop always falls behind them."""
+        deadline, quiet_polls, before = time.perf_counter() + 3, 0, self.run_time_ns()
+        while quiet_polls < 10 and time.perf_counter() < deadline:
+            time.sleep(0.01)
+            now = self.run_time_ns()
+            quiet_polls, before = (quiet_polls + 1 if now - before < 50000 else 0), now
         self.process.send_signal(signal.SIGSTOP)
 
     def resume(self):
@@ -369,6 +397,18 @@ class Server:
         return dict(timed, instructions=counted["instructions"], cycles=counted["cycles"], counted_requests_per_second=counted["requests_per_second"], events=counted["events"],
                     guests=max(timed["guests"], counted["guests"]), disturbed=timed["disturbed"] or counted["disturbed"])
 
+    def alive_after_full_collections(self):
+        """Megabytes alive after a full collection under load: the median of the second half of a run in which every collection
+        is a full one. Peak RSS and private memory hang on when collections happen to fall; this does not. None where the log
+        has no collection: a server that allocates too little."""
+        self.column = dict(self.column, run_env=dict(self.column["run_env"], BUN_JSC_logGC="1", BUN_JSC_useGenerationalGC="0"))
+        self.start()
+        self.run_window(self.options.alive_requests, counters=False)
+        self.kill()
+        text = open(os.path.join(self.folder, "server.log"), "rb").read().decode("latin-1")
+        alive = [int(kb) for kb in re.findall(r"=> (\d+)kb, p=", text)]
+        return statistics.median(alive[len(alive) // 2:]) / 1024 if alive else None
+
     def is_stable(self):
         best = max(each["requests_per_second"] for each in self.rounds)
         return sum(1 for each in self.rounds if each["requests_per_second"] >= 0.97 * best and not each["disturbed"]) >= min(3, self.options.rounds)
@@ -428,6 +468,16 @@ def measure_job(options, lane, spec, server, route):
         for each in running:
             each.resume()
             run_step(each, lambda: results[each.column["name"]].__setitem__(start, each.result()))
+    alive = {}
+    for column in columns if options.alive_requests else []:
+        if column is NATIVE_COLUMN:
+            continue
+        each = Server(options, lane, spec, server, route, column)
+        try:
+            alive[column["name"]] = each.alive_after_full_collections()
+        except Exception as error:
+            each.kill()
+            print("%-32s alive after full collections: not read: %s" % (each.name, str(error)[:160]), flush=True)
     lines = []
     for column in columns:
         starts = results[column["name"]]
@@ -435,6 +485,7 @@ def measure_job(options, lane, spec, server, route):
         if starts:
             line.update({name: statistics.median(each[name] for each in starts.values()) for name in PER_START})
             line["starts"] = {str(start): dict({name: round(each[name], 2) for name in PER_START}, **each["events"]) for start, each in starts.items()}
+            line["alive_mb"] = alive.get(column["name"])
             line["settled"] = all(each["settled"] for each in starts.values())
             line["stable"] = all(each["stable"] for each in starts.values())
             line["void"] = any(each["void"] for each in starts.values())
@@ -443,9 +494,9 @@ def measure_job(options, lane, spec, server, route):
             line["invalid_order_statuses"] = next(iter(starts.values()))["invalid_order_statuses"]
             line["executable_mb"] = os.path.getsize(os.path.join(options.work, "bin", "%s-%s" % (column.get("server") or server, column["name"]))) / 1e6
             line["build_seconds"] = column.get("build_seconds", {}).get(column.get("server") or server)
-            print("%-32s %8.0f/s | %9.0f instructions %9.0f cycles %7.2f us CPU | peak RSS %6.1f private %6.1f ready %5.1f MB | first %6.1f ms | %d starts" % (
+            print("%-32s %8.0f/s | %9.0f instructions %9.0f cycles %7.2f us CPU | peak RSS %6.1f private %6.1f alive %s ready %5.1f MB | first %6.1f ms | %d starts" % (
                 "%s/%s/%s" % (server, route["name"], column["name"]), line["requests_per_second"], line["instructions"], line["cycles"], line["cpu_us"],
-                line["peak_rss_mb"], line["private_mb"], line["ready_rss_mb"], line["first_response_ms"], len(starts)) + (" VOID: guests on its cores" if line["void"] else ""), flush=True)
+                line["peak_rss_mb"], line["private_mb"], "%5.2f" % line["alive_mb"] if line["alive_mb"] is not None else "    -", line["ready_rss_mb"], line["first_response_ms"], len(starts)) + (" VOID: guests on its cores" if line["void"] else ""), flush=True)
         lines.append(line)
     return lines
 
@@ -533,12 +584,14 @@ def main():
     parser.add_argument("--lock", help="a file to hold an exclusive lock on while measuring, for cores that are shared with other measurements; building does not hold it")
     parser.add_argument("--work", help="working directory for executables and logs; a temporary one by default")
     parser.add_argument("--starts", type=int, default=3)
+    parser.add_argument("--layouts", type=int, default=0, metavar="K", help="build every --aot column K times, as NAME.1 to NAME.K, each with its code laid out otherwise; see layouts.py")
     parser.add_argument("--first-responses", type=int, default=3)
     parser.add_argument("--warm-up", type=int, default=200000, help="requests; a JIT build needs 200,000, an --aot build is stable from the first window")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--max-rounds", type=int, default=6)
     parser.add_argument("--window-seconds", type=float, default=1.5)
     parser.add_argument("--connections", type=int, default=64)
+    parser.add_argument("--alive-requests", type=int, default=60000, help="requests of the one start more that reads what is alive after full collections; 0: no such start")
     parser.add_argument("--events", default="", help="more hardware events by perf's names, separated by commas: counted with instructions and cycles, per request, in every start's entry; at most four, or perf takes turns")
     parser.add_argument("--soak", type=int, default=0, metavar="REQUESTS", help="soak mode: one process per server and column serves this many requests over all routes")
     parser.add_argument("--layers", action="store_true", help="layers mode: cycles and instructions per request by the layer that owns the code")
@@ -556,6 +609,16 @@ def main():
         for text in values:
             name, _, pair = text.partition(":")
             next(column for column in options.columns if column["name"] == name)[kind].update([pair.split("=", 1)])
+    if options.layouts:
+        options.columns = [
+            copy
+            for column in options.columns
+            for copy in (
+                [dict(column, name="%s.%d" % (column["name"], seed), run_env=dict(column["run_env"]), build_env=dict(column["build_env"], BUN_AOT_LAYOUT_SEED=str(seed)), build_seconds={}) for seed in range(1, options.layouts + 1)]
+                if "--aot" in column["flags"]
+                else [column]
+            )
+        ]
     for column in options.columns if options.layers else []:
         if "--aot" in column["flags"]:
             column["run_env"].setdefault("BUN_JSC_useAOTPerfMap", "1")

@@ -1188,6 +1188,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 &[entry_path],
             )
         };
+        #[cfg(windows)]
+        if ctx.runtime_options.aot_graph_fd.is_none() {
+            ctx.runtime_options.aot_graph_fd = Some(cli::aot::build_for_this_process(ctx, &[entry_path]));
+            ctx.runtime_options.aot = false;
+        }
         let Some(graph) = cli::aot::graph(ctx)? else {
             cli::aot::exec_build(ctx, &[entry_path], false);
         };

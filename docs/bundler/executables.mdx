@@ -435,7 +435,7 @@ The compiler sees your whole program at once, and the executable differs from on
 - **Breakpoints are unavailable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements do not. [Debugging and profiling with `--aot`](/bundler/aot-debugging) lists what each tool shows.
 - **[Macros](/bundler/macros) are unavailable**, and so are `bun --aot -e` and `bun --aot -p`.
 - **`Bun.build` cannot compile with `aot`** from inside an executable that was compiled with `--aot`: it throws. A build script that you run with `bun run --aot` can.
-- **`Bun.ModuleGraph` runs the compiled code.** Each graph gets its own copy of the module state, as without `--aot`. The `globals` option can add names, but it cannot replace a global that already exists, such as `console` or `Math`: importing a compiled module into such a graph throws a `TypeError`.
+- **`Bun.ModuleGraph` runs the compiled code.** Each graph gets its own copy of the module state, as without `--aot`. The `globals` option adds names and replaces what Bun provides (`process`, the timers, `fetch`, `Bun`, `console`, `globalThis` itself), as without `--aot`. A built-in of the language, such as `Math` or `Date`, can be replaced if the build sees its name: write it as a key of the object literal that you pass as `globals`. Your own code then reads that name through the graph, as it reads `process`, and no longer uses the built-in directly. A built-in whose name the build did not see cannot be replaced, and neither can `undefined`, `NaN` and `Infinity`: importing a compiled module into such a graph throws a `TypeError`.
 - **An HTML file is imported with `import page from "./page.html"`**, as in a [full-stack executable](#full-stack-executables). `import()`, `require()` and `import * as` of an HTML file are errors at build time.
 - **The executable has no bytecode.** It keeps the text of your functions for `Function.prototype.toString()`. With `--no-compile-function-source` it does not, and `toString()` returns `function name() { [native code] }`. Stack traces have the files, lines and columns of your sources either way.
 - **`--minify` shortens names and the paths of your sources in stack traces**, as it does without `--aot`. With `--sourcemap=external`, `bun build` writes a file that turns them back: see [Minified executables](/bundler/aot-debugging#minified-executables).
@@ -590,7 +590,8 @@ Some options cannot differ between the files of one program:
 | Options | What the program uses |
 | --- | --- |
 | `strictNullChecks`, `exactOptionalPropertyTypes`, `strictFunctionTypes`, `strictBindCallApply`, `strictBuiltinIteratorReturn` | On if the `tsconfig.json` of any of your TypeScript files turns it on. If a file whose own `tsconfig.json` leaves one off has type errors, they do not stop the build: Bun prints a warning and compiles that file without its types, which is slower but behaves the same. |
-| `lib`, `types`, global declarations in files that a `tsconfig.json` includes (one without `include` includes every file below it, as it does for `tsc`), `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them. If there is none, or it only has `references`, each option is what all of them say, and Bun's default where they differ. |
+| Global declarations (`declare global`, `.d.ts` files) in files that a `tsconfig.json` includes | Those of the `tsconfig.json` of every entry point. A `tsconfig.json` without `include` includes every file below it, as it does for `tsc`. |
+| `lib`, `types`, `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them. If there is none, or it only has `references`, each option is what all of them say, and Bun's default where they differ. |
 
 To list every place where your program would behave differently, without stopping at the first one, use [`bun --aot-audit`](/bundler/aot-adoption).
 
@@ -816,6 +817,57 @@ Checked 63 installs across 64 packages (no changes) [5.00ms]
 ```
 
 CLI tools built on top of Bun can use this to install packages, bundle dependencies, or run other files without downloading a separate binary or installing Bun.
+
+---
+
+## Leave out what the program cannot reach
+
+A standalone executable is a copy of `bun` with your program attached, so it also holds the parts of Bun that only the `bun` command uses. `--compile-trim-runtime` leaves them out. The executable is about 40 MB smaller, and about 50 MB smaller with `--aot`. It starts as fast and uses as much memory as before.
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --compile-trim-runtime ./app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: { outfile: "./myapp", trimRuntime: true },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+What is left out:
+
+- the `bun` command line with all of its commands: `install`, `add`, `remove`, `run`, `test`, `x`, `create`, `build`, `pm`, `upgrade`, `repl` and the rest
+- `bun check`, `bun lint` and `bun fmt`
+- the ahead-of-time compiler
+- with `--aot`, the just-in-time compilers, which such an executable never starts
+
+Everything that a program can import or call stays: `Bun.build`, `Bun.Transpiler`, `eval`, `new Function`, `import()` and `require()` of files on disk, workers, WebAssembly, every `node:` and `bun:` module, N-API addons, `BUN_OPTIONS` and `--compile-exec-argv`.
+
+What no longer works:
+
+| | without the flag | with the flag |
+| --- | --- | --- |
+| `BUN_BE_BUN=1 ./myapp install`, `run`, `x`, `-e`, a file name, or no argument | acts as the `bun` CLI | prints that the Bun command line was left out, and exits with code 70 |
+| `BUN_BE_BUN=1 ./myapp --version` or `--revision` | prints it | prints it |
+| `BUN_OPTIONS=--help ./myapp` | prints the help of `bun` | prints that the Bun command line was left out, and exits with code 70 |
+| `Bun.build({ check: true })` or `({ dts: true })`, called by the executable | type checks | throws a `TypeError` |
+| `Bun.build({ compile: { aot: true } })`, called by the executable | compiles ahead of time | throws a `TypeError` |
+
+Nothing that stays is moved, so addresses in crash reports and profiles mean the same as in the untrimmed executable. On macOS the executable is signed again.
+
+Should the executable ever reach a part that was left out in some other way, it does not go on: it prints which part and a number, and exits with code 70. That is a bug in Bun. Please report it with the number.
+
+The flag works for Linux and macOS targets, with a `bun` that was itself linked for it. Any other `bun` refuses the flag:
+
+```txt
+--compile-trim-runtime: nothing can be left out of this Bun: NoIslands
+```
 
 ---
 
@@ -1569,6 +1621,7 @@ interface CompileBuildOptions {
   autoloadBunfig?: boolean; // Load bunfig.toml (default: true)
   bytecodeOrder?: string | string[] | false | null; // Order file(s) to lay the bytecode out by (requires bytecode: true)
   jitPolicy?: number; // JIT tier-up threshold scale at startup (default: 1 = normal)
+  trimRuntime?: boolean; // Leave out the parts of Bun that a compiled program cannot reach (default: false)
   windows?: {
     icon?: string; // Path to .ico file
     hideConsole?: boolean; // Hide console window

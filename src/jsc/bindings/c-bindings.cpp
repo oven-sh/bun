@@ -1213,18 +1213,33 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
     const char* description = Bun__trimmedFeatures;
     for (uint32_t feature = door & 15; feature--;)
         description += strlen(description) + 1;
-    static constexpr char before[] = "error: this executable was built without ";
-    static constexpr char after[] = ", and the program has just asked for it. That is a bug in bun build --compile: please report it, with this number: ";
-    char digits[8];
-    size_t count = 0;
-    for (uint32_t number = door >> 4; number || !count; number /= 10)
-        digits[sizeof(digits) - ++count] = static_cast<char>('0' + number % 10);
-    (void)!write(STDERR_FILENO, before, sizeof(before) - 1);
-    (void)!write(STDERR_FILENO, description, strlen(description));
-    (void)!write(STDERR_FILENO, after, sizeof(after) - 1);
-    (void)!write(STDERR_FILENO, digits + sizeof(digits) - count, count);
-    (void)!write(STDERR_FILENO, "\n", 1);
+    const auto print = [](const char* text) { (void)!write(STDERR_FILENO, text, strlen(text)); };
+    const char* actsAsBun = getenv("BUN_BE_BUN");
+    print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but this executable was built with --compile-trim-runtime, without " : "error: this executable was built with --compile-trim-runtime, without ");
+    print(description);
+    if (actsAsBun && *actsAsBun) {
+        print(".\n");
+        _exit(70);
+    }
+    char digits[9];
+    size_t first = sizeof(digits) - 1;
+    digits[first] = 0;
+    for (uint32_t number = door >> 4; number || !digits[first]; number /= 10)
+        digits[--first] = static_cast<char>('0' + number % 10);
+    print(", and something has just asked for it.");
+    if (getenv("BUN_OPTIONS"))
+        print(" BUN_OPTIONS is set: an option in it may be what asked.");
+    print(" Otherwise this is a bug in Bun: please report it, with this number: ");
+    print(digits + first);
+    print("\n");
     _exit(70);
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasTypeChecker()
+{
+    bool hasTypeChecker = true;
+    asm volatile("" : "+r"(hasTypeChecker));
+    return hasTypeChecker;
 }
 
 #endif

@@ -4869,13 +4869,17 @@ fn extract_owner_uid() -> u32 {
 /// An addon may load libraries by a path from its own place (`$ORIGIN/../lib`, `@loader_path/../lib`). Where the executable holds
 /// shared libraries at their paths, the addon and they are written out at those paths under one folder, which only this user can
 /// write to. `None` where it holds none, or a step fails.
-#[cfg(unix)]
 fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use std::io::Write as _;
-    use std::os::unix::ffi::OsStrExt as _;
-    use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
-    let as_path = |bytes: &[u8]| std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
+    #[cfg(unix)]
+    let as_path = |bytes: &[u8]| {
+        use std::os::unix::ffi::OsStrExt as _;
+        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    };
+    #[cfg(windows)]
+    let as_path = |bytes: &[u8]| std::path::PathBuf::from(String::from_utf8_lossy(bytes).into_owned());
 
+    let addon_path = bun_paths::string_paths::without_nt_prefix::<u8>(addon_path);
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let addon = graph.find_ref(addon_path)?.contents.as_bytes();
     let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
@@ -4888,28 +4892,57 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     }
     files.push((addon_path, addon));
 
+    let mut private_folder = std::fs::DirBuilder::new();
+    let mut private_file = std::fs::OpenOptions::new();
+    private_file.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+        private_folder.mode(0o700);
+        private_file.mode(0o600);
+    }
+
     let uid = extract_owner_uid();
-    let mut folder = Fs::RealFS::tmpdir_path().to_vec();
-    folder.extend_from_slice(format!("/.bun-{uid}-{hash:x}").as_bytes());
-    let _ = std::fs::DirBuilder::new().mode(0o700).create(as_path(&folder));
+    let folder = [Fs::RealFS::tmpdir_path(), bun_paths::SEP_STR.as_bytes(), format!(".bun-{uid}-{hash:x}").as_bytes()].concat();
+    let _ = private_folder.create(as_path(&folder));
     // `lstat`: a planted link is not followed.
-    let is_ours = bun_sys::lstat(&bun_core::ZBox::from_bytes(&folder)).is_ok_and(|it| bun_sys::S::ISDIR(it.st_mode as u32) && it.st_uid == uid && it.st_mode & 0o077 == 0);
+    let is_ours = bun_sys::lstat(&bun_core::ZBox::from_bytes(&folder)).is_ok_and(|it| {
+        #[cfg(unix)]
+        let is_private = it.st_uid == uid && it.st_mode & 0o077 == 0;
+        #[cfg(windows)]
+        let is_private = true;
+        bun_sys::S::ISDIR(it.st_mode as u32) && is_private
+    });
     if !is_ours {
         return None;
     }
+    let written_path = |path: &[u8]| -> Vec<u8> {
+        if cfg!(unix) {
+            return [&folder[..], path].concat();
+        }
+        let under_folder = path.iter().filter(|&&c| c != b':').map(|&c| if c == b'/' { b'\\' } else { c });
+        folder.iter().copied().chain(std::iter::once(b'\\')).chain(under_folder).collect()
+    };
+    private_folder.recursive(true);
     for (path, contents) in files {
-        let to = bun_core::ZBox::from_vec([&folder[..], path].concat());
-        if bun_sys::lstat(&to).is_ok_and(|it| bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len()) {
+        let to = bun_core::ZBox::from_vec(written_path(path));
+        let is_written = || bun_sys::lstat(&to).is_ok_and(|it| bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len());
+        if is_written() {
             continue;
         }
-        std::fs::DirBuilder::new().mode(0o700).recursive(true).create(as_path(&to).parent()?).ok()?;
-        let scratch = bun_core::ZBox::from_vec([&folder[..], path, format!(".{}", std::process::id()).as_bytes()].concat());
-        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(as_path(&scratch)).ok()?;
+        private_folder.create(as_path(&to).parent()?).ok()?;
+        let scratch = bun_core::ZBox::from_vec([&to[..], format!(".{}", std::process::id()).as_bytes()].concat());
+        let mut file = private_file.open(as_path(&scratch)).ok()?;
         file.write_all(contents).ok()?;
         drop(file);
-        bun_sys::rename(&scratch, &to).ok()?;
+        if bun_sys::rename(&scratch, &to).is_err() {
+            let _ = bun_sys::unlink(&scratch);
+            if !is_written() {
+                return None;
+            }
+        }
     }
-    Some([&folder[..], addon_path].concat())
+    Some(written_path(addon_path))
 }
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
@@ -4924,7 +4957,6 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
         if bun_sys::exists(input_path.slice()) {
             return bun_core::String::DEAD;
         }
-        #[cfg(unix)]
         if let Some(path) = write_next_to_libraries(input_path.slice()) {
             return bun_core::String::clone_utf8(&path);
         }

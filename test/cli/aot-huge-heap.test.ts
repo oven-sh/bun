@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { describe, test } from "../aot/supported";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 // --aot keeps references between objects in 32 bits, which limits each thread to 32 GB of objects. --aot-huge-heap compiles with
@@ -23,7 +23,7 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
   return { stdout, stderr, exitCode };
 }
 
-describe.skipIf(isWindows).concurrent("--aot-huge-heap", () => {
+describe.concurrent("--aot-huge-heap", () => {
   test("an executable built with it goes past the limit", async () => {
     using folder = tempDir("aot-huge-heap", { "program.ts": program });
     const cwd = String(folder);

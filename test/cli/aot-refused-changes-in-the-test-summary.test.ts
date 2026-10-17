@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { unsupported } from "../aot/run-programs";
 
 const files = {
   "package.json": JSON.stringify({ name: "suite", type: "module" }),
@@ -42,7 +43,7 @@ async function bunTest(cwd: string, ...flags: string[]) {
   return { output: stdout + stderr, exitCode };
 }
 
-test("bun test --aot names every refused change to a locked built-in, where it was made and which file ran", async () => {
+test.skipIf(!!unsupported)("bun test --aot names every refused change to a locked built-in, where it was made and which file ran", async () => {
   using dir = tempDir("aot-refused-changes", files);
   const { output, exitCode } = await bunTest(String(dir), "--aot");
   const lines = output.split("\n");
@@ -59,7 +60,7 @@ test("bun test --aot names every refused change to a locked built-in, where it w
   expect(exitCode).toBe(0);
 });
 
-test("a run in which nothing is refused says nothing", async () => {
+test.skipIf(!!unsupported)("a run in which nothing is refused says nothing", async () => {
   using dir = tempDir("aot-nothing-refused", { "package.json": files["package.json"], "c-clean.test.js": files["c-clean.test.js"] });
   const { output, exitCode } = await bunTest(String(dir), "--aot");
   expect(output).not.toContain("locked built-ins");

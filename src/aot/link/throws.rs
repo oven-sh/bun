@@ -758,6 +758,9 @@ impl<'a> Flow<'a> {
         let program = self.program;
         *self.locked.entry(name).or_insert_with(|| {
             let text = program.strs.get(name);
+            if text == b"globalThis" && program.strs.find(b"ModuleGraph").is_some() {
+                return (None, false);
+            }
             let found = global_object().object_at(text);
             (found.map(Builtin::index), locked_builtins::is_locked_global(text) && is_engine_global(text))
         })

@@ -26,6 +26,17 @@ const programs = {
     for (let i = 0; i < 3_000_000; i++) sum = (sum + i) | 0;
     console.log(sum);
   `,
+  "asks-for-the-checker.ts": `
+    const entrypoints = [process.env.FOLDER + "/entry.ts"];
+    for (const options of [{ check: true }, { dts: true }, { compile: { aot: true } }]) {
+      try {
+        await Bun.build({ entrypoints, ...options });
+      } catch (error) {
+        console.log((error as Error).message);
+      }
+    }
+    console.log((await Bun.build({ entrypoints, target: "bun" })).success);
+  `,
   "api.ts": `
     const built = await Bun.build({
       entrypoints: [process.argv[2]],
@@ -83,10 +94,33 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       const build = [bunExe(), "build", "--compile", ...flags, "--compile-trim-runtime", "hello.ts", "--outfile", "hello"];
       expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
       const asked = await run([join(folder, "hello"), "install"], folder, { ...bunEnv, BUN_BE_BUN: "1" });
-      expect(asked.stderr).toStartWith("error: this executable was built without the Bun command line");
+      expect(asked.stderr).toStartWith(
+        "error: BUN_BE_BUN is set, but this executable was built with --compile-trim-runtime, without the Bun command line",
+      );
       expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
+      const version = await run([join(folder, "hello"), "--version"], folder, { ...bunEnv, BUN_BE_BUN: "1" });
+      expect(version).toEqual({ stdout: Bun.version + "\n", stderr: "", exitCode: 0 });
+      const help = await run([join(folder, "hello")], folder, { ...bunEnv, BUN_OPTIONS: "--help" });
+      expect(help.stderr).toContain("BUN_OPTIONS is set: an option in it may be what asked.");
+      expect(help).toMatchObject({ stdout: "", exitCode: 70 });
     });
   }
+
+  test("Bun.build({ check }), ({ dts }) and ({ compile: { aot } }) called by a trimmed executable throw", async () => {
+    using dir = tempDir("compile-trim-runtime-checker", programs);
+    const folder = String(dir);
+    const build = [bunExe(), "build", "--compile", "--compile-trim-runtime", "asks-for-the-checker.ts", "--outfile", "asks"];
+    expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
+    expect(await run([join(folder, "asks")], folder, { ...bunEnv, FOLDER: folder })).toEqual({
+      stdout:
+        "check: this executable was built with --compile-trim-runtime, without the type checker\n" +
+        "dts: this executable was built with --compile-trim-runtime, without the type checker\n" +
+        "compile.aot: this build of Bun does not include the ahead-of-time compiler\n" +
+        "true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   test("compile: { trimRuntime: true }", async () => {
     using dir = tempDir("compile-trim-runtime-api", programs);

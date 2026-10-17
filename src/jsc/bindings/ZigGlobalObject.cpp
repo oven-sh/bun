@@ -297,7 +297,8 @@ extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses();
 #if ENABLE(AOT)
 extern "C" JSC::EncodedJSValue Response__createFromParts(JSC::JSGlobalObject*, JSC::EncodedJSValue body, JSC::EncodedJSValue status, JSC::EncodedJSValue statusText, JSC::EncodedJSValue headers, unsigned headerCount, const JSC::EncodedJSValue* headerNamesAndValues);
 extern "C" JSC::EncodedJSValue Response__createFromResponse(JSC::JSGlobalObject*, JSC::EncodedJSValue other);
-extern "C" JSC::EncodedJSValue Request__getHeader(JSC::JSGlobalObject*, JSC::EncodedJSValue request, JSC::EncodedJSValue name);
+extern "C" JSC::EncodedJSValue Bun__getRequestOrResponseHeader(JSC::JSGlobalObject*, JSC::EncodedJSValue holder, JSC::EncodedJSValue name, uint32_t knownName);
+extern "C" JSC::EncodedJSValue Bun__callHeadersMethod(JSC::JSGlobalObject*, JSC::EncodedJSValue headersOrHolder, JSC::EncodedJSValue name, JSC::EncodedJSValue value, uint32_t methodAndKnownName);
 extern "C" JSC::EncodedJSValue Response__createJSONFromParts(JSC::JSGlobalObject*, JSC::EncodedJSValue value, JSC::EncodedJSValue status, JSC::EncodedJSValue statusText, JSC::EncodedJSValue headers, unsigned headerCount, const JSC::EncodedJSValue* headerNamesAndValues);
 #endif
 extern "C" [[noreturn]] void Bun__outOfMemory();
@@ -330,7 +331,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         Bun__AOT__setImageCodec();
 #if ENABLE(AOT)
         Bun__AOT__setCachedGettersOfGeneratedClasses();
-        JSC::AOT::Typed::setHostClassEntryPoints({ Response__createFromParts, Response__createJSONFromParts, Response__createFromResponse, Request__getHeader });
+        JSC::AOT::Typed::setHostClassEntryPoints({ Response__createFromParts, Response__createJSONFromParts, Response__createFromResponse, Bun__getRequestOrResponseHeader, Bun__callHeadersMethod });
 #endif
         JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
         JSC::initialize([&] {

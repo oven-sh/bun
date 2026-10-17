@@ -1,12 +1,12 @@
 // `indexOf`, `includes`, `lastIndexOf`, `startsWith` and `endsWith`.
-// CALLS+ indexOfCharacter operationAOTTypedStringFindCharacter8|operationAOTTypedStringIndexOfLiteral
-// CALLS+ includesCharacter operationAOTTypedStringFindCharacter8|operationAOTTypedStringIndexOfLiteral
+// CALLS+ indexOfCharacter StringFindCharacter
+// CALLS+ includesCharacter StringFindCharacter
 // CALLS+ lastIndexOfCharacter operationAOTTypedStringReverseFindCharacter8|operationAOTTypedStringLastIndexOfLiteral
-// CALLS+ indexOf1 operationAOTTypedStringFind8|operationAOTTypedStringIndexOf
-// CALLS+ includes1 operationAOTTypedStringFind8|operationAOTTypedStringIndexOf
+// CALLS+ indexOf1 StringFindString
+// CALLS+ includes1 StringFindString
 // CALLS+ lastIndexOf1 operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
 // CALLS- searchKnown CallHostFunction|CallValue
-// CALLS+ searchKnown operationAOTTypedStringFind8|operationAOTTypedStringIndexOf
+// CALLS+ searchKnown StringFindString
 // CALLS+ searchKnown operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
 // CALLS- startsWithKnown CallHostFunction|CallValue|OperationValueWithInstance
 // CALLS- endsWithKnown CallHostFunction|CallValue|OperationValueWithInstance

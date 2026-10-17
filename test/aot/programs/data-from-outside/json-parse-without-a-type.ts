@@ -6,7 +6,19 @@ function describe(value: unknown): string {
 }
 let checksum = 0;
 let count = 0;
+const beginningsSeen = new Set<string>();
+function letSixteenGoBy(text: string) {
+  const beginning = text.slice(0, 8);
+  if (beginningsSeen.has(beginning) || text.length > 10000) return;
+  beginningsSeen.add(beginning);
+  for (let turn = 0; turn < 16; turn++) {
+    try {
+      JSON.parse(text);
+    } catch {}
+  }
+}
 function check(text: string) {
+  letSixteenGoBy(text);
   let seen: string;
   try {
     seen = describe(JSON.parse(text));

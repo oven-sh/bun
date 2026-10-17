@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { describe, test } from "./supported";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { withoutCoreDump } from "./run-programs";
 
@@ -85,7 +85,7 @@ async function build(cwd: string, ...moreEntryPoints: string[]) {
 
 if (isASAN) console.error("SKIPPED: the tests of heap-limit.test.ts under `ulimit -v`: a program built with AddressSanitizer does not start there");
 
-describe.skipIf(isWindows).concurrent("the address space for objects of a compiled program", () => {
+describe.concurrent("the address space for objects of a compiled program", () => {
   test("a program that keeps more objects alive than fit stops and says why", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
     const program = await build(String(folder));

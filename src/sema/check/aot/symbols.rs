@@ -13,6 +13,7 @@ const INTERNAL_MODULES: &[u8] = b"/$bun/js/internal/";
 pub(super) struct Shared {
     escaped_builtin_exports: OnceLock<FxHashSet<FileId>>,
     names_module_graph: OnceLock<bool>,
+    builtins_given_to_module_graphs: OnceLock<FxHashSet<Atom>>,
 }
 
 fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
@@ -76,7 +77,42 @@ struct HeldSymbol {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    fn names_module_graph(&self) -> bool {
+    pub fn module_graph_may_replace(&self, global: Atom) -> bool {
+        self.names_module_graph() && (self.atoms().bytes(global) == b"globalThis" || self.builtins_given_to_module_graphs().contains(&global))
+    }
+
+    pub fn module_graph_may_replace_in(&self, file: FileId, global: Atom) -> bool {
+        self.files().module(file).builtin.is_none() && self.module_graph_may_replace(global)
+    }
+
+    pub fn builtins_given_to_module_graphs(&self) -> &'p FxHashSet<Atom> {
+        let program = self.p;
+        program.aot.symbols.builtins_given_to_module_graphs.get_or_init(|| {
+            let mut given = FxHashSet::default();
+            let Some(globals) = self.atoms().lookup(b"globals").filter(|_| self.names_module_graph()) else { return given };
+            for file in (0..program.files.modules.len() as u32).map(FileId) {
+                let hir = self.hir(file);
+                if hir.kind == FileKind::Declaration || program.files.module(file).builtin.is_some() {
+                    continue;
+                }
+                let mut add = |e: ExprId| {
+                    let ExprKind::Object(written) = hir[skip_assertions(hir, e)].kind else { return };
+                    let names = written.iter().filter_map(|prop| hir[prop].key.name());
+                    given.extend(names.filter(|&name| !matches!(self.atoms().bytes(name), b"undefined" | b"NaN" | b"Infinity" | b"globalThis") && super::locked_builtins::is_locked_global(self.atoms().bytes(name))));
+                };
+                for option in hir.props.iter().filter(|prop| matches!(prop.kind, PropKind::Init | PropKind::Shorthand) && prop.key.name() == Some(globals)) {
+                    add(option.value);
+                    let ExprKind::Ident(variable) = hir[skip_assertions(hir, option.value)].kind else { continue };
+                    for declared in hir.var_decls.iter().filter(|declared| declared.init.is_some() && matches!(hir[declared.pat].kind, PatKind::Ident(name) if name == variable)) {
+                        add(declared.init);
+                    }
+                }
+            }
+            given
+        })
+    }
+
+    pub fn names_module_graph(&self) -> bool {
         let program = self.p;
         *program.aot.symbols.names_module_graph.get_or_init(|| {
             let Some(name) = self.atoms().lookup(b"ModuleGraph") else { return false };

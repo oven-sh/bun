@@ -106,7 +106,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
         import { expect, test } from "bun:test";
         import { readFileSync } from "node:fs";
         test("paths", async () => {
-          expect(import.meta.path.endsWith("/sub/paths.test.ts")).toBe(true);
+          expect(import.meta.path.split(/[\\\\/]/).slice(-2)).toEqual(["sub", "paths.test.ts"]);
           expect(Bun.main).toBe(import.meta.path);
           expect(import.meta.main).toBe(true);
           expect({ ...import.meta }.dir ?? import.meta.dir).toBe(import.meta.dir);

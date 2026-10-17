@@ -1093,19 +1093,39 @@
     "windows": 62
   },
   "aot/instruction-counts/linux-x64-2.test.ts": {
-    "default": 300879,
+    "default": 140064,
     "asan": 570,
-    "musl": 300397
+    "musl": 139840
   },
   "aot/instruction-counts/linux-x64-3.test.ts": {
-    "default": 257124,
+    "default": 87090,
     "asan": 535,
-    "musl": 300144
+    "musl": 101662
   },
   "aot/instruction-counts/linux-x64-4.test.ts": {
-    "default": 118215,
+    "default": 52540,
     "asan": 532,
-    "musl": 117106
+    "musl": 52047
+  },
+  "aot/instruction-counts/linux-x64-5.test.ts": {
+    "default": 78828,
+    "asan": 541,
+    "musl": 84113
+  },
+  "aot/instruction-counts/linux-x64-6.test.ts": {
+    "default": 160815,
+    "asan": 570,
+    "musl": 160557
+  },
+  "aot/instruction-counts/linux-x64-7.test.ts": {
+    "default": 170034,
+    "asan": 535,
+    "musl": 198482
+  },
+  "aot/instruction-counts/linux-x64-8.test.ts": {
+    "default": 65675,
+    "asan": 532,
+    "musl": 65059
   },
   "aot/instruction-counts/linux-x64-in-place.test.ts": {
     "default": 74092,
@@ -1128,9 +1148,9 @@
     "musl": 154526
   },
   "aot/instruction-counts/linux-x64.test.ts": {
-    "default": 171989,
+    "default": 93161,
     "asan": 541,
-    "musl": 183520
+    "musl": 99407
   },
   "aot/int32-is-proven-at-build-time.test.ts": {
     "default": 4475,

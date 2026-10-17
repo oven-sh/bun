@@ -328,14 +328,21 @@ fn compiled_program_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> 
 }
 
 /// A file that the executable holds has no descriptor: its bytes are handed over in a file that has no name.
-#[cfg(unix)]
 fn open_embedded_file(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
     if flags & (sys::O::WRONLY | sys::O::RDWR | sys::O::TRUNC | sys::O::APPEND) != 0 {
         return Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path));
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let fd = sys::memfd_create(c"file-of-the-executable", sys::MemfdFlags::NonExecutable).map_err(|err| err.with_path(path))?;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(windows)]
+    let fd = {
+        let name = format!("\\.file-of-the-executable-{:x}-{:x}", std::process::id(), bun_core::fast_random());
+        let name = bun_core::ZBox::from_vec([bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()].concat());
+        let made = sys::open(&name, sys::O::RDWR | sys::O::CREAT | sys::O::EXCL, 0o600).map_err(|err| err.with_path(path))?;
+        let _ = sys::unlink(&name);
+        made
+    };
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     let fd = {
         let mut name = *b"/tmp/.file-of-the-executable-XXXXXX\0";
         // SAFETY: `name` is a writable NUL-terminated template, and stays alive for both calls.
@@ -762,6 +769,21 @@ mod _async_tasks {
                         args.path
                             .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
+                    if let Some(file) = standalone_module_graph().and_then(|graph| graph.find_ref(path.as_bytes())) {
+                        // SAFETY: identity write — `R == ret::Open` for this `F`.
+                        unsafe {
+                            core::ptr::write(
+                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
+                                open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice()),
+                            )
+                        };
+                        let task_ptr: *mut Self = task;
+                        task.global_object()
+                            .bun_vm()
+                            .event_loop_mut()
+                            .enqueue_task(bun_jsc::Task::init(task_ptr));
+                        return task.completion.value();
+                    }
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
                     let mut mode: c_int = args.mode as c_int;
@@ -6049,7 +6071,6 @@ impl NodeFS {
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
-        #[cfg(unix)]
         if let Some(graph) = standalone_module_graph()
             && let Some(file) = graph.find_ref(path.as_bytes())
         {
@@ -7625,6 +7646,11 @@ impl NodeFS {
         args: &args::Realpath,
         variant: RealpathVariant,
     ) -> Maybe<ret::Realpath> {
+        if let Some(graph) = standalone_module_graph()
+            && (graph.contains_file(args.path.slice()) || graph.find_dir(args.path.slice()))
+        {
+            return Ok(encode_path_result(args.path.slice(), args.encoding));
+        }
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -7637,6 +7663,9 @@ impl NodeFS {
                 )
             };
             if let Some(err) = rc.to_error(sys::Tag::realpath) {
+                if err.get_errno() == E::ENOENT && is_compiled_program_path(args.path.slice()) {
+                    return Ok(encode_path_result(args.path.slice(), args.encoding));
+                }
                 return Err(err.with_path(args.path.slice()));
             }
             // `fs_t.ptr` *is* the nullable C
@@ -7675,11 +7704,6 @@ impl NodeFS {
 
         #[cfg(not(windows))]
         {
-            if let Some(graph) = standalone_module_graph()
-                && (graph.contains_file(args.path.slice()) || graph.find_dir(args.path.slice()))
-            {
-                return Ok(encode_path_result(args.path.slice(), args.encoding));
-            }
             let mut outbuf = bun_paths::path_buffer_pool::get();
             let inbuf = &mut self.sync_error_buf;
             // SAFETY: single-threaded init flag (resolver/fs.rs).

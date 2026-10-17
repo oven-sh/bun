@@ -5597,6 +5597,19 @@ impl VirtualMachine {
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
 
+        // Same again for a VM that ran a macro: the table of registered
+        // macro functions, and the entry points `load_macro_entry_point`
+        // boxed into the other table.
+        drop(core::mem::take(&mut self.macros));
+        for entry_point in core::mem::take(&mut self.macro_entry_points).values() {
+            // SAFETY: boxed by `load_macro_entry_point`; the table owned it.
+            unsafe {
+                bun_core::heap::destroy(
+                    entry_point.cast::<bun_bundler::entry_points::MacroEntryPoint>(),
+                );
+            }
+        }
+
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.
         unsafe { self.transpiler.deinit() };

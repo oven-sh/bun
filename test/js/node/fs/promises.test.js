@@ -464,8 +464,8 @@ describe("FileHandle.writer() after a rejected write", () => {
     "[Symbol.dispose]()": w => w[Symbol.dispose](),
   };
 
-  // Every write on a read-only handle rejects. Windows reports another errno.
-  const readOnlyError = isWindows ? {} : { code: "EBADF" };
+  // Every write on a read-only handle rejects. On Windows, libuv maps the access error to EBADF too.
+  const readOnlyError = { code: "EBADF" };
   const writeOnce = (w, method) => (method === "write" ? w.write("x") : w.writev(["x", "y"]));
 
   describe.each(["write", "writev"])("%s on a read-only handle", method => {
@@ -535,7 +535,16 @@ describe("FileHandle.writer() after a rejected write", () => {
       const reason = new Error("stop");
       await expect(abortedWrite(w, reason)).rejects.toBe(reason);
       await expect(w.write("y")).rejects.toBe(reason);
+      expect([w.writeSync("y"), w.writevSync(["y"])]).toEqual([false, false]);
       expect(terminal === "end" ? await w.end() : w.endSync()).toBe(3);
+      // ended: a later write reports the closed writer, as in node
+      const closedError = {
+        name: "TypeError",
+        code: "ERR_INVALID_STATE",
+        message: "Invalid state: The writer is closed",
+      };
+      await expect(w.write("z")).rejects.toMatchObject(closedError);
+      await expect(w.writev(["z"])).rejects.toMatchObject(closedError);
       await expectHandleReleased(fh, fd);
       // the aborted write had landed, the refused one was never issued
       expect(fs.readFileSync(file, "utf8")).toBe("abcx");

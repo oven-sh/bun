@@ -1094,7 +1094,7 @@ function asyncWrap(fn: any, name: string) {
       let closing = false;
       let pendingEndPromise: Promise<number> | null = null;
       let error: unknown = null;
-      // What later writes reject with. Only fail() sets `error` (as in node), so end()/endSync()/fail() still run.
+      // Set by a rejected write, which later writes reject with. Only fail() sets `error` (as in node).
       let writeError: unknown = null;
       // Count of in-flight async writes (write() doesn't serialize callers,
       // so several can be on the threadpool at once).
@@ -1282,11 +1282,11 @@ function asyncWrap(fn: any, name: string) {
       return {
         __proto__: null,
         write(chunk, options = kEmptyObject) {
+          if (closed) {
+            return Promise.$reject(error || $ERR_INVALID_STATE_TypeError("The writer is closed"));
+          }
           if (writeError) {
             return Promise.$reject(writeError);
-          }
-          if (closed) {
-            return Promise.$reject($ERR_INVALID_STATE_TypeError("The writer is closed"));
           }
           if (handle[kFd] === -1) {
             // The handle was closed before this writer took its ref.
@@ -1314,11 +1314,11 @@ function asyncWrap(fn: any, name: string) {
         },
 
         writev(chunks, options = kEmptyObject) {
+          if (closed) {
+            return Promise.$reject(error || $ERR_INVALID_STATE_TypeError("The writer is closed"));
+          }
           if (writeError) {
             return Promise.$reject(writeError);
-          }
-          if (closed) {
-            return Promise.$reject($ERR_INVALID_STATE_TypeError("The writer is closed"));
           }
           if (handle[kFd] === -1) {
             return Promise.$reject($ERR_INVALID_STATE("The FileHandle is closed"));
@@ -1465,7 +1465,7 @@ function asyncWrap(fn: any, name: string) {
 
         fail(reason) {
           if (closed || error) return;
-          writeError = error = reason ?? $ERR_INVALID_STATE("Failed");
+          error = reason ?? $ERR_INVALID_STATE("Failed");
           closed = true;
           handle[kLocked] = false;
           function teardown() {

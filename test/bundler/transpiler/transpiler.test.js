@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, tempDir } from "harness";
+import { SourceMap } from "node:module";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -500,6 +501,8 @@ describe("Bun.Transpiler", () => {
       err("x = async(...b = c) => 0", "A rest argument cannot have a default initializer");
       err("x = (...a = 1) => 0", "A rest argument cannot have a default initializer");
       err("x = ([...a = 1]) => 0", "A rest argument cannot have a default initializer");
+      err("x = async (...a = 1): T => 0", "A rest argument cannot have a default initializer");
+      err("x = a ? async (b, ...c = d): T => e : f", "A rest argument cannot have a default initializer");
 
       // Above assignment level the ":" cannot be a return type
       exp("x = a ? !async(b, ...c) : d", "x = a ? !async(b, ...c) : d;\n");
@@ -534,6 +537,22 @@ describe("Bun.Transpiler", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("a+b+c\n2\n");
       expect(exitCode).toBe(0);
+    });
+
+    it('a spread argument of a call of "async" maps to its own column', async () => {
+      const source = "x = a ? async(b, ...c) : d;\n";
+      using dir = tempDir("ts-async-spread-sourcemap", { "entry.ts": source });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], sourcemap: "external" });
+      expect(result.success).toBe(true);
+      const code = await result.outputs.find(output => output.kind === "entry-point").text();
+      const map = new SourceMap(await result.outputs.find(output => output.kind === "sourcemap").json());
+      const lines = code.split("\n");
+      const line = lines.findIndex(text => text.includes("...c"));
+      const entry = map.findEntry(line, lines[line].indexOf("...c"));
+      expect({ line: entry.originalLine, column: entry.originalColumn }).toEqual({
+        line: 0,
+        column: source.indexOf("...c"),
+      });
     });
 
     it("type-only import syntax", () => {

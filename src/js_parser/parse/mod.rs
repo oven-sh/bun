@@ -23,7 +23,7 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    FnOrArrowDataParse, InvalidLocTag, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
@@ -467,7 +467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
 
             if is_spread {
-                item = p.new_expr(E::Spread { value: item }, loc);
+                item = p.new_expr(E::Spread { value: item }, spread_range.loc);
             }
 
             // Skip over types
@@ -571,7 +571,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && invalid_log
+                    .iter()
+                    .all(|invalid| invalid.kind == InvalidLocTag::RestInitializer)
+            {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p

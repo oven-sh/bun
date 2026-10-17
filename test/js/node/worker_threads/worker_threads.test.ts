@@ -1152,7 +1152,7 @@ test("workerpool's channel detection picks parentPort in a node worker, and mess
 
 // The child uses the Web Worker idiom on its global scope. Node has no such
 // globals in a worker, so the child throws and the parent exits with that error.
-// Bun 1.4.0 to 1.4.2 printed "ready" and then waited forever: the global
+// Bun 1.4.0 to 1.4.3 printed "ready" and then waited forever: the global
 // postMessage() reached the parent, and nothing came back. The spawn timeout is
 // shorter than this file's test timeout, so a child that waits is killed and
 // the failure is the diff below.

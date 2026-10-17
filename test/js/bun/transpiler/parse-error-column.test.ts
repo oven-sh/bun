@@ -40,6 +40,17 @@ test.concurrent("JS parse error after astral characters reports UTF-16 column", 
   });
 });
 
+test.concurrent("parser failure with no message of its own points at the token the lexer stopped on", async () => {
+  // A method-signature parameter that is not a binding makes the parser fail
+  // without logging anything. The fallback diagnostic carried no position
+  // (line -1, column -1); it must point at the `1` the lexer stopped on.
+  expect(await buildPosition("in.ts", "const a = 1;\n\ntype T = { foo(1): void };\n")).toEqual({
+    stdout: `{"line":3,"column":16}`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("JS parse error column agrees for BMP vs astral lines of equal UTF-16 width", async () => {
   // Four one-unit BMP characters and two two-unit astral characters both put
   // `]` at column 19.

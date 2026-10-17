@@ -1200,7 +1200,7 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
                   if (what === "db") db.close();
                   else if (what === "sess") sess.close();
                   else sess[Symbol.dispose]();
-                } catch (e) { caught = e.code; }
+                } catch (e) { caught = e.code + ": " + e.message; }
                 return 0;
               });
               const cs = sess.changeset();
@@ -1220,17 +1220,128 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
       // On regression ASAN aborts the process before any line is printed.
       // db.close(): deferred on the first authorizer call (catches nothing),
       //   throws ERR_INVALID_STATE on the second (db already marked closed).
-      // sess.close(): record->inUse → ERR_INVALID_STATE.
-      // Symbol.dispose: inUse → silent no-op (tolerant).
+      // sess.close() and Symbol.dispose: record->inUse → ERR_INVALID_STATE
+      //   "session is currently in use" (Node's message; it wins over the
+      //   in-callback message because it is checked first).
       expect({ lines, stderr, exitCode }).toEqual({
         lines: [
-          { what: "db", len: 20, caught: "ERR_INVALID_STATE", dbOpen: false },
-          { what: "sess", len: 20, caught: "ERR_INVALID_STATE", dbOpen: true },
-          { what: "dispose", len: 20, caught: null, dbOpen: true },
+          { what: "db", len: 20, caught: "ERR_INVALID_STATE: database is not open", dbOpen: false },
+          { what: "sess", len: 20, caught: "ERR_INVALID_STATE: session is currently in use", dbOpen: true },
+          { what: "dispose", len: 20, caught: "ERR_INVALID_STATE: session is currently in use", dbOpen: true },
         ],
         stderr: expect.any(String),
         exitCode: 0,
       });
+    },
+  );
+
+  // Issue #45327. The session's preupdate hook runs PRAGMA table_xinfo on
+  // the connection, which fires the authorizer while SQLite still walks the
+  // sqlite3_session it would free. A UDF during step and an applyChangeset
+  // conflict handler are the other callback kinds that can reach a session.
+  test.skipIf(!sqliteHasSession)(
+    "session.close()/Symbol.dispose inside a SQLite callback throws ERR_INVALID_STATE instead of freeing the session",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync, constants } = require("node:sqlite");
+            const closers = { close: s => s.close(), dispose: s => s[Symbol.dispose]() };
+            const errOf = e => e.code + ": " + e.message;
+            for (const [how, closer] of Object.entries(closers)) {
+              // 1. authorizer fired by the preupdate hook during INSERT.
+              {
+                const db = new DatabaseSync(":memory:");
+                db.exec("CREATE TABLE t(a PRIMARY KEY)");
+                const session = db.createSession();
+                let caught = null;
+                // The session extension ran PRAGMA table_info before SQLite
+                // 3.49.0; macOS CI loads Apple's older libsqlite3.
+                db.setAuthorizer((action, p1) => {
+                  if (action === constants.SQLITE_PRAGMA && /^table_x?info$/.test(p1) && caught === null) {
+                    try { closer(session); } catch (e) { caught = errOf(e); }
+                  }
+                  return constants.SQLITE_OK;
+                });
+                db.exec("INSERT INTO t VALUES (1)");
+                db.setAuthorizer(null);
+                const rows = db.prepare("SELECT a FROM t").all();
+                const len = session.changeset().length;
+                closer(session);
+                console.log(JSON.stringify({ what: "authorizer", how, caught, rows, len }));
+                db.close();
+              }
+              // 2. UDF during step on a session-tracked table.
+              {
+                const db = new DatabaseSync(":memory:");
+                db.exec("CREATE TABLE t(a PRIMARY KEY)");
+                const session = db.createSession();
+                let caught = null;
+                db.function("f", x => {
+                  try { closer(session); } catch (e) { caught = errOf(e); }
+                  return x;
+                });
+                db.prepare("INSERT INTO t VALUES (f(1))").run();
+                const rows = db.prepare("SELECT a FROM t").all();
+                const len = session.changeset().length;
+                closer(session);
+                console.log(JSON.stringify({ what: "udf", how, caught, rows, len }));
+                db.close();
+              }
+              // 3. applyChangeset onConflict handler on a connection with a session.
+              {
+                const src = new DatabaseSync(":memory:");
+                const dst = new DatabaseSync(":memory:");
+                for (const db of [src, dst]) db.exec("CREATE TABLE t(a PRIMARY KEY, v)");
+                const s = src.createSession();
+                src.exec("INSERT INTO t VALUES (1, 'src')");
+                dst.exec("INSERT INTO t VALUES (1, 'dst')");
+                const session = dst.createSession();
+                let caught = null;
+                const ok = dst.applyChangeset(s.changeset(), {
+                  onConflict: () => {
+                    try { closer(session); } catch (e) { caught = errOf(e); }
+                    return constants.SQLITE_CHANGESET_REPLACE;
+                  },
+                });
+                const rows = dst.prepare("SELECT a, v FROM t").all();
+                const len = session.changeset().length;
+                closer(session);
+                console.log(JSON.stringify({ what: "conflict", how, caught, ok, rows, len }));
+                src.close();
+                dst.close();
+              }
+            }
+          `,
+        ],
+        env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // On regression the child dies (ASAN abort or segfault) before it
+      // prints; an empty stdout then surfaces stderr in the diff.
+      const lines =
+        stdout.trim() === ""
+          ? [stderr]
+          : stdout
+              .trim()
+              .split("\n")
+              .map(l => JSON.parse(l));
+      const caught = "ERR_INVALID_STATE: session cannot be closed while in a callback";
+      // The session survives the callback: the changeset still records the
+      // write (len > 0) and the close outside the callback succeeds.
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["close", "dispose"].flatMap(how => [
+          { what: "authorizer", how, caught, rows: [{ a: 1 }], len: expect.any(Number) },
+          { what: "udf", how, caught, rows: [{ a: 1 }], len: expect.any(Number) },
+          { what: "conflict", how, caught, ok: true, rows: [{ a: 1, v: "src" }], len: expect.any(Number) },
+        ]),
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+      for (const line of lines) expect(line.len).toBeGreaterThan(0);
     },
   );
 
@@ -1262,13 +1373,14 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     const session = db.createSession();
     db.close();
     db.open();
-    // closeInternal() freed the sqlite3_session* but left the wrapper's
-    // pointer intact; after re-open the db is "open" again, so without the
-    // origin-connection check changeset()/close() would dereference freed
-    // memory (heap-use-after-free / double-free under ASAN).
-    expect(() => session.changeset()).toThrow(/database is not open/);
-    expect(() => session.patchset()).toThrow(/database is not open/);
-    expect(() => session.close()).toThrow(/database is not open/);
+    // closeInternal() freed the sqlite3_session* and nulled the shared
+    // record's handle; after re-open the db is "open" again, so the wrapper
+    // reports the session as closed (Node's message) instead of
+    // dereferencing freed memory (heap-use-after-free / double-free under
+    // ASAN).
+    expect(() => session.changeset()).toThrow(/session is not open/);
+    expect(() => session.patchset()).toThrow(/session is not open/);
+    expect(() => session.close()).toThrow(/session is not open/);
     // Symbol.dispose swallows.
     expect(() => session[Symbol.dispose]()).not.toThrow();
     db.close();

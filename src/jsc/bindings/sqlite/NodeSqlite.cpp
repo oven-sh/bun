@@ -1425,6 +1425,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    // An extension's init routine can run SQL on this connection, which
+    // re-enters JS through the authorizer, a UDF, or the session preupdate
+    // hook.
+    JSDatabaseSync::BusyScope busy { self };
     if (!self->allowLoadExtension() || !self->enableLoadExtensionIsOn()) {
         return throwNodeState(globalObject, scope, "extension loading is not allowed"_s);
     }
@@ -3218,24 +3222,22 @@ void JSNodeSqliteSession::finishCreation(VM& vm, JSDatabaseSync* db, Ref<NodeSql
     m_database.set(vm, this, db);
 }
 
-bool JSNodeSqliteSession::isStale() const
+bool JSNodeSqliteSession::databaseClosed() const
 {
-    // The database frees every tracked session handle out from under the
-    // wrappers when it closes, is torn down, or successfully deserialize()s
-    // a new database — all of those mark the shared record dbGone.
     auto* db = m_database.get();
-    return db == nullptr || !db->isOpen() || !m_record || m_record->dbGone;
+    return db == nullptr || !db->isOpen();
 }
 
 void JSNodeSqliteSession::deleteSession()
 {
     if (!m_record || m_record->handle == nullptr) return;
-    // A changeset()/patchset() is on the C stack for this handle;
-    // sqlite3session_delete would free it under sessionGenerateChangeset().
-    // close() throws ERR_INVALID_STATE for this; Symbol.dispose no-ops.
-    if (m_record->inUse) return;
+    // Both callers throw ERR_INVALID_STATE first: a changeset()/patchset()
+    // on the C stack (inUse) or any SQLite callback on the connection
+    // (isBusy) may still be walking this handle.
+    ASSERT(!m_record->inUse);
     if (!m_record->dbGone) {
         auto* db = m_database.get();
+        ASSERT(!db->isBusy());
         db->untrackSession(m_record.get());
         sqlite3session_delete(m_record->handle);
     }
@@ -3284,7 +3286,7 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
 {
     THIS_SESSION();
     JSDatabaseSync* db = self->database();
-    if (self->isStale()) {
+    if (self->databaseClosed()) {
         return throwNodeState(globalObject, scope, "database is not open"_s);
     }
     auto* record = self->record();
@@ -3335,14 +3337,19 @@ JSC_DEFINE_HOST_FUNCTION(jsSessionPatchset, (JSGlobalObject * globalObject, Call
 JSC_DEFINE_HOST_FUNCTION(jsSessionClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_SESSION();
-    if (self->isStale()) {
+    if (self->databaseClosed()) {
         return throwNodeState(globalObject, scope, "database is not open"_s);
     }
     if (self->session() == nullptr) {
         return throwNodeState(globalObject, scope, "session is not open"_s);
     }
     if (self->record()->inUse) {
-        return throwNodeState(globalObject, scope, "session is currently generating a changeset"_s);
+        return throwNodeState(globalObject, scope, "session is currently in use"_s);
+    }
+    // Checked last: changeset()/patchset() run the authorizer, so both hold
+    // there and the in-use message above wins (Node's order).
+    if (self->database()->isBusy()) {
+        return throwNodeState(globalObject, scope, "session cannot be closed while in a callback"_s);
     }
     self->deleteSession();
     return JSValue::encode(jsUndefined());
@@ -3350,9 +3357,20 @@ JSC_DEFINE_HOST_FUNCTION(jsSessionClose, (JSGlobalObject * globalObject, CallFra
 
 JSC_DEFINE_HOST_FUNCTION(jsSessionDispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue());
-    (void)globalObject;
-    if (self) self->deleteSession();
+    // Already closed, or the database freed the handle: nothing to do.
+    if (!self || self->databaseClosed() || self->session() == nullptr) {
+        return JSValue::encode(jsUndefined());
+    }
+    if (self->record()->inUse) {
+        return throwNodeState(globalObject, scope, "session is currently in use"_s);
+    }
+    if (self->database()->isBusy()) {
+        return throwNodeState(globalObject, scope, "session cannot be closed while in a callback"_s);
+    }
+    self->deleteSession();
     return JSValue::encode(jsUndefined());
 }
 
@@ -3877,6 +3895,9 @@ void JSNodeSqliteTagStoreConstructor::finishCreation(VM& vm, JSGlobalObject*, JS
 // WorkPool (webcrypto's PhonyWorkQueue is the in-tree precedent).
 //
 // The `progress` callback still fires between each batch of `rate` pages.
+// It runs inside the source connection's BusyScope, so session.close() and
+// Symbol.dispose throw ERR_INVALID_STATE there, where Node permits them. A
+// WorkPool port lifts that along with the blocking.
 JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);

@@ -8,6 +8,125 @@ afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
 });
 
+const restoredFormatterFixture = String.raw`
+const assert = require("node:assert/strict");
+const mode = process.argv[1];
+const original = Error.prepareStackTrace;
+let cachedCalls = 0;
+const cached = () => { cachedCalls++; return "cached formatter"; };
+Error.prepareStackTrace = cached;
+const descriptor = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
+if (mode === "restore-descriptor") {
+  Error.prepareStackTrace = () => "temporary formatter";
+  Object.defineProperty(Error, "prepareStackTrace", descriptor);
+} else if (mode === "delete-restore" || mode === "restore-default") {
+  delete Error.prepareStackTrace;
+  assert.equal(typeof new Error("default stack").stack, "string");
+  assert.equal(cachedCalls, 0);
+  Error.prepareStackTrace = mode === "restore-default" ? original : cached;
+} else if (mode === "replace-value") {
+  Object.defineProperty(Error, "prepareStackTrace", { ...descriptor, value: () => "replacement" });
+} else if (mode === "replace-accessor") {
+  let value = cached;
+  Object.defineProperty(Error, "prepareStackTrace", { configurable: true, get() { return value; }, set(next) { value = next; } });
+} else if (mode === "inherited-write") {
+  class ChildError extends Error {}
+  ChildError.prepareStackTrace = () => "child formatter";
+  assert.equal(Error.prepareStackTrace, cached);
+}
+let calls = 0;
+Error.prepareStackTrace = function(error, frames) {
+  assert.equal(this, Error);
+  calls++;
+  return frames;
+};
+const target = {};
+Error.captureStackTrace(target);
+const stacks = [target.stack, new Error("instance").stack];
+assert.equal(calls, 2);
+for (const frames of stacks) {
+  assert.equal(Array.isArray(frames), true);
+  assert.ok(frames.length > 0);
+  assert.equal(typeof frames[0].getFileName, "function");
+}
+console.log("ok");
+`;
+
+test.concurrent.each([
+  "restore-descriptor",
+  "delete-restore",
+  "restore-default",
+  "replace-value",
+  "replace-accessor",
+  "inherited-write",
+])("Error.prepareStackTrace property restoration: %s", async mode => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", restoredFormatterFixture, mode],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
+const formatterAccessorFixture = String.raw`
+const assert = require("node:assert/strict");
+const mode = process.argv[1];
+let reads = 0;
+let calls = 0;
+let nested;
+const failure = new Error("formatter failure");
+Object.defineProperty(Error, "prepareStackTrace", {
+  configurable: true,
+  get() {
+    reads++;
+    if (mode === "getter-throws") throw failure;
+    if (mode === "changes-between-reads" && reads === 2) return null;
+    nested = new Error("nested").stack;
+    return function(error, frames) {
+      calls++;
+      if (mode === "formatter-throws") throw failure;
+      return frames;
+    };
+  },
+});
+function capture() {
+  const target = {};
+  Error.captureStackTrace(target);
+  return target.stack;
+}
+if (mode === "getter-throws" || mode === "formatter-throws") {
+  assert.throws(capture, error => error === failure);
+} else if (mode === "changes-between-reads") {
+  assert.throws(capture, { name: "TypeError", message: "globalThis.Error.prepareStackTrace is not a function" });
+} else {
+  assert.equal(Array.isArray(capture()), true);
+  assert.equal(calls, 1);
+}
+assert.equal(reads, mode === "getter-throws" ? 1 : 2);
+if (mode !== "getter-throws") assert.equal(typeof nested, "string");
+Object.defineProperty(Error, "prepareStackTrace", {
+  configurable: true, writable: true, value: (_error, frames) => frames,
+});
+assert.equal(Array.isArray(new Error("healthy later capture").stack), true);
+console.log("ok");
+`;
+
+test.concurrent.each(["nested", "getter-throws", "formatter-throws", "changes-between-reads"])(
+  "Error.prepareStackTrace accessor lookup: %s",
+  async mode => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", formatterAccessorFixture, mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+);
+
 test("Regular .stack", () => {
   var err;
   class Foo {

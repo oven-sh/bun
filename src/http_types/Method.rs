@@ -173,8 +173,10 @@ impl Method {
         }
     }
 
+    /// Response side. RFC 9112 §6.3 ends only a HEAD response at the header
+    /// section; a TRACE response echoes the request (RFC 9110 §9.3.8).
     pub fn has_body(self) -> bool {
-        !matches!(self, Method::HEAD | Method::TRACE)
+        !matches!(self, Method::HEAD)
     }
 
     /// RFC 9110: GET/HEAD have no defined body semantics; TRACE "MUST NOT
@@ -370,6 +372,15 @@ pub enum HeaderName {
 #[cfg(test)]
 mod tests {
     use super::Method;
+
+    /// RFC 9112 §6.3: by request method alone, only a HEAD response ends at
+    /// its header section.
+    #[test]
+    fn has_body_excludes_only_head() {
+        for m in enumset::EnumSet::<Method>::all() {
+            assert_eq!(m.has_body(), m != Method::HEAD, "{m:?}");
+        }
+    }
 
     /// Exhaustive parity check for `Method::which`: every variant round-trips
     /// via its uppercase wire form and the all-lower convenience form, and

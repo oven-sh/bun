@@ -157,6 +157,210 @@ test.concurrent.each([
   },
 );
 
+// By method, only a response to HEAD ends at its header block (RFC 9112 §6.3).
+// A TRACE response has content: the request it echoes (RFC 9110 §9.3.8). Its
+// connection is reusable only after that content. A request written in front
+// of it is answered with the echoed TRACE (`Malformed_HTTP_Response`).
+//
+// In the "after the next request" rows the server holds the body until another
+// request arrives, on whichever connection, so no timer decides the order.
+// Every row has an origin of its own, and with it a pool key of its own.
+test.concurrent("a TRACE response body is read before its connection is pooled", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      async function run(framing, bodyArrives) {
+        let connections = 0;
+        let traceRequest = "";
+        // Which connection each request arrived on.
+        const arrivedOn = [];
+        // Sends the body of a TRACE response whose head is already on the wire.
+        let sendHeldBody = null;
+        const server = net.createServer(sock => {
+          const connection = ++connections;
+          sock.on("error", () => {});
+          let buf = "";
+          sock.on("data", d => {
+            buf += d.toString("latin1");
+            let end;
+            while ((end = buf.indexOf("\\r\\n\\r\\n")) !== -1) {
+              const request = buf.slice(0, end + 4);
+              buf = buf.slice(end + 4);
+              const requestLine = request.slice(0, request.indexOf("\\r\\n"));
+              arrivedOn.push(connection);
+              // The held body goes out ahead of the answer to this request.
+              sendHeldBody?.();
+              if (requestLine.startsWith("TRACE ")) {
+                traceRequest = request;
+                const [framingHeader, body] =
+                  framing === "chunked"
+                    ? ["Transfer-Encoding: chunked", request.length.toString(16) + "\\r\\n" + request + "\\r\\n0\\r\\n\\r\\n"]
+                    : ["Content-Length: " + request.length, request];
+                const head = "HTTP/1.1 200 OK\\r\\nContent-Type: message/http\\r\\n" + framingHeader + "\\r\\n\\r\\n";
+                if (bodyArrives === "with the head") {
+                  sock.write(head + body);
+                } else {
+                  sock.write(head);
+                  sendHeldBody = () => {
+                    sendHeldBody = null;
+                    sock.write(body);
+                  };
+                }
+              } else {
+                sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + requestLine.length + "\\r\\n\\r\\n" + requestLine);
+              }
+            }
+          });
+        });
+        server.listen(0, "127.0.0.1");
+        await new Promise(r => server.on("listening", r));
+        const origin = "http://127.0.0.1:" + server.address().port;
+        const outcome = promise =>
+          promise.then(
+            async res => [res.status, await res.text()],
+            err => ["rejected", err.code],
+          );
+
+        const trace = await fetch(origin + "/trace", { method: "TRACE" });
+        // A held body is released by this request, so it starts before the
+        // TRACE body is read. It has to dial: the first connection is busy.
+        const next = bodyArrives === "with the head" ? null : outcome(fetch(origin + "/next"));
+        const echoed = (await trace.text()) === traceRequest;
+        const second = await (next ?? outcome(fetch(origin + "/next")));
+        // Every connection is idle again by now, so this one dials nothing.
+        const third = await outcome(fetch(origin + "/third"));
+        server.close();
+        return { echoed, second, third, arrivedOn: arrivedOn.slice(0, 2), connections };
+      }
+
+      const results = {};
+      for (const framing of ["Content-Length", "chunked"]) {
+        for (const bodyArrives of ["with the head", "after the next request"]) {
+          results[framing + ", body " + bodyArrives] = await run(framing, bodyArrives);
+        }
+      }
+      console.log(JSON.stringify(results));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  const delivered = { echoed: true, second: [200, "GET /next HTTP/1.1"], third: [200, "GET /third HTTP/1.1"] };
+  // The next request reuses the connection of a TRACE whose body was read.
+  const withTheHead = { ...delivered, arrivedOn: [1, 1], connections: 1 };
+  // It dials when that body is still to come.
+  const afterTheNextRequest = { ...delivered, arrivedOn: [1, 2], connections: 2 };
+  expect({ result, exitCode }).toEqual({
+    result: {
+      "Content-Length, body with the head": withTheHead,
+      "Content-Length, body after the next request": afterTheNextRequest,
+      "chunked, body with the head": withTheHead,
+      "chunked, body after the next request": afterTheNextRequest,
+    },
+    exitCode: 0,
+  });
+});
+
+// Everything else about the response to a TRACE is framed as for a GET. Each
+// row runs both methods against the same answer, each on an origin of its own,
+// and then sends one more request: `connections` is 1 when the first answer
+// left its connection reusable. The two redirect rows hold the body of the 3xx
+// until the hop arrives. A followed redirect does not wait for that body, so
+// the hop has to dial; written onto the first connection, it would be answered
+// with the 3xx body.
+test.concurrent("a TRACE response is framed like a GET response", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      async function run(path, method) {
+        let connections = 0;
+        // Sends the body of a 3xx whose head is already on the wire.
+        let sendHeldBody = null;
+        const server = net.createServer(sock => {
+          connections++;
+          sock.on("error", () => {});
+          let buf = "";
+          sock.on("data", d => {
+            buf += d.toString("latin1");
+            let end;
+            while ((end = buf.indexOf("\\r\\n\\r\\n")) !== -1) {
+              const [verb, target] = buf.slice(0, end).split(" ");
+              buf = buf.slice(end + 4);
+              sendHeldBody?.();
+              if (target === "/close-delimited") {
+                sock.end("HTTP/1.1 200 OK\\r\\n\\r\\nuntil close");
+              } else if (target === "/204") {
+                sock.write("HTTP/1.1 204 No Content\\r\\n\\r\\n");
+              } else if (target === "/content-length-0") {
+                sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\n\\r\\n");
+              } else if (target === "/content-length-conflict") {
+                sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 3\\r\\nContent-Length: 4\\r\\n\\r\\nabc");
+              } else if (target === "/307" || target === "/303") {
+                sock.write("HTTP/1.1 " + target.slice(1) + " Redirect\\r\\nLocation: /landed\\r\\nContent-Length: 5\\r\\n\\r\\n");
+                sendHeldBody = () => {
+                  sendHeldBody = null;
+                  sock.write("moved");
+                };
+              } else {
+                const body = verb + " " + target;
+                sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
+              }
+            }
+          });
+        });
+        server.listen(0, "127.0.0.1");
+        await new Promise(r => server.on("listening", r));
+        const origin = "http://127.0.0.1:" + server.address().port;
+        const outcome = await fetch(origin + path, { method }).then(
+          async res => [res.status, await res.text()],
+          err => ["rejected", err.code],
+        );
+        await (await fetch(origin + "/after")).text();
+        server.close();
+        return [...outcome, connections];
+      }
+
+      const results = {};
+      for (const path of ["/close-delimited", "/204", "/content-length-0", "/content-length-conflict", "/307", "/303"]) {
+        results[path] = { GET: await run(path, "GET"), TRACE: await run(path, "TRACE") };
+      }
+      console.log(JSON.stringify(results));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  const same = (outcome: [number | string, string, number]) => ({ GET: outcome, TRACE: outcome });
+  expect({ result, exitCode }).toEqual({
+    result: {
+      "/close-delimited": same([200, "until close", 2]),
+      "/204": same([204, "", 1]),
+      "/content-length-0": same([200, "", 1]),
+      "/content-length-conflict": same(["rejected", "InvalidContentLength", 2]),
+      // A 307 keeps the method for the hop, a 303 turns it into GET.
+      "/307": { GET: [200, "GET /landed", 2], TRACE: [200, "TRACE /landed", 2] },
+      "/303": same([200, "GET /landed", 2]),
+    },
+    exitCode: 0,
+  });
+});
+
 // Through a CONNECT proxy two status lines arrive on one connection. The
 // proxy's reply to CONNECT only describes the hop to the proxy (tinyproxy,
 // Apache mod_proxy_connect and older Squid all answer it with `HTTP/1.0 200`),

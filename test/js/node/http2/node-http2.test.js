@@ -6273,6 +6273,22 @@ describe.concurrent("write() after end()", () => {
     expect([closedBeforeLateWrite, events]).toEqual([true, ["finish", ...lateWriteEvents]]);
   });
 
+  // Guard, passes without the fix too: an 'error' that user code emits does not make the stream
+  // errored. The natively closed stream still waits for 'end', and a late reader gets the response.
+  it("client stream, 'error' emitted by user code on a stream that is not errored", async () => {
+    let length = 0;
+    const events = await request((client, req) => {
+      req.end("body");
+      req.on("response", () => {
+        client.ping(() => {
+          req.emit("error", new Error("emitted by user code"));
+          setImmediate(() => req.on("data", chunk => (length += chunk.length)));
+        });
+      });
+    });
+    expect([length, events]).toEqual([2, ["finish", "error:undefined", "close"]]);
+  });
+
   // A chunk written before end() goes out without END_STREAM, which then comes from _final. The
   // Writable never calls _final on an errored stream, and the stream still has to end.
   describe("last write in flight at end()", () => {
@@ -6403,10 +6419,10 @@ describe.concurrent("write() after end()", () => {
       expect([pending, events]).toEqual([true, lateWriteEvents]);
     });
 
-    it("client stream that gets its id before the late write's 'error'", async () => {
-      // Over a transport that is already connected, the request gets its id one tick before 'ready'
-      // dispatches the held write. The late write's 'error' falls in between, and the body must
-      // still reach the server.
+    // One request over a duplexPair, which is connected from the start: the request is made without
+    // an id and gets it one tick before 'ready' dispatches the write it holds. Resolves with
+    // req.pending, the length of the body that the server received, and the events of the request.
+    async function pairRequest(drive) {
       const [clientSide, serverSide] = duplexPair();
       const server = http2.createServer();
       let client;
@@ -6428,16 +6444,54 @@ describe.concurrent("write() after end()", () => {
         client.on("error", closed.reject);
         const req = client.request({ ":path": "/", ":method": "POST" });
         const pending = req.pending;
-        const late = record(req, closed);
         req.resume();
-        req.write("body");
-        req.end();
-        req.write("late", late);
-        expect([pending, await received.promise, await closed.promise]).toEqual([true, 4, lateWriteEvents]);
+        drive(req, record(req, closed));
+        return [pending, await received.promise, await closed.promise];
       } finally {
         client?.close();
         server.close();
       }
+    }
+
+    // Four bytes through the write that the request holds until 'ready'.
+    const heldWrites = [
+      ["_write", (req, done) => req.write("body", done)],
+      [
+        "_writev",
+        (req, done) => {
+          req.cork();
+          req.write("bo");
+          req.write("dy", done);
+          req.uncork();
+        },
+      ],
+    ];
+
+    it.each(heldWrites)("client stream that gets its id before the late write's 'error' (held %s)", async (_, hold) => {
+      // The late write's 'error' falls between the id and 'ready'. The held write carries END_STREAM
+      // itself, and the body must still reach the server.
+      const result = await pairRequest((req, late) => {
+        hold(req);
+        req.end();
+        req.write("late", late);
+      });
+      expect(result).toEqual([true, 4, lateWriteEvents]);
+    });
+
+    it.each(heldWrites)("late write after the held %s was dispatched", async (_, hold) => {
+      // The request has no id until the session connects, so its first write is held. 'ready' dispatches
+      // it and clears its mark: the next write in flight is on the wire, and the stream is owed its
+      // END_STREAM again.
+      let pending;
+      const events = await request((client, req, late) => {
+        pending = req.pending;
+        hold(req, () => {
+          req.write("more");
+          req.end();
+          req.write("late", late);
+        });
+      });
+      expect([pending, events]).toEqual([true, lateWriteEvents]);
     });
 
     it("write blocked on flow control", async () => {

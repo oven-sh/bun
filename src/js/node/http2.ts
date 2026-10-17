@@ -2351,7 +2351,6 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
-  errorEmitted: boolean;
   finalCalled: boolean;
   bufferedRequestCount: number;
 }
@@ -4978,8 +4977,8 @@ function destroySelfOnEnd(this: Http2Stream) {
 // streamEnd(7): the native side fully closed the stream and freed it.
 function destroyClosedStream(stream: Http2Stream) {
   if (stream.errored) {
-    // The 'error' listeners get a live stream. streamOnErrored destroys after an 'error' that is still queued.
-    if (stream._writableState.errorEmitted) process.nextTick(destroyIfNotDestroyedNT, stream);
+    // Deferred: 'error' can still be queued or in the middle of its emit, and its listeners get a live stream.
+    process.nextTick(destroyIfNotDestroyedNT, stream);
   } else if (stream.readable && !stream.rstCode) {
     // Unread data is still buffered: like node, destroy at 'end' so that a late reader loses nothing.
     stream.once("end", destroySelfOnEnd);

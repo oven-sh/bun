@@ -126,6 +126,10 @@ const jsFixtures = [
   "regexp-greedy-group-with-minimum-can-match-empty.js",
   "regexp-repeated-group-saves-the-alternative-that-matched.js",
   "regexp-long-source.js",
+  "regexp-lookaround-releases-paren-contexts.js",
+  "regexp-tail-loop-with-many-alternatives.js",
+  "regexp-repeated-group-with-many-alternatives.js",
+  "regexp-many-single-character-alternatives.js",
   // Builtins
   "function-prototype-call-not-called-as-a-method.js",
 ];
@@ -255,6 +259,9 @@ describe.concurrent("JSC JIT Stress Tests", () => {
       { script: `/^(?:a|[ ]?){2,}$/.test("aa a")`, result: `true`, interpreted: false },
       { script: `/(?:a|[ ]?)+/.exec("aa a")`, result: `["aa a"]`, interpreted: false },
       { script: `/(?:(a)|[ ]?)+/.exec("aa a")`, result: `["aa a","a"]`, interpreted: true },
+      // The JIT's code ran out of stack after some number of start positions, and the interpreter then ran out of steps.
+      { script: `/(?=((?:ab|c)+))\\1x/.exec("ab".repeat(512) + "yabx")?.index`, result: `1025`, interpreted: false },
+      { script: `/(?=((?:ab|c)+))\\1x/.exec("ab".repeat(2048) + "yabx")?.index`, result: `4097`, interpreted: false },
     ])("$script", async ({ script, result, interpreted }) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", `console.log(JSON.stringify(${script}))`],

@@ -4639,11 +4639,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         #[cfg(windows)]
         let ours = true;
         if size_ok && ours {
-            return Ok(Some(write_absolute(
-                out_buf,
-                tmpdir_path,
-                canonical_name.as_bytes(),
-            )));
+            return write_absolute(out_buf, tmpdir_path, canonical_name.as_bytes()).map(Some);
         }
     }
 
@@ -4656,7 +4652,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // The absolute scratch path is what a failure below reports. The
     // success path overwrites `out_buf` with the final path.
-    let scratch_len = write_absolute(out_buf, tmpdir_path, scratch_name.as_bytes());
+    let scratch_len = write_absolute(out_buf, tmpdir_path, scratch_name.as_bytes())?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.
@@ -4680,21 +4676,25 @@ pub(crate) fn resolve_embedded_file_to_buf(
     } else {
         scratch_name
     };
-    Ok(Some(write_absolute(
-        out_buf,
-        tmpdir_path,
-        final_name.as_bytes(),
-    )))
+    write_absolute(out_buf, tmpdir_path, final_name.as_bytes()).map(Some)
 }
 
-/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
-fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> usize {
-    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length. Leaves
+/// room for the NUL that `bun:ffi` appends. `ENAMETOOLONG` when it does not
+/// fit.
+fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> bun_sys::Maybe<usize> {
+    let capacity = out_buf.len();
+    match bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
         tmpdir,
         out_buf,
         &[name],
-    )
-    .len()
+    ) {
+        Some(path) if path.len() < capacity => Ok(path.len()),
+        _ => Err(
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(tmpdir),
+        ),
+    }
 }
 
 /// The `ERR_DLOPEN_FAILED` error for an embedded library that could not be

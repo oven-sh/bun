@@ -70,7 +70,7 @@ describe("Bun.build compile", () => {
     async () => {
       const body = Array.from(
         { length: 24 },
-        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << (j % 20)}) s = s - ${j} | 0; o.p${j} = s;`,
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
       ).join(" ");
       const functions = Array.from(
         { length: 4000 },
@@ -3202,15 +3202,29 @@ int hello42(void) { return 42; }
     return out;
   }
 
+  // With PRINT_DLOPEN_ERROR set, the fixture prints the caught error's
+  // fields instead of letting it escape.
+  const printError = `
+    if (!process.env.PRINT_DLOPEN_ERROR) throw error;
+    console.log(JSON.stringify({ code: error.code, errno: error.errno, syscall: error.syscall, path: error.path }));`;
   test.each([
-    ["process.dlopen", "node.js", `const addon = require("./hello.node"); console.log(addon.hello());`],
+    [
+      "process.dlopen",
+      "node.js",
+      `try {
+         const addon = require("./hello.node");
+         console.log(addon.hello());
+       } catch (error) {${printError}}`,
+    ],
     [
       "bun:ffi dlopen",
       "ffi.js",
       `import { dlopen } from "bun:ffi";
        import lib from "./libhello.${soExt}" with { type: "file" };
-       const { symbols } = dlopen(lib, { hello42: { args: [], returns: "i32" } });
-       console.log(symbols.hello42() === 42 ? "hello" : "bad");`,
+       try {
+         const { symbols } = dlopen(lib, { hello42: { args: [], returns: "i32" } });
+         console.log(symbols.hello42() === 42 ? "hello" : "bad");
+       } catch (error) {${printError}}`,
     ],
   ])(
     "%s reports the temp dir failure",
@@ -3223,11 +3237,11 @@ int hello42(void) { return 42; }
       // Root ignores the mode bits, so the child runs as nobody under root.
       using unprivileged = unprivilegedSpawnOptions(cwd);
 
-      async function run(tmpdir: string, cmd: string[] = [exe]) {
+      async function run(tmpdir: string, cmd: string[] = [exe], extraEnv: Record<string, string> = {}) {
         await using proc = Bun.spawn({
           cmd,
           cwd,
-          env: { ...bunEnv, BUN_TMPDIR: tmpdir, TMPDIR: tmpdir },
+          env: { ...bunEnv, BUN_TMPDIR: tmpdir, TMPDIR: tmpdir, ...extraEnv },
           stdout: "pipe",
           stderr: "pipe",
           ...unprivileged,
@@ -3253,6 +3267,15 @@ int hello42(void) { return 42; }
       expect(result.stderr).toContain("BUN_TMPDIR");
       expect(result.stderr).not.toMatch(/cannot open shared object file|tried:/);
       expect(result.exitCode).toBe(1);
+      // The error object carries the syscall fields, not only the message.
+      const caught = await run(missing, [exe], { PRINT_DLOPEN_ERROR: "1" });
+      expect(caught.exitCode).toBe(0);
+      expect(JSON.parse(caught.stdout)).toEqual({
+        code: "ERR_DLOPEN_FAILED",
+        errno: -2,
+        syscall: "open",
+        path: missing,
+      });
 
       // The temp dir is not writable: creating the file fails with EACCES.
       const readOnly = join(cwd, "ro");

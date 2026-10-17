@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
+import { join } from "node:path";
 
 // server.upgrade(req, opts) reads opts.data / opts.headers via property
 // access, which can invoke user getters. A getter that calls
@@ -171,3 +173,106 @@ for (const via of ["data", "headers"] as const) {
     expect(exitCode).toBe(0);
   });
 }
+
+// The handler calls server.upgrade(req) after a response to `req` has started.
+// That response owns the connection, so the upgrade returns false and leaves the
+// response alone. It used to go ahead: the handshake went out under the
+// response's `200 OK`, the socket went to a ServerWebSocket while the response
+// body still wrote to it, and with a Bun.file() body the request's context was
+// released while the file stream still used it. The scenarios run in child
+// processes, because the old behaviour can crash the process.
+describe.concurrent("server.upgrade(req) after the response has started", () => {
+  const fixture = join(import.meta.dir, "websocket-server-upgrade-after-response-fixture.ts");
+
+  // Runs the scenarios in one child process, one after the other.
+  async function run(scenarios: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, ...scenarios],
+      env: { ...bunEnv, UPGRADE_FIXTURE_TLS: JSON.stringify(tls) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const results = stdout
+      .split("\n")
+      .filter(line => line !== "")
+      .map(line => JSON.parse(line));
+    return { results, stderr, exitCode };
+  }
+
+  // The scenarios of one group share a child process.
+  const groups = [
+    ["stream:13", "stream:12", "route", "head", "direct", "pull"],
+    ["getter:data", "getter:headers", "race", "rewriter"],
+    ["tls", "blob"],
+  ];
+  const runs = new Map<string[], ReturnType<typeof run>>();
+  async function scenario(name: string) {
+    const group = groups.find(group => group.includes(name))!;
+    if (!runs.has(group)) runs.set(group, run(group));
+    const { results, stderr, exitCode } = await runs.get(group)!;
+    return { stderr, result: results[group.indexOf(name)], exitCode };
+  }
+
+  // What every scenario reports when the upgrade is refused: the response keeps
+  // its status line, no handshake header reaches the client, and the server
+  // holds no ServerWebSocket and no request afterwards.
+  const refused = {
+    upgraded: false,
+    opened: 0,
+    pendingWebSockets: 0,
+    statusLine: "HTTP/1.1 200 OK",
+    handshake: false,
+    pendingRequests: 0,
+  };
+  const twoChunks = "7\r\nchunk-a\r\n7\r\nchunk-b\r\n0\r\n\r\n";
+
+  test.each([
+    ["a streaming body is in flight", "stream:13", { body: twoChunks }],
+    // An unsupported Sec-WebSocket-Version is answered with a 426. That answer
+    // used to go into the response in flight as well.
+    ["a streaming body is in flight and the version is not 13", "stream:12", { body: twoChunks }],
+    ["a streaming body is in flight over TLS", "tls", { body: twoChunks }],
+    ["a streaming body from a route is in flight", "route", { body: twoChunks }],
+    ["a direct stream body is in flight", "direct", { body: twoChunks }],
+    ["a stream has sent only its status line", "head", { body: "the body" }],
+    ["a direct stream calls it from its first pull()", "pull", { body: "the body" }],
+    // The wait page stays the response: it hears the client leave.
+    [
+      "a request timeout wrapper answered before the handler",
+      "race",
+      { cancelled: true, body: "c\r\nplease wait\n\r\n" },
+    ],
+    ["a Blob body waits for the client to read", "blob", { bodyLength: 32 * 1024 * 1024, bodyIntact: true }],
+    // server.upgrade() checks the request, then reads its options. A getter can
+    // start the response between the two.
+    ["an options.data getter started the response", "getter:data", { startedInGetter: true, body: twoChunks }],
+    ["an options.headers getter started the response", "getter:headers", { startedInGetter: true, body: twoChunks }],
+    // An HTMLRewriter body writes its status line with its first chunk. Before
+    // that chunk the upgrade used to succeed, and the body was then written to
+    // nobody.
+    ["an HTMLRewriter body waits for its first chunk", "rewriter", { body: "b\r\n<p>late</p>\r\n0\r\n\r\n" }],
+  ] as const)("returns false when %s", async (_, name, expected) => {
+    expect(await scenario(name)).toEqual({
+      stderr: "",
+      result: { ...refused, ...expected },
+      exitCode: 0,
+    });
+  });
+
+  // A FIFO body waits for its writer, so the response stays in flight. After
+  // the upgrade the file stream used to run on a released request context:
+  // `panic: infallible: server bound`, or a later request in that slot lost its
+  // response.
+  test.skipIf(isWindows)("returns false when a Bun.file() body is in flight", async () => {
+    using dir = tempDir("ws-upgrade-file-in-flight", {});
+    const fifo = join(String(dir), "body.fifo");
+    mkfifo(fifo);
+    const { results, stderr, exitCode } = await run([`file:${fifo}`]);
+    expect({ stderr, result: results[0], exitCode }).toEqual({
+      stderr: "",
+      result: { ...refused, fileBodyArrived: true, other: "other-answer" },
+      exitCode: 0,
+    });
+  });
+});

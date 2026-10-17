@@ -2359,6 +2359,18 @@ where
         matches!(self.upgrade_context.get(), UpgradeState::Upgraded)
     }
 
+    /// `byte_stream`: an `HTMLRewriter` body writes its status with its first chunk.
+    fn has_started_response(&self) -> bool {
+        self.flags.has_written_status() || self.byte_stream.get().is_some()
+    }
+
+    /// A started response owns `resp` and the base ref that `server.upgrade(req)` would take.
+    pub(crate) fn can_upgrade(&self) -> bool {
+        !self.is_aborted_or_ended()
+            && matches!(self.upgrade_context.get(), UpgradeState::Pending(_))
+            && !self.has_started_response()
+    }
+
     fn to_async_without_abort_handler(
         &self,
         req: *mut Req<SSL_ENABLED, MUX>,

@@ -1785,7 +1785,7 @@ where
         // SAFETY: tagged pointer just matched this monomorphization.
         let upgrader = unsafe { &*upgrader_ptr };
 
-        if upgrader.is_aborted_or_ended() {
+        if !upgrader.can_upgrade() {
             return Ok(JSValue::FALSE);
         }
 
@@ -1952,8 +1952,8 @@ where
 
         // SAFETY: upgrader_ptr is live (ref_() above)
         let upgrader = unsafe { &*upgrader_ptr };
-        // Option getters may have run a re-entrant server.upgrade(req).
-        if upgrader.is_aborted_or_ended() || upgrader.did_upgrade_web_socket() {
+        // Option getters may have run a re-entrant server.upgrade(req) or started a response.
+        if !upgrader.can_upgrade() {
             return Ok(JSValue::FALSE);
         }
 
@@ -2024,6 +2024,13 @@ where
         resp.clear_on_data();
         resp.clear_on_writable();
         resp.clear_timeout();
+
+        debug_assert!(
+            upgrader.sink.get().is_none()
+                && upgrader.byte_stream.get().is_none()
+                && !upgrader.flags.has_sendfile_ctx(),
+            "a body writer still holds the response"
+        );
 
         // The upgrade detaches the response and disarms onAborted, so neither
         // on_abort nor an end path can reclaim a parked handler promise's

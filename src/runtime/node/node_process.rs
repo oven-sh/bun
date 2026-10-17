@@ -7,11 +7,10 @@ use bun_core::env_var;
 use bun_core::{self, Environment, Global};
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
-// Both materialize the array on first access through `Bun__Process__createArgv`
-// / `createExecArgv` below, which return zero with the exception pending.
+// Materializes the array on first access through `Bun__Process__createArgv`
+// below, which returns zero with the exception pending.
 unsafe extern "C" {
     safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
-    safe fn Bun__Process__getExecArgv(global: &JSGlobalObject) -> JSValue;
 }
 
 // ───────────────────────────── argv0 / execPath ─────────────────────────────
@@ -56,10 +55,6 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))
-}
-
-pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
-    bun_jsc::call_zero_is_throw(global, || Bun__Process__getExecArgv(global))
 }
 
 // ───────────────────────────── exit ─────────────────────────────

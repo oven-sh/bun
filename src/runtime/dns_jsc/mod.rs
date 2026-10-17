@@ -29,4 +29,4 @@ pub(crate) mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 
 #[cfg(target_os = "macos")]
 pub(crate) use dns_body::dns_sd;
-pub(crate) use dns_body::{GlobalData, Order, Resolver};
+pub(crate) use dns_body::{GlobalData, Order, Resolver, internal};

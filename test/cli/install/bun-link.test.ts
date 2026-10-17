@@ -122,7 +122,8 @@ it("should link and unlink workspace package", async () => {
     "",
     `installed moo@link:moo`,
     "",
-    "1 package installed",
+    // The install above was isolated: the root's links to both workspaces are new to the hoisted one.
+    "3 packages installed",
   ]);
   expect(await exited).toBe(0);
   expect(await file(join(link_dir, "packages", "boba", "node_modules", "moo", "package.json")).json()).toEqual({
@@ -177,7 +178,8 @@ it("should link and unlink workspace package", async () => {
     "",
     "1 package installed",
   ]);
-  expect(await file(join(link_dir, "packages", "boba", "node_modules", "foo", "package.json")).json()).toEqual({
+  // Hoisted to the root, like any other dependency of a workspace.
+  expect(await file(join(link_dir, "node_modules", "foo", "package.json")).json()).toEqual({
     name: "foo",
     version: "1.0.0",
     workspaces: ["packages/*"],
@@ -601,7 +603,7 @@ describe("link: specifier longer than the path buffers", () => {
     await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies }));
 
     const missing = await run(package_dir, "install");
-    expect(missing.err).toContain('error: Could not find directory "./vendor/bar" for linked dependency "bar"');
+    expect(missing.err).toContain('error: directory "./vendor/bar" not found for linked dependency "bar"');
     expect(missing.err).not.toContain("ENAMETOOLONG");
     expect(missing.exitCode).toBe(1);
 
@@ -714,6 +716,100 @@ it("bun link <package> only writes package.json and a lockfile when --save is pa
     dependencies: { "lib-to-link": "link:lib-to-link" },
   });
   expect(await readdirSorted(app)).toEqual(["bun.lock", "node_modules", "package.json"]);
+});
+
+// https://github.com/oven-sh/bun/issues/24190
+describe.each(["hoisted", "isolated"] as const)("bun link <package> in a workspace member (%s linker)", linker => {
+  /** Installs the workspace, runs `bun link lib-to-link` in `packages/app` and says what that left behind. */
+  async function linkInMember(dependencies: Record<string, string>, ...flags: string[]) {
+    using dir = tempDir("bun-link-member", {
+      "lib/package.json": JSON.stringify({ name: "lib-to-link", version: "1.0.0" }),
+      "mono/bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+      "mono/package.json": JSON.stringify({ name: "mono", workspaces: ["packages/*"] }),
+      "mono/packages/app/package.json": JSON.stringify({ name: "app", dependencies }),
+      "mono/packages/util/package.json": JSON.stringify({ name: "util", version: "1.0.0" }),
+      "mono/vendor/bar-0.0.2.tgz": await readFile(join(import.meta.dir, "bar-0.0.2.tgz")),
+    });
+    const mono = join(String(dir), "mono");
+    const app = join(mono, "packages", "app");
+    async function bun(cwd: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        env: { ...env, BUN_INSTALL: join(String(dir), "bun-install") },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    expect(await bun(mono, "install")).toMatchObject({ exitCode: 0 });
+    expect(await bun(join(String(dir), "lib"), "link")).toMatchObject({ stderr: "", exitCode: 0 });
+    const lockfile = await file(join(mono, "bun.lock")).text();
+
+    const { stdout, stderr, exitCode } = await bun(app, "link", "lib-to-link", ...flags);
+    return {
+      stderr,
+      installed: stdout.includes("installed lib-to-link@link:lib-to-link"),
+      linksToLib:
+        (await realpath(join(linker === "hoisted" ? mono : app, "node_modules", "lib-to-link")).catch(() => null)) ===
+        (await realpath(join(String(dir), "lib"))),
+      app: await readdirSorted(app),
+      appNodeModules: await readdirSorted(join(app, "node_modules")).catch(() => []),
+      dependencies: (await file(join(app, "package.json")).json()).dependencies,
+      addedToRootLockfile: (await file(join(mono, "bun.lock")).text())
+        .split("\n")
+        .filter(line => !lockfile.includes(line))
+        .map(line => line.trim()),
+      exitCode,
+    };
+  }
+  const isolated = linker === "isolated";
+  const bar = "file:../../vendor/bar-0.0.2.tgz";
+
+  it.concurrent("finds the sibling the member depends on", async () => {
+    expect(await linkInMember({ util: "workspace:*" })).toEqual({
+      stderr: "",
+      installed: true,
+      linksToLib: true,
+      app: isolated ? ["node_modules", "package.json"] : ["package.json"],
+      appNodeModules: isolated ? ["lib-to-link", "util"] : [],
+      dependencies: { util: "workspace:*" },
+      addedToRootLockfile: [],
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("does not install the member's dependencies a second time", async () => {
+    expect(await linkInMember({ bar })).toEqual({
+      stderr: "",
+      installed: true,
+      linksToLib: true,
+      app: isolated ? ["node_modules", "package.json"] : ["package.json"],
+      appNodeModules: isolated ? ["bar", "lib-to-link"] : [],
+      dependencies: { bar },
+      addedToRootLockfile: [],
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("--save writes the member's package.json and the root's bun.lock", async () => {
+    expect(await linkInMember({ bar }, "--save")).toEqual({
+      stderr: expect.stringContaining("Saved lockfile"),
+      installed: true,
+      linksToLib: true,
+      app: isolated ? ["node_modules", "package.json"] : ["package.json"],
+      appNodeModules: isolated ? ["bar", "lib-to-link"] : [],
+      dependencies: { bar, "lib-to-link": "link:lib-to-link" },
+      addedToRootLockfile: [
+        '"lib-to-link": "link:lib-to-link",',
+        '"lib-to-link": ["lib-to-link@link:lib-to-link", {}],',
+      ],
+      exitCode: 0,
+    });
+  });
 });
 
 it("a link: dependency whose link is in place is not linked again", async () => {

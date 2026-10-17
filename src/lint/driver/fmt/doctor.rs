@@ -127,6 +127,7 @@ pub(super) fn report(
     } else if configs.turns_svelte_off_for_some(&own, cwd) {
         notes.push(b"Some Svelte files are not formatted (svelte = false in an override)".to_vec());
     }
+    notes.extend(configs.classes.note());
 
     let loaded = modules.packages();
     let is_not_supported = |name: &[u8]| plugins.not_supported.iter().any(|it| it == name);

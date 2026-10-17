@@ -6769,6 +6769,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getMinArgumentCount`
     pub(super) fn min_argument_count(&mut self, params: &[SigParam]) -> usize {
+        self.min_argument_count_asked(None, params)
+    }
+
+    /// `sig`: `params` is its list from `sig_params_with_first`.
+    pub(super) fn min_argument_count_asked(
+        &mut self,
+        sig: Option<SigId>,
+        params: &[SigParam],
+    ) -> usize {
         let mut count = None;
         if let Some(rest) = params.last().filter(|p| p.rest) {
             self.get_type_of_parameter(rest);
@@ -6785,10 +6794,11 @@ impl<'p, 's> Checker<'p, 's> {
         let mut count = count.unwrap_or_else(|| Self::min_args(params));
         // Trailing parameters that accept `void` are optional.
         while count > 0 {
-            let ty = match params.get(count - 1) {
-                Some(param) if !param.rest => self.get_type_of_parameter(param),
-                _ => self.param_type_at(params, count - 1).unwrap_or(TypeId::ANY),
+            let ty = match sig {
+                Some(sig) => self.param_type_asked_at(sig, params, count - 1),
+                None => self.param_type_at(params, count - 1),
             };
+            let ty = ty.unwrap_or(TypeId::ANY);
             if !self.some_type(ty, |_, m| m == TypeId::VOID) {
                 break;
             }

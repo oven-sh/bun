@@ -64,7 +64,9 @@ When you run `bun install` in a project without a `bun.lock`, Bun automatically 
 
 When a project has both npm lockfiles, Bun reads `npm-shrinkwrap.json` and ignores `package-lock.json`, as npm does.
 
-Bun does not migrate an npm lockfile from npm 6 or older (`lockfileVersion` 1); it prints a warning and resolves from `package.json` instead.
+When a project has lockfiles of several package managers, Bun migrates the first one it can, in this order: `npm-shrinkwrap.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`. It prints a warning for each one it had to skip.
+
+Bun does not migrate an npm lockfile from npm 6 or older (`lockfileVersion` 1); it prints a warning and, when there is no other lockfile, resolves from `package.json` instead.
 
 Bun preserves the original lockfile. You can remove it manually after verification.
 

@@ -126,9 +126,9 @@ export function getStdinStream(
   let forceUnref = false;
 
   function own() {
-    // After EOF there is nothing left to read: no acquisition path ('readable'
+    // After EOF or destroy() there is nothing left to read: no acquisition path ('readable'
     // listeners, resume(), ref(), an explicit read()) may take the reader back.
-    if (stream_reachedEof) return;
+    if (stream_reachedEof || stream.destroyed) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
@@ -276,14 +276,6 @@ export function getStdinStream(
     }
   }
   stream._read = triggerRead;
-
-  stream.on("resume", () => {
-    if (stream.isPaused()) return; // fake resume
-    $debug('on("resume");');
-    own();
-    stream._undestroy();
-    stream_destroyed = false;
-  });
 
   stream._readableState.reading = false;
 

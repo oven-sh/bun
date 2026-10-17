@@ -840,6 +840,7 @@ The three properties are one [`sqlite3_update_hook`](https://www.sqlite.org/c3re
 - The hook cannot stop the statement. Bun reports what it throws as an [uncaught exception](https://nodejs.org/api/process.html#event-uncaughtexception), and the statement goes on.
 - SQLite does not report changes to a `WITHOUT ROWID` table, a row that `INSERT OR REPLACE` removes, and changes by another connection or process. A `DELETE` without `WHERE` on a table without triggers empties the table in one step, and SQLite does not report its rows.
 - For a virtual table such as FTS5, SQLite reports the rows of the tables that store its data (`docs_content`, `docs_data`), not the rows of the virtual table.
+- Bun calls the hook only while a call of yours runs the statement. A statement that is garbage-collected before you read all of its rows still commits, but what it writes at that moment is not reported.
 
 ---
 

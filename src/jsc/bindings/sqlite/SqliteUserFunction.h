@@ -136,8 +136,19 @@ struct SqliteResult {
 // `Module` is what differs between bun:sqlite (SQLiteCallbacks) and node:sqlite (NodeSqliteCallbacks).
 // The callbacks are plain pointers: the caller puts them in the SqliteCallbackRoots of its database cell once create() returned SQLITE_OK.
 // xDestroy also runs when create() fails, and during a sweep (the destructor of a cell closes the connection), so it touches nothing of the collector.
+// The others run during a sweep too: the destructor of a statement that was left on a row finalizes it. Module::scriptForbidden() says so.
 // What a callback throws stays pending on the VM: whoever called sqlite3_step() looks for it before SQLite's result code.
 // TopExceptionScope: a ThrowScope's destructor simulates a throw, which the next call in the same sqlite3_step() would report under validateExceptionChecks.
+
+// First in every callback, before anything of the VM: the statement fails.
+template<typename Module>
+bool failIfScriptForbidden(const Module& module, sqlite3_context* context)
+{
+    if (!module.scriptForbidden()) [[likely]]
+        return false;
+    sqlite3_result_error(context, "", 0);
+    return true;
+}
 
 template<typename Module>
 JSC::JSValue callSqliteCallback(const Module& module, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::ArgList& arguments)
@@ -174,6 +185,8 @@ private:
     static void xFunc(sqlite3_context* context, int argc, sqlite3_value** argv)
     {
         auto* self = static_cast<SqliteUserFunction*>(sqlite3_user_data(context));
+        if (failIfScriptForbidden(self->module, context)) [[unlikely]]
+            return;
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(self->module.globalObject));
 
         JSC::MarkedArgumentBuffer arguments;
@@ -254,6 +267,8 @@ private:
 
     void stepOrInverse(sqlite3_context* context, int argc, sqlite3_value** argv, JSC::JSObject* callback)
     {
+        if (failIfScriptForbidden(module, context)) [[unlikely]]
+            return;
         auto& vm = JSC::getVM(module.globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (scope.exception()) [[unlikely]]
@@ -276,6 +291,12 @@ private:
 
     void valueOrFinal(sqlite3_context* context, bool isFinal)
     {
+        if (failIfScriptForbidden(module, context)) [[unlikely]] {
+            // Frees a root, as the destructors of other cells do in a sweep.
+            if (isFinal)
+                destroyAccumulator(context);
+            return;
+        }
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(module.globalObject));
         auto* accumulator = scope.exception() ? nullptr : this->accumulator(context, scope);
 

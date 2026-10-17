@@ -76,6 +76,16 @@ struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord>
     bool inUse { false };
 };
 
+// What a DatabaseSync shares with its statements, for the same reason. SQLite's callbacks get it as their user data.
+struct NodeSqliteDatabaseRecord : public WTF::RefCounted<NodeSqliteDatabaseRecord> {
+    // For the authorizer, where script is not forbidden. Null once the cell is destroyed.
+    JSDatabaseSync* database { nullptr };
+    // What calls SQLite is not a call of the user's on a live object: a destructor (perhaps in the middle of a collection),
+    // the end of the thread, a graph that is disposed. The cells can be garbage, so no callback touches one, or the VM.
+    // sqlite3_finalize() commits a write statement that was left on a row, and a full-text index writes its tables then.
+    bool scriptForbidden { false };
+};
+
 struct DatabaseSyncOpenConfiguration {
     bool readOnly = false;
     bool enableForeignKeyConstraints = true;
@@ -135,6 +145,7 @@ public:
 
     sqlite3* connection() const { return m_db; }
     bool isOpen() const { return m_db != nullptr; }
+    NodeSqliteDatabaseRecord& record() { return m_record.get(); }
 
     // close() and deserialize() finalize the StatementSyncs of this connection, as Node does. Not
     // sqlite3_next_stmt(), which also returns the private statements of virtual table modules (FTS5).
@@ -211,10 +222,12 @@ private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
+        m_record->database = this;
     }
 
     void finishCreation(JSC::VM& vm);
 
+    const Ref<NodeSqliteDatabaseRecord> m_record { adoptRef(*new NodeSqliteDatabaseRecord) };
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
@@ -395,6 +408,7 @@ private:
     void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_stmt* stmt);
 
     sqlite3_stmt* m_stmt = nullptr;
+    RefPtr<NodeSqliteDatabaseRecord> m_databaseRecord;
     JSC::WriteBarrier<JSC::Structure> m_rowStructure;
     WTF::Vector<int8_t> m_columnOffsets;
     // sqlite3_stmt native heap footprint reported to JSC's GC so

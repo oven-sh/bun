@@ -76,6 +76,7 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #include <JavaScriptCore/JSIteratorPrototype.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <limits>
@@ -391,6 +392,10 @@ static SqliteFromJS sqliteFromJS(JSGlobalObject* globalObject, ThrowScope& scope
 struct NodeSqliteCallbacks {
     JSGlobalObject* globalObject;
     bool useBigInts;
+    // What calls the function (the DatabaseSync, a statement) holds a reference.
+    NodeSqliteDatabaseRecord* record;
+
+    bool scriptForbidden() const { return record->scriptForbidden; }
 
     JSValue toJS(sqlite3_value* value) const { return sqliteToJS(globalObject, SqliteArgument { value }, useBigInts); }
 
@@ -557,10 +562,12 @@ static void unregisterOpenDatabase(JSDatabaseSync* db)
 
 JSDatabaseSync::~JSDatabaseSync()
 {
+    m_record->database = nullptr;
     // Reachable with a BusyScope still on the stack only when process.exit()
     // was called from inside a UDF/authorizer and the heap is destructed on
     // exit; closing the connection mid-sqlite3_step is a use-after-free.
     if (!isBusy()) {
+        WTF::SetForScope forbidScript { m_record->scriptForbidden, true };
         closeInternal();
         return;
     }
@@ -636,6 +643,7 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
         // the same use-after-free a busy close() refuses. Leave it alone.
         if (db->isBusy())
             continue;
+        WTF::SetForScope forbidScript { db->record().scriptForbidden, true };
         if (sqlite3* handle = db->connection())
             Bun__sqliteCheckpointForTermination(handle);
         // closeInternal() re-takes openDatabasesLock to unregister, so the
@@ -658,8 +666,10 @@ extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(WebCore::ScriptExecu
     }
     // (dispose() from inside a UDF/authorizer: closeInternal() leaves the connection to the
     // outermost BusyScope, which unwinds here, unlike at process exit.)
-    for (auto* db : toClose)
+    for (auto* db : toClose) {
+        WTF::SetForScope forbidScript { db->record().scriptForbidden, true };
         db->closeInternal();
+    }
 }
 
 void JSDatabaseSync::deleteTrackedSessions()
@@ -1115,7 +1125,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     REQUIRE_DB_OPEN(self);
     auto nameUtf8 = tryUTF8(globalObject, scope, name);
     RETURN_IF_EXCEPTION(scope, {});
-    int r = SqliteUserFunction<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs }, fn);
+    int r = SqliteUserFunction<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs, &self->record() }, fn);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
@@ -1204,7 +1214,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     REQUIRE_DB_OPEN(self);
     auto nameUtf8 = tryUTF8(globalObject, scope, name);
     RETURN_IF_EXCEPTION(scope, {});
-    int r = SqliteUserAggregate<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs }, startV, stepFn, inverseFn, resultFn);
+    int r = SqliteUserAggregate<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs, &self->record() }, startV, stepFn, inverseFn, resultFn);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
@@ -1299,7 +1309,7 @@ struct ApplyChangesetContext {
 static int applyChangesetXConflict(void* pCtx, int eConflict, sqlite3_changeset_iter*)
 {
     auto* ctx = static_cast<ApplyChangesetContext*>(pCtx);
-    if (!ctx->onConflict) return SQLITE_CHANGESET_ABORT;
+    if (!ctx->onConflict || ctx->db->record().scriptForbidden) return SQLITE_CHANGESET_ABORT;
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1331,6 +1341,8 @@ static int applyChangesetXFilter(void* pCtx, const char* zTab)
 {
     auto* ctx = static_cast<ApplyChangesetContext*>(pCtx);
     if (!ctx->filter) return 1;
+    if (ctx->db->record().scriptForbidden) [[unlikely]]
+        return 0;
     auto* globalObject = ctx->globalObject;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1458,7 +1470,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 
 // sqlite3_set_authorizer() callback. Runs from inside sqlite3_prepare_*
 // and sqlite3_exec() — i.e. *between* BusyScope open and close on the
-// JSDatabaseSync — so the db pointer is live for its entire duration.
+// JSDatabaseSync — so the db pointer is live for its entire duration,
+// or where script is forbidden and it may not be.
 // Uses TopExceptionScope for the same reason SqliteUserFunction.h does: the destructor
 // of a nested ThrowScope would simulateThrow(), tripping the next
 // callback's constructor under validateExceptionChecks. A thrown JS
@@ -1467,7 +1480,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 // CHECK_UDF_EXCEPTION observes to surface it over "not authorized".
 static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const char* p1, const char* p2, const char* p3, const char* p4)
 {
-    auto* db = static_cast<JSDatabaseSync*>(userData);
+    auto* record = static_cast<NodeSqliteDatabaseRecord*>(userData);
+    // Not SQLITE_OK: what a statement fires is authorized when that statement is compiled, and an index compiles its own at the commit.
+    auto* db = record->database;
+    if (record->scriptForbidden || !db) [[unlikely]]
+        return SQLITE_DENY;
     auto* globalObject = db->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1553,7 +1570,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSetAuthorizer, (JSGlobalObject * globalOb
         return throwNodeArgType(globalObject, scope, "callback"_s, "a function or null"_s);
     }
     self->m_authorizer.set(vm, self, arg0.getObject());
-    int r = sqlite3_set_authorizer(self->connection(), nodeSqliteAuthorizerCallback, self);
+    int r = sqlite3_set_authorizer(self->connection(), nodeSqliteAuthorizerCallback, &self->record());
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
@@ -2014,6 +2031,7 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
     putNodeInstanceGetter(vm, this, "expandedSQL"_s, jsStatementSyncExpandedSQL);
     m_stmt = stmt;
     m_database.set(vm, this, db);
+    m_databaseRecord = &db->record();
     if (stmt)
         db->trackStatement(*this);
     m_extraMemorySize = stmt ? static_cast<size_t>(sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0)) : 0;
@@ -2044,6 +2062,7 @@ JSStatementSync::~JSStatementSync()
     // Do NOT dereference m_database here: GC may have already destroyed
     // the JSDatabaseSync, leaving the WriteBarrier pointing at freed
     // memory (this cell is then off its list).
+    WTF::SetForScope forbidScript { m_databaseRecord->scriptForbidden, true };
     finalizeStatement();
 }
 

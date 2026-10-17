@@ -27,12 +27,19 @@ impl_size_shorthand!(
     inline_start,
     inline_end
 );
-impl_size_shorthand!(PaddingBlock, LengthPercentageOrAuto, block_start, block_end);
+impl_size_shorthand!(
+    PaddingBlock,
+    LengthPercentageOrAuto,
+    block_start,
+    block_end,
+    non_negative
+);
 impl_size_shorthand!(
     PaddingInline,
     LengthPercentageOrAuto,
     inline_start,
-    inline_end
+    inline_end,
+    non_negative
 );
 impl_size_shorthand!(
     ScrollMarginBlock,
@@ -183,7 +190,8 @@ define_rect_shorthand! {
     top: PaddingTop,
     right: PaddingRight,
     bottom: PaddingBottom,
-    left: PaddingLeft
+    left: PaddingLeft,
+    non_negative
 }
 
 /// A value for the [scroll-margin-block](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-margin-block) shorthand property.

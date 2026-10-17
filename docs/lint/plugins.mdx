@@ -180,7 +180,7 @@ export default [
 ];
 ```
 
-Comments such as `// eslint-disable-next-line` work in JSONC and JSON5, as they do in ESLint.
+Comments such as `// eslint-disable-next-line` work in JSONC and JSON5, as they do in ESLint. A file with a syntax error gets one error and no rule runs, as in ESLint, but the message is Bun's.
 
 Bun hands every other file to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
 

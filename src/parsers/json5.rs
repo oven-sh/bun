@@ -27,6 +27,8 @@ pub struct JSON5Parser<'a> {
     token: Token<'a>,
     /// For [`SourceTokens`]: a comment is a token, and a string without escapes is a slice of the source.
     as_written: bool,
+    /// [`SourceTokens::not_in_json`]
+    not_in_json: Option<usize>,
 }
 
 struct Token<'a> {
@@ -121,27 +123,23 @@ impl<'a> SourceTokens<'a> {
                 data: TokenData::Eof,
             },
             as_written: true,
+            not_in_json: None,
         }))
     }
 
-    /// Where the last token ends.
-    pub fn position(&self) -> usize {
-        self.0.pos
-    }
-
-    /// The next token is looked for from `position` on.
-    pub fn seek(&mut self, position: usize) {
-        self.0.pos = position.min(self.0.source.len());
+    /// Where the first character is, before the last token or in it, that JSON does not take there and that the kind of the token
+    /// does not show: white space other than a blank, a tab and a line break, or a control character in a string.
+    pub fn not_in_json(&self) -> Option<usize> {
+        self.0.not_in_json
     }
 
     /// `Ok(None)`: the text ends. `Err`: there is no token here.
-    pub fn next(&mut self) -> Result<Option<SourceToken<'a>>, ParseError> {
-        self.0.scan()?;
+    pub fn next(&mut self) -> Result<Option<SourceToken<'a>>, Error> {
+        self.0.not_in_json = None;
+        if let Err(error) = self.0.scan() {
+            return Err(JSON5Parser::to_error(error, &self.0));
+        }
         let (kind, value): (_, &[u8]) = match self.0.token.data {
-            // The scanner takes a NUL for the end.
-            TokenData::Eof if self.0.pos < self.0.source.len() => {
-                return Err(ParseError::UnexpectedCharacter);
-            }
             TokenData::Eof => return Ok(None),
             TokenData::LeftBrace => (SourceTokenKind::LeftBrace, b""),
             TokenData::RightBrace => (SourceTokenKind::RightBrace, b""),
@@ -230,10 +228,10 @@ pub enum AddToLogError {
 bun_core::impl_tag_error!(AddToLogError);
 
 impl Error {
-    pub(crate) fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
-        let loc: Loc = match *self {
-            Error::Oom => return Err(AddToLogError::OutOfMemory),
-            Error::StackOverflow => return Err(AddToLogError::StackOverflow),
+    /// Where it is in the text, and what is wrong there. `None`: nothing is wrong with the text.
+    pub fn describe(&self) -> Option<(usize, &'static [u8])> {
+        let pos = match *self {
+            Error::Oom | Error::StackOverflow => return None,
             Error::UnexpectedCharacter { pos }
             | Error::UnexpectedToken { pos }
             | Error::UnexpectedEof { pos }
@@ -253,12 +251,10 @@ impl Error {
             | Error::ExpectedClosingBrace { pos }
             | Error::ExpectedClosingBracket { pos }
             | Error::InvalidIdentifier { pos }
-            | Error::TrailingData { pos } => Loc {
-                start: i32::try_from(pos).expect("int cast"),
-            },
+            | Error::TrailingData { pos } => pos,
         };
         let msg: &'static [u8] = match *self {
-            Error::Oom | Error::StackOverflow => unreachable!(),
+            Error::Oom | Error::StackOverflow => return None,
             Error::UnexpectedCharacter { .. } => b"Unexpected character",
             Error::UnexpectedToken { .. } => b"Unexpected token",
             Error::UnexpectedEof { .. } => b"Unexpected end of input",
@@ -279,6 +275,19 @@ impl Error {
             Error::ExpectedClosingBracket { .. } => b"Expected ']'",
             Error::InvalidIdentifier { .. } => b"Invalid identifier start character",
             Error::TrailingData { .. } => b"Unexpected token after JSON5 value",
+        };
+        Some((pos, msg))
+    }
+
+    pub(crate) fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
+        let Some((pos, msg)) = self.describe() else {
+            return Err(match self {
+                Error::Oom => AddToLogError::OutOfMemory,
+                _ => AddToLogError::StackOverflow,
+            });
+        };
+        let loc = Loc {
+            start: i32::try_from(pos).expect("int cast"),
         };
         log.add_error(Some(source), loc, msg);
         Ok(())
@@ -352,6 +361,7 @@ impl<'a> JSON5Parser<'a> {
                 data: TokenData::Eof,
             },
             as_written: false,
+            not_in_json: None,
         };
         match parser.parse_root() {
             Ok(result) => Ok(result),
@@ -381,14 +391,25 @@ impl<'a> JSON5Parser<'a> {
         self.token.data = 'next: loop {
             match self.peek() {
                 0 => {
+                    if self.pos < self.source.len() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     self.token.loc = Loc {
                         start: i32::try_from(self.pos).expect("int cast"),
                     };
                     break 'next TokenData::Eof;
                 }
                 // Whitespace — skip without setting loc
-                b'\t' | b'\n' | b'\r' | b' ' | 0x0B | 0x0C => {
+                0x0B | 0x0C => {
+                    self.not_in_json = self.not_in_json.or(Some(self.pos));
                     self.pos += 1;
+                    continue 'next;
+                }
+                b'\t' | b'\n' | b'\r' | b' ' => {
+                    self.pos += 1;
+                    while let Some(b' ' | b'\n' | b'\t' | b'\r') = self.source.get(self.pos) {
+                        self.pos += 1;
+                    }
                     continue 'next;
                 }
                 // Structural
@@ -533,6 +554,7 @@ impl<'a> JSON5Parser<'a> {
                         // Multi-byte: check whitespace first, then identifier
                         let mb = self.multi_byte_whitespace();
                         if mb > 0 {
+                            self.not_in_json = self.not_in_json.or(Some(self.pos));
                             self.pos += usize::from(mb);
                             continue 'next;
                         }
@@ -763,59 +785,48 @@ impl<'a> JSON5Parser<'a> {
     // ── Scan Helpers ──
 
     fn scan_string(&mut self) -> Result<&'a [u8], ParseError> {
-        let quote = self.source[self.pos];
+        let source: &'a [u8] = self.source;
+        let quote = source[self.pos];
         self.pos += 1; // skip opening quote
 
+        let start = self.pos;
         let mut buf: BumpVec<'a, u8> = BumpVec::new_in(self.bump);
-        if self.as_written {
-            let source: &'a [u8] = self.source;
-            let rest = &source[self.pos..];
-            let plain = bun_highway::index_of_interesting_character_in_string_literal(rest, quote)
-                .unwrap_or(rest.len());
-            if rest.get(plain) == Some(&quote) {
-                self.pos += plain + 1;
-                return Ok(&rest[..plain]);
-            }
-        }
+        // Everything but an escape sequence stands for itself, and is copied in one piece: what is from here on is still to be.
+        let mut uncopied = start;
 
-        while self.pos < self.source.len() {
-            let c = self.source[self.pos];
-
+        while let Some(&c) = source.get(self.pos) {
             if c == quote {
+                let rest = &source[uncopied..self.pos];
                 self.pos += 1;
+                if self.as_written && uncopied == start {
+                    return Ok(rest);
+                }
+                buf.extend_from_slice(rest);
                 return Ok(buf.into_bump_slice());
             }
 
-            if c == b'\\' {
-                self.pos += 1;
-                self.parse_escape_sequence(&mut buf)?;
-                continue;
-            }
-
-            // Line terminators are not allowed unescaped in strings
-            if c == b'\n' || c == b'\r' {
-                return Err(ParseError::UnterminatedString);
-            }
-
-            // Check for U+2028/U+2029 (allowed unescaped in JSON5 strings)
-            if c == 0xE2
-                && self.pos + 2 < self.source.len()
-                && self.source[self.pos + 1] == 0x80
-                && (self.source[self.pos + 2] == 0xA8 || self.source[self.pos + 2] == 0xA9)
-            {
-                buf.extend_from_slice(&self.source[self.pos..][..3]);
-                self.pos += 3;
-                continue;
-            }
-
-            // Regular character - handle multi-byte UTF-8
-            let cp_len = strings::wtf8_byte_sequence_length(c);
-            if self.pos + usize::from(cp_len) > self.source.len() {
-                buf.push(c);
-                self.pos += 1;
-            } else {
-                buf.extend_from_slice(&self.source[self.pos..][..usize::from(cp_len)]);
-                self.pos += usize::from(cp_len);
+            match c {
+                b'\\' => {
+                    buf.extend_from_slice(&source[uncopied..self.pos]);
+                    self.pos += 1;
+                    self.parse_escape_sequence(&mut buf)?;
+                    uncopied = self.pos;
+                }
+                // Line terminators are not allowed unescaped in strings. U+2028 and U+2029 are.
+                b'\n' | b'\r' => return Err(ParseError::UnterminatedString),
+                0x20..=0x7E => {
+                    let rest = &source[self.pos + 1..];
+                    self.pos += 1 + bun_highway::index_of_interesting_character_in_string_literal(
+                        rest, quote,
+                    )
+                    .unwrap_or(rest.len());
+                }
+                _ => {
+                    if c < 0x20 {
+                        self.not_in_json = self.not_in_json.or(Some(self.pos));
+                    }
+                    self.pos += 1;
+                }
             }
         }
 
@@ -985,6 +996,10 @@ impl<'a> JSON5Parser<'a> {
             _ => {}
         }
 
+        // Nobody reads the value of a token.
+        if self.as_written {
+            return Ok(0.0);
+        }
         bun_core::wtf::parse_double(&self.source[start..self.pos])
             .map_err(|_| ParseError::InvalidNumber)
     }
@@ -1001,6 +1016,10 @@ impl<'a> JSON5Parser<'a> {
             return Err(ParseError::InvalidHexNumber);
         }
 
+        // Nobody reads the value of a token.
+        if self.as_written {
+            return Ok(0.0);
+        }
         // scanner pre-filters to is_ascii_hexdigit → `_`/sign unreachable
         let value = bun_core::fmt::parse_int::<u64>(&self.source[hex_start..self.pos], 16)
             .map_err(|_| ParseError::InvalidHexNumber)?;
@@ -1009,6 +1028,24 @@ impl<'a> JSON5Parser<'a> {
 
     fn scan_identifier(&mut self) -> Result<&'a [u8], ParseError> {
         let mut buf: BumpVec<'a, u8> = BumpVec::new_in(self.bump);
+
+        // Nothing but ASCII, and no escape, as nearly always.
+        let source: &'a [u8] = self.source;
+        let rest = &source[self.pos..];
+        let plain = (rest.iter())
+            .take_while(|c| is_ident_continue_ascii(**c))
+            .count();
+        if plain > 0
+            && !rest[0].is_ascii_digit()
+            && !matches!(rest.get(plain), Some(b'\\' | 0x80..))
+        {
+            self.pos += plain;
+            if self.as_written {
+                return Ok(&rest[..plain]);
+            }
+            buf.extend_from_slice(&rest[..plain]);
+            return Ok(buf.into_bump_slice());
+        }
 
         // First character must be IdentifierStart
         let Some(start_cp) = self.read_codepoint() else {
@@ -1038,7 +1075,7 @@ impl<'a> JSON5Parser<'a> {
             if cont_cp.cp == i32::from(b'\\') {
                 let escaped_cp = self.parse_identifier_unicode_escape()?;
                 if !identifier::is_identifier_part(escaped_cp as u32) {
-                    break;
+                    return Err(ParseError::InvalidIdentifier);
                 }
                 append_codepoint_to_utf8(&mut buf, escaped_cp)?;
             } else if identifier::is_identifier_part(cont_cp.cp as u32) {

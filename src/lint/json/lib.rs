@@ -2,15 +2,12 @@
 //! of the same name, with the same options, the same messages, at the same places.
 //! - https://github.com/eslint/json (Copyright Nicholas C. Zakas, Apache License 2.0)
 //!
-//! The plugin parses with Momoa. Here the tokens are those of Bun's parser for JSON5 ([`bun_parsers::json5::SourceTokens`]), which
-//! reads all three languages. `parse.rs` puts them together the way Momoa does, so that the tree is the same and what is
-//! refused is refused with the same words.
-//! - https://github.com/humanwhocodes/momoa (Copyright Nicholas C. Zakas, Apache License 2.0)
+//! The tokens are those of Bun's parser for JSON5 ([`bun_parsers::json5::SourceTokens`]), which reads all three languages.
+//! `parse.rs` makes the tree of them. A text is refused if the specification of its language refuses it, in Bun's own words.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
 
-mod momoa;
 mod parse;
 mod tree;
 
@@ -21,12 +18,16 @@ pub use tree::{Document, Member, Node, NodeKind, Tree};
 
 bun_lint::rules! {
     no_duplicate_keys::NoDuplicateKeys,
+    no_empty_keys::NoEmptyKeys,
+    no_unnormalized_keys::NoUnnormalizedKeys,
+    no_unsafe_values::NoUnsafeValues,
+    sort_keys::SortKeys,
+    top_level_interop::TopLevelInterop,
 }
 
 /// `meta.languages` of all rules.
 pub(crate) const LANGUAGES: &[&str] = &["json/json", "json/jsonc", "json/json5"];
 
-/// Momoa's `mode`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Mode {
     Json,
@@ -34,7 +35,6 @@ pub(crate) enum Mode {
     Json5,
 }
 
-/// What Momoa's `parse` is told.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct Options {
     pub(crate) mode: Mode,

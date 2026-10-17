@@ -187,7 +187,7 @@ plugins! {
     /// `prettier/prettier`
     Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
     /// `json/no-duplicate-keys`
-    Json: ["json"], Languages("@eslint/json", "2.1.1"), Part;
+    Json: ["json"], Languages("@eslint/json", "2.1.1"), Whole;
 }
 
 impl Plugin {

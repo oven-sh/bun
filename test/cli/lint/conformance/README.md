@@ -3,7 +3,7 @@
 Every test case of every ESLint core rule, of every typescript-eslint rule and of the rules of other plugins that
 `bun lint` has, as JSON, with what **real ESLint** reports for it. They are in `bundle.zst`: one file after the other,
 compressed with zstd (see `../../format/bundle.ts`). `sync.ts` writes it, `version.json` says from which versions and
-commits, and `licenses/` has the license of each (all MIT).
+commits, and `licenses/` has the license of each (MIT, and Apache 2.0 for `@eslint/json`).
 
 |                           | version | rules | cases |
 | ------------------------- | ------- | ----- | ----- |
@@ -14,6 +14,8 @@ commits, and `licenses/` has the license of each (all MIT).
 | eslint-plugin-n           | 18.4.1  | 4     | 1530  |
 | eslint-plugin-react       | 7.37.5  | 102   | 11486 |
 | eslint-plugin-prettier    | 5.5.6   | 1     | 448   |
+| @eslint/json              | 2.1.1   | 6     | 332   |
+| @eslint/markdown          | 8.0.3   | 21    | 1410  |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
@@ -94,7 +96,7 @@ if a configuration with them would end the run. Not where the recorded options h
 
 ## Layout
 
-- `eslint/<rule>.json`, `typescript-eslint/<rule>.json`, `react-hooks/`, `import/`, `n/`, `oxc/`: one file per rule.
+- `eslint/<rule>.json`, `typescript-eslint/<rule>.json`, `react-hooks/`, `import/`, `n/`, `oxc/`, `json/`, `markdown/`: one file per rule.
 - `typescript-eslint-project/`: `packages/eslint-plugin/tests/fixtures`, unchanged. The type-aware cases are linted as
   files of this project. Its tsconfigs say `"types": ["node", "react"]`.
 - `node_modules/`: the declaration files of the packages that this project finds types in. 76 of the 8208 type-aware
@@ -119,6 +121,8 @@ bun summarize.ts --summary report.md # fixtures/index.json, and a report to read
 bun sync.ts                          # bundle.zst, version.json, licenses/
 bun extract-oxlint.ts --oxc <oxc at the tag of the executable> --oxlint <oxlint> --out <directory> <plugin>/<rule>..
 bun sync.ts --oxlint <directory>     # `oxlint/` of bundle.zst
+node extract-languages.ts ..         # the rules of a plugin with a language of its own: its first lines say how
+bun sync.ts --plugin json <fixtures> # `json/` of bundle.zst, and the same for `markdown`
 ```
 
 What is in `more/` is recorded by `extra-cases.ts`, which takes cases as JSON (a fixture is one way to write them), and
@@ -214,6 +218,8 @@ columns on one line.
   `sourceType: "module"` and `disallowAutomaticSingleRunInference: true`; the last is never recorded, the first two only
   when they differ from the ESLint-level value. `tsconfigRootDir` is relative to the fixture project (`"."`,
   `"unstrict"`).
+- **`language`** is only there for a rule of a plugin that brings its own language: `json/jsonc`. **`languageOptions`** is then
+  what the language is given, as it is in the configuration.
 - **`typeAware`** is `parserOptions.project || parserOptions.projectService`. **`tsconfig`** is the config that applies,
   relative to the fixture project. The type-aware cases were linted with the fixture project as the working directory
   (upstream: `packages/eslint-plugin`), which is what `{ "from": "file", "path": ... }` specifiers in rule options are
@@ -240,6 +246,7 @@ A case that cannot be reproduced without upstream's test code. It still has what
 | `test-only rule: <name>`   | typescript-eslint | 5     | same, through `defineRule()`                              |
 | `parser: custom`           | typescript-eslint | 1     | a stub parser without parser services                     |
 | `skipped upstream`         | typescript-eslint | 1     | `skip: true` in the test; a known false negative          |
+| `half of a surrogate pair` | json              | 3     | it is in the code as it is, which no file in UTF-8 has    |
 
 26 core cases name a "parser" of `tests/fixtures/parsers/*.js`, which returns a hard-coded AST (type annotations, old
 babel-eslint and typescript-eslint). They are not skipped: 25 are recorded with the real parser that reads the code

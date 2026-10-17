@@ -29,6 +29,8 @@ fn thrown(message: Vec<u8>) -> LintResult {
     }
 }
 
+pub(crate) const HOW_TO_INSTALL: &[u8] = b"\n  Run bun add -d eslint";
+
 /// What is said about the file at `path`, which only ESLint can lint, if there is no ESLint.
 fn not_installed(path: &[u8], config: &ResolvedConfig) -> Vec<u8> {
     let (what, name): (&[u8], _) = match config.is_javascript() {
@@ -42,7 +44,8 @@ fn not_installed(path: &[u8], config: &ResolvedConfig) -> Vec<u8> {
         what,
         b" \"",
         name.as_deref().unwrap_or_default(),
-        b"\" needs eslint, which is not installed\n  Run bun add -d eslint",
+        b"\" needs eslint, which is not installed",
+        HOW_TO_INSTALL,
     ]
     .concat()
 }
@@ -92,7 +95,8 @@ impl Context<'_, '_> {
                     file.path,
                     b" returned code in the language \"",
                     config.language_name.as_deref().unwrap_or_default(),
-                    b"\", but bun lint only supports JavaScript and TypeScript",
+                    b"\", but that needs eslint, which is not installed",
+                    HOW_TO_INSTALL,
                 ]
                 .concat(),
             );
@@ -295,6 +299,12 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let reads_fixes = self.lint_options().wants_fixes;
         let mut deprecated = None;
+        // ESLint reads a file as UTF-8: what is not becomes U+FFFD.
+        let is_read_here = loaded.routes(config, path_to_verify) == Route::Language;
+        let text = match is_read_here && !bun_core::strings::is_valid_utf8(&text) {
+            true => String::from_utf8_lossy(&text).into_owned().into_bytes(),
+            false => text,
+        };
         let mut verify = |text: &[u8]| {
             let it = Text {
                 path: path_to_verify,

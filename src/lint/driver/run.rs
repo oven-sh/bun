@@ -7,6 +7,7 @@ use crate::doctor::{self, Modules};
 use crate::format::{self, Format};
 use crate::inferred::Inferred;
 use crate::lint::{Context, elapsed};
+use crate::processor::HOW_TO_INSTALL;
 use crate::results::{Counts, FileResult};
 use crate::suppressions::{self, Suppressions};
 use crate::typed::{self, Typed};
@@ -679,11 +680,8 @@ impl Run<'_> {
                 });
         if !unsupported.is_empty() {
             let count = format!("{}", unsupported.len()).into_bytes();
-            let noun: &[u8] = if unsupported.len() == 1 {
-                b" file was"
-            } else {
-                b" files were"
-            };
+            let is_one = unsupported.len() == 1;
+            let noun: &[u8] = if is_one { b" file was" } else { b" files were" };
             // By what they are called, the most frequent first, and the first few.
             let mut kinds: Vec<(&[u8], usize)> = Vec::new();
             for target in &unsupported {
@@ -707,14 +705,17 @@ impl Run<'_> {
                 Status::Matched(config) => config.route_as_it_is(&it.path) == Route::Eslint,
                 _ => false,
             };
-            let hint: &[u8] = match unsupported.iter().any(is_for_eslint) {
-                true => b"\n  To lint other languages, install eslint: bun add -d eslint",
-                false => b"",
+            let (reason, hint): (&[u8], &[u8]) = match unsupported.iter().any(is_for_eslint) {
+                true if is_one => (b"it needs eslint, which is not installed", HOW_TO_INSTALL),
+                true => (b"they need eslint, which is not installed", HOW_TO_INSTALL),
+                false => (b"only an ESLint config can have a processor", b""),
             };
             loader.cannot_do(&[
                 &count,
                 noun,
-                b" not linted because bun lint only supports JavaScript and TypeScript (",
+                b" not linted because ",
+                reason,
+                b" (",
                 &kinds.join(&b", "[..]),
                 b"): ",
                 &first.join(&b", "[..]),

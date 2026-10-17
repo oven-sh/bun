@@ -5,7 +5,7 @@
 use crate::Linter;
 use crate::cli::Options;
 use crate::embedded::Framework;
-use crate::lint::Context;
+use crate::lint::{Context, Fixes};
 use crate::paths::{self, Style};
 use crate::run::{Environment, Pool, Timing};
 use crate::typed::{self, Typed};
@@ -95,6 +95,13 @@ impl Host for Tester<'_> {
         let config = Arc::new(case.config.clone());
         match case.place {
             Place::Nowhere => Some(match Framework::of(case.path) {
+                _ if let Some(dialect) = &config.dialect => {
+                    let of_the_file = (&*config, dialect);
+                    let fixes = Fixes::default();
+                    let linted =
+                        context.verify_in_language(case.path, None, case.code, of_the_file, fixes);
+                    linted.messages
+                }
                 Some(framework) if config.language.is_oxlint => {
                     let linted = context.verify_scripts(framework, case.path, case.code, &config);
                     linted.messages

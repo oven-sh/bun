@@ -1,13 +1,15 @@
-//! The tree of a document: Momoa's, as far as the rules look at it.
+//! The tree of a document: what the rules look at of the tree that the plugin's parser, Momoa, makes.
 //!
 //! | Momoa | here |
 //! | --- | --- |
 //! | `Document` | [`Document`]. `body` is [`Document::body`] |
 //! | `Object`, `Array`, `String`, `Number`, `Boolean`, `Null`, `Identifier`, `NaN`, `Infinity` | [`Node`], by [`Node::kind`] |
 //! | `Member` | [`Member`], from [`Node::members`] |
-//! | `Element` | Not a node. Its range is that of its value: [`Node::elements`] |
+//! | `Element` | Not a node |
 //! | `node.loc`, `node.range` | [`Node::span`] |
+//! | `string.value` | [`Node::value`] |
 //! | `getKey(member)`, `getRawKey(member, sourceCode)` | [`Member::key`], [`Member::raw_key`] |
+//! | `sourceCode.comments` | [`Document::comments`] |
 
 use bun_lint::ast::File;
 use bun_lint::span::{Span, Spanned};
@@ -39,9 +41,11 @@ pub(crate) struct Entry {
 #[derive(Default)]
 pub struct Tree {
     pub(crate) nodes: Vec<Entry>,
-    /// The names that are not written as what they stand for, by their indices, which ascend: where that is in `texts`.
+    /// What strings and names stand for, by their indices, which ascend: where that is in `texts`. Only those names that are not
+    /// written as what they stand for, and those values that have half of a surrogate pair.
     pub(crate) unescaped: Vec<(u32, Span)>,
     pub(crate) texts: Vec<u8>,
+    pub(crate) comments: Vec<Span>,
 }
 
 /// A tree and the text that it is of.
@@ -73,9 +77,29 @@ impl<'a> Document<'a> {
         self.node(0)
     }
 
-    /// All nodes but the members, each before what is in it.
+    /// All nodes, each before what is in it.
     pub fn nodes(self) -> impl Iterator<Item = Node<'a>> {
         (0..self.tree.nodes.len() as u32).filter_map(move |index| self.node(index))
+    }
+
+    /// All members, each before what is in it.
+    pub fn members(self) -> impl Iterator<Item = Member<'a>> {
+        self.nodes().flat_map(Node::members)
+    }
+
+    /// The strings and names whose [value](Node::value) is kept apart from the text.
+    pub fn unescaped(self) -> impl Iterator<Item = Node<'a>> {
+        let indices = self.tree.unescaped.iter().map(|it| it.0);
+        indices.filter_map(move |index| self.node(index))
+    }
+
+    /// In the order of the text.
+    pub fn comments(self) -> &'a [Span] {
+        &self.tree.comments
+    }
+
+    pub fn text(self) -> &'a [u8] {
+        self.text
     }
 }
 
@@ -94,36 +118,40 @@ impl<'a> Node<'a> {
 
     /// `sourceCode.getText(node)`
     pub fn text(self) -> &'a [u8] {
-        self.document
-            .text
-            .get(self.span().range())
-            .unwrap_or_default()
+        let text = self.document.text;
+        text.get(self.span().range()).unwrap_or_default()
     }
 
-    /// The nodes that are right in it: of an object, names and values in turns.
-    fn children(self) -> impl Iterator<Item = Node<'a>> {
-        let first = self.document.node(self.index + 1);
-        std::iter::successors(first, |it| it.document.node(it.entry.next))
-            .take_while(move |it| it.index < self.entry.next)
+    /// The text without the quotes of a string.
+    fn written(self) -> &'a [u8] {
+        match (self.kind(), self.text()) {
+            (NodeKind::String, [_, inner @ .., _]) => inner,
+            (_, text) => text,
+        }
+    }
+
+    /// What a name stands for. Of a string that is a value, this is right if it has half of a surrogate pair.
+    pub fn value(self) -> &'a [u8] {
+        let tree = self.document.tree;
+        let found = tree.unescaped.binary_search_by_key(&self.index, |it| it.0);
+        match found.ok().and_then(|at| tree.unescaped.get(at)) {
+            Some((_, span)) => tree.texts.get(span.range()).unwrap_or_default(),
+            None => self.written(),
+        }
     }
 
     /// `members` of an `Object`. Nothing for any other node.
     pub fn members(self) -> impl Iterator<Item = Member<'a>> {
-        let mut children = self
-            .children()
-            .filter(move |_| self.kind() == NodeKind::Object);
+        let is_object = self.kind() == NodeKind::Object;
+        let first = self.document.node(self.index + 1).filter(|_| is_object);
+        let mut children = std::iter::successors(first, |it| it.document.node(it.entry.next))
+            .take_while(move |it| it.index < self.entry.next);
         std::iter::from_fn(move || {
             Some(Member {
                 name: children.next()?,
                 value: children.next()?,
             })
         })
-    }
-
-    /// The values of the `elements` of an `Array`. Nothing for any other node.
-    pub fn elements(self) -> impl Iterator<Item = Node<'a>> {
-        self.children()
-            .filter(move |_| self.kind() == NodeKind::Array)
     }
 }
 
@@ -144,22 +172,12 @@ pub struct Member<'a> {
 impl<'a> Member<'a> {
     /// The name as it is written, without its quotes.
     pub fn raw_key(self) -> &'a [u8] {
-        match (self.name.kind(), self.name.text()) {
-            (NodeKind::String, [_, inner @ .., _]) => inner,
-            (_, text) => text,
-        }
+        self.name.written()
     }
 
     /// What the name stands for.
     pub fn key(self) -> &'a [u8] {
-        let tree = self.name.document.tree;
-        let found = tree
-            .unescaped
-            .binary_search_by_key(&self.name.index, |it| it.0);
-        match found.ok().and_then(|at| tree.unescaped.get(at)) {
-            Some((_, span)) => tree.texts.get(span.range()).unwrap_or_default(),
-            None => self.raw_key(),
-        }
+        self.name.value()
     }
 }
 

@@ -18,7 +18,7 @@ const env = {
   FORCE_COLOR: undefined,
 };
 
-async function lint(files: Record<string, string>, args: string[], reads: string[] = []) {
+async function lint(files: Record<string, string | Buffer>, args: string[], reads: string[] = []) {
   using dir = tempDir("bun-lint-js-parsers", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", ...(args.includes("--threads") ? [] : ["--threads", "2"]), ...args],
@@ -836,7 +836,7 @@ rules = { "no-console" = "off" }
       const result = await lint(lines, ["-f", "unix", "a.js", "b.txt"]);
       expect(result.stdout).toContain("a.js:1:1: Unexpected var, use let or const instead. [Error/no-var]");
       expect(result.stderr).toContain(
-        "1 file was not linted because bun lint only supports JavaScript and TypeScript (1 *.txt): b.txt\n  To lint other languages, install eslint: bun add -d eslint",
+        "1 file was not linted because it needs eslint, which is not installed (1 *.txt): b.txt\n  Run bun add -d eslint",
       );
       expect(result.exitCode).toBe(2);
     },
@@ -853,7 +853,11 @@ const jsonPackage = (name = "@eslint/json") => ({
     module.exports = {
       meta: { name: ${JSON.stringify(name)}, namespace: "json", version: "2.1.1" },
       languages: { json: language, jsonc: language, json5: language },
-      rules: { "no-duplicate-keys": rule("no-duplicate-keys"), "only-in-the-package": rule("only-in-the-package") },
+      rules: Object.fromEntries(
+        ["no-duplicate-keys", "no-empty-keys", "no-unnormalized-keys", "no-unsafe-values", "sort-keys", "top-level-interop", "only-in-the-package"].map(
+          name => [name, rule(name)],
+        ),
+      ),
     };`,
 });
 
@@ -870,7 +874,7 @@ const jsonConfig = (more = "") => `
 // What is expected is what ESLint 10.13 with @eslint/json 2.1.1 reports.
 describe.concurrent("bun lint with the languages that are built in", () => {
   const json = { ...jsonPackage(), "eslint.config.mjs": jsonConfig() };
-  const [mark, noBreakSpace, noCharacter] = [0xfeff, 0xa0, 0xffff].map(it => String.fromCodePoint(it));
+  const [mark, noBreakSpace] = [0xfeff, 0xa0].map(it => String.fromCodePoint(it));
 
   test(
     "JSON, JSONC and JSON5 are linted here, without the package eslint",
@@ -935,36 +939,50 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     timeout,
   );
 
+  // Which texts are refused is what has to be the same as with the plugin. The words and the place are those of Bun's parser.
   test(
-    "what the parser of the plugin refuses is refused with its words, at its place",
+    "a text that is refused is one fatal problem",
     async () => {
       const cases: [string, string, string][] = [
-        ["json", "", "1:1 Unexpected end of input found."],
-        ["json", "{", "1:1 Unexpected token LBrace found."],
-        ["json", '{"a":1', "1:7 Unexpected end of input found."],
-        ["json", '{"a":', "1:1 Unexpected end of input found."],
-        ["json", '{"a":1,}', "1:8 Unexpected token RBrace found."],
-        ["json", "[1,]", "1:4 Unexpected token RBracket found."],
-        ["json", "[1", "1:2 Unexpected token Number found."],
-        ["json", "{} {}", "1:4 Unexpected token LBrace found."],
-        ["json", "// c\n1", "1:1 Unexpected character '/' found."],
-        ["json", "{a:1}", "1:2 Unexpected character 'a' found."],
-        ["json", "'a'", "1:1 Unexpected character ''' found."],
-        ["json", "tru", "1:1 Unexpected identifier 'tru' found."],
-        ["json", "01", "1:1 Unexpected character '1' found."],
-        ["json", "+1", "1:1 Unexpected character '+' found."],
-        ["json", '{\n  "a": "\\q"\n}', "2:9 Unexpected character 'q' found."],
-        ["json", '"abc\n\n', "2:2 Unexpected end of input found."],
-        ["json", `${noBreakSpace}1`, `1:1 Unexpected character '${noBreakSpace}' found.`],
-        ["jsonc", '{"a":1,} // c', "1:8 Unexpected token RBrace found."],
-        ["jsonc", "/* c", "1:5 Unexpected end of input found."],
-        ["jsonc", "[1, // c\n", "1:5 Unexpected token LineComment found."],
-        ["jsonc", "{a:1}", "1:2 Unexpected character 'a' found."],
-        ["json5", "{true:1}", "1:2 Unexpected token Boolean found."],
-        ["json5", "-.5", "1:1 Unexpected character '.' found."],
-        ["json5", "0x", `1:3 Unexpected character '${noCharacter}' found.`],
-        ["json5", "[,]", "1:2 Unexpected token Comma found."],
-        ["json5", "{a-b:1}", "1:3 Unexpected character 'b' found."],
+        ["json", "", "1:1 Unexpected end of input"],
+        ["json", "{", "1:2 Unexpected end of input"],
+        ["json", '{"a":1', "1:7 Unterminated object"],
+        ["json", '{"a" 1}', "1:6 Expected ':' after object key"],
+        ["json", '{"a":1,}', "1:7 Trailing commas are not allowed in JSON"],
+        ["json", "[1,]", "1:3 Trailing commas are not allowed in JSON"],
+        ["json", "[1", "1:3 Unterminated array"],
+        ["json", "[1 2]", "1:4 Expected ','"],
+        ["json", "[1}", "1:3 Expected ']'"],
+        ["json", '{"a":1]', "1:7 Expected '}'"],
+        ["json", "{} {}", "1:4 Unexpected token after JSON value"],
+        ["json", "// c\n1", "1:1 Comments are not allowed in JSON"],
+        ["json", "{a:1}", "1:2 Keys must be strings in double quotes"],
+        ["json", "{true:1}", "1:2 Keys must be strings in double quotes"],
+        ["json", "'a'", "1:1 Strings must be in double quotes"],
+        ["json", "tru", "1:1 Unexpected token"],
+        ["json", "NaN", "1:1 Unexpected token"],
+        ["json", "01", "1:1 Leading zeros are not allowed in JSON"],
+        ["json", "+1", "1:1 Invalid number"],
+        ["json", ".5", "1:1 Invalid number"],
+        ["json", "5.", "1:1 Invalid number"],
+        ["json", "0x1", "1:1 Invalid number"],
+        ["json", "-Infinity", "1:1 Invalid number"],
+        ["json", '{\n  "a": "\\q"\n}', "2:9 Invalid escape sequence"],
+        ["json", '"\\x41"', "1:2 Invalid escape sequence"],
+        ["json", '"a\\\nb"', "1:3 Invalid escape sequence"],
+        ["json", '"abc', "1:5 Unterminated string"],
+        ["json", `${noBreakSpace}1`, "1:1 Unexpected character"],
+        ["json", `1${String.fromCodePoint(0)}`, "1:2 Unexpected character"],
+        ["jsonc", '{"a":1,} // c', "1:7 Trailing commas are not allowed in JSONC"],
+        ["jsonc", "/* c", "1:5 Unterminated multi-line comment"],
+        ["jsonc", "[1, // c\n", "2:1 Unexpected end of input"],
+        ["jsonc", "{a:1}", "1:2 Keys must be strings in double quotes"],
+        ["json5", "{1:1}", "1:2 Invalid identifier start character"],
+        ["json5", "0x", "1:3 Invalid hex number"],
+        ["json5", "01", "1:1 Leading zeros are not allowed in JSON5"],
+        ["json5", "[,]", "1:2 Unexpected token"],
+        ["json5", "{a-b:1}", "1:4 Unexpected character"],
+        ["json5", "1 2", "1:3 Unexpected token after JSON5 value"],
       ];
       const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
       const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
@@ -979,6 +997,320 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     timeout,
   );
 
+  // `a` is accepted and `r` is refused: as JSON, as JSONC, as JSONC with `allowTrailingCommas`, as JSON5. Behind `//` is what ESLint
+  // does where that is something else, which the next test is about.
+  test(
+    "which texts are accepted",
+    async () => {
+      const texts: [string, string][] = [
+        ["", "rrrr"],
+        [" ", "rrrr"],
+        ["\n", "rrrr"],
+        ["{", "rrrr"],
+        ["}", "rrrr"],
+        ["[", "rrrr"],
+        ["]", "rrrr"],
+        ["{}", "aaaa"],
+        ["[]", "aaaa"],
+        ["{} {}", "rrrr"],
+        ["[] 1", "rrrr"],
+        ["1 2", "rrrr"],
+        ['"a"', "aaaa"],
+        ['"a', "rrrr"],
+        ['"a\n', "rrrr"],
+        ['"a\nb"', "rrrr"], // aaaa
+        ["'a'", "rrra"],
+        ["nul", "rrrr"],
+        ["null", "aaaa"],
+        ["nulll", "rrrr"],
+        ["tru", "rrrr"],
+        ["true", "aaaa"],
+        ["false", "aaaa"],
+        ["fals", "rrrr"],
+        ["t", "rrrr"],
+        ["n", "rrrr"],
+        ["f", "rrrr"],
+        ["a", "rrrr"],
+        ["abc", "rrrr"],
+        ["undefined", "rrrr"],
+        ["NaN", "rrra"],
+        ["Infinity", "rrra"],
+        ["-Infinity", "rrra"],
+        ["+Infinity", "rrra"],
+        ["-NaN", "rrra"],
+        ["+NaN", "rrra"],
+        ["-Inf", "rrrr"],
+        ["+N", "rrrr"],
+        ["-", "rrrr"],
+        ["+", "rrrr"],
+        ["-a", "rrrr"],
+        ["+1", "rrra"],
+        ["-1", "aaaa"],
+        ["01", "rrrr"],
+        ["00", "rrrr"],
+        ["-01", "rrrr"],
+        ["0", "aaaa"],
+        ["-0", "aaaa"],
+        ["1.", "rrra"],
+        ["1.e5", "rrra"],
+        [".5", "rrra"],
+        ["-.5", "rrra"], // rrrr
+        ["+.5", "rrra"], // rrrr
+        [".", "rrrr"], // rrra
+        [".a", "rrrr"], // rrra
+        [".e1", "rrrr"], // rrra
+        ["5.", "rrra"],
+        ["1e", "rrrr"],
+        ["1e+", "rrrr"],
+        ["1e-", "rrrr"],
+        ["1ea", "rrrr"],
+        ["1e5", "aaaa"],
+        ["1E+5", "aaaa"],
+        ["1.5e-3", "aaaa"],
+        ["0x", "rrrr"],
+        ["0x1", "rrra"],
+        ["0X1f", "rrra"],
+        ["0xg", "rrrr"],
+        ["-0x1", "rrra"],
+        ["0x1.5", "rrrr"], // rrra
+        ["1a", "rrrr"],
+        ["1_000", "rrrr"],
+        ["1n", "rrrr"],
+        ["0b1", "rrrr"],
+        ["0o7", "rrrr"],
+        ['{"a"}', "rrrr"],
+        ['{"a":}', "rrrr"],
+        ['{"a":1', "rrrr"],
+        ['{"a":1,', "rrrr"],
+        ['{"a":1,}', "rraa"],
+        ['{"a":1,,}', "rrrr"],
+        ["{,}", "rrrr"],
+        ['{"a" 1}', "rrrr"],
+        ['{"a":1 "b":2}', "rrrr"],
+        ['{"a":1]', "rrrr"],
+        ["{a:1}", "rrra"],
+        ["{'a':1}", "rrra"],
+        ["{1:1}", "rrrr"],
+        ["{true:1}", "rrra"], // rrrr
+        ["{null:1}", "rrra"], // rrrr
+        ["{NaN:1}", "rrra"],
+        ["{Infinity:1}", "rrra"],
+        ["{-Infinity:1}", "rrrr"],
+        ["{+NaN:1}", "rrrr"],
+        ["{.5:1}", "rrrr"], // rrra
+        ['{"a":', "rrrr"],
+        ['{"a"', "rrrr"],
+        ['{"a":{', "rrrr"],
+        ['{"a":[', "rrrr"],
+        ["[1", "rrrr"],
+        ["[1,", "rrrr"],
+        ["[1,]", "rraa"],
+        ["[1,,2]", "rrrr"],
+        ["[,]", "rrrr"],
+        ["[,1]", "rrrr"],
+        ["[1 2]", "rrrr"],
+        ["[1}", "rrrr"],
+        ["[1,2", "rrrr"],
+        ["[[", "rrrr"],
+        ["[{", "rrrr"],
+        ["[1,\n", "rrrr"],
+        ["[1 // c\n", "rrrr"],
+        ["[1, // c\n", "rrrr"],
+        ["[1, /* c */", "rrrr"],
+        ["{ // c\n", "rrrr"],
+        ['{"a":1 /* c */', "rrrr"],
+        ['{"a":1, // c', "rrrr"],
+        ["// c", "rrrr"],
+        ["/* c */", "rrrr"],
+        ["/* c", "rrrr"],
+        ["/*", "rrrr"],
+        ["/", "rrrr"],
+        ["/a", "rrrr"],
+        ["/* c *", "rrrr"],
+        ["/**/", "rrrr"],
+        ["/***/1", "raaa"],
+        ["/*/", "rrrr"],
+        ["1 // c", "raaa"],
+        ["1 /* c */", "raaa"],
+        ["// c\n1", "raaa"],
+        ["/* c */ 1", "raaa"],
+        ["//\n1", "raaa"],
+        ["1 /", "rrrr"],
+        ["# c", "rrrr"],
+        ['"\\a"', "rrra"],
+        ['"\\u12"', "rrrr"],
+        ['"\\u12G4"', "rrrr"],
+        ['"\\u"', "rrrr"],
+        ['"\\x41"', "rrra"],
+        ['"\\x4"', "rrrr"],
+        ['"\\xg"', "rrrr"],
+        ['"\\0"', "rrra"],
+        ['"\\1"', "rrrr"], // rrra
+        ['"\\v"', "rrra"],
+        ['"\\\'"', "rrra"],
+        ['"\\\n"', "rrra"],
+        ['"\\\r\n"', "rrra"],
+        ['"\\"', "rrrr"],
+        ['"\\\\"', "aaaa"],
+        ['"\\""', "aaaa"],
+        ['"\\/"', "aaaa"],
+        ['"\\b\\f\\n\\r\\t"', "aaaa"],
+        ['"\\u0061"', "aaaa"],
+        ['"\\uD83D\\uDE00"', "aaaa"],
+        ['"\\uD83D"', "aaaa"],
+        ['"\t"', "rrra"], // aaaa
+        ['"\u0001"', "rrra"], // aaaa
+        ['"\u2028"', "aaaa"],
+        ["'\\''", "rrra"],
+        ["'\"'", "rrra"],
+        ['"\'"', "aaaa"],
+        ["'a\nb'", "rrrr"], // rrra
+        ["'a", "rrrr"],
+        ["\u00a0 1", "rrra"],
+        ["\u000b1", "rrra"],
+        ["\f1", "rrra"],
+        ["\ufeff1", "aaaa"],
+        ["1\ufeff", "rrra"],
+        ["\u20281", "rrra"],
+        ["\u16801", "rrra"], // rrrr
+        ["\u30001", "rrra"],
+        ["\u20001", "rrra"],
+        ["\u180e1", "rrrr"],
+        ["\u00001", "rrrr"],
+        ["1\u0000", "rrrr"],
+        ["\u00e9", "rrrr"],
+        ["{\u00e9:1}", "rrra"],
+        ["{\\u0061:1}", "rrra"],
+        ["{\\u0031:1}", "rrrr"],
+        ["{a\\u0031:1}", "rrra"],
+        ["{a\\u002d:1}", "rrrr"],
+        ["{\\x61:1}", "rrrr"],
+        ["{\\u00:1}", "rrrr"],
+        ["{\\", "rrrr"],
+        ["{a\\", "rrrr"],
+        ["{$a_1:1}", "rrra"],
+        ["{\u200c:1}", "rrrr"], // rrra
+        ["{a\u200d:1}", "rrra"],
+        ["{\ud835\udc00:1}", "rrra"], // rrrr
+        ["{a-b:1}", "rrrr"],
+        ["{a b:1}", "rrrr"],
+        ['{"a":a}', "rrrr"],
+        ['{"a":tru}', "rrrr"],
+        ["[tru]", "rrrr"],
+        ["[nulla]", "rrrr"],
+        ["[true1]", "rrrr"],
+        ["[tru\u0435]", "rrrr"],
+        ['{"a":1,"a":2}', "aaaa"],
+        ['{"a":1,"\\u0061":2}', "aaaa"],
+        ['{"a":1,"b":{"a":1,"a":2},"a":3}', "aaaa"],
+        ['[{"a":1,"a":2}]', "aaaa"],
+        ['{"":1,"":2}', "aaaa"],
+        ['{"__proto__":1,"__proto__":2}', "aaaa"],
+        ['{"\u00e9":1,"\\u00e9":2}', "aaaa"],
+        ['{"\ud83d\ude00":1,"\\uD83D\\uDE00":2, "x\ud83d\ude00": 1, "x\ud83d\ude00": 2}', "aaaa"],
+        ["{a:1,'a':2,\"a\":3,\\u0061:4}", "rrra"],
+        ['{NaN:1,"NaN":2}', "rrra"],
+        ['{Infinity:1,"Infinity":2}', "rrra"],
+        ['{"a\\/b":1,"a/b":2}', "aaaa"],
+        ['{"a\\\\":1,"a\\\\":2}', "aaaa"],
+        ['{"a\\nb":1,"a\\u000ab":2}', "aaaa"],
+        ["{'a\\\nb':1,ab:2}", "rrra"],
+        ['{"\\uD83D":1,"\\uD83D":2}', "aaaa"],
+        ['{\r\n  "a": 1,\r\n  "a": 2\r\n}\r\n', "aaaa"],
+        ['{\r  "a": 1,\r  "a": 2\r}\r', "aaaa"],
+        ['{\n"a":1,\n\n"a"\n:\n2}', "aaaa"],
+        ['\ufeff{"a":1,"a":2}', "aaaa"],
+        ['{"\u00e9\ud83d\ude00": 1, "a": 1, "a": 2}', "aaaa"],
+        ['{"a":1,\n"b":"\u2028","a":2}', "aaaa"],
+        ['{"a":1}\n\n\n', "aaaa"],
+        ['{"a":1\n\n', "rrrr"],
+        ["[1,2\n\n", "rrrr"],
+        ['"abc\n\n', "rrrr"],
+        ["/* abc\n\n", "rrrr"],
+        ['{"a":"b\n', "rrrr"],
+        ['{"a":1,\r\n', "rrrr"],
+        ["[\r\n1\r\n", "rrrr"],
+        ['"a\r\n', "rrrr"],
+        ["/*\r\n", "rrrr"],
+        ['{"a":"\\q"}', "rrra"],
+        ['{\n  "a": "\\q"\n}', "rrra"],
+        ['{\n  "a": 1e\n}', "rrrr"],
+        ['{\n  "a": -\n}', "rrrr"],
+        ['{\n "a": 01\n}', "rrrr"],
+        ['{\n "a": 1.\n}', "rrra"],
+        ['{\n "a": 1.}', "rrra"],
+        ["1.\n", "rrra"],
+        ["1e\n", "rrrr"],
+        ["-\n", "rrrr"],
+      ];
+      const names = (i: number) => [`plain/${i}.json`, `plain/${i}.jsonc`, `commas/${i}.jsonc`, `plain/${i}.json5`];
+      const files = Object.fromEntries(texts.flatMap(([text], i) => names(i).map(name => [name, text])));
+      const config = jsonConfig(`{ files: ["commas/*.jsonc"], languageOptions: { allowTrailingCommas: true } }`);
+      const result = await lint({ ...json, "eslint.config.mjs": config, ...files }, ["-f", "json", "."]);
+      const found = new Map<string, string>();
+      for (const { filePath, messages } of JSON.parse(result.raw)) {
+        // What is refused has one problem.
+        const isRefused = messages.some((it: any) => it.fatal);
+        found.set(
+          filePath.replaceAll("\\", "/").split("/").slice(-2).join("/"),
+          isRefused ? "r".repeat(messages.length) : "a",
+        );
+      }
+      expect(
+        texts.map(([text], i) => [
+          text,
+          names(i)
+            .map(name => found.get(name))
+            .join(""),
+        ]),
+      ).toEqual(texts);
+    },
+    timeout,
+  );
+
+  // Momoa 3.3, which is the parser of the plugin, says the opposite of each.
+  test(
+    "where the parser of the plugin is wrong, the specification of the language counts",
+    async () => {
+      const character = (code: number) => String.fromCodePoint(code);
+      const cases: [string, string, "accepted" | "refused"][] = [
+        // RFC 8259: a control character in a string is written as an escape sequence.
+        ["json", '"a\nb"', "refused"],
+        ["json", '"a\tb"', "refused"],
+        ["jsonc", `"${character(1)}"`, "refused"],
+        // JSON5: a string goes on in the next line only after a backslash.
+        ["json5", '"a\nb"', "refused"],
+        // A sign can be before every number.
+        ["json5", "[-.5, +.5]", "accepted"],
+        ["json5", "[.a]", "refused"],
+        ["json5", "[.e1]", "refused"],
+        ["json5", "[0x1.5]", "refused"],
+        // A key is an IdentifierName of ECMAScript 5.1, which every word is, or a string.
+        ["json5", "{true:1, null:2, false: 3}", "accepted"],
+        ["json5", "{.5:1}", "refused"],
+        ["json5", `{${character(0x200c)}:1}`, "refused"],
+        ["json5", `{${character(0x1d400)}:1}`, "accepted"],
+        // After a backslash a digit is only `0`, and no digit follows.
+        ["json5", '["\\1"]', "refused"],
+        ["json5", '["\\01"]', "refused"],
+        ["json5", '["\\8"]', "refused"],
+        // White space is what is in the category Zs.
+        ["json5", `${character(0x1680)}[]`, "accepted"],
+        // A comment ends where a line of ECMAScript ends.
+        ["json5", `// c${character(0x2028)}[]`, "accepted"],
+      ];
+      const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
+      const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
+      const found = JSON.parse(result.raw)
+        .filter((it: any) => /\d\d\.json[c5]?$/.test(it.filePath))
+        .map((it: any) => (it.messages.some((it: any) => it.fatal) ? "refused" : "accepted"));
+      expect(found.map((it: string, i: number) => `${JSON.stringify(cases[i][1])} in ${cases[i][0]}: ${it}`)).toEqual(
+        cases.map(([language, text, expected]) => `${JSON.stringify(text)} in ${language}: ${expected}`),
+      );
+    },
+    timeout,
+  );
+
   test(
     "what only JSON5 has is read in JSON5",
     async () => {
@@ -986,6 +1318,181 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       const result = await lint({ ...json, "a.json5": text }, ["-f", "json", "."]);
       expect(summary(result.raw)).toBe("");
       expect(result.exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  describe("all rules of the plugin", () => {
+    const character = (code: number) => String.fromCodePoint(code);
+    const [accent, backslash, wideQuote, wideBackslash, ligature] = [0x301, 92, 0xff02, 0xff3c, 0xfb01].map(character);
+    const escaped = (code: string) => `${backslash}u${code}`;
+    const all = {
+      ...jsonPackage(),
+      "eslint.config.mjs": jsonConfig(`
+        { files: ["**/*.json*"], rules: { "json/no-empty-keys": "error", "json/no-unnormalized-keys": "error", "json/no-unsafe-values": "error", "json/sort-keys": "warn", "json/top-level-interop": "error" } },
+        { files: ["desc.json"], rules: { "json/sort-keys": ["error", "desc", { caseSensitive: false, natural: true, minKeys: 3 }] } },
+        { files: ["groups.jsonc"], rules: { "json/sort-keys": ["error", "asc", { allowLineSeparatedGroups: true }] } },
+        { files: ["nfkc.json5"], rules: { "json/no-unnormalized-keys": ["error", { form: "NFKC" }] } },`),
+      "a.json": `{\n  "b": 1e400,\n  "a": 9007199254740993,\n  "": -1e-400,\n  " \\t": 2.2250738585072009e-308,\n  "cafe${accent}": "${escaped("d83d")} x ${escaped("dc00")}${escaped("d83d")}${escaped("de00")}",\n  "${escaped("d83d")}": 0.0e-999,\n  "b": [1.5, -0, 9007199254740991, 123456789012345678]\n}\n`,
+      "top.json": `${mark}\n"x"\n`,
+      "top.json5": "// c\n-Infinity",
+      "whole.json": `"${escaped("d83d")}"`,
+      "whole.json5": "1e400",
+      "hex.json5": `[0x1fffffffffffff, 0x20000000000000, -0x20000000000000, 0x0, 0xe, 1E400, .0e1, 5.e-324, NaN, +0x${"f".repeat(300)}]`,
+      "desc.json": `{ "a10": 1, "A2": 2, "b": 3, "x": { "a": 1, "b": 2 } }`,
+      "groups.jsonc": `{\n  "b": 1,\n\n  "a": 2,\n  // c\n  "A": 3,\n  /*\n\n  */\n  "0": 4,\n  \n  "-": 5\n}`,
+      "nfkc.json5": `{ '${wideQuote}': 1, ${ligature}: 2, "${escaped("fb01")}": 3, "${wideBackslash}": 4 }`,
+      "fix.jsonc": `{\n  "c": { "z": 1, "y": 2 }, "b": [1], // c\n  "a": 1, "0": 2\n}`,
+    };
+
+    test(
+      "report what they report in ESLint",
+      async () => {
+        const result = await lint(all, ["-f", "json", "."]);
+        expect(summary(result.raw).replace(/f{300}/, "f..f")).toMatchInlineSnapshot(`
+          "a.json: 2:8 json/no-unsafe-values The number '1e400' will evaluate to Infinity.
+          a.json: 3:3 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'a' should be before 'b'. [fix 4,39 "\\"a\\": 9007199254740993,\\n  \\"b\\": 1e400"]
+          a.json: 3:8 json/no-unsafe-values The integer '9007199254740993' is outside the safe integer range.
+          a.json: 4:3 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. '' should be before 'a'. [fix 18,54 "\\"\\": -1e-400,\\n  \\"a\\": 9007199254740993"]
+          a.json: 4:3 json/no-empty-keys Empty key found.
+          a.json: 4:7 json/no-unsafe-values The number '-1e-400' will evaluate to zero.
+          a.json: 5:3 json/no-empty-keys Empty key found.
+          a.json: 5:10 json/no-unsafe-values Unexpected subnormal number '2.2250738585072009e-308' found, which may cause interoperability issues.
+          a.json: 6:3 json/no-unnormalized-keys Unnormalized key 'café' found. [fix 93,98 "café"]
+          a.json: 6:12 json/no-unsafe-values Lone surrogate '\\ud83d' found.
+          a.json: 6:12 json/no-unsafe-values Lone surrogate '\\udc00' found.
+          a.json: 7:3 json/no-unsafe-values Lone surrogate '\\ud83d' found.
+          a.json: 8:3 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'b' should be before '\\ud83d'. [fix 134,208 "\\"b\\": [1.5, -0, 9007199254740991, 123456789012345678],\\n  \\"\\\\ud83d\\": 0.0e-999"]
+          a.json: 8:3 json/no-duplicate-keys Duplicate key "b" found.
+          a.json: 8:36 json/no-unsafe-values The integer '123456789012345678' is outside the safe integer range.
+          desc.json: 1:22 json/sort-keys Expected object keys to be in natural case-insensitive descending order. 'b' should be before 'A2'. [fix 12,27 "\\"b\\": 3, \\"A2\\": 2"]
+          desc.json: 1:30 json/sort-keys Expected object keys to be in natural case-insensitive descending order. 'x' should be before 'b'. [fix 21,52 "\\"x\\": { \\"a\\": 1, \\"b\\": 2 }, \\"b\\": 3"]
+          fix.jsonc: 2:18 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'y' should be before 'z'. [fix 11,25 "\\"y\\": 2, \\"z\\": 1"]
+          fix.jsonc: 2:28 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'b' should be before 'c'.
+          fix.jsonc: 3:3 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'a' should be before 'b'.
+          fix.jsonc: 3:11 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. '0' should be before 'a'.
+          groups.jsonc: 6:3 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'A' should be before 'a'.
+          groups.jsonc: 10:3 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. '0' should be before 'A'.
+          hex.json5: 1:20 json/no-unsafe-values The integer '0x20000000000000' is outside the safe integer range.
+          hex.json5: 1:38 json/no-unsafe-values The integer '-0x20000000000000' is outside the safe integer range.
+          hex.json5: 1:67 json/no-unsafe-values The number '1E400' will evaluate to Infinity.
+          hex.json5: 1:80 json/no-unsafe-values Unexpected subnormal number '5.e-324' found, which may cause interoperability issues.
+          hex.json5: 1:94 json/no-unsafe-values The number '+0xf..f' will evaluate to Infinity.
+          nfkc.json5: 1:3 json/no-unnormalized-keys Unnormalized key '＂' found. [fix 3,4 "\\""]
+          nfkc.json5: 1:11 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'ﬁ' should be before '＂'. [fix 2,14 "ﬁ: 2, '＂': 1"]
+          nfkc.json5: 1:11 json/no-unnormalized-keys Unnormalized key 'ﬁ' found. [fix 10,11 "fi"]
+          nfkc.json5: 1:17 json/no-duplicate-keys Duplicate key "\\ufb01" found.
+          nfkc.json5: 1:17 json/no-unnormalized-keys Unnormalized key '\\ufb01' found.
+          nfkc.json5: 1:30 json/no-unnormalized-keys Unnormalized key '＼' found. [fix 30,31 "\\\\\\\\"]
+          top.json: 1:1 json/top-level-interop Top level item should be array or object, got 'String'.
+          top.json5: 1:1 json/top-level-interop Top level item should be array or object, got 'Infinity'.
+          whole.json: 1:1 json/top-level-interop Top level item should be array or object, got 'String'.
+          whole.json: 1:1 json/no-unsafe-values Lone surrogate '\\ud83d' found.
+          whole.json5: 1:1 json/top-level-interop Top level item should be array or object, got 'Number'.
+          whole.json5: 1:1 json/no-unsafe-values The number '1e400' will evaluate to Infinity."
+        `);
+        expect(result.exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test(
+      "--fix goes on until the keys are sorted",
+      async () => {
+        const names = ["a.json", "desc.json", "fix.jsonc", "nfkc.json5"];
+        const result = await lint(all, ["--fix", "."], names);
+        expect(result.files).toMatchInlineSnapshot(`
+          {
+            "a.json": 
+          "{
+            "": -1e-400,
+            " \\t": 2.2250738585072009e-308,
+            "a": 9007199254740993,
+            "b": 1e400,
+            "b": [1.5, -0, 9007199254740991, 123456789012345678],
+            "café": "\\ud83d x \\udc00\\ud83d\\ude00",
+            "\\ud83d": 0.0e-999
+          }
+          "
+          ,
+            "desc.json": "{ "x": { "a": 1, "b": 2 }, "b": 3, "a10": 1, "A2": 2 }",
+            "fix.jsonc": 
+          "{
+            "c": { "y": 2, "z": 1 }, "b": [1], // c
+            "a": 1, "0": 2
+          }"
+          ,
+            "nfkc.json5": "{ '"': 1, "\\\\": 4, fi: 2, "\\ufb01": 3 }",
+          }
+        `);
+      },
+      timeout,
+    );
+
+    test.each([
+      [
+        '"json/sort-keys": ["error", "up"]',
+        'Key "json/sort-keys":\n\tValue "up" should be equal to one of the allowed values.',
+      ],
+      ['"json/sort-keys": ["error", "asc", { minKeys: 1 }]', 'Key "json/sort-keys":\n\tValue 1 should be >= 2.'],
+      [
+        '"json/no-unnormalized-keys": ["error", { form: "nfc" }]',
+        'Key "json/no-unnormalized-keys":\n\tValue "nfc" should be equal to one of the allowed values.',
+      ],
+      [
+        '"json/no-empty-keys": ["error", 1]',
+        'Key "json/no-empty-keys":\n\tValue [1] should NOT have more than 0 items.',
+      ],
+    ])(
+      "options are validated: %s",
+      async (rule, expected) => {
+        const config = jsonConfig(`{ files: ["**/*.json"], rules: { ${rule} } }`);
+        const result = await lint({ ...json, "eslint.config.mjs": config, "a.json": "{}" }, ["a.json"]);
+        expect(result.stderr).toContain(`Key "rules": ${expected}`);
+        expect(result.exitCode).toBe(2);
+      },
+      timeout,
+    );
+
+    test(
+      "many keys out of order, with comments",
+      async () => {
+        const keys = Array.from({ length: 30_000 }, (_, i) => `"k${30_000 - i}": ${i}, // ${i}`);
+        const result = await lint({ ...all, "many.jsonc": `{\n${keys.join("\n")}\n"a": 1\n}` }, [
+          "-f",
+          "json",
+          "many.jsonc",
+        ]);
+        const { messages } = JSON.parse(result.raw)[0];
+        expect(messages.length).toBeGreaterThan(20_000);
+        expect(messages.filter((it: any) => it.fix)).toEqual([]);
+        // Nothing but comments between two keys, where an empty line would start a group.
+        const apart = `{\n"b": 1,\n${"// c\n/*\n\n*/\n".repeat(30_000)}"a": 2\n}`;
+        const groups = await lint({ ...all, "groups.jsonc": apart }, ["-f", "json", "groups.jsonc"]);
+        expect(JSON.parse(groups.raw)[0].messages.map((it: any) => it.line)).toEqual([120_003]);
+      },
+      timeout,
+    );
+  });
+
+  // ESLint reads a file as UTF-8.
+  test(
+    "what is not UTF-8 in a file counts as U+FFFD",
+    async () => {
+      const bytes = (text: string) => Buffer.from(text, "latin1");
+      const replaced = String.fromCodePoint(0xfffd);
+      const result = await lint(
+        {
+          ...json,
+          "a.json": bytes('{"\xED\xA0\xBD": "\xC3", "b\xFF": 1, "\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD": 1}'),
+          "b.json5": bytes("{c\xFF: 1}"),
+        },
+        ["-f", "json", "."],
+      );
+      expect(summary(result.raw)).toBe(
+        `a.json: 1:23 json/no-duplicate-keys Duplicate key "${replaced.repeat(3)}" found.\n` +
+          "b.json5: 1:3 null Parsing error: Unexpected character [fatal]",
+      );
     },
     timeout,
   );
@@ -1090,7 +1597,9 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       expect(allowed.exitCode).toBe(0);
       expect(JSON.parse(printed.raw).language).toBe("json/jsonc");
       expect(JSON.parse(printed.raw).languageOptions).toEqual({ allowTrailingCommas: true });
-      expect(summary(refused.raw)).toBe("a.jsonc: 1:11 null Parsing error: Unexpected token RBracket found. [fatal]");
+      expect(summary(refused.raw)).toBe(
+        "a.jsonc: 1:10 null Parsing error: Trailing commas are not allowed in JSONC [fatal]",
+      );
       expect(wrong.stderr).toContain('Key "languageOptions": allowTrailingCommas must be a boolean if provided.');
       expect(wrong.exitCode).toBe(2);
       expect(elsewhere.stderr).toContain(
@@ -1298,9 +1807,8 @@ describe.concurrent("bun lint with the languages that are built in", () => {
         const files = { ...json, "eslint.config.mjs": config, "a.json": text, "b.json": text };
         const result = await lint(files, ["-f", "unix", "."]);
         expect(result.stdout).toContain('b.json:1:11: Duplicate key "a" found. [Error/json/no-duplicate-keys]');
-        expect(result.stderr).toContain("1 file was not linted");
         expect(result.stderr).toContain(
-          "(1 *.json): a.json\n  To lint other languages, install eslint: bun add -d eslint",
+          "1 file was not linted because it needs eslint, which is not installed (1 *.json): a.json\n  Run bun add -d eslint",
         );
         expect(result.exitCode).toBe(2);
       },

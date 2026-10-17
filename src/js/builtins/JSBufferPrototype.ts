@@ -5,7 +5,8 @@ interface BufferExt extends Buffer {
 
 export function toJSON(this: BufferExt) {
   const type = "Buffer";
-  const data = Array.from(this);
+  // A detached or out-of-bounds view has length 0, and the %TypedArray% iterator throws on it.
+  const data = this.length === 0 ? [] : Array.from(this);
   return { type, data };
 }
 

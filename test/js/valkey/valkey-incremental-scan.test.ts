@@ -8,7 +8,21 @@ const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
 const HELLO =
   `%3${CRLF}` + bulk("server") + bulk("redis") + bulk("proto") + `:3${CRLF}` + bulk("version") + bulk("7.4.0");
 
-type PerSocket = { buf: Buffer; replied: boolean };
+type PerSocket = { buf: Buffer; replied: boolean; unsent: Buffer | null };
+
+/** Writes `reply`; whatever the socket does not take at once goes out on `drain`. */
+function writeReply(s: Socket<PerSocket>, reply: string) {
+  const bytes = Buffer.from(reply, "latin1");
+  s.data.unsent = s.data.unsent ? Buffer.concat([s.data.unsent, bytes]) : bytes;
+  flushUnsent(s);
+}
+
+function flushUnsent(s: Socket<PerSocket>) {
+  const st = s.data;
+  if (!st.unsent) return;
+  const written = Math.max(0, s.write(st.unsent));
+  st.unsent = written < st.unsent.length ? st.unsent.subarray(written) : null;
+}
 
 /**
  * Mock server: parses the client's RESP command frames
@@ -22,8 +36,9 @@ function createCommandServer(
     port: 0,
     socket: {
       open(s) {
-        s.data = { buf: Buffer.alloc(0), replied: false };
+        s.data = { buf: Buffer.alloc(0), replied: false, unsent: null };
       },
+      drain: flushUnsent,
       error() {},
       close() {},
       data(s, raw) {
@@ -90,16 +105,16 @@ function createReplyServer(
         };
         writeByte(0);
       } else {
-        s.write(reply.slice(0, splitAt));
+        writeReply(s, reply.slice(0, splitAt));
         s.flush();
         if (splitAt < reply.length) {
           // Yield twice so the first write reaches the client's `on_data`
           // before the second is sent.
-          setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
+          setImmediate(() => setImmediate(() => writeReply(s, reply.slice(splitAt))));
         }
       }
     } else {
-      s.write(`+OK${CRLF}`);
+      writeReply(s, `+OK${CRLF}`);
     }
   });
 }
@@ -133,8 +148,10 @@ const FRAMES: [name: string, frame: string, expected: Decoded][] = [
   ],
   ["big number above 2^53", `(9007199254740993${CRLF}`, { value: 9007199254740993n }],
   ["negative big number", `(-42${CRLF}`, { value: -42n }],
+  ["big number with an explicit plus sign", `(+42${CRLF}`, { value: 42n }],
   ["big number above 2^64", `(340282366920938463463374607431768211456${CRLF}`, { value: 2n ** 128n }],
   ["big number with a non-integer payload", `(12abc${CRLF}`, { value: "12abc" }],
+  ["big number with a sign and no digits", `(+${CRLF}`, { value: "+" }],
   [
     "simple error (-ERR)",
     `-ERR unknown command${CRLF}`,
@@ -181,6 +198,19 @@ describe.concurrent("Valkey reply decoding", () => {
       const value = await client.getBuffer("k");
       expect(value).toBeInstanceOf(Buffer);
       expect(value!.toString()).toBe("9007199254740993");
+    });
+  });
+
+  test("big number with more digits than a BigInt can hold resolves as a string", async () => {
+    // JavaScriptCore caps a BigInt at 2^20 bits, about 313,600 decimal digits.
+    // The RESP line limit is far above that.
+    const digits = Buffer.alloc(400_000, "7").toString();
+    const server = createReplyServer(`(${digits}${CRLF}`);
+    await withClient(server, async client => {
+      const value = await client.get("k");
+      expect(typeof value).toBe("string");
+      expect(value).toBe(digits);
+      expect(await client.send("PING", [])).toBe("OK");
     });
   });
 

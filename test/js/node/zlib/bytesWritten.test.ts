@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { expect, test } from "bun:test";
 import type { Transform } from "stream";
 import * as zlib from "zlib";

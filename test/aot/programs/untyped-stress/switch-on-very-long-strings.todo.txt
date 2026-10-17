@@ -1,0 +1,1 @@
+It needs is8BitString(), which only the jsc shell has.

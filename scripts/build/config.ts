@@ -115,6 +115,7 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  islands: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
@@ -173,7 +174,8 @@ export interface Config {
   webkit: WebKitMode;
   /**
    * Deps built from a local checkout instead of the pinned tarball, keyed by
-   * dep name → absolute source dir. Set via `--local-deps=name=path[,...]`.
+   * dep name → absolute source dir. Set via `--local-deps=name=path[,...]`;
+   * `webkit: "local"` is the WebKit entry ($BUN_WEBKIT_PATH or vendor/WebKit).
    * The checkout is used as-is: no fetch, no `.ref` stamp, and the dep's
    * `patches` are NOT applied (they target the pinned tarball; a fork
    * checkout is expected to carry whatever you're iterating on).
@@ -231,8 +233,6 @@ export interface Config {
    */
   clangResourceDir: string | undefined;
   ar: string;
-  /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
-  ranlib: string | undefined;
   /**
    * ld.lld on linux, lld-link on windows, ld64.lld when cross-compiling for
    * darwin from a non-darwin host. May be empty on native darwin (clang
@@ -262,7 +262,7 @@ export interface Config {
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
-  /** cmake executable. Required for nested dep builds. */
+  /** cmake executable: CI packages the zips with `cmake -E tar` (ci.ts). */
   cmake: string;
   /** cargo executable. undefined when no rust toolchain is available. */
   cargo: string | undefined;
@@ -291,10 +291,8 @@ export interface Config {
   rustHostTriple: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
-  /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
+  /** Windows: llvm-rc, compiles bun.exe's resources. */
   rc: string | undefined;
-  /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
-  mt: string | undefined;
   /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 
@@ -352,6 +350,7 @@ export interface PartialConfig {
   buildType?: BuildType;
   mode?: Mode;
   lto?: boolean;
+  islands?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
   asan?: boolean;
@@ -448,7 +447,6 @@ export interface Toolchain extends JsToolchain {
   /** `clang -print-resource-dir`. undefined on Windows. */
   clangResourceDir: string | undefined;
   ar: string;
-  ranlib: string | undefined;
   ld: string;
   /**
    * lld's Mach-O port (`ld64.lld`), resolved on non-darwin unix hosts.
@@ -489,19 +487,8 @@ export interface Toolchain extends JsToolchain {
    * (the GNU hard-link utility) from shadowing the real linker in PATH.
    */
   msvcLinker: string | undefined;
-  /**
-   * Windows only: llvm-rc (resource compiler). Passed to nested cmake
-   * as CMAKE_RC_COMPILER. cmake's own detection usually finds it, but
-   * that depends on PATH and cmake version — explicit is safer.
-   */
+  /** Windows only: llvm-rc (resource compiler). */
   rc: string | undefined;
-  /**
-   * Windows only: llvm-mt (manifest tool). Passed to nested cmake as
-   * CMAKE_MT. Optional — some LLVM distributions don't ship llvm-mt;
-   * when absent, cmake's STATIC_LIBRARY try-compile mode (set in
-   * source.ts) sidesteps the need.
-   */
-  mt: string | undefined;
   /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 }
@@ -1058,6 +1045,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // ─── Paths ───
   const vendorDir = resolve(cwd, "vendor");
 
+  const localDeps = parseLocalDeps(partial.localDeps, cwd);
+  const webkit = partial.webkit ?? (localDeps.WebKit !== undefined ? "local" : "prebuilt");
+  if (webkit === "local") {
+    localDeps.WebKit ??= expandLocalPath(process.env.BUN_WEBKIT_PATH || resolve(vendorDir, "WebKit"), cwd);
+  }
+
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(!valgrind || linux, "valgrind=true requires os=linux");
@@ -1204,7 +1197,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         });
       }
     }
-    if (partial.webkit === "local") {
+    if (webkit === "local") {
       throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
         hint: "Drop --webkit=local or build on a Windows host.",
       });
@@ -1221,7 +1214,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
-  // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
   // host: an extracted MacOSX*.sdk — explicit path, well-known install, or
   // auto-downloaded into the cache dir (see macos-sdk.ts / ensureMacosSdk()).
@@ -1240,6 +1232,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer; only `-mmacosx-version-min` decides what the binary runs on).
   let ld64StripSwap: { ld: string; strip: string } | undefined;
   if (darwinCross) {
+    if (webkit === "local") {
+      throw new BuildError("Cross-compiling for macOS requires the prebuilt WebKit", {
+        hint: "Drop --webkit=local or build on a macOS host.",
+      });
+    }
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
     osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
@@ -1291,6 +1288,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: "full",
     lto,
+    islands: (partial.islands ?? false) && (linux || (darwinCross && arm64)) && release && !asan,
     pgoGenerate,
     pgoUse,
     asan,
@@ -1312,8 +1310,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
-    webkit: partial.webkit ?? "prebuilt",
-    localDeps: parseLocalDeps(partial.localDeps, cwd),
+    webkit,
+    localDeps,
     packageManager,
     cwd,
     buildDir,
@@ -1328,7 +1326,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangVersion: toolchain.clangVersion,
     clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
-    ranlib: toolchain.ranlib,
     ld: ld64StripSwap?.ld ?? toolchain.ld,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
@@ -1365,7 +1362,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustHostTriple: toolchain.rustHostTriple,
     msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
-    mt: toolchain.mt,
     nasm: toolchain.nasm,
     osxDeploymentTarget,
     osxSysroot,
@@ -1538,12 +1534,19 @@ function parseLocalDeps(spec: string | undefined, cwd: string): Record<string, s
         hint: "Example: --local-deps=mimalloc=~/code/mimalloc",
       });
     }
-    const name = entry.slice(0, eq);
-    let path = entry.slice(eq + 1);
-    if (path === "~" || path.startsWith("~/")) path = join(homedir(), path.slice(1));
-    out[name] = resolve(cwd, path);
+    out[entry.slice(0, eq)] = expandLocalPath(entry.slice(eq + 1), cwd);
   }
   return out;
+}
+
+/**
+ * Shells don't expand `~` inside quotes or after `=`. Relative paths are
+ * anchored to the repo root so ninja's regen rule (which runs from buildDir)
+ * resolves the same path as the initial configure.
+ */
+function expandLocalPath(path: string, cwd: string): string {
+  if (path === "~" || path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(1));
+  return resolve(cwd, path);
 }
 
 /**
@@ -1668,6 +1671,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
+  if (cfg.islands) features.push("islands");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");
@@ -1684,7 +1688,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
-  for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
+  for (const name of Object.keys(cfg.localDeps)) if (name !== "WebKit") features.push(`local:${name}`);
   if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the

@@ -83,8 +83,8 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             parent = match parent {
                 // FOR SPEED: most steps are these two.
-                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                Parent::Expr(e) if e.is_some() => self.expr_parent_link(file, e),
+                Parent::Stmt(s) if s.is_some() => self.stmt_parent_link(file, s),
                 Parent::FnBody(f) => return Some(f),
                 Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
                 Parent::None | Parent::File => return None,
@@ -163,7 +163,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ExprKind::Call(c) | ExprKind::New(c) => {
                         if hir[c].callee != at
                             && self.p.calls.get(&self.task, &(file, parent)).is_none()
-                            && !self.stack.contains(&Query::Call(file, parent))
+                            && !self.is_in_flight(Query::Call(file, parent))
                         {
                             // No query is entered on the way up through calls in arguments of calls, so nothing else looks at the stack.
                             if self.is_stack_low() {
@@ -226,7 +226,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// element.
     fn prepare_jsx(&mut self, file: FileId, e: ExprId) {
         if self.p.calls.get(&self.task, &(file, e)).is_none()
-            && !self.stack.contains(&Query::Call(file, e))
+            && !self.is_in_flight(Query::Call(file, e))
         {
             self.prepare_context(file, e);
             self.resolved_signature(file, e);
@@ -356,7 +356,7 @@ impl<'p, 's> Checker<'p, 's> {
             PatKind::Array(elems) => {
                 let rest_element = elems.iter().next_back().filter(|&e| hir[e].is_rest);
                 if elems.is_empty() || (elems.len() == 1 && rest_element.is_some()) {
-                    if self.p.files.options.target == crate::resolve::ScriptTarget::ES5 {
+                    if self.check_options(file).target == crate::resolve::ScriptTarget::ES5 {
                         return Some(self.array_of(TypeId::ANY));
                     }
                     // `createIterableType`, `getGlobalIterableTypeChecked`
@@ -762,7 +762,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if prop.kind == PropKind::Spread {
                     return self.contextual_type(file, owner, context_flags);
                 }
-                let context = self.apparent_type_of_contextual_type(file, owner, context_flags)?;
+                let context = self.apparent_type_of_literal_context(file, owner, context_flags)?;
                 let name_expression = match prop.key {
                     PropKey::Computed(k) if is_dynamic_name(hir, k) => k,
                     // `symbol.Name`, as the binder has it. A missing name is the empty string.
@@ -917,9 +917,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn check_initializer_cached(&mut self, file: FileId, initializer: ExprId) -> Option<TypeId> {
         let q = Query::Expr(file, initializer);
         let from = self.resolution_start.min(self.stack.len());
-        let outermost = match self.may_be_in_flight(q) {
-            true => self.stack[from..].iter().position(|&visit| visit == q),
-            false => None,
+        let outermost = match self.innermost(q, from) {
+            Some(_) => self.stack[from..].iter().position(|&visit| visit == q),
+            None => None,
         };
         let Some(outermost) = outermost.map(|above| from + above) else {
             let outer = self.suspend_recheck();
@@ -1238,6 +1238,19 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         (!types.is_empty()).then(|| self.union_unreduced(&types))
+    }
+
+    /// The type an object literal is checked against, narrowed to the member of a union that its properties single out.
+    pub(super) fn contextual_type_of_literal_uncached(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<TypeId> {
+        if self.is_spread_part(file, e) {
+            return None;
+        }
+        self.prepare_enclosing(file, e);
+        self.apparent_type_of_contextual_type(file, e, ContextFlags::SKIP_BINDING_PATTERNS)
     }
 
     /// `getApparentTypeOfContextualType`
@@ -2219,7 +2232,7 @@ impl<'p, 's> Checker<'p, 's> {
             let sig = match fitting[..] {
                 [] => continue,
                 [only] => only,
-                _ => match self.intersected_signature(&fitting) {
+                _ => match self.intersected_signature(file, &fitting) {
                     Some(combined) => combined,
                     None => continue,
                 },
@@ -2282,14 +2295,14 @@ impl<'p, 's> Checker<'p, 's> {
         match fitting[..] {
             [] => None,
             [only] => Some(only),
-            _ => self.intersected_signature(&fitting),
+            _ => self.intersected_signature(file, &fitting),
         }
     }
 
     /// `getIntersectedSignatures`: a single signature for a function that must satisfy all of
     /// `sigs`.
-    pub(super) fn intersected_signature(&mut self, sigs: &[SigId]) -> Option<SigId> {
-        if !self.p.files.options.no_implicit_any {
+    pub(super) fn intersected_signature(&mut self, file: FileId, sigs: &[SigId]) -> Option<SigId> {
+        if !self.check_options(file).no_implicit_any {
             return None;
         }
         let mut combined: Option<SigId> = None;
@@ -2533,7 +2546,7 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.types().sig(sig) {
             SigData::Decl { file, func, .. } => {
                 let q = Query::ReturnAtFirstLook(file, func);
-                self.may_be_in_flight(q) && self.stack.contains(&q)
+                self.is_in_flight(q)
             }
             SigData::Synth { ref of, .. } => of.iter().any(|&s| self.is_at_first_look(s)),
             _ => false,

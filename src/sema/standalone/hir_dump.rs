@@ -96,6 +96,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         specifier_uses,
         deferred_import_calls,
         import_call_type_args: _,
+        folded_specifiers: _,
         import_attributes,
         specifier_expressions,
         exports_from_expressions: _,
@@ -1166,10 +1167,11 @@ impl Dump<'_, '_> {
             other_implements,
             members,
             start,
+            body_pos,
             modifiers,
         } = node!(self, depth, label, classes, id);
         let mut head = format!(
-            "Class name={} name_pos={name_pos} flags={flags:?} start={start}",
+            "Class name={} name_pos={name_pos} flags={flags:?} start={start} body_pos={body_pos}",
             self.q(name)
         );
         for modifier in self.file.modifier_list(modifiers) {

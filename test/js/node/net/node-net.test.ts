@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";

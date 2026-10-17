@@ -403,6 +403,28 @@ const promiseHooks = {
     isBuildingSnapshot: () => false,
   };
 
+hideFromStack(
+  notimpl,
+  throwNotBuildingSnapshot,
+  cachedDataVersionTag,
+  getHeapSnapshot,
+  getHeapStatistics,
+  getHeapSpaceStatistics,
+  getHeapCodeStatistics,
+  getCppHeapStatistics,
+  setFlagsFromString,
+  deserialize,
+  takeCoverage,
+  stopCoverage,
+  serialize,
+  writeHeapSnapshot,
+  setHeapSnapshotNearHeapLimit,
+  Deserializer,
+  Serializer,
+  DefaultDeserializer,
+  DefaultSerializer,
+);
+
 export default {
   cachedDataVersionTag,
   GCProfiler,
@@ -426,25 +448,3 @@ export default {
   DefaultDeserializer,
   DefaultSerializer,
 };
-
-hideFromStack(
-  notimpl,
-  throwNotBuildingSnapshot,
-  cachedDataVersionTag,
-  getHeapSnapshot,
-  getHeapStatistics,
-  getHeapSpaceStatistics,
-  getHeapCodeStatistics,
-  getCppHeapStatistics,
-  setFlagsFromString,
-  deserialize,
-  takeCoverage,
-  stopCoverage,
-  serialize,
-  writeHeapSnapshot,
-  setHeapSnapshotNearHeapLimit,
-  Deserializer,
-  Serializer,
-  DefaultDeserializer,
-  DefaultSerializer,
-);

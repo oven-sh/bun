@@ -1,0 +1,2 @@
+bytes alive for an object, its bound method and the array's slot: 72
+5050 400000 true

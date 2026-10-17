@@ -1,0 +1,5 @@
+{
+ "module": "all agree",
+ "sloppy": "as bun run",
+ "strict": "all agree"
+}

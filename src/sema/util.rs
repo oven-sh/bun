@@ -10,7 +10,38 @@ use memory::Newest;
 use std::alloc::{Allocator, Global};
 use std::hash::Hasher;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+pub struct Barrier {
+    parties: u32,
+    arrived: AtomicU32,
+    generation: AtomicU32,
+}
+
+impl Barrier {
+    pub fn new(parties: usize) -> Barrier {
+        Barrier {
+            parties: parties as u32,
+            arrived: AtomicU32::new(0),
+            generation: AtomicU32::new(0),
+        }
+    }
+
+    pub fn wait(&self) -> bool {
+        let generation = self.generation.load(Ordering::Acquire);
+        if self.arrived.fetch_add(1, Ordering::AcqRel) + 1 == self.parties {
+            self.arrived.store(0, Ordering::Relaxed);
+            self.generation
+                .store(generation.wrapping_add(1), Ordering::Release);
+            bun_threading::futex::wake(&self.generation, u32::MAX);
+            return true;
+        }
+        while self.generation.load(Ordering::Acquire) == generation {
+            bun_threading::futex::wait_forever(&self.generation, generation);
+        }
+        false
+    }
+}
 
 /// The hash rustc uses, as in `bun_collections::AutoContext`: keys here are small integers and short
 /// tuples of them. Nothing may depend on the order in which a map or a set iterates.
@@ -222,7 +253,7 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
 }
 
 /// `in_parallel(count, work)` runs `work(i)` exactly once for every `i` below `count`, on the pool, and returns when all have returned.
-pub type InParallel<'a> = &'a dyn Fn(usize, &(dyn Fn(usize) + Sync));
+pub type InParallel<'a> = &'a (dyn Fn(usize, &(dyn Fn(usize) + Sync)) + Sync);
 
 /// Runs `work(&mut items[i])` for every item, on the pool. The first items are started first.
 pub fn for_each_mut<T: Send>(
@@ -494,6 +525,12 @@ impl<K, V, A: Allocator + Clone> ShardedMap<K, V, A> {
 impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone> ShardedMap<K, V, A> {
     pub fn entries(&self) -> usize {
         self.shards.iter().map(|s| s.entries.len() as usize).sum()
+    }
+
+    pub fn into_each(mut self, mut take: impl FnMut(K, V)) {
+        for shard in self.shards.iter_mut() {
+            shard.entries.drain(|_, (key, value)| take(key, value));
+        }
     }
 
     /// Stored values never move.

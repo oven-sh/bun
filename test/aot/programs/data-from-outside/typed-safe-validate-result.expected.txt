@@ -1,0 +1,6 @@
+3.5 -1 -1 3
+8.5 n | 1 undefined | from.x: invalid_type; from.y: invalid_type; points.0: invalid_type; name: invalid_type
+{"success":true,"data":{"x":1,"y":2}} success,data 2
+{"success":false,"issues":[{"path":["x"],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"},{"path":["y"],"code":"invalid_type","expected":"number","received":"undefined","message":"Invalid input: expected number, received undefined"}]} success,issues Invalid input: expected number, received string
+{"success":false,"issues":[{"path":[],"code":"invalid_type","expected":"object","received":"null","message":"Invalid input: expected object, received null"}]} success,issues Invalid input: expected object, received null
+true {"data":{"x":1,"y":2}} true false false

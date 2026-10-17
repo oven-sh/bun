@@ -99,6 +99,23 @@ const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
 #[cold]
 #[inline(never)]
 pub fn keyword_suggestion(word: &[u8]) -> Option<Vec<u8>> {
+    thread_local! {
+        static KNOWN: std::cell::RefCell<bun_sema::util::FxHashMap<Box<[u8]>, Option<Vec<u8>>>> = Default::default();
+    }
+    if let Some(known) = KNOWN.with_borrow(|known| known.get(word).cloned()) {
+        return known;
+    }
+    let found = find_keyword_suggestion(word);
+    KNOWN.with_borrow_mut(|known| {
+        if known.len() >= 1 << 16 {
+            known.clear();
+        }
+        known.insert(word.into(), found.clone());
+    });
+    found
+}
+
+fn find_keyword_suggestion(word: &[u8]) -> Option<Vec<u8>> {
     let keywords = KEYWORD_SUGGESTIONS.iter().copied();
     match bun_sema::check::get_spelling_suggestion(word, keywords, |c| c, |a, b| a.cmp(b)) {
         Some(keyword) => Some(keyword.to_vec()),

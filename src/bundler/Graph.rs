@@ -83,6 +83,9 @@ pub struct Graph<'a> {
     pub(crate) css_file_count: usize,
 
     pub(crate) additional_output_files: Vec<options::OutputFile>,
+    /// Where modules keep their paths: what each specifier that is written in the program was resolved to:
+    /// `StandaloneModuleGraph::resolution`.
+    pub(crate) program_resolutions: Vec<u8>,
 
     pub(crate) kit_referenced_server_data: bool,
     pub(crate) kit_referenced_client_data: bool,
@@ -152,6 +155,8 @@ bitflags::bitflags! {
         const IS_EXPORT_STAR_TARGET = 1 << 1;
         /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
         const IS_LOADED_BY_PLUGIN = 1 << 2;
+        const IS_LEFT_TO_THE_HOST = 1 << 3;
+        const MATCHES_ON_LOAD_PLUGIN = 1 << 4;
     }
 }
 
@@ -176,6 +181,7 @@ impl<'a> Graph<'a> {
             estimated_file_loader_count: 0,
             css_file_count: 0,
             additional_output_files: Vec::new(),
+            program_resolutions: Vec::new(),
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,

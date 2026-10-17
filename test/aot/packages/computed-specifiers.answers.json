@@ -1,0 +1,9 @@
+{
+  "variable.imp_concat.mjs": "compiled",
+  "variable.imp_template.mjs": "compiled",
+  "variable.req_any_bundled.cjs": "compiled",
+  "variable.req_concat.cjs": "compiled",
+  "variable.req_noext.cjs": "compiled",
+  "variable.req_template.cjs": "compiled",
+  "variable.req_try.cjs": "compiled"
+}

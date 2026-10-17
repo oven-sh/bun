@@ -492,6 +492,15 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
+    pub use_aot: bool,
+    pub crash_if_interpreter_is_used: bool,
+}
+
+static COMPILES_WITH_WIDE_REFERENCES: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn compile_with_wide_references() {
+    COMPILES_WITH_WIDE_REFERENCES.store(true, core::sync::atomic::Ordering::Relaxed);
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -511,8 +520,13 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            options.use_aot,
+            options.crash_if_interpreter_is_used,
         )
     };
+    if COMPILES_WITH_WIDE_REFERENCES.swap(false, core::sync::atomic::Ordering::Relaxed) {
+        Bun__AOT__useWideReferences();
+    }
 }
 
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
@@ -845,6 +859,7 @@ pub mod resolved_source_tag {
         pub const ExportDefaultObject: Self = Self(9);
         /// Signal upwards that the matching value in `require.extensions` should be used.
         pub const CommonJsCustomExtension: Self = Self(10);
+        pub const ExportDefaultOnly: Self = Self(11);
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
@@ -1571,8 +1586,11 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        use_aot: bool,
+        crash_if_interpreter_is_used: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    safe fn Bun__AOT__useWideReferences();
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

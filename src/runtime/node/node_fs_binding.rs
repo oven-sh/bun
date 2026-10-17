@@ -45,6 +45,9 @@ where
         .node_fs
         .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
     match result {
+        Err(_) if global.ignores_host_function_exception() => {
+            Err(global.throw_value(JSValue::UNDEFINED))
+        }
         Err(err) => Err(global.throw_value(err.to_js(global))),
         Ok(res) => res.fs_to_js(global),
     }
@@ -279,8 +282,8 @@ impl Binding {
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
-        let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
-            && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
+        let is_bunfs = bun_standalone_graph::Graph::get_ref()
+            .is_some_and(|graph| graph.lists(rd_args.path.slice()));
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
                 &global.js_thread_of_caller(frame),

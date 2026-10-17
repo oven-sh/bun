@@ -154,6 +154,10 @@ pub struct VirtualMachine {
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
+    /// The entry point was compiled ahead of time, together with what `bun:main` does after it.
+    pub main_is_compiled: bool,
+    pub starts_server_natively: bool,
+    pub did_look_for_server: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -199,6 +203,7 @@ pub struct VirtualMachine {
     // object here so `init_with_module_graph` can hand it straight to
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    pub finds_entry_points_by_path: bool,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -536,6 +541,27 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleSourcePath(
+    name: *const u8,
+    len: usize,
+    out_len: *mut usize,
+) -> *const u8 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
+        return core::ptr::null();
+    }
+    match standalone_module_graph().and_then(|graph| graph.source_path(name)) {
+        Some(source_path) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
+            unsafe { *out_len = source_path.len() };
+            source_path.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
+}
+
 /// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key whose file carries a serialized ES module record, i.e.
 /// one the loader can register ahead of JSC's graph walk (CommonJS, JSON, assets take the normal path).
 #[unsafe(no_mangle)]
@@ -582,6 +608,28 @@ pub unsafe extern "C" fn Bun__standalonePrelinkedModuleIndex(name: *const u8, le
         return u32::MAX;
     }
     standalone_module_graph().map_or(u32::MAX, |graph| graph.prelinked_module_index(name))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleIsCompiled(name: *const u8, len: usize) -> bool {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    standalone_module_graph().is_some_and(|graph| graph.is_compiled_module(name))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneCompiledProgramSources(out_len: *mut usize) -> *const u8 {
+    let paths = standalone_module_graph().map_or(&[][..], |graph| graph.compiled_program_sources());
+    // SAFETY: `out_len` is the caller's writable out-parameter.
+    unsafe { *out_len = paths.len() };
+    paths.as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleIsInternal(name: *const u8, len: usize) -> bool {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    standalone_module_graph().is_some_and(|graph| graph.is_internal_module(name))
 }
 
 /// The module key (canonical embedded name) of graph module `index`; null if out of range.
@@ -771,11 +819,25 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+        if !vm.transpiler.options.disable_transpilation
+            && !vm.main_is_html_entrypoint
+            && !vm.main_is_compiled
+            && !vm.starts_server_natively
+        {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
             bun_core::StringView::borrow_utf8(vm.main())
         }
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__shouldLookForServer(vm: &VirtualMachine) -> bool {
+        vm.starts_server_natively && !vm.did_look_for_server
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__didLookForServer(vm: &mut VirtualMachine) {
+        vm.did_look_for_server = true;
     }
 
     #[unsafe(no_mangle)]
@@ -1470,6 +1532,23 @@ impl VirtualMachine {
         }
         // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
+    }
+
+    fn use_aot_image(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+        unsafe extern "C" {
+            fn Bun__AOT__useImage(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let image = graph.aot_image();
+            if image.is_empty() {
+                return;
+            }
+            let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
+            // SAFETY: `image` is a part of the `'static` graph, which is never unmapped.
+            unsafe { Bun__AOT__useImage(image.as_ptr(), image.len(), fd, offset_in_file) };
+            bun_analytics::features::aot.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        });
     }
 
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
@@ -3104,6 +3183,9 @@ unsafe extern "C" {
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
     safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    safe fn Bun__AOT__isCompiledEntryPoint(module: u32) -> bool;
+    fn Bun__lookForServerAfterEvaluation(global: &JSGlobalObject, promise: *mut JSInternalPromise);
+    safe fn Bun__isCompiledProgramFile(global: &JSGlobalObject, path: &bun_core::String) -> bool;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3267,6 +3349,10 @@ impl VirtualMachine {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
+            addr_of_mut!((*vm).finds_entry_points_by_path).write(
+                opts.graph
+                    .is_some_and(|graph| graph.has_entry_point_paths()),
+            );
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
@@ -3312,6 +3398,11 @@ impl VirtualMachine {
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
         // ZigGlobalObject.cpp:473/961).
         unsafe { (*vm).regular_event_loop.ensure_waker() };
+        if opts.is_main_thread {
+            if let Some(graph) = standalone_module_graph() {
+                Self::use_aot_image(graph);
+            }
+        }
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).
@@ -3488,7 +3579,21 @@ impl VirtualMachine {
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
 
-        if !self.main_is_html_entrypoint {
+        let is_compiled = self.is_compiled_entry_point(entry_path);
+        self.has_loaded = is_compiled
+            && self
+                .standalone_module_graph
+                .is_some_and(|graph| graph.preserves_source_paths());
+        self.main_is_compiled = is_compiled;
+        self.starts_server_natively = !is_compiled
+            && !self.main_is_html_entrypoint
+            && !self.transpiler.options.disable_transpilation
+            && self.preload.is_empty()
+            && self.standalone_module_graph.is_some()
+            && Bun__isCompiledProgramFile(self.global(), &bun_core::String::from_bytes(entry_path));
+        self.did_look_for_server = false;
+
+        if !self.main_is_html_entrypoint && !self.main_is_compiled && !self.starts_server_natively {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
                 if !(hooks.generate_entry_point)(self, watch, entry_path) {
@@ -3513,7 +3618,14 @@ impl VirtualMachine {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)?;
+                    let argv1 = bun_string_jsc::create_utf8_for_js(
+                        global_ref,
+                        if self.main_is_compiled {
+                            self.main()
+                        } else {
+                            MAIN_FILE_NAME
+                        },
+                    )?;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3557,7 +3669,19 @@ impl VirtualMachine {
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
-            let promise = if !self.main_is_html_entrypoint {
+            let promise = if self.main_is_compiled || self.starts_server_natively {
+                let main_str = bun_core::String::from_bytes(self.main());
+                let promise = jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
+                    global, &main_str,
+                )
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?;
+                if self.starts_server_natively {
+                    // SAFETY: `promise` is a live JSC heap cell.
+                    unsafe { Bun__lookForServerAfterEvaluation(global_ref, promise) };
+                }
+                promise
+            } else if !self.main_is_html_entrypoint {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                     .map(NonNull::as_ptr)
@@ -4110,6 +4234,23 @@ pub fn collect_macro_vm_garbage() {
     debug_assert!(!vm_ref.is_main_thread);
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
     vm_ref.jsc_vm().run_gc(true);
+}
+
+fn path_from_build_folder(frame_url: &bun_core::String) -> Option<bun_core::String> {
+    let url = frame_url.to_utf8();
+    let mut rest = url.slice().strip_prefix(b"/$bunfs/root/")?;
+    if standalone_module_graph()
+        .is_some_and(|graph| graph.find_assume_standalone_path(url.slice()).is_some())
+    {
+        return None;
+    }
+    let mut path = Vec::new();
+    while let Some(inner) = rest.strip_prefix(b"_.._/") {
+        path.extend_from_slice(b"../");
+        rest = inner;
+    }
+    path.extend_from_slice(rest);
+    Some(bun_core::String::clone_utf8(&path))
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {
@@ -4753,6 +4894,7 @@ impl VirtualMachine {
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
+        vm_ref.dns_result_order = opts.dns_result_order;
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
@@ -5062,6 +5204,7 @@ impl VirtualMachine {
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),
+            function_sources: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -5163,7 +5306,7 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
-        let source_to_use: &[u8] = if !is_special_source {
+        let mut source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
                 // re-slice of `source`, which the caller guarantees outlives
@@ -5186,6 +5329,8 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        let mut may_retry_from_source_path = is_a_file_path && !is_special_source;
+        let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5201,6 +5346,27 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                    if core::mem::take(&mut may_retry_from_source_path) {
+                        if let Some(source_path) = self
+                            .standalone_module_graph
+                            .and_then(|graph| graph.source_path(source))
+                        {
+                            source_to_use = bun_resolver::fs::PathName::init(source_path)
+                                .dir_with_trailing_slash();
+                            retry_on_not_found = true;
+                            continue;
+                        }
+                    }
+                    if core::mem::take(&mut may_retry_from_root)
+                        && let Some(root) = self
+                            .standalone_module_graph
+                            .map(|graph| graph.base_public_path_with_default_suffix())
+                            .filter(|root| !source_to_use.starts_with(root))
+                    {
+                        source_to_use = root;
+                        retry_on_not_found = true;
+                        continue;
+                    }
                     if !retry_on_not_found {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
@@ -5271,6 +5437,13 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        if self.finds_entry_points_by_path
+            && let Some(name) = self
+                .standalone_module_graph
+                .and_then(|graph| graph.find_by_source_path(ret.path))
+        {
+            ret.path = name;
+        }
 
         Ok(())
     }
@@ -5659,11 +5832,20 @@ impl VirtualMachine {
     }
 
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
+    fn is_compiled_entry_point(&self, entry_path: &[u8]) -> bool {
+        (self.standalone_module_graph)
+            .and_then(|graph| graph.program_data_index(entry_path))
+            .is_some_and(|module| Bun__AOT__isCompiledEntryPoint(module))
+    }
+
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        self.has_loaded = false;
+        self.has_loaded = self.is_compiled_entry_point(entry_path)
+            && self
+                .standalone_module_graph
+                .is_some_and(|graph| graph.preserves_source_paths());
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
@@ -6509,6 +6691,11 @@ impl VirtualMachine {
         fn is_unknown_source(url: &bun_core::String) -> bool {
             url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
         }
+        fn is_noisy_frame(f: &crate::ZigStackFrame) -> bool {
+            is_noisy_builtin(&f.function_name)
+                && (is_unknown_source(&f.source_url)
+                    || f.source_url.eq_ascii(b"internal:process/next_tick_queue"))
+        }
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
@@ -6525,7 +6712,7 @@ impl VirtualMachine {
                 }
                 // Workaround for being unable to hide that specific frame
                 // without also hiding the frame before it.
-                if is_unknown_source(&frame.source_url) && is_noisy_builtin(&frame.function_name) {
+                if is_noisy_frame(frame) {
                     start_index = Some(0);
                     break;
                 }
@@ -6537,9 +6724,7 @@ impl VirtualMachine {
                     if is_hidden_frame(frame) {
                         continue;
                     }
-                    if is_unknown_source(&frame.source_url)
-                        && is_noisy_builtin(&frame.function_name)
-                    {
+                    if is_noisy_frame(frame) {
                         continue;
                     }
                     // Swap rather than overwrite: the discarded tail past `j`
@@ -6654,10 +6839,11 @@ impl VirtualMachine {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 let mut log = bun_ast::Log::default();
+                let on_disk = path_from_build_folder(&frames[top].source_url);
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
-                    &frames[top].source_url,
+                    on_disk.as_ref().unwrap_or(&frames[top].source_url),
                     &bun_core::String::EMPTY,
                     &mut log,
                     FetchFlags::PrintSource,

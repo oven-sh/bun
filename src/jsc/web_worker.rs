@@ -902,7 +902,11 @@ impl WebWorker {
                 // Same rule as the main thread (run_command): a CJS worker
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
-                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
+                unsafe extern "C" {
+                    fn JSC__AOT__entryPointIsCommonJS(global: *const JSGlobalObject) -> bool;
+                }
+                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs
+                    && !JSC__AOT__entryPointIsCommonJS(vm.global());
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
@@ -1318,10 +1322,15 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
-    Some(
-        resolved_entry_point
-            .path_const()
-            .expect("resolve_entry_point rejects disabled results")
-            .text,
-    )
+    let path = resolved_entry_point
+        .path_const()
+        .expect("resolve_entry_point rejects disabled results")
+        .text;
+    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
+    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+        && let Some(name) = graph.find_by_source_path(path)
+    {
+        return Some(name);
+    }
+    Some(path)
 }

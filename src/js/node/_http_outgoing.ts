@@ -5,7 +5,17 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const {
+  kOutHeaders,
+  kNeedDrain,
+  kErrored,
+  kHighWaterMark,
+  kSocket,
+  kRejectNonStandardBodyWrites,
+  kUniqueHeaders,
+  kHandle,
+  utcDate,
+} = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -110,14 +120,9 @@ function validatedLowercaseHeaderName(name) {
 }
 
 const kCorked = Symbol("corked");
-const kSocket = Symbol("kSocket");
 const kChunkedBuffer = Symbol("kChunkedBuffer");
 const kChunkedLength = Symbol("kChunkedLength");
-const kUniqueHeaders = Symbol("kUniqueHeaders");
 const kBytesWritten = Symbol("kBytesWritten");
-const kErrored = Symbol("errored");
-const kHighWaterMark = Symbol("kHighWaterMark");
-const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kLenientValidation = Symbol("kLenientValidation");
 
 const nop = () => {};
@@ -135,8 +140,22 @@ function isContentDispositionField(s) {
   return s.length === 19 && s.toLowerCase() === "content-disposition";
 }
 
-function OutgoingMessage(options) {
-  Stream.$call(this, options);
+function OutgoingMessage(
+  options,
+  highWaterMark: any = undefined,
+  rejectNonStandardBodyWrites: any = undefined,
+  keepAliveTimeout: any = undefined,
+) {
+  if (options === kHandle) {
+    Stream.$call(this, undefined);
+    highWaterMark ??= getDefaultHighWaterMark();
+    if (rejectNonStandardBodyWrites === undefined) rejectNonStandardBodyWrites = false;
+  } else {
+    Stream.$call(this, options);
+    highWaterMark = options?.highWaterMark ?? getDefaultHighWaterMark();
+    rejectNonStandardBodyWrites = options?.rejectNonStandardBodyWrites ?? false;
+    keepAliveTimeout = 0;
+  }
 
   // Queue that holds all currently pending data, until the response will be
   // assigned to the socket (until it will its turn in the HTTP pipeline).
@@ -180,13 +199,13 @@ function OutgoingMessage(options) {
   this._header = null;
   this[kOutHeaders] = null;
 
-  this._keepAliveTimeout = 0;
+  this._keepAliveTimeout = keepAliveTimeout;
 
   this._onPendingData = nop;
 
   this[kErrored] = null;
-  this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
-  this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
+  this[kHighWaterMark] = highWaterMark;
+  this[kRejectNonStandardBodyWrites] = rejectNonStandardBodyWrites;
   // Declared here so the memoizing _isLenientHeaderValidation never
   // shape-transitions the message when it caches.
   this[kLenientValidation] = undefined;

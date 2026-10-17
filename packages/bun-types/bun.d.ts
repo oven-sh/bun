@@ -14,6 +14,102 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  /**
+   * A whole number from -2147483648 to 2147483647.
+   *
+   * To TypeScript, and to Bun without `--aot`, this is `number`. `bun build --compile --aot` keeps a
+   * variable, field, parameter or result of this type in four bytes, and arithmetic on it needs no
+   * check for fractions. Nothing is checked when the program runs: the build proves that every value
+   * stored there is an int32, and reports an error where it cannot. `| 0` makes any number one.
+   *
+   * ```ts
+   * import type { int32 } from "bun";
+   * class Cursor { line: int32 = 0; column: int32 = 0; }
+   * function advance(cursor: Cursor, by: int32) {
+   *   cursor.column = (cursor.column + by) | 0; // without `| 0` the sum could overflow: error TS100031
+   * }
+   * ```
+   */
+  type int32 = number;
+  /** One reason why {@link validate}, {@link safeValidate} or {@link parse} refused a value. */
+  interface ValidationIssue {
+    /** Where the value stands in what was handed over: property names and array indices. */
+    path: (string | number)[];
+    /** `"invalid_type"`, `"invalid_value"`, `"invalid_union"`, `"too_small"`, `"too_big"`, `"not_multiple_of"`, `"invalid_format"` or `"unrecognized_keys"`. */
+    code: string;
+    expected: string;
+    received: string;
+    message: string;
+  }
+  /**
+   * Checks `value` against the TypeScript type `T` and returns a copy of it that is a `T`.
+   * Throws a `TypeError` whose `issues` property lists every {@link ValidationIssue} otherwise.
+   *
+   * Properties that `T` does not declare are left out of the copy, unless `T` has an index signature.
+   * Available in programs built or run with `--aot`.
+   *
+   * ```ts
+   * import type { Int, Min, MaxLength } from "bun";
+   * interface Order { id: number & Int & Min<1>; note?: string & MaxLength<100> }
+   * const order = Bun.validate<Order>(await request.json());
+   * ```
+   */
+  function validate<T>(value: unknown): T;
+  /**
+   * Parses `text` as JSON and checks the result against the TypeScript type `T`, as {@link validate} does, with one difference:
+   * an optional property whose value does not match its type is left out instead of being an issue.
+   * Throws a `SyntaxError` for text that is not JSON.
+   */
+  function parse<T>(text: string): T;
+  /** {@link validate}, but returns the issues instead of throwing them. */
+  function safeValidate<T>(value: unknown): { success: true; data: T } | { success: false; issues: ValidationIssue[] };
+  /** What {@link schema} returns: a [Standard Schema](https://standardschema.dev). */
+  interface Schema<T> {
+    readonly "~standard": {
+      readonly version: 1;
+      readonly vendor: "bun";
+      readonly validate: (
+        value: unknown,
+      ) => { readonly value: T; readonly issues?: undefined } | { readonly issues: readonly ValidationIssue[] };
+      readonly types?: { readonly input: unknown; readonly output: T };
+    };
+  }
+  /** The checks of {@link validate} for the type `T` as an object that libraries which take a Standard Schema accept. */
+  function schema<T>(): Schema<T>;
+  /** `number & Int`: a whole number. */
+  type Int = { readonly "bun.int"?: true };
+  /** `number & Min<1>`: at least 1. */
+  type Min<N extends number> = { readonly "bun.min"?: N };
+  /** `number & Max<100>`: at most 100. */
+  type Max<N extends number> = { readonly "bun.max"?: N };
+  /** `number & Above<0>`: more than 0. */
+  type Above<N extends number> = { readonly "bun.above"?: N };
+  /** `number & Below<1>`: less than 1. */
+  type Below<N extends number> = { readonly "bun.below"?: N };
+  /** `number & MultipleOf<5>` */
+  type MultipleOf<N extends number> = { readonly "bun.multipleOf"?: N };
+  /** `string & MinLength<1>` */
+  type MinLength<N extends number> = { readonly "bun.minLength"?: N };
+  /** `string & MaxLength<100>` */
+  type MaxLength<N extends number> = { readonly "bun.maxLength"?: N };
+  /** `string[] & MinItems<1>` */
+  type MinItems<N extends number> = { readonly "bun.minItems"?: N };
+  /** `string[] & MaxItems<10>` */
+  type MaxItems<N extends number> = { readonly "bun.maxItems"?: N };
+  /** `string & Pattern<"^[a-z]+$">`: the source of a regular expression that the string must match. */
+  type Pattern<S extends string> = { readonly "bun.pattern"?: S };
+  /** `string & Format<"uuid">` */
+  type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = {
+    readonly "bun.format"?: S;
+  };
+  /** `number & Min<1> & Message<"Order at least one">`: the message of the issues about this value. */
+  type Message<S extends string> = { readonly "bun.message"?: S };
+  /** `number & Default<8080>`: what stands in for `undefined` or a missing property. */
+  type Default<V extends string | number | boolean | null> = { readonly "bun.default"?: V };
+  /** `{ id: number } & Strict`: a property that the type does not declare is an issue. */
+  type Strict = { readonly "bun.strict"?: true };
+  /** {@link Strict} for the type and for every object type within it. */
+  type DeepStrict = { readonly "bun.strict"?: "deep" };
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
@@ -3538,6 +3634,20 @@ declare module "bun" {
     check?: boolean;
 
     /**
+     * Write a TypeScript declaration file (`.d.ts`) for each entry point.
+     * The entry points and everything they import are type checked first, as with `check`.
+     * Equivalent to `--dts` in the CLI.
+     *
+     * Each JavaScript output file is also written once more with its TypeScript types kept
+     * (`index.js` and `index.sound.ts`), and the first line of `index.d.ts` is a comment that names
+     * that file. `bun build --compile --aot` compiles a package from these files, so that it knows
+     * the types inside the package. Every other tool reads `index.d.ts` as before.
+     *
+     * @default false
+     */
+    dts?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -3737,10 +3847,16 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
+  type AotReport = "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json" | "costs" | "costs-json";
+
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;
+    /**
+     * Leave the parts of Bun that no compiled program can reach out of the executable.
+     */
+    trimRuntime?: boolean;
     outfile?: string;
     /**
      * Files or directories to embed into the executable under their original
@@ -3750,6 +3866,15 @@ declare module "bun" {
      * Equivalent CLI flag: `--asset` (repeatable)
      */
     assets?: string[];
+    /**
+     * With `aot`: whether the executable keeps the source text that `Function.prototype.toString()`
+     * returns for a compiled function. Without it, `toString()` returns `function name() { [native code] }`.
+     *
+     * Equivalent CLI flags: `--compile-function-source`, `--no-compile-function-source`
+     *
+     * @default true
+     */
+    functionSource?: boolean;
     /**
      * Whether the standalone executable loads .env files when it runs
      *
@@ -3782,6 +3907,55 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * Compile the bundle's JavaScript to machine code when the executable is built,
+     * instead of when it runs. Implies `bytecode: true`.
+     *
+     * The executable runs with the JIT off. Code the build cannot see, such as
+     * `eval` and `new Function`, is interpreted.
+     *
+     * Built-in objects are immutable in the executable: assigning to an existing
+     * property of one, such as `Array.prototype.push` or `Math.random`, throws a
+     * `TypeError` in strict mode and does nothing in sloppy mode. `bun:ffi` and the
+     * debugger are not available.
+     *
+     * Requires `format: "esm"` (the default with `aot`), and a `target` that is the
+     * platform and version of Bun that runs the build. `Bun.build` throws when it
+     * cannot compile ahead of time.
+     *
+     * Equivalent CLI flag: `--aot`
+     *
+     * @default false
+     */
+    aot?: boolean;
+    /**
+     * With `aot`: what the executable does when a value does not match its TypeScript type.
+     *
+     * - `"throw"`: throw a `TypeError`
+     * - `"log"`: write one line with the location, the expected type and the kind of value it got,
+     *   never the value itself, and continue as JavaScript where it can. Lines go to stderr, or to the
+     *   file named by the environment variable `BUN_AOT_TYPE_ERROR_LOG` when the executable runs.
+     *
+     * Use `"log"` to run a new `aot` build in production before you switch to `"throw"`.
+     *
+     * Equivalent CLI flag: `--aot-type-errors`
+     *
+     * @default "throw"
+     */
+    aotTypeErrors?: "throw" | "log";
+    /**
+     * With `aot`: reports to add to the `logs` of the build, at level `"verbose"`.
+     *
+     * - `"throws"`: every type check that can fail when the program runs, where the value comes from and how to fix it
+     * - `"throws-all"`: also the checks that can only fail if typed code produced a value of the wrong type
+     * - `"throws-json"`, `"throws-all-json"`: the same, one JSON object per line
+     * - `"rules-json"`: what the rules of `[aot]` in bunfig.toml found, one JSON object per line
+     * - `"costs"`: the places where the compiler cannot use the types, with what each costs and how to fix it, the most expensive first
+     * - `"costs-json"`: the same, one JSON object per line
+     *
+     * Equivalent CLI flag: `--aot-explain`
+     */
+    aotExplain?: AotReport | AotReport[];
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *
@@ -4370,7 +4544,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "declaration" | "sound";
     sourcemap: BuildArtifact | null;
   }
 

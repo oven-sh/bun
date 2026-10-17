@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "crypto";
 import fs from "fs";

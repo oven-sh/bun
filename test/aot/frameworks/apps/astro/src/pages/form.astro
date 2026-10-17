@@ -1,0 +1,10 @@
+---
+import Layout from "../layouts/Layout.astro";
+let said = "nothing yet";
+if (Astro.request.method === "POST") {
+  const word = String((await Astro.request.formData()).get("word") ?? "");
+  Astro.cookies.set("remembered", word.toUpperCase(), { path: "/" });
+  said = "saved " + word.length;
+}
+---
+<Layout title="form"><form method="POST"><input name="word" /><button>remember</button></form><p>remembered {Astro.cookies.get("remembered")?.value ?? "nothing"}; {said}</p></Layout>

@@ -651,6 +651,45 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
+static EncodedJSValue validateByPlan(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, ASCIILiteral name, unsigned planIndex)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!callFrame->argument(planIndex).isString()) {
+        throwTypeError(lexicalGlobalObject, scope, makeString("Bun."_s, name, "<T>() checks a value against a TypeScript type, which Bun knows only with --aot. Run the program with `bun run --aot`, or build it with `bun build --compile --aot`."_s));
+        return {};
+    }
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue functions = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalValidationPlans);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue function = functions.getObject()->get(globalObject, Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, {});
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 0; i < callFrame->argumentCount(); i++)
+        arguments.append(callFrame->uncheckedArgument(i));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, function, arguments, name)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBunValidate, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return validateByPlan(globalObject, callFrame, "validate"_s, 1);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBunParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return validateByPlan(globalObject, callFrame, "parse"_s, 1);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBunSafeValidate, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return validateByPlan(globalObject, callFrame, "safeValidate"_s, 1);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBunSchema, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return validateByPlan(globalObject, callFrame, "schema"_s, 0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1007,6 +1046,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
     postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
     SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback
+    parse                                          functionBunParse                                                    DontDelete|Function 1
+    safeValidate                                   functionBunSafeValidate                                             DontDelete|Function 1
+    schema                                         functionBunSchema                                                   DontDelete|Function 0
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         Bun::Bindgen::Generated::BunObject::jsShrink                        DontDelete|Function 0
@@ -1023,6 +1065,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         Bun::Bindgen::Generated::UnsafeObject::createUnsafe                 DontDelete|PropertyCallback
+    validate                                       functionBunValidate                                                 DontDelete|Function 1
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
     which                                          Bun::Bindgen::Generated::BunObject::jsWhich                         DontDelete|Function 1

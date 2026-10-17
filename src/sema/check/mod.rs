@@ -10,6 +10,7 @@ macro_rules! cat {
 }
 
 mod alias;
+mod aot;
 mod call;
 mod check_source_file;
 mod context;
@@ -102,6 +103,7 @@ use errors_names_and_exports::{root_declaration, root_pattern};
 use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
 use errors_type_nodes::start_of_type;
+pub(crate) use mapped::combine_surrogate_pairs;
 pub use regexp_scanner::get_spelling_suggestion;
 use regexp_scanner::spelling_suggestion;
 use shape::members_among;
@@ -117,6 +119,32 @@ use std::sync::atomic::AtomicBool;
 use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
+pub use aot::Identity;
+pub use aot::ImportedCode;
+pub use aot::locked_builtins;
+pub use aot::nullish_flow;
+pub use aot::{
+    Activation, Capture, CapturedVariable, DeclaredClosure, NotCopiedReason, Receiver, argument_use,
+};
+pub use aot::{AddedMembers, ClassFacts, MethodStore, ReplacedMethods};
+pub use aot::{AotCheck, AotCheckKind};
+pub use aot::{
+    BuiltIn, Candidate, DataOrigin, FilePartition, FlowNotes, KindsDeclared, LayoutUsage, Literal,
+    Membership, Place, SearchBarrier, SubtypeAnswer, SubtypeQuery, TruncatedSearch, UntypedReason,
+};
+pub use aot::{Callee, SingleFunction};
+pub use aot::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
+pub use aot::{Claim, is_engine_global, is_typed_array_class};
+pub use aot::{
+    CodeOwner, FlowNode, FlowSource, Int32Verdict, NotInt32Reason, NumberFlow, expected_int32,
+};
+pub use aot::{CommonJsExports, ExportsReference};
+pub use aot::{
+    Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule,
+    ValidationCall, ValidationPlan,
+};
+pub use aot::{ConstantSymbol, FieldKey};
+pub use aot::{EvaluationTime, FirstStore, Primitive, ReferenceRead, Storage, kind};
 pub use call::ResolvedCall;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
@@ -163,7 +191,7 @@ macro_rules! buffered_fields {
             type_predicates_from_body initializer_is_undefined circular_initializers circular_returns deferred_nodes
             resolved_parameter_symbols
             calls_before_signatures untyped_signatures_in_js jsx_fragment_types assignments_marked
-            blocks_too_large_for_flow_analysis
+            blocks_too_large_for_flow_analysis kept_types
         )
     };
 }
@@ -182,6 +210,24 @@ pub(crate) use file_local_fields;
 /// The signature passed to `assignContextualParameterTypes`, if it was called, and whether
 /// `instantiateSignature` created it for the call.
 pub(crate) type AssignedSignature = (Option<SigId>, bool);
+
+#[derive(Default)]
+pub struct CommentDirectives(errors_aliases::Directives);
+
+impl CommentDirectives {
+    pub fn silence(&mut self, file: FileId, hir: &hir::File, start: u32) -> bool {
+        self.0.preceding(file, hir, start) != sink::NO_DIRECTIVE
+    }
+}
+
+pub struct CompilerDiagnostic {
+    pub file: FileId,
+    pub start: u32,
+    pub end: u32,
+    pub code: u32,
+    pub args: Vec<Vec<u8>>,
+    pub related: Vec<CompilerDiagnostic>,
+}
 
 pub struct Program<'s> {
     /// The arenas that the program and everything computed from it are in.
@@ -206,6 +252,9 @@ pub struct Program<'s> {
     /// What `check_external_emit_helpers_of_later_files` has reported, of all tasks. `finish_file`
     /// keeps the first of each. It does not depend on which task comes first.
     emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
+    pub compiler_diagnostics: Guarded<Vec<CompilerDiagnostic>>,
+    pub rule_scopes: std::sync::OnceLock<crate::aot_rules::Scopes>,
+    pub compiled_untyped: Guarded<Vec<CompilerDiagnostic>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -273,6 +322,10 @@ pub struct Program<'s> {
     sink: sink::Sink<'s>,
     /// `MappedType.containsError`
     mapped_types_with_errors: ById<TypeId, (), Buffered, &'s Session>,
+    /// See `Checker::keep_type`.
+    kept_types: ById<TypeId, (), Buffered, &'s Session>,
+    /// What ahead-of-time compilation finds in a pass over all files and that holds for every checker.
+    aot: core::mem::ManuallyDrop<aot::Shared>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
     initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
     /// `links.resolvedType != nil` of the symbol of a parameter that `is_resolved_on_request`: the
@@ -480,6 +533,9 @@ impl<'s> Program<'s> {
             listings_are_not_compared: Guarded::new(false),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
+            compiler_diagnostics: Default::default(),
+            rule_scopes: Default::default(),
+            compiled_untyped: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -509,6 +565,8 @@ impl<'s> Program<'s> {
             symbol_reference_links: ByNode::new_in(&symbols, session),
             global_errors: Default::default(),
             mapped_types_with_errors: ById::new_in(session),
+            kept_types: ById::new_in(session),
+            aot: Default::default(),
             initializer_is_undefined: ByNode::new_in(&params, session),
             resolved_parameter_symbols: ByNode::new_in(&params, session),
             untyped_signatures_in_js: ByNode::new_in(&fns, session),
@@ -572,8 +630,8 @@ impl<'s> Program<'s> {
         program
     }
 
-    /// Frees what the program owns on the regular heap: the diagnostics, and the keys or values of
-    /// two tables with few entries. Everything else is in the arenas of the session and is freed
+    /// Frees what the program owns on the regular heap: the diagnostics, the keys or values of
+    /// two tables with few entries, and what `--aot` has found out. Everything else is in the arenas of the session and is freed
     /// with them, so a program that is itself allocated in an arena needs no `Drop`.
     pub fn release(&mut self) {
         let session = self.session;
@@ -584,6 +642,11 @@ impl<'s> Program<'s> {
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
         self.distributed_intersections = ByKey::new_in(session);
+        *self.compiler_diagnostics.get_mut() = Default::default();
+        *self.compiled_untyped.get_mut() = Default::default();
+        self.rule_scopes = Default::default();
+        // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
+        unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };
     }
 
     /// `GetGlobalDiagnostics`: the errors found that belong to no file, once all files have been
@@ -637,6 +700,9 @@ impl<'s> Program<'s> {
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
             in_progress: [0; 1024],
+            outermost_tainted: usize::MAX,
+            outermost_incomplete_flow: usize::MAX,
+            frames_with_result: Vec::new(),
             frames: Vec::new(),
             last_enter: EnterOutcome::Entered,
             resolution_start: 0,
@@ -722,6 +788,7 @@ impl<'s> Program<'s> {
             lowest_unresolved_members_hit: u32::MAX,
             active_mappers: Default::default(),
             limits: 0,
+            fuel: std::cell::Cell::new(u64::MAX),
             instantiation_limit_hits: 0,
             comparisons_of_deeply_nested_types: 0,
             instantiations_up_to_a_limit: Default::default(),
@@ -746,6 +813,8 @@ impl<'s> Program<'s> {
             simplified: Default::default(),
             inherited_names: [0; 4],
             cond_distributive_memo: Default::default(),
+            intersection_identities: Default::default(),
+            cond_constraint_instantiations: Default::default(),
             relation_too_complex: false,
             relation_too_deep: false,
             current_source_element: None,
@@ -780,6 +849,7 @@ impl<'s> Program<'s> {
             type_arguments_in_instantiation: Vec::new(),
             conditional_constraint_depth: 0,
             deepest_stack: std::cell::Cell::new(0),
+            stack_half_used_count: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
             scopes_of_what_is_in: Default::default(),
             spread_indices_of_many: Default::default(),
@@ -788,6 +858,7 @@ impl<'s> Program<'s> {
             provisional_shapes: Default::default(),
             provisional: Default::default(),
             taint_events: Vec::new(),
+            flow_taint_events: Vec::new(),
             cycle_at: 0,
             limit_at: 0,
             refused_at: 0,
@@ -801,6 +872,8 @@ impl<'s> Program<'s> {
             alias_symbols: Default::default(),
             could_contain_type_variables: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
+            totally_ordered_unions: Default::default(),
+            evolving_arrays_grown: Default::default(),
             symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: Vec::new(),
@@ -880,6 +953,8 @@ impl<'s> Program<'s> {
             unwind_to: usize::MAX,
             unwind_work: 0,
             restart_with: None,
+            aot: Default::default(),
+            translator: None,
         }
     }
 }
@@ -1072,8 +1147,14 @@ pub(super) enum CurrentNode {
 /// For unbounded recursion. tsgo has no limit. A declaration without an annotation whose type is
 /// that of the next one takes three queries: `Symbol`, `Pat`, `Expr`, or `Return`, `Expr`, `Call`.
 /// One query takes 1 to 2 KB of stack in a release build, which `is_stack_low` guards. See
-/// `refuse_as_too_deep`.
+/// `is_too_deep`.
 const MAX_DEPTH: usize = 1000;
+
+/// The limit where no frame can start over, so that a refusal at `MAX_DEPTH` would leave the file unchecked. `getResolvedSignature`
+/// hides the resolutions in progress from the arguments of a call, so mutually recursive functions that pass their results to calls
+/// are resolved again on top of themselves, once for each such call that is reached while the others are in progress. tsgo recurses
+/// as deep. `is_stack_low` is the other guard.
+const MAX_DEPTH_IN_CONTEXT: usize = 8 * MAX_DEPTH;
 
 /// The metadata of an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
@@ -1082,6 +1163,11 @@ struct QueryFrame {
     serial: u64,
     /// `instantiation_depth` when it was pushed.
     entry_depth: u32,
+    /// The entry of `Checker::in_progress` that this one replaced: the next entry of its class further down.
+    below_in_class: u32,
+    /// All frames from this index up to this one are `tainted` and `drops_reported`. `u32::MAX`: not known. See
+    /// `mark_tainted_by_pattern_from`.
+    marked_from: u32,
     /// A query it made re-entered an entry below it.
     tainted: bool,
     /// It `is_resolution`, and is part of a cycle of resolutions. See `mark_cycle_from`.
@@ -1153,9 +1239,14 @@ pub struct Checker<'p, 's> {
     stack: Vec<Query>,
     /// For each entry of `stack`.
     frames: Vec<QueryFrame>,
-    /// How many entries of `stack` fall into each class. A query whose class is empty is not in
-    /// progress.
-    in_progress: [u16; 1024],
+    /// For each class, the index plus one of the innermost entry of `stack` that falls into it. 0: a query of that class is not in
+    /// progress. `QueryFrame::below_in_class` has the next one, so `innermost` compares a query with the entries of its class alone.
+    in_progress: [u32; 1024],
+    /// The index of the outermost frame that is `tainted`, and of the outermost one that has `incomplete_flow`. `usize::MAX`: none.
+    outermost_tainted: usize,
+    outermost_incomplete_flow: usize,
+    /// The indices of the frames that have `has_result`, in increasing order.
+    frames_with_result: Vec<u32>,
     /// How the last `enter` ended. `leave` and `excessively_deep` reset it to `Entered`.
     last_enter: EnterOutcome,
     /// The patterns whose implied type is being computed as the contextual type of their
@@ -1386,6 +1477,9 @@ pub struct Checker<'p, 's> {
     /// How many times `error_at_current_node` had nothing to report since `check_file` began: the
     /// computation in progress is not cached.
     limits: u64,
+    /// How much a question that only the translation asks may still make: see `burn`, `is_provably_assignable`. `u64::MAX`: no such
+    /// question is being answered.
+    fuel: std::cell::Cell<u64>,
     /// How many times `instantiate` returned the error type at a limit since `check_file` began.
     instantiation_limit_hits: u64,
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the
@@ -1439,6 +1533,8 @@ pub struct Checker<'p, 's> {
     pub(super) inherited_names: [u64; 4],
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
+    intersection_identities: FxHashMap<TypeId, Option<std::rc::Rc<relate::MemberIdentities>>>,
+    cond_constraint_instantiations: FxHashMap<(FileId, TypeNodeId, MapperId), TypeId>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
     /// Whether the last `checkTypeRelatedToEx` reached 100 nested comparisons (2321).
@@ -1508,6 +1604,7 @@ pub struct Checker<'p, 's> {
     /// `conditionalConstraintDepth`
     conditional_constraint_depth: u32,
     deepest_stack: std::cell::Cell<usize>,
+    stack_half_used_count: std::cell::Cell<u32>,
     ran_out_of_stack: std::cell::Cell<bool>,
     /// `enclosing_scope_of_expr` of what is in these expressions.
     scopes_of_what_is_in: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
@@ -1524,6 +1621,8 @@ pub struct Checker<'p, 's> {
     /// `work` and `from` of each call of `mark_tainted_by_pattern_from` and `taint_from`, in order. An event is dropped when a later one has a
     /// lower or equal `from`, so `from` increases and the length is bounded by the depth of `stack`. See `lowest_taint_since`.
     taint_events: Vec<(u64, u32)>,
+    /// The same for the calls of `taint_from` alone. See `lowest_flow_taint_since`.
+    flow_taint_events: Vec<(u64, u32)>,
     /// `work` when `cycles` was last incremented, when `limits` was, and when a query was last refused by `bailed_out`. `QueryFrame::serial` is
     /// `work` when the frame was pushed, so the event happened since then if the value is not lower than the serial number.
     cycle_at: u64,
@@ -1547,6 +1646,8 @@ pub struct Checker<'p, 's> {
     could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
+    totally_ordered_unions: std::cell::RefCell<crate::util::FxHashSet<TypeId>>,
+    evolving_arrays_grown: FxHashMap<(TypeId, FileId, ExprId), TypeId>,
     /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
     symbol_ids: Option<std::cell::RefCell<symbol_ids::SymbolIds>>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
@@ -1778,13 +1879,16 @@ pub struct Checker<'p, 's> {
     context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
     /// Of how many functions it has been asked.
     context_sensitivity_asked: std::cell::Cell<u64>,
-    /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
-    /// `refuse_as_too_deep`.
+    /// A query was refused as too deep: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
+    /// `is_too_deep`.
     unwind_to: usize,
     /// `work` of the next `enter` while that is so. It takes the slow path (`work_trap`).
     unwind_work: u64,
     /// The innermost resolution that was in progress at the refusal. The frame at `unwind_to` resolves it and starts over.
     restart_with: Option<Query>,
+    /// What the queries of ahead-of-time compilation have found.
+    aot: aot::State,
+    pub translator: Option<Box<dyn std::any::Any>>,
 }
 
 /// The stack pointer of the thread, less a constant: only the difference of two results is used.
@@ -1827,12 +1931,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     pub fn intern(&self, data: TypeData<'s>) -> TypeId {
+        self.burn(1);
         self.types().intern(data)
     }
 
     /// `intern` for a type with lists, which are copied to the arena only if the type is new.
     #[inline]
     pub fn intern_key(&self, key: TypeKey<'_>) -> TypeId {
+        self.burn(1);
         self.types().intern_key(key)
     }
 
@@ -1909,6 +2015,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.files
     }
 
+    #[inline]
+    pub(crate) fn check_options(&self, file: FileId) -> &'p crate::resolve::CheckOptions {
+        self.files.check_options(file)
+    }
+
     /// Whether `file` contains a conditional or a mapped type node: in any other file,
     /// `getConditionalFlowTypeOfType` finds nothing among the ancestors.
     #[inline]
@@ -1929,9 +2040,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.stack_limit = bytes;
     }
 
-    /// Whether little stack is left for recursion.
+    /// Whether little stack is left for recursion. The file the task is in is then reported as incomplete.
     #[inline]
-    pub(crate) fn is_stack_low(&self) -> bool {
+    pub fn is_stack_low(&self) -> bool {
+        // Whoever recurses gives up as it does for want of stack, and leaves as little behind. The file is not incomplete for it.
+        if self.fuel.get() == 0 {
+            self.times_cut_short.set(self.times_cut_short.get() + 1);
+            return true;
+        }
         let used = self.stack_base.saturating_sub(stack_pointer());
         if used > self.deepest_stack.get() {
             self.deepest_stack.set(used);
@@ -1942,6 +2058,25 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         false
+    }
+
+    #[inline]
+    fn is_out_of_fuel(&mut self) -> bool {
+        if self.fuel.get() != 0 {
+            return false;
+        }
+        self.times_cut_short.set(self.times_cut_short.get() + 1);
+        self.bailed_out();
+        true
+    }
+
+    /// So many members, types, instantiations or comparisons have been made.
+    #[inline]
+    fn burn(&self, made: usize) {
+        let fuel = self.fuel.get();
+        if fuel != u64::MAX {
+            self.fuel.set(fuel.saturating_sub(made as u64));
+        }
     }
 
     /// `is_stack_low` for the printer. It elides what is nested too deeply, which loses no error, so the check has not run out of
@@ -1955,7 +2090,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// typescript-go ends at `instantiationCount`, on a stack that grows.
     #[inline]
     pub(crate) fn is_half_of_stack_in_use(&self) -> bool {
-        self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2
+        let is_in_use = self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2;
+        if is_in_use {
+            self.stack_half_used_count
+                .set(self.stack_half_used_count.get().wrapping_add(1));
+        }
+        is_in_use
+    }
+
+    pub(crate) fn stack_half_used_count(&self) -> u32 {
+        self.stack_half_used_count.get()
     }
 
     /// The maximum stack in use at any query.
@@ -1972,26 +2116,25 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        let class = (crate::util::fx_hash(&q) >> 54) as u16;
-        let from = self.resolution_start;
+        let class = Self::class_of(q);
         // `checkExpression` and `checkPropertyAssignment` have no re-entrancy guard: an uncached check
         // runs again while it is in progress.
         if !(matches!(q, Query::Expr(..) | Query::LiteralProp(..)) && self.is_rechecking())
-            && self.in_progress[class as usize] != 0
-            && let Some(i) = self.stack[from..].iter().rposition(|x| *x == q)
-            && self.on_reentry(q, i + from)
+            && let Some(i) = self.innermost_in_class(q, class, self.resolution_start)
+            && self.on_reentry(q, i)
         {
             return false;
         }
-        if self.stack.len() >= MAX_DEPTH {
-            return self.refuse_as_too_deep(q);
+        if self.stack.len() >= MAX_DEPTH && self.is_too_deep(q) {
+            return false;
         }
         self.last_enter = EnterOutcome::Entered;
         if self.stack.is_empty() {
             self.reset_instantiation_count_if_idle();
         }
         self.stack.push(q);
-        self.in_progress[class as usize] += 1;
+        let innermost = self.stack.len() as u32;
+        let below_in_class = std::mem::replace(&mut self.in_progress[class as usize], innermost);
         if let Some((file, kind)) = q.syntax()
             && Some(file) != self.task.file
         {
@@ -2007,10 +2150,16 @@ impl<'p, 's> Checker<'p, 's> {
                 .frames
                 .last()
                 .is_some_and(|frame| frame.incomplete_flow);
+        let marked_from = match self.frames.last() {
+            Some(frame) if drops_reported => frame.marked_from,
+            _ => u32::MAX,
+        };
         self.frames.push(QueryFrame {
             class,
             serial: self.work,
             entry_depth: self.instantiation_depth,
+            below_in_class,
+            marked_from,
             tainted,
             circular: false,
             drops_reported,
@@ -2024,6 +2173,37 @@ impl<'p, 's> Checker<'p, 's> {
             source_element: self.current_source_element,
         });
         true
+    }
+
+    /// The index of `q` in `in_progress`.
+    #[inline]
+    fn class_of(q: Query) -> u16 {
+        (crate::util::fx_hash(&q) >> 54) as u16
+    }
+
+    /// `innermost` for a `q` whose class is `class`.
+    #[inline]
+    fn innermost_in_class(&self, q: Query, class: u16, from: usize) -> Option<usize> {
+        let mut next = self.in_progress[class as usize] as usize;
+        while next > from {
+            if self.stack[next - 1] == q {
+                return Some(next - 1);
+            }
+            next = self.frames[next - 1].below_in_class as usize;
+        }
+        None
+    }
+
+    /// The index of the innermost entry of `stack` that is `q`, among those from the index `from` up.
+    #[inline]
+    fn innermost(&self, q: Query, from: usize) -> Option<usize> {
+        self.innermost_in_class(q, Self::class_of(q), from)
+    }
+
+    /// Whether `q` is on `stack`.
+    #[inline]
+    fn is_in_flight(&self, q: Query) -> bool {
+        self.innermost(q, 0).is_some()
     }
 
     /// Counts the evaluation of a query about `file`, which is not the file the task is checking,
@@ -2065,6 +2245,11 @@ impl<'p, 's> Checker<'p, 's> {
             self.restart_with = None;
         }
         let is_low = self.is_stack_low();
+        // The frames are not those of one expression: see `MAX_DEPTH_IN_CONTEXT`.
+        if is_low && self.stack.len() >= MAX_DEPTH {
+            self.unwind_all_frames();
+            return true;
+        }
         if is_low {
             self.refuse_outermost_in_flight(q);
         }
@@ -2136,10 +2321,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.
+    /// `stack` has `MAX_DEPTH` entries or more. Returns whether `q` is refused.
     ///
-    /// The result of no frame in progress is cached. A frame that goes on regardless computes
-    /// again, from its lower height, what the frames above it could not finish: a chain of
+    /// After a refusal the result of no frame in progress is cached. A frame that goes on regardless
+    /// computes again, from its lower height, what the frames above it could not finish: a chain of
     /// functions that is n links too long costs n^3. So every query is refused until `stack` is
     /// back at `unwind_to`.
     ///
@@ -2148,15 +2333,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// innermost one from its own height, where that has the depth which the frames in between
     /// took, and starts over: `resolve_what_was_too_deep`. The frames below it see no refusal. A
     /// cycle that is longer than `MAX_DEPTH` never closes, and is refused again.
+    ///
+    /// Where no frame can start over, `q` is entered, up to `MAX_DEPTH_IN_CONTEXT`. Not in a file that is incomplete already: every
+    /// later query that leads there would descend as far again.
     #[cold]
     #[inline(never)]
-    fn refuse_as_too_deep(&mut self, q: Query) -> bool {
-        self.last_enter = EnterOutcome::Refused;
-        bun_core::scoped_log!(
-            SemaCycles,
-            "too deep: {:?}",
-            &self.stack[self.stack.len() - 12..]
-        );
+    fn is_too_deep(&mut self, q: Query) -> bool {
         let starts_over =
             |q: &Query| matches!(q, Query::Symbol(_) | Query::Return(..) | Query::Declared(_));
         let is_without_context = self.flow_loops.is_empty()
@@ -2167,34 +2349,56 @@ impl<'p, 's> Checker<'p, 's> {
             && self.assigned_parameters.is_empty()
             && self.context_checking.is_empty()
             && self.context_checked_under.is_empty();
-        let outermost = self.stack.iter().position(starts_over);
-        let innermost = match starts_over(&q) {
-            true => Some(q),
-            false => self.stack.iter().rev().find(|q| starts_over(q)).copied(),
+        // The index of the frame that starts over, and what it resolves first.
+        let mut restart = None;
+        if is_without_context {
+            let outermost = self.stack.iter().position(starts_over);
+            let innermost = match starts_over(&q) {
+                true => Some(q),
+                false => self.stack.iter().rev().find(|q| starts_over(q)).copied(),
+            };
+            restart = (outermost.zip(innermost))
+                .filter(|&(outermost, innermost)| self.stack[outermost] != innermost);
+        }
+        if restart.is_none()
+            && self.stack.len() < MAX_DEPTH_IN_CONTEXT
+            && !self.ran_out_of_stack.get()
+        {
+            return false;
+        }
+        bun_core::scoped_log!(
+            SemaCycles,
+            "too deep: {:?}",
+            &self.stack[self.stack.len() - 12..]
+        );
+        let Some((outermost, innermost)) = restart else {
+            self.unwind_all_frames();
+            self.refuse_outermost_in_flight(q);
+            return true;
         };
+        self.last_enter = EnterOutcome::Refused;
         self.unwind_work = self.work + 1;
         self.work_trap = self.work + 1;
-        match (outermost, innermost) {
-            (Some(outermost), Some(innermost))
-                if is_without_context && self.stack[outermost] != innermost =>
-            {
-                self.unwind_to = outermost;
-                self.restart_with = Some(innermost);
-            }
-            _ => {
-                self.unwind_to = 0;
-                self.restart_with = None;
-                self.ran_out_of_stack.set(true);
-                self.refuse_outermost_in_flight(q);
-            }
-        }
-        self.bailed_out_from(self.unwind_to);
-        false
+        self.unwind_to = outermost;
+        self.restart_with = Some(innermost);
+        self.bailed_out_from(outermost);
+        true
+    }
+
+    /// A query is refused for lack of capacity, and no frame can start over: every query is refused until `stack` is empty.
+    fn unwind_all_frames(&mut self) {
+        self.last_enter = EnterOutcome::Refused;
+        self.unwind_work = self.work + 1;
+        self.work_trap = self.work + 1;
+        self.unwind_to = 0;
+        self.restart_with = None;
+        self.ran_out_of_stack.set(true);
+        self.bailed_out_from(0);
     }
 
     /// After the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
     /// `stack.len() == unwind_to`.
-    /// Returns whether the caller is to start over: what `refuse_as_too_deep` refused has a result.
+    /// Returns whether the caller is to start over: what `is_too_deep` refused has a result.
     #[cold]
     #[inline(never)]
     fn resolve_what_was_too_deep(&mut self) -> bool {
@@ -2668,7 +2872,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `typeResolutionHasProperty` for the frames from `i` up. In tsgo `links` belong to one checker. A result that another thread
     /// has cached in the meantime is a valid value for any caller, but is unrelated to the queries this checker has in flight.
     fn is_resolved_since(&self, i: usize) -> bool {
-        self.frames[i..].iter().any(|frame| frame.has_result) || self.is_below_stale_resolution(i)
+        (self.frames_with_result.last()).is_some_and(|&innermost| innermost as usize >= i)
+            || self.is_below_stale_resolution(i)
     }
 
     /// Whether an entry is left on `typeResolutions` above `stack[i]`.
@@ -2676,34 +2881,27 @@ impl<'p, 's> Checker<'p, 's> {
         (self.stale_resolutions.last()).is_some_and(|stale| stale.0 > i)
     }
 
-    /// False if `q` is not on `stack`. Reads the per-class counter that `enter` tests before it scans the stack.
-    #[inline]
-    fn may_be_in_flight(&self, q: Query) -> bool {
-        self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] != 0
-    }
-
     /// `resolvedX == nil && findResolutionCycleStartIndex(target, property) >= 0`, from this checker's own state.
     fn is_resolving(&self, q: Query) -> bool {
-        let from = self.resolution_start.min(self.stack.len());
-        self.may_be_in_flight(q)
-            && self.stack[from..]
-                .iter()
-                .rposition(|x| *x == q)
-                .is_some_and(|i| !self.is_resolved_since(from + i))
+        self.innermost(q, self.resolution_start)
+            .is_some_and(|i| !self.is_resolved_since(i))
     }
 
     /// A result for `q` has been cached by this checker. Marks the frames of `q` that are still on the stack.
     #[cold]
     #[inline(never)]
     fn note_result(&mut self, q: Query) {
-        if self.is_resolution(q) {
-            for (frame, _) in self
-                .frames
-                .iter_mut()
-                .zip(&self.stack)
-                .filter(|x| *x.1 == q)
-            {
-                frame.has_result = true;
+        if !self.is_resolution(q) {
+            return;
+        }
+        let mut next = self.in_progress[Self::class_of(q) as usize];
+        while next != 0 {
+            let i = next - 1;
+            let frame = &mut self.frames[i as usize];
+            next = frame.below_in_class;
+            if self.stack[i as usize] == q && !std::mem::replace(&mut frame.has_result, true) {
+                let at = self.frames_with_result.partition_point(|&other| other < i);
+                self.frames_with_result.insert(at, i);
             }
         }
     }
@@ -2711,12 +2909,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// See `QueryFrame::is_stored_by_nested_visit`.
     #[inline]
     fn note_stored_by_nested_visit(&mut self, q: Query) {
-        if !self.may_be_in_flight(q) {
-            return;
-        }
-        let frames = self.frames.iter_mut().zip(&self.stack);
-        for (frame, _) in frames.filter(|x| *x.1 == q) {
-            frame.is_stored_by_nested_visit = true;
+        let mut next = self.in_progress[Self::class_of(q) as usize];
+        while next != 0 {
+            let i = next as usize - 1;
+            next = self.frames[i].below_in_class;
+            if self.stack[i] == q {
+                self.frames[i].is_stored_by_nested_visit = true;
+            }
         }
     }
 
@@ -2781,7 +2980,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.bailed_out_from(0);
     }
 
-    /// `bailed_out`, where the frame at `from` makes the query again: see `refuse_as_too_deep`.
+    /// `bailed_out`, where the frame at `from` makes the query again: see `is_too_deep`.
     fn bailed_out_from(&mut self, from: usize) {
         self.mark_tainted_from(from);
         self.note_cycle();
@@ -3013,6 +3212,9 @@ impl<'p, 's> Checker<'p, 's> {
                     self.frames[i].tainted = false;
                 }
             }
+            self.forget_marked_frames();
+            let outermost = self.frames.iter().position(|frame| frame.tainted);
+            self.outermost_tainted = outermost.unwrap_or(usize::MAX);
         }
     }
 
@@ -3045,8 +3247,19 @@ impl<'p, 's> Checker<'p, 's> {
         debug_assert!(popped == Some(q));
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
-        self.in_progress[frame.class as usize] -= 1;
-        if self.in_progress[frame.class as usize] != 0 && (!frame.tainted || frame.circular) {
+        self.in_progress[frame.class as usize] = frame.below_in_class;
+        // No frame below the outermost one has the flag.
+        let index = self.frames.len();
+        if self.outermost_tainted == index {
+            self.outermost_tainted = usize::MAX;
+        }
+        if self.outermost_incomplete_flow == index {
+            self.outermost_incomplete_flow = usize::MAX;
+        }
+        if frame.has_result {
+            self.frames_with_result.pop();
+        }
+        if frame.below_in_class != 0 && (!frame.tainted || frame.circular) {
             self.note_result(q);
         }
         self.left_a_cycle = if self.stale_resolutions.is_empty() {
@@ -3072,6 +3285,7 @@ impl<'p, 's> Checker<'p, 's> {
             current != symbol.file && self.is_checked_no_later_than(symbol.file, current)
         });
         if !is_resolved_by_check
+            && !self.p.files.options.pops_every_type_resolution
             && let Some(frame) = self.frames.last()
             && self.unpopped_resolutions.insert(symbol)
         {
@@ -3174,25 +3388,56 @@ impl<'p, 's> Checker<'p, 's> {
     fn mark_tainted_by_pattern_from(&mut self, from: usize) {
         self.lowest_taint = self.lowest_taint.min(from);
         self.note_taint_event(from);
-        for frame in &mut self.frames[from..] {
+        if from < self.frames.len() {
+            self.outermost_tainted = self.outermost_tainted.min(from);
+        }
+        // From the innermost frame down to one below which all are marked. A provisional result that is read many times marks from the
+        // same index every time, and only the frames pushed in the meantime are visited.
+        for frame in self.frames[from..].iter_mut().rev() {
+            if frame.marked_from as usize <= from {
+                break;
+            }
             frame.tainted = true;
             frame.drops_reported = true;
+            frame.marked_from = from as u32;
+        }
+    }
+
+    /// A frame has lost `tainted` or `drops_reported`: nothing is known about `QueryFrame::marked_from`.
+    fn forget_marked_frames(&mut self) {
+        for frame in &mut self.frames {
+            frame.marked_from = u32::MAX;
         }
     }
 
     fn note_taint_event(&mut self, from: usize) {
+        Self::record_event(&mut self.taint_events, self.work, from);
+    }
+
+    /// Appends an event to `taint_events` or `flow_taint_events`.
+    fn record_event(events: &mut Vec<(u64, u32)>, work: u64, from: usize) {
         let is_covered = |event: &(u64, u32)| event.1 as usize >= from;
-        while self.taint_events.last().is_some_and(is_covered) {
-            self.taint_events.pop();
+        while events.last().is_some_and(is_covered) {
+            events.pop();
         }
-        self.taint_events.push((self.work, from as u32));
+        events.push((work, from as u32));
     }
 
     /// The lowest index from which frames were tainted since the frame with the serial number `serial` was pushed. `usize::MAX`: no event.
     fn lowest_taint_since(&self, serial: u64) -> usize {
-        let first = self.taint_events.partition_point(|event| event.0 < serial);
-        let event = self.taint_events.get(first);
-        event.map_or(usize::MAX, |event| event.1 as usize)
+        Self::lowest_event_since(&self.taint_events, serial)
+    }
+
+    /// The same for `taint_from` alone.
+    fn lowest_flow_taint_since(&self, serial: u64) -> usize {
+        Self::lowest_event_since(&self.flow_taint_events, serial)
+    }
+
+    fn lowest_event_since(events: &[(u64, u32)], serial: u64) -> usize {
+        let first = events.partition_point(|event| event.0 < serial);
+        events
+            .get(first)
+            .map_or(usize::MAX, |event| event.1 as usize)
     }
 
     /// The diagnostics of the innermost query are dropped, whether or not its result is cached.
@@ -3312,6 +3557,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// the frame at the stack height at which that loop was pushed, or the outermost frame marked
     /// by `taint_from` if that is higher.
     ///
+    /// `enter` passes `incomplete_flow` on to the queries made under a pushed context. A frame that has the flag
+    /// from there alone has read no incomplete type if no loop in progress is visible to it: see
+    /// `has_read_no_incomplete_flow`. Its result is valid as long as that of any other frame that `enter` pushed as
+    /// tainted. A hit for a result that depends on a loop requires that the loop is visible, so none of what a
+    /// function that is called under such a frame depends on would ever be a hit.
+    ///
     /// A result that depends on a refused query (`bailed_out`) is reused only at the same or a greater
     /// stack height, where computing it again would be refused again. A query from a lower height
     /// has more capacity and may succeed, so it computes.
@@ -3335,6 +3586,7 @@ impl<'p, 's> Checker<'p, 's> {
         // non-cacheable frame. It is asked for from where the loop is not visible either, where a result that follows from a
         // loop is no hit: every use would compute it again, and uses in uses cost uses ^ depth.
         let flow = frame.incomplete_flow
+            && !self.has_read_no_incomplete_flow(q, &frame)
             && (self.flow_loops.last())
                 .is_some_and(|innermost| self.is_flow_loop_visible(innermost.5));
         // tsgo computes it again, and then finds in `flowLoopCache` the loop of which this
@@ -3344,11 +3596,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let scope = if flow {
             let innermost_loop = self.flow_loops.last().map(|in_progress| in_progress.5);
-            let outermost = self.frames.iter().position(|frame| frame.incomplete_flow);
+            let outermost = self.outermost_incomplete_flow;
+            let outermost = (outermost != usize::MAX).then_some(outermost);
             (outermost.zip(innermost_loop))
                 .map(|(outermost, innermost_loop)| outermost.max(innermost_loop))
         } else {
-            self.frames.iter().position(|frame| frame.tainted)
+            self.outermost_tainted_frame()
         };
         // An event from the frame's own index up has tainted no caller.
         let from = self.lowest_taint_since(frame.serial);
@@ -3385,6 +3638,25 @@ impl<'p, 's> Checker<'p, 's> {
                 },
             );
         }
+    }
+
+    /// The index of the outermost frame that is `tainted`.
+    #[inline]
+    fn outermost_tainted_frame(&self) -> Option<usize> {
+        (self.outermost_tainted != usize::MAX).then_some(self.outermost_tainted)
+    }
+
+    /// Whether `frame`, the frame of `q` that `leave` has just popped, has `incomplete_flow` only because the frame below it had.
+    /// - No `taint_from` has reached it. Every read of an incomplete type, and of what follows from one, calls that.
+    /// - No loop in progress was visible to it. A resolution computes what it stores with an empty `flowLoopStack`
+    ///   (`checkExpressionCached`), and tsgo stores it whatever loop is in progress. The innermost loop is the last to be hidden.
+    /// - Its diagnostics are dropped. A hit reports nothing, and under a loop alone computing it again reports (`taint_from`).
+    fn has_read_no_incomplete_flow(&self, q: Query, frame: &QueryFrame) -> bool {
+        frame.drops_reported
+            && self.lowest_flow_taint_since(frame.serial) > self.frames.len()
+            && (self.is_resolution(q)
+                || (self.flow_loops.last())
+                    .is_some_and(|pushed| !self.is_flow_loop_visible(pushed.5)))
     }
 
     /// Whether `mark_cycle_from` refuses a cycle whose head is `stack[from - 1]` because of `eager`.
@@ -3512,6 +3784,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.lowest_taint = self.lowest_taint.min(depth);
         self.note_taint_event(depth);
+        Self::record_event(&mut self.flow_taint_events, self.work, depth);
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
         // which checks the callee with the loops visible, and the type of a `...rest`.
         // Not the type of a pattern around a binding element, which nothing stores: it is computed
@@ -3523,6 +3796,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             self.frames[at].tainted = true;
             self.frames[at].incomplete_flow = true;
+            self.outermost_tainted = self.outermost_tainted.min(at);
+            self.outermost_incomplete_flow = self.outermost_incomplete_flow.min(at);
         }
         self.taints += 1;
         self.note_cycle();

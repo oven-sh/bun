@@ -15,6 +15,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "JSCommonJSModule.h"
+#include "JSBuffer.h"
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
@@ -83,6 +84,10 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
+#include <limits.h>
+#include <poll.h>
+#include <sys/select.h>
+#include <sys/stat.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -515,7 +520,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     [[maybe_unused]] bool fromEmbedded = false;
-    if (filename.startsWith(StandaloneModuleGraph__base_path)) {
+    {
         BunString bunStr = Bun::toString(filename);
         BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
         if (!resolved.isDead()) {
@@ -1564,6 +1569,45 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
 static int watchModeStickySignal = 0;
 
 #if !OS(WINDOWS)
+#if OS(LINUX)
+static struct sigaction faultActionsBeforeListeners[2];
+
+static struct sigaction* faultActionBeforeListeners(int signalNumber)
+{
+    if (signalNumber == SIGSEGV)
+        return &faultActionsBeforeListeners[0];
+    if (signalNumber == SIGBUS)
+        return &faultActionsBeforeListeners[1];
+    return nullptr;
+}
+
+__attribute__((noinline)) static void forwardSignalUnlessFault(int signalNumber, siginfo_t* info, void* context)
+{
+    if (info->si_code <= 0) {
+        Bun__onPosixSignal(signalNumber);
+        return;
+    }
+    struct sigaction before = *faultActionBeforeListeners(signalNumber);
+    if (before.sa_handler == SIG_DFL || before.sa_handler == SIG_IGN) {
+        signal(signalNumber, SIG_DFL);
+        return;
+    }
+    if (before.sa_flags & SA_SIGINFO)
+        before.sa_sigaction(signalNumber, info, context);
+    else
+        before.sa_handler(signalNumber);
+}
+#endif
+
+static bool isForwardSignalHandler(void (*handler)(int))
+{
+#if OS(LINUX)
+    if (handler == reinterpret_cast<void (*)(int)>(forwardSignalUnlessFault))
+        return true;
+#endif
+    return handler == forwardSignal;
+}
+
 static void installForwardSignalHandler(int signalNumber)
 {
     struct sigaction action;
@@ -1572,6 +1616,15 @@ static void installForwardSignalHandler(int signalNumber)
     sigemptyset(&action.sa_mask);
     sigaddset(&action.sa_mask, signalNumber);
     action.sa_flags = SA_RESTART;
+#if OS(LINUX)
+    if (auto* before = faultActionBeforeListeners(signalNumber)) {
+        action.sa_sigaction = forwardSignalUnlessFault;
+        action.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
+        struct sigaction current;
+        if (!sigaction(signalNumber, nullptr, &current) && !isForwardSignalHandler(current.sa_handler))
+            *before = current;
+    }
+#endif
     sigaction(signalNumber, &action, nullptr);
 }
 
@@ -1681,10 +1734,14 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
                         if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
-                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); !isForwardSignalHandler(oldHandler)) {
                                 // Don't uninstall the old handler if it's not the one we installed.
                                 signal(signalNumber, oldHandler);
                             }
+#if OS(LINUX)
+                            else if (auto* before = faultActionBeforeListeners(signalNumber))
+                                sigaction(signalNumber, before, nullptr);
+#endif
 #else
                             SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                             Bun__UVSignalHandle__close(signal_handle.handle);
@@ -1703,6 +1760,98 @@ Process::~Process()
 }
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
+
+#if !OS(WINDOWS)
+static bool acceptsBytesWithoutBlocking(int descriptor)
+{
+    struct pollfd polled = { descriptor, POLLOUT, 0 };
+    int ready;
+    do {
+        ready = ::poll(&polled, 1, 0);
+    } while (ready < 0 && errno == EINTR);
+    bool mayBeUnpollableDevice = ready == 1 && polled.revents == POLLNVAL;
+    if (!mayBeUnpollableDevice)
+        return ready == 1 && polled.revents == POLLOUT;
+    do {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(descriptor, &writable);
+        struct timeval noWait = { 0, 0 };
+        ready = ::select(descriptor + 1, nullptr, &writable, nullptr, &noWait);
+    } while (ready < 0 && errno == EINTR);
+    return ready == 1;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionAppendToWarningsFile, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto path = callFrame->argument(0).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto message = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int descriptor = ::open(byteCast<char>(path.utf8().data()), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0666);
+    if (descriptor < 0)
+        return JSValue::encode(jsBoolean(false));
+    auto bytes = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    const char* next = byteCast<char>(bytes.data());
+    size_t remaining = bytes.length();
+    while (remaining) {
+        ssize_t written = ::write(descriptor, next, remaining);
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            break;
+        next += written;
+        remaining -= static_cast<size_t>(written);
+    }
+    ::close(descriptor);
+    return JSValue::encode(jsBoolean(!remaining));
+}
+#endif
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+#if OS(WINDOWS)
+    UNUSED_PARAM(lexicalGlobalObject);
+    return JSValue::encode(callFrame->argument(0));
+#else
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = globalObject->processObject();
+    if (globalObject->nodeWorkerStdioPorts() || process->staticPropertiesReified() || process->getDirect(vm, Identifier::fromString(vm, "stderr"_s)))
+        return JSValue::encode(callFrame->argument(0));
+    auto message = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto bytes = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    const char* next = byteCast<char>(bytes.data());
+    size_t remaining = bytes.length();
+    struct stat status;
+    bool isRegularFile = !::fstat(STDERR_FILENO, &status) && S_ISREG(status.st_mode);
+#if OS(DARWIN)
+    bool hadNoSIGPIPE = ::fcntl(STDERR_FILENO, F_GETNOSIGPIPE) > 0;
+    ::fcntl(STDERR_FILENO, F_SETNOSIGPIPE, 1);
+#endif
+    while (remaining && acceptsBytesWithoutBlocking(STDERR_FILENO)) {
+        ssize_t written = ::write(STDERR_FILENO, next, isRegularFile ? remaining : std::min<size_t>(remaining, PIPE_BUF));
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            break;
+        next += written;
+        remaining -= static_cast<size_t>(written);
+    }
+#if OS(DARWIN)
+    ::fcntl(STDERR_FILENO, F_SETNOSIGPIPE, hadNoSIGPIPE ? 1 : 0);
+#endif
+    if (!remaining)
+        return JSValue::encode(jsUndefined());
+    if (remaining == bytes.length())
+        return JSValue::encode(callFrame->argument(0));
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(next), remaining)));
+#endif
+}
 
 JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
 {
@@ -1745,6 +1894,13 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
         disabled = array;
     }
     args.append(disabled);
+    args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionWriteToUntouchedStderr, JSC::ImplementationVisibility::Private));
+#if !OS(WINDOWS)
+    JSValue nodeFS = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::NodeFS).get();
+    bool isNodeFSLoaded = nodeFS && !nodeFS.isUndefined();
+    if (!isNodeFSLoaded)
+        args.append(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionAppendToWarningsFile, JSC::ImplementationVisibility::Private));
+#endif
     JSValue onWarning = JSC::profiledCall(globalObject, ProfilingReason::API, factory, JSC::getCallData(factory), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_onWarning.set(vm, this, asObject(onWarning));
@@ -1817,7 +1973,7 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
 // Lazy PropertyCallback builders that enter JS. reifyAllStaticProperties wraps these in
 // DeferTerminationForAWhile; a non-termination throw is cleared+reported so the worker's
 // reifyAllStaticProperties (node:worker_threads preload) doesn't leave a pending exception.
-static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
+static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::BuiltinCode (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* function = JSC::JSFunction::create(vm, globalObject, generator(vm), globalObject);
@@ -2229,7 +2385,7 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
             return jsUndefined();
     }
 
-    if (!type.isNull() && type.isObject() && !isJSArray(type)) {
+    if (!type.isNull() && type.isObject() && type.asCell()->classInfo() != JSArray::info()) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -4295,8 +4451,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
         JSValue resumeValue = stdinValue.getObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "resume"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (resumeValue && !resumeValue.isUndefinedOrNull()) {
-            auto resumeFunction = dynamicDowncast<JSFunction>(resumeValue);
-            if (!resumeFunction) [[unlikely]] {
+            auto resumeFunction = resumeValue.getObject();
+            if (!resumeFunction || !resumeFunction->isCallable()) [[unlikely]] {
                 throwTypeError(globalObject, throwScope, "stdin.resume is not a function"_s);
                 return {};
             }
@@ -4561,27 +4717,31 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     return mainModule;
 }
 
+extern "C" void Bun__didCreateNextTickQueue(JSC::VM*);
+
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);
         globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
+        Bun__didCreateNextTickQueue(&vm);
     } else {
         nextTickQueueObject = globalObject->m_nextTickQueue.get();
     }
 
-    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
-
-    JSC::MarkedArgumentBuffer args;
-    args.append(this);
-    args.append(nextTickQueueObject);
-    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
-
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    JSValue initializer = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalProcessNextTickQueue);
+    JSValue nextTickFunction;
+    if (!scope.exception()) [[likely]] {
+        JSC::MarkedArgumentBuffer args;
+        args.append(this);
+        args.append(nextTickQueueObject);
+        args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
+        nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    }
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -4775,7 +4935,7 @@ static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalN
     if (!CrashHandler__isCrashSignal(signalNumber) || !killReachesThisProcess(pid, ownPid))
         return;
     struct sigaction current;
-    if (sigaction(signalNumber, nullptr, &current) != 0 || current.sa_handler == forwardSignal)
+    if (sigaction(signalNumber, nullptr, &current) != 0 || isForwardSignalHandler(current.sa_handler))
         return;
     restoreDefaultSignalDisposition(signalNumber);
 }

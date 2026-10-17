@@ -365,6 +365,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         {
             self.flag(DiagnosticKind::Grammar, 1098, empty_list, &[]);
         }
+        let body_pos = self.pos();
         // What is scanned from here to the `}` is in the class. What it extends and its decorators are not.
         let private_names = (
             self.lx.private_names.len(),
@@ -429,6 +430,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             other_implements: heritage.other_implements,
             members,
             start,
+            body_pos,
             modifiers,
         })
     }
@@ -616,7 +618,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // To oxc `static constructor` is a name like any other.
         let is_keyword =
             name_token == T::Constructor && !(written.contains(Flags::STATIC) && self.is_for_oxc());
-        key = declared_key(key, name_token, is_default);
+        key = match name_token {
+            T::BigInt if self.options.bigint_names_are_digits => key,
+            _ => declared_key(key, name_token, is_default),
+        };
         flags |= flags_of_member_name(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor the property without a name looks for it.
         let mut question = None;
@@ -664,6 +669,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // text. After `*` it is the name of a method.
             let is_constructor = kind == MemberKind::Property
                 && !is_generator
+                && !(self.f.is_js && self.options.is_compiled && flags.contains(Flags::STATIC))
                 && key == PropKey::Name(known::constructor)
                 && (name_token == T::Constructor
                     || name_token == T::String

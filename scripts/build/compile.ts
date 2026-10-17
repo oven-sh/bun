@@ -193,6 +193,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
   });
+  if (cfg.islands) {
+    assert(cfg.cxxfilt !== undefined, "islands need llvm-cxxfilt");
+    n.rule("link_with_islands", {
+      command: `${cfg.jsRuntime} ${q(islandsScript(cfg))} ${q(islandsDoors(cfg))} ${q(cfg.cxxfilt)} $out.islands -- ${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
+      description: "link $out with islands",
+      rspfile: "$out.rsp",
+      rspfile_content: "$in_newline",
+    });
+  }
 
   // ─── Static library archive ───
   n.rule("ar", {
@@ -217,8 +226,8 @@ export interface CompileOpts {
   /**
    * Extra implicit deps. Use for generated headers this specific .cpp needs
    * (e.g. ErrorCode.cpp depends on ErrorCode+List.h), and for dep outputs
-   * (lib*.a) — local sub-builds rewrite forwarding headers as undeclared
-   * side effects, so the lib is the invalidation signal; order-only would
+   * (fetch stamps, lib*.a) — a fetch writes headers as undeclared side
+   * effects, so its output is the invalidation signal; order-only would
    * lag one build behind.
    */
   implicitInputs?: string[];
@@ -371,11 +380,11 @@ export function pch(
      * libs (libJavaScriptCore.a etc.).
      *
      * Can't be order-only: the depfile tracks headers, but ninja stats at
-     * startup. Local WebKit headers live in buildDir and get regenerated
-     * by dep_build MID-RUN. At startup ninja sees old headers → thinks
-     * PCH is fresh → cxx fails with "file modified since PCH was built"
-     * → needs a second build. With these implicit, restat propagates the
-     * lib change to PCH and it rebuilds in the same run.
+     * startup. A dep's headers are rewritten by its fetch MID-RUN. At
+     * startup ninja sees old headers → thinks PCH is fresh → cxx fails with
+     * "file modified since PCH was built" → needs a second build. With these
+     * implicit, restat propagates the change to PCH and it rebuilds in the
+     * same run.
      *
      * Cost: PCH also rebuilds on unrelated dep bumps (brotli etc.). Rare
      * enough to accept for correctness.
@@ -473,7 +482,11 @@ export interface LinkOpts {
   linkerMapOutputs?: string[];
   /** Checks to run on the executable whenever it is linked (ninja validations): stamp paths of edges emitted elsewhere. */
   validations?: string[];
+  islands?: boolean;
 }
+
+const islandsScript = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.ts");
+const islandsDoors = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.doors");
 
 /**
  * Link an executable. Returns absolute path to output (with cfg.exeSuffix
@@ -506,7 +519,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 
   const node: BuildNode = {
     outputs: [absOut],
-    rule: "link",
+    rule: opts.islands && cfg.islands ? "link_with_islands" : "link",
     inputs,
     vars,
   };
@@ -516,6 +529,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
     ...(opts.implicitInputs ?? []),
+    ...(opts.islands && cfg.islands ? [islandsScript(cfg), islandsDoors(cfg)] : []),
     ...lazyInputs,
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)

@@ -26,6 +26,19 @@ pub(super) enum AccessNode {
     Other,
 }
 
+impl AccessNode {
+    pub(super) fn file(self) -> Option<FileId> {
+        match self {
+            AccessNode::IndexedAccessType(file, _)
+            | AccessNode::ElementAccess(file, _)
+            | AccessNode::PropertyName(file, _)
+            | AccessNode::BindingName(file, _)
+            | AccessNode::Name((file, ..)) => Some(file),
+            AccessNode::None | AccessNode::Other => None,
+        }
+    }
+}
+
 /// A `getObjectTypeInstantiation` of a mapped type: its target and its key.
 pub(super) struct MappedInstantiation {
     target: (FileId, TypeNodeId),
@@ -722,7 +735,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getReducedType`: an intersection that reduces to `never` is removed.
         let obj = self.reduced(obj);
         let index = self.key_into_string_index_only(obj, index);
-        if self.p.files.options.no_unchecked_indexed_access
+        if self.index_may_be_missing(access_node.file())
             && access_flags.contains(AccessFlags::EXPRESSION_POSITION)
         {
             access_flags |= AccessFlags::INCLUDE_UNDEFINED;
@@ -899,6 +912,7 @@ impl<'p, 's> Checker<'p, 's> {
         match access_node {
             AccessNode::ElementAccess(file, e) => match self.hir(file)[e].kind {
                 ExprKind::Index { index, .. } => Some(self.span_of_parenthesized_expr(file, index)),
+                ExprKind::Dot { name_pos, .. } => Some((file, name_pos, self.hir(file)[e].end - 1)),
                 _ => None,
             },
             AccessNode::IndexedAccessType(file, node) => match self.hir(file)[node].kind {
@@ -986,7 +1000,8 @@ impl<'p, 's> Checker<'p, 's> {
                     });
                 }
                 if let Some((file, e)) = access_expression
-                    && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                    && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } =
+                        self.hir(file)[e].kind
                     && self.is_assignment_to_readonly_entity(file, e, obj, prop)
                     && let Some(index_node) = self.place_of_index_node(access_node)
                 {
@@ -1089,7 +1104,8 @@ impl<'p, 's> Checker<'p, 's> {
                     && info.key != TypeId::NUMBER
                 {
                     if let Some((file, e)) = access_expression
-                        && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                        && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } =
+                            self.hir(file)[e].kind
                     {
                         let at = self.place_inside_parentheses(file, e);
                         // `originalObjectType`
@@ -1141,7 +1157,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some((file, e)) = access_expression
                 && !self.is_const_enum_object(object)
             {
-                let no_implicit_any = self.p.files.options.no_implicit_any;
+                let no_implicit_any = self.check_options(file).no_implicit_any;
                 if self.is_object_literal_type(object) {
                     if no_implicit_any
                         && self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
@@ -1343,7 +1359,7 @@ impl<'p, 's> Checker<'p, 's> {
             && (is_repeatable || !is_member)
         {
             // The call in progress assigns the entry again.
-            if !is_repeatable && self.may_be_in_flight(q) && self.stack.contains(&q) {
+            if !is_repeatable && self.is_in_flight(q) {
                 self.note_cycle();
             }
             return known;
@@ -2586,8 +2602,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `getIndexInfosOfType`: what `resolveUnionTypeMembers` has set, once it has run. This
         // object is also made for the properties alone, which resolve no members of the union.
         let index = match self.resolved_union_type_members(ty) {
-            Some(resolved) => SmallVec::from_slice(resolved.index_infos()),
-            None => self.union_index_infos(parts),
+            Some(resolved) if resolved.shape().properties_of.is_none() => {
+                SmallVec::from_slice(resolved.index_infos())
+            }
+            _ => self.union_index_infos(parts),
         };
         shape.index.extend(index);
         let object = self.synth(shape);
@@ -3308,7 +3326,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 /// `CombineSurrogatePairs`: a lone high surrogate immediately before a lone low one combines with
 /// it into one character. Each is three bytes (`EncodeJSStringRune`).
-pub(super) fn combine_surrogate_pairs(text: &mut Vec<u8>) {
+pub(crate) fn combine_surrogate_pairs(text: &mut Vec<u8>) {
     let mut at = 0;
     while at + 6 <= text.len() {
         let [

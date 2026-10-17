@@ -1,0 +1,12 @@
+---
+import Card from "../components/Card.astro";
+import Slow from "../components/Slow.astro";
+import Layout from "../layouts/Layout.astro";
+const html = "<b>set as html</b>";
+---
+<Layout title="parts">
+  <Card title="with slots"><p>the body</p><em slot="foot">a foot</em></Card>
+  <Card title="without a foot"><Fragment set:html={html} /></Card>
+  <Slow word="a component that awaits" />
+  <p class:list={["a", { b: true, c: false }]}>{[1, 2, 3].map(n => <span>{n * n}</span>)}</p>
+</Layout>

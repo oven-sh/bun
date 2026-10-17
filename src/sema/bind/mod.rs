@@ -238,9 +238,21 @@ pub fn is_module_exports_inside_parentheses(hir: &File, e: ExprId) -> bool {
 
 /// `GetAssignmentDeclarationKind`, for the kinds that only JavaScript has.
 pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
-    if !hir.is_js {
+    if hir.is_js {
+        return assignment_declaration_kind_in_javascript(hir, e);
+    }
+    if !hir.is_annotated_javascript() {
         return JsDeclarationKind::None;
     }
+    match assignment_declaration_kind_in_javascript(hir, e) {
+        JsDeclarationKind::ThisProperty | JsDeclarationKind::ObjectDefinePropertyValue => {
+            JsDeclarationKind::None
+        }
+        exported => exported,
+    }
+}
+
+fn assignment_declaration_kind_in_javascript(hir: &File, e: ExprId) -> JsDeclarationKind {
     let (target, value) = match hir[e].kind {
         ExprKind::Assign {
             op: None,
@@ -1217,6 +1229,10 @@ pub struct BoundIn<S: Storage> {
     /// `requiresScopeChange` is true for some parameter, indexed by function: names in its parameters then
     /// resolve to variables of its body.
     pub requires_scope_change: S::List<bool>,
+    pub uses_ecmascript_bindings: bool,
+    pub inserted: S::Few<(u32, u32)>,
+    pub is_non_utf8: bool,
+    pub class_options: Option<crate::resolve::ClassOptions>,
     /// `node.Symbol`. For an unnamed function expression and for an arrow function `NONE` means
     /// that it has not been created: see `symbol_of_expando_initializer`.
     pub fn_symbol: S::List<SymbolId>,
@@ -1501,7 +1517,7 @@ impl<S: Storage> BoundIn<S> {
     /// text of `PropertyNameOrName()`, `NONE` if that is neither an identifier nor a string
     /// literal.
     pub fn required_by(&self, hir: &File, pat: PatId) -> Option<(Atom, Option<Atom>)> {
-        if !hir.is_js {
+        if !hir.is_js && !hir.is_annotated_javascript() {
             return None;
         }
         let (pattern, property_name) = match self.pat_parent[pat.idx()] {
@@ -1577,6 +1593,13 @@ impl<S: Storage> BoundIn<S> {
         // Among the members of a class or an interface only the type parameters are in scope, as
         // types: `class C<T> { T = 1 }`.
         if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
+            return false;
+        }
+        if self.uses_ecmascript_bindings
+            && matches!(from, ScopeKind::Param(_))
+            && ((meaning & flags).contains(SymFlags::FUNCTION) || flags.contains(SymFlags::ALIAS))
+            && !flags.contains(SymFlags::PARAMETER)
+        {
             return false;
         }
         let f = match from {
@@ -1747,6 +1770,22 @@ impl Bound<'_> {
 
     /// `markNodeAssignmentsWorker`: the identifiers that resolve to `symbol` and are assignment
     /// targets, in source order.
+    pub fn is_const(&self, hir: &File, d: VarDeclId) -> bool {
+        match hir[d].kind {
+            VarKind::Const => true,
+            VarKind::Var => self
+                .pat_symbol
+                .get(hir[d].pat.idx())
+                .and_then(|symbol| symbol.some())
+                .is_some_and(|symbol| self.symbols[symbol.idx()].flags.contains(SymFlags::CONST)),
+            VarKind::Let | VarKind::Using | VarKind::AwaitUsing => false,
+        }
+    }
+
+    pub fn is_constant(&self, hir: &File, d: VarDeclId) -> bool {
+        matches!(hir[d].kind, VarKind::Using | VarKind::AwaitUsing) || self.is_const(hir, d)
+    }
+
     pub fn assignments_to(&self, symbol: SymbolId) -> &[(SymbolId, ExprId)] {
         let from = self.assignments.partition_point(|a| a.0.0 < symbol.0);
         let len = self.assignments[from..].partition_point(|a| a.0 == symbol);
@@ -2159,6 +2198,10 @@ impl BoundBuilder {
             type_param_scope,
             fns,
             requires_scope_change,
+            uses_ecmascript_bindings,
+            inserted,
+            is_non_utf8,
+            class_options,
             fn_symbol,
             class_symbol,
             class_owner,
@@ -2252,6 +2295,10 @@ impl BoundBuilder {
         type_param_scope.clear();
         fns.clear();
         requires_scope_change.clear();
+        *uses_ecmascript_bindings = Default::default();
+        inserted.clear();
+        *is_non_utf8 = Default::default();
+        *class_options = Default::default();
         fn_symbol.clear();
         class_symbol.clear();
         class_owner.clear();
@@ -2370,6 +2417,10 @@ impl BoundBuilder {
             type_param_scope: copy_to_arena(&mut self.type_param_scope, arena),
             fns: copy_to_arena(&mut self.fns, arena),
             requires_scope_change: copy_to_arena(&mut self.requires_scope_change, arena),
+            uses_ecmascript_bindings: self.uses_ecmascript_bindings,
+            inserted: few_to_arena(std::mem::take(&mut self.inserted), arena),
+            is_non_utf8: self.is_non_utf8,
+            class_options: self.class_options,
             fn_symbol: copy_to_arena(&mut self.fn_symbol, arena),
             class_symbol: copy_to_arena(&mut self.class_symbol, arena),
             class_owner: copy_to_arena(&mut self.class_owner, arena),
@@ -2453,6 +2504,10 @@ impl Bound<'_> {
     pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
+            uses_ecmascript_bindings: self.uses_ecmascript_bindings,
+            inserted: ArenaFew::from_iter_in(self.inserted.iter().cloned(), arena),
+            is_non_utf8: self.is_non_utf8,
+            class_options: self.class_options,
             symbols: {
                 let copy = |symbol: &Symbol<'_>| Symbol {
                     name: symbol.name,
@@ -2647,6 +2702,11 @@ pub struct BindOptions {
     /// `GetEmitScriptTarget` is older than that.
     pub before_es2020: bool,
     pub before_es2017: bool,
+    /// `Options::detects_commonjs_by_free_names`
+    pub detects_commonjs_by_free_names: bool,
+    pub uses_ecmascript_bindings: bool,
+    pub is_forced_commonjs: Option<bool>,
+    pub is_typed_bundle: bool,
 }
 
 /// `bindSourceFile`

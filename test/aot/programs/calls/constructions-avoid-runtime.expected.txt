@@ -1,0 +1,7 @@
+maps: 10000, few entries
+sets: 20000, few entries
+dates: 49995000, few entries
+errors: 20000, few entries
+a function that asks new.target: 15000, few entries
+the same, called without new: 1015000, few entries
+all in turn: 10000, few entries

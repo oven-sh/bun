@@ -14,6 +14,7 @@ const { validateFunction } = require("internal/validators");
 const { CSI } = require("internal/readline/utils");
 
 const { kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd } = CSI;
+const kCSI = "\x1b[";
 
 /**
  * moves the cursor to the x and y coordinate on the given stream
@@ -39,7 +40,7 @@ function cursorTo(stream, x, y, callback) {
 
   if (typeof x !== "number") throw new ERR_INVALID_CURSOR_POS();
 
-  const data = typeof y !== "number" ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
+  const data = typeof y !== "number" ? kCSI + (x + 1) + "G" : kCSI + (y + 1) + ";" + (x + 1) + "H";
   return stream.write(data, callback);
 }
 
@@ -60,15 +61,15 @@ function moveCursor(stream, dx, dy, callback) {
   let data = "";
 
   if (dx < 0) {
-    data += CSI`${-dx}D`;
+    data += kCSI + -dx + "D";
   } else if (dx > 0) {
-    data += CSI`${dx}C`;
+    data += kCSI + dx + "C";
   }
 
   if (dy < 0) {
-    data += CSI`${-dy}A`;
+    data += kCSI + -dy + "A";
   } else if (dy > 0) {
-    data += CSI`${dy}B`;
+    data += kCSI + dy + "B";
   }
 
   return stream.write(data, callback);

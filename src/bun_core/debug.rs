@@ -348,6 +348,33 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// own frames are never in the chain. `rbp` is not a reliable frame pointer
 /// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
 /// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
+#[cfg(windows)]
+static KEEPS_FRAME_POINTER_CHAIN: std::sync::OnceLock<fn(usize) -> bool> =
+    std::sync::OnceLock::new();
+
+#[cfg(windows)]
+pub fn set_keeps_frame_pointer_chain(is_such_code: fn(usize) -> bool) {
+    let _ = KEEPS_FRAME_POINTER_CHAIN.set(is_such_code);
+}
+
+#[cfg(windows)]
+pub fn with_current_context<R>(run: impl FnOnce(usize, usize) -> R) -> R {
+    unsafe extern "system" {
+        fn RtlCaptureContext(context: *mut bun_windows_sys::CONTEXT);
+    }
+    let mut context = core::mem::MaybeUninit::<bun_windows_sys::CONTEXT>::zeroed();
+    // SAFETY: the pointer is valid for a write of a whole CONTEXT, which all-zero bytes are a value of
+    let context = unsafe {
+        RtlCaptureContext(context.as_mut_ptr());
+        context.assume_init()
+    };
+    #[cfg(target_arch = "x86_64")]
+    let pc = context.Rip;
+    #[cfg(target_arch = "aarch64")]
+    let pc = context.Pc;
+    run(pc as usize, &raw const context as usize)
+}
+
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
@@ -383,7 +410,34 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             let rf = unsafe {
                 ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
             };
-            if rf.is_null() {
+            let keeps_frame_pointer_chain = rf.is_null()
+                && KEEPS_FRAME_POINTER_CHAIN
+                    .get()
+                    .is_some_and(|is_such_code| is_such_code(control_pc as usize));
+            if keeps_frame_pointer_chain {
+                #[cfg(target_arch = "x86_64")]
+                let frame = ctx.Rbp;
+                #[cfg(target_arch = "aarch64")]
+                let frame = ctx.Fp;
+                if frame & 15 != 0 || frame < control_sp || !is_valid_memory(frame as usize) {
+                    break;
+                }
+                // SAFETY: `frame` is 16-byte aligned, so both words lie in the one page that is_valid_memory found committed and readable.
+                let (caller_frame, return_address) =
+                    unsafe { (*(frame as *const u64), *(frame as *const u64).add(1)) };
+                #[cfg(target_arch = "x86_64")]
+                {
+                    ctx.Rip = return_address;
+                    ctx.Rsp = frame + 16;
+                    ctx.Rbp = caller_frame;
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    ctx.Pc = return_address;
+                    ctx.Sp = frame + 16;
+                    ctx.Fp = caller_frame;
+                }
+            } else if rf.is_null() {
                 // Leaf function with no `.pdata` entry: manually pop the
                 // return address. On x64 it is at `[Rsp]`; on ARM64 it is in
                 // `Lr`. An ARM64 leaf allocates no stack (bl does not push),

@@ -1248,6 +1248,7 @@ impl<'l> Loader<'l> {
             config.follow_eslint(9);
         }
         config.infer_globals(self.infers_globals_besides());
+        config.enable_aot_rules(self.options.aot);
         Ok(config)
     }
 
@@ -1419,6 +1420,7 @@ impl<'l> Loader<'l> {
         })?;
         self.advise_about_js_plugins(&config, &sources);
         config.infer_globals(self.infers_globals_besides());
+        config.enable_aot_rules(self.options.aot);
         Ok(config)
     }
 
@@ -2462,6 +2464,7 @@ impl<'l> Loader<'l> {
         }
         self.warn_about_unknown_rules(&config, b"your .eslintrc config");
         config.infer_globals(self.infers_globals_besides());
+        config.enable_aot_rules(self.options.aot);
         Ok(Arc::new(Loaded {
             config,
             flavor: Flavor::EslintRc,
@@ -2706,6 +2709,9 @@ impl<'l> Loader<'l> {
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.
     pub(crate) fn wants_types(&self, loaded: &Loaded, config: &ResolvedConfig) -> bool {
+        if self.options.aot && self.options.type_aware.is_none() {
+            return true;
+        }
         // With no config file and no flag, the rules decide. A rule that only uses types when they're available isn't a
         // reason to type check.
         if loaded.flavor == Flavor::BuiltIn && self.options.type_aware.is_none() {

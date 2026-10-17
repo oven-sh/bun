@@ -32,6 +32,7 @@ export type Field =
   | ({
       getter: string;
       cache?: true | string;
+      type?: string;
       /**
        * Allow overriding the value of the property
        */

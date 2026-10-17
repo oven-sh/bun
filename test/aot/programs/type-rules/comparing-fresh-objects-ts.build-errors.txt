@@ -1,0 +1,1 @@
+error: TS2839: This condition will always return 'true' since JavaScript compares objects by reference, not value.

@@ -1,0 +1,286 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`reads a declared optional field that is absent from an instance that has an undeclared property; its class is extended by its value 1`] = `
+"typed, function: 35.27 instructions (kernel 20.15, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadAbsentByName 2, module 0.12), 122 bytes
+typed, module level: 35.12 instructions (module 20.12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 1931 bytes
+untyped, function: 53.34 instructions (kernel 38.22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2, module 0.12), 334 bytes
+untyped, module level: 51.26 instructions (module 36.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 2339 bytes"
+`;
+
+exports[`fills an empty array that came out of a call by storing at the index of the loop 1`] = `
+"typed, function: 105.94 instructions (the runtime 70.44, kernel 23, elsewhere 4.94, stub ArrayLiteral0 4.56, stub ColdOperationVoidWithoutFPRs 1.81, module 0.75, stub ColdOperationVoidWithoutFPRs to operationAOTTypedArrayPutAtIndexExpecting with arguments 0.31, stub ColdOperationVoidWithoutFPRs to operationAOTTypedArrayPutAtIndexExpecting 0.13), 384 bytes
+typed, module level: 107.75 instructions (the runtime 71.44, module 22.56, elsewhere 4.94, stub ArrayLiteral0 4.56, stub ColdOperationVoid 3.81, stub ColdOperationVoid to operationAOTTypedArrayPutAtIndexExpecting with arguments 0.31, stub ColdOperationVoid to operationAOTTypedArrayPutAtIndexExpecting 0.13), 1516 bytes
+untyped, function: 113.13 instructions (the runtime 70.44, kernel 30.19, elsewhere 4.94, stub ArrayLiteral0 4.56, stub ColdOperationVoidWithoutFPRs 1.81, module 0.75, stub ColdOperationVoidWithoutFPRs to operationAOTTypedArrayPutAtIndexExpecting with arguments 0.31, stub ColdOperationVoidWithoutFPRs to operationAOTTypedArrayPutAtIndexExpecting 0.13), 807 bytes
+untyped, module level: 111.50 instructions (the runtime 70.44, module 29.31, elsewhere 4.94, stub ArrayLiteral0 4.56, stub ColdOperationVoidWithoutFPRs 1.81, stub ColdOperationVoidWithoutFPRs to operationAOTTypedArrayPutAtIndexExpecting with arguments 0.31, stub ColdOperationVoidWithoutFPRs to operationAOTTypedArrayPutAtIndexExpecting 0.13), 1758 bytes"
+`;
+
+exports[`fills new Array(n) with numbers by storing at the index of the loop 1`] = `
+"typed, function: 40.70 instructions (the runtime 21.94, kernel 14.06, elsewhere 2.13, stub ColdPlainOperationWithoutFPRs 1.56, module 0.75, stub ColdPlainOperationWithoutFPRs to operationAOTTypedAllocateStorage 0.13, stub ColdPlainOperationWithoutFPRs to operationAOTTypedAllocateStorage with arguments 0.13), 704 bytes
+typed, module level: 41.75 instructions (the runtime 21.94, module 13.88, stub ColdPlainOperation 3.56, elsewhere 2.13, stub ColdPlainOperation to operationAOTTypedAllocateStorage 0.13, stub ColdPlainOperation to operationAOTTypedAllocateStorage with arguments 0.13), 1964 bytes
+untyped, function: 42.56 instructions (the runtime 21.94, kernel 15.94, elsewhere 2.13, stub ColdPlainOperationWithoutFPRs 1.56, module 0.75, stub ColdPlainOperationWithoutFPRs to operationAOTTypedAllocateStorage 0.13, stub ColdPlainOperationWithoutFPRs to operationAOTTypedAllocateStorage with arguments 0.13), 940 bytes
+untyped, module level: 41.52 instructions (the runtime 21.94, module 15.63, elsewhere 2.13, stub ColdPlainOperationWithoutFPRs 1.56, stub ColdPlainOperationWithoutFPRs to operationAOTTypedAllocateStorage 0.13, stub ColdPlainOperationWithoutFPRs to operationAOTTypedAllocateStorage with arguments 0.13), 2139 bytes"
+`;
+
+exports[`turns an array of numerals into numbers with map(Number) 1`] = `
+"typed, function: 115.51 instructions (kernel 52.63, the runtime 28.50, stub StringToNumber8 25.44, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3, module 0.75, stub TypedBuiltinCell of 1149 0.31), 807 bytes
+typed, module level: 114.75 instructions (module 52.94, the runtime 28.50, stub StringToNumber8 25.44, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3), 2341 bytes
+untyped, function: 117.77 instructions (kernel 53.63, the runtime 28.50, stub StringToNumber8 25.44, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3, stub GetByNameWithDirectColumnWithReceiverInR15 0.88, module 0.75, stub ReadInheritedOutOfLineByName 0.38, stub TypedBuiltinCell of 1149 0.31), 1043 bytes
+untyped, module level: 116.56 instructions (module 53.50, the runtime 28.50, stub StringToNumber8 25.44, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3, stub GetByNameWithDirectColumnWithReceiverInRBX 0.88, stub ReadInheritedOutOfLineByName 0.38), 2513 bytes"
+`;
+
+exports[`pushes numbers onto an empty array 1`] = `
+"typed, function: 13.14 instructions (kernel 15.23, stub NewArrayWithDouble 6.19, module 0.12, elsewhere -0.41, the runtime -7.99), 349 bytes
+typed, module level: 13.01 instructions (module 15.22, stub NewArrayWithDouble 6.19, elsewhere -0.41, the runtime -7.99), 1455 bytes
+untyped, function: 18.57 instructions (kernel 22.54, stub NewEmptyArrayWithCapacity 3.96, module 0.12, elsewhere -0.60, the runtime -7.45), 654 bytes
+untyped, module level: 18.56 instructions (module 22.51, stub NewEmptyArrayWithCapacity 3.96, elsewhere -0.60, the runtime -7.31), 1582 bytes"
+`;
+
+exports[`writes an array of numbers at the index of the loop 1`] = `
+"typed, function: 6.41 instructions (kernel 6.29, module 0.12), 365 bytes
+typed, module level: 6.29 instructions (module 6.29), 1852 bytes
+untyped, function: 21.58 instructions (kernel 21.38, module 0.12, stub Add 0.08), 745 bytes
+untyped, module level: 21.41 instructions (module 21.41), 2381 bytes"
+`;
+
+exports[`iterates over an async generator that awaits an async function before every yield 1`] = `
+"typed, function: 471.05 instructions (the runtime 139.95, stub AsyncIteratorNext 92.05, doubles 55.25, kernel 50.85, stub AwaitBySavingFrame 31.50, stub AwaitMayContinue 26.80, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14.70, stub EnterSavedFrame 6.50, elsewhere 4.05, module 2.75, stub EnterResume 2.15, stub OperationValueWithInstance 2.10, stub OperationVoidWithInstance 2.10, stub RestoreSavedFrameToStack 1.70, stub AllocateTypedCell 1.60, stub EnterAsyncGenerator 1.40, stub AwaitInAsyncGenerator 1.30, stub ResolvePromiseAfterAwait 0.90, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 513 bytes
+typed, module level: 359.45 instructions (stub AsyncIteratorNext 95.45, module 68.75, doubles 54.15, the runtime 39.90, stub AwaitMayContinue 28, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14, stub OperationValueWithInstance 2.10, elsewhere 1.70, stub AllocateTypedCell 1.60, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10), 2525 bytes
+untyped, function: 472.20 instructions (the runtime 139.95, stub AsyncIteratorNext 92.05, doubles 55.40, kernel 51.85, stub AwaitBySavingFrame 31.50, stub AwaitMayContinue 26.80, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14.70, stub EnterSavedFrame 6.50, elsewhere 4.05, module 2.75, stub EnterResume 2.15, stub OperationValueWithInstance 2.10, stub OperationVoidWithInstance 2.10, stub RestoreSavedFrameToStack 1.70, stub AllocateTypedCell 1.60, stub EnterAsyncGenerator 1.40, stub AwaitInAsyncGenerator 1.30, stub ResolvePromiseAfterAwait 0.90, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 701 bytes
+untyped, module level: 359.60 instructions (stub AsyncIteratorNext 95.45, module 68.75, doubles 54.30, the runtime 39.90, stub AwaitMayContinue 28, stub GetByNameWithDirectColumnWithReceiverInR15 20.50, stub AsyncGeneratorYield 17, double 16, stub TypedNewPromise 14, stub OperationValueWithInstance 2.10, elsewhere 1.70, stub AllocateTypedCell 1.60, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationValueWithInstance to operationAOTTypedNewGenerator 0.10), 3089 bytes"
+`;
+
+exports[`resumes one async generator by awaiting next() and reads done and value 1`] = `
+"typed, function: 1045.85 instructions (the runtime 512.25, stub EnterSavedFrame 190.45, stub AwaitBySavingFrame 74.70, stub EnterResume 45.15, naturals 30, stub RestoreSavedFrameToStack 28, kernel 25.10, stub CallValue0 25, stub CallHostFunction0 24, stub CallMethodByName0 24, stub OperationVoidWithInstance 15.40, stub GetByNameAsDouble 15, stub AsyncGeneratorYield 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, stub CoerceToType with arguments 6, module 2.75, elsewhere 2.35, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 273 bytes
+typed, module level: 1616.75 instructions (the runtime 1259, stub EnterResume 86, module 80.65, naturals 30, stub OperationVoidWithInstance 28, stub CallValue0 25, stub CallHostFunction0 24, stub CallMethodByName0 24, stub GetByNameAsDoublePreservingTwo 15, stub AsyncGeneratorYield 14, elsewhere 13.10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, stub CoerceToType with arguments 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 2), 2054 bytes
+untyped, function: 1039.85 instructions (the runtime 512.25, stub EnterSavedFrame 190.45, stub AwaitBySavingFrame 74.70, stub EnterResume 45.15, kernel 30.10, naturals 30, stub RestoreSavedFrameToStack 28, stub CallValue0 25, stub CallHostFunction0 24, stub CallMethodByName0 24, stub OperationVoidWithInstance 15.40, stub AsyncGeneratorYield 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 10, module 2.75, elsewhere 2.35, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 362 bytes
+untyped, module level: 1608.85 instructions (the runtime 1259, stub EnterResume 86, module 83.75, naturals 30, stub OperationVoidWithInstance 28, stub CallValue0 25, stub CallHostFunction0 24, stub CallMethodByName0 24, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 20, stub AsyncGeneratorYield 14, elsewhere 13.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 2), 2082 bytes"
+`;
+
+exports[`calls a function that lies far out of line in objects with hundreds of functions 1`] = `
+"typed, function: 95.31 instructions (kernel 26.19, stub CallMethodByName1 25, a function without a name 15, stub CallValue1 12, stub BoxOptionalNumber 8, stub AddDoubleAsDouble 5, stub LeafUnboxNumberArgument0ToFPR0 4, module 0.12), 220 bytes
+typed, module level: 89.45 instructions (stub CallMethodByName1 25, module 20.45, a function without a name 15, stub CallValue1 12, stub BoxOptionalNumber 8, stub AddDoubleAsDouble 5, stub LeafUnboxNumberArgument0ToFPR0 4), 1324 bytes
+untyped, function: 112.41 instructions (kernel 30.29, stub CallMethodByName1 25, stub Add 24, a function without a name 17, stub CallValue1 12, exports of call-own-function-far-out-of-line.untyped.function.js 4, module 0.12), 320 bytes
+untyped, module level: 101.52 instructions (stub CallMethodByName1 25, stub Add 24, module 19.52, a function without a name 17, stub CallValue1 12, exports of call-own-function-far-out-of-line.untyped.module-level.js 4), 1365 bytes"
+`;
+
+exports[`passes object literals typed any, which nothing else holds, to a typed function, which reads three fields 1`] = `
+"typed, function: 214.67 instructions (stub ConvertByPlan 120.56, kernel 32.19, stub NewObjectFromDescriptor3 23.08, the runtime 18.70, stub ColdOperationValue to operationAOTTypedCoerce 16, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.72, stub ColdOperationValue 0.29, module 0.12), 361 bytes
+typed, module level: 214.09 instructions (stub ConvertByPlan 120.56, module 32.15, stub NewObjectFromDescriptor3 23.08, the runtime 18.43, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.72, stub ColdOperationValueWithoutFPRs 0.14), 1424 bytes
+untyped, function: 65.27 instructions (kernel 31.15, stub Add 24, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 0.12), 254 bytes
+untyped, module level: 61.18 instructions (module 27.18, stub Add 24, stub GetByNameWithDirectColumnWithReceiverInRAX 10), 1242 bytes"
+`;
+
+exports[`reads two properties that the class does not declare, through a parameter of type any, and keeps them as they are 1`] = `
+"typed, function: 71.29 instructions (kernel 21.17, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub GetByNameWithDirectColumnWithReceiverInRCX 14, stub ReadExtraPropertyByName 11, stub ReadExtraPropertyByNamePreservingTwo 11, module 0.12), 179 bytes
+typed, module level: 71.12 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 28, stub ReadExtraPropertyByNamePreservingTwo 22, module 21.12), 1445 bytes
+untyped, function: 61.38 instructions (kernel 41.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 20, module 0.12), 428 bytes
+untyped, module level: 59.26 instructions (module 39.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 20), 1849 bytes"
+`;
+
+exports[`replaces the value of a property that the class does not declare, through a parameter of type any 1`] = `
+"typed, function: 49.76 instructions (kernel 23.35, stub PutByNameStoresExtraPropertyPreservingTwo 13, stub PutByNameWithDirectColumnPreservingTwo 13, stub GetByNameWithDirectColumnWithReceiverInRAX 0.13, module 0.12, stub ReadExtraPropertyByName 0.11, stub AddDoubleAsDouble 0.05), 267 bytes
+typed, module level: 49.58 instructions (module 23.29, stub PutByNameStoresExtraPropertyPreservingTwo 13, stub PutByNameWithDirectColumnPreservingTwo 13, stub GetByNameWithDirectColumnWithReceiverInRAX 0.13, stub ReadExtraPropertyByName 0.11, stub AddDoubleAsDouble 0.05), 1476 bytes
+untyped, function: 57.77 instructions (kernel 43.47, stub PutByNameWithDirectColumnPreservingTwo 14, module 0.12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.10, stub Add 0.08), 582 bytes
+untyped, module level: 55.65 instructions (module 41.47, stub PutByNameWithDirectColumnPreservingTwo 14, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 1814 bytes"
+`;
+
+exports[`iterates with for await over an array of numbers 1`] = `
+"typed, function: 474.40 instructions (the runtime 329.40, kernel 55.85, stub AwaitBySavingFrame 41.50, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncIteratorNext 10.15, stub EnterSavedFrame 3.30, module 2.80, elsewhere 2.35, stub EnterResume 2.15, stub RestoreSavedFrameToStack 1.70, stub OperationValueWithInstance 1.40, stub OperationVoidWithInstance 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 507 bytes
+typed, module level: 446.05 instructions (the runtime 310.20, module 69.65, stub AsyncIteratorNext 29.40, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub OperationValueWithInstance 16.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10), 2842 bytes
+untyped, function: 472.35 instructions (the runtime 324.40, kernel 50.85, stub AwaitBySavingFrame 41.50, stub GetByNameWithDirectColumnWithReceiverInRBX 20.50, stub AsyncIteratorNext 10.15, stub Add 8, stub EnterSavedFrame 3.30, module 2.75, elsewhere 2.35, stub EnterResume 2.15, stub RestoreSavedFrameToStack 1.70, stub OperationValueWithInstance 1.40, stub OperationVoidWithInstance 1.40, stub ResolvePromiseAfterAwait 0.90, stub TypedNewPromise 0.70, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 0.10), 586 bytes
+untyped, module level: 440.05 instructions (the runtime 305.20, module 68.65, stub AsyncIteratorNext 29.40, stub GetByNameWithDirectColumnWithReceiverInR15 20.50, stub OperationValueWithInstance 16.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIterator 0.10, stub OperationValueWithInstance to operationAOTTypedGetAsyncIteratorNext 0.10), 3411 bytes"
+`;
+
+exports[`creates a generator object and never resumes it 1`] = `
+"typed, function: 114.67 instructions (count 50.98, stub AllocateTypedCell 32.54, the runtime 22.80, kernel 7.15, elsewhere 0.89, stub ColdOperationValueWithoutFPRs 0.14, module 0.12, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 108 bytes
+typed, module level: 113.09 instructions (count 50.98, stub AllocateTypedCell 32.54, the runtime 22.34, module 6.15, elsewhere 0.89, stub ColdOperationValueWithoutFPRs 0.14, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 1131 bytes
+untyped, function: 114.21 instructions (count 50.98, stub AllocateTypedCell 32.54, the runtime 22.34, kernel 7.15, elsewhere 0.89, stub ColdOperationValueWithoutFPRs 0.14, module 0.12, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 108 bytes
+untyped, module level: 113.55 instructions (count 50.98, stub AllocateTypedCell 32.54, the runtime 22.80, module 6.15, elsewhere 0.89, stub ColdOperationValueWithoutFPRs 0.14, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewGenerator 0.01), 1075 bytes"
+`;
+
+exports[`iterates with for of over a generator that was kept in an array 1`] = `
+"typed, function: 95.32 instructions (stub IterHasInFrame 42.42, kernel 29.59, upTo 16.57, outlined code 6, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30, module 0.12), 721 bytes
+typed, module level: 90.20 instructions (stub IterHasInFrame 42.42, module 30.59, upTo 16.57, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30), 1820 bytes
+untyped, function: 91.39 instructions (stub IterHasInFrame 42.42, kernel 21.63, upTo 18.60, stub Add 8, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30, module 0.12), 586 bytes
+untyped, module level: 91.31 instructions (stub IterHasInFrame 42.42, module 29.67, upTo 18.60, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30), 2065 bytes"
+`;
+
+exports[`collects with spread what a generator yields that was kept in an array 1`] = `
+"typed, function: 118.77 instructions (stub IterHasInFrame 42.42, stub PushToFullVector 25.21, the runtime 21.12, upTo 16.57, stub AppendSpread 9.25, elsewhere 2.19, stub NewEmptyArrayWithDouble 0.73, kernel 0.54, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30, module 0.12), 300 bytes
+typed, module level: 118.57 instructions (stub IterHasInFrame 42.42, stub PushToFullVector 25.21, the runtime 21.12, upTo 16.57, stub AppendSpread 9.25, elsewhere 2.19, stub NewEmptyArrayWithDouble 0.73, module 0.47, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30), 1253 bytes
+untyped, function: 118.66 instructions (stub IterHasInFrame 42.42, stub PushToFullVector 23.28, the runtime 20.52, upTo 18.60, stub AppendSpread 9.25, elsewhere 2.19, kernel 0.94, stub ArrayLiteral0 0.73, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30, module 0.12), 773 bytes
+untyped, module level: 118.60 instructions (stub IterHasInFrame 42.42, stub PushToFullVector 23.28, the runtime 20.65, upTo 18.60, stub AppendSpread 9.25, elsewhere 2.19, module 0.87, stub ArrayLiteral0 0.73, stub AllocateTypedCell 0.32, stub IterOpenInFrame 0.30), 1596 bytes"
+`;
+
+exports[`tests objects against the class that made them at one site that sees sixteen classes 1`] = `
+"typed, function: 72.73 instructions (stub InstanceOfCached 37.56, kernel 35.09, module 0.07), 250 bytes
+typed, module level: 73.66 instructions (stub InstanceOfCached 37.56, module 36.09), 2099 bytes
+untyped, function: 86.73 instructions (kernel 49.09, stub InstanceOfCached 37.56, module 0.07), 378 bytes
+untyped, module level: 87.69 instructions (module 50.13, stub InstanceOfCached 37.56), 2243 bytes"
+`;
+
+exports[`makes an Intl.DateTimeFormat whose locale and options are constants and formats one date with it 1`] = `
+"typed, function: 806.85 instructions (the runtime 727.65, kernel 55.60, stub OperationValueWithInstance 14, stub PlainOperationWithInstance 5, stub OperationValueWithInstance to operationAOTTypedNewConstantFormatter 2, stub PlainOperationWithInstance to operationAOTTypedFormatDateTime 2, module 0.60), 531 bytes
+typed, module level: 777.10 instructions (the runtime 702.65, module 51.45, stub OperationValueWithInstance 14, stub PlainOperationWithInstance 5, stub OperationValueWithInstance to operationAOTTypedNewConstantFormatter 2, stub PlainOperationWithInstance to operationAOTTypedFormatDateTime 2), 1732 bytes
+untyped, function: 2461.97 instructions (the runtime 2240.82, kernel 60.95, stub GetThroughKnownCustomGetterByName 31, elsewhere 28.60, stub CallHostFunction1 27, stub CallValue1 24, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadKnownCustomGetterByNamePreservingTwo 13, stub CallValueNamed1 7, stub OperationValueWithInstance to operationAOTTypedNewConstantFormatter 2, module 0.60), 629 bytes
+untyped, module level: 2460.37 instructions (the runtime 2240.82, module 59.95, stub GetThroughKnownCustomGetterByName 31, elsewhere 28.60, stub CallHostFunction1 27, stub CallValue1 24, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadKnownCustomGetterByNamePreservingTwo 13, stub CallValueNamed1 7, stub OperationValueWithInstance to operationAOTTypedNewConstantFormatter 2), 2021 bytes"
+`;
+
+exports[`adds up an array of numbers that came out of a call with a for loop 1`] = `
+"typed, function: 4.35 instructions (kernel 4.23, module 0.12), 312 bytes
+typed, module level: 4.24 instructions (module 4.24), 1448 bytes
+untyped, function: 41.18 instructions (kernel 41.06, module 0.12), 1082 bytes
+untyped, module level: 43.53 instructions (module 40.53, outlined code 3), 2208 bytes"
+`;
+
+exports[`adds up an array of numbers with for of 1`] = `
+"typed, function: 4.48 instructions (kernel 4.36, module 0.12), 349 bytes
+typed, module level: 4.35 instructions (module 4.35), 1791 bytes
+untyped, function: 47.28 instructions (kernel 24.38, stub Add 22.78, module 0.12), 356 bytes
+untyped, module level: 41.07 instructions (module 41.07), 2546 bytes"
+`;
+
+exports[`adds up an array of numbers with a for loop 1`] = `
+"typed, function: 4.35 instructions (kernel 4.23, module 0.12), 312 bytes
+typed, module level: 4.25 instructions (module 4.25), 1741 bytes
+untyped, function: 59.29 instructions (kernel 36.39, stub Add 22.78, module 0.12), 402 bytes
+untyped, module level: 43.53 instructions (module 40.53, outlined code 3), 2557 bytes"
+`;
+
+exports[`parses JSON of three numbers and a string 1`] = `
+"typed, function: 511.40 instructions (the runtime 229.75, kernel 218.50, stub NewObjectFromDescriptor4 23, stub PlainOperationWithInstance 13.25, elsewhere 11, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2, stub PlainOperationWithInstance to operationAOTTypedJSONStringAt 2, stub PlainOperationWithInstance to operationAOTTypedJSONNumberAt 1.30, module 0.60), 1625 bytes
+typed, module level: 505.65 instructions (the runtime 229.75, module 213.35, stub NewObjectFromDescriptor4 23, stub PlainOperationWithInstance 13.25, elsewhere 11, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2, stub PlainOperationWithInstance to operationAOTTypedJSONStringAt 2, stub PlainOperationWithInstance to operationAOTTypedJSONNumberAt 1.30), 3013 bytes
+untyped, function: 1088.90 instructions (the runtime 955.55, kernel 48.95, elsewhere 38.80, stub CallHostFunction1 27, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub Add 8, module 0.60), 501 bytes
+untyped, module level: 988.10 instructions (the runtime 864.15, module 46.95, elsewhere 32, stub CallHostFunction1 27, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub Add 8), 2717 bytes"
+`;
+
+exports[`turns an object of three numbers and a string into JSON 1`] = `
+"typed, function: 578.20 instructions (the runtime 451.10, kernel 75.15, elsewhere 19.35, stub PlainOperation 12, stub PlainOperationWithInstance 10, stub PlainOperation to operationAOTTypedJSONAppendNumber 6, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONFinish 2, module 0.60), 645 bytes
+typed, module level: 576.55 instructions (the runtime 451.10, module 74.10, elsewhere 19.35, stub PlainOperation 12, stub PlainOperationWithInstance 10, stub PlainOperation to operationAOTTypedJSONAppendNumber 6, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONFinish 2), 2245 bytes
+untyped, function: 1294.25 instructions (the runtime 1144.35, kernel 70.95, elsewhere 36.35, stub CallHostFunction1 27, a function without a name 15, module 0.60), 688 bytes
+untyped, module level: 1291.65 instructions (the runtime 1144.35, module 68.95, elsewhere 36.35, stub CallHostFunction1 27, a function without a name 15), 2475 bytes"
+`;
+
+exports[`lists the keys of an instance that has an undeclared property 1`] = `
+"typed, function: 498.67 instructions (the runtime 402.26, stub ColdOperationValue 59, kernel 32.16, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys with arguments 3, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys 2, elsewhere 0.13, module 0.12), 322 bytes
+typed, module level: 495.52 instructions (the runtime 402.26, stub ColdOperationValue 59, module 30.13, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys 2, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys with arguments 2, elsewhere 0.13), 1733 bytes
+untyped, function: 77.39 instructions (kernel 77.27, module 0.12), 880 bytes
+untyped, module level: 76.23 instructions (module 76.23), 2440 bytes"
+`;
+
+exports[`makes an instance of a class whose constructor stores four arrow functions on \`this\` 1`] = `
+"typed, function: 188.65 instructions (stub NewTypedClosure1 84.48, kernel 59.33, the runtime 24.23, stub AllocateTypedObject 18.26, elsewhere 2.23, module 0.12), 649 bytes
+typed, module level: 190.96 instructions (stub NewTypedClosure1 84.48, module 61.31, the runtime 24.68, stub AllocateTypedObject 18.26, elsewhere 2.23), 2161 bytes
+untyped, function: 193.92 instructions (kernel 147.49, stub NewObjectLiteral4 31, stub PutByNameWithDirectColumnPreservingTwo 14, stub ReadLazyClosureByNameWithinFrame 0.37, stub CallMethodByName0 0.34, stub GetByNameWithinFrame 0.17, module 0.12, stub CallValue0 0.12, stub GetByNameWithDirectColumnWithReceiverInRDI 0.10, stub Add 0.08, a function without a name 0.06, the runtime 0.06, exports of new-class-storing-arrow-functions.untyped.function.js 0.01), 1276 bytes
+untyped, module level: 189.32 instructions (module 143.63, stub NewObjectLiteral4 31, stub PutByNameWithDirectColumnPreservingTwo 14, stub ReadLazyClosureByNamePreservingTwo 0.37, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.14, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 3159 bytes"
+`;
+
+exports[`makes an Error three calls deep with Error.stackTraceLimit = 0 1`] = `
+"typed, function: 665.33 instructions (the runtime 582.62, kernel 27.12, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub CallValue0 12, outer 8, stub ReadInheritedOutOfLineByName 6, stub OperationValueWithInstance to operationAOTTypedNewError 2, elsewhere 0.52, module 0.07), 237 bytes
+typed, module level: 667.23 instructions (the runtime 582.62, module 29.09, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub CallValue0 12, outer 8, stub ReadInheritedOutOfLineByName 6, stub OperationValueWithInstance to operationAOTTypedNewError 2, elsewhere 0.52), 1285 bytes
+untyped, function: 670.34 instructions (the runtime 582.62, kernel 32.13, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub CallValue0 12, outer 8, stub ReadInheritedOutOfLineByName 6, stub OperationValueWithInstance to operationAOTTypedNewError 2, elsewhere 0.52, module 0.07), 287 bytes
+untyped, module level: 671.96 instructions (the runtime 582.33, module 34.11, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub CallValue0 12, outer 8, stub ReadInheritedOutOfLineByName 6, stub OperationValueWithInstance to operationAOTTypedNewError 2, elsewhere 0.52), 1338 bytes"
+`;
+
+exports[`makes a Response from a string alone 1`] = `
+"typed, function: 829.28 instructions (the runtime 656.58, stub FrontEndTypedConstruct 49, kernel 43.10, stub ReadKnownCustomGetterByName 36, elsewhere 15, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedConstruct 2, module 0.60), 420 bytes
+typed, module level: 815.68 instructions (the runtime 656.58, stub FrontEndTypedConstruct 49, stub ReadKnownCustomGetterByName 36, module 30.10, elsewhere 15, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedConstruct 2), 1330 bytes
+untyped, function: 831.33 instructions (the runtime 656.58, stub FrontEndTypedConstruct 49, kernel 45.15, stub ReadKnownCustomGetterByName 36, elsewhere 15, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedConstruct 2, module 0.60), 467 bytes
+untyped, module level: 815.68 instructions (the runtime 656.58, stub FrontEndTypedConstruct 49, stub ReadKnownCustomGetterByName 36, module 30.10, elsewhere 15, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedConstruct 2), 1330 bytes"
+`;
+
+exports[`follows a reference from an object to the next 1`] = `
+"typed, function: 7.21 instructions (kernel 7.09, module 0.12), 76 bytes
+typed, module level: 7.12 instructions (module 7.12), 1389 bytes
+untyped, function: 36.40 instructions (kernel 28.28, stub Add 8, module 0.12), 368 bytes
+untyped, module level: 40.26 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 20, module 12.26, stub Add 8), 2000 bytes"
+`;
+
+exports[`reads a property under a key that is a rope of four thousand characters 1`] = `
+"typed, function: 2538.85 instructions (elsewhere 1358.50, the runtime 1046, kernel 79.75, stub GetByValCachedOfCells 50, stub GetByValCached 4, module 0.60), 536 bytes
+typed, module level: 2518.50 instructions (elsewhere 1358.50, the runtime 1046, module 64, stub GetByValCachedOfCells 50), 1983 bytes
+untyped, function: 2541.85 instructions (elsewhere 1358.50, the runtime 1046, kernel 74.75, stub GetByValCachedOfCells 50, stub Add 8, stub GetByValCached 4, module 0.60), 522 bytes
+untyped, module level: 2525.50 instructions (elsewhere 1358.50, the runtime 1046, module 59, stub GetByValCachedOfCells 50, stub Add 8, stub GetByValCached 4), 1882 bytes"
+`;
+
+exports[`makes a JSON Response from an object, a status and three headers 1`] = `
+"typed, function: 3628.63 instructions (the runtime 3275.13, kernel 130.90, elsewhere 99, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, stub OperationValueWithInstance 14, stub PlainOperationWithInstance 10, stub PlainOperation 4, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewJSONResponse 2, stub PlainOperation to operationAOTTypedJSONAppendInteger 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONPrepare 2, module 0.60), 1078 bytes
+typed, module level: 4058.83 instructions (the runtime 3749.68, elsewhere 103, module 88.15, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, built-in modules 15, stub OperationValueWithInstance 14, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewJSONResponse 2), 1886 bytes
+untyped, function: 3635.67 instructions (the runtime 3275.13, kernel 137.95, elsewhere 99, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, stub OperationValueWithInstance 14, stub PlainOperationWithInstance 10, stub PlainOperation 4, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewJSONResponse 2, stub PlainOperation to operationAOTTypedJSONAppendInteger 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONPrepare 2, module 0.60), 1248 bytes
+untyped, module level: 4058.83 instructions (the runtime 3749.68, elsewhere 103, module 88.15, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, built-in modules 15, stub OperationValueWithInstance 14, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewJSONResponse 2), 1886 bytes"
+`;
+
+exports[`parses the digits of a string by charCodeAt as a 32-bit integer 1`] = `
+"typed, function: 11.44 instructions (kernel 11.32, module 0.12), 443 bytes
+typed, module level: 11.23 instructions (module 11.23), 2140 bytes
+untyped, function: 78.81 instructions (kernel 54.15, stub AddAfterInt32Check 21.84, outlined code 2.70, module 0.12), 591 bytes
+untyped, module level: 77.54 instructions (module 53.12, stub AddAfterInt32Check 21.60, outlined code 2.82), 2503 bytes"
+`;
+
+exports[`skips white space in a string by charCodeAt 1`] = `
+"typed, function: 8.35 instructions (kernel 8.23, module 0.12), 332 bytes
+typed, module level: 8.14 instructions (module 8.14), 2111 bytes
+untyped, function: 8.40 instructions (kernel 8.28, module 0.12), 302 bytes
+untyped, module level: 9.17 instructions (module 9.17), 2251 bytes"
+`;
+
+exports[`adds strings to an empty Set 1`] = `
+"typed, function: 199.23 instructions (the runtime 105.67, stub SetAddWithStringKey 65.81, kernel 22.29, elsewhere 4.25, stub OperationValueWithInstance 0.91, stub ConstructInternalFunction0 0.13, module 0.12, stub TypedBuiltinCell of 1186 0.05), 228 bytes
+typed, module level: 196.09 instructions (the runtime 105.67, stub SetAddWithStringKey 65.81, module 19.31, elsewhere 4.25, stub OperationValueWithInstance 0.91, stub ConstructInternalFunction0 0.13), 1831 bytes
+untyped, function: 200.86 instructions (stub SetAdd 75.51, the runtime 71.18, kernel 48.52, elsewhere 4.79, stub OperationValueWithInstance 0.56, stub ConstructInternalFunction0 0.13, module 0.12, stub TypedBuiltinCell of 1186 0.05), 631 bytes
+untyped, module level: 200.97 instructions (stub SetAdd 75.51, the runtime 71.45, module 48.53, elsewhere 4.79, stub OperationValueWithInstance 0.56, stub ConstructInternalFunction0 0.13), 2301 bytes"
+`;
+
+exports[`gives a fresh object another prototype 1`] = `
+"typed, function: 54.51 instructions (kernel 31.17, stub AllocateTypedObject 18.16, the runtime 4.89, elsewhere 0.21, module 0.07), 403 bytes
+typed, module level: 51.30 instructions (module 28.13, stub AllocateTypedObject 18.16, the runtime 4.80, elsewhere 0.21), 1562 bytes
+untyped, function: 107.86 instructions (kernel 34.12, stub CallHostFunction2 34, stub NewObjectFromDescriptor2 21.05, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, the runtime 4.41, stub WriteBarrier 4, elsewhere 0.21, module 0.07), 383 bytes
+untyped, module level: 103.77 instructions (module 32.09, stub CallHostFunction2 32, stub NewObjectFromDescriptor2 21.05, stub GetByNameWithDirectColumnWithReceiverInRAX 10, the runtime 4.41, stub WriteBarrier 4, elsewhere 0.21), 1292 bytes"
+`;
+
+exports[`compares two equal strings that are not the same object 1`] = `
+"typed, function: 56.36 instructions (kernel 52.24, stub FlatStringsAreEqual 4, module 0.12), 398 bytes
+typed, module level: 49.36 instructions (module 45.36, stub FlatStringsAreEqual 4), 2615 bytes
+untyped, function: 89.39 instructions (kernel 67.27, stub StrictEqual 22, module 0.12), 1179 bytes
+untyped, module level: 82.39 instructions (module 78.39, stub FlatStringsAreEqual 4), 2892 bytes"
+`;
+
+exports[`takes a slice of a string 1`] = `
+"typed, function: 25.42 instructions (kernel 25.30, module 0.12), 506 bytes
+typed, module level: 26.24 instructions (module 26.24), 2252 bytes
+untyped, function: 329.51 instructions (the runtime 190.27, kernel 48.39, stub CallHostFunction2 28, stub CallValue2 25, stub CallMethodByName2 24, stub GetLengthByName 14, module 0.12, elsewhere -0.28), 547 bytes
+untyped, module level: 238.35 instructions (the runtime 129.27, module 78.36, stub Substring 31, elsewhere -0.28), 2734 bytes"
+`;
+
+exports[`throws a new Error and catches it 1`] = `
+"typed, function: 2366.80 instructions (the runtime 2275, kernel 30.20, elsewhere 28, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewError 2, module 0.60), 385 bytes
+typed, module level: 2255.20 instructions (the runtime 2166, module 28.20, elsewhere 28, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewError 2), 1299 bytes
+untyped, function: 2416.80 instructions (the runtime 2288, elsewhere 28, stub ColdPlainOperationWithoutFPRs 25, kernel 24.20, stub GetLengthByNamePreservingTwo 14, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadOutOfLineByName 4, stub ColdPlainOperationWithoutFPRs to operationAOTTypedExceptionValue 2, stub ColdPlainOperationWithoutFPRs to operationAOTTypedExceptionValue with arguments 2, stub OperationValueWithInstance to operationAOTTypedNewError 2, module 0.60), 334 bytes
+untyped, module level: 2305.20 instructions (the runtime 2179, elsewhere 28, stub ColdPlainOperationWithoutFPRs 25, module 22.20, stub GetLengthByName 14, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadOutOfLineByName 4, stub ColdPlainOperationWithoutFPRs to operationAOTTypedExceptionValue 2, stub ColdPlainOperationWithoutFPRs to operationAOTTypedExceptionValue with arguments 2, stub OperationValueWithInstance to operationAOTTypedNewError 2), 1250 bytes"
+`;
+
+exports[`throws a new Error in a function that only the loop of a small function calls and catches it there 1`] = `
+"typed, function: 545.40 instructions (the runtime 338, stub HandleExceptionPreservingRegisters 78, stub ThrowAtSiteByWord 75, kernel 30.80, check 10, elsewhere 6, stub PlainOperationWithInstance to operationAOTTypedCatch 5, stub ThrowAtSiteByWord with arguments 2, module 0.60), 453 bytes
+typed, module level: 19.95 instructions (countOf 19.40, module 0.55), 1342 bytes
+untyped, function: 753.70 instructions (the runtime 526, stub HandleExceptionPreservingRegisters 78, stub ThrowAtTrap 76, kernel 49.10, check 11, elsewhere 8, stub PlainOperationWithInstance to operationAOTTypedCatch 5, module 0.60), 645 bytes
+untyped, module level: 115.55 instructions (stub ColdPlainOperation 57, countOf 48.60, the runtime 5, stub ColdPlainOperation to operationAOTTypedExceptionValue 2, stub ColdPlainOperation to operationAOTTypedExceptionValue with arguments 2, module 0.95), 1337 bytes"
+`;
+
+exports[`reads a number field of objects that came out of parse<T>() 1`] = `
+"typed, function: 15.29 instructions (kernel 15.17, module 0.12), 274 bytes
+typed, module level: 13.20 instructions (module 13.20), 2238 bytes"
+`;
+
+exports[`reads the pathname of a URL made from a string 1`] = `
+"typed, function: 890.90 instructions (the runtime 758, kernel 125.30, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2, module 0.60), 1039 bytes
+typed, module level: 891 instructions (the runtime 773, module 111, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2), 1990 bytes
+untyped, function: 894.95 instructions (the runtime 758, kernel 129.35, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2, module 0.60), 1099 bytes
+untyped, module level: 895 instructions (the runtime 773, module 115, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2), 2009 bytes"
+`;
+
+exports[`writes a field of an object that JSON.parse made 1`] = `
+"typed, function: 47.67 instructions (kernel 33.45, stub PutByNameWithDirectColumnPreservingTwo 14, module 0.12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.10), 523 bytes
+typed, module level: 46.58 instructions (module 32.48, stub PutByNameWithDirectColumnPreservingTwo 14, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10), 2131 bytes
+untyped, function: 65.84 instructions (kernel 38.41, stub PutByNameWithDirectColumnPreservingTwo 14, stub GetLengthByNamePreservingTwo 13.13, module 0.12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.10, stub Add 0.08), 457 bytes
+untyped, module level: 65.73 instructions (module 38.42, stub PutByNameWithDirectColumn 14, stub GetLengthByName 13.13, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 1646 bytes"
+`;

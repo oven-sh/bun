@@ -22,6 +22,7 @@ mod token;
 
 pub use names::FileAtoms;
 pub use parser::keyword_suggestion;
+pub use pragmas::read_jsx_pragmas_of_every_comment;
 
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
@@ -135,6 +136,7 @@ pub struct Options {
     pub is_javascript: bool,
     /// `.json`: `parseJSONText`. With `is_javascript` and `is_jsx`, as `initializeState` has it.
     pub is_json: bool,
+    pub is_typescript_with_js_extension: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
     /// For oxc, in a file whose name does not say what it is: until something says that it is a module, an `await` at the top
@@ -147,6 +149,9 @@ pub struct Options {
     /// what the checker asks about them. Only [`parse`] does it, and only for TypeScript's dialect.
     pub reads_jsdoc: bool,
     pub dialect: bun_sema::resolve::Dialect,
+    pub bigint_names_are_digits: bool,
+    pub constant_keys_are_names: bool,
+    pub is_compiled: bool,
     /// Not the whole text is parsed.
     pub part: Option<Part>,
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and `following_node` of

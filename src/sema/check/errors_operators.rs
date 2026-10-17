@@ -42,7 +42,7 @@ impl Checker<'_, '_> {
     /// `checkGrammarBigIntLiteral`: 2737. A bigint literal type is not an expression here.
     pub(super) fn check_grammar_big_int_literal(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
-        if language_version(self) < ScriptTarget::ES2020 && !hir.is_ambient(hir.node(e)) {
+        if language_version(self, file) < ScriptTarget::ES2020 && !hir.is_ambient(hir.node(e)) {
             self.error_at((file, hir[e].pos, 0), 2737, &[]);
         }
     }
@@ -71,8 +71,8 @@ pub(super) fn check_grammar_rest_element(
 // ───────────────────────────── source text ─────────────────────────────
 
 /// `GetEmitScriptTarget`: defaults to the latest standard.
-pub(super) fn language_version(c: &Checker<'_, '_>) -> ScriptTarget {
-    match c.p.files.options.target {
+pub(super) fn language_version(c: &Checker<'_, '_>, file: FileId) -> ScriptTarget {
+    match c.check_options(file).target {
         ScriptTarget::None => ScriptTarget::ES2025,
         reported => reported,
     }
@@ -304,7 +304,7 @@ fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
 /// The end of `checkYieldExpression`: 7057, nothing specifies the type `yield` evaluates to, and
 /// that type matters.
 pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprId) {
-    if !c.p.files.options.no_implicit_any {
+    if !c.check_options(file).no_implicit_any {
         return;
     }
     let (hir, bound) = (c.hir(file), c.bound(file));

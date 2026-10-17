@@ -1,0 +1,3 @@
+{
+  "skipInShell": "its JavaScript file has a declaration file beside it, so the host loads it at run time, and the jsc shell has no such file in its work folder"
+}

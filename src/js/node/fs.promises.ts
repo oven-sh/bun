@@ -390,8 +390,6 @@ const exports = {
   // this is used to export the private symbols to internal/fs/streams and node:http2 without making them public.
   $data: private_symbols,
 };
-export default exports;
-
 // TODO: remove this in favor of just returning js functions that don't check `this`
 function asyncWrap(fn: any, name: string) {
   const wrapped = async function (...args) {
@@ -1672,3 +1670,5 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw error;
   }
 }
+
+export default exports;

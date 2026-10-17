@@ -1134,10 +1134,15 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_unless(promise, || false).map(|_| ())
+    }
+
+    pub fn wait_for_promise_unless(
+        &mut self,
+        promise: jsc::AnyPromise,
+        mut gives_up: impl FnMut() -> bool,
+    ) -> Result<bool, jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
-        if promise.status() != PromiseStatus::Pending {
-            return Ok(());
-        }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
@@ -1145,12 +1150,15 @@ impl EventLoop {
             {
                 return Err(jsc::Stopped);
             }
+            if gives_up() {
+                return Ok(false);
+            }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     pub fn wakeup(&self) {

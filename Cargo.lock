@@ -155,6 +155,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_aot"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_alloc",
+ "bun_ast",
+ "bun_builtin_syntax",
+ "bun_core",
+ "bun_paths",
+ "bun_react_compiler",
+ "bun_sema",
+ "bun_sys",
+ "bun_threading",
+ "hashbrown 0.15.5",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
@@ -234,6 +253,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_builtin_syntax"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_zstd",
+]
+
+[[package]]
 name = "bun_bundler"
 version = "0.0.0"
 dependencies = [
@@ -243,6 +270,7 @@ dependencies = [
  "bun_analytics",
  "bun_ast",
  "bun_base64",
+ "bun_builtin_syntax",
  "bun_collections",
  "bun_core",
  "bun_css",
@@ -558,6 +586,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_exe_islands"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+]
+
+[[package]]
 name = "bun_format"
 version = "0.0.0"
 dependencies = [
@@ -832,6 +868,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_base64",
+ "bun_builtin_syntax",
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
@@ -1466,12 +1503,14 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
+ "bun_aot",
  "bun_ast",
  "bun_ast_jsc",
  "bun_base64",
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_brotli",
+ "bun_builtin_syntax",
  "bun_bundler",
  "bun_bundler_jsc",
  "bun_bunfig",
@@ -1602,6 +1641,7 @@ dependencies = [
  "bun_wyhash",
  "bun_zstd",
  "hashbrown 0.15.5",
+ "libc",
  "rustc-hash",
  "smallvec",
 ]
@@ -1625,9 +1665,11 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_ast",
+ "bun_builtin_syntax",
  "bun_core",
  "bun_parsers",
  "bun_paths",
+ "bun_resolve_builtins",
  "bun_sema",
  "bun_sema_parser",
  "bun_sys",
@@ -1653,6 +1695,8 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
+ "bun_aot",
+ "bun_builtin_syntax",
  "bun_core",
  "bun_js_parser",
  "bun_paths",
@@ -1859,6 +1903,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_exe_format",
+ "bun_exe_islands",
  "bun_http",
  "bun_libarchive",
  "bun_opaque",

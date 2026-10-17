@@ -327,6 +327,9 @@ enum BaseMembers {
     Inherited,
 }
 
+const FIRST_PARAM_PREFILTER_MIN_MEMBERS: usize = 16;
+const LINEAR_SEARCH_LIMIT: usize = 16;
+
 /// `partialMatch` of `compareSignaturesIdentical`: a target with no fewer required parameters than
 /// the source matches too.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -826,7 +829,9 @@ impl<'p, 's> Checker<'p, 's> {
         // no guard, and resolves the members again with the base types that there are so far.
         if let TypeData::Ref { target, .. } = *self.data(key)
             && self.base_types_so_far.iter().any(|it| it.0 == target)
-            && self.stack[self.resolution_start..].contains(&Query::Shape(key))
+            && self
+                .innermost(Query::Shape(key), self.resolution_start)
+                .is_some()
         {
             self.note_members_in_place();
             let shape = meanwhile(self);
@@ -840,7 +845,9 @@ impl<'p, 's> Checker<'p, 's> {
                 origin: Origin::Mapped(..),
                 ..
             }
-        ) && self.stack[self.resolution_start..].contains(&Query::Shape(key))
+        ) && self
+            .innermost(Query::Shape(key), self.resolution_start)
+            .is_some()
         {
             self.note_members_in_place();
             let shape = meanwhile(self);
@@ -861,7 +868,9 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.enter(Query::Shape(key)) {
             // `enter` also fails for lack of stack space.
             let is_in_progress = !self.is_stack_low()
-                && self.stack[self.resolution_start..].contains(&Query::Shape(key));
+                && self
+                    .innermost(Query::Shape(key), self.resolution_start)
+                    .is_some();
             let shape = if is_in_progress {
                 meanwhile(self)
             } else {
@@ -1149,6 +1158,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_open = !built.is_some_and(|(built, _)| built.kept.is_some());
         let ended = self.end_scope_as(scope, is_open);
         let (built, mapper) = built?;
+        self.burn(1 + built.resolved.shape.props.len());
         if let (Some(shape), Ok(stored)) = (built.kept, ended) {
             let entry = CachedMembers { shape, mapper };
             self.p.members.insert(&self.task, ty, entry, stored);
@@ -1637,7 +1647,7 @@ impl<'p, 's> Checker<'p, 's> {
         // FOR SPEED: every element of an array literal with a contextual type asks for the name of
         // its index.
         let index = n as usize;
-        if index as f64 != n || index >= 256 {
+        if index as f64 != n || index >= 1 << 16 {
             return intern();
         }
         let mut names = self.names_of_small_numbers.borrow_mut();
@@ -3080,10 +3090,7 @@ impl<'p, 's> Checker<'p, 's> {
             .task
             .file
             .filter(|_| self.found_cycle && self.task.checker_count == 0);
-        let from = self.resolution_start.min(self.stack.len());
-        let head = self.stack[from..]
-            .iter()
-            .rposition(|&q| q == Query::Bases(sym));
+        let head = self.innermost(Query::Bases(sym), self.resolution_start);
         // `return data.resolvedBaseTypes`
         let mut in_progress = self.base_types_so_far.iter().rev();
         let so_far = in_progress.find(|it| it.0 == sym);
@@ -3092,7 +3099,7 @@ impl<'p, 's> Checker<'p, 's> {
             return so_far;
         };
         let before = self.files().rank_of_file(own);
-        let members = self.stack[from + head..].iter().filter_map(|&q| match q {
+        let members = self.stack[head..].iter().filter_map(|&q| match q {
             Query::Bases(member) => Some((
                 self.first_declaration_checked_before(member, before)?,
                 member,
@@ -5353,7 +5360,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `reportImplicitAny` for a property whose type resolves to `ty`.
     fn report_implicit_any(&mut self, file: FileId, declaration: UntypedProperty, ty: TypeId) {
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.check_options(file).no_implicit_any;
         if self.hir(file).is_js && !self.is_check_js(file)
             || !no_implicit_any && !self.captures_suggestions()
         {
@@ -6102,14 +6109,14 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     let widened = self.get_widened_type(ty);
                     // `widenTypeForVariableLikeDeclaration`
-                    if reports_errors && self.report_errors_from_widening(ty) {
+                    if reports_errors && self.report_errors_from_widening(file, ty) {
                         self.report_implicit_any(file, UntypedProperty::Member(first), widened);
                     }
                     return widened;
                 }
                 // `getTypeForVariableLikeDeclaration`: where an implicit `any` is an error, the
                 // assignments to it are inspected first.
-                if self.p.files.options.no_implicit_any
+                if self.check_options(file).no_implicit_any
                     && let crate::bind::MemberOwner::Class(c) =
                         self.bound(file).member_owner[first.idx()]
                     // `declaration.Symbol()` is the symbol of the binder, and no reference and no
@@ -6356,7 +6363,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let PatKind::Ident(name) = hir[decl.pat].kind else {
                     return TypeId::SYMBOL;
                 };
-                if decl.kind != VarKind::Const
+                if !bound.is_const(hir, d)
                     || stmt.is_none()
                     || !matches!(hir[stmt].kind, StmtKind::Var(_))
                     || matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt))
@@ -6497,6 +6504,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return Some(ty);
         }
+        if self.queries_out_of_order() {
+            return self.base_constraint_within_budget(ty);
+        }
+        self.resolved_base_constraint_without_budget(ty)
+    }
+
+    pub(super) fn resolved_base_constraint_without_budget(&mut self, ty: TypeId) -> Option<TypeId> {
         // A call from outside starts a new stack.
         let around = std::mem::take(&mut self.constraint_stack);
         let result = self.next_base_constraint(ty);
@@ -6607,11 +6621,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `pushTypeResolution` marks every entry from the start of the cycle to the top of the
             // stack, whatever the kind of type. Callers call `has_non_circular_base_constraint`
             // while these entries are still on the stack.
-            let from = self.resolution_start;
-            if let Some(i) = self.stack[from..]
-                .iter()
-                .rposition(|q| *q == Query::Constraint(ty))
-                .map(|i| i + from)
+            if let Some(i) = self.innermost(Query::Constraint(ty), self.resolution_start)
                 && !self.eager.iter().any(|&eager| eager > i)
             {
                 for j in i..self.stack.len() {
@@ -7014,6 +7024,9 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.never_intersections.get(&self.task, &ty) {
             return known;
         }
+        if self.is_out_of_fuel() {
+            return false;
+        }
         // `ObjectFlagsIsNeverIntersectionComputed` is set before the properties are examined, so a recursive query gets `false`.
         if self.never_in_progress.contains(&ty) {
             return false;
@@ -7265,6 +7278,10 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             }
             for prop in &member.shape().props {
+                if self.is_stack_low() {
+                    self.bailed_out();
+                    return NeverReduced::No;
+                }
                 // Of two members only the first gets here, and all its names are new.
                 if all.len() > 2 && !seen.insert(prop.name) {
                     continue;
@@ -7281,6 +7298,14 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some(other) = later.resolved.prop(prop.name) else {
                         continue;
                     };
+                    self.burn(1);
+                    if self.is_stack_low() {
+                        if let Some(scope) = scope {
+                            let _ = self.end_scope_by_counters(scope);
+                        }
+                        self.bailed_out();
+                        return NeverReduced::No;
+                    }
                     // FOR SPEED: a property of a union has a property of each constituent in it, and
                     // the identity changes nothing.
                     let second_copy;
@@ -7403,6 +7428,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn reduced_members(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Intersection(_) if self.is_empty_intersection(ty) => TypeId::NEVER,
+            TypeData::Union(_) if self.is_out_of_fuel() => ty,
             TypeData::Union(_) => self.filter(ty, |c, m| !c.is_never_intersection(m)),
             _ => ty,
         }
@@ -7429,11 +7455,21 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         access: Access,
     ) -> Option<(TypeId, Found)> {
+        self.property_type_within(left_type, apparent_type, name, access, None)
+    }
+
+    pub(super) fn property_type_within(
+        &mut self,
+        left_type: TypeId,
+        apparent_type: TypeId,
+        name: Atom,
+        access: Access,
+        within: Option<FileId>,
+    ) -> Option<(TypeId, Found)> {
         let (found, how) = self.find_property(left_type, apparent_type, name, access)?;
         // `noUncheckedIndexedAccess`: a value read through an index signature may be missing.
-        let may_be_missing = how == Found::ByIndex
-            && access == Access::Read
-            && self.p.files.options.no_unchecked_indexed_access;
+        let may_be_missing =
+            how == Found::ByIndex && access == Access::Read && self.index_may_be_missing(within);
         let found = if may_be_missing {
             self.with_missing(found)
         } else {
@@ -7647,6 +7683,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `prop != singleProp`, `propSet.Add(prop)`: a symbol that many members inherit is
         // considered once.
         let mut symbols: SmallVec<[(*const Prop<'p>, MapperId); 8]> = SmallVec::new();
+        let mut symbol_set: crate::util::FxHashSet<(*const Prop<'p>, MapperId)> =
+            Default::default();
+        let mut prop_indices_by_hash: crate::util::FxHashMap<u64, SmallVec<[u32; 1]>> =
+            Default::default();
         let mut merged_instantiations = false;
         let (mut flags, mut is_public, mut first_owner) =
             (PropFlags::empty(), false, containing_type);
@@ -7663,10 +7703,19 @@ impl<'p, 's> Checker<'p, 's> {
             let holder = self.apparent_type_or_type_variable(current, t);
             if let Some((prop, mapper)) = self.get_property_of_type_ex(holder, name, skips) {
                 let symbol = (std::ptr::from_ref(prop), mapper);
-                if symbols.contains(&symbol) {
-                    continue;
+                if symbols.len() < LINEAR_SEARCH_LIMIT {
+                    if symbols.contains(&symbol) {
+                        continue;
+                    }
+                    symbols.push(symbol);
+                } else {
+                    if symbol_set.is_empty() {
+                        symbol_set.extend(symbols.iter().copied());
+                    }
+                    if !symbol_set.insert(symbol) {
+                        continue;
+                    }
                 }
-                symbols.push(symbol);
                 let mut prop = prop.clone_in(self.arena);
                 self.instantiate_prop(&mut prop, mapper);
                 // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
@@ -7700,8 +7749,30 @@ impl<'p, 's> Checker<'p, 's> {
                             if (self.files().parent_of_symbol(symbol)).is_some_and(|parent| {
                                 !self.local_type_params_of_symbol(parent).is_empty()
                             }));
-                        } else if !prop_set.contains(&prop) {
-                            prop_set.push(prop);
+                        } else if prop_set.len() < LINEAR_SEARCH_LIMIT {
+                            if !prop_set.contains(&prop) {
+                                prop_set.push(prop);
+                            }
+                        } else {
+                            let hash_of = |prop: &Prop<'s>| {
+                                std::hash::BuildHasher::hash_one(&crate::util::FxBuild, prop)
+                            };
+                            if prop_indices_by_hash.is_empty() {
+                                for (index, known) in prop_set.iter().enumerate() {
+                                    prop_indices_by_hash
+                                        .entry(hash_of(known))
+                                        .or_default()
+                                        .push(index as u32);
+                                }
+                            }
+                            let indices = prop_indices_by_hash.entry(hash_of(&prop)).or_default();
+                            if !indices
+                                .iter()
+                                .any(|&index| prop_set[index as usize] == prop)
+                            {
+                                indices.push(prop_set.len() as u32);
+                                prop_set.push(prop);
+                            }
                         }
                     }
                 }
@@ -8173,6 +8244,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut result: Vec<SigId> = Vec::new();
         let mut index_with_overloads = 0;
         let mut count_with_overloads = 0;
+        let mut lists_without_match: SmallVec<[usize; 4]> = SmallVec::new();
+        let mut first_param_mismatches: FxHashMap<TypeId, bool> = FxHashMap::default();
         for (i, list) in lists.iter().enumerate() {
             if list.len() > 1 {
                 index_with_overloads = i;
@@ -8189,7 +8262,13 @@ impl<'p, 's> Checker<'p, 's> {
                 if earlier.is_some() {
                     continue;
                 }
-                let Some(matching) = self.find_matching_signatures(lists, sig, i) else {
+                let Some(matching) = self.find_matching_signatures(
+                    lists,
+                    sig,
+                    i,
+                    &mut lists_without_match,
+                    &mut first_param_mismatches,
+                ) else {
                     continue;
                 };
                 if let [_] = matching[..] {
@@ -8263,6 +8342,8 @@ impl<'p, 's> Checker<'p, 's> {
         lists: &[Vec<SigId>],
         sig: SigId,
         list_index: usize,
+        lists_without_match: &mut SmallVec<[usize; 4]>,
+        first_param_mismatches: &mut FxHashMap<TypeId, bool>,
     ) -> Option<Vec<SigId>> {
         if !self.sig_type_params(sig).is_empty() {
             // For a generic signature only an identical one matches, and it is taken from the first
@@ -8275,6 +8356,40 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return Some(vec![sig]);
         }
+        if lists.len() >= FIRST_PARAM_PREFILTER_MIN_MEMBERS
+            && self.fuel.get() == u64::MAX
+            && !self.are_compared_pairs_recorded()
+            && self.first_param_mismatches_some_member(lists, sig, first_param_mismatches)
+        {
+            return None;
+        }
+        if !lists_without_match.is_empty()
+            && self.fuel.get() == u64::MAX
+            && !self.are_compared_pairs_recorded()
+        {
+            for &i in lists_without_match.iter() {
+                if i != list_index
+                    && self
+                        .find_matching_signature(
+                            &lists[i],
+                            sig,
+                            PartialMatch::No,
+                            IgnoreReturnTypes::Yes,
+                        )
+                        .is_none()
+                    && self
+                        .find_matching_signature(
+                            &lists[i],
+                            sig,
+                            PartialMatch::Yes,
+                            IgnoreReturnTypes::Yes,
+                        )
+                        .is_none()
+                {
+                    return None;
+                }
+            }
+        }
         let mut result = Vec::with_capacity(lists.len());
         for (i, list) in lists.iter().enumerate() {
             let matching = if i == list_index {
@@ -8286,12 +8401,20 @@ impl<'p, 's> Checker<'p, 's> {
                 match exact {
                     Some(exact) => exact,
                     // Failing that, one with fewer parameters matches.
-                    None => self.find_matching_signature(
+                    None => match self.find_matching_signature(
                         list,
                         sig,
                         PartialMatch::Yes,
                         ignore_return_types,
-                    )?,
+                    ) {
+                        Some(partial) => partial,
+                        None => {
+                            lists_without_match.retain(|known| *known != i);
+                            lists_without_match.truncate(3);
+                            lists_without_match.insert(0, i);
+                            return None;
+                        }
+                    },
                 }
             };
             if !result.contains(&matching) {
@@ -8299,6 +8422,61 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         Some(result)
+    }
+
+    fn first_param_mismatches_some_member(
+        &mut self,
+        lists: &[Vec<SigId>],
+        sig: SigId,
+        cache: &mut FxHashMap<TypeId, bool>,
+    ) -> bool {
+        let List::Kept(params) = self.sig_params(sig) else {
+            return false;
+        };
+        if self.parameter_count(params) == 0 {
+            return false;
+        }
+        let Some(first) = self.param_type_at(params, 0) else {
+            return false;
+        };
+        if let Some(&cached) = cache.get(&first) {
+            return cached;
+        }
+        let mut compared: SmallVec<[(TypeId, bool); 4]> = SmallVec::new();
+        let mut found_mismatch = false;
+        for list in lists {
+            let mut can_match = list.is_empty();
+            for &other in list {
+                let List::Kept(other_params) = self.sig_params(other) else {
+                    can_match = true;
+                    break;
+                };
+                let Some(other_first) = self.param_type_at(other_params, 0) else {
+                    can_match = true;
+                    break;
+                };
+                let is_related = match compared.iter().find(|entry| entry.0 == other_first) {
+                    Some(entry) => entry.1,
+                    None => {
+                        let is_related = first == other_first
+                            || self.is_identical(first, other_first)
+                            || self.is_subtype(first, other_first);
+                        compared.push((other_first, is_related));
+                        is_related
+                    }
+                };
+                if is_related {
+                    can_match = true;
+                    break;
+                }
+            }
+            if !can_match {
+                found_mismatch = true;
+                break;
+            }
+        }
+        cache.insert(first, found_mismatch);
+        found_mismatch
     }
 
     /// `findMatchingSignature`

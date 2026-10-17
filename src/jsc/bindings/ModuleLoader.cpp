@@ -36,6 +36,8 @@
 
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
+#include "JavaScriptCore/AOTFunction.h"
+#include "JavaScriptCore/SyntheticModuleRecord.h"
 #include "IsolatedModuleCache.h"
 #include "ModuleGraph.h"
 #include "../modules/_NativeModule.h"
@@ -87,7 +89,7 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         auto len = properties.size() + 1;
@@ -535,6 +537,11 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
         ASSERT(res->success);
 
+        JSObject* helpers = compiledRuntimeHelpers(globalObject, specifier->toWTFString(BunString::ZeroCopy));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (helpers)
+            return { Kind::Exports, helpers };
+
         auto tag = res->result.value.tag;
         switch (tag) {
         // require("bun")
@@ -642,6 +649,418 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
+static constexpr uint32_t compiledProgramFilesByPath = 0x7fffffff;
+static constexpr uint32_t compiledProgramRuntimeHelpers = 0x7ffffffe;
+
+JSC::JSObject* compiledRuntimeHelpers(JSC::JSGlobalObject* globalObject, const String& key)
+{
+    if (key != "bun:wrap"_s || !JSC::AOT::Typed::hasBuiltinModule(globalObject, compiledProgramRuntimeHelpers)) [[likely]]
+        return nullptr;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue helpers = JSC::AOT::Typed::evaluateBuiltinModule(globalObject, compiledProgramRuntimeHelpers);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return helpers.getObject();
+}
+
+enum class CompiledProgramQuery : int32_t { Require = 0,
+    Import = 1,
+    Namespace = 2,
+    RequireWithNonDefaultLoader = 12,
+    Wrapper = 13 };
+
+extern "C" bool NodeModuleModule__usesNonDefaultLoader(Zig::GlobalObject*, const BunString* path);
+
+class CompiledFileList {
+public:
+    static std::optional<CompiledFileList> create(JSGlobalObject* globalObject, JSObject* files)
+    {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue paths = files->get(globalObject, Identifier::fromString(vm, "paths"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!paths.isString())
+            return std::nullopt;
+        String text = asString(paths)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!text.is8Bit())
+            return std::nullopt;
+        return CompiledFileList(text.span8());
+    }
+
+    std::optional<int32_t> find(const String& path) const
+    {
+        Vector<Latin1Character, 512> key;
+        auto utf8 = path.utf8();
+        for (uint8_t byte : utf8.span()) {
+            if (byte >= 0x20 && byte < 0x7f && byte != '%') {
+                key.append(byte);
+                continue;
+            }
+            key.append('%');
+            key.append(upperNibbleToASCIIHexDigit(byte));
+            key.append(lowerNibbleToASCIIHexDigit(byte));
+        }
+        size_t low = 0;
+        size_t high = m_text.size();
+        while (low < high) {
+            size_t start = low + (high - low) / 2;
+            while (start > low && m_text[start - 1] != '\n')
+                --start;
+            Line line = lineAt(start);
+            size_t common = std::min(line.path.size(), key.size());
+            int order = memcmp(line.path.data(), key.span().data(), common);
+            if (!order && line.path.size() == key.size())
+                return line.number;
+            if (order < 0 || (!order && line.path.size() < key.size()))
+                low = line.end;
+            else
+                high = start;
+        }
+        return std::nullopt;
+    }
+
+    template<typename Functor>
+    void forEach(const Functor& functor) const
+    {
+        for (size_t start = 0; start < m_text.size();) {
+            Line line = lineAt(start);
+            if (functor(line.number, line.path) == IterationStatus::Done)
+                return;
+            start = line.end;
+        }
+    }
+
+    static String decode(std::span<const Latin1Character> path)
+    {
+        Vector<char8_t, 512> bytes;
+        for (size_t i = 0; i < path.size(); ++i) {
+            if (path[i] == '%' && i + 2 < path.size()) {
+                bytes.append(static_cast<char8_t>(toASCIIHexValue(path[i + 1], path[i + 2])));
+                i += 2;
+            } else
+                bytes.append(static_cast<char8_t>(path[i]));
+        }
+        return String::fromUTF8(bytes.span());
+    }
+
+private:
+    struct Line {
+        std::span<const Latin1Character> path;
+        int32_t number;
+        size_t end;
+    };
+
+    explicit CompiledFileList(std::span<const Latin1Character> text)
+        : m_text(text)
+    {
+    }
+
+    Line lineAt(size_t start) const
+    {
+        size_t tab = start;
+        while (m_text[tab] != '\t')
+            ++tab;
+        int32_t number = 0;
+        size_t end = tab + 1;
+        for (; m_text[end] != '\n'; ++end)
+            number = number * 10 + (m_text[end] - '0');
+        return { m_text.subspan(start, tab - start), number, end + 1 };
+    }
+
+    std::span<const Latin1Character> m_text;
+};
+
+static JSValue compiledFileNumber(JSGlobalObject* globalObject, JSObject* files, const String& path)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier name = Identifier::fromString(vm, path);
+    if (JSValue remembered = files->getDirect(vm, name))
+        return remembered.isInt32() ? remembered : JSValue();
+    auto list = CompiledFileList::create(globalObject, files);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto number = list ? list->find(path) : std::nullopt;
+    files->putDirect(vm, name, number ? jsNumber(*number) : jsNull());
+    return number ? jsNumber(*number) : JSValue();
+}
+
+static NEVER_INLINE JSValue queryCompiledProgramFile(Zig::GlobalObject* globalObject, const String& path, JSValue target, CompiledProgramQuery how)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue table = JSC::AOT::Typed::evaluateBuiltinModule(globalObject, compiledProgramFilesByPath);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* files = table.getObject();
+    if (!files)
+        return jsBoolean(false);
+    JSValue number = compiledFileNumber(globalObject, files, path);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!number || !number.isInt32())
+        return jsBoolean(false);
+    JSC::AOT::Typed::willRequestFileFromProgram(globalObject, path);
+    JSValue evaluate = files->get(globalObject, vm.propertyNames->emptyIdentifier);
+    RETURN_IF_EXCEPTION(scope, {});
+    MarkedArgumentBuffer arguments;
+    arguments.append(number);
+    arguments.append(target);
+    arguments.append(jsNumber(static_cast<int32_t>(how)));
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, evaluate, JSC::getCallData(evaluate), jsUndefined(), arguments));
+}
+
+static bool isCompiledProgramFile(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue table = JSC::AOT::Typed::evaluateBuiltinModule(globalObject, compiledProgramFilesByPath);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSObject* files = table.getObject();
+    if (!files)
+        return false;
+    JSValue number = compiledFileNumber(globalObject, files, path);
+    RETURN_IF_EXCEPTION(scope, false);
+    return number && number.isInt32();
+}
+
+extern "C" bool Bun__isCompiledProgramFile(Zig::GlobalObject* globalObject, const BunString* path)
+{
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    bool isFile = isCompiledProgramFile(globalObject, path->toWTFString());
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    return isFile;
+}
+
+static bool reevaluateCompiledProgramFile(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue wrapper = queryCompiledProgramFile(globalObject, path, target, CompiledProgramQuery::Wrapper);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!wrapper.isCallable())
+        return false;
+    RELEASE_AND_RETURN(scope, target->evaluateCompiledWrapper(vm, globalObject, wrapper));
+}
+
+static bool evaluateCompiledProgramFile(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    BunString pathString = Bun::toString(path);
+    bool usesNonDefaultLoader = globalObject->hasOverriddenModuleWrapper || NodeModuleModule__usesNonDefaultLoader(globalObject, &pathString);
+    JSValue hasRun = queryCompiledProgramFile(globalObject, path, target, usesNonDefaultLoader ? CompiledProgramQuery::RequireWithNonDefaultLoader : CompiledProgramQuery::Require);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (hasRun.isTrue() || usesNonDefaultLoader)
+        return hasRun.isTrue();
+    RELEASE_AND_RETURN(scope, reevaluateCompiledProgramFile(globalObject, target, path));
+}
+
+bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader)
+{
+    if (!hasCompiledProgramFiles(globalObject) || target->moduleGraph() || target->m_overriddenCompile || globalObject->hasOverriddenModuleWrapper) [[likely]]
+        return false;
+    bool isTypeScriptFile = path.endsWith(".ts"_s) || path.endsWith(".tsx"_s) || path.endsWith(".mts"_s) || path.endsWith(".cts"_s);
+    if (isTypeScriptFile != isTypeScriptLoader)
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue hasRun = queryCompiledProgramFile(globalObject, path, target, CompiledProgramQuery::Require);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasRun.isTrue()) {
+        bool wasReevaluated = reevaluateCompiledProgramFile(globalObject, target, path);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!wasReevaluated)
+            return false;
+    }
+    target->hasEvaluated = true;
+    return true;
+}
+
+static JSValue queryCompiledProgram(Zig::GlobalObject* globalObject, JSValue number, JSValue operand, int32_t how, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue table = JSC::AOT::Typed::evaluateBuiltinModule(globalObject, compiledProgramFilesByPath);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* files = table.getObject();
+    if (!files)
+        return jsUndefined();
+    if (number.isString()) {
+        String path = asString(number)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        number = compiledFileNumber(globalObject, files, path);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!number || !number.isInt32())
+            return jsUndefined();
+    }
+    JSValue function = files->get(globalObject, vm.propertyNames->emptyIdentifier);
+    RETURN_IF_EXCEPTION(scope, {});
+    MarkedArgumentBuffer arguments;
+    arguments.append(number);
+    arguments.append(operand);
+    arguments.append(jsNumber(how));
+    arguments.append(value);
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, function, JSC::getCallData(function), jsUndefined(), arguments));
+}
+
+NEVER_INLINE static void registerEvaluatedCompiledProgramFiles(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue wasRead = queryCompiledProgram(globalObject, jsNumber(0), jsUndefined(), 7, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, );
+    if (!wasRead.isUndefined())
+        return;
+    scope.release();
+    queryCompiledProgram(globalObject, jsNumber(0), jsUndefined(), 8, jsUndefined());
+}
+
+void recordRequireCacheRead(Zig::GlobalObject* globalObject)
+{
+    if (hasCompiledProgramFiles(globalObject)) [[unlikely]]
+        registerEvaluatedCompiledProgramFiles(globalObject);
+}
+
+void evictCompiledModule(Zig::GlobalObject* globalObject, const String& path)
+{
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue evicted = queryCompiledProgram(globalObject, jsString(vm, path), jsUndefined(), 9, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, );
+    if (JSObject* namespaceObject = evicted.getObject(); namespaceObject && JSC::AOT::Typed::isModuleNamespace(namespaceObject))
+        JSC::AOT::Typed::detachModuleNamespace(globalObject, namespaceObject);
+}
+
+JSC::JSObject* evaluatedCompiledModuleNamespace(Zig::GlobalObject* globalObject, const String& path)
+{
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
+        return nullptr;
+    return queryCompiledProgram(globalObject, jsString(JSC::getVM(globalObject), path), jsUndefined(), 11, jsUndefined()).getObject();
+}
+
+void appendEvaluatedCompiledModules(Zig::GlobalObject* globalObject, JSC::MarkedArgumentBuffer& keys, const WTF::Function<bool(const JSC::Identifier&)>& isAlreadyListed)
+{
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue table = JSC::AOT::Typed::evaluateBuiltinModule(globalObject, compiledProgramFilesByPath);
+    RETURN_IF_EXCEPTION(scope, );
+    JSObject* files = table.getObject();
+    if (!files)
+        return;
+    auto list = CompiledFileList::create(globalObject, files);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!list)
+        return;
+    list->forEach([&](int32_t number, std::span<const Latin1Character> path) {
+        JSValue moduleNamespace = queryCompiledProgram(globalObject, jsNumber(number), jsUndefined(), 11, jsUndefined());
+        if (scope.exception()) [[unlikely]]
+            return IterationStatus::Done;
+        if (!moduleNamespace.isObject())
+            return IterationStatus::Continue;
+        String name = CompiledFileList::decode(path);
+        if (!isAlreadyListed(Identifier::fromString(vm, name)))
+            keys.append(jsString(vm, name));
+        return IterationStatus::Continue;
+    });
+}
+
+bool hasCompiledProgramFiles(JSC::JSGlobalObject* globalObject)
+{
+    static const bool has = JSC::AOT::Typed::hasBuiltinModule(globalObject, compiledProgramFilesByPath);
+    return has;
+}
+
+JSC::JSPromise* importCompiledProgramFile(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const String& name, const String& referrer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, name), Identifier::fromString(vm, referrer), nullptr, true);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSValue imported = queryCompiledProgramFile(globalObject, key.string(), jsUndefined(), CompiledProgramQuery::Import);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return imported.isCell() ? dynamicDowncast<JSC::JSPromise>(imported.asCell()) : nullptr;
+}
+
+static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateCompiledNamespaceSource(JSC::JSObject* object)
+{
+    gcProtectNullTolerant(object);
+    return [object](JSC::JSGlobalObject* globalObject, JSC::Identifier, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) -> void {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::EnsureStillAliveScope stillAlive(object);
+        JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, JSC::DontEnumPropertiesMode::Include);
+        gcUnprotectNullTolerant(object);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (auto& name : names.releaseData()->propertyNameVector()) {
+            exportNames.append(name);
+            exportValues.append(JSC::SyntheticModuleRecord::createLiveBinding(globalObject, object, name));
+        }
+    };
+}
+
+JSC::JSSourceCode* compiledProgramFileSource(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!globalObject->hasImmutableIntrinsics()) [[unlikely]] {
+        bool isCompiled = isCompiledProgramFile(defaultGlobalObject(vm), key);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (isCompiled)
+            throwSyntaxError(globalObject, scope, JSC::withAOTErrorNote(makeString("The module "_s, key, " was compiled ahead of time and cannot be loaded in a realm that was created at run time (ShadowRealm, node:vm)"_s)));
+        return nullptr;
+    }
+    JSValue namespaceObject = queryCompiledProgramFile(globalObject, key, jsUndefined(), CompiledProgramQuery::Namespace);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (namespaceObject.isInt32()) {
+        JSC::JSSourceCode* source = loadedCommonJSModuleSource(globalObject, key, namespaceObject.asInt32() == 2);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!source)
+            throwTypeError(globalObject, scope, makeString("--aot: the compiled CommonJS module \""_s, key, "\" has run and is not in require.cache any more: it cannot be imported"_s));
+        return source;
+    }
+    JSObject* object = namespaceObject.getObject();
+    if (!object)
+        return nullptr;
+    auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateCompiledNamespaceSource(object), JSC::SourceOrigin(), key));
+    return JSSourceCode::create(vm, WTF::move(source));
+}
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledNamespaceSource, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    String key = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!object) {
+        throwTypeError(globalObject, scope, makeString("--aot: the compiled module \""_s, key, "\" has no namespace"_s));
+        return {};
+    }
+    auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateCompiledNamespaceSource(object), JSC::SourceOrigin(), key));
+    return JSValue::encode(JSSourceCode::create(vm, WTF::move(source)));
+}
+
+JSC::JSPromise* asyncCompiledProgramFileSource(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue imported = queryCompiledProgramFile(globalObject, key, jsUndefined(), CompiledProgramQuery::Import);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* promise = imported.isCell() ? dynamicDowncast<JSC::JSPromise>(imported.asCell()) : nullptr;
+    if (!promise)
+        return nullptr;
+    JSC::JSPromise* source = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    source->markAsHandled();
+    promise->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionCompiledNamespaceSource), jsUndefined(), source, jsString(vm, key));
+    return source;
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
@@ -658,6 +1077,15 @@ JSValue fetchCommonJSModule(
     // An ES module reached from here is loaded by the requiring module's loader.
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (hasCompiledProgramFiles(globalObject) && !target->moduleGraph()) [[unlikely]] {
+        bool hasRun = evaluateCompiledProgramFile(globalObject, target, specifierWtfString);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (hasRun) {
+            target->hasEvaluated = true;
+            RELEASE_AND_RETURN(scope, target);
+        }
+    }
 
     BunString specifier = Bun::toString(specifierWtfString);
 
@@ -888,6 +1316,21 @@ JSValue fetchCommonJSModuleNonBuiltin(
         RELEASE_AND_RETURN(scope, target);
     }
 
+    if (res->result.value.tag == SyntheticModuleType::ExportDefaultOnly) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateJSValueExportDefaultOnlySourceCode(globalObject, value), JSC::SourceOrigin(), String(specifierWtfString)));
+        JSC::ensureStillAliveHere(value);
+        JSC::VM::SynchronousModuleQueue queue;
+        queue.prev = vm.m_synchronousModuleQueue;
+        vm.m_synchronousModuleQueue = &queue;
+        loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(source));
+        if (!scope.exception())
+            JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+        vm.m_synchronousModuleQueue = queue.prev;
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, jsNumber(-1));
+    }
+
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
         Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
@@ -906,6 +1349,16 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
+}
+
+extern "C" void Bun__AOT__keepTypeErrorsThrown()
+{
+    JSC::AOT::startRecordingThrownTypeErrors();
+}
+
+extern "C" BunString Bun__AOT__typeErrorsThrown()
+{
+    return Bun::toStringRef(JSC::AOT::recordedThrownTypeErrors());
 }
 
 extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
@@ -1028,6 +1481,11 @@ static JSValue fetchESMSourceCode(
         }
 
         auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+
+        JSObject* helpers = compiledRuntimeHelpers(globalObject, moduleKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (helpers)
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateCompiledNamespaceSource(helpers), JSC::SourceOrigin(), moduleKey)))));
 
         // bun:wrap and a few other builtins return real JS source (not a
         // synthetic generator). Their providers are identical across globals,
@@ -1224,6 +1682,13 @@ static JSValue fetchESMSourceCode(
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+    }
+
+    if (res->result.value.tag == SyntheticModuleType::ExportDefaultOnly) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateJSValueExportDefaultOnlySourceCode(globalObject, value), JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+        JSC::ensureStillAliveHere(value);
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);

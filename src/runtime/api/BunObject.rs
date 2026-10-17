@@ -732,6 +732,13 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
     'use_resolved_path: {
+        if let (true, Some(source_path)) = (
+            vm.main_resolved_path.is_empty(),
+            vm.standalone_module_graph
+                .and_then(|graph| graph.source_path(vm.main())),
+        ) {
+            vm.main_resolved_path = BunString::clone_utf8(source_path);
+        }
         if vm.main_resolved_path.is_empty() {
             // If it's from eval, don't try to resolve it.
             if strings::ends_with(vm.main(), b"[eval]") {
@@ -1667,7 +1674,12 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     use crate::webcore::blob::{Blob, BlobExt as _};
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
-    let Some(graph) = StandaloneModuleGraph::get_ref() else {
+    let is_executable = |graph: &&StandaloneModuleGraph| {
+        !graph
+            .flags
+            .contains(bun_standalone_graph::StandaloneModuleGraph::Flags::PRESERVES_SOURCE_PATHS)
+    };
+    let Some(graph) = StandaloneModuleGraph::get_ref().filter(is_executable) else {
         return JSValue::create_empty_array(global_this, 0);
     };
 

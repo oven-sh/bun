@@ -73,6 +73,24 @@ bun run <file or script>
   Use less memory, but run garbage collection more often
 </ParamField>
 
+<ParamField path="--aot" type="boolean">
+  Run under the rules of <code>bun build --compile --aot</code>: type check first, hold values to their types, and make
+  built-in objects immutable. Nothing is compiled ahead of time
+</ParamField>
+
+<ParamField path="--aot-type-errors" type="string" default="throw">
+  With <code>--aot</code>: what to do when a value does not match its TypeScript type: <code>throw</code>, or{" "}
+  <code>log</code> to write a line to stderr and continue
+</ParamField>
+
+<ParamField path="--aot-huge-heap" type="boolean">
+  With <code>--aot</code>: let each thread have more than 32 GB of objects. The program uses more memory and runs slower
+</ParamField>
+
+<ParamField path="--aot-audit" type="boolean">
+  Run normally and log the places where the program would behave differently under <code>--aot</code>
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>

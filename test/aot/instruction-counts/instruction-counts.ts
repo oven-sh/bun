@@ -1,0 +1,402 @@
+import { afterAll, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { availableParallelism, tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { unsupported, withoutDebugInformation } from "../run-programs";
+import {
+  mark,
+  whyInstructionsCannotBeCounted,
+  type CompiledFunction,
+  type Counted,
+  type Request,
+} from "./count-instructions";
+
+const snippets = join(import.meta.dir, "snippets");
+const programs = join(import.meta.dir, "programs");
+const packages = join(import.meta.dir, "packages");
+const inPlace = join(import.meta.dir, "in-place");
+const folderOfCountedPrograms = process.platform === "linux" ? "/tmp" : realpathSync(tmpdir());
+const turnsBeforeCounting = [50, 50, 50, 50],
+  fewerTurns = 100,
+  moreTurns = 300;
+const roundsBeforeCounting = [1, 1, 1, 1],
+  roundsOfFewerOperations = 1,
+  roundsOfMoreOperations = 3;
+
+type Form = { types: "typed" | "untyped"; place: "function" | "module level" | "function that no loop calls" };
+const forms: Form[] = [
+  { types: "typed", place: "function" },
+  { types: "typed", place: "module level" },
+  { types: "untyped", place: "function" },
+  { types: "untyped", place: "module level" },
+];
+const formsOutsideLoops: Form[] = [
+  { types: "typed", place: "function" },
+  { types: "typed", place: "function that no loop calls" },
+  { types: "untyped", place: "function" },
+  { types: "untyped", place: "function that no loop calls" },
+];
+
+function partsOf(name: string, text: string) {
+  const parts = /^\/\/ (.*)\n([^]*?)\nkernel: \{\n([^]*?)\n\}\n([^]*)$/.exec(text);
+  const operations = /^const operations = (\d+);$/m.exec(text);
+  if (!parts || !operations)
+    throw new Error(
+      `${name} needs a first line that says what it is, "const operations = <number>;" and a block labeled "kernel"`,
+    );
+  return { title: parts[1], setup: parts[2], kernel: parts[3], rest: parts[4], operations: Number(operations[1]) };
+}
+
+function isCountedTwice(operations: number) {
+  return operations * (roundsOfMoreOperations - roundsOfFewerOperations) < 10;
+}
+
+function programOf({ setup, kernel, rest, operations }: ReturnType<typeof partsOf>, place: Form["place"]) {
+  const waits = /\bawait\b/.test(kernel);
+  const windows = (turn: string) =>
+    `const roundsOfWindows = process.argv.slice(2).map(Number);\n${isCountedTwice(operations) ? "roundsOfWindows.push(...roundsOfWindows.slice(-2));\n" : ""}for (let window = 0; window < roundsOfWindows.length; window++) {\n  const rounds = roundsOfWindows[window];\n  for (let round = 0; round < rounds; round++) ${turn}\n  ${mark}\n}\n`;
+  if (place === "module level") return `${setup}\n${windows(`{\n${kernel}\n  }`)}${rest}`;
+  return `${setup}
+let isNeverThrown = 0;
+if (process.argv.length > 50) isNeverThrown = 1;
+${waits ? "async " : ""}function kernel() {
+  try {
+    if (isNeverThrown > 0) throw isNeverThrown;
+  } catch {
+    return;
+  }
+${kernel}
+}
+${
+  place === "function that no loop calls"
+    ? `function neverCalled() {}\nfunction chosen() {\n  return process.argv.length > 50 ? neverCalled : kernel;\n}\nconst called = chosen();\n${windows(`{\n    ${waits ? "await " : ""}called();\n  }`)}`
+    : windows(`{\n    ${waits ? "await " : ""}kernel();\n    if (rounds < 0) ${waits ? "await " : ""}kernel();\n  }`)
+}${rest}`;
+}
+
+async function run(command: string[], cwd: string, env: Record<string, string | undefined>) {
+  await using child = Bun.spawn({ cmd: command, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+function functionsOf(map: string, entry: string): CompiledFunction[] {
+  const functions: CompiledFunction[] = [];
+  for (const line of map.split("\n")) {
+    const fields = line.split("\t");
+    if (fields[0] === "F")
+      functions.push({
+        offset: Number(fields[2]),
+        size: Number(fields[3]),
+        name:
+          fields[10] === entry || fields[7].startsWith("module ")
+            ? fields[7] || "a function without a name"
+            : "built-in modules",
+      });
+    else if (fields[0] === "T")
+      functions.push({
+        offset: Number(fields[1]),
+        size: -1,
+        name: fields[2].startsWith("outlined ") ? "outlined code" : `stub ${fields[2]}`,
+      });
+  }
+  functions.sort((a, b) => a.offset - b.offset);
+  functions.forEach((compiled, index) => {
+    if (compiled.size < 0) compiled.size = (functions[index + 1]?.offset ?? compiled.offset) - compiled.offset;
+  });
+  return functions;
+}
+
+async function countInstructions(request: Request): Promise<Counted> {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "count-in-a-child.ts")],
+    env: bunEnv,
+    stdin: new Blob([JSON.stringify(request)]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  if (exitCode) throw new Error(stderr.trim());
+  const counted = JSON.parse(stdout);
+  return { ...counted, windows: counted.windows.map((window: [string, number][]) => new Map(window)) };
+}
+
+const atOnce = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
+const jobs: (() => Promise<string[]>)[] = [];
+const started: Promise<string[]>[] = [];
+
+function linesOf(job: () => Promise<string[]>) {
+  const index = jobs.push(job) - 1;
+  return () => {
+    for (let next = index; next < Math.min(jobs.length, index + atOnce); next++)
+      if (!started[next]) (started[next] = jobs[next]()).catch(() => {});
+    return started[index];
+  };
+}
+
+const tsconfigWithTypesOfBun = JSON.stringify({
+  compilerOptions: { typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")], types: ["bun-types"] },
+});
+
+const twoDecimals = (value: number) => value.toFixed(2).replace(/\.00$/, "");
+
+async function lineOf(
+  name: string,
+  parts: ReturnType<typeof partsOf>,
+  form: Form,
+  dir: string,
+  countsInstructions: boolean,
+) {
+  const stem = `${name}.${form.types}.${form.place.replaceAll(" ", "-")}`;
+  writeFileSync(join(dir, "tsconfig.json"), tsconfigWithTypesOfBun);
+  writeFileSync(join(dir, `${stem}.ts`), programOf(parts, form.place));
+  let entry = `${stem}.ts`;
+  if (form.types === "untyped") {
+    const erased = await run([bunExe(), "build", "--no-bundle", entry], dir, bunEnv);
+    expect({ stderr: erased.stderr, exitCode: erased.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    entry = `${stem}.js`;
+    writeFileSync(join(dir, entry), erased.stdout);
+  }
+  const executable = join(dir, stem),
+    mapFile = join(dir, `${stem}.map`);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), entry, "--outfile", executable],
+    dir,
+    { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile },
+  );
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const functions = functionsOf(readFileSync(mapFile, "utf8"), entry);
+  const measured = form.place === "module level" ? `module ${entry}` : "kernel";
+  const bytes = functions
+    .filter(compiled => compiled.name === measured)
+    .reduce((sum, compiled) => sum + compiled.size, 0);
+  const label = `${form.types}, ${form.place}`;
+  if (!countsInstructions) return `${label}: ${bytes} bytes`;
+
+  const counted = await countInstructions({
+    command: [executable, ...[...roundsBeforeCounting, roundsOfFewerOperations, roundsOfMoreOperations].map(String)],
+    env: { ...bunEnv, BUN_JSC_useGC: "0", BUN_JSC_crashIfInterpreterIsUsed: "1" },
+    marksBeforeTheFirstWindow: roundsBeforeCounting.length,
+    numberOfWindows: isCountedTwice(parts.operations) ? 4 : 2,
+    functions,
+  });
+  expect({ stderr: counted.stderr, exitCode: counted.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const operations = parts.operations * (roundsOfMoreOperations - roundsOfFewerOperations);
+  const shares = sharesOf(
+    [cheapest(counted.windows.filter((_, index) => index % 2 === 0)), cheapest(counted.windows.filter((_, index) => index % 2 === 1))],
+    operations,
+    entry,
+  );
+  if (form.place !== "module level") expect(shares.map(share => share.where)).toContain("kernel");
+  return `${label}: ${shown(shares)}, ${bytes} bytes`;
+}
+
+type Share = { where: string; instructions: number };
+
+function cheapest(windows: Map<string, number>[]) {
+  const total = (window: Map<string, number>) => [...window.values()].reduce((sum, instructions) => sum + instructions, 0);
+  return windows.reduce((best, window) => (total(window) < total(best) ? window : best));
+}
+
+function sharesOf([few, many]: Map<string, number>[], operations: number, entry: string): Share[] {
+  return [...new Set([...few.keys(), ...many.keys()])]
+    .map(where => ({
+      where: where === `module ${entry}` ? "module" : where,
+      instructions: ((many.get(where) ?? 0) - (few.get(where) ?? 0)) / operations,
+    }))
+    .filter(share => Math.abs(share.instructions) >= 0.005)
+    .sort((a, b) => b.instructions - a.instructions || (a.where < b.where ? -1 : 1));
+}
+
+function shown(shares: Share[]) {
+  const all = shares.reduce((sum, share) => sum + share.instructions, 0);
+  return `${twoDecimals(all)} instructions (${shares.map(share => `${share.where} ${twoDecimals(share.instructions)}`).join(", ")})`;
+}
+
+function describeCasesOf(folder: string, platform: string, isSkipped: boolean, testFile = `${platform}-programs`) {
+  const title = /^\/\/ (.*)\n/.exec(readFileSync(join(folder, "main.ts"), "utf8"))?.[1];
+  if (!title) throw new Error(`${folder}/main.ts needs a first line that says what it is`);
+  const names = Bun.spawnSync({ cmd: [bunExe(), join(folder, "main.ts"), "names"], env: bunEnv });
+  const dir = mkdtempSync(join(folderOfCountedPrograms, `instruction-counts-${basename(folder)}_`));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const executable = join(dir, "main"),
+    mapFile = join(dir, "main.map");
+  const turns: { before: number[]; fewer: number; more: number } = existsSync(join(folder, "turns.json"))
+    ? JSON.parse(readFileSync(join(folder, "turns.json"), "utf8"))
+    : { before: turnsBeforeCounting, fewer: fewerTurns, more: moreTurns };
+  let functions: Promise<CompiledFunction[]> | undefined;
+  const build = async () => {
+    cpSync(folder, dir, { recursive: true });
+    if (!existsSync(join(dir, "tsconfig.json"))) writeFileSync(join(dir, "tsconfig.json"), tsconfigWithTypesOfBun);
+    if (existsSync(join(dir, "package.json"))) {
+      const installed = process.env.BUN_TEST_AOT_COUNTED_PACKAGES;
+      const got = installed
+        ? await run(["cp", "-R", join(installed, basename(folder), "node_modules"), "node_modules"], dir, bunEnv)
+        : await run([bunExe(), "install", "--ignore-scripts", "--frozen-lockfile"], dir, bunEnv);
+      expect({ stderr: got.exitCode ? got.stderr : "", exitCode: got.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    }
+    const flags: string[] = existsSync(join(dir, "flags.json")) ? JSON.parse(readFileSync(join(dir, "flags.json"), "utf8")) : [];
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), "main.ts", ...flags, "--outfile", executable],
+      dir,
+      { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile },
+    );
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    return functionsOf(readFileSync(mapFile, "utf8"), "main.ts");
+  };
+  for (const name of names.stdout.toString().split("\n").filter(Boolean)) {
+    const lines = linesOf(async () => {
+      const counted = await countInstructions({
+        command: [executable, name, ...[...turns.before, turns.fewer, turns.more].map(String)],
+        env: { ...bunEnv, BUN_JSC_useGC: "0" },
+        marksBeforeTheFirstWindow: turns.before.length,
+        numberOfWindows: 2,
+        functions: await (functions ??= build()),
+      });
+      expect({ stderr: counted.stderr, exitCode: counted.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return [`a turn: ${shown(sharesOf(counted.windows, turns.more - turns.fewer, "main.ts"))}, 0 bytes`];
+    });
+    test.skipIf(isSkipped)(
+      `${title}: ${name}`,
+      async () => {
+        const [line] = await lines();
+        const before = recordedLines(testFile, `${title}: ${name}`)[0];
+        expect(before !== undefined && isNoWorse(line, before, turns.more - turns.fewer) ? before : line).toMatchSnapshot();
+      },
+      600_000,
+    );
+  }
+}
+
+const shareOutsideCompiledCode = /^(the runtime|elsewhere)$/;
+
+const instructionsOfTwoBlockRefills = 5_000;
+
+function numbersOf(line: string) {
+  const found = /^(.+): (-?[\d.]+) instructions \((.*)\), (\d+) bytes$/.exec(line);
+  if (!found) return undefined;
+  let compiled = 0,
+    outside = 0;
+  for (const share of found[3].split(", ")) {
+    const at = share.lastIndexOf(" ");
+    const instructions = Math.max(0, Number(share.slice(at + 1)));
+    if (shareOutsideCompiledCode.test(share.slice(0, at))) outside += instructions;
+    else compiled += instructions;
+  }
+  return { label: found[1], compiled, outside, bytes: Number(found[4]) };
+}
+
+export function isNoWorse(line: string, recorded: string, operationsCountedOnce: number) {
+  const now = numbersOf(line),
+    then = numbersOf(recorded);
+  if (!now || !then || now.label !== then.label) return false;
+  const refills = operationsCountedOnce ? instructionsOfTwoBlockRefills / operationsCountedOnce : 0;
+  return (
+    now.compiled <= then.compiled + Math.max(0.25, then.compiled * 0.02) &&
+    now.outside <= then.outside + Math.max(1, then.outside * 0.15, refills) &&
+    now.bytes <= then.bytes * 1.05
+  );
+}
+
+function recordedLines(testFile: string, title: string) {
+  const file = join(import.meta.dir, "__snapshots__", `${testFile}.test.ts.snap`);
+  if (!existsSync(file)) return [];
+  const titleAsWritten = title.replace(/[\\`]|\$\{/g, "\\$&");
+  const start = `exports[\`${titleAsWritten} 1\`] = \``;
+  const text = readFileSync(file, "utf8");
+  const from = text.indexOf(start);
+  if (from < 0) return [];
+  return text
+    .slice(from + start.length, text.indexOf("`;\n", from))
+    .trim()
+    .replace(/^"|"$/g, "")
+    .split("\n");
+}
+
+async function whetherItCounts(platform: string) {
+  const isThisPlatform = platform === `${process.platform}-${process.arch}` && !unsupported && !isASAN && !isDebug;
+  if (!unsupported && !isThisPlatform)
+    console.error(`SKIPPED: test/aot/instruction-counts: the numbers are those of a release build on ${platform}`);
+  const reason = isThisPlatform ? await whyInstructionsCannotBeCounted() : undefined;
+  if (reason && process.platform === "linux") console.warn(`Only the bytes of compiled code are compared: ${reason}.`);
+  return { isThisPlatform, reason };
+}
+
+export async function describeInstructionCountsOfPrograms(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  for (const folder of readdirSync(programs).sort())
+    describeCasesOf(join(programs, folder), platform, !isThisPlatform || !!reason);
+}
+
+export async function describeInstructionCountsInPlace(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  for (const folder of readdirSync(inPlace).sort())
+    describeCasesOf(join(inPlace, folder), platform, !isThisPlatform || !!reason, `${platform}-in-place`);
+}
+
+export async function describeInstructionCountsOfPackages(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  for (const folder of readdirSync(packages).sort())
+    describeCasesOf(join(packages, folder), platform, !isThisPlatform || !!reason, `${platform}-packages`);
+}
+
+const partOf = (name: string, parts: number) =>
+  ([...name].reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 0) % parts) + 1;
+
+export async function describeInstructionCounts(platform: string, part: number, parts: number) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  const testFile = part === 1 ? platform : `${platform}-${part}`;
+  const typedOnly = join(snippets, "typed-only");
+  const files = [
+    ...readdirSync(snippets).map(file => ({ file, folder: snippets, formsOfFile: forms })),
+    ...(existsSync(typedOnly) ? readdirSync(typedOnly) : []).map(file => ({
+      file,
+      folder: typedOnly,
+      formsOfFile: forms.filter(form => form.types === "typed"),
+    })),
+  ].filter(({ file }) => file.endsWith(".ts") && partOf(basename(file, ".ts"), parts) === part);
+  describeSnippets(files, testFile, isThisPlatform, reason);
+}
+
+export async function describeInstructionCountsOutsideLoops(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  const folder = join(snippets, "outside-loops");
+  const files = readdirSync(folder)
+    .filter(file => file.endsWith(".ts"))
+    .map(file => ({ file, folder, formsOfFile: formsOutsideLoops }));
+  describeSnippets(files, `${platform}-outside-loops`, isThisPlatform, reason);
+}
+
+function describeSnippets(
+  files: { file: string; folder: string; formsOfFile: Form[] }[],
+  testFile: string,
+  isThisPlatform: boolean,
+  reason: string | undefined,
+) {
+  for (const { file, folder, formsOfFile } of files.sort((a, b) => (a.file < b.file ? -1 : 1))) {
+    const name = basename(file, ".ts");
+    const pieces = partsOf(file, readFileSync(join(folder, file), "utf8"));
+    const lines = linesOf(async () => {
+      using dir = tempDir(`instruction-counts-${name}`, {});
+      const counted: string[] = [];
+      for (const form of formsOfFile) counted.push(await lineOf(name, pieces, form, String(dir), !reason));
+      return counted;
+    });
+    test.skipIf(!isThisPlatform || (!!reason && process.platform === "linux"))(
+      pieces.title,
+      async () => {
+        const recorded = recordedLines(testFile, pieces.title);
+        const operationsCountedOnce = isCountedTwice(pieces.operations) ? 0 : pieces.operations * (roundsOfMoreOperations - roundsOfFewerOperations);
+        const shownLines = (await lines()).map((line, index) =>
+          recorded[index] !== undefined && isNoWorse(line, recorded[index], operationsCountedOnce) ? recorded[index] : line,
+        );
+        expect(shownLines.join("\n")).toMatchSnapshot();
+      },
+      600_000,
+    );
+  }
+}

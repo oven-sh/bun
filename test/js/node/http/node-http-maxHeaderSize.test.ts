@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { expect, test } from "bun:test";
 import { bunRun } from "harness";
 import { once } from "node:events";

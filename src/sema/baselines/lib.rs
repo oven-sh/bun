@@ -42,7 +42,7 @@ pub fn read_file(path: &str) -> Option<Vec<u8>> {
 }
 
 /// Its directory is created if there is none.
-fn write_file(path: &str, contents: &[u8]) -> bun_sys::Maybe<()> {
+pub fn write_file(path: &str, contents: &[u8]) -> bun_sys::Maybe<()> {
     if let Some(end) = rfind(path, "/").filter(|&end| end > 0) {
         bun_sys::mkdir_recursive(&path.as_bytes()[..end])?;
     }
@@ -1796,6 +1796,8 @@ fn run_one(
             errors: &[],
             paths: &[],
             are_entry_points: false,
+            is_one_program: false,
+            code: &[],
             threads: 1,
             libs: bun_sema_driver::Libs::Directory(setup.lib_dir.as_bytes()),
             progress: None,
@@ -1817,9 +1819,12 @@ fn run_one(
             stops_like_tsc: false,
             uses_typescript_wording: true,
             loaded: None,
+            compile: None,
             checked: None,
             declaration_file_emitted: None,
             after_file,
+            before_visits: None,
+            all_visited_once: None,
         };
         let began = std::time::Instant::now();
         bun_sema_driver::check_project(&host, project, &request, Report::default(), began)

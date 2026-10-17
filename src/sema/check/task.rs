@@ -156,6 +156,16 @@ impl<'s> Task<'s> {
         debug_assert_eq!(self.withheld.count_ones() as usize, TABLES_OF_RECORDS.len());
     }
 
+    /// `finish` passes no entry of `EXPRESSION_TABLES` to the barrier.
+    pub(super) fn withhold_expression_tables(&mut self) {
+        for (slot, name) in table_names().into_iter().enumerate() {
+            if EXPRESSION_TABLES.contains(&name) {
+                self.withheld |= 1 << slot;
+            }
+        }
+        debug_assert_eq!(self.withheld.count_ones() as usize, EXPRESSION_TABLES.len());
+    }
+
     fn drop_everything(&mut self) {
         (self.place, self.is_read_later, self.file) = (None, true, None);
         self.withheld = 0;
@@ -247,6 +257,7 @@ impl<'s> Task<'s> {
             link: Link::default(),
             tables: published,
             buffered,
+            pairs_compared: Vec::new(),
         }
     }
 }
@@ -279,6 +290,7 @@ pub struct Finished<'s> {
     tables: Vec<Option<Entries<'s>>>,
     /// The number of entries in `tables`.
     buffered: u64,
+    pub(super) pairs_compared: Vec<(super::Identity, super::Identity)>,
 }
 
 impl Finished<'_> {
@@ -305,14 +317,17 @@ impl Finished<'_> {
             link: _,
             tables: _,
             buffered: _,
+            pairs_compared,
         } = self;
-        (diagnostics.is_empty() && listings.is_empty() && assignments_walked.is_empty()).then(
-            || {
-                order_dependent_variances
-                    .iter()
-                    .map(|it| (it.sym, it.variances))
-            },
-        )
+        (diagnostics.is_empty()
+            && listings.is_empty()
+            && assignments_walked.is_empty()
+            && pairs_compared.is_empty())
+        .then(|| {
+            order_dependent_variances
+                .iter()
+                .map(|it| (it.sym, it.variances))
+        })
     }
 
     /// Whether `Program::validate` can find the task invalid.
@@ -422,6 +437,37 @@ const TABLES_OF_RECORDS: [&str; 30] = [
     "constraints",
     "plain_global_refs",
     "equivalent_base_types",
+];
+
+impl Program<'_> {
+    pub fn release_expression_tables(&self) {
+        self.expr_types.release_pages();
+        self.context_free_expr_types.release_pages();
+        self.calls.release_pages();
+        self.call_return_types.release_pages();
+        self.calls_before_signatures.release_pages();
+        self.effects_signatures.release_pages();
+        self.resolved_effects_signatures.release_pages();
+        self.flows_too_deep.release_pages();
+        self.deferred_nodes.release_pages();
+    }
+}
+
+/// The `Buffered` tables keyed by an expression. They are most of what a task publishes. Whoever asks about an expression and finds no
+/// entry evaluates it, as a task does with an expression of a file of its own step, going by what the tables keyed by a declaration, a
+/// symbol or a type hold.
+const EXPRESSION_TABLES: [&str; 11] = [
+    "expr_types",
+    "context_free_expr_types",
+    "calls",
+    "call_return_types",
+    "call_diagnostics",
+    "diagnostics_of_re_resolved_calls",
+    "calls_before_signatures",
+    "effects_signatures",
+    "resolved_effects_signatures",
+    "flows_too_deep",
+    "deferred_nodes",
 ];
 
 /// The names of the `Buffered` fields of `Program`, by slot.
@@ -601,6 +647,7 @@ fn publish_tables<'s>(
             let (shares, applied) = (&mut stage.shares, &mut chain.applied);
             let before = applied.published;
             stage.table.apply(stage.part, shares, &mut handles, applied);
+            shares.iter_mut().for_each(Share::release);
             stage.published = applied.published - before;
         }
     });

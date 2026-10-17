@@ -582,7 +582,7 @@ impl Checker<'_, '_> {
                     return error(1243, [text, "accessor"]);
                 }
             } else if modifier == Flags::EXPORT {
-                if self.files().options.verbatim_module_syntax
+                if self.check_options(file).verbatim_module_syntax
                     && !hir.is_ambient(location)
                     && !matches!(
                         kind,
@@ -707,7 +707,14 @@ impl Checker<'_, '_> {
         }
         let error_at =
             |start: u32, code: u32, modifier| GrammarError::some(start, 0, code, [modifier, ""]);
-        if kind == Kind::Constructor {
+        let is_js_static_constructor = seen.contains(Flags::STATIC)
+            && matches!(node, NodeData::Member(m) if hir.is_js
+                && hir[m].kind == MemberKind::Method
+                && hir[m].key == PropKey::Name(known::constructor)
+                && !hir[m].flags.contains(Flags::COMPUTED_NAME)
+                && hir[m].func.is_some()
+                && !hir[hir[m].func].flags.contains(Flags::GENERATOR));
+        if kind == Kind::Constructor || is_js_static_constructor {
             return if seen.contains(Flags::STATIC) {
                 error_at(last_static, 1089, "static")
             } else if seen.contains(Flags::OVERRIDE) {

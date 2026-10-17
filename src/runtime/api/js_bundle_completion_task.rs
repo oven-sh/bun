@@ -32,7 +32,7 @@ use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
-    target_base_public_path, to_executable,
+    discard_early_template_copy, start_copying_template, target_base_public_path, to_executable,
 };
 use bun_sys::Dir;
 #[cfg(not(windows))]
@@ -149,6 +149,9 @@ impl Drop for JSBundleCompletionTask {
         if let Some(plugin) = self.plugins.take() {
             // The FFI handle stashed at construction.
             Plugin::destroy(plugin.as_ptr());
+        }
+        if self.config.compile.is_some() {
+            discard_early_template_copy();
         }
     }
 }
@@ -385,6 +388,7 @@ impl JSBundleCompletionTask {
                 &compile_options.assets,
                 entry_key,
                 output_files,
+                false,
             ) {
                 return CompileResult::fail_fmt(format_args!("{}", msg));
             }
@@ -477,6 +481,7 @@ impl JSBundleCompletionTask {
             flags,
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
+                crash_if_interpreter_is_used: compile_options.crash_if_interpreter_is_used,
             },
         ) {
             Ok(r) => r,
@@ -1042,6 +1047,23 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
+        transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
+        transpiler.options.aot_explain =
+            (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
+        transpiler.options.aot_explain_to_log = true;
+        transpiler.options.aot_logs_type_errors =
+            (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
+        transpiler.options.compile_function_source =
+            (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
+        transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
+        if let Some(compile) = &config.compile {
+            let executable_path = &compile.executable_path.list;
+            start_copying_template(
+                &compile.compile_target,
+                (!executable_path.is_empty()).then_some(&executable_path[..]),
+            );
+        }
+        transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
         if let Some(compile) = &config.compile {
@@ -1098,6 +1120,40 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.type_check = config
             .check
             .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
+        transpiler.options.emit_declarations = (config.dts && config.compile.is_none()).then_some(
+            crate::cli::check_command::declarations_for_bun_build as options::EmitDeclarations,
+        );
+        let unsupported = [
+            (
+                config.minify.syntax || config.minify.whitespace || config.minify.identifiers,
+                "minify",
+            ),
+            (config.code_splitting, "splitting"),
+            (
+                config.format != options::Format::Esm,
+                "a format other than esm",
+            ),
+            (
+                transpiler.options.source_map == options::SourceMapOption::Inline,
+                "an inline source map",
+            ),
+        ];
+        let emits_declarations = config.dts && config.compile.is_none();
+        transpiler.options.skips_sound_files_for = unsupported
+            .iter()
+            .find(|(is_set, _)| *is_set && emits_declarations)
+            .map(|(_, option)| *option);
+        if emits_declarations && transpiler.options.skips_sound_files_for.is_none() {
+            transpiler.options.emit_declarations =
+                Some(crate::cli::check_command::sound_declarations_for_build);
+            transpiler.options.write_sound_files =
+                Some(crate::cli::check_command::sound_files_for_build);
+            transpiler.options.rolls_up_declarations = !config.is_root_given;
+            if transpiler.options.source_map == options::SourceMapOption::None {
+                transpiler.options.drops_source_maps = true;
+                transpiler.options.source_map = options::SourceMapOption::External;
+            }
+        }
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
@@ -1158,10 +1214,31 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
+        if let Some(compile) = config
+            .compile
+            .as_ref()
+            .filter(|_| transpiler.options.compiles_ahead_of_time())
+        {
+            if let Some(why) = crate::cli::aot::why_cannot_be_carried(
+                &compile.compile_target,
+                // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.
+                unsafe { &mut *self.env },
+                Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
+            ) {
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("compile.aot: {}", bstr::BStr::new(&why)),
+                );
+                return Err(bun_bundler::Error::BuildFailed);
+            }
+        }
+
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {
             Some(compile)
                 if config.bytecode
+                    && !transpiler.options.compiles_ahead_of_time()
                     && (!compile.compile_target.is_default()
                         || !compile.executable_path.list.is_empty()) =>
             {

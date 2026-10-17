@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import child_process from "node:child_process";

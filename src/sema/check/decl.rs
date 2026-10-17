@@ -57,7 +57,7 @@ struct Mentioned {
 }
 
 /// `toInt32` of jsnum.go
-fn to_int32(n: f64) -> i32 {
+pub(super) fn to_int32(n: f64) -> i32 {
     if !n.is_finite() {
         return 0;
     }
@@ -367,8 +367,44 @@ fn exponentiate(base: f64, exponent: f64) -> f64 {
     pow(base, exponent)
 }
 
+fn jsc_pow(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() || base.abs() == 1.0 && exponent.is_infinite() {
+        return f64::NAN;
+    }
+    if exponent == 0.5 {
+        return if base == 0.0 {
+            0.0
+        } else if base.is_infinite() {
+            f64::INFINITY
+        } else {
+            base.sqrt()
+        };
+    }
+    if exponent == -0.5 {
+        return if base == 0.0 {
+            f64::INFINITY
+        } else if base.is_infinite() {
+            0.0
+        } else {
+            1.0 / base.sqrt()
+        };
+    }
+    if (0.0..=1000.0).contains(&exponent) && exponent == exponent.trunc() {
+        let (mut result, mut factor, mut left) = (1.0, base, exponent as u32);
+        while left != 0 {
+            if left & 1 == 1 {
+                result *= factor;
+            }
+            factor *= factor;
+            left >>= 1;
+        }
+        return result;
+    }
+    base.powf(exponent)
+}
+
 /// The operators `evaluate` knows, on numbers.
-fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
+pub(super) fn number_operation(op: BinOp, a: f64, b: f64, as_the_engine: bool) -> Option<f64> {
     let shift = to_int32(b) as u32 & 31;
     Some(match op {
         BinOp::BitOr => f64::from(to_int32(a) | to_int32(b)),
@@ -382,6 +418,7 @@ fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
         BinOp::Add => a + b,
         BinOp::Sub => a - b,
         BinOp::Rem => a % b,
+        BinOp::Pow if as_the_engine => jsc_pow(a, b),
         BinOp::Pow => exponentiate(a, b),
         _ => return None,
     })
@@ -585,6 +622,9 @@ impl<'p, 's> Checker<'p, 's> {
                             });
                             continue 'operand;
                         }
+                        if self.p.files.options.uses_engine_arithmetic {
+                            super::mapped::combine_surrogate_pairs(&mut text);
+                        }
                         of_template.value = Some(EnumValue::String(self.atoms().intern(&text)));
                         result = of_template;
                     }
@@ -613,12 +653,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// The result for a `BinaryExpression`, from those for its operands.
     fn evaluate_binary(&self, op: Option<BinOp>, l: Evaluated, r: Evaluated) -> Evaluated {
         let value = match (l.value, r.value, op) {
-            (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => {
-                number_operation(op, f64::from_bits(a), f64::from_bits(b))
-                    .and_then(|n| Evaluated::number(n).value)
-            }
+            (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => number_operation(
+                op,
+                f64::from_bits(a),
+                f64::from_bits(b),
+                self.p.files.options.uses_engine_arithmetic,
+            )
+            .and_then(|n| Evaluated::number(n).value),
             (Some(a), Some(b), Some(BinOp::Add)) => {
-                let text = [self.constant_text(a), self.constant_text(b)].concat();
+                let mut text = [self.constant_text(a), self.constant_text(b)].concat();
+                if self.p.files.options.uses_engine_arithmetic {
+                    super::mapped::combine_surrogate_pairs(&mut text);
+                }
                 Some(EnumValue::String(self.atoms().intern(&text)))
             }
             _ => None,
@@ -2678,7 +2724,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.error_at(at, 1061, &[]);
             return Evaluated::default();
         };
-        if self.p.files.options.isolated_modules
+        if self.check_options(file).isolated_modules
             && let Some((previous, before)) = previous
             && hir[previous].init.is_some()
             && (!matches!(before.value, Some(EnumValue::Number(_))) || before.resolved_other_files)
@@ -2713,7 +2759,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let is_nan = f64::from_bits(n).is_nan();
                     self.error_at(at, if is_nan { 2478 } else { 2477 }, &[]);
                 }
-                if self.p.files.options.isolated_modules
+                if self.check_options(file).isolated_modules
                     && matches!(value, EnumValue::String(_))
                     && !result.is_syntactically_string
                 {
@@ -2746,7 +2792,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.evaluate(file, e, Location::Expr(file, e)).value
     }
 
-    fn constant_text(&self, value: EnumValue) -> &'p [u8] {
+    pub(super) fn constant_text(&self, value: EnumValue) -> &'p [u8] {
         let atom = match value {
             EnumValue::String(s) => s,
             EnumValue::Number(bits) => self.number_name(f64::from_bits(bits)),
@@ -2867,7 +2913,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let provisional = self.provisional(q);
         let pushed_at = match provisional {
-            None if in_flow_loop && self.may_be_in_flight(q) => {
+            None if in_flow_loop && self.is_in_flight(q) => {
                 let first = self.stack.iter().rposition(|&it| it == q);
                 first.and_then(|first| self.flow_loop_pushed_since(first))
             }
@@ -3595,7 +3641,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let is_js = hir.is_js && is_class_or_interface && most != 0;
         // `isJsImplicitAny`
-        if is_js && !self.p.files.options.no_implicit_any {
+        if is_js && !self.check_options(file).no_implicit_any {
             return Some(most);
         }
         let at = match node {
@@ -3665,7 +3711,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let name = hir[name.at(0)].text;
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.check_options(file).no_implicit_any;
         let ty = match self.atoms().bytes(name) {
             b"String" => TypeId::STRING,
             b"Number" => TypeId::NUMBER,
@@ -3739,7 +3785,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let (decl, stmt) = (&hir[d], bound.var_stmt[d.idx()]);
                 match hir[decl.pat].kind {
                     PatKind::Ident(name)
-                        if decl.kind == VarKind::Const
+                        if bound.is_const(hir, d)
                             && stmt.is_some()
                             && matches!(hir[stmt].kind, StmtKind::Var(_))
                             && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>

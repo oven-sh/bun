@@ -1,0 +1,16 @@
+{
+  "name": "aot-servers",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "elysia": "1.4.30",
+    "express": "5.3.0",
+    "fastify": "5.2.2",
+    "hono": "4.13.13",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "@types/node": "26.6.5"
+  }
+}

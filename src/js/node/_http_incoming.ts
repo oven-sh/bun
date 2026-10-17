@@ -6,31 +6,63 @@
 const Readable = require("internal/streams/readable");
 // callback-style stream.finished (returns a cleanup function)
 const finished = require("internal/streams/end-of-stream");
+const { advanceFlags, addFlags, flagsOf, internals } = require("internal/streams/state");
+const { kAutoDestroyed } = require("internal/shared");
 
 const {
   abortedSymbol,
   eofInProgress,
   kHandle,
   kHandoffResponse,
+  kResumeUnlessFlowing,
   kHeaderSource,
   noBodySymbol,
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
+  emitEOFIncomingMessageOuter,
+  clearServerParserIncoming,
   onDataIncomingMessage,
   kAbortController,
+  kReqShouldKeepAlive,
 } = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
+const ProcessNextTick = process.nextTick;
+const constructReadable = internals.constructReadable!;
+const resumeOnNextTick = internals.resumeOnNextTick!;
+const endOnNextTick = internals.endOnNextTick!;
+const { emit, listenerCount, read, push, resume, destroy } = Readable.prototype;
+
+const kAutoDestroy = 1 << 2;
+const kEmitClose = 1 << 3;
+const kDestroyed = 1 << 4;
+const kClosed = 1 << 5;
+const kCloseEmitted = 1 << 6;
+const kConstructed = 1 << 8;
+const kEnded = 1 << 9;
+const kEndEmitted = 1 << 10;
+const kReading = 1 << 11;
+const kSync = 1 << 12;
+const kNeedReadable = 1 << 13;
+const kResumeScheduled = 1 << 16;
+const kReadingMore = 1 << 18;
+const kDefaultUTF8Encoding = 1 << 20;
+const kHasFlowing = 1 << 23;
+const kFlowing = 1 << 24;
+const kHasPaused = 1 << 25;
+
+const kFlagsUntouched = kAutoDestroy | kEmitClose | kConstructed | kSync | kReadingMore | kDefaultUTF8Encoding;
+const kFlagsResumed = kFlagsUntouched | kHasFlowing | kFlowing | kHasPaused | kResumeScheduled;
+const kFlagsReading = (kFlagsResumed | kReading | kNeedReadable) & ~(kSync | kReadingMore | kResumeScheduled);
+const kFlagsEnded = (kFlagsReading | kEnded) & ~(kReading | kNeedReadable);
+const kFlagsDestroyed = kFlagsEnded | kEndEmitted | kDestroyed;
+const kFlagsClosed = kFlagsDestroyed | kClosed;
 const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => Function | undefined = (
   Object.prototype as any
 ).__lookupGetter__;
 
 const kHeaders = Symbol("kHeaders");
-// Cache slot for the server dispatcher's keep-alive decision (stamped once
-// per request in _http_server.ts); declared in the constructor so the stamp
-// never shape-transitions the request.
-const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
 const kHeadersCount = Symbol("kHeadersCount");
 // Cache slot for the lazy req.rawHeaders. The bytes live on kHeaderSource
@@ -57,43 +89,30 @@ function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
 
 /* Abstract base class for ServerRequest and ClientResponse. */
 function IncomingMessage(socket) {
-  this[abortedSymbol] = false;
-  this[eofInProgress] = false;
-  this._consuming = false;
-  // Flag for when we decide that this message cannot possibly be
-  // read by the user, so there's no point continuing to handle it.
-  this._dumped = false;
-  this.complete = false;
-  this._closed = false;
-  this[kHeaders] = null;
-  this[kReqShouldKeepAlive] = undefined;
-  this[kRawHeaders] = null;
-  this[kHeaderSource] = undefined;
-  this[kHeadersCount] = 0;
-  this[kTrailers] = null;
-  this[kTrailersCount] = 0;
-  this.rawTrailers = [];
-  this[kAbortController] = null;
-
-  if (socket === kHandle) {
+  const isFromNativeServer = $likely(socket === kHandle);
+  let handle = null;
+  let hasNoBody = false;
+  if (isFromNativeServer) {
     // Native server fast-path: (kHandle, url, method, headers, rawHeaders, handle, hasBody, socket)
-    this.url = arguments[1];
-    this.method = arguments[2];
     // arguments[3] carries no headers object and arguments[4] no rawHeaders
     // on the native fast path anymore: the raw header bytes stay captured on
     // the native handle and req.rawHeaders / req.headers are materialized by
     // their accessors only when user code reads them.
-    this[kHeaderSource] = arguments[5];
-    this[kHandle] = arguments[5];
-    this[noBodySymbol] = !arguments[6];
+    handle = arguments[5];
+    hasNoBody = !arguments[6];
+    // Like Node's IncomingMessage: the readable side inherits the connection
+    // socket's highWaterMark (which carries createServer({ highWaterMark })).
+    constructReadable(this, arguments[7] ? arguments[7].readableHighWaterMark : undefined);
     this.socket = arguments[7];
+    this.complete = false;
+    this.rawTrailers = [];
+    this.upgrade = null;
+    this.url = arguments[1];
+    this.method = arguments[2];
     // Node.js exposes the connection as req.client as well (it predates
     // req.socket and some code still reaches for it).
     this.client = arguments[7];
-    this.upgrade = null;
-    // Like Node's IncomingMessage: the readable side inherits the connection
-    // socket's highWaterMark (which carries createServer({ highWaterMark })).
-    Readable.$call(this, arguments[7] ? { highWaterMark: arguments[7].readableHighWaterMark } : undefined);
+    this[kHandle] = handle;
   } else {
     // Node.js-style construction from a net.Socket (used by the HTTP client
     // and anything driving the llhttp parser through node:_http_common).
@@ -112,7 +131,8 @@ function IncomingMessage(socket) {
     this.httpVersionMajor = null;
     this.httpVersionMinor = null;
     this.httpVersion = null;
-    this.rawHeaders = [];
+    this.complete = false;
+    this.rawTrailers = [];
     this.joinDuplicateHeaders = false;
 
     this.upgrade = null;
@@ -125,8 +145,26 @@ function IncomingMessage(socket) {
     this.statusCode = null;
     this.statusMessage = null;
     this.client = socket;
+  }
 
-    this[noBodySymbol] = false;
+  this._consuming = false;
+  // Flag for when we decide that this message cannot possibly be
+  // read by the user, so there's no point continuing to handle it.
+  this._dumped = false;
+  this._closed = false;
+  this[kHeaders] = null;
+  this[kHeadersCount] = 0;
+  this[kTrailers] = null;
+  this[kTrailersCount] = 0;
+  this[abortedSymbol] = false;
+  this[eofInProgress] = false;
+  this[kReqShouldKeepAlive] = undefined;
+  this[kRawHeaders] = null;
+  this[kHeaderSource] = isFromNativeServer ? handle : undefined;
+  this[kAbortController] = null;
+  this[noBodySymbol] = hasNoBody;
+  if (!isFromNativeServer) {
+    this.rawHeaders = [];
   }
 
   this._readableState.readingMore = true;
@@ -312,6 +350,24 @@ IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   return this;
 };
 
+function resumeConnection(req) {
+  const socket = req.socket;
+  if (socket && socket.readable) {
+    if (req.upgrade || socket[kHandoffResponse] !== undefined) {
+      // Upgrade request with a body (Node 26 semantics): reading the request
+      // must not flip the raw socket into flowing mode - tunnel bytes pushed
+      // to the socket before the 'upgrade' listener attaches its own 'data'
+      // handler would be discarded by a flowing stream with no readers.
+      // Resume the native body source directly instead.
+      // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
+      onIncomingMessageResumeNodeHTTPResponse.$call(req);
+    } else if (!socket._paused) {
+      if (socket[kResumeUnlessFlowing] !== undefined) socket[kResumeUnlessFlowing]();
+      else socket.resume();
+    }
+  }
+}
+
 IncomingMessage.prototype._read = function _read(_n) {
   if (!this._consuming) {
     this._readableState.readingMore = false;
@@ -329,20 +385,7 @@ IncomingMessage.prototype._read = function _read(_n) {
   }
 
   // Native server path.
-  const socket = this.socket;
-  if (socket && socket.readable) {
-    if (this.upgrade || socket[kHandoffResponse] !== undefined) {
-      // Upgrade request with a body (Node 26 semantics): reading the request
-      // must not flip the raw socket into flowing mode - tunnel bytes pushed
-      // to the socket before the 'upgrade' listener attaches its own 'data'
-      // handler would be discarded by a flowing stream with no readers.
-      // Resume the native body source directly instead.
-      // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
-      onIncomingMessageResumeNodeHTTPResponse.$call(this);
-    } else {
-      readStart(socket);
-    }
-  }
+  resumeConnection(this);
 
   if (this[eofInProgress]) {
     // There is a nextTick pending that will emit EOF
@@ -385,12 +428,14 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
     // (node's _destroy null-socket check).
     this[kHandle] = undefined;
     handle.onabort = handle.ondata = undefined;
-    if (!handle.finished && shouldEmitAborted && this.socket) {
-      handle.abort();
-    }
-    const socket = this.socket;
-    if (socket && !socket.destroyed && shouldEmitAborted) {
-      socket.destroy(err);
+    if (shouldEmitAborted) {
+      if (!handle.finished && this.socket) {
+        handle.abort();
+      }
+      const socket = this.socket;
+      if (socket && !socket.destroyed) {
+        socket.destroy(err);
+      }
     }
     if ($isCallable(cb)) {
       emitErrorNextTickIfErrorListenerNT(this, err, cb);
@@ -719,10 +764,106 @@ IncomingMessage.prototype._dump = function _dump() {
     // If there is buffered data, it may trigger 'data' events.
     // Remove 'data' event listeners explicitly.
     this.removeAllListeners("data");
+    if (endsUnwatched(this)) return;
     // ondata stays armed: it drops the chunks and still delivers the last one, which completes the request.
     this.resume();
   }
 };
+
+const { _read: incomingMessageRead, _destroy: incomingMessageDestroy } = IncomingMessage.prototype;
+
+function isUnheard(req, name) {
+  if (req.emit !== emit) return false;
+  if (req._eventsCount === 0) return true;
+  const events = req._events;
+  return events !== undefined && events[name] === undefined;
+}
+
+function endsUnwatched(req) {
+  if (!req[noBodySymbol] || req.resume !== resume) {
+    return false;
+  }
+  const state = req._readableState;
+  if (!advanceFlags(state, kFlagsUntouched, kFlagsResumed)) return false;
+  process.nextTick(resumeUnwatched, req, state);
+  return true;
+}
+
+function resumeUnwatched(req, state) {
+  if (
+    !req[kHandle] ||
+    req._consuming ||
+    req[eofInProgress] ||
+    req.read !== read ||
+    req._read !== incomingMessageRead ||
+    req._readableState !== state ||
+    !isUnheard(req, "resume") ||
+    !advanceFlags(state, kFlagsResumed, kFlagsReading)
+  ) {
+    return resumeOnNextTick(req, state);
+  }
+  req._consuming = true;
+  resumeConnection(req);
+  req[eofInProgress] = true;
+  process.nextTick(endUnwatched, req);
+}
+
+function endUnwatched(req) {
+  const state = req._readableState;
+  if (
+    req.push !== push ||
+    req.read !== read ||
+    !isUnheard(req, "readable") ||
+    !advanceFlags(state, kFlagsReading, kFlagsEnded)
+  ) {
+    return emitEOFIncomingMessageOuter(req);
+  }
+  req.complete = true;
+  const parser = req.socket?.parser;
+  process.nextTick(destroyUnwatched, req, state, parser != null && parser.incoming === req ? parser : undefined);
+}
+
+function destroyUnwatched(req, state, parser) {
+  try {
+    destroyOnNextTick(req, state);
+  } finally {
+    if (parser !== undefined) clearServerParserIncoming(parser, req);
+  }
+}
+
+function destroyOnNextTick(req, state) {
+  const handle = req[kHandle];
+  if (
+    !handle ||
+    !req.complete ||
+    req.writable ||
+    req._writableState ||
+    req.destroy !== destroy ||
+    req._destroy !== incomingMessageDestroy ||
+    req._readableState !== state ||
+    !isUnheard(req, "end") ||
+    !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
+  ) {
+    return endOnNextTick(state, req);
+  }
+  req[kAutoDestroyed] = true;
+  req[kHandle] = undefined;
+  handle.onabort = handle.ondata = undefined;
+  process.nextTick(closeUnwatched, req);
+}
+
+function closeUnwatched(req) {
+  if (req.listenerCount !== listenerCount) req.listenerCount("error");
+  const state = req._readableState;
+  if (!advanceFlags(state, kFlagsDestroyed, kFlagsClosed)) addFlags(state, kClosed);
+  ProcessNextTick(emitCloseUnwatched, req);
+}
+
+function emitCloseUnwatched(req) {
+  const state = req._readableState;
+  if (!advanceFlags(state, kFlagsClosed, kFlagsClosed | kCloseEmitted)) addFlags(state, kCloseEmitted);
+  if (!isUnheard(req, "close") && (flagsOf(state) & kEmitClose) !== 0) req.emit("close");
+}
 
 function onError(self, error, cb) {
   // This is to keep backward compatible behavior.

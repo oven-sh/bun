@@ -1,0 +1,1 @@
+export default defineNuxtConfig({ compatibilityDate: "2026-01-01", telemetry: false, devtools: { enabled: false }, routeRules: { "/": { prerender: false }, "/old": { redirect: { to: "/", statusCode: 307 } } } });

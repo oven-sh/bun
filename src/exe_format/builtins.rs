@@ -177,77 +177,103 @@ fn sub(bytes: &[u8], offset: usize, len: usize) -> Result<&[u8], BuiltinsError> 
         .ok_or(BuiltinsError::Invalid)
 }
 
-fn struct_at<T: Copy>(bytes: &[u8], offset: usize) -> Result<T, BuiltinsError> {
-    Ok(read_struct(sub(bytes, offset, size_of::<T>())?))
+pub struct Image<'a> {
+    pub len: usize,
+    pub read: &'a mut dyn FnMut(usize, &mut [u8]) -> bool,
 }
 
-/// The bytes of the builtins section in an executable image of any of the three formats bun ships as.
-pub fn find_section(file: &[u8]) -> Result<&[u8], BuiltinsError> {
-    if file.starts_with(b"\x7fELF") {
+impl Image<'_> {
+    fn range(&self, offset: usize, len: usize) -> Result<(usize, usize), BuiltinsError> {
+        offset
+            .checked_add(len)
+            .filter(|&end| end <= self.len)
+            .map(|_| (offset, len))
+            .ok_or(BuiltinsError::Invalid)
+    }
+
+    fn bytes(&mut self, offset: usize, len: usize) -> Result<Vec<u8>, BuiltinsError> {
+        self.range(offset, len)?;
+        let mut bytes = vec![0; len];
+        if (self.read)(offset, &mut bytes) {
+            Ok(bytes)
+        } else {
+            Err(BuiltinsError::Invalid)
+        }
+    }
+
+    fn struct_at<T: Copy>(&mut self, offset: usize) -> Result<T, BuiltinsError> {
+        Ok(read_struct(&self.bytes(offset, size_of::<T>())?))
+    }
+}
+
+/// Where the builtins section lies in an executable image of any of the three formats bun ships as: its offset and its length.
+pub fn find_section(file: &mut Image<'_>) -> Result<(usize, usize), BuiltinsError> {
+    let magic = file.bytes(0, file.len.min(4))?;
+    if magic.starts_with(b"\x7fELF") {
         find_elf(file)
-    } else if file.starts_with(&MH_MAGIC_64.to_le_bytes()) {
+    } else if magic.starts_with(&MH_MAGIC_64.to_le_bytes()) {
         find_macho(file)
-    } else if file.starts_with(b"MZ") {
+    } else if magic.starts_with(b"MZ") {
         find_pe(file)
     } else {
         Err(BuiltinsError::UnrecognizedExecutable)
     }
 }
 
-fn find_elf(file: &[u8]) -> Result<&[u8], BuiltinsError> {
-    // EI_CLASS = ELFCLASS64, EI_DATA = ELFDATA2LSB: every target bun builds for.
-    if file.len() < size_of::<Elf64_Ehdr>() || file[4] != 2 || file[5] != 1 {
+fn find_elf(file: &mut Image<'_>) -> Result<(usize, usize), BuiltinsError> {
+    if file.len < size_of::<Elf64_Ehdr>() {
         return Err(BuiltinsError::UnrecognizedExecutable);
     }
-    let ehdr: Elf64_Ehdr = struct_at(file, 0)?;
-    let shdr = |index: usize| -> Result<Elf64_Shdr, BuiltinsError> {
+    let ehdr: Elf64_Ehdr = file.struct_at(0)?;
+    // EI_CLASS = ELFCLASS64, EI_DATA = ELFDATA2LSB: every target bun builds for.
+    if ehdr.e_ident[4] != 2 || ehdr.e_ident[5] != 1 {
+        return Err(BuiltinsError::UnrecognizedExecutable);
+    }
+    let shdr = |file: &mut Image<'_>, index: usize| -> Result<Elf64_Shdr, BuiltinsError> {
         let offset = (index * size_of::<Elf64_Shdr>())
             .checked_add(usize::try_from(ehdr.e_shoff).map_err(|_| BuiltinsError::Invalid)?)
             .ok_or(BuiltinsError::Invalid)?;
-        struct_at(file, offset)
+        file.struct_at(offset)
     };
     if ehdr.e_shstrndx >= ehdr.e_shnum {
         return Err(BuiltinsError::MissingSection);
     }
-    let strtab_hdr = shdr(ehdr.e_shstrndx as usize)?;
-    let strtab = sub(
-        file,
+    let strtab_hdr = shdr(file, ehdr.e_shstrndx as usize)?;
+    let strtab = file.bytes(
         to_usize(strtab_hdr.sh_offset)?,
         to_usize(strtab_hdr.sh_size)?,
     )?;
     for i in 0..ehdr.e_shnum as usize {
-        let s = shdr(i)?;
+        let s = shdr(file, i)?;
         let Some(name) = strtab.get(s.sh_name as usize..) else {
             continue;
         };
         if slice_to_nul(name) == ELF_SECTION_NAME {
-            return sub(file, to_usize(s.sh_offset)?, to_usize(s.sh_size)?);
+            return file.range(to_usize(s.sh_offset)?, to_usize(s.sh_size)?);
         }
     }
     Err(BuiltinsError::MissingSection)
 }
 
-fn find_macho(file: &[u8]) -> Result<&[u8], BuiltinsError> {
-    let header: macho::mach_header_64 = struct_at(file, 0)?;
+fn find_macho(file: &mut Image<'_>) -> Result<(usize, usize), BuiltinsError> {
+    let header: macho::mach_header_64 = file.struct_at(0)?;
     let mut offset = size_of::<macho::mach_header_64>();
     for _ in 0..header.ncmds {
-        let (cmd, cmdsize) = (
-            u32_at(sub(file, offset, 8)?, 0),
-            u32_at(sub(file, offset, 8)?, 4) as usize,
-        );
+        let command = file.bytes(offset, 8)?;
+        let (cmd, cmdsize) = (u32_at(&command, 0), u32_at(&command, 4) as usize);
         if cmdsize < 8 {
             return Err(BuiltinsError::Invalid);
         }
         if cmd == macho::LC::SEGMENT_64 {
-            let seg: macho::segment_command_64 = struct_at(file, offset)?;
+            let seg: macho::segment_command_64 = file.struct_at(offset)?;
             let mut sect_offset = offset + size_of::<macho::segment_command_64>();
             for _ in 0..seg.nsects {
                 if sect_offset + size_of::<macho::section_64>() > offset + cmdsize {
                     return Err(BuiltinsError::Invalid);
                 }
-                let sect: macho::section_64 = struct_at(file, sect_offset)?;
+                let sect: macho::section_64 = file.struct_at(sect_offset)?;
                 if sect.sect_name() == MACHO_SECTNAME {
-                    return sub(file, sect.offset as usize, to_usize(sect.size)?);
+                    return file.range(sect.offset as usize, to_usize(sect.size)?);
                 }
                 sect_offset += size_of::<macho::section_64>();
             }
@@ -257,10 +283,10 @@ fn find_macho(file: &[u8]) -> Result<&[u8], BuiltinsError> {
     Err(BuiltinsError::MissingSection)
 }
 
-fn find_pe(file: &[u8]) -> Result<&[u8], BuiltinsError> {
-    let dos: DOSHeader = struct_at(file, 0)?;
+fn find_pe(file: &mut Image<'_>) -> Result<(usize, usize), BuiltinsError> {
+    let dos: DOSHeader = file.struct_at(0)?;
     let pe_offset = dos.e_lfanew as usize;
-    let pe: PEHeader = struct_at(file, pe_offset)?;
+    let pe: PEHeader = file.struct_at(pe_offset)?;
     if pe.signature != crate::pe::PE_SIGNATURE {
         return Err(BuiltinsError::UnrecognizedExecutable);
     }
@@ -268,7 +294,7 @@ fn find_pe(file: &[u8]) -> Result<&[u8], BuiltinsError> {
         .checked_add(size_of::<PEHeader>() + pe.size_of_optional_header as usize)
         .ok_or(BuiltinsError::Invalid)?;
     for _ in 0..pe.number_of_sections {
-        let s: SectionHeader = struct_at(file, offset)?;
+        let s: SectionHeader = file.struct_at(offset)?;
         if s.name == PE_SECTION_NAME {
             // virtual_size is the payload; size_of_raw_data is that rounded up to the file alignment.
             let len = if s.virtual_size != 0 {
@@ -276,7 +302,7 @@ fn find_pe(file: &[u8]) -> Result<&[u8], BuiltinsError> {
             } else {
                 s.size_of_raw_data
             };
-            return sub(file, s.pointer_to_raw_data as usize, len as usize);
+            return file.range(s.pointer_to_raw_data as usize, len as usize);
         }
         offset += size_of::<SectionHeader>();
     }

@@ -2059,7 +2059,31 @@ impl BlobExt for Blob {
                 }
             }
             store::DataTag::S3 => crate::webcore::s3_file::get_stat(self, global_this, callback),
-            store::DataTag::Bytes => Ok(JSValue::UNDEFINED),
+            store::DataTag::Bytes => {
+                let name = &self
+                    .store()
+                    .expect("infallible: store present")
+                    .data
+                    .as_bytes()
+                    .stored_name;
+                if !bun_standalone_graph::Graph::get_ref()
+                    .is_some_and(|graph| graph.contains_file(name))
+                {
+                    return Ok(JSValue::UNDEFINED);
+                }
+                // SAFETY: bun_vm() returns the live VM for this global.
+                let vm = global_this.bun_vm().as_mut();
+                // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
+                let binding =
+                    unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                Ok(crate::node::fs::async_::Stat::create(
+                    &global_this.js_thread_of_caller(callback),
+                    binding,
+                    crate::node::fs::args::Stat::owned(name.to_vec()),
+                    vm,
+                    None,
+                ))
+            }
         }
     }
 
@@ -2664,6 +2688,10 @@ impl BlobExt for Blob {
         // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
         // free the original allocation, not the offset pointer.
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
+
+        if let Some(parsed) = EncodedSlice::latin1(buf).try_parse_json_from_utf8(global) {
+            return Ok(parsed);
+        }
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             if let Some(external) = strings::to_utf16_alloc(buf, false, false)

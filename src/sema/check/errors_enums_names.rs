@@ -66,7 +66,7 @@ impl Checker<'_, '_> {
         // `resolveName(node, GetFirstIdentifier(node).Text(), SymbolFlagsAlias, nil, false, true)`
         let first = first_identifier(hir, e);
         let resolves_to_import = match hir[first].kind {
-            ExprKind::Ident(name) if files.options.verbatim_module_syntax => {
+            ExprKind::Ident(name) if files.check_options(file).verbatim_module_syntax => {
                 let scope = self.enclosing_scope_of_expr(file, first);
                 let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
                     // `excludeGlobals`
@@ -78,13 +78,13 @@ impl Checker<'_, '_> {
             }
             _ => false,
         };
-        let flag_name = super::errors_modules::isolated_modules_like_flag_name(files);
+        let flag_name = super::errors_modules::isolated_modules_like_flag_name(files, file);
         let mut node = hir.node(e);
         // The parent of each is a `NonNullExpression`.
         for &(_, end) in non_null_ends_in(hir, e) {
             let (start, _) = self.get_error_range_for_node(file, node);
             self.error_at((file, start, end), 2475, &[]);
-            if files.options.isolated_modules_reported
+            if files.check_options(file).isolated_modules_reported
                 && self.aliases_is_ambient_const_enum(symbol)
                 && !is_valid_type_only_alias_use_site(hir, node)
             {
@@ -101,12 +101,12 @@ impl Checker<'_, '_> {
                 || matches!(hir.kind(node), Kind::Identifier | Kind::QualifiedName)
                     && is_in_right_side_of_import_or_export_assignment(hir, node)
                 || matches!(hir.kind(parent), Kind::TypeQuery | Kind::ExportSpecifier);
-            if !ok {
+            if !ok && !crate::direct_eval::is_inserted(&self.bound(file).inserted, hir[e].pos) {
                 self.error(file, node, 2475, &[]);
             }
             // Imports of ambient `const` enums are checked in `checkAliasSymbol`.
-            if (files.options.isolated_modules_reported
-                || files.options.verbatim_module_syntax && ok && !resolves_to_import)
+            if (files.check_options(file).isolated_modules_reported
+                || files.check_options(file).verbatim_module_syntax && ok && !resolves_to_import)
                 && self.aliases_is_ambient_const_enum(symbol)
                 && !is_valid_type_only_alias_use_site(hir, node)
             {
@@ -167,7 +167,7 @@ impl Checker<'_, '_> {
     /// `Resolve`, at an enum declaration: 1281.
     fn check_x_names_from_other_files(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        if !files.options.isolated_modules || hir.enums.is_empty() {
+        if !files.check_options(file).isolated_modules || hir.enums.is_empty() {
             return;
         }
         for &(e, scope) in &bound.free_idents {
@@ -211,7 +211,8 @@ impl Checker<'_, '_> {
                     && !hir[en].flags.contains(Flags::AMBIENT)
                     && files.decls(found).first().is_some_and(|d| d.0 != file)
                 {
-                    let option = super::errors_modules::isolated_modules_like_flag_name(files);
+                    let option =
+                        super::errors_modules::isolated_modules_like_flag_name(files, file);
                     let (of, member) = (self.atoms().bytes(hir[en].name), self.atoms().bytes(name));
                     let qualified = [of, b".", member].concat();
                     self.error_at(
@@ -444,7 +445,7 @@ pub(super) fn resolves_to_umd_global(
     name: Atom,
     meaning: SymFlags,
 ) -> bool {
-    !files.options.allow_umd_global_access
+    !files.check_options(file).allow_umd_global_access
         && files.module(file).is_module()
         && umd_global(files, name).is_some_and(|global| {
             // `getSymbol`: an alias is matched by the meaning of its target, which is every meaning

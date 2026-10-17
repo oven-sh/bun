@@ -10,6 +10,7 @@ export const replacements: ReplacementRule[] = [
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
+  { from: /\b__intrinsic__(?:un)?likely\(/g, toRaw: "(" },
 ];
 
 let error_i = 0;
@@ -134,6 +135,8 @@ const typesOnly = (process.argv.find(arg => arg.startsWith("--types-only=")) ?? 
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
+  // `true` where src/js is compiled ahead of time: src/aot/build/mod.rs.
+  "IS_BUN_AOT": "false",
 
   "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),

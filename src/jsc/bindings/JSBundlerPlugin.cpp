@@ -649,7 +649,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedOnstartPromisesArray));
     arguments.append(JSValue::decode(encodedIsLast));
     arguments.append(JSValue::decode(encodedIsBake));
-    auto* lexicalGlobalObject = uncheckedDowncast<JSFunction>(JSValue::decode(encodedSetupFunction))->globalObject();
+    auto* lexicalGlobalObject = asObject(JSValue::decode(encodedSetupFunction))->globalObject();
 
     auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active

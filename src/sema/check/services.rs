@@ -574,6 +574,21 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(crate::atom::written_name(self.c.atoms().bytes(name)))
     }
 
+    /// Whether `node` is what a `const` of a function starts with, and `--aot` lets the constant hold `undefined`: each
+    /// mention of it is a test, a comparison or arithmetic on numbers, or stands behind a test that it is there.
+    pub fn is_used_only_undefined_safely(&mut self, node: NodeRef) -> bool {
+        let Some(e) = self.expr_of(node) else {
+            return false;
+        };
+        let Some(&crate::bind::Parent::VarInit(d)) =
+            self.c.bound(node.file).expr_parent.get(e.idx())
+        else {
+            return false;
+        };
+        let pat = self.c.hir(node.file)[d].pat;
+        self.c.is_const_used_only_undefined_safely(node.file, pat)
+    }
+
     /// The text of the file from the first token of `node` to the end of its last.
     pub fn node_source_text(&mut self, node: NodeRef) -> &'p [u8] {
         let (start, end) = self.node_span(node);
@@ -858,6 +873,42 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             .apparent_type_of_contextual_type(node.file, e, ContextFlags::empty());
         self.c.end_recheck(outer);
         ty
+    }
+
+    pub fn aot_check_any_inflow(&mut self, node: NodeRef) -> Option<crate::check::AotCheck> {
+        let e = self.expr_of(node)?;
+        if self
+            .c
+            .cached_type_of_expr(node.file, e)
+            .is_some_and(|known| known != TypeId::ANY)
+        {
+            return None;
+        }
+        let outer = self.c.begin_recheck();
+        let found = self.c.check_any_inflow(node.file, e);
+        self.c.end_recheck(outer);
+        found
+    }
+
+    pub fn aot_describe_any_origin(&mut self, node: NodeRef) -> Vec<u8> {
+        let Some(e) = self.expr_of(node) else {
+            return Vec::new();
+        };
+        let outer = self.c.begin_recheck();
+        let found = self.c.describe_any_origin(node.file, e);
+        self.c.end_recheck(outer);
+        found
+    }
+
+    pub fn aot_check_external_data_inflow(
+        &mut self,
+        node: NodeRef,
+    ) -> Option<crate::check::AotCheck> {
+        let e = self.expr_of(node)?;
+        let outer = self.c.begin_recheck();
+        let found = self.c.check_external_data_inflow(node.file, e);
+        self.c.end_recheck(outer);
+        found
     }
 
     pub fn contextual_type_for_argument_at_index(

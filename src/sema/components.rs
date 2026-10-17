@@ -32,7 +32,8 @@ impl<'s> Components<'s> {
     /// repetitions.
     pub fn new(
         order: &[FileId],
-        imports: &dyn Fn(FileId) -> Vec<FileId>,
+        imports: &(dyn Fn(FileId) -> Vec<FileId> + Sync),
+        in_parallel: crate::util::InParallel<'_>,
         arena: &'s Arena,
     ) -> Components<'s> {
         // A node is a position in `order`.
@@ -49,7 +50,12 @@ impl<'s> Components<'s> {
             edges.dedup();
             edges
         };
-        let edges: Vec<Vec<u32>> = order.iter().map(edges_of).collect();
+        let mut edges: Vec<(FileId, Vec<u32>)> =
+            order.iter().map(|&file| (file, Vec::new())).collect();
+        crate::util::for_each_mut(&mut edges, in_parallel, &|(file, edges)| {
+            *edges = edges_of(file)
+        });
+        let edges: Vec<Vec<u32>> = edges.into_iter().map(|(_, edges)| edges).collect();
         // Numbered by the traversal: a component has a higher number than every component it imports.
         let (number_of, numbered) = strongly_connected_components(&edges);
         let mut levels = vec![0u32; numbered.len()];

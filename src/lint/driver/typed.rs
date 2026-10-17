@@ -103,7 +103,7 @@ fn check_and_lint(
         b"tsconfig.of-no-project.json",
     );
     let mut already_read = already_read;
-    already_read.insert(config.clone(), OPTIONS_OF_NO_PROJECT.to_vec());
+    already_read.insert(config.clone(), OPTIONS_OF_NO_PROJECT.into());
     let (in_no_project, is_one_left) = check(
         &like_oxlint,
         already_read.clone(),
@@ -476,6 +476,8 @@ fn check_and_lint_in(
         errors: &[],
         paths: &paths,
         are_entry_points: false,
+        is_one_program: false,
+        code: &[],
         script_kinds: &[],
         script_kinds_by_extension: &[],
         conditions: &[],
@@ -509,7 +511,10 @@ fn check_and_lint_in(
         uses_typescript_wording: false,
         loaded: None,
         checked: None,
+        compile: None,
         after_file: Some(&after_file),
+        before_visits: None,
+        all_visited_once: None,
         declaration_file_emitted: None,
     };
     let provided = Provided {
@@ -536,7 +541,7 @@ fn check_and_lint_in(
             // Each kind of configuration loads it for its own files.
             match noted.iter_mut().find(|it| it.config_path == config_path) {
                 Some(known) => {
-                    known.asked_for += program.asked_for;
+                    known.requested += program.requested;
                     known.load_time += program.load_time;
                 }
                 None => noted.push(WithoutInclude {
@@ -592,7 +597,7 @@ fn check_and_lint_in(
 /// Whether nearly all of the time went into files that nobody asked about: a thousand or more, and a hundred for each
 /// that was linted. A `tsconfig.json` at the top of a repository is like that for a file that its own package leaves out.
 pub(crate) fn is_out_of_proportion(program: &WithoutInclude) -> bool {
-    program.included >= 1000 && program.included >= 100 * program.asked_for
+    program.included >= 1000 && program.included >= 100 * program.requested
 }
 
 /// What oxlint makes of each error for which tsgolint makes no program (`CreateProgram`): "Invalid tsconfig", with TypeScript's
@@ -745,10 +750,9 @@ pub(crate) fn lint(
     let mut pending: Vec<usize> = (0..files.len()).collect();
     let mut is_first_pass = true;
     while !pending.is_empty() {
-        let changed = states
-            .iter()
-            .zip(files)
-            .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
+        let changed = states.iter().zip(files).filter_map(|(state, file)| {
+            Some((from_native(file.path), state.current.clone()?.into()))
+        });
         let changed = changed.collect();
         let linted = check_and_lint(
             context,

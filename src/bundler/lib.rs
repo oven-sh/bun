@@ -93,6 +93,7 @@ pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
 pub mod bytecode_order;
+pub mod compiled_source_index;
 pub mod prelinked_module_graph;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
@@ -289,6 +290,8 @@ pub mod options {
         /// in it (`OutputFile::bytecode_entry_offset`).
         #[strum(serialize = "bytecode-payload")]
         BytecodePayload,
+        #[strum(serialize = "aot-image")]
+        AotImage,
         /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
         #[strum(serialize = "module-info-string-table")]
         ModuleInfoStringTable,
@@ -300,6 +303,10 @@ pub mod options {
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
         MetafileMarkdown,
+        #[strum(serialize = "declaration")]
+        Declaration,
+        #[strum(serialize = "sound")]
+        Sound,
     }
 
     impl OutputKind {
@@ -312,10 +319,13 @@ pub mod options {
                     | OutputKind::BuiltinBytecode
                     | OutputKind::BytecodeStringTable
                     | OutputKind::BytecodePayload
+                    | OutputKind::AotImage
                     | OutputKind::ModuleInfoStringTable
                     | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
+                    | OutputKind::Declaration
+                    | OutputKind::Sound
             )
         }
     }

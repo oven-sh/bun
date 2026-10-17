@@ -79,6 +79,32 @@ impl Checked {
 }
 
 impl Program<'_> {
+    /// The files whose trees are not what their texts say: the parser has reported an error and gone on, or it or the binder has run
+    /// out of stack. For `Request::after_file`: nothing is made of such a tree, nor of a file that may look into one. It holds from
+    /// when the program is loaded. Not every such file is reported: one that is only code is not checked.
+    pub fn partially_parsed_files(&self) -> Vec<FileId> {
+        (self.files.modules.iter().enumerate())
+            .filter(|(_, module)| {
+                let mut reported = module
+                    .hir
+                    .diagnostics
+                    .iter()
+                    .filter(|found| found.kind == crate::hir::DiagnosticKind::Parse)
+                    .peekable();
+                let matches_source = module.hir.is_js
+                    && reported.peek().is_some()
+                    && reported.all(|found| {
+                        matches!(found.code, 18030 | 1121 | 1487 | 1488 | 1489)
+                            || crate::hir::is_in_comment(&module.hir, found.start)
+                    });
+                module.hir.has_parse_diagnostics && !matches_source
+                    || module.hir.has_errors
+                    || module.hir.ran_out_of_stack
+            })
+            .map(|(i, _)| FileId(i as u32))
+            .collect()
+    }
+
     /// The errors of `file`, after the last barrier. It runs no query and reads no HIR.
     pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
         let mut out = Vec::new();
@@ -190,9 +216,9 @@ impl Checker<'_, '_> {
             .retain(|key| key.0 != file);
     }
 
-    /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
-    /// cause in this one, are in the sink.
-    pub fn check_file(&mut self, file: FileId) -> Checked {
+    /// From now on the task visits `file`. What is only good for the file it visited before is
+    /// dropped.
+    fn begin_file(&mut self, file: FileId) {
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf
@@ -228,10 +254,24 @@ impl Checker<'_, '_> {
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
-        let hir = self.hir(file);
-        if hir.ran_out_of_stack {
+        if self.hir(file).ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
+    }
+
+    /// The task visits `file` and does not check it: for a caller that is about to ask about its
+    /// nodes. The checker is in the state `check_file` leaves it in, so what the queries find
+    /// wrong in `file` is not reported.
+    pub fn visit_file(&mut self, file: FileId) {
+        self.begin_file(file);
+        self.is_type_checked = true;
+    }
+
+    /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
+    /// cause in this one, are in the sink.
+    pub fn check_file(&mut self, file: FileId) -> Checked {
+        self.begin_file(file);
+        let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
@@ -418,7 +458,11 @@ impl Checker<'_, '_> {
         }
         if !self.is_plain_js(d.file) {
             d.directive = directives.preceding(d.file, hir, d.start);
-        } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err() {
+        } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err()
+            || self.files().options.uses_ecmascript_bindings
+                && matches!(d.code, 1100..=1102 | 1210 | 1212 | 1214 | 1215)
+                && self.is_sloppy_function(d.file, FnId::NONE)
+        {
             return None;
         }
         self.settle_place(&mut d);
@@ -429,7 +473,14 @@ impl Checker<'_, '_> {
     /// Reports the HIR diagnostics of `file` whose kind is in `kinds`.
     fn report_hir_diagnostics(&mut self, file: FileId, kinds: &[DiagnosticKind]) {
         let diagnostics = self.hir(file).diagnostics.iter();
-        let diagnostics = diagnostics.filter(|d| kinds.contains(&d.kind));
+        let is_deferred_to_bundler =
+            self.files().options.uses_ecmascript_bindings && self.hir(file).is_js;
+        let diagnostics = diagnostics.filter(|d| {
+            kinds.contains(&d.kind)
+                && !(is_deferred_to_bundler
+                    && d.kind == DiagnosticKind::Parse
+                    && matches!(d.code, 18030 | 1121 | 1487 | 1488 | 1489))
+        });
         self.reported
             .extend(diagnostics.map(|d| Reported::from_hir(file, d)));
     }
@@ -904,6 +955,9 @@ impl Checker<'_, '_> {
         mode: ResolutionMode,
         at: (FileId, u32, u32),
     ) {
+        if self.is_restricted_to_fixed_set(file) {
+            return;
+        }
         let module = self.files().module(file);
         let mut untyped = module.untyped_imports.iter();
         let Some(index) = untyped.position(|&u| u == (spec, mode)) else {
@@ -1097,7 +1151,7 @@ impl Checker<'_, '_> {
         let (options, hir) = (&self.p.files.options, self.hir(file));
         let class = &hir[c];
         if !options.strict_null_checks
-            || !options.strict_property_initialization
+            || !self.check_options(file).strict_property_initialization
             || hir.kind == FileKind::Declaration
             || class.flags.contains(Flags::AMBIENT)
         {
@@ -1215,7 +1269,7 @@ impl Checker<'_, '_> {
     /// `node.Parent` of the node `parent` represents, as far as `Parent` can express it: a pattern
     /// is skipped. `None`: for a member of a type literal and for a function type, whose parents
     /// are not stored.
-    pub(super) fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
+    pub fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of_class = |c: ClassId| bound.class_owner[c.idx()].to_parent();
         let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
@@ -1451,7 +1505,7 @@ impl Checker<'_, '_> {
         let (options, module) = (&files.options, files.module(file));
         !(options.no_emit
             || options.emit_declaration_only
-            || options.verbatim_module_syntax
+            || files.check_options(file).verbatim_module_syntax
             || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             || hir.is_js
             || module.is_from_external_library)
@@ -1891,6 +1945,9 @@ impl Checker<'_, '_> {
         if let Some(&lib) = SUGGESTED_LIBS.get(self.atoms().bytes(name)) {
             let args = [declaration_name, Arg::Bytes(lib)];
             return self.new_diagnostic(at, name_not_found_message, &args);
+        }
+        if self.is_after_check() {
+            return self.new_diagnostic(at, name_not_found_message, &[declaration_name]);
         }
         // `getSuggestedSymbolForNonexistentSymbol`
         let Some((suggestion, leads_to_export)) =

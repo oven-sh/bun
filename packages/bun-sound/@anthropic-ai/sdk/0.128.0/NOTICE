@@ -1,0 +1,19 @@
+@sound/anthropic-ai__sdk 0.128.0
+
+This package holds files of @anthropic-ai/sdk 0.128.0 (https://www.npmjs.com/package/@anthropic-ai/sdk/v/0.128.0).
+Copyright 2023 Anthropic, PBC.
+Licensed under MIT: see LICENSE, which is that package's own.
+
+What was changed:
+  lay/core/streaming.sound.mts
+  lay/internal/decoders/line.sound.mts
+  lay/internal/utils/bytes.sound.mts
+  TypeScript type annotations, type declarations, `declare`d fields and type-only casts were added to the
+  package's own JavaScript. No statement and no expression was changed: with the types erased, each file
+  prints as the file it was made from.
+  lay/core/streaming.mjs
+  lay/internal/decoders/line.mjs
+  lay/internal/utils/bytes.mjs
+  These take the place of the package's files of the same name. Each only loads the typed file.
+
+The additions are offered under the same licence as the package.

@@ -766,7 +766,7 @@ impl Checker<'_, '_> {
             );
         if kind.is_node() && !is_esm {
             self.error_at((file, start, 0), 1309, &[]);
-        } else if !has_it || self.is_target_before_es2017() {
+        } else if !has_it || self.is_target_before_es2017(file) {
             self.error_at((file, start, 0), options_do_not_have_it, &[]);
         } else {
             return !is_module;
@@ -919,8 +919,8 @@ impl Checker<'_, '_> {
     }
 
     /// `languageVersion < ES2017`. `GetEmitScriptTarget`: an unset target means the latest.
-    fn is_target_before_es2017(&self) -> bool {
-        let target = self.p.files.options.target;
+    fn is_target_before_es2017(&self, file: FileId) -> bool {
+        let target = self.check_options(file).target;
         target != ScriptTarget::None && target < ScriptTarget::ES2017
     }
 

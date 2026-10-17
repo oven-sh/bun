@@ -15,7 +15,7 @@ import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } f
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
-import { webkitTestFFIPath } from "./deps/webkit.ts";
+import { webkitJSCPath, webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
@@ -246,6 +246,7 @@ const TIMINGS_META_DATA = "timings:";
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
+//           ├── jsc                      (WebKit's shell, where `bun build --compile --aot` works)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
 //           ├── bun-profile.map          (windows; with the above, what the
@@ -329,6 +330,12 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   if (existsSync(testFFI)) {
     chmodSync(testFFI, 0o755);
     files.push(testFFI);
+  }
+  const jsc = webkitJSCPath(cfg);
+  const compilesAheadOfTime = (cfg.darwin && cfg.arm64) || (cfg.linux && cfg.x64 && cfg.abi === "gnu");
+  if (compilesAheadOfTime && existsSync(jsc)) {
+    chmodSync(jsc, 0o755);
+    files.push(jsc);
   }
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
@@ -442,6 +449,8 @@ const PREVIOUS_BUILDS_TO_TRY = 50;
 
 /** Bound on the number probe: the main branch is sparse among build numbers. */
 const NUMBER_PROBE_BUDGET = 200;
+
+const PROBES_AT_ONCE = 25;
 
 /** Per-attempt cap, so a hung agent cannot blow the step's budget. */
 const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -585,13 +594,21 @@ export async function* candidateBuilds(
   // one commit. A build can fail its tests, or be cancelled, and still have
   // linked and published.
   let number = ctx.buildNumber;
-  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; probes++) {
+  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET;) {
     if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
-    number -= 1;
-    const body = await lookups.build(`${pipeline}/builds/${number}.json`);
-    if (!body?.id || body.branch_name !== branch) continue;
-    seen.add(body.id);
-    yield { id: body.id, number: body.number };
+    const nearest: number = number - 1;
+    const count = Math.min(PROBES_AT_ONCE, NUMBER_PROBE_BUDGET - probes, nearest);
+    const bodies = await Promise.all(
+      Array.from({ length: count }, (_, index) => lookups.build(`${pipeline}/builds/${nearest - index}.json`)),
+    );
+    probes += count;
+    number -= count;
+    for (const body of bodies) {
+      if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
+      if (!body?.id || body.branch_name !== branch) continue;
+      seen.add(body.id);
+      yield { id: body.id, number: body.number };
+    }
   }
 
   // The branch was quiet for longer than the probe reaches: fall back to its

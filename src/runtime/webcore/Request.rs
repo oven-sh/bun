@@ -188,6 +188,31 @@ impl BodyMixin for Request {
     }
 }
 
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Request__fetchHeadersOrParsedRequest(
+    request: &Request,
+    parsed_request: &mut *mut core::ffi::c_void,
+) -> *mut FetchHeaders {
+    if let Some(headers) = request.headers.get().as_ref() {
+        return headers.as_ptr();
+    }
+    *parsed_request = request
+        .request_context
+        .get_request()
+        .map_or(core::ptr::null_mut(), |parsed| parsed.cast());
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Request__ensureFetchHeaders(
+    request: &Request,
+    global_this: &JSGlobalObject,
+) -> *mut FetchHeaders {
+    request
+        .ensure_fetch_headers(global_this)
+        .map_or(core::ptr::null_mut(), |headers| headers.as_ptr())
+}
+
 // ─── header accessors & simple getters ──────────────────────────────────────
 impl Request {
     /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
@@ -1083,7 +1108,10 @@ impl Request {
         for &value in values_to_try {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
+                && matches!(
+                    value_type,
+                    bun_jsc::JSType::FinalObject | bun_jsc::JSType::Object
+                )
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {

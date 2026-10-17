@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readlinePromises from "node:readline/promises";

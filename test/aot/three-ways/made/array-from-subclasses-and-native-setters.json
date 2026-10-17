@@ -1,0 +1,7 @@
+{
+ "array-from": "all agree",
+ "heirs-of-array-iterated": "all agree",
+ "json-of-fresh-literals": "alone: forms: {\"a\":1,\"b\":2} | {\"a\":1,\"b\":2,\"c\":3} | {\"b\":2} | THROWS TypeError | {\"x\":1,\"y\":2,\"toString\":5} | {\"replaced\":1} | {\nthe world changes: TypeError | TypeError | TypeError",
+ "native-setters": "all agree",
+ "typed-fields-read-by-name-in-javascript": "all agree"
+}

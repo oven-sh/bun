@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it reads /proc/self/maps with node:fs, which the jsc shell does not have",
+  "skipWithASAN": "the shadow memory of AddressSanitizer is a large unnamed mapping that begins below 2 GB"
+}

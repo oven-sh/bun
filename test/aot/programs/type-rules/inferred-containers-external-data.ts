@@ -1,0 +1,31 @@
+// An array whose element type is only inferred may end up holding external data that does not match the inferred type.
+// Reading such an element and using it must behave as in plain JavaScript instead of asserting the inferred type.
+const data = JSON.parse('{"t":"abc","u":"d","l":["x","y"]}') as { t: number; u: number; l: number[] };
+const say = (label: string, f: () => unknown): void => { let r: string; try { const v = f(); r = typeof v + " " + (typeof v === "object" ? JSON.stringify(v) : String(v)); } catch (e) { r = "throws " + (e as Error).constructor.name; } console.log(label + " ==> " + r); };
+say("array literal", () => { const c = [data.t]; return c[0] + 1; });
+say("array literal, used directly", () => [data.t][0] + 1);
+say("array literal, second element", () => { const c = [1, data.t]; return c[0] + c[1]; });
+say("array literal of a sum", () => { const c = [data.t + 1]; return c[0] + 1; });
+say("spread", () => { const c = [...data.l]; return c[0] + 1; });
+say("spread after a number", () => { const c = [1, ...data.l]; return c[1] + 1; });
+say("nested literal", () => { const c = [[data.t]]; return c[0][0] + 1; });
+say("array in an object literal", () => { const c = { l: [data.t] }; return c.l[0] + 1; });
+say("push", () => { const c = [1]; c.push(data.t); return c[1] + 1; });
+say("push onto an empty array", () => { const c = []; c.push(data.t); return c[0] + 1; });
+say("unshift", () => { const c = [1]; c.unshift(data.t); return c[0] + 1; });
+say("splice", () => { const c = [1]; c.splice(0, 0, data.t); return c[0] + 1; });
+say("fill", () => { const c = [1, 2]; c.fill(data.t); return c[0] + 1; });
+say("element assignment", () => { const c = [1]; c[1] = data.t; return c[1] + 1; });
+say("compound element assignment", () => { const c = [1]; c[0] += data.t; return c[0] + 1; });
+say("push of a spread", () => { const c = [1]; c.push(...data.l); return c[1] + 1; });
+say("let reassigned", () => { let c = [1]; c = [data.t]; return c[0] + 1; });
+say("copied to a local", () => { const c = [data.t]; const v = c[0]; return v + 1; });
+say("for-of", () => { const c = [data.t]; let s = ""; for (const v of c) s += v + 1; return s; });
+say("destructured", () => { const [v] = [data.t]; return v + 1; });
+say("map", () => { const c = [data.t]; return c.map(v => v + 1); });
+say("reduce", () => { const c = [1]; c.push(data.t); return c.reduce((a, v) => a + v, 0); });
+say("pop", () => { const c = [1]; c.push(data.t); return c.pop()! + 1; });
+say("at", () => { const c = [data.t]; return c.at(0)! + 1; });
+say("returned from a function", () => { const f = () => [data.t]; return f()[0] + 1; });
+say("trusted array stays exact", () => { const c = [1, 2]; c.push(3); return c[0] + c[2]; });
+say("trusted Map stays exact", () => { const m = new Map([[1, 2]]); m.set(2, 3); return m.get(2)! + 1; });

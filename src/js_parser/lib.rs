@@ -5,6 +5,7 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
+pub(crate) mod builtin_syntax;
 pub mod error;
 pub mod function_identities;
 pub use error::Error;
@@ -500,6 +501,8 @@ pub mod defines {
         pub drop_debugger: bool,
         /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
         pub user_hash: Option<u64>,
+        /// What the user defined, as written: the dotted name and the JavaScript text of the value.
+        pub user_inputs: Vec<(Box<[u8]>, Box<[u8]>)>,
     }
 
     #[derive(Clone)]

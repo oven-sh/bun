@@ -110,6 +110,10 @@ pub(crate) mod test {
 #[path = "Arguments.rs"]
 pub(crate) mod arguments;
 pub(crate) use arguments as Arguments;
+#[path = "aot.rs"]
+pub(crate) mod aot;
+pub(crate) mod aot_audit;
+pub(crate) mod builtins_manifest;
 #[path = "run_command.rs"]
 pub(crate) mod run_command;
 
@@ -1068,6 +1072,7 @@ pub(crate) mod command {
                     match argv.get(1).map(bun_core::ZStr::as_bytes) {
                         Some(b"-v" | b"--version") => print_version_and_exit(),
                         Some(b"--revision") => print_revision_and_exit(),
+                        Some(b"--aot-stamp") => crate::cli::aot::print_stamp_and_exit(),
                         _ => {}
                     }
                 }
@@ -1262,6 +1267,12 @@ pub(crate) mod command {
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
         let runs_several =
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
+        if runs_several && (ctx.runtime_options.aot || super::aot_audit::is_enforcing()) {
+            pretty_errorln!(
+                "<r><red>error<r>: <b>--aot<r> does not apply to the processes that <b>--filter<r>, <b>--workspaces<r>, <b>--parallel<r> and <b>--sequential<r> start: each one is a separate process. Add <b>--aot<r> to the command inside the script."
+            );
+            Global::exit(1);
+        }
         if runs_several
             && ctx.runtime_options.check
             && !super::check_command::check_project_before()
@@ -1405,9 +1416,9 @@ pub(crate) mod command {
     #[inline(never)]
     fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
         // CheckCommand parses its own argv.
-        init(Tag::CheckCommand, log)?;
+        let ctx = init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
-        super::check_command::CheckCommand::exec(after_command(&argv, b"check"))
+        super::check_command::CheckCommand::exec(ctx, after_command(&argv, b"check"))
     }
 
     /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
@@ -2006,6 +2017,12 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Type check the test files and what they import, then run them<r>
   <b><green>bun test<r> <cyan>--check<r>
+
+  <d>Run the tests and log the places where the code would behave differently under --aot<r>
+  <b><green>bun test<r> <cyan>--aot-audit<r>
+
+  <d>Compile the tests and what they import to machine code ahead of time, then run them<r>
+  <b><green>bun test<r> <cyan>--aot<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "

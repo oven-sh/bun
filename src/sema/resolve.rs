@@ -72,7 +72,20 @@ pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 /// `Options::paths`
 pub type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ClassOptions {
+    pub use_define_for_class_fields: bool,
+    pub experimental_decorators: bool,
+    pub emit_decorator_metadata: bool,
+}
+
 pub trait Host: Sync {
+    fn is_without_bundler(&self) -> bool {
+        false
+    }
+    fn build_constants(&self) -> Option<std::sync::Arc<crate::fold::BuildConstants>> {
+        None
+    }
     /// One thread has spent `time` on `phase`. Only a host whose `times` is queried accumulates it.
     fn spent(&self, _phase: Phase, _time: Duration) {}
     /// The totals reported to `spent` so far, in the order of `Phase::ALL`.
@@ -93,6 +106,9 @@ pub trait Host: Sync {
     /// The paths for which `read_source` has failed since the last call.
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         Vec::new()
+    }
+    fn is_non_utf8(&self, _path: &[u8]) -> bool {
+        false
     }
     fn is_file(&self, path: &[u8]) -> bool;
     fn is_dir(&self, path: &[u8]) -> bool;
@@ -124,6 +140,59 @@ pub trait Host: Sync {
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
+    fn uses_default_parse_settings(&self, _path: &[u8]) -> bool {
+        true
+    }
+    fn class_options(&self, _path: &[u8]) -> Option<ClassOptions> {
+        None
+    }
+    fn file_timestamps(&self, _path: &[u8]) -> Option<[i64; 4]> {
+        None
+    }
+    fn has_bundler_source(&self, _path: &[u8]) -> bool {
+        false
+    }
+    fn is_scheduled_by_bundler(&self, _path: &[u8]) -> bool {
+        false
+    }
+    fn is_early_parse_cancelled(&self) -> bool {
+        false
+    }
+    fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
+        None
+    }
+    fn is_load_abandoned(&self) -> bool {
+        false
+    }
+    /// Called once, when the program and `Options::code_roots` are loaded, with every file so far. The sources of the runtime
+    /// that are compiled with them: they are loaded like `Options::code_roots`. Each with its `Module::builtin`.
+    fn builtin_files(
+        &self,
+        _loaded: &[Option<Box<crate::program::Module<'_>>>],
+        _atoms: &crate::atom::Interner<'_>,
+    ) -> Vec<(Vec<u8>, crate::program::Builtin)> {
+        Vec::new()
+    }
+    fn loader_entry_points(&self) -> Vec<(u32, crate::hir::ExprId)> {
+        Vec::new()
+    }
+    fn file_loader_entry_points(&self) -> Vec<(u32, crate::hir::ExprId)> {
+        Vec::new()
+    }
+    fn is_runtime_commonjs(&self, _path: &[u8]) -> Option<bool> {
+        None
+    }
+    /// `None`: `importer` is none of `builtin_files`. Else the file that `specifier` stands for there, as a specifier that resolves to
+    /// it, or nothing. Such a file refers to its like alone: the disk is not asked.
+    fn builtin_import(&self, _importer: &[u8], _specifier: &[u8]) -> Option<Option<Vec<u8>>> {
+        None
+    }
+    fn is_deferred_import(&self, _importer: &[u8], _specifier: &[u8]) -> bool {
+        false
+    }
+    fn is_deferred_path(&self, _path: &[u8]) -> bool {
+        false
+    }
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,
@@ -464,6 +533,25 @@ impl Options {
             jsx_factory,
             jsx_fragment_factory,
             react_namespace,
+            uses_nearest_config_paths,
+            removed_base_url,
+            host_modules_without_paths,
+            early_parse_only,
+            attaches_direct_eval_scopes,
+            bun_intrinsics,
+            bun_global,
+            detects_commonjs_by_free_names,
+            uses_engine_arithmetic,
+            uses_ecmascript_bindings,
+            undefined_properties_have_no_declaration,
+            pops_every_type_resolution,
+            resolves_js_imports_as_code_only,
+            code_roots,
+            every_named_root_is_own,
+            loads_augmented_modules,
+            relative_imports_need_no_extension,
+            emits_nothing,
+            specified_use_define_for_class_fields,
         } = self;
         let _ = write!(
             key,
@@ -512,6 +600,14 @@ impl Options {
         let _ = write!(
             key,
             "{import_helpers:?} {allow_arbitrary_extensions:?} {jsx_factory:?} {jsx_fragment_factory:?} {react_namespace:?} "
+        );
+        let _ = write!(
+            key,
+            "{uses_nearest_config_paths:?} {removed_base_url:?} {host_modules_without_paths:?} {early_parse_only:?} {attaches_direct_eval_scopes:?} {bun_intrinsics:?} {bun_global:?} {detects_commonjs_by_free_names:?} "
+        );
+        let _ = write!(
+            key,
+            "{uses_engine_arithmetic:?} {uses_ecmascript_bindings:?} {undefined_properties_have_no_declaration:?} {pops_every_type_resolution:?} {resolves_js_imports_as_code_only:?} {code_roots:?} {every_named_root_is_own:?} {loads_augmented_modules:?} {relative_imports_need_no_extension:?} {emits_nothing:?} {specified_use_define_for_class_fields:?} "
         );
     }
 
@@ -737,7 +833,34 @@ pub struct ParseOptions {
     /// The source text of TypeScript's own libraries is only consulted where they are checked. With `libReplacement` a
     /// library can be any file.
     pub keeps_the_text_of_libraries: bool,
+    pub attaches_direct_eval_scopes: bool,
     pub bind: crate::bind::BindOptions,
+}
+
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CheckOptions {
+    pub no_implicit_any: bool,
+    pub strict_property_initialization: bool,
+    pub no_implicit_this: bool,
+    pub use_unknown_in_catch_variables: bool,
+    pub no_unchecked_indexed_access: bool,
+    pub no_property_access_from_index_signature: bool,
+    pub no_unused_locals: bool,
+    pub no_unused_parameters: bool,
+    pub no_implicit_returns: bool,
+    pub no_fallthrough_cases_in_switch: bool,
+    pub no_implicit_override: bool,
+    pub allow_unreachable_code: Option<bool>,
+    pub allow_unused_labels: Option<bool>,
+    pub erasable_syntax_only: bool,
+    pub allow_umd_global_access: bool,
+    pub allow_importing_ts_extensions: bool,
+    pub no_unchecked_side_effect_imports: bool,
+    pub isolated_modules: bool,
+    pub isolated_modules_reported: bool,
+    pub verbatim_module_syntax: bool,
+    pub preserve_const_enums: bool,
+    pub target: ScriptTarget,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -750,6 +873,11 @@ pub struct Options {
     /// `PathsBasePath`: the directory of the configuration file that specifies `paths`, which they
     /// are relative to.
     pub paths_base_dir: Vec<u8>,
+    pub uses_nearest_config_paths: bool,
+    /// `baseUrl`, which TypeScript has removed. Absolute. Empty: there is none. See `tolerate_removed_options`.
+    pub removed_base_url: Vec<u8>,
+    /// See `ignore_paths_for_host_modules`.
+    pub host_modules_without_paths: Vec<Vec<u8>>,
     /// `skipLibCheck`: declaration files are not checked. `skipDefaultLibCheck`: TypeScript's own are not.
     pub skip_lib_check: bool,
     pub skip_default_lib_check: bool,
@@ -759,6 +887,8 @@ pub struct Options {
     /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
     /// file afterwards leaves it off.
     pub drops_unreferenced: bool,
+    pub early_parse_only: bool,
+    pub attaches_direct_eval_scopes: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
     pub captures_suggestions: bool,
@@ -772,6 +902,8 @@ pub struct Options {
     /// The `N` of each `lib.N.d.ts` to start from: the entries of `compilerOptions.lib`, or the
     /// default for the target.
     pub libs: Vec<Vec<u8>>,
+    pub bun_intrinsics: Option<Vec<u8>>,
+    pub bun_global: Option<Vec<u8>>,
     /// `noLib`: no libraries are loaded, and `/// <reference lib>` is ignored.
     pub no_lib: bool,
     /// `libReplacement`: `lib.dom.d.ts` is replaced by the package `@typescript/lib-dom`, if it
@@ -823,6 +955,17 @@ pub struct Options {
     pub strict_bind_call_apply: bool,
     pub use_unknown_in_catch_variables: bool,
     pub strict_property_initialization: bool,
+    /// JavaScript without imports and exports that names `exports` or `module` is a CommonJS module, as it is for the runtime. TypeScript wants `require(..)`, `module.exports = ..` or
+    /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
+    pub detects_commonjs_by_free_names: bool,
+    pub uses_engine_arithmetic: bool,
+    pub uses_ecmascript_bindings: bool,
+    /// What `getUndefinedProperty` makes has no declaration and is not readonly. TypeScript makes one for a name from the first property it is asked for, whose declarations it keeps: which
+    /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
+    /// has to be the same in every task.
+    pub undefined_properties_have_no_declaration: bool,
+    pub pops_every_type_resolution: bool,
+    pub resolves_js_imports_as_code_only: bool,
     pub no_implicit_this: bool,
     pub allow_unreachable_code: Option<bool>,
     pub allow_unused_labels: Option<bool>,
@@ -876,6 +1019,14 @@ pub struct Options {
     /// They, and what only they bring in, are not its sources: nothing is emitted for them, so
     /// `rootDir` and `composite` have no say about them. `None`: all are its own.
     pub own_roots: Option<usize>,
+    pub every_named_root_is_own: bool,
+    pub loads_augmented_modules: bool,
+    pub relative_imports_need_no_extension: bool,
+    pub emits_nothing: bool,
+    /// The root files from this one on are the files of a bundle. An import is resolved here for its types, and by the bundler for the
+    /// code that runs, often to another file: `@types/react/index.d.ts` and `react/index.js`. Those of them that the program does not
+    /// have anyway are loaded for whoever compiles it, see `Module::is_code_only`. `None`: there are none.
+    pub code_roots: Option<usize>,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
     /// `validatedFilesSpec` as an absolute path.
     pub file_specs: Vec<(Vec<u8>, Vec<u8>)>,
@@ -926,6 +1077,8 @@ pub struct Options {
     pub jsx: JsxEmit,
     /// `useDefineForClassFields`, as specified or as implied by the target.
     pub use_define_for_class_fields: bool,
+    /// As specified, if it is. What runs the program defines the fields of a class unless this is `Some(false)`, whatever the target.
+    pub specified_use_define_for_class_fields: Option<bool>,
     /// Class fields are emitted as in the source: the target supports them and no option overrides
     /// that.
     pub emit_standard_class_fields: bool,
@@ -988,11 +1141,43 @@ impl Options {
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
             keeps_the_text_of_libraries: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
+            attaches_direct_eval_scopes: self.attaches_direct_eval_scopes,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),
                 before_es2017: is_before(ScriptTarget::ES2017),
+                detects_commonjs_by_free_names: self.detects_commonjs_by_free_names,
+                uses_ecmascript_bindings: self.uses_ecmascript_bindings,
+                is_forced_commonjs: None,
+                is_typed_bundle: false,
             },
+        }
+    }
+
+    pub fn for_checking(&self) -> CheckOptions {
+        CheckOptions {
+            no_implicit_any: self.no_implicit_any,
+            strict_property_initialization: self.strict_property_initialization,
+            no_implicit_this: self.no_implicit_this,
+            use_unknown_in_catch_variables: self.use_unknown_in_catch_variables,
+            no_unchecked_indexed_access: self.no_unchecked_indexed_access,
+            no_property_access_from_index_signature: self.no_property_access_from_index_signature,
+            no_unused_locals: self.no_unused_locals,
+            no_unused_parameters: self.no_unused_parameters,
+            no_implicit_returns: self.no_implicit_returns,
+            no_fallthrough_cases_in_switch: self.no_fallthrough_cases_in_switch,
+            no_implicit_override: self.no_implicit_override,
+            allow_unreachable_code: self.allow_unreachable_code,
+            allow_unused_labels: self.allow_unused_labels,
+            erasable_syntax_only: self.erasable_syntax_only,
+            allow_umd_global_access: self.allow_umd_global_access,
+            allow_importing_ts_extensions: self.allow_importing_ts_extensions,
+            no_unchecked_side_effect_imports: self.no_unchecked_side_effect_imports,
+            isolated_modules: self.isolated_modules,
+            isolated_modules_reported: self.isolated_modules_reported,
+            verbatim_module_syntax: self.verbatim_module_syntax,
+            preserve_const_enums: self.preserve_const_enums,
+            target: self.target,
         }
     }
 
@@ -1130,6 +1315,7 @@ impl Options {
         if before_7 {
             options.base_url = directory(b"baseUrl");
         }
+        options.removed_base_url = directory(b"baseUrl");
         // `getPathsBasePath`
         options.paths_base_dir = match options.base_url.is_empty() {
             true => word(b"pathsBasePath").unwrap_or(base_dir).to_vec(),
@@ -1303,6 +1489,7 @@ impl Options {
             options.target == ScriptTarget::None || options.target >= ScriptTarget::ES2022;
         let use_define = specified(b"useDefineForClassFields");
         options.use_define_for_class_fields = use_define.unwrap_or(has_class_fields);
+        options.specified_use_define_for_class_fields = use_define;
         options.emit_standard_class_fields = use_define != Some(false) && has_class_fields;
         options.isolated_modules_reported = flag(b"isolatedModules");
         options.verbatim_module_syntax = flag(b"verbatimModuleSyntax");
@@ -1342,6 +1529,101 @@ impl Options {
             !text(b"sourceRoot").is_empty() || !text(b"mapRoot").is_empty();
         options.verify(compiler, b"");
         options
+    }
+
+    /// 5102, 5108: `createRemovedOptionDiagnostic`, an option, or a value of one, that TypeScript no longer has. 5090: a substitution
+    /// of `paths` that is no path, which is relative to `baseUrl` where there is one.
+    pub fn is_removed_option_error(&self, code: u32) -> bool {
+        matches!(code, 5102 | 5108) || code == 5090 && !self.removed_base_url.is_empty()
+    }
+
+    /// For a program that is compiled: no declaration file comes of it, so what one could not say is no error.
+    pub fn emit_nothing(&mut self) {
+        self.emits_nothing = true;
+        self.composite = false;
+        self.emits_declarations = false;
+        self.isolated_declarations = false;
+        self.writes_declaration_maps = false;
+    }
+
+    /// For a program that is compiled or run, not checked for its own sake. That its configuration still has an option that TypeScript
+    /// has removed does not keep it from running, and is no error. Most of them are about what is emitted. `baseUrl` says where
+    /// modules are, and the bundler goes by it, so the types are looked for in the same places: `paths` are relative to it, and a
+    /// name that is no path is looked for in it before it is taken for a package.
+    pub fn tolerate_removed_options(&mut self) {
+        if !self.removed_base_url.is_empty() {
+            self.base_url.clone_from(&self.removed_base_url);
+            self.paths_base_dir.clone_from(&self.removed_base_url);
+        }
+        let mut problems = std::mem::take(&mut self.problems);
+        problems.retain(|problem| !self.is_removed_option_error(problem.code));
+        self.problems = problems;
+        let mut errors = std::mem::take(&mut self.errors);
+        errors.retain(|&code| !self.is_removed_option_error(code));
+        self.errors = errors;
+    }
+
+    pub fn is_about_output_option(code: u32, option: Option<&[u8]>) -> bool {
+        const OF_OUTPUT: [&[u8]; 13] = [
+            b"composite",
+            b"declaration",
+            b"declarationDir",
+            b"declarationMap",
+            b"emitDeclarationOnly",
+            b"incremental",
+            b"inlineSourceMap",
+            b"inlineSources",
+            b"mapRoot",
+            b"outFile",
+            b"sourceMap",
+            b"sourceRoot",
+            b"tsBuildInfoFile",
+        ];
+        const OF_OUTPUT_ONCE: [&[u8]; 6] = [
+            b"charset",
+            b"importsNotUsedAsValues",
+            b"noImplicitUseStrict",
+            b"out",
+            b"prepend",
+            b"preserveValueImports",
+        ];
+        match code {
+            5051 | 5052 | 5053 | 5069 => option.is_some_and(|option| OF_OUTPUT.contains(&option)),
+            5023 => option.is_some_and(|option| OF_OUTPUT_ONCE.contains(&option)),
+            _ => false,
+        }
+    }
+
+    pub fn tolerate_output_options(&mut self) {
+        let is_about_output = |problem: &crate::verify::Problem| {
+            Self::is_about_output_option(
+                problem.code,
+                problem.args.first().map(|option| &option[..]),
+            )
+        };
+        for problem in self
+            .problems
+            .iter()
+            .filter(|problem| is_about_output(problem))
+        {
+            if let Some(at) = self.errors.iter().position(|&code| code == problem.code) {
+                self.errors.remove(at);
+            }
+        }
+        self.problems.retain(|problem| !is_about_output(problem));
+    }
+
+    /// For a program that is compiled. A specifier that names a module of the host is that module when the program runs, whatever
+    /// `paths` says, so the file that `paths` has for it is no part of the program. Nothing is known of such a module unless something
+    /// declares it.
+    pub fn ignore_paths_for_host_modules(&mut self, is_host_module: impl Fn(&[u8]) -> bool) {
+        let (of_host, others): (Paths, Paths) = self
+            .paths
+            .iter()
+            .cloned()
+            .partition(|path| is_host_module(&path.0));
+        self.paths = std::sync::Arc::new(others);
+        self.host_modules_without_paths = of_host.into_iter().map(|path| path.0).collect();
     }
 
     /// Validates the options, which were built from `compiler`, in the configuration file at
@@ -2128,6 +2410,12 @@ pub struct ResolvedModule<'h> {
     pub package_id: Option<PackageId<'h>>,
 }
 
+struct ConfigPaths {
+    paths: std::sync::Arc<Paths>,
+    base_dir: Vec<u8>,
+    base_url: Vec<u8>,
+}
+
 /// A memo table of a resolver. Two threads may compute the same entry; they compute the same value.
 enum Memo<K, V> {
     Sharded(ShardedMap<K, V>),
@@ -2219,6 +2507,8 @@ pub struct Resolver<'h> {
     /// `OriginalPath` and `ResolvedFileName` of each file found through a symlink. Only recorded
     /// when declaration files are emitted.
     links: bun_threading::Guarded<Vec<(&'h [u8], &'h [u8]), &'h Session>>,
+    config_by_folder: Memo<&'h [u8], Option<&'h [u8]>>,
+    paths_by_config: Memo<&'h [u8], Option<ConfigPaths>>,
     /// `GetCompilerOptionsWithRedirect`: one for each of `options.referenced_options`, made when a file of that project is
     /// first resolved from.
     redirected: Vec<std::sync::OnceLock<Resolver<'h>>>,
@@ -2403,9 +2693,15 @@ pub(crate) fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
         .find(|&e| file_extension_is(path, e))
 }
 
+pub(crate) fn is_typed_bundle(path: &[u8]) -> bool {
+    [&b".sound.ts"[..], b".sound.mts", b".sound.cts"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
+}
+
 /// `GetImpliedNodeFormatForFile`, as far as the extension alone determines it.
 pub(crate) fn format_by_extension(path: &[u8]) -> ResolutionMode {
-    if file_extension_is_one_of(path, &[b".mts", b".mjs"]) {
+    if file_extension_is_one_of(path, &[b".mts", b".mjs", b".sound.ts"]) {
         ResolutionMode::Import
     } else if file_extension_is_one_of(path, &[b".cts", b".cjs"]) {
         ResolutionMode::Require
@@ -2535,6 +2831,8 @@ impl<'h> Resolver<'h> {
             caches: std::sync::Arc::new(Caches::new(are_small)),
             ambiguous_roots: bun_threading::Guarded::new(Vec::new_in(session)),
             links: bun_threading::Guarded::new(Vec::new_in(session)),
+            config_by_folder: Memo::new(true),
+            paths_by_config: Memo::new(true),
             // Not in an arena: a resolver that keeps nothing creates none.
             redirected: redirected.collect(),
             redirect: 0,
@@ -2592,6 +2890,8 @@ impl<'h> Resolver<'h> {
             links: bun_threading::Guarded::new(Vec::new_in(self.session)),
             redirected: Vec::new(),
             redirect: 1 + project as u32,
+            config_by_folder: Memo::new(true),
+            paths_by_config: Memo::new(true),
         });
         (redirected, source)
     }
@@ -3074,7 +3374,7 @@ impl<'h> Resolver<'h> {
             false if strings::contains_char(spec, b':') => None,
             false => {
                 if how.through_paths
-                    && let Some(found) = self.through_paths(spec, look)
+                    && let Some(found) = self.through_paths(spec, from_dir, look)
                 {
                     return Some((found, None));
                 }
@@ -3129,13 +3429,29 @@ impl<'h> Resolver<'h> {
         };
         // `tryLoadModuleUsingPathsIfEligible`: also for `/a`.
         if !path_is_relative(spec)
-            && let Some(found) = self.through_paths(spec, look)
+            && let Some(found) = self.through_paths(spec, from_dir, look)
         {
             return Some(real(found));
         }
         // `tryLoadModuleUsingBaseUrl`
-        if !self.options.base_url.is_empty() && !is_relative(spec) {
-            let candidate = resolve_path(&self.options.base_url, spec);
+        let base_urls: Vec<&[u8]> = match (is_relative(spec), self.goes_by_configs_above(from_dir))
+        {
+            (true, _) => Vec::new(),
+            (false, false) => vec![&self.options.base_url[..]],
+            (false, true) => (self.configs_above(from_dir))
+                .filter_map(|config| match self.is_config_of_program(config) {
+                    true => Some(&self.options.base_url[..]),
+                    false => self
+                        .paths_of_config(config)
+                        .map(|other| &other.base_url[..]),
+                })
+                .collect(),
+        };
+        for base_url in base_urls
+            .into_iter()
+            .filter(|base_url| !base_url.is_empty())
+        {
+            let candidate = resolve_path(base_url, spec);
             let found = match self.options.is_classic {
                 true => self.file(&candidate, look),
                 false => self.file_or_directory(&candidate, look),
@@ -3151,7 +3467,8 @@ impl<'h> Resolver<'h> {
             return self
                 .through_root_dirs(spec, from_dir, look)
                 .or_else(|| self.relative(spec, from_dir, look))
-                .map(real);
+                .map(real)
+                .map(|found| self.typescript_beside_declarations(found, look));
         }
         // Tries each location in turn until one produces a result.
         let mut found = Found::No;
@@ -3182,7 +3499,10 @@ impl<'h> Resolver<'h> {
         {
             found = Found::of(self.in_type_roots(roots, true, spec, look.for_declarations()));
         }
-        found.file().map(real)
+        found
+            .file()
+            .map(real)
+            .map(|found| self.typescript_beside_declarations(found, look))
     }
 
     /// `classicNameResolver` of TypeScript 5, after `paths`: a file, in the directory or in one above it. No directory is a
@@ -3260,6 +3580,14 @@ impl<'h> Resolver<'h> {
     /// nearest to the file at `path`.
     pub fn package_json_directory<'d>(&self, path: &'d [u8]) -> Option<&'d [u8]> {
         Some(self.package_scope(dirname::<Posix>(path))?.0)
+    }
+
+    pub fn package_directory<'d>(&self, path: &'d [u8]) -> Option<&'d [u8]> {
+        let is_narrower_than_module_type = |package: &Package<'h>| !matches!(package.json.as_object(), Some([only]) if only.0 == b"type");
+        let directory = dirname::<Posix>(path);
+        ancestors(directory)
+            .find(|at| self.package(at).is_some_and(is_narrower_than_module_type))
+            .or_else(|| Some(self.package_scope(directory)?.0))
     }
 
     /// `loadSourceFileMetaData`: the `package.json` nearest to the file at `path`
@@ -3500,19 +3828,59 @@ impl<'h> Resolver<'h> {
     }
 
     /// `tryLoadModuleUsingPathsIfEligible`: `tryLoadModuleUsingPaths` with `compilerOptions.paths`.
-    fn through_paths(&self, spec: &[u8], look: Look) -> Option<Vec<u8>> {
-        if self.options.paths.is_empty() {
+    fn through_paths(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
+        let own_base = if self.options.paths_base_dir.is_empty() {
+            &self.options.base_dir
+        } else {
+            &self.options.paths_base_dir
+        };
+        if !self.goes_by_configs_above(from_dir) {
+            return self.resolve_through_paths(&self.options.paths, own_base, spec, look);
+        }
+        let (paths, base) = self.configs_above(from_dir).find_map(|config| {
+            let (paths, base) = match self.is_config_of_program(config) {
+                true => (&self.options.paths, own_base),
+                false => self
+                    .paths_of_config(config)
+                    .map(|other| (&other.paths, &other.base_dir))?,
+            };
+            best_pattern(paths.iter(), spec).map(|_| (paths, base))
+        })?;
+        self.resolve_through_paths(paths, base, spec, look)
+    }
+
+    fn is_config_of_program(&self, config: &[u8]) -> bool {
+        dirname::<Posix>(config) == &self.options.base_dir[..]
+    }
+
+    fn goes_by_configs_above(&self, from_dir: &[u8]) -> bool {
+        self.options.uses_nearest_config_paths && !strings::contains(from_dir, b"/node_modules/")
+    }
+
+    fn configs_above<'a>(&'a self, from_dir: &[u8]) -> impl Iterator<Item = &'h [u8]> + 'a {
+        std::iter::successors(self.governing_config(from_dir), |config| {
+            let folder = dirname::<Posix>(config);
+            let parent = dirname::<Posix>(folder);
+            (parent != folder && !parent.is_empty())
+                .then(|| self.governing_config(parent))
+                .flatten()
+        })
+    }
+
+    fn resolve_through_paths(
+        &self,
+        paths: &Paths,
+        base: &[u8],
+        spec: &[u8],
+        look: Look,
+    ) -> Option<Vec<u8>> {
+        if paths.is_empty() {
             return None;
         }
         look.trace(6091, &[Arg::Bytes(spec)]);
-        let (pattern, targets, matched) = best_pattern(self.options.paths.iter(), spec)?;
+        let (pattern, targets, matched) = best_pattern(paths.iter(), spec)?;
         look.trace(6092, &[Arg::Bytes(spec), Arg::Bytes(pattern)]);
         targets.iter().find_map(|target| {
-            let base = if self.options.paths_base_dir.is_empty() {
-                &self.options.base_dir
-            } else {
-                &self.options.paths_base_dir
-            };
             let filled = target.replacen(b"*", matched, 1);
             look.trace(6093, &[Arg::Bytes(target), Arg::Bytes(&filled)]);
             let candidate = resolve_path(base, &filled);
@@ -3523,6 +3891,42 @@ impl<'h> Resolver<'h> {
             self.very_file(target, &candidate, look)
                 .or_else(|| self.file_or_directory(&candidate, look))
         })
+    }
+
+    fn governing_config(&self, folder: &[u8]) -> Option<&'h [u8]> {
+        if let Some(&known) = self.config_by_folder.get_ref(folder) {
+            return known;
+        }
+        let own = [&b"tsconfig.json"[..], b"jsconfig.json"]
+            .into_iter()
+            .map(|name| join(folder, name))
+            .find(|config| self.is_file(config));
+        let parent = dirname::<Posix>(folder);
+        let found = match own {
+            Some(own) => Some(self.keep(&own)),
+            None if parent == folder || parent.is_empty() || folder.ends_with(b"/node_modules") => {
+                None
+            }
+            None => self.governing_config(parent),
+        };
+        *self.config_by_folder.insert_ref(self.keep(folder), found)
+    }
+
+    fn paths_of_config(&self, config: &'h [u8]) -> Option<&ConfigPaths> {
+        if let Some(known) = self.paths_by_config.get_ref(config) {
+            return known.as_ref();
+        }
+        let found =
+            crate::config::options_for_resolution(self.host, config).map(|options| ConfigPaths {
+                base_dir: if options.paths_base_dir.is_empty() {
+                    options.base_dir
+                } else {
+                    options.paths_base_dir
+                },
+                paths: options.paths,
+                base_url: options.base_url,
+            });
+        self.paths_by_config.insert_ref(config, found).as_ref()
     }
 
     /// In `tryLoadModuleUsingPaths`: a substitution `written` with an extension may name the file
@@ -3629,7 +4033,13 @@ impl<'h> Resolver<'h> {
 
     /// Resolves the relative specifier `spec` from `from_dir`.
     fn relative(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
-        self.file_or_directory(&normalize_path_for_cjs_resolution(from_dir, spec), look)
+        let candidate = normalize_path_for_cjs_resolution(from_dir, spec);
+        let code = if look.typescript {
+            self.typescript_with_js_extension(&candidate, look)
+        } else {
+            None
+        };
+        code.or_else(|| self.file_or_directory(&candidate, look))
     }
 
     /// `nodeLoadModuleByRelativeName` with `considerPackageJson`.
@@ -3920,6 +4330,40 @@ impl<'h> Resolver<'h> {
             _ => false,
         };
         is_json.then(|| self.try_file(&[stem, b".json"].concat(), look))?
+    }
+
+    fn typescript_beside_declarations(&self, declarations: Vec<u8>, look: Look) -> Vec<u8> {
+        const EXTENSIONS: [(&[u8], &[u8]); 3] = [
+            (b".d.ts", b".js"),
+            (b".d.mts", b".mjs"),
+            (b".d.cts", b".cjs"),
+        ];
+        let code = EXTENSIONS
+            .iter()
+            .find_map(|(from, to)| Some([declarations.strip_suffix(*from)?, *to].concat()));
+        let is_typescript = |path: &Vec<u8>| {
+            look.typescript
+                && self
+                    .host
+                    .script_kind(path)
+                    .is_some_and(|kind| !kind.is_javascript())
+        };
+        code.filter(is_typescript)
+            .filter(|path| self.is_file(path))
+            .unwrap_or(declarations)
+    }
+
+    fn typescript_with_js_extension(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
+        [&b""[..], b".js", b".cjs", b".mjs", b"/index.js"]
+            .iter()
+            .find_map(|ending| {
+                let path = [candidate, *ending].concat();
+                ScriptKind::from_file_name(&path).filter(|kind| kind.is_javascript())?;
+                self.host
+                    .script_kind(&path)
+                    .filter(|kind| !kind.is_javascript())?;
+                self.try_file(&path, look)
+            })
     }
 
     /// `loadFileNameFromPackageJSONField`: the file at `path`, which a `package.json` names. A

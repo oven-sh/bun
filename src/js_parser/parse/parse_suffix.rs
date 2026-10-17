@@ -1445,6 +1445,120 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn mark_audited(
+        p: &mut Self,
+        audited: &'static bun_ast::audited::AuditedFile,
+        left: &mut Expr,
+        is_in_optional_chain: bool,
+    ) {
+        let is_called = match p.lexer.token {
+            T::TOpenParen | T::TNoSubstitutionTemplateLiteral | T::TTemplateHead => true,
+            T::TQuestionDot => matches!(
+                p.source.contents[p.lexer.end..]
+                    .iter()
+                    .find(|byte| !byte.is_ascii_whitespace()),
+                Some(b'(' | b'<' | b'/')
+            ),
+            _ => false,
+        };
+        if is_called
+            || p.lexer.token.is_assign()
+            || matches!(p.lexer.token, T::TPlusPlus | T::TMinusMinus)
+        {
+            let marked = bun_ast::audited::unmarked(*left);
+            if !is_called
+                || matches!(
+                    marked.data,
+                    ExprData::EDot(..) | ExprData::EIndex(..) | ExprData::EIdentifier(..)
+                )
+            {
+                *left = marked;
+                return;
+            }
+        }
+        let goes_on = is_called
+            || matches!(
+                p.lexer.token,
+                T::TDot | T::TOpenBracket | T::TExclamation | T::TQuestionDot
+            );
+        if (is_in_optional_chain && goes_on) || left.loc.start < 0 {
+            return;
+        }
+        let starts_at = left.loc.start as u32;
+        for site in audited.ending_before(p.lexer.loc().start as u32) {
+            if site.start > starts_at {
+                continue;
+            }
+            let before = &p.source.contents[site.start as usize..starts_at as usize];
+            if !before
+                .iter()
+                .all(|&byte| byte == b'(' || byte.is_ascii_whitespace())
+            {
+                continue;
+            }
+            if let ExprData::ECall(call) = left.data {
+                if matches!(call.target.data, ExprData::EMissing(..))
+                    && call.close_paren_loc.start == site.id as i32
+                {
+                    continue;
+                }
+            }
+            let loc = left.loc;
+            *left = p.new_expr(
+                E::Call {
+                    args: <bun_ast::ExprNodeList as bun_collections::VecExt<Expr>>::init_one(*left),
+                    close_paren_loc: bun_ast::Loc {
+                        start: site.id as i32,
+                    },
+                    ..Default::default()
+                },
+                loc,
+            );
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn attach_validation_plan(
+        p: &mut Self,
+        audited: &'static bun_ast::audited::AuditedFile,
+        left: &mut Expr,
+    ) {
+        let ExprData::ECall(call) = left.data else {
+            return;
+        };
+        if left.loc.start < 0 || matches!(call.target.data, ExprData::EMissing(..)) {
+            return;
+        }
+        let Some(site) = audited.validation_at(left.loc.start as u32, p.lexer.loc().start as u32)
+        else {
+            return;
+        };
+        let is_schema = site.which == 2;
+        if call.args.len() != usize::from(!is_schema) {
+            return;
+        }
+        let loc = left.loc;
+        let plan = p.new_expr(E::String::init(&site.plan), loc);
+        let listed = <bun_ast::ExprNodeList as bun_collections::VecExt<Expr>>::from_arena_slice;
+        let args = if is_schema {
+            listed(&[plan])
+        } else {
+            listed(&[call.args[0], plan])
+        };
+        *left = p.new_expr(
+            E::Call {
+                target: call.target,
+                args,
+                close_paren_loc: call.close_paren_loc,
+                ..Default::default()
+            },
+            loc,
+        );
+    }
+
     pub(crate) fn parse_suffix(
         &mut self,
         left: &mut Expr,
@@ -1456,6 +1570,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
+            if let Some(audited) = p.options.features.audited {
+                if !audited.validations.is_empty() {
+                    Self::attach_validation_plan(p, audited, left);
+                }
+                Self::mark_audited(p, audited, left, optional_chain.is_some());
+            }
             if p.lexer.loc().start == p.after_arrow_body_loc.start {
                 // Plain loop re-reading `p.lexer.token` each iteration.
                 loop {

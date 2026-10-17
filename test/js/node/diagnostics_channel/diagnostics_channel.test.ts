@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";

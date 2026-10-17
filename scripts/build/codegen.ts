@@ -325,6 +325,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   emitHostExports(ctx);
   emitCppBind(ctx);
   emitJsModules(ctx);
+  emitBuiltinSources(ctx);
   emitBakeCodegen(ctx);
   emitBindgen(ctx);
   emitJsSink(ctx);
@@ -879,6 +880,40 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[0]!); // WebCoreJSBuiltins.cpp
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
+}
+
+function emitBuiltinSources({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "builtins-manifest.ts");
+  const bindings = resolve(cfg.cwd, "src", "jsc", "bindings");
+  const outputs = [resolve(cfg.codegenDir, "builtins.manifest"), resolve(cfg.codegenDir, "builtin_sources.bin")];
+
+  n.build({
+    outputs,
+    rule: "codegen_bun",
+    inputs: [
+      script,
+      ...sources.js,
+      ...sources.jsCodegen,
+      ...sources.aotEngineBuiltins,
+      resolve(bindings, "ErrorCode.ts"),
+      resolve(bindings, "js_classes.ts"),
+      resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h"),
+      resolve(cfg.cwd, "src", "aot", "build", "intrinsics.txt"),
+      resolve(cfg.cwd, "src", "aot", "builtins_generated.rs"),
+    ],
+    // builtin-name-census.ts imports typescript from the root install.
+    implicitInputs: [o.rootInstall],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "builtin_sources.bin",
+      args: shJoin(cfg, ["run", script, debugFlag(cfg), ...outputs, typesOnlyFlag(cfg, sources)]),
+    },
+  });
+
+  o.all.push(...outputs);
+  // bun_builtin_syntax `include_bytes!`s the archive.
+  o.rustInputs.push(outputs[1]!);
 }
 
 function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {

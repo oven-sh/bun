@@ -22,6 +22,9 @@ pub(crate) const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
 
 pub(crate) const S_REGULAR: u32 = 0x0;
 pub(crate) const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
+pub(crate) const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x400;
+pub(crate) const N_SECT: u8 = 0x0e;
+pub(crate) const INDIRECT_SYMBOL_LOCAL_OR_ABS: u32 = 0xc000_0000;
 
 pub(crate) const LC_REQ_DYLD: u32 = 0x8000_0000;
 
@@ -49,6 +52,7 @@ pub(crate) mod PROT {
     use super::vm_prot_t;
     pub(crate) const READ: vm_prot_t = 0x01;
     pub(crate) const WRITE: vm_prot_t = 0x02;
+    pub(crate) const EXECUTE: vm_prot_t = 0x04;
 }
 
 #[repr(C)]

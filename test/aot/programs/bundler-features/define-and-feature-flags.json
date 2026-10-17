@@ -1,0 +1,17 @@
+{
+  "build": [
+    "--define",
+    "BUILD_INFO.VERSION=\"1.2.3\"",
+    "--define",
+    "BUILD_INFO.COUNT=41",
+    "--define",
+    "BUILD_INFO.FLAG=true",
+    "--define",
+    "process.env.APP_CHANNEL=\"public\"",
+    "--define",
+    "process.env.NODE_ENV=\"production\"",
+    "--feature",
+    "ON"
+  ],
+  "reference": "compiled"
+}

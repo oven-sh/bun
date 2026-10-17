@@ -1,0 +1,41 @@
+numbers, strings and booleans: {"id":99,"name":"three\n","ok":false,"score":49.5}: 100 texts finished by compiled code
+no members: {}: 100 texts finished by compiled code
+null and undefined: {"a":null,"c":99}: 100 texts finished by compiled code
+only undefined: {}: 100 texts finished by compiled code
+undefined first: {"b":99}: 100 texts finished by compiled code
+undefined now and then: {"a":99,"b":"b"}: 100 texts finished by compiled code
+a function and a symbol: {"c":99}: 0 texts finished by compiled code
+not a number, infinity, minus zero: {"a":null,"b":null,"c":0,"d":null}: 100 texts finished by compiled code
+large and small numbers: {"a":1e+21,"b":1e-7,"c":2147483747,"d":-2147483648,"e":0.30000000000000004}: 100 texts finished by compiled code
+an object within: {"ok":true,"data":{"id":99,"name":"three\n"}}: 100 texts finished by compiled code
+a list within: {"total":2,"rows":[99,100]}: 100 texts finished by compiled code
+an object from elsewhere within: {"ok":true,"data":{"id":99}}: 100 texts finished by compiled code
+a date within: {"at":"1970-01-01T00:00:00.000Z"}: 100 texts finished by compiled code
+a member with toJSON within: {"a":99}: 0 texts finished by compiled code
+in a constant: {"id":99,"ok":true}: 100 texts finished by compiled code
+used afterwards: {"id":99}: 100 texts finished by compiled code
+written twice: {"id":99}{"id":99}: 100 texts finished by compiled code
+a member stored afterwards: {"id":99,"more":100}: 100 texts finished by compiled code
+a member changed: {"id":100}: 0 texts finished by compiled code
+a member deleted: {"id":99}: 0 texts finished by compiled code
+handed to a function first: {"id":99,"added":true}: 100 texts finished by compiled code
+kept first: {"id":99,"late":1}: 0 texts finished by compiled code
+one of two: {"odd":99}: 0 texts finished by compiled code
+changed on one path: {"id":99,"odd":true}: 0 texts finished by compiled code
+made before a loop: {"id":99}{"id":100}: 0 texts finished by compiled code
+a name twice: {"a":99,"b":2}: 0 texts finished by compiled code
+names that are indexes: {"1":4,"2":99,"b":1,"a":3}: 0 texts finished by compiled code
+a computed name: {"k1":99,"z":1}: 0 texts finished by compiled code
+a spread: {"a":1,"b":99,"c":3}: 100 texts finished by compiled code
+a getter: {"a":1,"b":99}: 0 texts finished by compiled code
+a method: {"a":99}: 0 texts finished by compiled code
+__proto__ as a prototype: {"a":99}: 0 texts finished by compiled code
+__proto__ computed: {"a":99,"__proto__":2}: 0 texts finished by compiled code
+a member named toJSON: "mine": 0 texts finished by compiled code
+a name that must be escaped: {"a\"b":99,"c\n":1,"é":2}: 0 texts finished by compiled code
+with a replacer: {"b":2}: 0 texts finished by compiled code
+with a space: {
+ "a": 99
+}: 0 texts finished by compiled code
+a bigint throws: TypeError: 0 texts finished by compiled code
+members evaluated in order: {"a":99,"b":2}ab: 100 texts finished by compiled code

@@ -222,7 +222,7 @@ impl Checker<'_, '_> {
                 }
             }
             _ => match getter {
-                Some(getter) if self.p.files.options.no_implicit_any => (getter, 7023),
+                Some(getter) if self.check_options(getter.0).no_implicit_any => (getter, 7023),
                 _ => return,
             },
         };
@@ -318,7 +318,7 @@ impl Checker<'_, '_> {
         func: FnId,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.check_options(file).no_implicit_any;
         let fn_owner = bound.fns[func.idx()].owner;
         // `printed`: the position of the name in the message, if it is not that of `of`.
         let named = |c: &mut Self, of: FnId, code: u32, printed: Option<u32>| {

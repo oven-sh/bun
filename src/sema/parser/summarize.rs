@@ -79,6 +79,7 @@ struct Reading<'a> {
     script_kind: Option<ScriptKind>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    bigint_names_are_digits: bool,
     jsdoc: JsDoc,
     /// `Options::attach_comments`
     attach_comments: bool,
@@ -189,6 +190,8 @@ fn file_of(
     file_read_as(scratch, how, text, atoms, false)
 }
 
+const RUNTIME_MODULES: &[u8] = b"/$bun/js/";
+
 /// `file_of`, in the dialect that `how` has. `refuses_await`: an `await` expression at the top level is an error.
 fn file_read_as(
     scratch: &mut Scratch,
@@ -212,6 +215,10 @@ fn file_read_as(
         is_jsx: is_js || is_json || script_kind == Some(ScriptKind::Tsx),
         is_javascript: is_js || is_json,
         is_json,
+        is_typescript_with_js_extension: !is_js
+            && !by_name
+            && !path.starts_with(RUNTIME_MODULES)
+            && ScriptKind::from_file_name(path).is_some_and(ScriptKind::is_javascript),
         // `flow-parser` reads it as a name outside an async function, in a module too.
         await_is_a_name: is_json
             || (is_ecmascript || dialect.oxc) && dialect.script
@@ -222,6 +229,9 @@ fn file_read_as(
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
+        bigint_names_are_digits: how.bigint_names_are_digits,
+        constant_keys_are_names: how.bigint_names_are_digits,
+        is_compiled: how.bigint_names_are_digits,
         part: None,
         attach_comments: how.attach_comments,
     };
@@ -346,6 +356,7 @@ pub fn summarize<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    bigint_names_are_digits: bool,
 ) -> File<'s> {
     let how = Reading {
         dialect: Dialect::default(),
@@ -353,6 +364,7 @@ pub fn summarize<'s>(
         script_kind,
         experimental_decorators,
         every_file_is_a_module,
+        bigint_names_are_digits,
         jsdoc: JsDoc::Read,
         attach_comments: false,
     };
@@ -404,6 +416,7 @@ pub fn summarize_in<'s>(
         script_kind,
         experimental_decorators,
         every_file_is_a_module,
+        bigint_names_are_digits: false,
         jsdoc: JsDoc::Ignored,
         attach_comments: false,
     };
@@ -496,6 +509,7 @@ pub fn with_summary_in_place<'s, R>(
         script_kind,
         experimental_decorators,
         every_file_is_a_module,
+        bigint_names_are_digits: false,
         jsdoc: JsDoc::Ignored,
         attach_comments,
     };

@@ -63,7 +63,7 @@ impl Checker<'_, '_> {
         self.check_collision_with_global_object_in_generated_code(file, node, name);
         self.check_collision_with_global_promise_in_generated_code(file, node, name);
         // `recordPotentialCollisionWithWeakMapSetInGeneratedCode`, `recordPotentialCollisionWithReflectInGeneratedCode`
-        if language_version(self) <= ScriptTarget::ES2021
+        if language_version(self, file) <= ScriptTarget::ES2021
             && [known::WeakMap, known::WeakSet, known::Reflect]
                 .iter()
                 .any(|&text| self.need_collision_check_for_identifier(file, node, name, text))
@@ -149,7 +149,7 @@ impl Checker<'_, '_> {
                     )
             })
         };
-        if language_version(self) < ScriptTarget::ES2017
+        if language_version(self, file) < ScriptTarget::ES2017
             && self.need_collision_check_for_identifier(file, node, name, known::Promise)
             && self.is_emitted_at_top_level_of_module(file, node)
             && has_async_functions(self.hir(file))
@@ -216,7 +216,7 @@ impl Checker<'_, '_> {
         file: FileId,
         m: MemberId,
     ) {
-        if language_version(self) < ScriptTarget::ESNext
+        if language_version(self, file) < ScriptTarget::ESNext
             || !self.p.files.options.use_define_for_class_fields
         {
             let node = self.hir(file).node(m);
@@ -231,7 +231,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let node = hir.node(e);
         let parent = hir.parent(node);
-        if language_version(self) > ScriptTarget::ES2021
+        if language_version(self, file) > ScriptTarget::ES2021
             || hir.kind(parent) == Kind::CallExpression && hir.expression(parent) == node
         {
             return;

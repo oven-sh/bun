@@ -226,6 +226,40 @@ warn: Loaded 10,114 files in 1.4s to lint vite.config.ts
 
 With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `tsconfig.json` that the `import` rules resolve imports with, for its `paths`. It doesn't change which `tsconfig.json` a file is type checked with, so the warning only suggests `"include"`.
 
+## Before you compile with `--aot`
+
+[`bun build --compile --aot`](/bundler/aot-adoption) holds your program to its TypeScript types when it runs, and makes built-in objects immutable. `--aot` turns on the rules that find the code this affects. Each report is something that can throw a `TypeError` in the compiled program.
+
+```bash terminal icon="terminal"
+bun lint --aot
+```
+
+```txt
+7 | const body = JSON.parse(text);
+8 | console.log(double(body.visits));
+                       ^
+warn: Under `--aot`, this `any` is checked against `number` here when the program runs, and throws a `TypeError` if it does not match.  bun/aot-no-any-to-typed
+   at app.ts:8:20
+```
+
+| Rule                                                                       | Reports                                                              |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [`bun/aot-outside-data`](/lint/rules/bun/aot-outside-data)                 | `as` on data from `JSON.parse()`, a `catch` clause or untyped code   |
+| [`bun/aot-no-any-to-typed`](/lint/rules/bun/aot-no-any-to-typed)           | an `any` where it is checked against a type                          |
+| [`bun/aot-cast-lacks-member`](/lint/rules/bun/aot-cast-lacks-member)       | an object literal cast to a type that it does not match              |
+| [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) | a write to a built-in object, such as `Array.prototype`              |
+| [`bun/aot-spy-on-builtin`](/lint/rules/bun/aot-spy-on-builtin)             | `sinon.stub(Math, "random")`                                         |
+| [`bun/aot-non-null-escapes`](/lint/rules/bun/aot-non-null-escapes)         | `x!` that is stored, passed on or returned. Off until you turn it on |
+
+They are warnings, and most of them need types. To keep them on:
+
+```toml bunfig.toml icon="settings"
+[lint]
+aot = true
+```
+
+In an ESLint config, extend `"bun/aot"`.
+
 ## Git hooks
 
 `--staged` lints only the files you're about to commit, so you don't need `lint-staged`.

@@ -52,6 +52,10 @@ const patterns = {
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
   },
+  /** JavaScriptCore's own built-in functions and their numbers, read by builtins-manifest.ts */
+  aotEngineBuiltins: {
+    paths: ["src/aot/prelude/engine/*"],
+  },
   /** one page per lint rule, read by generate-lint-docs.ts */
   lintRuleDocs: {
     paths: ["docs/lint/rules/*/**/*.mdx"],

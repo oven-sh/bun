@@ -6,9 +6,7 @@ type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray } = require("internal/sql/shared");
 const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool");
-const {
-  symbols: { _results, _handle },
-} = require("internal/sql/query");
+const { stateOf } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
 const {
@@ -23,7 +21,7 @@ initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_inser
   result.count = count || affected_rows || 0;
   result.lastInsertRowid = last_insert_rowid;
   result.affectedRows = affected_rows || 0;
-  SQLResultArray.describe(result, query[_handle], statement);
+  SQLResultArray.describe(result, stateOf(query).handle, statement);
   addResult(query, result);
 
   // until the server clears SERVER_MORE_RESULTS_EXISTS
@@ -31,11 +29,11 @@ initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_inser
     // The native side swaps the pending value out for js_undefined before
     // invoking this callback; re-prime so the follow-up result set lands in
     // a fresh array.
-    query[_handle].setPendingValue(new SQLResultArray());
+    stateOf(query).handle.setPendingValue(new SQLResultArray());
     return;
   }
 
-  query.resolve(query[_results]);
+  query.resolve(stateOf(query).results);
 }, onRejectQuery);
 
 interface MySQLDotZig {

@@ -1049,6 +1049,7 @@ impl Reader<'_> {
             eslint_major: if semantics.is_legacy { 8 } else { 10 },
             without_modules: false,
             infers_globals: crate::language::InferGlobals::No,
+            enables_aot_rules: false,
             lints_all_that_is_named: false,
             dot_patterns: None,
             prefers_typescript_rules: self.prefers_typescript_rules,

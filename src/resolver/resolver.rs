@@ -1357,6 +1357,50 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
+                // What the executable holds is not looked for on the disk.
+                let is_require = matches!(
+                    kind,
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve
+                );
+                let preserves_source_paths = graph.preserves_source_paths();
+                if preserves_source_paths
+                    && let Some(path) = match self.custom_dir_paths {
+                        Some(folders) => folders.iter().find_map(|folder| {
+                            graph.resolution(folder.to_utf8().slice(), import_path, is_require)
+                        }),
+                        None => graph.resolution(source_dir, import_path, is_require),
+                    }
+                {
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(path),
+                            secondary: None,
+                        },
+                        ..Default::default()
+                    });
+                }
+                if !preserves_source_paths
+                    && let Some(file_name) = match self.custom_dir_paths {
+                        Some(folders) => folders.iter().find_map(|folder| {
+                            graph.entry_point_at(folder.to_utf8().slice(), import_path, is_require)
+                        }),
+                        None => graph.entry_point_at(source_dir, import_path, is_require),
+                    }
+                {
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    });
+                }
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
                 if specifier_is_embedded_path
@@ -1640,6 +1684,9 @@ impl<'a> Resolver<'a> {
                 );
                 if let Some(v) = tsconfig.use_define_for_class_fields {
                     result.flags.set_use_define_for_class_fields(v);
+                }
+                if let Some(v) = tsconfig.rewrite_relative_import_extensions {
+                    result.flags.set_rewrite_relative_import_extensions(v);
                 }
             }
 
@@ -4478,8 +4525,22 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
+            let may_skip_opening =
+                !queue_top.fd.is_valid() && !self.store_fd && !self.care_about_bin_folder;
+            let has_current_entries = may_skip_opening
+                && matches!(
+                    rfs!().entries.get(queue_top_unsafe_path),
+                    Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) if entries.generation >= self.generation
+                );
+            let shared_listing = if has_current_entries || !may_skip_opening {
+                None
+            } else {
+                crate::fs_full::list_from_source(queue_top_unsafe_path)
+            };
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
+            } else if has_current_entries || shared_listing.is_some() {
+                FD::INVALID
             } else {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
@@ -4568,7 +4629,9 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                && err != crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
+                            {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -4705,6 +4768,20 @@ impl<'a> Resolver<'a> {
                                 // SAFETY: see block-wide note above.
                                 in_place.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
+                                &mut filename_store,
+                                (),
+                            )
+                            .expect("unreachable");
+                    }
+                } else if let Some(shared_listing) = &shared_listing {
+                    let mut filename_store = FilenameStoreAppender::new();
+                    for (name, kind) in shared_listing {
+                        new_entry
+                            .add_named_entry_with_store(
+                                // SAFETY: see block-wide note above.
+                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                name,
+                                *kind,
                                 &mut filename_store,
                                 (),
                             )
@@ -5860,7 +5937,8 @@ impl<'a> Resolver<'a> {
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -6601,6 +6679,9 @@ impl<'a> Resolver<'a> {
                 if let Some(v) = parent_config.use_define_for_class_fields {
                     mc.use_define_for_class_fields = Some(v);
                 }
+                if let Some(v) = parent_config.rewrite_relative_import_extensions {
+                    mc.rewrite_relative_import_extensions = Some(v);
+                }
                 if !parent_config.base_url.is_empty() {
                     mc.base_url = core::mem::take(&mut parent_config.base_url);
                 }
@@ -6676,10 +6757,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
-    pub(crate) fn enclosing_tsconfig_json(
-        &mut self,
-        dir_info: &DirInfo::DirInfo,
-    ) -> Option<TSConfigRef> {
+    pub fn enclosing_tsconfig_json(&mut self, dir_info: &DirInfo::DirInfo) -> Option<TSConfigRef> {
         match self.tsconfig_override() {
             Some(it) => it.map(TSConfigRef::Override),
             None => dir_info

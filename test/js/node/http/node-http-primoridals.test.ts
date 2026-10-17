@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { afterEach, expect, test } from "bun:test";
 
 const Response = globalThis.Response;

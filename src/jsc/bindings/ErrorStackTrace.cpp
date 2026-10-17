@@ -31,10 +31,9 @@ using namespace WebCore;
 
 namespace Zig {
 
-static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* codeBlock)
+static ImplementationVisibility getImplementationVisibility(JSC::ScriptExecutable* executable)
 {
-
-    if (auto* executable = codeBlock->ownerExecutable()) {
+    if (executable) {
         return executable->implementationVisibility();
     }
 
@@ -53,8 +52,8 @@ bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
             }
         }
 
-        if (auto* codeBlock = visitor->codeBlock()) {
-            return getImplementationVisibility(codeBlock);
+        if (visitor->hasCode()) {
+            return getImplementationVisibility(visitor->ownerExecutable());
         }
 
 #if ENABLE(WEBASSEMBLY)
@@ -84,8 +83,8 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
             }
         }
 
-        if (auto* codeBlock = frame.codeBlock()) {
-            return getImplementationVisibility(codeBlock);
+        if (frame.hasLineAndColumnInfo()) {
+            return getImplementationVisibility(frame.ownerExecutable());
         }
 
         return ImplementationVisibility::Public;
@@ -168,6 +167,18 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
+#if ENABLE(AOT)
+        if (frame.isTypedAOTFrame() && JSC::AOT::isTypedFunctionClosure(callerObject, frame.typedAOTFunction())) {
+            removeCount = i + 1;
+            break;
+        }
+#endif
+        if (frame.hasLineAndColumnInfo()) {
+            if (auto* callerFunction = dynamicDowncast<JSC::JSFunction>(callerObject); callerFunction && callerFunction->executable() == frame.ownerExecutable()) {
+                removeCount = i + 1;
+                break;
+            }
+        }
         if (!callerName.isEmpty()) {
             WTF::String frameName = Zig::functionName(vm, frame, nullptr);
             if (frameName == callerName) {
@@ -211,6 +222,15 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     if (frame.isWasmFrame()) {
         m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
         m_isWasmFrame = true;
+#if ENABLE(AOT)
+    } else if (auto reported = frame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
+        m_isAOTCompiled = true;
+        if (frame.hasLineAndColumnInfo()) {
+            m_sourcePositions = { OrdinalNumber::fromOneBasedInt(reported->lineColumn.line), OrdinalNumber::fromOneBasedInt(reported->lineColumn.column) };
+            m_sourcePositionsState = SourcePositionsState::Calculated;
+            m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode;
+        }
+#endif
     } else if (auto* codeBlock = frame.codeBlock()) {
         auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
         if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
@@ -224,11 +244,11 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         }
     }
 
-    if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
+    if (!m_codeBlock && !m_isAOTCompiled && frame.hasLineAndColumnInfo()) {
         auto lineColumn = frame.computeLineAndColumn();
         m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
         m_sourcePositionsState = SourcePositionsState::Calculated;
-        auto codeType = frame.codeBlock()->codeType();
+        auto codeType = frame.codeType();
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
@@ -237,6 +257,10 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 
 intptr_t JSCStackFrame::sourceID() const
 {
+    if (m_isAOTCompiled) {
+        auto* executable = m_stackFrame->ownerExecutable();
+        return executable ? executable->sourceID() : JSC::noSourceID;
+    }
     return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
 }
 
@@ -275,7 +299,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-    auto url = Zig::sourceURL(m_codeBlock);
+    auto url = m_isAOTCompiled && (!m_stackFrame->isBuiltinFunction() || !m_stackFrame->ownerExecutable() || !Zig::sourceURL(m_stackFrame->ownerExecutable()->source()).isEmpty()) ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
@@ -327,6 +351,9 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
             return functionName;
         }
     }
+
+    if (m_isAOTCompiled)
+        return Zig::functionName(m_vm, *m_stackFrame, nullptr);
 
     return emptyString();
 }
@@ -411,7 +438,11 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
         return "[native code]"_s;
     }
 
-    return sourceURL(frame.codeBlock());
+    if (auto position = frame.reportedPosition(); position && position->source)
+        return JSC::AOT::ProgramData::get()->sourceNameInFrames(position->source);
+
+    auto* executable = frame.ownerExecutable();
+    return executable ? sourceURL(executable->source()) : String();
 }
 
 String sourceURL(JSC::StackVisitor& visitor)
@@ -421,6 +452,12 @@ String sourceURL(JSC::StackVisitor& visitor)
     case JSC::StackVisitor::Frame::Module:
     case JSC::StackVisitor::Frame::Function:
     case JSC::StackVisitor::Frame::Global: {
+#if ENABLE(AOT)
+        if (auto function = visitor->aotFunction()) {
+            if (auto position = function.reportedPositionFor(visitor->bytecodeIndex()); position && position->source)
+                return JSC::AOT::ProgramData::get()->sourceNameInFrames(position->source);
+        }
+#endif
         return sourceURL(visitor->codeBlock());
     }
     case JSC::StackVisitor::Frame::Native:
@@ -444,9 +481,11 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 {
-    auto codeType = codeBlock->codeType();
+    return functionName(vm, codeBlock->codeType(), codeBlock->ownerExecutable());
+}
 
-    auto* executable = codeBlock->ownerExecutable();
+String functionName(JSC::VM& vm, JSC::CodeType codeType, JSC::ScriptExecutable* executable)
+{
     if (!executable) {
         return String();
     }
@@ -513,12 +552,11 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
     JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
 
     if (frame.hasLineAndColumnInfo()) {
-        auto* codeblock = frame.codeBlock();
-        if (codeblock->isConstructor()) {
+        if (frame.isConstructor()) {
             isConstructor = true;
         }
 
-        auto codeType = codeblock->codeType();
+        auto codeType = frame.codeType();
         switch (codeType) {
         case JSC::CodeType::FunctionCode:
         case JSC::CodeType::EvalCode: {
@@ -531,10 +569,9 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
             }
             if (callee) {
                 functionName = Zig::functionName(vm, callee);
-
-                if (flags && codeblock->unlinkedCodeBlock()->isBuiltinFunction()) {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
-                }
+            }
+            if (flags && frame.isBuiltinFunction()) {
+                *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
             }
             break;
         }
@@ -543,11 +580,21 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         }
         }
 
+#if ENABLE(AOT)
+        if (frame.isTypedAOTFrame() && codeType == JSC::CodeType::FunctionCode && !(frame.isAsyncFrame() && JSC::AOT::typedFunctionHasGivenName(frame.typedAOTFunction()))) {
+            functionName = JSC::AOT::typedFunctionName(vm, frame.typedAOTFunction(), frame.isAsyncFrame());
+        }
+#endif
+
         if (functionName.isEmpty()) {
-            functionName = Zig::functionName(vm, codeblock);
+            functionName = Zig::functionName(vm, codeType, frame.ownerExecutable());
         }
     } else if (callee) {
         functionName = Zig::functionName(vm, callee);
+#if ENABLE(AOT)
+    } else if (frame.isTypedAOTFrame()) {
+        functionName = JSC::AOT::typedFunctionName(vm, frame.typedAOTFunction(), frame.isAsyncFrame());
+#endif
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {

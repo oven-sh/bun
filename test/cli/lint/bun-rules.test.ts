@@ -2426,8 +2426,9 @@ describe.concurrent("the plugin bun", () => {
   test("--rules lists them, without a category", async () => {
     const { stdout } = await lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]);
     const listed = (JSON.parse(stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun");
-    // `bun/format` is tested with `prettier/prettier`: prettier-rule.test.ts.
-    expect(listed.map(it => it.value)).toEqual([...Object.keys(rules), "format"].toSorted());
+    // `bun/format` is tested with `prettier/prettier`: prettier-rule.test.ts. `bun/aot-..`: aot-rules.test.ts.
+    const elsewhere = listed.map(it => String(it.value)).filter(it => it.startsWith("aot-"));
+    expect(listed.map(it => it.value)).toEqual([...Object.keys(rules), ...elsewhere, "format"].toSorted());
     expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
     expect(listed.map(it => it.docs_url)).toEqual(listed.map(it => `https://bun.com/docs/lint/rules/bun/${it.value}`));
   });
@@ -3295,7 +3296,7 @@ test("c", () => {
       "a.test.ts",
     ]);
     const said = (JSON.parse(stdout).diagnostics as Record<string, string>[]).map(it => [it.message, it.help, it.note]);
-    expect(said).toEqual([
+    expect(said).toEqual<unknown>([
       [
         "Test is missing a timeout.",
         "Add a numeric third argument, a `{ timeout }` option object, or call `setDefaultTimeout(..)` before this test.",

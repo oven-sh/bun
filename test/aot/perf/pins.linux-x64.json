@@ -1,0 +1,612 @@
+{
+  "accessor/inherited-method-in-function": {
+    "typed": 89.0,
+    "untyped": 78.0,
+    "jit": 6.0
+  },
+  "accessor/inherited-value-in-function": {
+    "typed": 57.1,
+    "untyped": 52.0,
+    "jit": 3.5
+  },
+  "array/push-in-loop-in-function": {
+    "typed": 160.9,
+    "untyped": 170.4,
+    "jit": 74.7
+  },
+  "array/reduce-in-function": {
+    "typed": 215.0,
+    "untyped": 518.0,
+    "jit": 110.3
+  },
+  "array/spread-into-math-max-in-function": {
+    "typed": 220.0,
+    "untyped": 248.0,
+    "jit": 746.5
+  },
+  "array/spread-into-call-in-function": {
+    "typed": 140.0,
+    "untyped": 132.0,
+    "jit": 322.1
+  },
+  "array/spread-of-set": {
+    "typed": 412.5,
+    "untyped": 414.4,
+    "jit": 85.5
+  },
+  "array/two-spread-in-function": {
+    "typed": 232.0,
+    "untyped": 381.9,
+    "jit": 427.5
+  },
+  "baseline/nothing": {
+    "typed": 3.0,
+    "untyped": 6.0,
+    "jit": 2.9
+  },
+  "baseline/nothing-in-function": {
+    "typed": 4.0,
+    "untyped": 33.0,
+    "jit": 3.0
+  },
+  "baseline/counter": {
+    "typed": 6.0,
+    "untyped": 31.0,
+    "jit": 6.5
+  },
+  "baseline/counter-in-function": {
+    "typed": 6.0,
+    "untyped": 70.0,
+    "jit": 6.5
+  },
+  "built-in/number-of-string-argument": {
+    "typed": 1362.9,
+    "untyped": 1395.7,
+    "jit": 1735.2
+  },
+  "built-in/number-of-string-or-null": {
+    "typed": 51.5,
+    "untyped": 73.5,
+    "jit": 189.5
+  },
+  "class/instanceof-false-in-function": {
+    "typed": 31.0,
+    "untyped": 96.0,
+    "jit": 3.1
+  },
+  "class/new-extends-in-function": {
+    "typed": 48.5,
+    "untyped": 201.2,
+    "jit": 43.9
+  },
+  "class/new-private-in-function": {
+    "typed": 40.1,
+    "untyped": 168.7,
+    "jit": 29.9
+  },
+  "class/new-three-stores-in-function": {
+    "typed": 47.5,
+    "untyped": 148.2,
+    "jit": 42.2
+  },
+  "class/private-method-in-function": {
+    "typed": 15.0,
+    "untyped": 109.0,
+    "jit": 11.0
+  },
+  "class/private-store-in-function": {
+    "typed": 18.0,
+    "untyped": 85.0,
+    "jit": 5.0
+  },
+  "class/setter-in-function": {
+    "typed": 18.0,
+    "untyped": 128.0,
+    "jit": 5.0
+  },
+  "class/static-method-in-function": {
+    "typed": 18.0,
+    "untyped": 114.0,
+    "jit": 6.5
+  },
+  "class/super-method": {
+    "typed": 4.0,
+    "untyped": 645.0,
+    "jit": 29.0
+  },
+  "collection/map-get-or-default-in-function": {
+    "typed": 132.0,
+    "untyped": 137.0,
+    "jit": 7.0
+  },
+  "collection/weak-map-cache-in-function": {
+    "typed": 64.5,
+    "untyped": 68.5,
+    "jit": 32.0
+  },
+  "destructure/literal-argument-in-function": {
+    "typed": 17.0,
+    "untyped": 63.0,
+    "jit": 11.0
+  },
+  "destructure/returned-pair-in-function": {
+    "typed": 18.0,
+    "untyped": 68.0,
+    "jit": 45.5
+  },
+  "destructure/record-returned": {
+    "typed": 9.0,
+    "untyped": 71.0,
+    "jit": 9.0
+  },
+  "destructure/swap-in-function": {
+    "typed": 18.0,
+    "untyped": 52.0,
+    "jit": 55.6
+  },
+  "enumerate/for-in-of-typed-object": {
+    "typed": 117.2,
+    "untyped": 113.0,
+    "jit": 184.3
+  },
+  "fill/object-entries-copy-in-function": {
+    "typed": 809.5,
+    "untyped": 817.8,
+    "jit": 2153.2
+  },
+  "fill/object-keys-copy-by-index-in-function": {
+    "typed": 536.0,
+    "untyped": 589.9,
+    "jit": 268.5
+  },
+  "fill/object-keys-copy-in-function": {
+    "typed": 505.8,
+    "untyped": 533.6,
+    "jit": 362.2
+  },
+  "fill/object-keys-for-each-copy-in-function": {
+    "typed": 521.1,
+    "untyped": 539.8,
+    "jit": 442.6
+  },
+  "fill/map-by-key-in-function": {
+    "typed": 369.6,
+    "untyped": 1289.8,
+    "jit": 945.8
+  },
+  "fill/counting-by-key-in-function": {
+    "typed": 569.1,
+    "untyped": 586.3,
+    "jit": 433.4
+  },
+  "fill/for-in-copy-has-own-property-in-function": {
+    "typed": 531.1,
+    "untyped": 432.0,
+    "jit": 369.1
+  },
+  "fill/for-in-copy-in-function": {
+    "typed": 534.7,
+    "untyped": 431.4,
+    "jit": 317.1
+  },
+  "fill/for-in-copy-one-name-skipped-in-function": {
+    "typed": 546.9,
+    "untyped": 470.7,
+    "jit": 307.1
+  },
+  "fill/for-in-map-in-function": {
+    "typed": 515.5,
+    "untyped": 468.3,
+    "jit": 348.3
+  },
+  "fill/four-stores-by-name-in-function": {
+    "typed": 61.2,
+    "untyped": 61.2,
+    "jit": 33.0
+  },
+  "fill/from-entries-map-in-function": {
+    "typed": 3078.1,
+    "untyped": 3008.6,
+    "jit": 2608.5
+  },
+  "fill/keys-from-string-array-in-function": {
+    "typed": 403.0,
+    "untyped": 471.2,
+    "jit": 296.0
+  },
+  "fill/keys-from-records-in-function": {
+    "typed": 446.3,
+    "untyped": 454.0,
+    "jit": 325.4
+  },
+  "fill/then-enumerated-in-function": {
+    "typed": 694.0,
+    "untyped": 646.0,
+    "jit": 471.3
+  },
+  "fill/then-read-by-name-in-function": {
+    "typed": 574.3,
+    "untyped": 499.6,
+    "jit": 328.3
+  },
+  "fill/then-spread-in-function": {
+    "typed": 768.7,
+    "untyped": 664.2,
+    "jit": 545.3
+  },
+  "for-of/Map": {
+    "typed": 316.0,
+    "untyped": 2252.2,
+    "jit": 383.9
+  },
+  "for-of/map-values-in-function": {
+    "typed": 284.0,
+    "untyped": 1105.1,
+    "jit": 214.0
+  },
+  "for-of/set-in-function": {
+    "typed": 284.0,
+    "untyped": 873.0,
+    "jit": 205.4
+  },
+  "for-of/generator-in-function": {
+    "typed": 135.0,
+    "untyped": 141.0,
+    "jit": 155.9
+  },
+  "for-of/custom-iterator": {
+    "typed": 4639.9,
+    "untyped": 4509.1,
+    "jit": 273.6
+  },
+  "for-of/array-entries": {
+    "typed": 319.2,
+    "untyped": 762.2,
+    "jit": 732.0
+  },
+  "for-of/records-destructured-in-function": {
+    "typed": 82.0,
+    "untyped": 262.0,
+    "jit": 155.0
+  },
+  "function/captured-variable-mutated-in-function": {
+    "typed": 13.0,
+    "untyped": 33.0,
+    "jit": 47.8
+  },
+  "function/closure-created-and-called-in-function": {
+    "typed": 16.0,
+    "untyped": 70.0,
+    "jit": 49.0
+  },
+  "function/arrow-argument-in-function": {
+    "typed": 18.0,
+    "untyped": 80.0,
+    "jit": 51.6
+  },
+  "function/arguments-length-in-function": {
+    "typed": 164.7,
+    "untyped": 182.6,
+    "jit": 7.1
+  },
+  "function/arguments-summed": {
+    "typed": 213.7,
+    "untyped": 306.6,
+    "jit": 23.0
+  },
+  "function/function-argument-in-function": {
+    "typed": 110.0,
+    "untyped": 97.0,
+    "jit": 13.8
+  },
+  "function/rest-parameters-summed-in-function": {
+    "typed": 113.3,
+    "untyped": 237.1,
+    "jit": 113.0
+  },
+  "generator/spread-in-function": {
+    "typed": 192.8,
+    "untyped": 196.7,
+    "jit": 856.6
+  },
+  "host-classes/request-headers-read-again": {
+    "typed": 14.0,
+    "untyped": 30.0,
+    "jit": 38.9
+  },
+  "host-classes/request-made": {
+    "typed": 1309.5,
+    "untyped": 1306.9,
+    "jit": 1260.4
+  },
+  "host-classes/request-created-url-read-once": {
+    "typed": 1574.1,
+    "untyped": 1586.3,
+    "jit": 1468.8
+  },
+  "host-classes/request-method": {
+    "typed": 124.0,
+    "untyped": 127.0,
+    "jit": 69.9
+  },
+  "host-classes/request-url-method-and-headers": {
+    "typed": 153.0,
+    "untyped": 209.0,
+    "jit": 143.1
+  },
+  "host-classes/request-url-read-again": {
+    "typed": 22.0,
+    "untyped": 48.0,
+    "jit": 44.0
+  },
+  "host-classes/request-url-reread-after-second-realm": {
+    "typed": 22.0,
+    "untyped": 48.0,
+    "jit": 44.0
+  },
+  "host-classes/request-url-reread-after-prototype-gains-name": {
+    "typed": 22.0,
+    "untyped": 48.0,
+    "jit": 44.0
+  },
+  "host-classes/response-status": {
+    "typed": 123.9,
+    "untyped": 126.0,
+    "jit": 70.0
+  },
+  "host-classes/url-pathname": {
+    "typed": 898.4,
+    "untyped": 902.5,
+    "jit": 1708.9
+  },
+  "host-classes/url-three-search-params": {
+    "typed": 2066.5,
+    "untyped": 2063.4,
+    "jit": 6807.5
+  },
+  "keyed/symbol": {
+    "typed": 467.0,
+    "untyped": 498.7,
+    "jit": 28.7
+  },
+  "keyed/read-by-concatenated-key": {
+    "typed": 743.1,
+    "untyped": 501.0,
+    "jit": 22.2
+  },
+  "literal/computed-name-in-function": {
+    "typed": 430.0,
+    "untyped": 425.1,
+    "jit": 33.9
+  },
+  "literal/getter": {
+    "typed": 613.3,
+    "untyped": 623.3,
+    "jit": 471.9
+  },
+  "literal/method-in-function": {
+    "typed": 16.0,
+    "untyped": 70.0,
+    "jit": 48.1
+  },
+  "react/element": {
+    "typed": 33.6,
+    "untyped": 55.6,
+    "jit": 36.9
+  },
+  "react/element-in-function": {
+    "typed": 55.6,
+    "untyped": 71.8,
+    "jit": 39.4
+  },
+  "react/create-element-key-in-props": {
+    "typed": 484.7,
+    "untyped": 471.0,
+    "jit": 332.2
+  },
+  "react/create-element-key-in-props-in-function": {
+    "typed": 498.6,
+    "untyped": 484.5,
+    "jit": 341.4
+  },
+  "react/create-element-no-key": {
+    "typed": 544.5,
+    "untyped": 526.4,
+    "jit": 385.8
+  },
+  "react/create-element-no-key-in-function": {
+    "typed": 558.8,
+    "untyped": 539.4,
+    "jit": 394.9
+  },
+  "react/jsx-key-in-props": {
+    "typed": 472.8,
+    "untyped": 466.6,
+    "jit": 273.7
+  },
+  "react/jsx-key-in-props-in-function": {
+    "typed": 498.4,
+    "untyped": 484.4,
+    "jit": 280.0
+  },
+  "react/jsx-no-key": {
+    "typed": 46.0,
+    "untyped": 59.0,
+    "jit": 7.3
+  },
+  "react/jsx-no-key-in-function": {
+    "typed": 70.0,
+    "untyped": 75.0,
+    "jit": 7.2
+  },
+  "rest/3-names": {
+    "typed": 66.0,
+    "untyped": 533.2,
+    "jit": 1092.6
+  },
+  "rest/4-names": {
+    "typed": 63.8,
+    "untyped": 561.5,
+    "jit": 914.7
+  },
+  "rest/5-names": {
+    "typed": 64.0,
+    "untyped": 590.6,
+    "jit": 841.7
+  },
+  "rest/computed-name-in-function": {
+    "typed": 514.4,
+    "untyped": 517.5,
+    "jit": 1326.5
+  },
+  "spread/object-in-function": {
+    "typed": 66.7,
+    "untyped": 256.3,
+    "jit": 247.4
+  },
+  "spread/object-one-overridden-in-function": {
+    "typed": 71.7,
+    "untyped": 212.4,
+    "jit": 252.1
+  },
+  "spread/object-then-one-in-function": {
+    "typed": 95.4,
+    "untyped": 278.3,
+    "jit": 269.4
+  },
+  "spread/one-then-object-in-function": {
+    "typed": 87.0,
+    "untyped": 353.0,
+    "jit": 1236.8
+  },
+  "spread/two-objects-in-function": {
+    "typed": 1018.1,
+    "untyped": 416.0,
+    "jit": 1201.9
+  },
+  "text/char-code-at-loop-in-function": {
+    "typed": 133.0,
+    "untyped": 501.0,
+    "jit": 129.7
+  },
+  "text/index-loop-in-function": {
+    "typed": 94.0,
+    "untyped": 198.0,
+    "jit": 207.8
+  },
+  "built-in/buffer-read-integers": {
+    "typed": 116.0,
+    "untyped": 158.0,
+    "jit": 26.0
+  },
+  "built-in/buffer-write-integers": {
+    "typed": 98.0,
+    "untyped": 126.0,
+    "jit": 31.5
+  },
+  "built-in/events-emit": {
+    "typed": 212.0,
+    "untyped": 215.0,
+    "jit": 15.0
+  },
+  "built-in/events-on-off": {
+    "typed": 1019.9,
+    "untyped": 1021.3,
+    "jit": 179.8
+  },
+  "built-in/path-basename": {
+    "typed": 287.9,
+    "untyped": 290.9,
+    "jit": 924.6
+  },
+  "built-in/path-dirname": {
+    "typed": 309.3,
+    "untyped": 311.2,
+    "jit": 913.4
+  },
+  "built-in/path-extname": {
+    "typed": 237.2,
+    "untyped": 238.8,
+    "jit": 1043.2
+  },
+  "built-in/path-is-absolute": {
+    "typed": 114.5,
+    "untyped": 113.5,
+    "jit": 354.0
+  },
+  "built-in/path-join": {
+    "typed": 761.6,
+    "untyped": 766.2,
+    "jit": 3099.7
+  },
+  "built-in/path-normalize": {
+    "typed": 524.5,
+    "untyped": 526.6,
+    "jit": 2326.7
+  },
+  "built-in/path-relative": {
+    "typed": 1720.8,
+    "untyped": 1723.7,
+    "jit": 4656.2
+  },
+  "built-in/path-resolve": {
+    "typed": 776.2,
+    "untyped": 781.2,
+    "jit": 3225.5
+  },
+  "built-in/path-16-bit": {
+    "typed": 4295.0,
+    "untyped": 4335.0,
+    "jit": 36209.2
+  },
+  "built-in/path-of-untidy-paths": {
+    "typed": 7425.9,
+    "untyped": 7451.8,
+    "jit": 10211.7
+  },
+  "built-in/process-argv": {
+    "typed": 111.0,
+    "untyped": 111.0,
+    "jit": 52.8
+  },
+  "built-in/process-members": {
+    "typed": 41.0,
+    "untyped": 78.0,
+    "jit": 13.0
+  },
+  "built-in/async-local-storage-get-store": {
+    "typed": 121,
+    "untyped": 127,
+    "jit": 107.8
+  },
+  "built-in/async-local-storage-of-records": {
+    "typed": 172,
+    "untyped": 168,
+    "jit": 109
+  },
+  "built-in/stream-new-readable": {
+    "typed": 3505.2,
+    "untyped": 3518.2,
+    "jit": 1265.8
+  },
+  "built-in/events-once": {
+    "typed": 1055.4,
+    "untyped": 1062.3,
+    "jit": 589.2
+  },
+  "built-in/process-next-tick": {
+    "typed": 470.1,
+    "untyped": 479.8,
+    "jit": 264.3
+  },
+  "built-in/native-setter": {
+    "typed": 558.3,
+    "untyped": 562.3,
+    "jit": 351
+  },
+  "built-in/regexp-exec-as-value": {
+    "typed": 205.7,
+    "untyped": 212.8,
+    "jit": 287.1
+  }
+}

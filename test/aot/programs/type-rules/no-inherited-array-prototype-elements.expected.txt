@@ -1,0 +1,3 @@
+an element added to Array.prototype: TypeError
+undefined undefined false
+true false

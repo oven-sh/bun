@@ -39,6 +39,7 @@ use crate::postgres::sasl::{self, ChannelBinding, Gs2Flag, Refusal, SASL, SASLSt
 use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
+use crate::shared::row_decoder::RowDecoder;
 use crate::shared::server_identity;
 use crate::shared::start_tls::{start_tls, verifies_certificate};
 use bun_sql::postgres::AnyPostgresError;
@@ -2020,6 +2021,35 @@ impl PostgresSQLConnection {
                 // keeps the statement alive.
                 let mut cached_structure: Option<ParentRef<PostgresCachedStructure>> = None;
                 let request_flags = request.flags.get();
+                let row_type = request.row_type.get();
+                if row_type != 0
+                    && request_flags.formats == ResultFormats::Decodable
+                    && !request_flags.bigint
+                    && request_flags.result_mode == SQLQueryResultMode::Objects
+                {
+                    if !statement.row_decoder.is_for(row_type) {
+                        statement.create_row_decoder(self.global(), row_type);
+                    }
+                    if let Some(this_value) = request.this_value.get().try_get() {
+                        let rows = postgres_sql_query::js::pending_value_get_cached(this_value)
+                            .unwrap_or_default();
+                        let (_, length) = reader.peek_length()?;
+                        if let Some(appended_to) = statement.row_decoder.append_row(
+                            self.global(),
+                            &reader.peek()[4..length],
+                            rows,
+                        ) {
+                            if rows.is_empty() {
+                                postgres_sql_query::js::pending_value_set_cached(
+                                    this_value,
+                                    self.global(),
+                                    appended_to,
+                                );
+                            }
+                            return reader.skip_message();
+                        }
+                    }
+                }
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
@@ -2092,6 +2122,10 @@ impl PostgresSQLConnection {
                         return Ok(());
                     }
                 };
+
+                if row_type != 0 && request_flags.result_mode == SQLQueryResultMode::Objects {
+                    RowDecoder::convert_last_row(self.global(), row_type, result);
+                }
 
                 if pending_value.is_empty() {
                     postgres_sql_query::js::pending_value_set_cached(
@@ -2261,6 +2295,7 @@ impl PostgresSQLConnection {
                 statement.cached_structure = Default::default();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
+                statement.row_decoder = Default::default();
             }
             MessageType::Authentication => {
                 let auth = protocol::Authentication::decode_internal(&mut reader)?;

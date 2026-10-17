@@ -1,0 +1,7 @@
+{
+  "env": {
+    "BUN_JSC_scribbleFreeCells": "1",
+    "BUN_JSC_useZombieMode": "1",
+    "BUN_JSC_slowPathAllocsBetweenGCs": "1"
+  }
+}

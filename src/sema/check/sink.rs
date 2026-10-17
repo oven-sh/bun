@@ -303,6 +303,32 @@ impl super::Program<'_> {
         (self.global_errors.lock()).insert((diagnostic.code, args.collect()));
     }
 
+    pub fn report_trial_diagnostics(&self, finished: &mut Finished, is_on_trial: &[bool]) {
+        for (owner, diagnostic) in std::mem::take(&mut finished.diagnostics) {
+            if diagnostic.file != NOWHERE.0 && is_on_trial.get(diagnostic.file.idx()).copied().unwrap_or(false) {
+                self.push_diagnostic(diagnostic);
+            } else if owner.is_some_and(|owner| !matches!(owner, Query::Expr(file, _) | Query::Call(file, _) if is_on_trial.get(file.idx()).copied().unwrap_or(false))) {
+                finished.diagnostics.push((owner, diagnostic));
+            }
+        }
+    }
+
+    pub fn unreported<R>(&self, run: impl FnOnce() -> R) -> R {
+        let lengths: Vec<usize> = self
+            .sink
+            .by_file
+            .iter()
+            .map(|buffer| buffer.lock().len())
+            .collect();
+        let global_errors = self.global_errors.lock().clone();
+        let result = run();
+        for (buffer, length) in self.sink.by_file.iter().zip(lengths) {
+            buffer.lock().truncate(length);
+        }
+        *self.global_errors.lock() = global_errors;
+        result
+    }
+
     /// The diagnostics the tasks have reported in `file`.
     pub(super) fn take_buffer(&self, file: FileId) -> Vec<Reported> {
         std::mem::take(&mut *self.sink.by_file[file.idx()].lock())
@@ -356,10 +382,12 @@ impl super::Program<'_> {
 impl Checker<'_, '_> {
     /// `StringifyArgs`. They are printed eagerly, as in tsgo: printing runs queries.
     pub(super) fn stringify_args(&mut self, args: &[Arg<'_>]) -> Args {
+        let is_dropped = self.is_after_check();
         args.iter()
             .map(|arg| {
                 let mut out = Vec::new();
                 match *arg {
+                    Arg::Type(_) | Arg::Sym(_) | Arg::Prop(_) | Arg::Sig(_) if is_dropped => {}
                     Arg::Type(ty) => self.write_type(&mut out, ty, super::print::TYPE_TO_STRING),
                     Arg::Sym(symbol) => self.write_symbol(&mut out, symbol),
                     Arg::Prop(prop) => self.write_prop(&mut out, prop),
@@ -470,7 +498,9 @@ impl Checker<'_, '_> {
             return self.discarded.insert(diagnostic);
         }
         if self.is_reported_too_late(None, diagnostic.file) {
-            self.mark_tainted_from(0);
+            if !self.is_after_check() {
+                self.mark_tainted_from(0);
+            }
             return self.discarded.insert(diagnostic);
         }
         self.reported.push(diagnostic);
@@ -701,6 +731,9 @@ impl Checker<'_, '_> {
         if self.is_type_checked && diagnostic.file == NOWHERE.0
             || self.is_reported_too_late(owner, diagnostic.file)
         {
+            if diagnostic.file != NOWHERE.0 && self.is_after_check() {
+                return;
+            }
             return self.mark_tainted_from(0);
         }
         diagnostic.by_emit |= self.is_emitting;
@@ -826,7 +859,7 @@ impl Checker<'_, '_> {
             && file != NOWHERE.0
             && self.task.file != Some(file)
             && self.reports_semantic_errors(file)
-            && !self.is_asked_by_check_in_time(owner, &self.stack, file)
+            && (self.is_translating() || !self.is_asked_by_check_in_time(owner, &self.stack, file))
     }
 
     /// At the end of the task, on its own thread, for `Task::finish`. A query with a task-local key

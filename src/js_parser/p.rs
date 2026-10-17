@@ -262,6 +262,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    pub(crate) has_esm_syntax: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -288,6 +289,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// When visiting e_call, if the target ref matches this, we replace the call with
     /// a boolean based on whether the feature flag is enabled.
     pub(crate) bundler_feature_flag_ref: Ref,
+    pub(crate) create_require_refs: Vec<Ref>,
+    pub(crate) node_module_refs: Vec<Ref>,
+    pub(crate) own_require_refs: Vec<Ref>,
+    pub(crate) single_argument_identifier_calls: Vec<(Ref, Expr)>,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
 
@@ -540,6 +545,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
+    pub(crate) is_after_jump: bool,
     /// Fill `scope_uses` (bundling with the number renamer).
     pub(crate) track_scope_uses: bool,
     /// Next `Scope::visit_span` pre-order index. The module scope is 0.
@@ -1453,13 +1459,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(ns)
     }
 
+    #[inline]
+    pub(crate) fn is_unreachable(&self) -> bool {
+        self.is_control_flow_dead || self.is_after_jump
+    }
+
     pub(crate) fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         // The argument must be a string
         if let Some(mut str_) = arg.data.as_e_string() {
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
             // never be used.
-            if self.is_control_flow_dead {
+            if self.is_unreachable() {
                 return self.new_expr(E::Null {}, arg.loc);
             }
 
@@ -1593,7 +1604,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Ignore calls to import() if the control flow is provably dead here.
         // We don't want to spend time scanning the required files if they will
         // never be used.
-        if self.is_control_flow_dead {
+        if self.is_unreachable() {
             return self.new_expr(E::Null {}, arg.loc);
         }
 
@@ -1641,7 +1652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Ignore calls to require() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
-                if self.is_control_flow_dead {
+                if self.is_unreachable() {
                     return Expr {
                         data: null_expr_data(),
                         loc: arg.loc,
@@ -2202,6 +2213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
         if self.options.bundle
+            && !self.options.defers_import_assignment_errors
             && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
@@ -3042,9 +3054,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
+                js_ast::ExprData::ECall(mut e)
+                    if matches!(e.target.data, js_ast::ExprData::EMissing(..)) =>
+                {
+                    return self
+                        .substitute_single_use_symbol_in_child(
+                            &mut e.args[0],
+                            expr,
+                            r#ref,
+                            replacement,
+                            replacement_can_be_removed,
+                        )
+                        .unwrap_or(Substitution::Continue);
+                }
                 js_ast::ExprData::ECall(mut e) => {
                     // Don't substitute something into a call target that could change "this"
-                    match replacement.data {
+                    match bun_ast::audited::unmarked(replacement).data {
                         js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
                             if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
                             {
@@ -3314,7 +3339,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
-        if self.esm_import_keyword.len > 0 {
+        if self.options.bun_builtin_syntax {
+            self.module_scope_mut()
+                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeBuiltin);
+        } else if self.esm_import_keyword.len > 0 {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
         } else if self.esm_export_keyword.len > 0 {
@@ -3879,6 +3907,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: ExprNodeIndex,
         invalid_loc: &mut LocList,
     ) -> Option<Binding> {
+        let expr = bun_ast::audited::unmarked(expr);
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
             js_ast::ExprData::EIdentifier(ex) => {
@@ -4369,6 +4398,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `default_name` separately
             }
         }
+        if self.options.compiles_ahead_of_time && matches!(path.text, b"module" | b"node:module") {
+            if stmt.star_name_loc.to_nullable().is_some() {
+                self.node_module_refs.push(stmt.namespace_ref);
+            }
+            if let Some(default_name) = &stmt.default_name {
+                self.node_module_refs.push(default_name.ref_);
+            }
+        }
         let mut end: usize = 0;
 
         let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
@@ -4386,6 +4423,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+            if alias == b"createRequire"
+                && matches!(path.text, b"module" | b"node:module")
+                && self.options.compiles_ahead_of_time
+            {
+                self.create_require_refs.push(r#ref);
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -4867,6 +4910,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::StrictModeKind::ImplicitStrictModeClass => {
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
+                }
+                js_ast::StrictModeKind::ImplicitStrictModeBuiltin => {
+                    why = b"A builtin module is the body of a strict function";
                 }
                 _ => {}
             }
@@ -5517,7 +5563,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut opts = PrependTempRefsOpts::default();
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
 
+        let was_after_jump = self.is_after_jump;
+        let declares_only_functions = stmts.iter().all(|stmt| match stmt.data {
+            js_ast::StmtData::SFunction(_) => true,
+            js_ast::StmtData::SExportDefault(default) => {
+                matches!(&default.value, js_ast::StmtOrExpr::Stmt(value) if matches!(value.data, js_ast::StmtData::SFunction(_)))
+            }
+            _ => false,
+        });
+        if declares_only_functions {
+            self.is_after_jump = false;
+        }
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
+        self.is_after_jump = was_after_jump
+            || (self.options.compiles_ahead_of_time
+                && part_stmts.iter().any(|stmt| {
+                    crate::scan::scan_side_effects::SideEffects::always_throws_or_returns(
+                        self, *stmt,
+                    )
+                }));
 
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
@@ -6175,6 +6239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.report_stack_overflow(expr.loc);
             return false;
         }
+        let expr = &bun_ast::audited::unmarked(*expr);
         match &expr.data {
             js_ast::ExprData::ENull(_)
             | js_ast::ExprData::EUndefined(_)
@@ -9010,6 +9075,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned (arena-/process-lifetime).
+                unsafe { parts.set_len(parts_end) };
+
                 // We need to iterate multiple times if an import-equals statement was
                 // removed and there are more import-equals statements that may be removed
                 if !kept_import_equals || !removed_import_equals {
@@ -9391,6 +9459,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
+            has_esm_syntax: self.has_esm_syntax,
+            jsx_pragmas: self.lexer.jsx_pragma.to_ast(),
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,
@@ -9710,6 +9780,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            has_esm_syntax: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
@@ -9729,6 +9800,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_meta_ref: Ref::NONE,
             hmr_api_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
+            create_require_refs: Vec::new(),
+            node_module_refs: Vec::new(),
+            own_require_refs: Vec::new(),
+            single_argument_identifier_calls: Vec::new(),
             in_branch_condition: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,
@@ -9789,6 +9864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
+            is_after_jump: false,
             track_scope_uses,
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),

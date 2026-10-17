@@ -80,6 +80,7 @@ pub mod fs {
     // `readdir` appender (`FilenameStoreAppender`). A second declaration here
     // would be a separate store that `exists`/`as_interned` cannot see into.
     pub use crate::fs_full::filename_store_backing;
+    pub use crate::fs_full::{DirectoryListingSource, set_directory_listing_source};
 
     /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
     pub struct DirnameStore(());

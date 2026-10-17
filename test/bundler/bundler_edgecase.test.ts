@@ -4293,6 +4293,50 @@ describe("bundler", () => {
     },
     run: { stdout: "m user" },
   });
+
+  for (const splitting of [false, true]) {
+    itBundled(`edgecase/ImportCycleKeepsEvaluationOrder${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as all from "./barrel.ts";
+          console.log(all.atLoad, all.mentionsDebug(), all.ranAtLoad);
+        `,
+        "/barrel.ts": /* ts */ `
+          export * from "./core.ts";
+          export * from "./debug.ts";
+          export * from "./later.ts";
+        `,
+        "/core.ts": /* ts */ `
+          import { debugValue, laterValue } from "./barrel.ts";
+          export function mentionsDebug() {
+            return debugValue();
+          }
+          export const mentionsLater = () => laterValue;
+          const hasOwnProperty = Object.prototype.hasOwnProperty;
+          export function hasProperty(object: object, key: string) {
+            return hasOwnProperty.call(object, key);
+          }
+        `,
+        "/debug.ts": /* ts */ `
+          import { hasProperty } from "./barrel.ts";
+          export function debugValue() {
+            return 1;
+          }
+          export const atLoad = hasProperty({ a: 1 }, "a");
+        `,
+        "/later.ts": /* ts */ `
+          import { atLoad, mentionsLater } from "./barrel.ts";
+          export const laterValue = "later";
+          export const ranAtLoad = String(atLoad) + " " + mentionsLater();
+        `,
+      },
+      splitting,
+      format: "esm",
+      target: "bun",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "true 1 true later" },
+    });
+  }
 });
 
 for (const backend of ["api", "cli"] as const) {

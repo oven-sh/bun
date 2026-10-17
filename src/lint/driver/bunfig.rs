@@ -705,6 +705,7 @@ const LINT: Table = Table {
         b"exit-on-fatal-error",
         b"allow-unsupported",
         b"type-aware",
+        b"aot",
         b"infer-globals",
         b"tsconfig",
         b"project",

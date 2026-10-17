@@ -1,0 +1,9 @@
+{
+ "in-remembered-and-arrays-made": "all agree",
+ "missing-properties-and-native-accessors-remembered": "all agree",
+ "objects-made-and-stored-to": "all agree",
+ "one-value-asked": "all agree",
+ "strings-joined": "all agree",
+ "two-values-asked": "all agree",
+ "undefined-nan-and-infinity-shadowed": "alone: evalDeclares \"[\\\"by eval\\\",1]\" TEXT AND COMPILED DIFFER: THROWS SyntaxError\nstoreStrict \"\\\"TypeError\\\"\" alike"
+}

@@ -1,0 +1,20 @@
+fib 0 1 6765
+total of the data 6
+total of what was stored 14850 0,3,6
+div 3 -3 WebAssembly.RuntimeError: Division by zero WebAssembly.RuntimeError: Integer overflow
+rem 1 5 WebAssembly.RuntimeError: Division by zero
+trap WebAssembly.RuntimeError: Unreachable code should not be executed
+forever RangeError: Maximum call stack size exceeded.
+and after it 55
+choose -1,-1,100,101,104,109,116,125,136,149,164,181,200,221,-1,-1,-1
+load 1 0 WebAssembly.RuntimeError: Out of bounds memory access WebAssembly.RuntimeError: Out of bounds memory access WebAssembly.RuntimeError: Out of bounds memory access
+far 0 WebAssembly.RuntimeError: Out of bounds memory access WebAssembly.RuntimeError: Out of bounds memory access
+size 1 grow 1 3 -1 3 196608
+behind the old end 0 0 WebAssembly.RuntimeError: Out of bounds memory access
+fill and copy 0,0,7,7,7,7,1,0,0,0,0,0
+WebAssembly.RuntimeError: Out of bounds memory access WebAssembly.RuntimeError: Out of bounds memory access undefined
+math 1.5375339059327375 -2.388574126990175 NaN NaN -9.990000000000001e+299
+wide 2623536934927580160 9182379272246532375 -327942116865947577
+count 42 43 44
+trunc 3 -3 WebAssembly.RuntimeError: Out of bounds Trunc operation WebAssembly.RuntimeError: Out of bounds Trunc operation WebAssembly.RuntimeError: Out of bounds Trunc operation 2147483647
+bits 2105344 7969 -33 504498184

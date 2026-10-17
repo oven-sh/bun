@@ -4660,6 +4660,98 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "aot",
+          "description": "Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-explain",
+          "description": "With --aot: print a report. --aot-explain=throws lists every type check that can fail when the program runs",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-type-errors",
+          "description": "With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-huge-heap",
+          "description": "With --aot: let each thread have more than 32 GB of objects. The executable uses more memory and runs slower",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-deny",
+          "description": "With --aot: fail where a rule finds something. --aot-deny=untyped-file,open-layout, or all",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-warn",
+          "description": "With --aot: the same, as warnings",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-allow",
+          "description": "With --aot: turn a rule off. Of two flags that name the same rule and file, the later one counts",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-baseline",
+          "description": "With --aot: a file with the number of findings per rule and file that are accepted",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-update-baseline",
+          "description": "With --aot-baseline: write the file anew from this build",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "compile-function-source",
+          "description": "With --compile --aot: keep the source text that Function.prototype.toString() returns (default: true)",
+          "hasValue": false,
+          "defaultValue": "true",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-compile-function-source",
+          "description": "With --compile --aot: omit that source text; toString() on a compiled function returns [native code]",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dts",
+          "description": "Write TypeScript declaration files (.d.ts) to --outdir. Implies --check. --dts=sound also writes each output file with its types kept, for --aot",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [],

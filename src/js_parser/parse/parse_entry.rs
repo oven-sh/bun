@@ -135,6 +135,8 @@ pub struct Options<'a> {
     pub module_type: options::ModuleType,
     /// The source is one of JavaScriptCore's builtins: `@name` is a name.
     pub jsc_builtin_syntax: bool,
+    /// The source is a file of `src/js`: see `crate::builtin_syntax`.
+    pub bun_builtin_syntax: bool,
     pub output_format: options::Format,
 
     pub transform_only: bool,
@@ -142,6 +144,10 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
+    pub inline_import_meta_paths: bool,
+    pub defers_import_assignment_errors: bool,
+    pub compiles_ahead_of_time: bool,
+    pub keeps_reexport_only_modules: bool,
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
@@ -187,10 +193,15 @@ impl<'a> Default for Options<'a> {
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
+            bun_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            inline_import_meta_paths: false,
+            defers_import_assignment_errors: false,
+            keeps_reexport_only_modules: false,
+            compiles_ahead_of_time: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
@@ -263,6 +274,7 @@ impl<'a> Options<'a> {
                 lower_using: f.lower_using,
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
+                audited: f.audited,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
             },
@@ -275,10 +287,15 @@ impl<'a> Options<'a> {
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
             jsc_builtin_syntax: self.jsc_builtin_syntax,
+            bun_builtin_syntax: self.bun_builtin_syntax,
             output_format: self.output_format,
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            inline_import_meta_paths: self.inline_import_meta_paths,
+            defers_import_assignment_errors: self.defers_import_assignment_errors,
+            compiles_ahead_of_time: self.compiles_ahead_of_time,
+            keeps_reexport_only_modules: self.keeps_reexport_only_modules,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
@@ -350,10 +367,15 @@ impl<'a> Options<'a> {
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
+            bun_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            inline_import_meta_paths: false,
+            defers_import_assignment_errors: false,
+            keeps_reexport_only_modules: false,
+            compiles_ahead_of_time: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
@@ -383,6 +405,7 @@ impl<'a> Parser<'a> {
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
+        lexer.bun_builtin_syntax = options.bun_builtin_syntax;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
@@ -958,10 +981,15 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
+        if p.options.bun_builtin_syntax {
+            p.finish_builtin_module(stmts);
+        }
+
         // A second guard dropped at end of `_parse` restores the previous action.
         let _visit_action_guard =
             bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
 
+        p.has_esm_syntax = p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0;
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
@@ -1221,6 +1249,12 @@ impl<'a> Parser<'a> {
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
         let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
+
+        for (callee, argument) in core::mem::take(&mut p.single_argument_identifier_calls) {
+            if p.own_require_refs.iter().any(|own| own.eql(callee)) {
+                p.add_referenced_files_in(&argument);
+            }
+        }
 
         let mut uses_dirname =
             p.symbols.as_slice()[p.dirname_ref.inner_index() as usize].use_count_estimate > 0;
@@ -1675,6 +1709,7 @@ impl<'a> Parser<'a> {
                                 };
                                 if let Some(id) = redirect_import_record_index
                                     && !p.options.is_entry_point
+                                    && !p.options.keeps_reexport_only_modules
                                 {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {

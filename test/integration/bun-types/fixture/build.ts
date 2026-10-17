@@ -24,6 +24,22 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: { aot: true, aotTypeErrors: "log", aotExplain: ["throws", "throws-all-json"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotTypeErrors: "throw", aotExplain: "throws-json" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotTypeErrors: "warn" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   plugins: [
     {
       name: "my-terrible-plugin",

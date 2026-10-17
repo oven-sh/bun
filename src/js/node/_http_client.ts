@@ -12,9 +12,9 @@ const {
   HTTPParser,
   calculateLenientFlags,
   prepareError,
-  kSkipPendingData,
 } = require("node:_http_common");
-const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
+const { parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
+const { kSkipPendingData, kUniqueHeaders } = require("internal/http");
 const Agent = require("node:_http_agent");
 const { urlToHttpOptions } = require("internal/url");
 const {

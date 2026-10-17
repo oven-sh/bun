@@ -1491,6 +1491,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => self.flow_heritage(),
             false => IdList::EMPTY,
         };
+        let body_pos = self.pos();
         let members = self.flow_object_type_members(Body::Class);
         let modifiers = self.take_modifiers(base);
         let class = self.f.add_class(Class {
@@ -1505,6 +1506,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             other_implements,
             members,
             start: start.pos,
+            body_pos,
             modifiers,
         });
         self.add_stmt(StmtKind::Class(class), start, modifiers)
@@ -2191,6 +2193,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => self.flow_heritage(),
             false => IdList::EMPTY,
         };
+        let body_pos = self.pos();
         self.expect(T::OpenBrace);
         self.classes_around += 1;
         let first = self.s.members.len();
@@ -2213,6 +2216,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             other_implements: IdList::EMPTY,
             members,
             start: start.pos,
+            body_pos,
             modifiers,
         });
         self.add_stmt(StmtKind::Class(class), start, modifiers)

@@ -1,0 +1,2 @@
+typed code only: 6 n2.5
+required property is missing: THROWS TypeError

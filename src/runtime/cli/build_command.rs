@@ -62,6 +62,12 @@ impl BuildCommand {
             long_running: true,
             ..Default::default()
         });
+        if ctx.bundler_options.compile && ctx.bundler_options.aot {
+            bun_alloc::mimalloc::mi_option_set_default(
+                bun_alloc::mimalloc::Option::hand_out_last_freed,
+                1,
+            );
+        }
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
@@ -82,9 +88,23 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
-        let compile_target = &ctx.bundler_options.compile_target;
+        if ctx.bundler_options.compile
+            && ctx.bundler_options.aot
+            && !ctx.bundler_options.compile_run
+        {
+            match expand_entry_point_patterns(&ctx.args.entry_points) {
+                Ok(entry_points) => ctx.args.entry_points = entry_points,
+                Err(message) => {
+                    Output::err_generic("{}", (message.as_str(),));
+                    Global::exit(1);
+                }
+            }
+        }
 
-        if ctx.bundler_options.compile {
+        let compile_target = &ctx.bundler_options.compile_target;
+        let runs_in_place = ctx.bundler_options.compile_run || ctx.bundler_options.compile_in_place;
+
+        if ctx.bundler_options.compile && !runs_in_place {
             let compile_define_keys = compile_target.define_keys();
             let compile_define_values = compile_target.define_values();
 
@@ -151,24 +171,120 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
-        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+        if ctx.bundler_options.dts
+            && (ctx.bundler_options.outdir.is_empty() || ctx.bundler_options.compile)
+        {
+            Output::err_generic(
+                "--dts requires --outdir, and cannot be used with --compile",
+                (),
+            );
+            Global::exit(1);
+        }
+        let skips_sound_files_for = {
+            let options = &ctx.bundler_options;
+            let unsupported = [
+                (
+                    options.minify_syntax
+                        || options.minify_whitespace
+                        || options.minify_identifiers,
+                    "--minify",
+                ),
+                (options.code_splitting, "--splitting"),
+                (
+                    options.output_format != options::Format::Esm,
+                    "--format other than esm",
+                ),
+                (
+                    ctx.args.source_map == Some(api::SourceMapMode::Inline),
+                    "--sourcemap=inline",
+                ),
+            ];
+            unsupported
+                .iter()
+                .find(|(is_set, _)| *is_set && options.dts)
+                .map(|(_, option)| *option)
+        };
+        let writes_sound_files = ctx.bundler_options.dts && skips_sound_files_for.is_none();
+        this_transpiler.options.skips_sound_files_for = skips_sound_files_for;
+        let mut declaration_files: options::DeclarationFiles = Vec::new();
+        let mut module_types = None;
+        if (ctx.bundler_options.check || ctx.bundler_options.dts)
+            && ctx.bundler_options.transform_only
+        {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
+                defines: &[],
+                features: &mut std::iter::empty(),
+                dropped_imports: &mut std::iter::empty(),
+                side_effect_free_files: &mut std::iter::empty(),
+                lifted_commonjs: &mut std::iter::empty(),
+                kinds: &mut std::iter::empty(),
+                statements: &mut std::iter::empty(),
+                texts: &mut std::iter::empty(),
+                assets: &mut std::iter::empty(),
+                has_late_strings: false,
                 cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
+                own_entry_points: &mut core::iter::empty(),
                 sources: &mut core::iter::empty(),
+                imports: &mut core::iter::empty(),
+                rewrite_jest_for_tests: false,
+                ignore_dce_annotations: false,
+                jsx_side_effects: false,
+                minify_syntax: false,
+                minifies_identifiers: false,
+                preserve_source_paths: false,
+                react_compiler_outputs: bun_bundler::options::DeferredReactCompilerOutputs::none(),
+                jsx: &mut core::iter::empty(),
+                classes: &mut core::iter::empty(),
+                function_sources: None,
+                function_source_printing: Default::default(),
+                explain: &[],
+                explain_to_log: false,
+                rules: &[],
+                logs_type_errors: false,
+                early_analysis: None,
+                early_sources: None,
+                release_asts: &mut || {},
             };
-            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+            let is_checked = match ctx.bundler_options.dts {
+                true if writes_sound_files => {
+                    this_transpiler.options.write_sound_files =
+                        Some(crate::cli::check_command::sound_files_for_build);
+                    let declarations =
+                        crate::cli::check_command::sound_declarations_for_build(checked, log_ref);
+                    declarations
+                        .map(|declarations| {
+                            (declaration_files, module_types) =
+                                (declarations.files, declarations.module_types)
+                        })
+                        .is_some()
+                }
+                true => crate::cli::check_command::declarations_for_build_command(checked, log_ref)
+                    .map(|declarations| declaration_files = declarations.files)
+                    .is_some(),
+                false => crate::cli::check_command::check_for_build_command(checked, log_ref),
+            };
+            if !is_checked {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
+        } else if writes_sound_files {
+            this_transpiler.options.emit_declarations =
+                Some(crate::cli::check_command::sound_declarations_for_build);
+            this_transpiler.options.write_sound_files =
+                Some(crate::cli::check_command::sound_files_for_build);
+            this_transpiler.options.rolls_up_declarations = ctx.bundler_options.root_dir.is_empty();
+        } else if ctx.bundler_options.dts {
+            this_transpiler.options.emit_declarations =
+                Some(crate::cli::check_command::declarations_for_build_command);
         } else if ctx.bundler_options.check {
             this_transpiler.options.type_check =
                 Some(crate::cli::check_command::check_for_build_command);
@@ -176,6 +292,13 @@ impl BuildCommand {
 
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
+        if writes_sound_files
+            && !ctx.bundler_options.transform_only
+            && this_transpiler.options.source_map == options::SourceMapOption::None
+        {
+            this_transpiler.options.source_map = options::SourceMapOption::External;
+            this_transpiler.options.drops_source_maps = true;
+        }
 
         this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
             options::CompileMode::Executable
@@ -276,6 +399,34 @@ impl BuildCommand {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+        this_transpiler.options.aot = ctx.bundler_options.aot;
+        this_transpiler
+            .options
+            .aot_explain
+            .clone_from(&ctx.bundler_options.aot_explain);
+        this_transpiler
+            .options
+            .aot_rules
+            .clone_from(&ctx.bundler_options.aot_rules);
+        this_transpiler.options.aot_logs_type_errors = ctx.bundler_options.aot_logs_type_errors;
+        this_transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
+        if ctx.bundler_options.compile && !ctx.bundler_options.compile_run {
+            bun_standalone_module_graph::StandaloneModuleGraph::start_copying_template(
+                &ctx.bundler_options.compile_target,
+                ctx.bundler_options.compile_executable_path.as_deref(),
+            );
+        }
+        this_transpiler.options.typed_package =
+            Some(bun_sema_driver::typed_packages::typed_package);
+        this_transpiler.options.preserve_source_paths = runs_in_place;
+        this_transpiler.options.compile_function_source =
+            ctx.bundler_options.compile_function_source;
+        // What is run from its sources finds out that a module is missing when it asks for it, if it ever does.
+        if runs_in_place {
+            this_transpiler.options.ignore_module_resolution_errors = true;
+            this_transpiler.resolver.prefer_module_field = false;
+        }
+        this_transpiler.options.rewrite_jest_for_tests = ctx.bundler_options.rewrite_jest_for_tests;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
         this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;
         this_transpiler
@@ -474,7 +625,11 @@ impl BuildCommand {
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
-        this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
+        this_transpiler.options.env.behavior = if runs_in_place {
+            api::DotEnvBehavior::LoadAllWithoutInlining
+        } else {
+            ctx.bundler_options.env_behavior
+        };
         this_transpiler
             .options
             .env
@@ -489,9 +644,22 @@ impl BuildCommand {
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
 
+        if ctx.bundler_options.compile && this_transpiler.options.compiles_ahead_of_time() {
+            if let Some(why) = crate::cli::aot::why_cannot_be_carried(
+                &ctx.bundler_options.compile_target,
+                // SAFETY: `env` is a process-lifetime singleton.
+                unsafe { &mut *this_transpiler.env },
+                ctx.bundler_options.compile_executable_path.as_deref(),
+            ) {
+                Output::err_generic("--aot: {}", format_args!("{}", bstr::BStr::new(&why)));
+                Global::exit(1);
+            }
+        }
+
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
             && ctx.bundler_options.bytecode
+            && !this_transpiler.options.compiles_ahead_of_time()
             && (!ctx.bundler_options.compile_target.is_default()
                 || ctx.bundler_options.compile_executable_path.is_some())
         {
@@ -512,7 +680,7 @@ impl BuildCommand {
             options::CompileTargetBuiltins::Host
         };
 
-        if !this_transpiler.options.production {
+        if !this_transpiler.options.production && !runs_in_place {
             this_transpiler
                 .options
                 .conditions
@@ -594,7 +762,97 @@ impl BuildCommand {
                     }
                 }
 
-                break 'brk result.output_files.into_vec();
+                let mut output_files = result.output_files.into_vec();
+                let entry_points: Vec<Box<[u8]>> = output_files
+                    .iter()
+                    .map(|file| Box::from(file.src_path.text))
+                    .collect();
+                for (source, text) in declaration_files
+                    .drain(..)
+                    .filter(|(source, _)| entry_points.contains(source))
+                {
+                    if let Some(path) = options::OutputFile::declaration_path(
+                        &this_transpiler.options.root_dir,
+                        &source,
+                    ) {
+                        output_files
+                            .push(options::OutputFile::declaration(&source, path, text, false));
+                    }
+                }
+                if let Some(option) = skips_sound_files_for {
+                    log_ref.add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{}: it does not support {option} yet",
+                            options::SKIPPED_SOUND_FILES
+                        ),
+                    );
+                }
+                if let Some(write_sound_files) = this_transpiler.options.write_sound_files {
+                    use bun_paths::resolve_path::{join_abs_string, platform::Auto};
+                    let cwd = bun_resolver::fs::FileSystem::instance().top_level_dir;
+                    let outdir: Vec<u8> =
+                        join_abs_string::<Auto>(cwd, &[&ctx.bundler_options.outdir]).to_vec();
+                    let transformed: Vec<(Vec<u8>, &options::OutputFile, &options::OutputFile)> =
+                        (output_files.iter())
+                            .filter_map(|file| {
+                                Some((
+                                    join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec(),
+                                    file,
+                                    output_files.get(file.source_map_index as usize)?,
+                                ))
+                            })
+                            .collect();
+                    let written: Vec<options::WrittenJavaScript<'_>> = (transformed.iter())
+                        .map(|(path, file, source_map)| options::WrittenJavaScript {
+                            path,
+                            text: file.value.as_slice(),
+                            source_map: source_map.value.as_slice(),
+                            entry_point: None,
+                        })
+                        .collect();
+                    let request = options::SoundFilesRequest {
+                        cwd,
+                        tsconfig: ctx.args.tsconfig_override.as_deref(),
+                        conditions: &ctx.args.conditions,
+                        loaders: &this_transpiler.options.loaders,
+                        outdir: &outdir,
+                        written: &written,
+                        module_types: module_types.as_deref(),
+                        rolls_up_declarations: false,
+                        keeps_modules_apart: true,
+                    };
+                    let typed = write_sound_files(&request, log_ref);
+                    drop(written);
+                    drop(transformed);
+                    for file in output_files.iter_mut() {
+                        file.source_map_index = u32::MAX;
+                    }
+                    output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
+                    let inside_outdir =
+                        |path: &[u8]| options::OutputFile::path_inside(&outdir, path);
+                    for file in typed.sound_files {
+                        let beside = inside_outdir(&file.declaration_file);
+                        let declarations = output_files.iter_mut().find(|written| {
+                            written.output_kind == options::OutputKind::Declaration
+                                && written.dest_path == beside
+                        });
+                        let Some(options::OutputFileValue::Buffer { bytes }) =
+                            declarations.map(|written| &mut written.value)
+                        else {
+                            continue;
+                        };
+                        *bytes = [&file.mark[..], &bytes[..]].concat().into_boxed_slice();
+                        output_files.push(options::OutputFile::sound(
+                            &file.path,
+                            inside_outdir(&file.path),
+                            file.text,
+                            false,
+                        ));
+                    }
+                }
+                break 'brk output_files;
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -731,6 +989,7 @@ impl BuildCommand {
                 &ctx.bundler_options.compile_assets,
                 compile_outfile(outfile),
                 &mut output_files,
+                ctx.bundler_options.compile_in_place,
             ) {
                 Output::err_generic("{}", (msg.as_str(),));
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
@@ -819,14 +1078,16 @@ impl BuildCommand {
             }
 
             if ctx.bundler_options.compile {
-                print_summary(
-                    bundled_end,
-                    minify_duration,
-                    opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
-                    input_code_length as usize,
-                    reachable_file_count,
-                    output_files,
-                );
+                if !ctx.bundler_options.compile_run {
+                    print_summary(
+                        bundled_end,
+                        minify_duration,
+                        opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
+                        input_code_length as usize,
+                        reachable_file_count,
+                        output_files,
+                    );
+                }
 
                 Output::flush();
 
@@ -855,6 +1116,111 @@ impl BuildCommand {
                     }
                 }
 
+                let graph_flags = {
+                    use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                    let mut flags = Flags::default();
+                    if !ctx.bundler_options.compile_autoload_dotenv {
+                        flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
+                    }
+                    if !ctx.bundler_options.compile_autoload_bunfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_tsconfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_package_json {
+                        flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                    }
+                    if ctx.bundler_options.compile_in_place {
+                        flags |= Flags::PRESERVES_SOURCE_PATHS;
+                    }
+                    flags
+                };
+                let graph_runtime_options =
+                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
+                        jit_policy: ctx.bundler_options.compile_jit_policy,
+                        crash_if_interpreter_is_used: ctx
+                            .bundler_options
+                            .aot_crash_if_interpreter_is_used,
+                    };
+                let compile_exec_argv = ctx
+                    .bundler_options
+                    .compile_exec_argv
+                    .as_deref()
+                    .unwrap_or(b"");
+                #[cfg(windows)]
+                if ctx.bundler_options.compile_run {
+                    let handle = ctx.bundler_options.compile_run_args.iter().find_map(|arg| {
+                        core::str::from_utf8(arg.strip_prefix(b"--aot-graph-fd=")?)
+                            .ok()?
+                            .parse::<isize>()
+                            .ok()
+                    });
+                    let Some(handle) = handle else {
+                        Output::print_errorln(format_args!(
+                            "--compile-run needs --aot-graph-fd on Windows"
+                        ));
+                        Global::exit(1);
+                    };
+                    if let Err(err) =
+                        bun_standalone_module_graph::StandaloneModuleGraph::to_graph_fd(
+                            compile_target,
+                            output_files,
+                            &opt_public_path,
+                            opt_output_format,
+                            compile_exec_argv,
+                            graph_flags,
+                            graph_runtime_options,
+                            bun_sys::Fd::from_system(handle as *mut core::ffi::c_void),
+                        )
+                    {
+                        Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                        Global::exit(1);
+                    }
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ))?;
+                    Output::flush();
+                    Global::exit(0);
+                }
+                #[cfg(unix)]
+                if ctx.bundler_options.compile_run {
+                    let fd = match bun_standalone_module_graph::StandaloneModuleGraph::to_graph_fd(
+                        compile_target,
+                        output_files,
+                        &opt_public_path,
+                        opt_output_format,
+                        compile_exec_argv,
+                        graph_flags,
+                        graph_runtime_options,
+                    ) {
+                        Ok(fd) => fd,
+                        Err(err) => {
+                            Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                            Global::exit(1);
+                        }
+                    };
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ))?;
+                    Output::flush();
+                    let graph_fd = format!("--aot-graph-fd={}", fd.native());
+                    let args: Vec<&[u8]> = ctx
+                        .bundler_options
+                        .compile_run_args
+                        .iter()
+                        .map(|arg| match &**arg {
+                            b"--aot-graph-fd=" => graph_fd.as_bytes(),
+                            arg => arg,
+                        })
+                        .collect();
+                    let errno = bun_core::exec_self(&args, Some(fd));
+                    Output::print_errorln(format_args!(
+                        "failed to run what was built: errno {errno}"
+                    ));
+                    Global::exit(1);
+                }
+
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,
@@ -865,31 +1231,10 @@ impl BuildCommand {
                     unsafe { &mut *env_ptr },
                     opt_output_format,
                     &ctx.bundler_options.windows,
-                    ctx.bundler_options
-                        .compile_exec_argv
-                        .as_deref()
-                        .unwrap_or(b""),
+                    compile_exec_argv,
                     ctx.bundler_options.compile_executable_path.as_deref(),
-                    {
-                        use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
-                        let mut flags = Flags::default();
-                        if !ctx.bundler_options.compile_autoload_dotenv {
-                            flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
-                        }
-                        if !ctx.bundler_options.compile_autoload_bunfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_tsconfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_package_json {
-                            flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
-                        }
-                        flags
-                    },
-                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
-                        jit_policy: ctx.bundler_options.compile_jit_policy,
-                    },
+                    graph_flags,
+                    graph_runtime_options,
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -1003,10 +1348,39 @@ impl BuildCommand {
                     }
                 );
 
+                let compiled_untyped = log_ref
+                    .msgs
+                    .iter()
+                    .filter(|msg| {
+                        matches!(
+                            msg.metadata,
+                            bun_ast::Metadata::TypeScript {
+                                code: 100009..=100011,
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                if compiled_untyped > 0 {
+                    bun_core::pretty!("  <r><yellow>{} compiled untyped<r>", compiled_untyped);
+                }
+
+                let bytes_left_out =
+                    bun_standalone_module_graph::StandaloneModuleGraph::bytes_left_out();
+                if bytes_left_out > 0 {
+                    bun_core::pretty!(
+                        "  <r><d>{:.1} MB of the runtime left out<r>",
+                        bytes_left_out as f64 / 1e6
+                    );
+                }
+
                 if is_cross_compile {
                     bun_core::pretty!(" <r><d>{}<r>\n", compile_target);
                 } else {
                     bun_core::pretty!("\n");
+                }
+                if let Some(line) = crate::cli::check_command::take_typedness_line() {
+                    bun_core::pretty!("<d>{}<r>", line);
                 }
 
                 Output::flush();
@@ -1070,10 +1444,12 @@ impl BuildCommand {
                         | options::OutputKind::BuiltinBytecode
                         | options::OutputKind::BytecodeStringTable
                         | options::OutputKind::BytecodePayload
+                        | options::OutputKind::AotImage
                         | options::OutputKind::ModuleInfoStringTable
                         | options::OutputKind::PrelinkedModuleGraph => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
+                        options::OutputKind::Declaration | options::OutputKind::Sound => "<d>",
                     }))?;
                 }
 
@@ -1120,10 +1496,13 @@ impl BuildCommand {
                         options::OutputKind::BuiltinBytecode => "builtin bytecode",
                         options::OutputKind::BytecodeStringTable => "bytecode strings",
                         options::OutputKind::BytecodePayload => "bytecode payload",
+                        options::OutputKind::AotImage => "machine code",
                         options::OutputKind::ModuleInfoStringTable => "module info strings",
                         options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
+                        options::OutputKind::Declaration => "declaration",
+                        options::OutputKind::Sound => "sound types",
                     }
                 )?;
                 if Output::enable_ansi_colors_stdout() {
@@ -1232,10 +1611,60 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
+/// With `--compile --aot` an entry point may be a pattern, as of `Bun.Glob`, from the working directory: `.next/server/**/*.js`.
+fn expand_entry_point_patterns(written: &[Box<[u8]>]) -> Result<Vec<Box<[u8]>>, String> {
+    use bun_glob::{BunGlobWalker, walk};
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let Ok(working_directory) = bun_core::getcwd(&mut cwd_buf) else {
+        return Err("failed to read the working directory".to_string());
+    };
+    let mut entry_points: Vec<Box<[u8]>> = Vec::with_capacity(written.len());
+    for entry_point in written {
+        if !strings::contains_any(entry_point, b"*{") {
+            entry_points.push(entry_point.clone());
+            continue;
+        }
+        let pattern = strings::remove_leading_dot_slash(entry_point);
+        let mut found: Vec<Box<[u8]>> = Vec::new();
+        // Files only, and what is in hidden folders too.
+        if let Ok(Ok(mut walker)) = BunGlobWalker::init_with_cwd(
+            pattern,
+            working_directory.as_bytes(),
+            true,
+            false,
+            false,
+            false,
+            true,
+            None,
+        ) {
+            let mut matches = walk::Iterator::new(&mut walker);
+            if matches!(matches.init(), Ok(Ok(()))) {
+                while let Ok(Ok(Some(path))) = matches.next() {
+                    found.push(
+                        [b"./".as_slice(), &path.into_vec()[..]]
+                            .concat()
+                            .into_boxed_slice(),
+                    );
+                }
+            }
+        }
+        if found.is_empty() {
+            return Err(format!(
+                "no file matches the entry point {}",
+                bun_fmt::quote(entry_point)
+            ));
+        }
+        found.sort_unstable();
+        entry_points.append(&mut found);
+    }
+    Ok(entry_points)
+}
+
 pub(crate) fn collect_compile_assets(
     assets: &[Box<[u8]>],
     outfile: &[u8],
     out: &mut Vec<options::OutputFile>,
+    in_place: bool,
 ) -> Result<(), String> {
     use bun_ast::Loader;
     use bun_collections::StringArrayHashMap;
@@ -1250,6 +1679,40 @@ pub(crate) fn collect_compile_assets(
     };
     let entry_name = bun_paths::basename(outfile);
 
+    let also_at_real_paths: Vec<Box<[u8]>>;
+    let assets = if in_place {
+        let mut all = assets.to_vec();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let mut absolute_buf = bun_paths::path_buffer_pool::get();
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        if let Ok(working_directory) = bun_core::getcwd(&mut cwd_buf) {
+            for asset in assets {
+                let Ok(real) = bun_sys::realpath(&bun_core::ZBox::from_bytes(asset), &mut real_buf)
+                else {
+                    continue;
+                };
+                let as_written = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                    working_directory.as_bytes(),
+                    &mut absolute_buf[..],
+                    &[&asset[..]],
+                );
+                let as_written = strings::without_trailing_slash(as_written);
+                let is_real = if cfg!(windows) {
+                    as_written.eq_ignore_ascii_case(real)
+                } else {
+                    as_written == real
+                };
+                if !is_real {
+                    all.push(Box::from(real));
+                }
+            }
+        }
+        also_at_real_paths = all;
+        &also_at_real_paths[..]
+    } else {
+        assets
+    };
+
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     for f in out.iter() {
         if !f.output_kind.is_file_in_standalone_mode() {
@@ -1260,6 +1723,9 @@ pub(crate) fn collect_compile_assets(
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
             if seen.contains_key(&dest) {
+                if in_place {
+                    return Ok(());
+                }
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",
                     bun_fmt::quote(asset),
@@ -1299,6 +1765,26 @@ pub(crate) fn collect_compile_assets(
                 bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
             );
         }
+        // In place a file is held at the path it has: `StandaloneModuleGraph::embedded_name`.
+        let mut absolute_buf = bun_paths::path_buffer_pool::get();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let held: Vec<u8>;
+        let base: &[u8] = if in_place {
+            let Ok(working_directory) = bun_core::getcwd(&mut cwd_buf) else {
+                return Err("failed to read the working directory".to_string());
+            };
+            let absolute = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                working_directory.as_bytes(),
+                &mut absolute_buf[..],
+                &[asset_trimmed],
+            );
+            let mut name = [b".held".as_slice(), absolute].concat();
+            resolve_path::platform_to_posix_in_place::<u8>(&mut name);
+            held = name;
+            &held
+        } else {
+            base
+        };
         if base == entry_name {
             return Err(format!(
                 "asset {} would embed at the same path as the entry point; use a different outfile",

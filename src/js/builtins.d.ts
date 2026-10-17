@@ -41,6 +41,8 @@ declare function $isPromiseRejected(promise: Promise<any>): boolean;
 declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
+/** Whether this code is compiled ahead of time. A define: the arm of `if (IS_BUN_AOT)` that is not taken is not in the build. */
+declare const IS_BUN_AOT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
@@ -184,6 +186,8 @@ declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
+declare function $likely<T>(value: T): T;
+declare function $unlikely<T>(value: T): T;
 declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
  * **NOTE** - use `throw new TypeError()` instead. it compiles to the same builtin

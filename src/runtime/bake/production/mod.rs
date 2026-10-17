@@ -763,9 +763,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         | OutputKind::BuiltinBytecode
                         | OutputKind::BytecodeStringTable
                         | OutputKind::BytecodePayload
+                        | OutputKind::AotImage
                         | OutputKind::ModuleInfoStringTable
                         | OutputKind::PrelinkedModuleGraph => {}
-                        OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
+                        OutputKind::MetafileJson
+                        | OutputKind::MetafileMarkdown
+                        | OutputKind::Declaration
+                        | OutputKind::Sound => {}
                     }
                 }
             }

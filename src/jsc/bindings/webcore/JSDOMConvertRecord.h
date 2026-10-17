@@ -28,6 +28,7 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
+#include <JavaScriptCore/AOTFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
@@ -192,6 +193,37 @@ private:
             }
 
             return result;
+        }
+
+        if (object->type() == JSC::ObjectType) {
+            Vector<JSC::Identifier, 8> identifiers;
+            JSC::MarkedArgumentBuffer fieldValues;
+            bool hasOnlyPrimitives = true;
+            bool isCompiledObject = JSC::AOT::Typed::forEachCompiledObjectOwnProperty(object, [&](UniquedStringImpl& name, JSC::JSValue fieldValue) {
+                identifiers.append(JSC::Identifier::fromUid(vm, &name));
+                fieldValues.appendWithCrashOnOverflow(fieldValue);
+                hasOnlyPrimitives &= !fieldValue.isObject();
+                return true;
+            });
+            if (isCompiledObject && hasOnlyPrimitives) {
+                for (size_t i = 0; i < identifiers.size(); ++i) {
+                    auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifiers[i]);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto typedValue = Converter<V>::convert(lexicalGlobalObject, fieldValues.at(i), args...);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if constexpr (std::is_same_v<K, IDLUSVString>) {
+                        if (!typedKey.is8Bit()) {
+                            auto addResult = resultMap.add(typedKey, result.size());
+                            if (!addResult.isNewEntry) {
+                                result[addResult.iterator->value].value = WTF::move(typedValue);
+                                continue;
+                            }
+                        }
+                    }
+                    result.append({ WTF::move(typedKey), WTF::move(typedValue) });
+                }
+                return result;
+            }
         }
 
         // 4. Let keys be ? O.[[OwnPropertyKeys]]().

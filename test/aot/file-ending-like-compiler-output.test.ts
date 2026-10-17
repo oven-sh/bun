@@ -1,0 +1,53 @@
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
+import { test } from "./supported";
+
+const programs = {
+  "without a direct eval": `function f() { return 1; }
+console.log(String(f));
+console.log(f());
+`,
+  "with a direct eval": `function f() { return 1; }
+function g() { return eval("f()") + 1; }
+console.log(String(f));
+console.log(String(g));
+console.log(g());
+`,
+};
+const endings = {
+  "nothing": "",
+  "a list of insertions": "// 0+9 (bun --aot: where direct evals were given their scopes)",
+  "a word on its encoding": "// bun --aot: this file is not UTF-8: read as the runtime reads it",
+};
+
+async function run(cwd: string, cmd: string[]) {
+  await using ran = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+for (const [kind, program] of Object.entries(programs)) {
+  for (const [ending, last] of Object.entries(endings)) {
+    test(`a file ${kind} that ends with ${ending} answers as under plain Bun`, async () => {
+      using dir = tempDir("aot-words-of-the-compiler", { "main.js": program + last });
+      const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
+      const built = await run(String(dir), [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "./main.js",
+        "--outfile",
+        outfile,
+      ]);
+      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
+      const plain = await run(String(dir), [bunExe(), "run", "./main.js"]);
+      expect(plain.stdout).toContain("return 1;");
+      expect(await run(String(dir), [outfile])).toEqual(plain);
+    }, 120_000);
+  }
+}

@@ -1,0 +1,160 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { unsupported, withoutCoreDump } from "./run-programs";
+
+const programs = join(import.meta.dir, "without-executable-memory");
+const control = "asks-for-executable-memory";
+const counts = "regions-for-generated-code";
+const names = readdirSync(programs)
+  .filter(name => name.endsWith(".ts"))
+  .map(name => name.slice(0, -3))
+  .filter(name => name !== control)
+  .sort();
+
+const hasLinuxKernel = isLinux || isAndroid;
+
+const refusesOnLinux = `import { dlopen, FFIType, ptr } from "bun:ffi";
+const libc = dlopen(${JSON.stringify(hasLinuxKernel ? libcPathForDlopen() : "")}, {
+  prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+  execv: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+});
+const load = 0x20, jumpIfEqual = 0x15, jumpIfAnyBitSet = 0x45, answer = 0x06;
+const allow = 0x7fff0000, permissionDenied = process.argv[3] === "refuse" ? 0x00050000 | 13 : 0x80000000;
+const systemCall = 0, architecture = 4, protection = 32, flags = 40;
+const [thisArchitecture, mmap, mprotect, pkeyMprotect] = process.arch === "arm64" ? [0xc00000b7, 222, 226, 288] : [0xc000003e, 9, 10, 329];
+const instructions = [
+  [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
+  [load, 0, 0, systemCall],
+  [jumpIfEqual, 0, 5, mmap],
+  [load, 0, 0, protection], [jumpIfAnyBitSet, 0, 8, 4],
+  [load, 0, 0, flags], [jumpIfAnyBitSet, 0, 6, 0x20], [answer, 0, 0, permissionDenied],
+  [jumpIfEqual, 1, 0, mprotect], [jumpIfEqual, 0, 3, pkeyMprotect],
+  [load, 0, 0, protection], [jumpIfAnyBitSet, 0, 1, 4], [answer, 0, 0, permissionDenied],
+  [answer, 0, 0, allow],
+];
+const filter = new Uint8Array(instructions.length * 8);
+const view = new DataView(filter.buffer);
+instructions.forEach(([code, ifTrue, ifFalse, operand], i) => {
+  view.setUint16(i * 8, code, true);
+  view.setUint8(i * 8 + 2, ifTrue);
+  view.setUint8(i * 8 + 3, ifFalse);
+  view.setUint32(i * 8 + 4, operand, true);
+});
+const filterProgram = new BigUint64Array([BigInt(instructions.length), BigInt(ptr(filter))]);
+const path = Buffer.from(process.argv[2] + "\\0");
+const argv = new BigUint64Array([BigInt(ptr(path)), 0n]);
+const setNoNewPrivileges = 38, setSeccomp = 22, filterMode = 2;
+if (libc.symbols.prctl(setNoNewPrivileges, 1, 0, 0, 0)) throw new Error("PR_SET_NO_NEW_PRIVS was refused");
+if (libc.symbols.prctl(setSeccomp, filterMode, ptr(filterProgram), 0, 0)) throw new Error("the filter was refused");
+libc.symbols.execv(ptr(path), ptr(argv));
+throw new Error("execv failed");
+`;
+
+async function run(cmd: string[], cwd?: string) {
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+
+const tsconfigWithTypesOfBun = JSON.stringify({
+  compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] },
+});
+
+async function build(name: string, directory: string) {
+  const executable = join(directory, name);
+  await Bun.write(executable + ".ts", Bun.file(join(programs, name + ".ts")));
+  await Bun.write(join(directory, "tsconfig.json"), tsconfigWithTypesOfBun);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", executable + ".ts", "--outfile", executable],
+    directory,
+  );
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+  return executable;
+}
+
+const isSupported = !unsupported;
+
+async function whereItIsRefused(executable: string, directory: string, onLinux: "refuse" | "kill" = "kill") {
+  if (hasLinuxKernel) return run(withoutCoreDump([bunExe(), join(directory, "refuses.ts"), executable, onLinux]));
+  const signed = await run(["codesign", "--force", "--sign", "-", "--options", "runtime", executable]);
+  expect(signed.exitCode).toBe(0);
+  return run([executable]);
+}
+
+// A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so nothing can be shown.
+async function isRefusedNowhere() {
+  if (!isMacOS || !isSupported) return false;
+  using dir = tempDir("aot-without-executable-memory-control", {});
+  return (await whereItIsRefused(await build(control, String(dir)), String(dir))).stdout === "granted\n";
+}
+const refusedNowhere = await isRefusedNowhere();
+if (refusedNowhere)
+  console.error(
+    "SKIPPED: test/aot/without-executable-memory.test.ts: this machine does not enforce the hardened runtime: an executable signed with it, without the entitlement, is granted memory for generated code",
+  );
+
+if (isWindows)
+  console.error(
+    "SKIPPED: test/aot/without-executable-memory.test.ts: nothing here refuses executable memory on Windows, where Arbitrary Code Guard would, and there an executable makes its own code executable with VirtualProtect",
+  );
+
+describe.skipIf(!isSupported || refusedNowhere || isWindows)(
+  "an executable needs no permission to make memory executable",
+  () => {
+    test("the control: what asks for executable memory gets it, and is refused it there", async () => {
+      using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refusesOnLinux });
+      const executable = await build(control, String(dir));
+      expect(await run([executable])).toEqual({ stdout: "granted\n", stderr: "", exitCode: 0, signalCode: null });
+      expect(await whereItIsRefused(executable, String(dir), "refuse")).toEqual({
+        stdout: "refused\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+      if (hasLinuxKernel)
+        expect(await whereItIsRefused(executable, String(dir))).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
+    }, 120_000);
+
+    test("an executable has no region for generated code, and the same program with the JIT has", async () => {
+      using dir = tempDir("aot-without-executable-memory", {});
+      expect(await run([await build(counts, String(dir))])).toEqual({
+        stdout: "0\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+      const withTheJIT = join(String(dir), "with-the-jit");
+      const built = await run(
+        [bunExe(), "build", "--compile", join(String(dir), counts + ".ts"), "--outfile", withTheJIT],
+        String(dir),
+      );
+      expect(built.exitCode).toBe(0);
+      expect(Number((await run([withTheJIT])).stdout)).toBeGreaterThan(0);
+    }, 120_000);
+
+    test.each(names)(
+      "%s",
+      async name => {
+        using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refusesOnLinux });
+        const executable = await build(name, String(dir));
+        const free = await run([executable]);
+        expect({ stderr: free.stderr, exitCode: free.exitCode, signalCode: free.signalCode }).toEqual({
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+        expect(free.stdout).not.toBe("");
+        expect(await whereItIsRefused(executable, String(dir))).toEqual(free);
+      },
+      120_000,
+    );
+  },
+);

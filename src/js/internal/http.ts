@@ -44,6 +44,7 @@ const kRequest = Symbol("request");
 const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
+const kResumeUnlessFlowing = Symbol("kResumeUnlessFlowing");
 // Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
 const kRememberPeer = Symbol("kRememberPeer");
 // Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
@@ -118,8 +119,9 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
 }
 
 function callCloseCallback(self) {
-  if (self[kCloseCallback]) {
-    self[kCloseCallback]();
+  const callback = self[kCloseCallback];
+  if (callback) {
+    callback.$call(self);
     self[kCloseCallback] = undefined;
   }
 }
@@ -142,7 +144,7 @@ function emitEOFIncomingMessageOuter(self) {
   // Trailers can only follow a chunked request body: a no-body request has
   // none, so skip the native call (and the socket/server option walk) for the
   // common GET/HEAD case.
-  if (self[kHandle] !== undefined && !self[noBodySymbol]) {
+  if (!self[noBodySymbol] && self[kHandle] !== undefined) {
     // The lenient (insecureHTTPParser) value bytes must match what the parser
     // accepted on the wire, or a CTL byte in a trailer value would vanish here.
     const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
@@ -214,7 +216,10 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     emitEOFIncomingMessage(this);
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
-    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+    if (!this.upgrade && socket && !socket._paused && socket.readable) {
+      if (socket[kResumeUnlessFlowing] !== undefined) socket[kResumeUnlessFlowing]();
+      else socket.resume();
+    }
   }
 }
 
@@ -373,6 +378,17 @@ const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTT
 const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
+const kErrored = Symbol("errored");
+const kHighWaterMark = Symbol("kHighWaterMark");
+const kSocket = Symbol("kSocket");
+const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kUniqueHeaders = Symbol("kUniqueHeaders");
+// Cache slot for the server dispatcher's keep-alive decision (stamped once
+// per request in _http_server.ts); declared in the constructor of IncomingMessage
+// so the stamp never shape-transitions the request.
+const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
+const kIncomingMessage = Symbol("IncomingMessage");
+const kSkipPendingData = Symbol("SkipPendingData");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
@@ -537,9 +553,11 @@ export {
   abortedSymbol,
   callCloseCallback,
   checkShouldUseProxy,
+  clearServerParserIncoming,
   drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,
+  emitEOFIncomingMessageOuter,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
@@ -551,10 +569,13 @@ export {
   kAbortController,
   kCloseCallback,
   kClosedWithUnsentData,
+  kErrored,
   kHandle,
   kHandoffResponse,
   kHasQueuedReads,
   kHeaderSource,
+  kHighWaterMark,
+  kIncomingMessage,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,
@@ -563,8 +584,14 @@ export {
   kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
+  kRejectNonStandardBodyWrites,
   kRememberPeer,
+  kReqShouldKeepAlive,
   kRequest,
+  kResumeUnlessFlowing,
+  kSkipPendingData,
+  kSocket,
+  kUniqueHeaders,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,

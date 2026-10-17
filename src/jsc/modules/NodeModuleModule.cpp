@@ -3,6 +3,7 @@
 #include "NodeModuleModule.h"
 #include "CodeGenerationFromStrings.h"
 #include "ModuleGraph.h"
+#include "ModuleLoader.h"
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -276,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // Called in a Bun.ModuleGraph's context: that graph's require().
     RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
+        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)), dynamicDowncast<Bun::JSCommonJSModule>(callFrame->thisValue()))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -448,6 +449,9 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
         globalObject->m_moduleResolveFilenameOverride.set(
             lexicalGlobalObject->vm(), globalObject, value);
         globalObject->hasOverriddenModuleResolveFilenameFunction = true;
+        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+        Bun::recordRequireCacheRead(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
     }
 
     return true;
@@ -608,11 +612,14 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     globalObject->putDirect(globalObject->vm(),
         WebCore::clientData(globalObject->vm())
             ->builtinNames()
             .overridableRequirePrivateName(),
         JSValue::decode(value), 0);
+    Bun::recordRequireCacheRead(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -702,6 +709,8 @@ static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, 
         THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(global, scope);
     }
     global->hasOverriddenModuleWrapper = isOverride;
+    if (isOverride) [[unlikely]]
+        Bun::recordRequireCacheRead(global);
     global->m_moduleWrapperStart = WTF::move(start);
     global->m_moduleWrapperEnd = WTF::move(end);
 }

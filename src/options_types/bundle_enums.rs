@@ -144,6 +144,7 @@ impl TargetExt for Target {
             Target::Browser => api::Target::browser,
             Target::Bun | Target::ServerComponentsSsr => api::Target::bun,
             Target::BunMacro => api::Target::bun_macro,
+            Target::BunBuiltins => api::Target::bun_builtins,
         }
     }
 
@@ -153,6 +154,7 @@ impl TargetExt for Target {
             api::Target::browser => Target::Browser,
             api::Target::bun => Target::Bun,
             api::Target::bun_macro => Target::BunMacro,
+            api::Target::bun_builtins => Target::BunBuiltins,
             _ => Target::Browser,
         }
     }

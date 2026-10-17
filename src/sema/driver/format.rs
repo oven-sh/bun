@@ -10,6 +10,7 @@ use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_sema::aot_rules::{Rule, Severity};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
@@ -67,6 +68,40 @@ fn display_path(path: &[u8], style: &Style) -> BString {
 /// `ConvertToRelativePath`
 fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
+}
+
+pub fn rule_findings_as_json(report: &Report, cwd: &[u8]) -> Vec<String> {
+    let quoted = |text: &[u8]| {
+        let mut out = String::new();
+        let _ = bun_core::fmt::encode_json_string(&mut out, text);
+        out
+    };
+    let place = |d: &Diagnostic| match d.path.is_empty() {
+        true => String::new(),
+        false => format!(
+            "\"file\":{},\"line\":{},\"column\":{},",
+            quoted(&get_relative_path_from_directory(
+                cwd,
+                &d.path,
+                report.is_case_sensitive
+            )),
+            d.line,
+            d.column
+        ),
+    };
+    let findings = report
+        .diagnostics
+        .iter()
+        .filter_map(|d| Some((Rule::of_code(d.code)?, d)));
+    findings
+        .map(|(rule, d)| {
+            let suffix = format!(" [{}]", rule.name());
+            let message = d.text.strip_suffix(suffix.as_bytes()).unwrap_or(&d.text);
+            let severity = if d.category == Category::Error { Severity::Deny } else { Severity::Warn };
+            let because: Vec<String> = d.related.iter().map(|related| format!("{{\"code\":{},{}\"message\":{}}}", related.code, place(related), quoted(&related.text))).collect();
+            format!("{{\"rule\":\"{}\",\"severity\":\"{}\",\"code\":{},{}\"message\":{},\"because\":[{}]}}", rule.name(), severity.name(), d.code, place(d), quoted(message), because.join(","))
+        })
+        .collect()
 }
 
 /// `1234` as `1,234`.
@@ -145,7 +180,11 @@ pub fn metadata_of(d: &Diagnostic) -> bun_ast::Metadata {
 
 /// `d` as a message of Bun's own log, with the related information as its notes.
 fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
-    let related = d.related.iter().take(MAX_RELATED);
+    let related = d.related.iter().take(if Rule::of_code(d.code).is_some() {
+        usize::MAX
+    } else {
+        MAX_RELATED
+    });
     bun_ast::Msg {
         kind: match d.category {
             Category::Error => bun_ast::Kind::Err,
@@ -292,6 +331,18 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
         }
         code => {
             let _ = writeln!(out, "{} TS{code}: {}", d.category.name(), d.text.as_bstr());
+        }
+    }
+    if Rule::of_code(d.code).is_some() {
+        for related in &d.related {
+            let _ = writeln!(
+                out,
+                "  {}({},{}): {}",
+                relative_path(&related.path, style.cwd, style),
+                related.line,
+                related.column,
+                related.text.as_bstr()
+            );
         }
     }
 }
@@ -670,7 +721,31 @@ pub const ERASE_LINE: &[u8] = "\r\u{1b}[2K".as_bytes();
 
 /// Whether any diagnostic is about a global or module that `@types/bun` declares.
 fn is_missing_bun_types(report: &Report) -> bool {
-    report.diagnostics.iter().any(is_about_bun_types)
+    report.is_missing_bun_members || report.diagnostics.iter().any(is_about_bun_types)
+}
+
+pub fn bun_types_hint(report: &Report) -> Option<(usize, &'static [u8])> {
+    let mut names = report.not_installed.iter().flat_map(|it| &it.names);
+    if names.any(|name| name == b"@types/bun") {
+        return None;
+    }
+    let last = report
+        .diagnostics
+        .iter()
+        .rposition(is_about_bun_types)
+        .or_else(|| {
+            report
+                .diagnostics
+                .len()
+                .checked_sub(1)
+                .filter(|_| report.is_missing_bun_members)
+        })?;
+    let note: &'static [u8] = if report.has_bun_types_installed {
+        b"Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: \"types\": [\"bun\"]"
+    } else {
+        b"Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun"
+    };
+    Some((last, note))
 }
 
 /// Whether `d` is about a global or module that `@types/bun` declares.
@@ -801,12 +876,33 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         return;
     }
     if errors == 0 {
+        let untyped = match report.files_compiled_untyped {
+            0 => BString::default(),
+            n => {
+                let first = report
+                    .diagnostics
+                    .iter()
+                    .find(|it| matches!(it.code, 100009..=100011));
+                let why =
+                    first.map_or_else(BString::default, |first| match first.related.first() {
+                        Some(error) => alloc_print!(
+                            ": {} TS{}: {}",
+                            first.text.as_bstr(),
+                            error.code,
+                            error.text.as_bstr()
+                        ),
+                        None => alloc_print!(": {}", first.text.as_bstr()),
+                    });
+                alloc_print!(", {} compiled untyped{}", plural(n, b"file", b"files"), why)
+            }
+        };
         pretty!(
             out,
             style.color,
-            "<green>\u{2713}<r> No type errors<d> in {}{}{}<r>\n",
+            "<green>\u{2713}<r> No type errors<d> in {}{}{}{}<r>\n",
             checked,
             projects,
+            untyped,
             took
         );
         return;

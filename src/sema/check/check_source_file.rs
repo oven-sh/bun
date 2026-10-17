@@ -26,7 +26,7 @@ use smallvec::SmallVec;
 /// thread is 4 MB (`DEFAULT_THREAD_STACK_SIZE`: Linux with glibc or musl, macOS). `StackCheck`
 /// reserves up to 512 KB of it (under a sanitizer), and the frames of the pool and of the driver
 /// are subtracted too.
-const TASK_STACK: usize = 3 << 20;
+const TASK_STACK: usize = if cfg!(bun_asan) { 24 << 20 } else { 3 << 20 };
 
 /// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl<'s> Program<'s> {
@@ -174,21 +174,118 @@ impl<'s> Program<'s> {
             (self.closed_a_cycle).store(true, std::sync::atomic::Ordering::Relaxed);
         }
         for finished in finished {
+            self.absorb_pairs_compared(std::mem::take(&mut finished.pairs_compared));
             self.publish_diagnostics(finished);
         }
         published
     }
 }
 
+#[cfg(unix)]
+struct SignalStack(*mut libc::c_void);
+
+#[cfg(unix)]
+impl SignalStack {
+    const SIZE: usize = 512 * 1024;
+
+    fn new() -> SignalStack {
+        let none = SignalStack(core::ptr::null_mut());
+        let mut current = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: 0,
+            ss_size: 0,
+        };
+        // SAFETY: `current` is a place for what the thread has.
+        if unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) } != 0
+            || current.ss_flags & libc::SS_DISABLE == 0
+        {
+            return none;
+        }
+        // SAFETY: a new anonymous mapping, where the kernel puts it.
+        let memory = unsafe {
+            libc::mmap(
+                core::ptr::null_mut(),
+                Self::SIZE,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+        if memory == libc::MAP_FAILED {
+            return none;
+        }
+        let stack = libc::stack_t {
+            ss_sp: memory,
+            ss_flags: 0,
+            ss_size: Self::SIZE,
+        };
+        // SAFETY: the mapping has `SIZE` bytes and stays until `drop` has taken it from the thread.
+        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } != 0 {
+            // SAFETY: nothing refers to the mapping.
+            unsafe { libc::munmap(memory, Self::SIZE) };
+            return none;
+        }
+        SignalStack(memory)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SignalStack {
+    fn drop(&mut self) {
+        if self.0.is_null() {
+            return;
+        }
+        let disabled = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: Self::SIZE,
+        };
+        // SAFETY: on the thread of `new`, which has no alternate stack when the mapping goes.
+        unsafe {
+            libc::sigaltstack(&raw const disabled, core::ptr::null_mut());
+            libc::munmap(self.0, Self::SIZE);
+        }
+    }
+}
+
+#[cfg(unix)]
+thread_local! {
+    static SIGNAL_STACK: SignalStack = SignalStack::new();
+}
+
 impl<'s> Checker<'_, 's> {
     /// Called at the start of a task, or of a checker outside the plan. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
+        #[cfg(unix)]
+        SIGNAL_STACK.with(|_| {});
         let left = bun_core::StackCheck::init().remaining();
         assert!(
-            left >= TASK_STACK,
+            cfg!(bun_asan) || left >= TASK_STACK,
             "the thread has too little stack for a task"
         );
-        self.set_stack_limit(TASK_STACK);
+        self.set_stack_limit(if cfg!(bun_asan) {
+            TASK_STACK.min(left)
+        } else {
+            TASK_STACK
+        });
+        #[cfg(bun_data_race_for_testing)]
+        {
+            static mut TASKS: u64 = 0;
+            let tasks = core::ptr::addr_of_mut!(TASKS);
+            // SAFETY: none: two threads at once are the data race that ThreadSanitizer has to report.
+            unsafe { tasks.write(tasks.read() + 1) };
+        }
+    }
+
+    pub fn extend_stack_budget(&mut self, more: usize) -> (usize, usize) {
+        let before = (self.stack_base, self.stack_limit);
+        self.set_stack_limit(TASK_STACK + more);
+        before
+    }
+
+    pub fn restore_stack_budget(&mut self, (base, limit): (usize, usize)) {
+        (self.stack_base, self.stack_limit) = (base, limit);
     }
 
     /// Called before `check_file`. `step` counts from 0. `index`: the position of the task in its
@@ -202,10 +299,28 @@ impl<'s> Checker<'_, 's> {
         self.order_dependent_filter = 0;
     }
 
+    /// Called after `begin_task`. Nothing of what the task finds out about expressions goes to the barrier. For a task after which no
+    /// file is checked, and whose types and declarations are still read: see `Checker::keep_type`.
+    pub fn withhold_expression_tables(&mut self) {
+        self.task.withhold_expression_tables();
+    }
+
     /// Called on the thread of the task, after everything else this checker does.
     pub fn end_task(&mut self) -> Finished<'s> {
+        let pairs_compared = self.take_pairs_compared();
         let diagnostics = self.take_diagnostics();
-        self.task.finish(self.p, diagnostics)
+        let mut finished = self.task.finish(self.p, diagnostics);
+        finished.pairs_compared = pairs_compared;
+        finished
+    }
+
+    pub fn begin_trial_task(&mut self, index: u32, is_on_trial: &[bool]) {
+        self.begin_task(0, index, true);
+        for file in (0..self.files.modules.len() as u32).map(FileId) {
+            if is_on_trial[file.idx()] || self.is_untyped_file(file) {
+                self.task.begin_file(file, false);
+            }
+        }
     }
 
     /// After `check_file`: whether the native stack ran out in that file. A task checks several files.
@@ -802,7 +917,7 @@ impl<'s> Checker<'_, 's> {
 
     /// `shouldCheckErasableSyntax`
     fn should_check_erasable_syntax(&self, file: FileId) -> bool {
-        self.p.files.options.erasable_syntax_only && !self.hir(file).is_js
+        self.check_options(file).erasable_syntax_only && !self.hir(file).is_js
     }
 
     /// From `checkAssertion`: 1294, of `<T>operand`, from the `<` up to `node.Expression().Pos()`.
@@ -1536,7 +1651,7 @@ impl<'s> Checker<'_, 's> {
                 self.current_source_element = saved;
                 self.check_type_node(file, hir[mapped].name_ty);
                 self.check_type_node(file, hir[mapped].ty);
-                if hir[mapped].ty.is_none() && self.p.files.options.no_implicit_any {
+                if hir[mapped].ty.is_none() && self.check_options(file).no_implicit_any {
                     self.error(file, node, 7039, &[]);
                 }
                 self.type_from_node(file, node);
@@ -1560,9 +1675,13 @@ impl<'s> Checker<'_, 's> {
         let save_within_unreachable_code = self.within_unreachable_code;
         let mut node = s;
         loop {
+            if self.files().is_dead_statement(file, node) {
+                self.never_check(hir[node].start, hir[node].loc.end);
+                break;
+            }
             self.enter_source_element(CurrentNode::Node(file, hir.node(node)));
             if !self.within_unreachable_code
-                && self.p.files.options.allow_unreachable_code != Some(true)
+                && self.check_options(file).allow_unreachable_code != Some(true)
                 && self.check_source_element_unreachable(file, node)
             {
                 self.within_unreachable_code = true;
@@ -1823,7 +1942,8 @@ impl<'s> Checker<'_, 's> {
                     }
                     self.check_source_elements(file, hir[c].body);
                     let fallthrough = bound.case_fallthrough[c.idx()];
-                    if self.p.files.options.no_fallthrough_cases_in_switch
+                    if self.check_options(file).no_fallthrough_cases_in_switch
+                        && !self.is_restricted_to_fixed_set(file)
                         && fallthrough.is_some()
                         && self.is_reachable(file, fallthrough)
                     {
@@ -1856,7 +1976,8 @@ impl<'s> Checker<'_, 's> {
                 if !self.check_grammar_statement_in_ambient_context(file, s) {
                     self.check_grammar_duplicate_label(file, s, label);
                 }
-                if self.p.files.options.allow_unused_labels == Some(false)
+                if self.check_options(file).allow_unused_labels == Some(false)
+                    && !self.is_restricted_to_fixed_set(file)
                     && bound.unused_labels.contains(&s)
                 {
                     self.error_at(self.place_of_token(file, hir[s].start), 7028, &[]);
@@ -1870,7 +1991,7 @@ impl<'s> Checker<'_, 's> {
                     if let ModuleName::Ident(name) = hir[module].name {
                         self.check_collisions_for_declaration_name(file, s, name);
                     }
-                    let options = &self.p.files.options;
+                    let options = self.check_options(file);
                     // `ShouldPreserveConstEnums`
                     let preserves_const_enums =
                         options.preserve_const_enums || options.isolated_modules;
@@ -2103,6 +2224,10 @@ impl<'s> Checker<'_, 's> {
                     if std::mem::take(&mut is_innermost) {
                         self.check_expression(file, left);
                     }
+                    if self.files().dead_operand(file, e) == Some(right) {
+                        self.never_check(self.start_of(file, right), self.end_of_expr(file, right));
+                        continue;
+                    }
                     self.check_expression(file, right);
                     match op {
                         BinOp::And | BinOp::Or | BinOp::Nullish => {
@@ -2133,6 +2258,10 @@ impl<'s> Checker<'_, 's> {
             }
             ExprKind::Cond { test, yes, no } => {
                 self.check_expression(file, test);
+                if let Some(cut) = self.files().dead_operand(file, e) {
+                    self.never_check(self.start_of(file, cut), self.end_of_expr(file, cut));
+                    return self.check_expression(file, if cut == yes { no } else { yes });
+                }
                 let body = Parent::Expr(yes);
                 self.check_testing_known_truthy_callable_or_awaitable_or_enum_member_type(
                     file, test, body,

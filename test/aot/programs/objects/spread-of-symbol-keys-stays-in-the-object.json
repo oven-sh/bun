@@ -1,0 +1,1 @@
+{ "skipInShell": "imports bun:jsc", "skipInVariants": "asks whether the planned copy was taken, which some variants turn off" }

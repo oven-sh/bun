@@ -1,0 +1,19 @@
+one within: {"ok":true,"data":{"id":99,"on":false}}: 100 texts finished by compiled code, 0 values handed to the runtime
+two within: {"a":{"x":99},"b":{"y":100}}: 100 texts finished by compiled code, 0 values handed to the runtime
+two levels down: {"a":{"b":{"c":99}}}: 100 texts finished by compiled code, 0 values handed to the runtime
+three levels down: {"a":{"b":{"c":{"d":99}}}}: 100 texts finished by compiled code, 100 values handed to the runtime
+none within has members: {"a":{},"b":{}}: 100 texts finished by compiled code, 0 values handed to the runtime
+undefined within: {"a":{"y":99},"b":{}}: 100 texts finished by compiled code, 0 values handed to the runtime
+in constants: {"inner":{"x":99}}: 100 texts finished by compiled code, 0 values handed to the runtime
+stored to before it is held: {"inner":{"x":99,"y":2}}: 100 texts finished by compiled code, 0 values handed to the runtime
+stored to after it is held: {"inner":{"x":99,"y":2}}: 100 texts finished by compiled code, 100 values handed to the runtime
+changed after it is held: {"inner":{"x":-1}}: 100 texts finished by compiled code, 100 values handed to the runtime
+changed through what holds it: {"inner":{"x":-1}}: 100 texts finished by compiled code, 100 values handed to the runtime
+held twice: {"a":{"x":99},"b":{"x":99}}: 100 texts finished by compiled code, 200 values handed to the runtime
+kept elsewhere and changed there: {"inner":{"x":99,"late":1}}: 100 texts finished by compiled code, 100 values handed to the runtime
+kept elsewhere afterwards: {"inner":{"x":99}}: 100 texts finished by compiled code, 0 values handed to the runtime
+with toJSON within: {"a":"mine"}: 0 texts finished by compiled code, 100 values handed to the runtime
+with an index within: {"a":{"0":99,"b":1}}: 0 texts finished by compiled code, 100 values handed to the runtime
+with a getter within: {"a":{"x":99}}: 0 texts finished by compiled code, 100 values handed to the runtime
+one of two within: {"a":{"odd":99}}: 100 texts finished by compiled code, 100 values handed to the runtime
+holds itself: TypeError: 0 texts finished by compiled code, 0 values handed to the runtime

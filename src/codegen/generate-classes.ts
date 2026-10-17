@@ -653,13 +653,32 @@ function renderStaticDecls(symbolName, typeName, fields) {
   return rows.join("\n");
 }
 
-function writeBarrier(symbolName, typeName, name, cacheName) {
+function assertType(typeName: string, name: string, type: string | undefined, value: string, mayBeEmpty = false) {
+  if (!type) return "";
+  const tests = type.split("|").map(part => {
+    const word = part.trim();
+    const primitive = {
+      string: "isString",
+      number: "isNumber",
+      boolean: "isBoolean",
+      undefined: "isUndefined",
+      null: "isNull",
+    }[word];
+    return primitive ? `${value}.${primitive}()` : `isInstanceOfClassNamed(${value}, ${JSON.stringify(word)}_s)`;
+  });
+  if (mayBeEmpty) tests.unshift(`${value}.isEmpty()`);
+  return `
+    if constexpr (ASSERT_ENABLED || ASAN_ENABLED)
+        RELEASE_ASSERT_WITH_MESSAGE(${tests.join(" || ")}, ${JSON.stringify(`${typeName}.${name} is defined as ${type}`)});`;
+}
+
+function writeBarrier(symbolName, typeName, name, cacheName, type?: string) {
   return `
 
 extern JSC_CALLCONV void ${symbolName(typeName, name)}SetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));${assertType(typeName, name, type, "JSValue::decode(value)", true)}
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
 }
 
@@ -738,7 +757,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
           proto[name].this!! ? " encodedThisValue, " : ""
         } globalObject)
     );
-    RETURN_IF_EXCEPTION(throwScope, {});
+    RETURN_IF_EXCEPTION(throwScope, {});${assertType(typeName, name, proto[name].type, "result")}
     thisObject->${cacheName}.set(vm, thisObject, result);
 #if ASSERT_ENABLED
     if (!result.isEmpty() && result.isCell()) {
@@ -749,6 +768,8 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
 }`.trim(),
         );
         if (proto[name].writable) {
+          if (proto[name].type)
+            throw new Error(`${typeName}.${name}: anything may be stored to a writable getter, so it has no type`);
           rows.push(
             `
 JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -767,7 +788,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
           );
         }
       }
-      rows.push(writeBarrier(symbolName, typeName, name, cacheName));
+      rows.push(writeBarrier(symbolName, typeName, name, cacheName, proto[name].type));
     } else if ("getter" in proto[name]) {
       rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
@@ -780,7 +801,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    RETURN_IF_EXCEPTION(throwScope, {});${assertType(typeName, name, proto[name].type, "JSValue::decode(result)")}
 #if ASSERT_ENABLED
     JSValue decodedValue = JSValue::decode(result);
     if (!decodedValue.isEmpty() && decodedValue.isCell()) {
@@ -1454,6 +1475,60 @@ ${DEFINE_VISIT_CHILDREN}
     `.trim();
 
   return output;
+}
+
+function cachedGetters(classes: ClassDefinition[]) {
+  return classes.flatMap((obj, number) => {
+    if (obj.forBind) return [];
+    const members = [
+      ...Object.keys(obj.klass).filter(name => obj.klass[name].cache === true),
+      ...Object.keys(obj.proto).filter(name => obj.proto[name].cache === true),
+      ...(obj.values ?? []),
+    ];
+    const firstOffset = obj.hasPendingActivity ? 16 : 8;
+    return Object.entries(obj.proto)
+      .filter(([, field]) => "getter" in field && field.cache)
+      .map(([name, field]) => {
+        const member = typeof field.cache === "string" ? field.cache : name;
+        const mayBeRedefined = field.configurable ?? obj.configurable ?? false;
+        return {
+          typeName: obj.name,
+          number,
+          name,
+          member,
+          mayBeRedefined,
+          offset: firstOffset + 8 * members.indexOf(member),
+          type: field.type ?? "",
+        };
+      });
+  });
+}
+
+function generateCachedGetterTable(classes: ClassDefinition[]) {
+  const getters = cachedGetters(classes);
+  const rows = getters.map(
+    ({ typeName, name, member }) =>
+      `    { ${protoSymbolName(typeName, name)}GetterWrap, OBJECT_OFFSETOF(${className(typeName)}, m_${member}) },`,
+  );
+  const assertions = getters.map(
+    ({ typeName, member, offset }) =>
+      `static_assert(OBJECT_OFFSETOF(${className(typeName)}, m_${member}) == sizeof(JSC::JSDestructibleObject) + ${offset});`,
+  );
+  return `
+#if ENABLE(AOT)
+static_assert(${classes.length} <= JSC::AOT::Typed::firstHostClassNumberedByHand);
+${assertions.join("\n")}
+
+static constexpr JSC::AOT::Typed::HostClassCachedGetter generatedClassCachedGetters[] = {
+${rows.join("\n")}
+};
+
+extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses()
+{
+    JSC::AOT::Typed::setHostClassCachedGetters(generatedClassCachedGetters);
+}
+#endif
+`;
 }
 
 function generateHeader(typeName, obj) {
@@ -2165,6 +2240,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/AOTFunction.h>
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"
@@ -2183,6 +2259,17 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Zig;
+
+[[maybe_unused]] static bool isInstanceOfClassNamed(JSC::JSValue value, ASCIILiteral name)
+{
+    if (!value.isCell())
+        return false;
+    for (auto* info = value.asCell()->classInfo(); info; info = info->parentClass) {
+        if (info->className == name)
+            return true;
+    }
+    return false;
+}
 
 static NEVER_INLINE JSC::EncodedJSValue generatedClassConstructor(Zig::GlobalObject* globalObject, Zig::GlobalObject::GeneratedLazyClass which)
 {
@@ -2316,6 +2403,17 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
             init.setStructure(fns.createStructure(init.vm, init.global, init.prototype));
             if (fns.createConstructor)
                 init.setConstructor(fns.createConstructor(init.vm, init.global, init.prototype));
+#if ENABLE(AOT)
+            JSC::AOT::Typed::didCreateHostClassStructure(globalObject, index, init.structure);
+            if (index == GeneratedLazyClassJSResponse)
+                JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::responseHostClass, init.structure);
+            if (index == GeneratedLazyClassJSRequest)
+                JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::requestHostClass, init.structure);
+            if (index == GeneratedLazyClassJSRequest || index == GeneratedLazyClassJSResponse || index == GeneratedLazyClassJSBlob)
+                globalObject->lockHostClassPrototype(init.prototype);
+            if (index == GeneratedLazyClassJSResponse)
+                JSC::AOT::Typed::didCreateReplaceableGlobal(init.global, "Response"_s, init.constructor);
+#endif
         });
     }
 }
@@ -2497,6 +2595,7 @@ function writeCppSerializers() {
     externs.trim(),
     GENERATED_CLASSES_IMPL_HEADER_POST,
     allImpls.join("\n"),
+    generateCachedGetterTable(classes),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
     jsInheritsCppImpl(),
@@ -2525,6 +2624,23 @@ function writeCppSerializers() {
   );
 
   await writeIfNotChanged(`${typesDir}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
+
+  await writeIfNotChanged(
+    path.join(import.meta.dirname, "../aot/build/host-classes.txt"),
+    [
+      ...cachedGetters(classes).filter(getter => !getter.mayBeRedefined),
+      ...classes.flatMap((obj, number) =>
+        Object.entries(obj.proto)
+          .filter(
+            ([, field]) => "getter" in field && !field.cache && field.type && !(field.configurable ?? obj.configurable),
+          )
+          .map(([name, field]) => ({ typeName: obj.name, number, name, offset: 0, type: field.type })),
+      ),
+    ]
+      .map(({ typeName, number, name, offset, type }) => `${typeName}\t${number}\t${name}\t${offset}\t${type}\n`)
+      .sort()
+      .join(""),
+  );
 }
 
 /**
@@ -2586,7 +2702,7 @@ function getPropertySignatureWithComment(
       commentLines.push(`* C++ builtin name: \`${propDef.builtin}\``);
     }
   } else if ("getter" in propDef) {
-    signature = `${tsPropName}: unknown;`; // Getter, possibly with setter
+    signature = `${tsPropName}: ${propDef.type ?? "unknown"};`; // Getter, possibly with setter
     isReadOnly = !propDef.writable && !("setter" in propDef); // Mark readonly if only getter or explicitly not writable
     commentLines.push(
       ` Look for a getter like this:

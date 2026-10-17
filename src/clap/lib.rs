@@ -224,6 +224,7 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    ManyOptional,
 }
 
 /// Represents a parameter for the command line.

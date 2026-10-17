@@ -800,16 +800,14 @@ const lanes = [
 type Lane = (typeof lanes)[number]["name"];
 
 const ruleLane: Record<RuleName, Lane> = {
-  dep_build: "dependencies",
   dep_cargo: "dependencies",
   dep_cargo_cross: "dependencies",
   dep_check_undefined: "dependencies",
   dep_codegen: "dependencies",
-  dep_configure: "dependencies",
   dep_fetch: "dependencies",
   dep_fetch_prebuilt: "dependencies",
+  dep_gen: "dependencies",
   dep_host_cc: "dependencies",
-  dep_prebuild: "dependencies",
   dep_subst: "dependencies",
   bun_install: "codegen",
   codegen: "codegen",
@@ -832,6 +830,7 @@ const ruleLane: Record<RuleName, Lane> = {
   dsymutil: "link and checks",
   duplicate_symbols: "link and checks",
   link: "link and checks",
+  link_with_islands: "link and checks",
   shim_verify: "link and checks",
   smoke_test: "link and checks",
   strip: "link and checks",

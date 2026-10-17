@@ -1,0 +1,8 @@
+through a const: throws RangeError
+through a let: throws RangeError
+through a const in an arrow: throws RangeError
+through a const in a method: throws RangeError
+frames: a const three times: "k_leaf,k_two,k_three,k_report"
+frames: deep: "k_deep,k_deep,k_deep,k_deep,k_deep,k_report"
+captureStackTrace: cut at the outer one: "k_top"
+captureStackTrace: cut at the inner one: "k_outer,k_top"

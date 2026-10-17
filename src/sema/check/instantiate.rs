@@ -341,7 +341,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.restrictive_instantiation(source),
             self.restrictive_instantiation(target),
         );
-        self.is_assignable(source, target)
+        self.is_assignable_in_conditional_type(source, target)
     }
 
     pub(super) fn is_assignable_permissive(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -349,7 +349,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.permissive_instantiation(source),
             self.permissive_instantiation(target),
         );
-        self.is_assignable(source, target)
+        self.is_assignable_in_conditional_type(source, target)
     }
 
     /// `instantiateTypeWithAlias`
@@ -391,6 +391,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId(known);
         }
         self.instantiation_count += 1;
+        self.burn(1);
         self.instantiate_cached(ty, mapper, serial)
     }
 

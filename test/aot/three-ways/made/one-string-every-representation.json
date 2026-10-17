@@ -1,0 +1,4 @@
+{
+ "near-misses-in-every-form": "alone: PASSES true\nPASSES null\nPASSES null\nPASSES undefined\nand 9 lines more",
+ "valid-texts-in-every-form": "all agree"
+}

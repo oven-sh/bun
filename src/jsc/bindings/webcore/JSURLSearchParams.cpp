@@ -589,7 +589,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
             } else {
                 obj->putDirect(vm, ident, array);
             }
-        } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
+        } else if (dynamicDowncast<JSC::JSArray>(jsValue)) {
             JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(jsValue.getObject());
             array->push(lexicalGlobalObject, stringValue);
             RETURN_IF_EXCEPTION(throwScope, );

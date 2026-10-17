@@ -951,16 +951,9 @@ fn get_project_references(references: &List, base: &[u8]) -> Option<Vec<ProjectR
 }
 
 /// `parseJsonConfigFileContentWorker`
-fn project_from_raw(
-    host: &dyn Host,
-    session: &Session,
-    config_path: &[u8],
-    base: &[u8],
-    mut raw: Raw,
-    mut errors: Vec<ConfigError>,
-) -> Project {
-    // `handleOptionConfigDirTemplateSubstitution`
-    for (key, value) in &mut raw.compiler {
+/// `handleOptionConfigDirTemplateSubstitution`
+fn substitute_config_dir_in_options(compiler: &mut [(Vec<u8>, Json)], base: &[u8]) {
+    for (key, value) in compiler {
         match value {
             Json::String(s) if is_file_path(key) => {
                 if let Some(substituted) = substitute_if_template(s, base) {
@@ -993,6 +986,27 @@ fn project_from_raw(
             _ => {}
         }
     }
+}
+
+pub(crate) fn options_for_resolution(host: &dyn Host, path: &[u8]) -> Option<Options> {
+    let session = Session::new();
+    let mut raw = parse_config(host, &session, path, &mut Vec::new())?;
+    let base = dirname::<Posix>(path);
+    substitute_config_dir_in_options(&mut raw.compiler, base);
+    let mut options = Options::from_compiler_options(base, &Json::Object(raw.compiler));
+    options.tolerate_removed_options();
+    Some(options)
+}
+
+fn project_from_raw(
+    host: &dyn Host,
+    session: &Session,
+    config_path: &[u8],
+    base: &[u8],
+    mut raw: Raw,
+    mut errors: Vec<ConfigError>,
+) -> Project {
+    substitute_config_dir_in_options(&mut raw.compiler, base);
     let compiler = Json::Object(std::mem::take(&mut raw.compiler));
     let mut options = Options::from_compiler_options(base, &compiler);
     if !options.paths.is_empty() {
@@ -1138,6 +1152,25 @@ pub fn matched_include_spec<'s>(
         })
         .map(|spec| spec.0.as_slice())
         .filter(|spec| !spec.is_empty())
+}
+
+pub struct PathPattern(Option<GlobPattern>);
+
+impl PathPattern {
+    pub fn new(spec: &[u8], base: &[u8], case_sensitive: bool) -> PathPattern {
+        PathPattern(GlobPattern::compile(
+            spec,
+            base,
+            Usage::Exclude,
+            case_sensitive,
+        ))
+    }
+
+    pub fn matches(&self, path: &[u8]) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|pattern| pattern.matches_path(typescript_path(path)))
+    }
 }
 
 /// `getFileNamesFromConfigSpecs`

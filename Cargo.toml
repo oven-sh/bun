@@ -19,6 +19,7 @@ members = [
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/aot",
   "src/sema",
   "src/sema/baselines",
   "src/sema/driver",
@@ -57,6 +58,7 @@ members = [
   "src/dotenv",
   "src/event_loop",
   "src/exe_format",
+  "src/exe_islands",
   "src/highway",
   "src/http_jsc",
   "src/http_types",
@@ -123,6 +125,7 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
+  "src/builtin_syntax",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -208,7 +211,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(bun_data_race_for_testing)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -387,6 +390,8 @@ bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_aot = { path = "src/aot" }
+bun_builtin_syntax = { path = "src/builtin_syntax" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }
@@ -424,6 +429,7 @@ bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
+bun_exe_islands = { path = "src/exe_islands" }
 bun_highway = { path = "src/highway" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }

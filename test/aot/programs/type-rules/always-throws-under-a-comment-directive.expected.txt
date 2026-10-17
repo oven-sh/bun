@@ -1,0 +1,4 @@
+underExpectError threw a TypeError: true
+underIgnore threw a TypeError: true
+insideAnExpression threw a TypeError: true
+function [1,2]

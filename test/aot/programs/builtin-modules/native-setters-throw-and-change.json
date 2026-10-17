@@ -1,0 +1,1 @@
+{ "skipInShell": "it asks for AbortController and setTimeout, which the jsc shell does not provide" }

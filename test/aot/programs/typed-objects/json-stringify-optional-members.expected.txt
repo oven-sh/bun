@@ -1,0 +1,18 @@
+members 0: {"id":0}: 100 texts finished by compiled code, 0 values handed to the runtime
+members 1: {"id":1,"title":"item 1"}: 100 texts finished by compiled code, 0 values handed to the runtime
+members 2: {"id":2,"price":2.25}: 100 texts finished by compiled code, 0 values handed to the runtime
+members 3: {"id":3,"title":"item 3","price":3.25}: 100 texts finished by compiled code, 0 values handed to the runtime
+members 4: {"id":4,"hidden":false}: 100 texts finished by compiled code, 0 values handed to the runtime
+members 5: {"id":5,"title":"item 5","hidden":false}: 100 texts finished by compiled code, 0 values handed to the runtime
+members 6: {"id":6,"price":6.25,"hidden":false}: 100 texts finished by compiled code, 0 values handed to the runtime
+members 7: {"id":7,"title":"item 7","price":7.25,"hidden":false}: 100 texts finished by compiled code, 0 values handed to the runtime
+created backwards: {"id":9,"hidden":true,"price":1,"title":"backwards"}: 100 texts finished by compiled code, 0 values handed to the runtime
+one deleted: {"id":7,"title":"item 7","hidden":false}: 100 texts finished by compiled code, 0 values handed to the runtime
+and created again: {"id":7,"title":"item 7","hidden":false,"price":2}: 100 texts finished by compiled code, 0 values handed to the runtime
+set to undefined: {"id":10}: 100 texts finished by compiled code, 0 values handed to the runtime
+booleans: {"name":"none"}: 100 texts finished by compiled code, 0 values handed to the runtime
+booleans: {"yes":true,"name":"yes"}: 100 texts finished by compiled code, 0 values handed to the runtime
+booleans: {"yes":false,"no":null,"name":"both"}: 100 texts finished by compiled code, 0 values handed to the runtime
+booleans: {"no":true,"name":"no"}: 100 texts finished by compiled code, 0 values handed to the runtime
+booleans: {"name":"undefined"}: 100 texts finished by compiled code, 0 values handed to the runtime
+an extra property: {"yes":true,"name":"strange","extra":1}: 0 texts finished by compiled code, 0 values handed to the runtime

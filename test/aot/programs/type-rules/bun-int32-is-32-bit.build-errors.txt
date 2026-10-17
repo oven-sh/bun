@@ -1,0 +1,7 @@
+error: TS100031: The result of 'yielded' is an 'int32', and the compiler cannot prove that 'n' is one: all that is known is that it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Property 'line' of 'Cursor' is an 'int32', and the compiler cannot prove that 'by' is one: all that is known is that it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'by | 0'.
+error: TS100031: 'kept' is an 'int32', and the compiler cannot prove that 'n' is one: all that is known is that it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'half' is an 'int32', and the compiler cannot prove that 'n' is one: all that is known is that it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'whole' is an 'int32', and the compiler cannot prove that 'n' is one: all that is known is that it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'counted' is an 'int32', and the compiler cannot prove that 'n' is one: all that is known is that it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'inline' is an 'int32', and the compiler cannot prove that 'n' is one: all that is known is that it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.

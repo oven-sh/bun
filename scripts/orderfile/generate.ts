@@ -120,6 +120,7 @@ interface Workload {
   /** Run on a pseudo-terminal rather than pipes (see ptyrun.c). */
   tty?: boolean;
   env?: Record<string, string>;
+  aot?: boolean;
 }
 
 /** Many small workloads, run several at a time and reported as one line. */
@@ -826,11 +827,12 @@ export function readFeatures(path: string): { names: string[]; required: string[
  * with one feature selected, so what the order file takes from a run is that
  * feature's code and whatever earlier runs had not already entered.
  */
-function appWorkloads(bunProfile: string, scratch: string): WorkloadGroup {
+function appWorkloads(bunProfile: string, scratch: string, aot = false): WorkloadGroup {
   const source = join(here, "app");
-  const tree = join(scratch, "app");
-  const data = join(scratch, "app-data");
-  const temp = join(scratch, "app-tmp");
+  const suffix = aot ? "-aot" : "";
+  const tree = join(scratch, `app${suffix}`);
+  const data = join(scratch, `app-data${suffix}`);
+  const temp = join(scratch, `app-tmp${suffix}`);
   mkdirSync(data);
   mkdirSync(temp);
   // What the local TLS server presents and its clients pin, and a second CA for a client's trust store.
@@ -841,20 +843,18 @@ function appWorkloads(bunProfile: string, scratch: string): WorkloadGroup {
 
   const scaffold = runCommand([bunProfile, join(source, "scaffold.js"), tree], { label: "app scaffold" });
   if (scaffold.status !== 0) throw new Error(`could not write the app workloads' source\n${scaffold.stderr}`);
-  const exe = join(scratch, "orderfile-app");
+  const exe = join(scratch, `orderfile-app${suffix}`);
   const embedded = readdirSync(join(tree, "src", "rt")).map(file => join("src", "rt", file));
   const build = runCommand(
     [
       bunProfile,
       "build",
       "--compile",
-      "--bytecode",
-      "--splitting",
+      ...(aot ? ["--aot"] : ["--bytecode", "--splitting"]),
       "--format=esm",
       "--target=bun",
-      "--minify",
       // A long-running application raises the JIT thresholds while it starts and lowers them once it is up (tui.js).
-      "--compile-jit-policy=4",
+      ...(aot ? [] : ["--minify", "--compile-jit-policy=4"]),
       // Defines handed to the executable's runtime transpiler are parsed on every start.
       `--compile-exec-argv=--define=ORDERFILE_APP:true --define=ORDERFILE_TRACED:true --define=process.env.ORDERFILE_MODE:"compiled"`,
       join("src", "main.js"),
@@ -862,7 +862,7 @@ function appWorkloads(bunProfile: string, scratch: string): WorkloadGroup {
       "--outfile",
       exe,
     ],
-    { cwd: tree, label: "bun build --compile (app workloads)", timeout: WORKLOAD_TIMEOUT_MS },
+    { cwd: tree, label: `bun build --compile${aot ? " --aot" : ""} (app workloads)`, timeout: WORKLOAD_TIMEOUT_MS },
   );
   if (build.status !== 0) throw new Error(`could not compile the app workloads\n${build.stdout}${build.stderr}`);
   if (!sameCode(bunProfile, exe)) {
@@ -871,10 +871,10 @@ function appWorkloads(bunProfile: string, scratch: string): WorkloadGroup {
 
   const features = readFeatures(join(source, "features.txt"));
   const env = { ORDERFILE_APP_DATA: data, TMPDIR: temp, TERM: "xterm-256color" };
-  const name = (feature: string) => `app ${feature}`;
+  const name = (feature: string) => `app${suffix} ${feature}`;
   return {
-    group: "app",
-    required: ["startup", ...features.required].map(name),
+    group: `app${suffix}`,
+    required: ["startup", ...(aot ? [] : features.required)].map(name),
     workloads: ["startup", ...features.names].map(feature => ({
       name: name(feature),
       exe,
@@ -885,8 +885,31 @@ function appWorkloads(bunProfile: string, scratch: string): WorkloadGroup {
       // The terminal features read keys; everything else ignores its stdin.
       ...(feature.startsWith("tui_") ? { input: "hello\r" } : {}),
       env: { ...env, ORDERFILE_FEATURES: feature },
+      aot,
     })),
   };
+}
+
+const supportsAOT =
+  (process.platform === "linux" && process.arch === "x64") ||
+  (process.platform === "darwin" && process.arch === "arm64");
+
+function aotWorkloads(bunProfile: string, scratch: string, sources: string[]): Workload[] {
+  if (!supportsAOT) return [];
+  return sources.map(source => {
+    const exe = join(scratch, `orderfile-aot-${basename(source).replace(/\.[jt]s$/, "")}`);
+    const label = `bun build --compile --aot ${basename(source)}`;
+    const build = runCommand([bunProfile, "build", "--compile", "--aot", source, "--outfile", exe], {
+      cwd: dirname(source),
+      label,
+      timeout: WORKLOAD_TIMEOUT_MS,
+    });
+    if (build.status !== 0) throw new Error(`${label} failed\n${build.stdout}${build.stderr}`);
+    if (!sameCode(bunProfile, exe)) {
+      throw new Error(`${label} did not leave ${basename(bunProfile)}'s code where the symbols say it is`);
+    }
+    return { name: `${basename(source)} (--aot)`, exe, args: [], aot: true };
+  });
 }
 
 /** The longest of a group's runs takes ~15 s under trace (the app's idle feature waits 11.5 s). */
@@ -1086,7 +1109,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     await checkpoint(interrupted);
     const steps: (Workload | WorkloadGroup)[] = [
       { name: "bun -e", args: ["-e", "console.log(1)"] },
+      ...aotWorkloads(bunProfile, scratch, [join(fixtures, "hello.ts"), join(fixtures, "server.js")]),
       ...(windows ? [] : [appWorkloads(bunProfile, scratch)]),
+      ...(supportsAOT ? [appWorkloads(bunProfile, scratch, true)] : []),
       { name: "bun hello.ts", args: [join(fixtures, "hello.ts")] },
       { name: "bun server.js", args: [join(fixtures, "server.js")] },
       { name: "bun test", args: ["test", join(fixtures, "tests", "example.test.ts")] },
@@ -1142,9 +1167,14 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       return { cmd, options, out };
     };
     let traces = 0;
-    const emit = (addresses: number[]) => {
+    const enteredByAOT = new Set<number>();
+    const enteredByOthers = new Set<number>();
+    const emit = (addresses: number[], aot: boolean | undefined) => {
       traces++;
-      for (const address of addresses) tracedAddresses.add(address);
+      for (const address of addresses) {
+        tracedAddresses.add(address);
+        (aot ? enteredByAOT : enteredByOthers).add(address);
+      }
       return appendNames(order, seen, symbols, addresses);
     };
 
@@ -1154,7 +1184,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
         const { cmd, options, out } = launch(step);
         const r = runCommand(cmd, { ...options, timeout: WORKLOAD_TIMEOUT_MS });
         if (r.status !== 0) throw new Error(`workload "${step.name}" exited ${r.status}\n${r.stderr}`);
-        const { added, unresolved } = emit(readTrace(out, step.name));
+        const { added, unresolved } = emit(readTrace(out, step.name), step.aot);
         const note = unresolved ? ` (${unresolved} unresolved)` : "";
         log(`  ${step.name.padEnd(21)} +${added} functions${note}`);
         continue;
@@ -1185,9 +1215,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       let added = 0;
       let unresolved = 0;
       let resolved = 0;
-      for (const trace of results) {
+      for (const [i, trace] of results.entries()) {
         if (!trace) continue;
-        const result = emit(trace);
+        const result = emit(trace, step.workloads[i]!.aot);
         added += result.added;
         unresolved += result.unresolved;
         resolved += trace.length - result.unresolved;
@@ -1224,6 +1254,17 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       `# ${order.length} functions from ${traces} workloads${hinted ? ` and ${hinted} hinted` : ""}.`,
     ];
     await checkpoint(interrupted);
+    const run = new Map<string, number>();
+    for (const [address, names] of symbols) {
+      const place = enteredByOthers.has(address) ? (enteredByAOT.has(address) ? 1 : 2) : 0;
+      for (const name of names) run.set(name, place);
+    }
+    const traced = order.splice(hinted);
+    for (const place of [0, 1, 2]) {
+      for (const name of traced) {
+        if (run.get(name) === place) order.push(name);
+      }
+    }
     writeFileSync(outPath, header.join("\n") + "\n" + order.join("\n") + "\n");
     return { count: order.length, outPath };
   });

@@ -809,6 +809,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.transform_declarations(file, true)
     }
 
+    /// `emit_declaration_file`, and nothing is reported.
+    pub fn declaration_file_without_reports(&mut self, file: FileId) -> Option<Vec<u8>> {
+        let reported = self.reported.len();
+        let text = self.transform_declarations(file, true);
+        self.reported.truncate(reported);
+        text
+    }
+
     fn transform_declarations(&mut self, file: FileId, writes: bool) -> Option<Vec<u8>> {
         let files = self.files();
         let module = files.module(file);
@@ -1305,6 +1313,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (flags, container) = match decl {
             Decl::File | Decl::UmdGlobal(_) | Decl::TypeParam(_) => return true,
+            Decl::Member(m) => return self.is_member_visible(file, m),
             Decl::Var(pat) => match bound.pat_parent[pat.idx()] {
                 PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
                     return self.is_declaration_visible(file, Decl::Var(outer));
@@ -1398,31 +1407,31 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isDeclarationVisible` for a function-like node. A type node is assumed to be in a visible
     /// position.
     fn is_function_visible(&mut self, file: FileId, f: FnId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match bound.fns[f.idx()].owner {
+        match self.bound(file).fns[f.idx()].owner {
             FnOwner::Stmt(_) => self.is_declaration_visible(file, Decl::Fn(f)),
-            FnOwner::Member(m) => {
-                let is_signature = matches!(
-                    hir[m].kind,
-                    MemberKind::Constructor
-                        | MemberKind::CallSignature
-                        | MemberKind::ConstructSignature
-                        | MemberKind::IndexSignature
-                );
-                if !is_signature && hir[m].flags.intersects(Flags::PRIVATE | Flags::PROTECTED) {
-                    return false;
-                }
-                match bound.member_owner[m.idx()] {
-                    MemberOwner::Class(c) => self.is_declaration_visible(file, Decl::Class(c)),
-                    MemberOwner::Interface(i) => {
-                        self.is_declaration_visible(file, Decl::Interface(i))
-                    }
-                    MemberOwner::TypeLiteral(_) => true,
-                    MemberOwner::None => false,
-                }
-            }
+            FnOwner::Member(m) => self.is_member_visible(file, m),
             FnOwner::Type(_) => true,
             FnOwner::Expr(_) | FnOwner::None => false,
+        }
+    }
+
+    fn is_member_visible(&mut self, file: FileId, m: MemberId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_signature = matches!(
+            hir[m].kind,
+            MemberKind::Constructor
+                | MemberKind::CallSignature
+                | MemberKind::ConstructSignature
+                | MemberKind::IndexSignature
+        );
+        if !is_signature && hir[m].flags.intersects(Flags::PRIVATE | Flags::PROTECTED) {
+            return false;
+        }
+        match bound.member_owner[m.idx()] {
+            MemberOwner::Class(c) => self.is_declaration_visible(file, Decl::Class(c)),
+            MemberOwner::Interface(i) => self.is_declaration_visible(file, Decl::Interface(i)),
+            MemberOwner::TypeLiteral(_) => true,
+            MemberOwner::None => false,
         }
     }
 
@@ -4377,10 +4386,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             return (!extra_imports.is_empty()).then_some(extra_imports);
         }
         let modified = ModifiedNode::new(bound.stmt_parent[s.idx()] == Parent::File);
-        let keyword: &[u8] = match decls.iter().next().map(|d| hir[d].kind) {
-            Some(VarKind::Var) | None => b"var ",
-            Some(VarKind::Let) => b"let ",
-            Some(VarKind::Const | VarKind::Using | VarKind::AwaitUsing) => b"const ",
+        let keyword: &[u8] = match decls.iter().next() {
+            Some(d) if bound.is_constant(hir, d) => b"const ",
+            Some(d) if hir[d].kind == VarKind::Let => b"let ",
+            _ => b"var ",
         };
         // `End()` of the declaration list, which emits the comments after its last declaration
         // unless the statement ends there too.
@@ -5411,7 +5420,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn literal_const_type(&mut self, node: Node) -> Option<TypeId> {
         let hir = self.c.hir(self.file());
         let ty = match hir.data(node) {
-            NodeData::VarDecl(d) if hir[d].kind == VarKind::Const && hir[d].init.is_some() => {
+            NodeData::VarDecl(d)
+                if self.c.bound(self.file()).is_const(hir, d) && hir[d].init.is_some() =>
+            {
                 self.c.type_of_pat(self.file(), hir[d].pat)
             }
             NodeData::Member(m)
@@ -6030,7 +6041,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Ending::Minimal
             }
         };
-        let allows_ts = files.options.allow_importing_ts_extensions;
+        let allows_ts = files.check_options(importing).allow_importing_ts_extensions;
         if prefers_js || mode == ResolutionMode::Import && is_node {
             return if allows_ts && inferred() != Ending::Js {
                 Ending::Ts
@@ -6056,7 +6067,7 @@ impl<'p, 's> Checker<'p, 's> {
         mode: ResolutionMode,
     ) -> Vec<Ending> {
         let files = self.files();
-        let allows_ts = files.options.allow_importing_ts_extensions
+        let allows_ts = files.check_options(importing).allow_importing_ts_extensions
             || is_declaration_file_name(files.module(importing).file_name());
         if mode == ResolutionMode::Import && files.options.resolves_like_node {
             return if allows_ts {
@@ -6298,6 +6309,7 @@ impl<'p, 's> Checker<'p, 's> {
         importing: FileId,
         mode: ResolutionMode,
         prefers_js: bool,
+        is_redirect: bool,
     ) -> Vec<u8> {
         let files = self.files();
         let options = &files.options;
@@ -6360,6 +6372,9 @@ impl<'p, 's> Checker<'p, 's> {
                         && remove_file_extension(&path[main.len()..]) == b"/index"
             }
         };
+        if is_redirect && !is_package_root {
+            return Vec::new();
+        }
         let module_specifier = if is_package_root {
             package_directory.to_vec()
         } else {
@@ -6488,8 +6503,13 @@ impl<'p, 's> Checker<'p, 's> {
             let is_in_node_modules = strings::contains(path, b"/node_modules/");
             let mut specifier = Vec::new();
             if is_in_node_modules {
-                specifier =
-                    self.try_get_module_name_as_node_module(path, importing, mode, prefers_js);
+                specifier = self.try_get_module_name_as_node_module(
+                    path,
+                    importing,
+                    mode,
+                    prefers_js,
+                    is_redirect,
+                );
             }
             let paths_only = is_redirect || !specifier.is_empty();
             if !specifier.is_empty() {

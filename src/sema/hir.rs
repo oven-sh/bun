@@ -828,16 +828,28 @@ pub struct ExprsByKind {
 
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
+        ExprsByKind::outside(file, &[])
+    }
+
+    pub fn outside(file: &File, ranges: &[(u32, u32)]) -> ExprsByKind {
+        let is_outside = |e: &Expr| {
+            let after = if ranges.is_empty() {
+                0
+            } else {
+                ranges.partition_point(|range| range.0 <= e.pos)
+            };
+            after == 0 || ranges[after - 1].1 <= e.pos
+        };
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        for e in &file.exprs {
+        for e in file.exprs.iter().filter(|e| is_outside(e)) {
             starts[e.kind.tag() as usize + 1] += 1;
         }
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
-        let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for (i, e) in file.exprs.iter().enumerate() {
+        let mut ids = vec![ExprId::NONE; starts[ExprTag::COUNT] as usize];
+        for (i, e) in file.exprs.iter().enumerate().filter(|(_, e)| is_outside(e)) {
             let at = &mut next[e.kind.tag() as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;
@@ -1073,6 +1085,7 @@ pub mod rare {
     /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
     /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
     pub const ODD_DECLARATION: u32 = 1 << 26;
+    pub const TYPESCRIPT_WITH_JS_EXTENSION: u32 = 1 << 27;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1459,6 +1472,8 @@ pub struct Class {
     pub members: Span<MemberId>,
     /// Position of its first token, including decorators and modifiers.
     pub start: u32,
+    /// Position of the `{` of its body.
+    pub body_pos: u32,
     /// `node.Modifiers()`. For a declaration, the list of its statement.
     pub modifiers: Span<ModifierId>,
 }
@@ -2160,6 +2175,7 @@ pub struct FileIn<S: Storage> {
     pub deferred_import_calls: S::Few<(ExprId, u32)>,
     /// The specifier of each `import<T>(..)`, and the type arguments.
     pub import_call_type_args: S::Few<(ExprId, IdList<TypeNodeId>)>,
+    pub folded_specifiers: S::Few<(ExprId, Atom)>,
     /// `with { .. }` of imports, exports and import types, in source order: the start of `with` or
     /// of the token in its place, and the attributes as an `ExprKind::Object`.
     pub import_attributes: S::Few<(u32, ExprId)>,
@@ -2353,6 +2369,10 @@ pub const fn mention_bit_of(words: [u64; 2], len: usize) -> u32 {
 }
 
 impl<S: Storage> FileIn<S> {
+    #[inline]
+    pub fn is_annotated_javascript(&self) -> bool {
+        self.rare_syntax & rare::TYPESCRIPT_WITH_JS_EXTENSION != 0
+    }
     /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.
     #[inline]
     pub fn param_modifiers(&self, p: ParamId) -> Span<ModifierId> {
@@ -2530,6 +2550,68 @@ impl<S: Storage> FileIn<S> {
         debug_assert!(i < list.len());
         T::from(self.ids[list.start as usize + i])
     }
+
+    pub fn references_import_meta(&self) -> bool {
+        self.exprs
+            .iter()
+            .any(|e| matches!(e.kind, ExprKind::ImportMeta))
+    }
+
+    pub fn constant_specifier(&self, e: ExprId) -> Option<Atom> {
+        match self[e].kind {
+            ExprKind::String(text) => Some(text),
+            _ => (self.folded_specifiers.iter())
+                .find(|folded| folded.0 == e)
+                .map(|folded| folded.1),
+        }
+    }
+
+    pub fn specifier_choices(&self, e: ExprId, found: &mut Vec<Atom>) -> bool {
+        match self[e].kind {
+            ExprKind::Cond { yes, no, .. } => {
+                self.specifier_choices(yes, found) && self.specifier_choices(no, found)
+            }
+            _ => match self.constant_specifier(e) {
+                Some(text) => {
+                    found.push(text);
+                    true
+                }
+                None => false,
+            },
+        }
+    }
+
+    pub fn is_require_callee(&self, callee: ExprId) -> bool {
+        use crate::atom::known;
+        match self[callee].kind {
+            ExprKind::Ident(known::require) => true,
+            ExprKind::Dot {
+                obj,
+                name: known::require,
+                chain: Chain::No,
+                ..
+            } => matches!(self[obj].kind, ExprKind::Ident(known::module)),
+            _ => false,
+        }
+    }
+
+    pub fn folded_require_specifiers(&self, e: ExprId) -> Vec<Atom> {
+        let ExprKind::Call(call) = self[e].kind else {
+            return Vec::new();
+        };
+        if self[call].args.len() != 1 || !self.is_require_callee(self[call].callee) {
+            return Vec::new();
+        }
+        self.folded_specifier_choices(self.id_at(self[call].args, 0))
+    }
+
+    pub fn folded_specifier_choices(&self, e: ExprId) -> Vec<Atom> {
+        let mut found = Vec::new();
+        if matches!(self[e].kind, ExprKind::String(_)) || !self.specifier_choices(e, &mut found) {
+            found.clear();
+        }
+        found
+    }
 }
 
 impl FileBuilder {
@@ -2661,6 +2743,7 @@ macro_rules! file_in_arena {
             specifier_uses: $long!($this.specifier_uses),
             deferred_import_calls: $few!($this.deferred_import_calls),
             import_call_type_args: $few!($this.import_call_type_args),
+            folded_specifiers: $few!($this.folded_specifiers),
             import_attributes: $few!($this.import_attributes),
             specifier_expressions: $few!($this.specifier_expressions),
             exports_from_expressions: $few!($this.exports_from_expressions),
@@ -2907,10 +2990,20 @@ pub fn start_inside_parentheses(hir: &File, e: ExprId) -> u32 {
     }
 }
 
+pub fn is_in_comment(hir: &File, pos: u32) -> bool {
+    let after = hir.comments.partition_point(|comment| comment.pos <= pos);
+    after > 0 && pos < hir.comments[after - 1].end
+}
+
 /// `IsPrivateIdentifier` for the name at `pos`.
 #[inline]
 pub fn is_private_name_at(hir: &File, pos: u32) -> bool {
     hir.text.get(pos as usize) == Some(&b'#')
+}
+
+#[inline]
+pub fn is_bracket_access(hir: &File, name_pos: u32) -> bool {
+    matches!(hir.text.get(name_pos as usize), Some(b'"' | b'\'' | b'`'))
 }
 
 /// `IsBigIntLiteral` for the token at `pos`: a number that ends in `n`.

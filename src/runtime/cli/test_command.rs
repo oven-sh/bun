@@ -63,6 +63,11 @@ use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 
+unsafe extern "C" {
+    safe fn Bun__AOT__keepTypeErrorsThrown();
+    safe fn Bun__AOT__typeErrorsThrown() -> bun_core::String;
+}
+
 mod bun_test {
     //! Façade over `crate::test_runner` that preserves the legacy paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
@@ -1747,7 +1752,7 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if !ctx.test_options.test_worker {
+        if !ctx.test_options.test_worker && ctx.runtime_options.aot_graph_fd.is_none() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
@@ -1782,10 +1787,21 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
+        let aot_graph = crate::cli::aot::graph(ctx)?;
+        let crash_if_interpreter_is_used = aot_graph
+            .as_ref()
+            .is_some_and(|graph| graph.runtime_options.crash_if_interpreter_is_used);
+        let aot_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph> =
+            aot_graph.map(|graph| crate::cli::aot::as_dyn(graph));
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
+            use_aot: aot_graph.is_some_and(|graph| !graph.aot_image().is_empty()),
+            crash_if_interpreter_is_used,
             ..Default::default()
         });
+        if aot_graph.is_some() {
+            Bun__AOT__keepTypeErrorsThrown();
+        }
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -1934,11 +1950,13 @@ impl TestCommand {
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
+                graph: aot_graph,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
             })?
         };
+        vm.transpiler.resolver.standalone_module_graph = aot_graph;
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
@@ -2344,8 +2362,34 @@ impl TestCommand {
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
 
+        if ctx.runtime_options.aot_audit && !has_type_errors {
+            use crate::cli::check_command::{EntryPoint, watching};
+            let preloads = crate::cli::aot_audit::preload_paths(vm);
+            let paths = test_files
+                .iter()
+                .map(|path| EntryPoint::file(path))
+                .chain(preloads.iter().map(|path| EntryPoint::file(path)));
+            if !crate::cli::aot_audit::prepare(&paths.collect::<Vec<_>>(), watching(vm), true) {
+                // No test is run.
+                let vm_ptr: *mut VirtualMachine = vm;
+                // SAFETY: as where `--check` has found type errors, above.
+                vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            }
+            if preloads
+                .iter()
+                .any(|path| crate::cli::aot_audit::is_skipped_for_type_errors(path))
+            {
+                Global::exit(1);
+            }
+        }
+
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
+
+        if ctx.runtime_options.aot && aot_graph.is_none() && !test_files.is_empty() {
+            let entry_points: Vec<&[u8]> = test_files.iter().map(|file| file.as_bytes()).collect();
+            crate::cli::aot::exec_build(ctx, &entry_points, true);
+        }
 
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
@@ -2669,6 +2713,36 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
+        if aot_graph.is_some() {
+            let thrown = Bun__AOT__typeErrorsThrown();
+            let thrown = thrown.to_utf8();
+            let places = bun_core::strings::split(&thrown, b"\n").filter(|place| !place.is_empty());
+            let count = places
+                .clone()
+                .filter(|place| !place.starts_with(b"..."))
+                .count();
+            if count > 0 {
+                pretty_error!(
+                    "<yellow>{} --aot type error{}<r> thrown during this run, caught or not:\n",
+                    count,
+                    if count == 1 { "" } else { "s" }
+                );
+                for place in places {
+                    pretty_error!("  {}\n", bstr::BStr::new(place));
+                }
+            }
+        }
+        let refused = crate::cli::aot_audit::refused_changes();
+        if !refused.is_empty() {
+            pretty_error!(
+                "<yellow>{} change{} to locked built-ins<r> refused during this run, caught or not; code that goes on after one may have been left half done:\n",
+                refused.len(),
+                if refused.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+        }
         Output::flush();
 
         reporter.write_junit_report_if_needed();
@@ -2871,6 +2945,7 @@ impl TestCommand {
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
         let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
+        crate::cli::aot_audit::will_run_test_file(file_title);
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)
@@ -2943,21 +3018,39 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let promise = if crate::cli::aot_audit::is_skipped_for_type_errors(file_name) {
+                None
+            } else {
+                Some(
+                    vm.load_entry_point_for_test_runner(
+                        vm.standalone_module_graph
+                            .and_then(|graph| graph.find_by_source_path(file_path))
+                            .unwrap_or(file_path),
+                    )?,
+                )
+            };
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
+            match promise.map(|promise| jsc::JSInternalPromise::opaque_mut(promise).status()) {
+                None | Some(jsc::js_promise::Status::Rejected) => {
+                    if let Some(promise) = promise {
+                        // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                        // `unhandled_rejection(&mut self, ...)` can reborrow.
+                        let global = vm.global();
+                        let p = jsc::JSInternalPromise::opaque_mut(promise);
+                        let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                        vm.unhandled_rejection(global, result, promise_js);
+                    } else {
+                        reporter.jest.current_file.print_if_needed();
+                        pretty_error!(
+                            "<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n"
+                        );
+                        Output::flush();
+                    }
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {

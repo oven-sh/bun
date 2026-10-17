@@ -1,0 +1,13 @@
+{
+  "build": [
+    "--define",
+    "process.env.APP_CHANNEL=\"public\"",
+    "--define",
+    "INTERNAL=false",
+    "--define",
+    "PUBLIC=true",
+    "--feature",
+    "ON"
+  ],
+  "reference": "compiled"
+}

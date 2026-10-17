@@ -243,7 +243,7 @@ impl Checker<'_, '_> {
         // `importElisionEnabled`
         if hir.jsx.is_empty()
             || !self.emits_js_file(file)
-            || self.p.files.options.verbatim_module_syntax
+            || self.check_options(file).verbatim_module_syntax
         {
             return;
         }
@@ -261,7 +261,7 @@ impl Checker<'_, '_> {
     pub(super) fn mark_property_aliases_referenced(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `importElisionEnabled`. Under `GetIsolatedModules` it returns before it asks for a type.
-        if !self.emits_js_file(file) || self.p.files.options.isolated_modules {
+        if !self.emits_js_file(file) || self.check_options(file).isolated_modules {
             return;
         }
         let index = self.exprs_by_kind(file);
@@ -340,8 +340,8 @@ impl Checker<'_, '_> {
         // `emitJSFile`, `sourceFileMayBeEmitted`, `GetIsolatedModules`
         if options.no_emit
             || options.emit_declaration_only
-            || options.isolated_modules
-            || options.verbatim_module_syntax
+            || files.check_options(file).isolated_modules
+            || files.check_options(file).verbatim_module_syntax
             || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             || hir.is_js
             || module.is_from_external_library
@@ -350,7 +350,7 @@ impl Checker<'_, '_> {
         }
         let index = self.exprs_by_kind(file);
         // `shouldTransformPrivateElementsOrClassStaticBlocks`
-        let transforms_private_elements = language_version(self) < ScriptTarget::ES2022;
+        let transforms_private_elements = language_version(self, file) < ScriptTarget::ES2022;
         let mut accesses: Vec<ExprId> = [ExprTag::Dot, ExprTag::Index]
             .iter()
             .flat_map(|&tag| index.of(tag).iter().copied())
@@ -548,7 +548,10 @@ impl Checker<'_, '_> {
         // only apply to JavaScript and `isolatedModules`.
         let meanings =
             SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-        if !hir.is_js && !options.isolated_modules && !files.flags(symbol).intersects(meanings) {
+        if !hir.is_js
+            && !files.check_options(file).isolated_modules
+            && !files.flags(symbol).intersects(meanings)
+        {
             return;
         }
         let target = self.resolve_alias(sym);
@@ -656,16 +659,16 @@ impl Checker<'_, '_> {
             self.error_at(at, code, &[Arg::Sym(symbol)]);
         } else if !is_export_specifier
             // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`: `verbatimModuleSyntax` has its own error for the import.
-            && options.isolated_modules_reported
+            && files.check_options(file).isolated_modules_reported
             && !is_type_only
             && is_value_here
         {
             self.error_at(at, 2865, &[Arg::Sym(symbol)]);
         }
-        if !options.isolated_modules || is_type_only || is_ambient {
+        if !files.check_options(file).isolated_modules || is_type_only || is_ambient {
             return;
         }
-        let is_verbatim = options.verbatim_module_syntax;
+        let is_verbatim = files.check_options(file).verbatim_module_syntax;
         // `getTypeOnlyAliasDeclaration(symbol)`: the export symbol of a local name is no alias.
         let type_only_alias = (files.flags(symbol).contains(SymFlags::ALIAS))
             .then(|| files.alias_links(symbol).type_only_declaration)
@@ -679,7 +682,7 @@ impl Checker<'_, '_> {
             Decl::ExportSpec(s) => hir[s].local,
             _ => files.symbol(sym).name,
         };
-        let flag_name = super::errors_modules::isolated_modules_like_flag_name(files);
+        let flag_name = super::errors_modules::isolated_modules_like_flag_name(files, file);
         if is_type || type_only_alias.is_some() {
             match decl {
                 Decl::ImportDefault(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_) => {
@@ -809,7 +812,7 @@ impl Checker<'_, '_> {
     fn aliases_imports_hiding_global_values(&mut self, file: FileId) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !files.options.isolated_modules_reported {
+        if !files.check_options(file).isolated_modules_reported {
             return;
         }
         for &(e, scope) in &bound.alias_idents {
@@ -850,7 +853,7 @@ impl Checker<'_, '_> {
         let name = files.symbol(result).name;
         // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `isInExternalModule`,
         // `isGlobal`
-        if !files.options.isolated_modules_reported
+        if !files.check_options(file).isolated_modules_reported
             || !files.module(file).is_module()
             || !meaning.contains(SymFlags::VALUE)
             || files.global(name, meaning) != Some(result)
@@ -888,8 +891,8 @@ impl Checker<'_, '_> {
         let options = &files.options;
         // `canCollectSymbolAliasAccessibilityData`, `GetIsolatedModules`, `GetEmitModuleKind`
         if !options.emit_decorator_metadata
-            || options.verbatim_module_syntax
-            || !options.isolated_modules
+            || files.check_options(file).verbatim_module_syntax
+            || !files.check_options(file).isolated_modules
             || options.module < ModuleKind::Es2015
             || hir.decorators.is_empty()
         {
@@ -1133,7 +1136,7 @@ impl Checker<'_, '_> {
         } = written;
         let is_side_effect = kind == SpecifierKind::SideEffect;
         // `checkImportDeclaration` does not resolve the module.
-        if is_side_effect && !options.no_unchecked_side_effect_imports {
+        if is_side_effect && !files.check_options(file).no_unchecked_side_effect_imports {
             return true;
         }
         let mode = crate::program::mode_for_usage_location(
@@ -1181,13 +1184,13 @@ impl Checker<'_, '_> {
                     let is_esm = (ModuleKind::Es2015..=ModuleKind::EsNext)
                         .contains(&options.module)
                         || mode == ResolutionMode::Import;
-                    let prefers_ts = options.allow_importing_ts_extensions;
+                    let prefers_ts = files.check_options(file).allow_importing_ts_extensions;
                     let suggested = suggested_import_source(text, is_esm, prefers_ts);
                     self.error_at(at, 2846, &[Arg::Bytes(&suggested)]);
                 }
             // `AllowImportingTsExtensionsFrom`
             } else if using_ts_extension
-                && !options.allow_importing_ts_extensions
+                && !files.check_options(file).allow_importing_ts_extensions
                 && !is_declaration_file_name(importing.file_name())
             {
                 if site.is_emittable {
@@ -1302,12 +1305,20 @@ impl Checker<'_, '_> {
             if site.is_for_augmentation {
                 let path = self.atoms().bytes(importing.untyped_import_files[index].0);
                 self.error_at(at, 2665, &[Arg::Atom(spec), Arg::Path(path)]);
-            } else if options.no_implicit_any && !site.is_not_validated && !is_side_effect {
+            } else if files.check_options(file).no_implicit_any
+                && !site.is_not_validated
+                && !is_side_effect
+            {
                 self.error_on_implicit_any_module(file, spec, mode, at);
             }
             return false;
         }
-        if site.is_not_validated {
+        if site.is_not_validated
+            || options
+                .host_modules_without_paths
+                .iter()
+                .any(|name| name == text)
+        {
             return false;
         }
         // "See if this was possibly a projectReference redirect"

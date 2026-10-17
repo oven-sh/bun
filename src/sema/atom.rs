@@ -814,7 +814,8 @@ impl<'p, 's> Atoms<'p, 's> {
 
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &'p [u8] {
-        if atom.is_own() {
+        if atom.0 & LOCAL != 0 {
+            assert!(atom.is_some(), "Atom::NONE has no text");
             self.own.atom_bytes(atom)
         } else {
             self.published.bytes(atom)

@@ -1,0 +1,10 @@
+copies that nothing reads by field, of [{"start":1,"end":2,"label":"a"},{"start":3,"end":4,"label":"b"}]: [[{"start":4,"end":2,"label":"a"},{"start":6,"end":4,"label":"b"},{"start":4,"end":2,"label":"a"},{"start":6,"end":4,"label":"b"}],["start,end,label","start,end,label","start,end,label","start,end,label"]]: 0 conversions by the runtime
+copies that nothing reads by field, of [{"label":"a","end":2,"start":1}]: [[{"label":"a","end":2,"start":4},{"label":"a","end":2,"start":4}],["label,end,start","label,end,start"]]: 0 conversions by the runtime
+copies that nothing reads by field, of [{"start":1,"label":"a"}]: [[{"start":4,"label":"a"},{"start":4,"label":"a"}],["start,label","start,label"]]: 0 conversions by the runtime
+copies that nothing reads by field, of [{"start":1,"end":"two","label":"a"}]: [[{"start":4,"end":"two","label":"a"},{"start":4,"end":"two","label":"a"}],["start,end,label","start,end,label"]]: 0 conversions by the runtime
+copies that nothing reads by field, of [{"label":"a","end":2,"start":1,"extra":true}]: [[{"label":"a","end":2,"start":4,"extra":true},{"label":"a","end":2,"start":4,"extra":true}],["label,end,start,extra","label,end,start,extra"]]: 0 conversions by the runtime
+copies that nothing reads by field, of [{"start":1,"end":2,"label":7}]: [[{"start":4,"end":2,"label":7},{"start":4,"end":2,"label":7}],["start,end,label","start,end,label"]]: 0 conversions by the runtime
+copies that nothing reads by field, of [{"end":2,"label":"a"}]: [[{"end":2,"label":"a","start":null},{"end":2,"label":"a","start":null}],["end,label,start","end,label,start"]]: 0 conversions by the runtime
+copies that nothing reads by field, of []: [[],[]]: 0 conversions by the runtime
+copies of objects allocated here: [[{"start":5,"end":2,"label":"here"}],["start,end,label"]]: 0 conversions by the runtime
+copies whose fields are read: 18: 0 conversions by the runtime

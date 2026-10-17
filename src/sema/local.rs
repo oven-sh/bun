@@ -193,6 +193,11 @@ impl<K: Eq, V> Hashed<K, V> {
         self.entries.is_empty()
     }
 
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     /// The entries in insertion order. It is empty afterwards.
     pub fn take(&mut self) -> Vec<(K, V)> {
         self.found.clear();
@@ -423,6 +428,13 @@ impl<'s> Half<'s> {
         if let Some(before) = self.earlier.get_mut(ordinal as usize - 1) {
             self.dense = std::mem::replace(before, (NO_FILE, Vec::new())).1;
         }
+    }
+
+    /// The number of cells that `take_cells` passes on.
+    pub(crate) fn filled_cells(&self) -> usize {
+        let filled = |cells: &[u32]| cells.iter().filter(|&&raw| raw != 0).count();
+        let earlier: usize = self.earlier.iter().map(|(_, cells)| filled(cells)).sum();
+        earlier + filled(&self.dense) + self.sparse.len()
     }
 
     /// The non-empty cells: those of the earlier files, in file order, by index. Then the dense

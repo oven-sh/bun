@@ -748,6 +748,8 @@ const console = {
   },
 };
 
+hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);
+
 export default {
   console,
   open,
@@ -756,5 +758,3 @@ export default {
   waitForDebugger,
   Session,
 };
-
-hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);

@@ -2256,7 +2256,7 @@ async function spawnBunTest(
 
 function getTestTimeout(testPath: string): number {
   if (
-    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi|\baot\b/i.test(
       testPath,
     )
   ) {
@@ -2764,10 +2764,13 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     // Every shard computes the same deterministic assignment from the same
     // sorted input and picks its own bin, so the result is identical across
     // machines without any coordination. Tests absent from the table (new
-    // files, or the file failing to load) fall back to the table's median so
-    // they spread across shards instead of all landing on shard 0.
+    // files, or the file failing to load) fall back to the median of the tests
+    // being dealt out so they spread across shards instead of all landing on shard 0.
     const durations = loadExpectedDurations(cwd);
-    const known = Object.values(durations).sort((a, b) => a - b);
+    const known = availableTests
+      .map(testPath => durations[testPath.replaceAll("\\", "/")])
+      .filter(cost => cost !== undefined)
+      .sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
     const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
 
@@ -2958,7 +2961,7 @@ function addPath(...paths: (string | undefined)[]): string {
 }
 
 function getTestLabel(): string | undefined {
-  return getBuildLabel()?.replace(" - test-bun", "");
+  return getBuildLabel()?.replace(/ - test-(?:bun|aot)$/, "");
 }
 
 /**

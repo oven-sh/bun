@@ -389,6 +389,8 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
         return;
     }
     case JSC::JSType::InternalFunctionType:
+    case JSC::JSType::SlimClosureType:
+    case JSC::JSType::SlimClosureWithPropertiesType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
         auto name = Zig::functionName(vm, cell->getObject());

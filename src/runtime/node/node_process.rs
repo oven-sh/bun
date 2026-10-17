@@ -254,7 +254,10 @@ mod _impl {
 
         // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS.
         // Use append_options_env for BUN_OPTIONS to correctly handle quoted values.
-        if let Some(graph) = vm.standalone_module_graph {
+        if let Some(graph) = vm
+            .standalone_module_graph
+            .filter(|graph| !graph.preserves_source_paths())
+        {
             // `standalone_module_graph` is the lower-crate trait object
             // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the field we
             // need is exposed via the trait so no downcast is required.
@@ -299,7 +302,11 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                args.push(BunString::clone_utf8(arg));
+                args.push(if arg.starts_with(b"--aot-graph-fd=") {
+                    BunString::static_("--debug-aot")
+                } else {
+                    BunString::clone_utf8(arg)
+                });
                 prev = Some(arg);
                 continue;
             }
@@ -321,6 +328,7 @@ mod _impl {
                         // An optional value is only ever written `--name=value`.
                         if param.takes_value != bun_clap::Values::None
                             && param.takes_value != bun_clap::Values::OneOptional
+                            && param.takes_value != bun_clap::Values::ManyOptional
                         {
                             if let Some(name) = param.names.long {
                                 let mut k = Vec::with_capacity(2 + name.len());
@@ -376,7 +384,13 @@ mod _impl {
         // argv also omits the script name
         let mut args_list: Vec<BunString> = Vec::with_capacity(args_count + 2);
 
-        if vm.standalone_module_graph.is_some() {
+        let entry_point_source_path = vm
+            .standalone_module_graph
+            .and_then(|graph| graph.source_path(vm.main()));
+        if vm
+            .standalone_module_graph
+            .is_some_and(|graph| !graph.preserves_source_paths())
+        {
             // Don't break user's code because they did process.argv.slice(2)
             // Even if they didn't type "bun", we still want to add it as argv[0]
             args_list.push(BunString::static_("bun"));
@@ -406,7 +420,9 @@ mod _impl {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::borrow_utf8(
+                    entry_point_source_path.unwrap_or_else(|| vm.main()),
+                ));
             }
         }
 

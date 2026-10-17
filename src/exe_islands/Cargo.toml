@@ -1,0 +1,14 @@
+[package]
+name = "bun_exe_islands"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_collections.workspace = true
+bun_core.workspace = true

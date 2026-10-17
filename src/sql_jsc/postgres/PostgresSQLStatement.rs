@@ -6,11 +6,13 @@ use crate::postgres::signature::Signature;
 use crate::shared::cached_structure::{
     CachedStructure as PostgresCachedStructure, column_name_to_js, describe_statement,
 };
+use crate::shared::row_decoder::{RowColumn, RowDecoder, WireFormat};
 use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
 use bun_ptr::RefPtr;
 use bun_sql::postgres::postgres_protocol as protocol;
-use bun_sql::postgres::postgres_types::int4;
+use bun_sql::postgres::postgres_types::{self as types, int4};
+use bun_sql::shared::ColumnIdentifier;
 
 bun_core::declare_scope!(Postgres, visible);
 
@@ -25,6 +27,7 @@ pub struct PostgresSQLStatement {
     pub(crate) error_response: Option<Error>,
     pub(crate) needs_duplicate_check: bool,
     pub(crate) fields_flags: DataCellFlags,
+    pub(crate) row_decoder: RowDecoder,
 }
 
 impl Default for PostgresSQLStatement {
@@ -41,6 +44,7 @@ impl Default for PostgresSQLStatement {
             error_response: None,
             needs_duplicate_check: true,
             fields_flags: DataCellFlags::default(),
+            row_decoder: RowDecoder::default(),
         }
     }
 }
@@ -108,6 +112,43 @@ impl PostgresSQLStatement {
 
         self.fields_flags =
             dedupe_columns(self.fields.iter_mut().rev().map(|f| &mut f.name_or_index));
+    }
+
+    pub(crate) fn create_row_decoder(&mut self, global_object: &JSGlobalObject, row_type: u32) {
+        use types::Tag as T;
+        self.check_for_duplicate_fields();
+        let columns: Option<Vec<RowColumn>> = self
+            .fields
+            .iter()
+            .map(|field| {
+                let ColumnIdentifier::Name(name) = &field.name_or_index else {
+                    return None;
+                };
+                let format = match field.type_tag() {
+                    _ if (u16::MAX as u32) < field.type_oid => WireFormat::Text,
+                    T::int4 => WireFormat::Int32,
+                    T::float4
+                        if field.binary
+                            || T::float4.is_binary_in(types::ResultFormats::Decodable) =>
+                    {
+                        WireFormat::Float32
+                    }
+                    T::float8 => WireFormat::Float64,
+                    T::bool => WireFormat::Boolean,
+                    T::timestamp | T::timestamptz => WireFormat::TimestampMicroseconds,
+                    T::text | T::varchar | T::bpchar | T::name | T::uuid | T::int8 => {
+                        WireFormat::Text
+                    }
+                    _ => return None,
+                };
+                Some(RowColumn {
+                    name: name.slice().as_ptr(),
+                    name_length: name.slice().len() as u32,
+                    format,
+                })
+            })
+            .collect();
+        self.row_decoder = RowDecoder::new(global_object, row_type, columns.as_deref());
     }
 
     // Note: returning

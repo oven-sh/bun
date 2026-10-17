@@ -1,7 +1,7 @@
 //! What the formats of oxlint print a problem from: `Info` of `oxc_diagnostics`.
 
 use super::oxlint::{Offsets, code, is_error};
-use super::{Meta, shown_at};
+use super::{Meta, exposed_at};
 use crate::paths;
 use crate::results::FileResult;
 use bun_core::strings;
@@ -114,7 +114,7 @@ impl<'r> Source<'r> {
 
     /// Where the problem starts and where it ends, in bytes from the start of the file. `None`: it has no place.
     pub(super) fn span(&self, message: &LintMessage) -> Option<(usize, usize)> {
-        let start = shown_at(message, self.is_oxlint);
+        let start = exposed_at(message, self.is_oxlint);
         if start.0 == 0 {
             return None;
         }

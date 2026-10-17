@@ -485,6 +485,19 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
+                } else if (frame.isCompiled()) {
+                    url = frame.url();
+                    if (!url.isEmpty() && url[0] == '/')
+                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    scriptId = static_cast<int>(std::get<1>(frame.sourceProviderAndID()));
+                    int definitionLine = frame.functionStartLine();
+                    unsigned definitionColumn = frame.functionStartColumn();
+                    if (definitionLine > 0 && definitionColumn != std::numeric_limits<unsigned>::max()) {
+                        functionDefLine = definitionLine - 1;
+                        functionDefColumn = definitionColumn > 0 ? static_cast<int>(definitionColumn) - 1 : 0;
+                    }
+                    if (frame.hasExpressionInfo())
+                        sampleLine = static_cast<int>(frame.semanticLocation.lineColumn.line);
                 }
 
                 // line/column here identify the function's DEFINITION, so all
@@ -680,6 +693,11 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);
                     }
+                } else if (frame.isCompiled()) {
+                    url = frame.url();
+                    if (!url.isEmpty() && url[0] == '/')
+                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    lineNumber = frame.hasExpressionInfo() ? static_cast<int>(frame.semanticLocation.lineColumn.line) : frame.functionStartLine();
                 }
 
                 WTF::String location = formatLocation(url, lineNumber);

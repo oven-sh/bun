@@ -2,7 +2,7 @@
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
 
 const { validateBoolean, validateAbortSignal, validateObject, validateNumber } = require("internal/validators");
-const { resistStopPropagation } = require("internal/shared");
+const { kEmptyObject, resistStopPropagation } = require("internal/shared");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
 const setImmediateGlobal = globalThis.setImmediate;
@@ -35,74 +35,89 @@ function asyncIterator({ next: nextFunction, return: returnFunction }: TimerAsyn
   return result;
 }
 
-function setTimeout(after = 1, value?, options: TimerOptions = {}) {
-  const arguments_ = [].concat(value ?? []);
-  try {
-    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
-    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
-    // is outside of a given range.
-    if (typeof after != "number") {
-      validateNumber(after, "delay");
+function resolveTimer(promise: Promise<unknown>, value: unknown) {
+  $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value);
+}
+
+function setTimeout(after = 1, value?, options: TimerOptions = kEmptyObject) {
+  let reference = true;
+  if (options !== kEmptyObject || typeof after != "number") {
+    try {
+      // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
+      // warning, not throw an error. So we can't call validateNumber as that will throw if the number
+      // is outside of a given range.
+      if (typeof after != "number") {
+        validateNumber(after, "delay");
+      }
+      validateObject(options, "options");
+    } catch (error) {
+      return Promise.$reject(error);
     }
-  } catch (error) {
-    return Promise.$reject(error);
+    const { signal, ref = true } = options;
+    try {
+      validateAbortSignal(signal, "options.signal");
+      validateBoolean(ref, "options.ref");
+    } catch (error) {
+      return Promise.$reject(error);
+    }
+    if (signal) return setTimeoutWithSignal(after, value, signal, ref);
+    reference = ref;
   }
-  try {
-    validateObject(options, "options");
-  } catch (error) {
-    return Promise.$reject(error);
+  const promise = $newPromise();
+  const timeout = setTimeoutGlobal(resolveTimer, after, promise, value);
+  if (!reference) {
+    timeout?.unref?.();
   }
-  const { signal, ref: reference = true } = options;
-  try {
-    validateAbortSignal(signal, "options.signal");
-  } catch (error) {
-    return Promise.$reject(error);
-  }
-  try {
-    validateBoolean(reference, "options.ref");
-  } catch (error) {
-    return Promise.$reject(error);
-  }
-  if (signal?.aborted) {
+  return promise;
+}
+
+function setTimeoutWithSignal(after: number, value: unknown, signal: AbortSignal, reference: boolean) {
+  if (signal.aborted) {
     return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
-    const timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
+    const timeout = setTimeoutGlobal(() => resolve(value), after);
     if (!reference) {
       timeout?.unref?.();
     }
-    if (signal) {
-      onCancel = () => {
-        clearTimeout(timeout);
-        reject($makeAbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
-    }
+    onCancel = () => {
+      clearTimeout(timeout);
+      reject($makeAbortError(undefined, { cause: signal.reason }));
+    };
+    signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
   });
-  return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
-    : returnValue;
+  return returnValue.finally(() => signal.removeEventListener("abort", onCancel));
 }
 
-function setImmediate(value?, options: TimerOptions = {}) {
-  try {
-    validateObject(options, "options");
-  } catch (error) {
-    return Promise.$reject(error);
+function setImmediate(value?, options: TimerOptions = kEmptyObject) {
+  let reference = true;
+  if (options !== kEmptyObject) {
+    try {
+      validateObject(options, "options");
+    } catch (error) {
+      return Promise.$reject(error);
+    }
+    const { signal, ref = true } = options;
+    try {
+      validateAbortSignal(signal, "options.signal");
+      validateBoolean(ref, "options.ref");
+    } catch (error) {
+      return Promise.$reject(error);
+    }
+    if (signal) return setImmediateWithSignal(value, signal, ref);
+    reference = ref;
   }
-  const { signal, ref: reference = true } = options;
-  try {
-    validateAbortSignal(signal, "options.signal");
-  } catch (error) {
-    return Promise.$reject(error);
+  const promise = $newPromise();
+  const immediate = setImmediateGlobal(resolveTimer, promise, value);
+  if (!reference) {
+    immediate?.unref?.();
   }
-  try {
-    validateBoolean(reference, "options.ref");
-  } catch (error) {
-    return Promise.$reject(error);
-  }
-  if (signal?.aborted) {
+  return promise;
+}
+
+function setImmediateWithSignal(value: unknown, signal: AbortSignal, reference: boolean) {
+  if (signal.aborted) {
     return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
@@ -111,17 +126,13 @@ function setImmediate(value?, options: TimerOptions = {}) {
     if (!reference) {
       immediate?.unref?.();
     }
-    if (signal) {
-      onCancel = () => {
-        clearImmediate(immediate);
-        reject($makeAbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
-    }
+    onCancel = () => {
+      clearImmediate(immediate);
+      reject($makeAbortError(undefined, { cause: signal.reason }));
+    };
+    signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
   });
-  return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
-    : returnValue;
+  return returnValue.finally(() => signal.removeEventListener("abort", onCancel));
 }
 
 function setInterval(after = 1, value?, options: TimerOptions = {}) {

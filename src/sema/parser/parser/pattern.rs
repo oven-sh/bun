@@ -173,7 +173,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             name_kind = NameKind::Identifier;
         }
         // `name.Text()` ends with the `n`.
-        if let Some(written) = bigint {
+        if let Some(written) = bigint.filter(|_| !self.options.bigint_names_are_digits) {
             key = PropKey::Name(self.atom(&bun_sema::json::bigint_token_value(written)));
         }
         let value = if is_identifier && self.token() != T::Colon {

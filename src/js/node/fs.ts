@@ -460,9 +460,9 @@ var access = function access(path, mode, callback?) {
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
-  existsSync = function existsSync(_path: string) {
+  existsSync = function existsSync(path: string) {
     try {
-      return fs.existsSync.$apply(fs, arguments);
+      return fs.existsSync(path);
     } catch {
       return false;
     }
@@ -515,7 +515,7 @@ var access = function access(path, mode, callback?) {
           ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
           return fs.writeSync(fd, buffer, offset, length, position);
         }
-        return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);
+        return fs.writeSync(fd, buffer, offset, length, position);
       }
       if (typeof buffer !== "string") {
         throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
@@ -1404,8 +1404,6 @@ var exports = {
     return require("node:fs/promises");
   },
 };
-export default exports;
-
 // Preserve the names
 function setName(fn, value) {
   Object.$defineProperty(fn, "name", {
@@ -1507,3 +1505,5 @@ setName(fdatasync, "fdatasync");
 setName(fdatasyncSync, "fdatasyncSync");
 setName(openAsBlob, "openAsBlob");
 setName(opendir, "opendir");
+
+export default exports;

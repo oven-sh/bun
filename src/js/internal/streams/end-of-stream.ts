@@ -1,3 +1,4 @@
+// @ts-check
 // Ported from https://github.com/mafintosh/end-of-stream with
 // permission from the author, Mathias Buus (@mafintosh).
 
@@ -22,6 +23,10 @@ const {
   kIsClosedPromise,
 } = require("internal/streams/utils");
 
+const { isReadableState, isWritableState } =
+  require("internal/streams/state") as typeof import("internal/streams/state").default;
+
+const process = globalThis.process;
 const SymbolDispose = Symbol.dispose;
 const PromisePrototypeThen = $Promise.prototype.$then;
 
@@ -130,7 +135,10 @@ function eos(stream, options, callback?) {
   let immediateResult;
   if (isClosed(stream)) {
     immediateResult = getEosOnCloseError(stream, readable, readableFinished, writable, writableFinished);
-  } else if (wState?.errorEmitted || rState?.errorEmitted) {
+  } else if (
+    (isWritableState(wState) ? wState.errorEmitted : wState?.errorEmitted) ||
+    (isReadableState(rState) ? rState.errorEmitted : rState?.errorEmitted)
+  ) {
     if (!willEmitClose) {
       immediateResult = getEosErrored(stream);
     }
@@ -138,7 +146,9 @@ function eos(stream, options, callback?) {
     !readable &&
     (!willEmitClose || isReadable(stream)) &&
     (writableFinished || isWritable(stream) === false) &&
-    (wState == null || wState.pendingcb === undefined || wState.pendingcb === 0)
+    (isWritableState(wState)
+      ? wState.pendingcb === undefined || wState.pendingcb === 0
+      : wState == null || wState.pendingcb === undefined || wState.pendingcb === 0)
   ) {
     immediateResult = getEosErrored(stream);
   } else if (

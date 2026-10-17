@@ -1,3 +1,4 @@
+// @ts-check
 // Ported from https://github.com/mafintosh/pump with
 // permission from the author, Mathias Buus (@mafintosh).
 
@@ -20,6 +21,9 @@ const {
   isReadableFinished,
 } = require("internal/streams/utils");
 
+const { isReadableState } = require("internal/streams/state") as typeof import("internal/streams/state").default;
+
+const process = globalThis.process;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const ArrayIsArray = Array.isArray;
 const SymbolDispose = Symbol.dispose;
@@ -72,7 +76,7 @@ async function* fromReadable(val) {
 }
 
 async function pumpToNode(iterable, writable, finish, { end }) {
-  let error;
+  let error: any;
   let onresolve: (() => void) | null = null;
 
   const resume = err => {
@@ -123,7 +127,7 @@ async function pumpToNode(iterable, writable, finish, { end }) {
 
     finish();
   } catch (err) {
-    finish(error !== err ? aggregateTwoErrors(error, err as Error) : err);
+    finish(error !== err ? aggregateTwoErrors(error, err as any) : err);
   } finally {
     cleanup();
     writable.off("drain", resume);
@@ -194,7 +198,7 @@ function pipelineImpl(streams, callback, opts?) {
 
   let error;
   let value;
-  const destroys: ((err: Error) => void)[] = [];
+  const destroys: ((err: any) => void)[] = [];
 
   let finishCount = 0;
 
@@ -328,7 +332,7 @@ function pipelineImpl(streams, callback, opts?) {
           finishCount++;
           pumpToNode(ret, pt, finish, { end });
         } else if (isReadableStream(ret) || isTransformStream(ret)) {
-          const toRead = (ret as TransformStream).readable || ret;
+          const toRead = (ret as any).readable || ret;
           finishCount++;
           pumpToNode(toRead, pt, finish, { end });
         } else {
@@ -351,7 +355,7 @@ function pipelineImpl(streams, callback, opts?) {
           lastStreamCleanup.push(cleanup);
         }
       } else if (isTransformStream(ret) || isReadableStream(ret)) {
-        const toRead = (ret as TransformStream).readable || ret;
+        const toRead = (ret as any).readable || ret;
         finishCount++;
         pumpToNode(toRead, stream, finish, { end });
       } else if (isIterable(ret)) {
@@ -428,7 +432,13 @@ function pipe(src, dst, finish, finishOnlyHandleError, { end }) {
 
   eos(src, { readable: true, writable: false }, err => {
     const rState = src._readableState;
-    if (err && err.code === "ERR_STREAM_PREMATURE_CLOSE" && rState?.ended && !rState.errored && !rState.errorEmitted) {
+    if (
+      err &&
+      err.code === "ERR_STREAM_PREMATURE_CLOSE" &&
+      (isReadableState(rState)
+        ? rState.ended && !rState.errored && !rState.errorEmitted
+        : rState?.ended && !rState.errored && !rState.errorEmitted)
+    ) {
       // Some readable streams will emit 'close' before 'end'. However, since
       // this is on the readable side 'end' should still be emitted if the
       // stream has been ended and no error emitted. This should be allowed in

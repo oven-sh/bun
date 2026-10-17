@@ -369,7 +369,11 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return resolved;
         }
+        if let Some(known) = self.translation_cached_call(file, call) {
+            return known;
+        }
         if let Some(known) = self.cached_resolved_signature(file, call) {
+            self.cache_call_for_translation(file, call, known);
             return known;
         }
         if let Some(&(.., resolved)) = self
@@ -389,10 +393,7 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         // `resolvingSignature`
-        let in_progress_at = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Call(file, call));
+        let in_progress_at = self.innermost(Query::Call(file, call), 0);
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
         // There is no re-entrancy guard. A call that a back edge of a loop reaches while it is
@@ -1019,7 +1020,7 @@ impl<'p, 's> Checker<'p, 's> {
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
-        let expects_return = if is_call_by_new && self.p.files.options.no_implicit_any {
+        let expects_return = if is_call_by_new && self.check_options(file).no_implicit_any {
             ExpectsReturn::No
         } else {
             ExpectsReturn::Yes
@@ -3310,7 +3311,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .resolved_meanwhile
                 .iter()
                 .any(|r| r.0 == file && r.1 == call)
-            && self.stack.contains(&Query::Call(file, call))
+            && self.is_in_flight(Query::Call(file, call))
         {
             return Some(TypeId::ANY);
         }

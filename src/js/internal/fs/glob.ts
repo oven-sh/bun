@@ -1005,8 +1005,6 @@ function globSync(pattern, options) {
   return new Glob(pattern, options).globSync();
 }
 
-export default { glob, globSync, Glob };
-
 let _minimatch: any;
 // ─────────────────────────────────────────────────────────────────────────
 // Vendored: Node.js deps/minimatch/index.js (v26.3.0, ISC license), unmodified.
@@ -2980,3 +2978,5 @@ function lazyMinimatch() {
   // --- end vendored minimatch ---
   return (_minimatch = module.exports);
 }
+
+export default { glob, globSync, Glob };

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
 import EventEmitter, { EventEmitterAsyncResource } from "events";

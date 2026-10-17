@@ -6,13 +6,16 @@
 
 #![feature(allocator_api)]
 
+pub mod aot_rules;
 pub mod atom;
 pub mod bind;
 pub mod check;
 pub mod components;
 pub mod config;
 pub mod config_options;
+pub mod direct_eval;
 pub mod ecmascript;
+pub mod fold;
 pub mod hir;
 pub mod json;
 pub mod local;

@@ -365,10 +365,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_typeof(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = p.parse_expr(Level::Prefix)?;
+        let mut value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
+        }
+        if matches!(
+            bun_ast::audited::unmarked(value).data,
+            ExprData::EIdentifier(_)
+        ) {
+            value = bun_ast::audited::unmarked(value);
         }
 
         let mut flags = UnaryFlags::default();
@@ -388,7 +394,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_delete(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = p.parse_expr(Level::Prefix)?;
+        let value = bun_ast::audited::unmarked(p.parse_expr(Level::Prefix)?);
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
@@ -507,7 +513,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_minus_minus(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = p.parse_expr(Level::Prefix)?;
+        let value = bun_ast::audited::unmarked(p.parse_expr(Level::Prefix)?);
         Ok(p.new_expr(
             E::Unary {
                 op: OpCode::UnPreDec,
@@ -521,7 +527,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_plus_plus(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        let value = p.parse_expr(Level::Prefix)?;
+        let value = bun_ast::audited::unmarked(p.parse_expr(Level::Prefix)?);
         Ok(p.new_expr(
             E::Unary {
                 op: OpCode::UnPreInc,

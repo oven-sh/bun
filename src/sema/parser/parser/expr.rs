@@ -140,6 +140,12 @@ fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
 /// The operator that a compound assignment combines with. `None` for `=`.
 /// A name or a member that is not part of an optional chain.
 #[inline(always)]
+fn is_identifier_like(key: &[u8]) -> bool {
+    !matches!(key.first(), None | Some(b'0'..=b'9' | b'-' | b'#'))
+        && key != b"Infinity"
+        && key != b"NaN"
+}
+
 fn is_plain_target(kind: ExprKind) -> bool {
     matches!(
         kind,
@@ -1348,6 +1354,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.s.ids.push(missing.0);
         }
         let args = self.take_ids(base);
+        if args.len() == 1 {
+            let specifier = self.f.id_at(args, 0);
+            self.note_folded_specifiers(specifier, 0);
+        }
         if self.is_for_oxc() {
             oxc::import_call(&mut self.f, self.lx.src, start, args, close);
         }
@@ -1484,6 +1494,122 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             chain: Chain::No,
         };
         self.add_expr(kind, start, at.1)
+    }
+
+    fn folded_text(&mut self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
+        if self.is_too_deep() {
+            return None;
+        }
+        if depth > 64 {
+            return None;
+        }
+        match self.f.exprs.get(e.idx())?.kind {
+            ExprKind::String(text) => Some(self.lx.text_of(text).to_vec()),
+            ExprKind::Template { exprs } => {
+                let texts = self.f.template_texts(exprs);
+                let mut folded = self.lx.text_of(self.f.id_at(texts, 0)).to_vec();
+                for i in 0..exprs.len() {
+                    folded.extend(self.folded_text(self.f.id_at(exprs, i), depth + 1)?);
+                    folded.extend_from_slice(self.lx.text_of(self.f.id_at(texts, i + 1)));
+                }
+                Some(folded)
+            }
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } => {
+                let mut folded = self.folded_text(left, depth + 1)?;
+                folded.extend(self.folded_text(right, depth + 1)?);
+                Some(folded)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn starts_with_dirname(&self, mut e: ExprId) -> bool {
+        loop {
+            match self.f.exprs.get(e.idx()).map(|it| it.kind) {
+                Some(ExprKind::Ident(name)) => return self.lx.text_of(name) == b"__dirname",
+                Some(ExprKind::Binary {
+                    op: BinOp::Add,
+                    left,
+                    ..
+                }) => e = left,
+                Some(ExprKind::Template { exprs })
+                    if exprs.len() == 1
+                        && self
+                            .lx
+                            .text_of(self.f.id_at(self.f.template_texts(exprs), 0))
+                            .is_empty() =>
+                {
+                    e = self.f.id_at(exprs, 0)
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    fn source_path_after_dirname(&mut self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
+        if self.is_too_deep() {
+            return None;
+        }
+        if depth > 64 {
+            return None;
+        }
+        match self.f.exprs.get(e.idx())?.kind {
+            ExprKind::Ident(_) => Some(Vec::new()),
+            ExprKind::Binary { left, right, .. } => {
+                let mut text = self.source_path_after_dirname(left, depth + 1)?;
+                let ExprKind::String(more) = self.f.exprs.get(right.idx())?.kind else {
+                    return None;
+                };
+                text.extend_from_slice(self.lx.text_of(more));
+                Some(text)
+            }
+            ExprKind::Template { exprs } => {
+                let mut text = self.source_path_after_dirname(self.f.id_at(exprs, 0), depth + 1)?;
+                text.extend_from_slice(
+                    self.lx
+                        .text_of(self.f.id_at(self.f.template_texts(exprs), 1)),
+                );
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
+    fn note_folded_specifiers(&mut self, argument: ExprId, depth: u32) {
+        if self.is_too_deep() {
+            return;
+        }
+        let Some(&Expr { kind, .. }) = self.f.exprs.get(argument.idx()) else {
+            return;
+        };
+        match kind {
+            ExprKind::Cond { yes, no, .. } if depth < 64 => {
+                self.note_folded_specifiers(yes, depth + 1);
+                self.note_folded_specifiers(no, depth + 1);
+            }
+            ExprKind::Binary { op: BinOp::Add, .. } | ExprKind::Template { .. }
+                if self.starts_with_dirname(argument) =>
+            {
+                if let Some(text) = self
+                    .source_path_after_dirname(argument, 0)
+                    .filter(|text| text.first() == Some(&b'/'))
+                {
+                    let folded = self.atom(&[b".".as_slice(), &text].concat());
+                    self.f.folded_specifiers.push((argument, folded));
+                }
+            }
+            ExprKind::Binary { op: BinOp::Add, .. } | ExprKind::Template { .. } => {
+                if let Some(folded) = self.folded_text(argument, 0) {
+                    let folded = self.atom(&folded);
+                    self.f.folded_specifiers.push((argument, folded));
+                }
+            }
+            _ => {}
+        }
     }
 
     /// `collectDynamicImportOrRequireOrJsDocImportCalls`: `argument` is the argument of `import()`
@@ -1819,6 +1945,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseElementAccessExpressionRest`, at the `[`.
     fn element_access(&mut self, start: u32, obj: ExprId, chain: Chain) -> ExprId {
         self.next();
+        let parens = self.f.parens.len();
         let index = match self.token() {
             T::CloseBracket => {
                 self.error(1011, (self.full_start(), Diagnostic::NO_LENGTH), &[]);
@@ -1828,6 +1955,28 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => self.expression_allowing_in(),
         };
         self.expect(T::CloseBracket);
+        if self.options.constant_keys_are_names
+            && index.idx() + 1 == self.f.exprs.len()
+            && let Some(&Expr {
+                kind: ExprKind::String(name),
+                pos,
+                end,
+            }) = self.f.exprs.get(index.idx())
+            && is_identifier_like(self.lx.text_of(name))
+        {
+            self.f.parens.truncate(parens);
+            self.drop_last_expr(index);
+            self.finish_name(pos, end);
+            return self.finish_expr(
+                ExprKind::Dot {
+                    obj,
+                    name,
+                    name_pos: pos,
+                    chain,
+                },
+                start,
+            );
+        }
         self.finish_expr(ExprKind::Index { obj, index, chain }, start)
     }
 
@@ -1888,7 +2037,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         chain: Chain,
     ) -> ExprId {
         // `IsRequireCall`
-        let is_require = self.options.is_javascript
+        let is_require = (self.options.is_javascript
+            || self.options.is_typescript_with_js_extension)
             && matches!(
                 self.f.exprs.get(callee.idx()),
                 Some(Expr {
@@ -1898,6 +2048,19 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             )
             && !self.is_parenthesized(callee);
         let (args, close_pos) = self.argument_list();
+        if args.len() == 1
+            && chain == Chain::No
+            && matches!(
+                self.f.exprs.get(callee.idx()),
+                Some(Expr {
+                    kind: ExprKind::Ident(bun_sema::atom::known::require),
+                    ..
+                })
+            )
+        {
+            let argument = self.f.id_at(args, 0);
+            self.note_folded_specifiers(argument, 0);
+        }
         if is_require && args.len() == 1 {
             let argument = self.f.id_at(args, 0);
             if !self.is_parenthesized(argument) {
@@ -2480,6 +2643,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 };
             }
             T::PrivateIdentifier => (PropKey::Private(self.lx.atom), NameKind::Identifier),
+            T::BigInt if self.options.bigint_names_are_digits => {
+                let written = bun_sema::json::bigint_token_value(self.lx.text());
+                let digits = bun_sema::json::parse_pseudo_big_int(&written);
+                (PropKey::Name(self.atom(&digits)), NameKind::Identifier)
+            }
             T::BigInt => (PropKey::Name(self.lx.atom), NameKind::Identifier),
             token if token.is_identifier_or_keyword() => {
                 (PropKey::Name(self.lx.atom), NameKind::Identifier)
@@ -2598,7 +2766,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         // `getDeclarationName`: a private name outside a class declares nothing. Neither does a
         // bigint.
-        if self.classes_around == 0 && matches!(key, PropKey::Private(_)) || is_bigint {
+        if self.classes_around == 0 && matches!(key, PropKey::Private(_))
+            || is_bigint && !self.options.bigint_names_are_digits
+        {
             key = PropKey::None;
         }
         // "Disallowing of optional property assignments and definite assignment assertion happens in

@@ -84,9 +84,8 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
 
     auto sourceURL = Zig::sourceURL(vm, stackFrame);
     frame.source_url = Bun::toStringRef(sourceURL);
-    auto m_codeBlock = stackFrame.codeBlock();
-    if (m_codeBlock) {
-        switch (m_codeBlock->codeType()) {
+    if (stackFrame.hasLineAndColumnInfo()) {
+        switch (stackFrame.codeType()) {
         case JSC::EvalCode: {
             frame.code_type = ZigStackFrameCodeEval;
             return;
@@ -100,7 +99,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
             return;
         }
         case JSC::FunctionCode: {
-            frame.code_type = !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+            frame.code_type = !stackFrame.isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
             break;
         }
         default:
@@ -119,6 +118,14 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
+#if ENABLE(AOT)
+    if (auto reported = stackFrame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart); reported && stackFrame.hasLineAndColumnInfo()) {
+        position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.line).zeroBasedInt();
+        position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.column).zeroBasedInt();
+        position.byte_position = -1;
+        return;
+    }
+#endif
     auto code = stackFrame.codeBlock();
     if (!code)
         return;
@@ -146,6 +153,10 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
     memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
+        return;
+    if (provider->hasNoSourceText())
+        return;
+    if (location.byte_position < 0 || static_cast<unsigned>(location.byte_position) >= sourceString.length())
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
@@ -220,6 +231,8 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
         populateStackFramePosition(stackFrame, nullptr,
             nullptr,
             0, frame.position, referenced_source_provider, flags);
+        if (auto position = stackFrame.reportedPosition(); position && position->source)
+            frame.remapped = true;
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
             is_top ? trace.source_lines_numbers : nullptr,

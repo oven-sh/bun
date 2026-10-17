@@ -1,14 +1,11 @@
+// @ts-check
 import type { SSLMode } from "./options";
 import type { Query as QueryType } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLArrayParameter, TransactionCommands } from "./shared";
 
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
-const {
-  SQLQueryFlags,
-  onQuerySettled,
-  symbols: { _results },
-} = require("internal/sql/query");
+const { SQLQueryFlags, onQuerySettled, stateOf } = require("internal/sql/query");
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } = require("internal/sql/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
@@ -30,16 +27,7 @@ const enum PooledConnectionFlags {
 }
 export type { PooledConnection };
 
-interface NativeConnection {
-  close(): void;
-  flush(): void;
-  hold(): void;
-  unhold(): void;
-  /// a boolean: the server's word after its last complete reply
-  readonly inTransaction: unknown;
-  /// PostgreSQL, a boolean: the server asked for SASL in the login that is under way or was refused
-  readonly sasl?: unknown;
-}
+type NativeConnection = any;
 
 /// A driver ignores the trailing arguments it does not take.
 export type NativeCreateConnection<ConnectionHandle> = (
@@ -87,7 +75,7 @@ class Reservation {
 /// connecting -> open -> closed, never back: whatever still holds a closed one cannot reach the one that replaced it.
 class PooledConnection<ConnectionHandle extends NativeConnection = any> {
   adapter: BaseSQLAdapter<ConnectionHandle, any>;
-  connection: ConnectionHandle | null = null;
+  connection: NativeConnection = null;
   state: PooledConnectionState = PooledConnectionState.connecting;
   closeHandlers: Set<(err: Error) => void> = new Set();
   flags: number = 0;
@@ -375,7 +363,7 @@ interface Login {
 }
 
 /// Whether to dial once more after `err`, which closed `connection`. The other methods send the password as it is.
-function tryOtherPassword(login: Login, err: Error | null, connection: Pick<NativeConnection, "sasl"> | null): boolean {
+function tryOtherPassword(login: Login, err: Error | null, connection: any): boolean {
   if (!login.otherPassword || (err as any)?.errno !== "28P01" || connection?.sasl !== true) {
     return false;
   }
@@ -463,11 +451,11 @@ async function createPooledConnectionHandle<ConnectionHandle>(
 
 /// A result of several: CALL <proc>() and a text of several statements.
 function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) {
-  const results = query[_results];
+  const results: any = stateOf(query).results;
   if (!results) {
-    query[_results] = result;
+    stateOf(query).results = result;
   } else if (SQLResultArray.isResult(results)) {
-    query[_results] = [results, result];
+    stateOf(query).results = [results, result];
   } else {
     results.push(result);
   }

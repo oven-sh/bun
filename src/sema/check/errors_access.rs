@@ -309,11 +309,19 @@ impl<'p> Checker<'p, '_> {
         (key, keys): (TypeId, TypeId),
         name: Option<Atom>,
     ) {
-        let ExprKind::Index { obj, index, .. } = self.hir(file)[e].kind else {
+        if self.is_after_check() {
             return;
+        }
+        let (obj, at_index) = match self.hir(file)[e].kind {
+            ExprKind::Index { obj, index, .. } => {
+                (obj, self.span_of_parenthesized_expr(file, index))
+            }
+            ExprKind::Dot { obj, name_pos, .. } => {
+                (obj, (file, name_pos, self.hir(file)[e].end - 1))
+            }
+            _ => return,
         };
         let at_access = self.place_inside_parentheses(file, e);
-        let at_index = self.span_of_parenthesized_expr(file, index);
         let is_target = self.is_assignment_target(file, e);
         if let Some(name) = name
             && self.static_side_has(object, name)
@@ -897,6 +905,9 @@ impl<'p> Checker<'p, '_> {
         containing: TypeId,
         is_unchecked_js: bool,
     ) {
+        if self.is_after_check() {
+            return;
+        }
         // `NodeCheckFlagsTypeChecked`: the error is already being built.
         if self
             .reporting_nonexistent
@@ -991,6 +1002,7 @@ impl<'p> Checker<'p, '_> {
         for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
             frame.drops_reported = dropped;
         }
+        self.forget_marked_frames();
         let reported = self.reported.len();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
         // `NodeCheckFlagsTypeChecked`: tsgo reports for a node once. What it reports while a loop is analysed, with the

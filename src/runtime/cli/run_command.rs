@@ -791,6 +791,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         check_before(&entry_points, before_read)
     }
 
+    fn audit_main(ctx: &ContextData, vm: &mut VirtualMachine) -> bool {
+        let preloads = cli::aot_audit::preload_paths(vm);
+        let main = crate::cli::check_command::EntryPoint {
+            path: vm.main(),
+            loader: Some(Self::loader_of_main(ctx, vm.main(), None)),
+            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+        };
+        let entry_points: Vec<_> = std::iter::once(main)
+            .chain(
+                preloads
+                    .iter()
+                    .map(|path| crate::cli::check_command::EntryPoint::file(path)),
+            )
+            .collect();
+        cli::aot_audit::prepare(
+            &entry_points,
+            crate::cli::check_command::watching(vm),
+            false,
+        )
+    }
+
     /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
     fn loader_of_main(ctx: &ContextData, path: &[u8], loader: Option<Loader>) -> Loader {
         use bun_bundler::options::loaders_from_transform_options;
@@ -968,6 +989,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
+            if ctx.runtime_options.aot || cli::aot_audit::is_enforcing() {
+                pretty_errorln!(
+                    "<r><red>error<r>: <b>--aot<r> does not apply to a shell script (<b>{}<r>). Run a JavaScript or TypeScript file.",
+                    bstr::BStr::new(&entry_path),
+                );
+                Global::exit(1);
+            }
             // It has no entry point to start from, like a script of a package.json.
             if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
                 Global::exit(1);
@@ -986,6 +1014,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
         {
             Global::exit(1);
+        }
+
+        if ctx.runtime_options.aot || ctx.runtime_options.aot_graph_fd.is_some() {
+            return Self::boot_aot(ctx, &entry_path);
         }
 
         // `bun_jsc::initialize`
@@ -1154,6 +1186,31 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
+    fn boot_aot(ctx: &mut ContextData, entry_path: &[u8]) -> crate::Result<()> {
+        let mut cwd_buf = paths::path_buffer_pool::get();
+        let mut path_buf = paths::path_buffer_pool::get();
+        let entry_path: &[u8] = if paths::is_absolute(entry_path) {
+            entry_path
+        } else {
+            paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                core::getcwd(&mut cwd_buf)?.as_bytes(),
+                &mut path_buf[..],
+                &[entry_path],
+            )
+        };
+        #[cfg(windows)]
+        if ctx.runtime_options.aot_graph_fd.is_none() {
+            ctx.runtime_options.aot_graph_fd =
+                Some(cli::aot::build_for_this_process(ctx, &[entry_path]));
+            ctx.runtime_options.aot = false;
+        }
+        let Some(graph) = cli::aot::graph(ctx)? else {
+            cli::aot::exec_build(ctx, &[entry_path], false);
+        };
+        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+        Self::boot_standalone(ctx, entry_name, graph)
+    }
+
     /// Entry point for
     /// `bun build --compile` executables. Mirrors [`boot`] but routes through
     /// `VirtualMachine::init_with_module_graph` and applies the standalone
@@ -1166,7 +1223,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
-        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            use_aot: !bun_resolver::StandaloneModuleGraph::aot_image(&*graph).is_empty(),
+            crash_if_interpreter_is_used: graph.runtime_options.crash_if_interpreter_is_used,
+            ..Default::default()
+        });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
@@ -1213,6 +1274,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
+        if let Some(report) = ctx.runtime_options.aot_decode_crash_report.take() {
+            let frames = bun_crash_handler::report_compiled_frames(&report);
+            if frames.is_empty() {
+                Output::err_generic(
+                    "--aot-decode-crash-report: that report has no frames from this executable's compiled code",
+                    (),
+                );
+                Global::exit(1);
+            }
+            let _ = Output::writer().write_all(&frames);
+            Output::flush();
+            Global::exit(0);
+        }
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
                 .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
@@ -1481,6 +1555,8 @@ impl Run<'_> {
             let watching = crate::cli::check_command::watching(vm);
             !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
         });
+        let has_type_errors =
+            has_type_errors || ctx.runtime_options.aot_audit && !RunCommand::audit_main(ctx, vm);
         if has_type_errors {
             // It is not read if the options are wrong.
             vm.add_main_to_watcher_if_needed();
@@ -1498,7 +1574,12 @@ impl Run<'_> {
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
+                    unsafe extern "C" {
+                        fn JSC__AOT__entryPointIsCommonJS(global: *const JSGlobalObject) -> bool;
+                    }
+                    // SAFETY: `global` valid for VM lifetime.
+                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs
+                        && !unsafe { JSC__AOT__entryPointIsCommonJS(global) };
                     // SAFETY: `global` valid for VM lifetime.
                     let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
                     promise.set_handled();
@@ -2432,6 +2513,13 @@ impl RunCommand {
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
+                        if ctx.runtime_options.aot || cli::aot_audit::is_enforcing() {
+                            pretty_errorln!(
+                                "<r><red>error<r>: <b>--aot<r> does not apply to a package.json script (<b>{}<r>). Add it to the command inside the script, or run a file.",
+                                bstr::BStr::new(target_name),
+                            );
+                            Global::exit(1);
+                        }
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Found matching script `{}`",
@@ -2677,6 +2765,13 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
+                    if ctx.runtime_options.aot || cli::aot_audit::is_enforcing() {
+                        pretty_errorln!(
+                            "<r><red>error<r>: <b>--aot<r> does not apply to an executable (<b>{}<r>). Run a JavaScript or TypeScript file.",
+                            bstr::BStr::new(destination.as_bytes()),
+                        );
+                        Global::exit(1);
+                    }
                     // It has no entry point to start from, like a script of a package.json.
                     if ctx.runtime_options.check
                         && !crate::cli::check_command::check_project_before()

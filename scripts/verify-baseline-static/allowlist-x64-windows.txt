@@ -889,7 +889,7 @@ bssl::BORINGSSL_keccak_squeeze_x4  [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
 # MSVC STL vectorized algorithms. Gate: __isa_available.
-# (16 symbols)
+# (17 symbols)
 # ----------------------------------------------------------------------------
 __std_min_element_d                                                                                       [AVX, AVX2]
 __std_mismatch_1                                                                                          [AVX, AVX2]
@@ -898,6 +898,7 @@ __std_reverse_trivially_swappable_1                                             
 __std_reverse_trivially_swappable_2                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_4                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_8                                                                       [AVX, AVX2]
+__std_swap_ranges_trivially_swappable_noalias                                                             [AVX]
 `anonymous namespace'::__std_find_last_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>  [AVX, AVX2, LZCNT]
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>       [AVX, AVX2]
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_2,unsigned short>      [AVX, AVX2]

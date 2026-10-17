@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { totalmem } from "node:os";

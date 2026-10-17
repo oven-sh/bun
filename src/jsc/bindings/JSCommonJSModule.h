@@ -4,6 +4,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
+#include "wtf/HashSet.h"
 #include "wtf/NakedPtr.h"
 #include "BunClientData.h"
 
@@ -61,6 +62,10 @@ public:
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
     // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
     WTF::Vector<WriteBarrier<Unknown>> m_children;
+    WTF::HashSet<JSCell*> m_childrenSet;
+    JSCommonJSModule* m_lastRequiredChild { nullptr };
+    void addChild(JSC::VM&, JSCommonJSModule*);
+    void clearChildren();
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
     // parent, it is assigned to this field.
@@ -115,7 +120,7 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr, JSCommonJSModule* requestingModule = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
 
@@ -132,6 +137,7 @@ public:
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    bool evaluateCompiledWrapper(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue wrapper);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -166,6 +172,8 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
+JSC::JSSourceCode* loadedCommonJSModuleSource(Zig::GlobalObject*, const WTF::String& key, bool ignoreESModuleAnnotation);
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,

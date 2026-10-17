@@ -1,0 +1,9 @@
+an async generator: collected, 1144
+an async generator that awaits before it yields: collected, 1144
+a generator: collected, 1144
+yield* over an async generator: collected, 1144
+yield* over a generator: collected, 1144
+a loop in an async generator: collected, 1144
+a value read after the await: kept, 1144
+42 [1,2,3,null,4,5,6,null,1,2,3,null,4,5,6,null]
+32 32 true

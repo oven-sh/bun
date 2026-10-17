@@ -163,6 +163,7 @@ pub struct TSConfigJSON {
     pub experimental_decorators: bool,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
+    pub rewrite_relative_import_extensions: Option<bool>,
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +180,7 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            rewrite_relative_import_extensions: None,
         }
     }
 }
@@ -375,6 +377,7 @@ impl TSConfigJSON {
             let mut emit_decorator_metadata_v: Option<&bun_ast::E::JsonValue> = None;
             let mut experimental_decorators_v: Option<&bun_ast::E::JsonValue> = None;
             let mut use_define_for_class_fields_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut rewrite_relative_import_extensions_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
@@ -397,6 +400,11 @@ impl TSConfigJSON {
                         }
                         b"useDefineForClassFields" if use_define_for_class_fields_v.is_none() => {
                             use_define_for_class_fields_v = Some(value)
+                        }
+                        b"rewriteRelativeImportExtensions"
+                            if rewrite_relative_import_extensions_v.is_none() =>
+                        {
+                            rewrite_relative_import_extensions_v = Some(value)
                         }
                         b"jsxFactory" if jsx_factory_v.is_none() => {
                             jsx_factory_v = Some((value, loc))
@@ -445,6 +453,11 @@ impl TSConfigJSON {
             // Parse "useDefineForClassFields"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_for_class_fields_v {
                 result.use_define_for_class_fields = Some(val);
+            }
+
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = rewrite_relative_import_extensions_v
+            {
+                result.rewrite_relative_import_extensions = Some(val);
             }
 
             // Parse "jsxFactory"

@@ -24,6 +24,8 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  patches: ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"],
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.

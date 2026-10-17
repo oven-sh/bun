@@ -240,6 +240,88 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
+    fn string_list(&mut self, list: &Expr) -> crate::Result<Vec<Box<[u8]>>> {
+        self.expect(list, ExprTag::EArray)?;
+        let array = list.data.e_array().expect("infallible: variant checked");
+        let items = array.items.slice();
+        let mut strings = Vec::with_capacity(items.len());
+        for item in items {
+            self.expect_string(item)?;
+            strings.push(estring_to_owned(
+                item.data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .get(),
+                self.bump,
+            ));
+        }
+        Ok(strings)
+    }
+
+    fn load_aot_rules(&mut self, table: &Expr, files: &[Box<[u8]>]) -> crate::Result<()> {
+        for key in [&b"allow"[..], b"warn", b"deny"] {
+            let Some(list) = table.get(key) else { continue };
+            for rule in self.string_list(&list)? {
+                let setting = [b"aot.".as_slice(), key, b"=", &rule[..]].concat();
+                match files {
+                    [] => self
+                        .ctx
+                        .bundler_options
+                        .aot_rules
+                        .push(setting.into_boxed_slice()),
+                    _ => self
+                        .ctx
+                        .bundler_options
+                        .aot_rules
+                        .extend(files.iter().map(|pattern| {
+                            [&setting[..], b":", &pattern[..]]
+                                .concat()
+                                .into_boxed_slice()
+                        })),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn load_aot(&mut self, aot: &Expr) -> crate::Result<()> {
+        self.expect(aot, ExprTag::EObject)?;
+        self.load_aot_rules(aot, &[])?;
+        if let Some(baseline) = aot.get(b"baseline") {
+            self.expect_string(&baseline)?;
+            let path = estring_to_owned(
+                baseline
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .get(),
+                self.bump,
+            );
+            self.ctx.bundler_options.aot_rules.push(
+                [b"aot.baseline=".as_slice(), &path[..]]
+                    .concat()
+                    .into_boxed_slice(),
+            );
+        }
+        let Some(overrides) = aot.get(b"overrides") else {
+            return Ok(());
+        };
+        self.expect(&overrides, ExprTag::EArray)?;
+        let array = overrides
+            .data
+            .e_array()
+            .expect("infallible: variant checked");
+        for table in array.items.slice() {
+            self.expect(table, ExprTag::EObject)?;
+            let Some(files) = table.get(b"files") else {
+                return self.add_error(table.loc, b"Expected \"files\", a list of patterns");
+            };
+            let files = self.string_list(&files)?;
+            self.load_aot_rules(table, &files)?;
+        }
+        Ok(())
+    }
+
     fn load_log_level(&mut self, expr: &Expr) -> crate::Result<()> {
         self.expect_string(expr)?;
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
@@ -901,6 +983,12 @@ impl<'a> Parser<'a, '_> {
             if let Some(serve_obj) = serve_obj2.get_object(b"static") {
                 self.parse_serve_static(&serve_obj)?;
             }
+        }
+
+        if matches!(cmd, CommandTag::BuildCommand | CommandTag::CheckCommand)
+            && let Some(aot) = json.get(b"aot")
+        {
+            self.load_aot(&aot)?;
         }
 
         if let Some(_bun) = json.get(b"bundle") {

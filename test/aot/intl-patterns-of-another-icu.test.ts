@@ -1,0 +1,49 @@
+// An executable may run with another ICU than the one that made its format patterns (test/aot/intl-fuzz/README.md). The programs
+// about constant formatters print what plain Bun prints as built, with every pattern planned again by the ICU that runs, and with
+// every plan refused, when ICU formats everything.
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
+import { test } from "./supported";
+
+const programs = join(import.meta.dir, "programs", "calls-fast-paths");
+const names = [
+  "intl-constant-formatters",
+  "intl-constant-formatters-in-every-flow",
+  "intl-constant-formatters-known-traps",
+  "intl-constant-formatters-when-the-time-zone-changes",
+  "to-locale-string-with-constant-arguments",
+];
+const ways = { "as built": "0", "planned again": "1", "no plan": "2" };
+
+async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+for (const name of names) {
+  test.concurrent(
+    `${name} prints the same whichever ICU made its patterns`,
+    async () => {
+      using dir = tempDir("aot-patterns-of-another-icu", {});
+      const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", join(programs, name + ".ts"), "--outfile", executable],
+        String(dir),
+        bunEnv,
+      );
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const plain = await run([bunExe(), "run", join(programs, name + ".ts")], String(dir), bunEnv);
+      expect(plain.exitCode).toBe(0);
+      for (const [way, value] of Object.entries(ways)) {
+        const ran = await run([executable], String(dir), {
+          ...bunEnv,
+          BUN_JSC_formatPatternsOfAnotherICUForTesting: value,
+        });
+        expect({ way, ...ran }).toEqual({ way, ...plain });
+      }
+    },
+    300_000,
+  );
+}

@@ -1,0 +1,5 @@
+---
+await new Promise(resolve => setTimeout(resolve, 15));
+const { word } = Astro.props;
+---
+<p>streamed later: {word}</p>

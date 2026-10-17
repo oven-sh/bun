@@ -18,7 +18,7 @@ use bun_alloc::{ArenaBox, vec_from_iter_in};
 use std::alloc::Allocator;
 use std::cell::Cell;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// A list that is stored once: one block, of its exact size, in the arena of the thread that built
 /// it. As wide as `Box<[T]>`. It frees the block when it is dropped, on any thread.
@@ -1365,6 +1365,7 @@ struct TypeSummary {
 struct Summaries<L: Length, A: Allocator + Clone> {
     flags: Stable<u32, L, A>,
     object_flags: Stable<ObjectFlags, L, A>,
+    rows: Stable<AtomicU64, L, A>,
     class: Stable<InstantiationClass, L, A>,
 }
 
@@ -1373,6 +1374,7 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
         Summaries {
             flags: Stable::new_in(alloc.clone()),
             object_flags: Stable::new_in(alloc.clone()),
+            rows: Stable::new_in(alloc.clone()),
             class: Stable::new_in(alloc),
         }
     }
@@ -1402,7 +1404,34 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
     fn push(&self, summary: TypeSummary) -> u32 {
         self.flags.push(summary.flags);
         self.object_flags.push(summary.object_flags);
+        self.rows.push(AtomicU64::new(0));
         self.class.push(summary.class)
+    }
+
+    /// Makes room for `count` more.
+    ///
+    /// # Safety
+    /// As for `Stable::reserve`, with `write`.
+    unsafe fn reserve(&self, count: u32) {
+        // SAFETY: the caller writes every column of each index, through `write`.
+        unsafe {
+            self.flags.reserve(count);
+            self.object_flags.reserve(count);
+            self.rows.reserve(count);
+            self.class.reserve(count);
+        }
+    }
+
+    /// # Safety
+    /// As for `Stable::write`.
+    unsafe fn write(&self, index: u32, summary: TypeSummary) {
+        // SAFETY: the index is one that `reserve` has made room for in every column, and this call alone has it.
+        unsafe {
+            self.flags.write(index, summary.flags);
+            self.object_flags.write(index, summary.object_flags);
+            self.rows.write(index, AtomicU64::new(0));
+            self.class.write(index, summary.class);
+        }
     }
 }
 
@@ -1528,6 +1557,10 @@ impl Bits {
             self.0.resize(index / 64 + 1, 0);
         }
         self.0[index / 64] |= 1 << (index % 64);
+    }
+
+    fn count(&self) -> usize {
+        self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
 }
 
@@ -2067,6 +2100,11 @@ impl<'s> TypeStore<'s> {
             self.summaries.push(self.types.items.get(id).summary());
         }
     }
+
+    /// How many types are published. Their ids are the numbers below that.
+    pub fn type_count(&self) -> u32 {
+        self.types.items.len()
+    }
 }
 
 impl<'p, 's> Types<'p, 's> {
@@ -2150,6 +2188,15 @@ impl<'p, 's> Types<'p, 's> {
             self.published.summaries.class(id.0)
         } else {
             self.own.summaries.class(id.0 & !LOCAL)
+        }
+    }
+
+    #[inline]
+    pub fn row(&self, id: TypeId) -> &'p AtomicU64 {
+        if id.0 & LOCAL == 0 {
+            self.published.summaries.rows.get(id.0)
+        } else {
+            self.own.summaries.rows.get(id.0 & !LOCAL)
         }
     }
 
@@ -3729,7 +3776,7 @@ type ContentHash = [u64; 2];
 
 /// Two lanes of multiply and fold, with different constants.
 #[derive(Copy, Clone)]
-struct Lanes(ContentHash);
+pub(crate) struct Lanes(pub(crate) ContentHash);
 
 #[inline]
 fn fold(a: u64, b: u64) -> u64 {
@@ -3738,10 +3785,10 @@ fn fold(a: u64, b: u64) -> u64 {
 }
 
 impl Lanes {
-    const START: Lanes = Lanes([0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344]);
+    pub(crate) const START: Lanes = Lanes([0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344]);
 
     #[inline]
-    fn add(&mut self, word: u64) {
+    pub(crate) fn add(&mut self, word: u64) {
         self.0[0] = fold(self.0[0] ^ word, 0x9e37_79b9_7f4a_7c15);
         self.0[1] = fold(self.0[1].rotate_left(23) ^ word, 0xc2b2_ae3d_27d4_eb4f);
     }
@@ -3778,17 +3825,60 @@ impl Hasher for Lanes {
     }
 }
 
+/// The content hashes of the marked records of one kind.
+struct Hashes<'a> {
+    marks: &'a Bits,
+    /// By word of `marks`: the number of marked records before it.
+    before: Vec<u32>,
+    /// In creation order.
+    of: Vec<ContentHash>,
+}
+
+impl<'a> Hashes<'a> {
+    fn new(marks: &'a Bits) -> Hashes<'a> {
+        let mut count = 0;
+        let before = (marks.0.iter())
+            .map(|word| {
+                count += word.count_ones();
+                count - word.count_ones()
+            })
+            .collect();
+        Hashes {
+            marks,
+            before,
+            of: vec![[0; 2]; count as usize],
+        }
+    }
+
+    /// Where `of` has the hash of the marked record `index`.
+    #[inline]
+    fn place(&self, index: u32) -> usize {
+        let (word, bit) = (index as usize / 64, index % 64);
+        let earlier = self.marks.0[word] & ((1 << bit) - 1);
+        (self.before[word] + earlier.count_ones()) as usize
+    }
+
+    /// Zero for a record that is not marked.
+    #[inline]
+    fn get(&self, index: u32) -> ContentHash {
+        match self.marks.has(index as usize) {
+            true => self.of[self.place(index)],
+            false => [0; 2],
+        }
+    }
+}
+
 /// Computes the content hash of one record. A published id is hashed as its number, a task-local id
 /// as the content hash of its record.
 struct Content<'a> {
     lanes: Lanes,
-    /// Indexed by kind and index. The records a record references are older, so their hashes are
-    /// already computed.
-    of: &'a [Vec<ContentHash>; 5],
+    /// Indexed by kind. The records a record references are older, so their hashes are already
+    /// computed.
+    of: &'a [Hashes<'a>; 5],
 }
 
 impl<'a> Content<'a> {
-    fn new(of: &'a [Vec<ContentHash>; 5], kind: Kind) -> Content<'a> {
+    fn new(of: &'a [Hashes<'a>; 5], kind: Kind) -> Content<'a> {
         let mut lanes = Lanes::START;
         lanes.add(kind as u64);
         Content { lanes, of }
@@ -3799,7 +3889,7 @@ impl<'a> Content<'a> {
         if id & LOCAL == 0 {
             self.lanes.add(u64::from(id));
         } else {
-            let [a, b] = self.of[kind as usize][(id & !LOCAL) as usize];
+            let [a, b] = self.of[kind as usize].get(id & !LOCAL);
             // No number of a published id has the high half set.
             self.lanes.add(a | 1 << 63);
             self.lanes.add(b);
@@ -3863,7 +3953,7 @@ impl Visitor for Content<'_> {
 /// The content hash of a type. A union is hashed as a set, and so is an origin that is a union: two
 /// tasks may have sorted members that tie in `compare_types` differently. See
 /// `Types::mark_ordered_by_id`.
-fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
+fn content_of_type(created: &Made, of: &[Hashes<'_>; 5]) -> ContentHash {
     let mut content = Content::new(of, Kind::Type);
     match &created.0 {
         data @ TypeData::Union(members) => {
@@ -3907,14 +3997,21 @@ const HASH_PARTS: usize = 64;
 /// A step that publishes fewer records than this is merged on one thread.
 const FEW_RECORDS: usize = 4096;
 
+/// One thread links or stores this many records of a task at a time.
+const RECORDS_PER_PIECE: usize = 1 << 12;
+
 /// The published records of one kind and one task.
 struct Taken<V> {
     /// The number of records of the kind the task had, which is the length of its `Link` array.
     len: usize,
-    /// The index in the task's store, the content hash, the record. In creation order.
-    records: Vec<(u32, ContentHash, V)>,
-    /// The positions in `records`, grouped by hash part, in order within a part.
+    /// The index in the task's store, the record. In creation order, in pieces of `RECORDS_PER_PIECE`.
+    records: Vec<Vec<(u32, V)>>,
+    /// The positions among all of `records`, grouped by hash part, in order within a part.
     positions: Vec<u32>,
+    /// The content hashes of the records, in the order of `positions`.
+    hashes: Vec<ContentHash>,
+    /// By position. For `number`: the place of the first record with the same hash.
+    firsts: Vec<AtomicU64>,
     /// The start of each part in `positions`, and the end of the last.
     parts: [u32; HASH_PARTS + 1],
     /// In a debug build, after `number`: the records that were merged with another record, each
@@ -3923,15 +4020,26 @@ struct Taken<V> {
 }
 
 impl<V> Taken<V> {
+    fn count(&self) -> usize {
+        self.records.iter().map(Vec::len).sum()
+    }
+
     fn map<U>(self, mut of: impl FnMut(V) -> U) -> Taken<U> {
         let records = self.records.into_iter();
         let joined = self.joined.into_iter();
         Taken {
             len: self.len,
             records: records
-                .map(|(index, hash, record)| (index, hash, of(record)))
+                .map(|piece| {
+                    piece
+                        .into_iter()
+                        .map(|(index, record)| (index, of(record)))
+                        .collect()
+                })
                 .collect(),
             positions: self.positions,
+            hashes: self.hashes,
+            firsts: self.firsts,
             parts: self.parts,
             joined: joined.map(|(id, record)| (id, of(record))).collect(),
         }
@@ -3944,6 +4052,8 @@ impl<V> Default for Taken<V> {
             len: 0,
             records: Vec::new(),
             positions: Vec::new(),
+            hashes: Vec::new(),
+            firsts: Vec::new(),
             parts: [0; HASH_PARTS + 1],
             joined: Vec::new(),
         }
@@ -3965,28 +4075,38 @@ fn take<V>(own: &mut Own<V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
         len: own.records.len() as usize,
         ..Taken::default()
     };
+    let count = marks.count();
+    let pieces = (0..count).step_by(RECORDS_PER_PIECE);
+    taken.records = pieces
+        .map(|first| Vec::with_capacity(RECORDS_PER_PIECE.min(count - first)))
+        .collect();
+    let mut position = 0;
     own.records.drain(|index, record| {
         if marks.has(index as usize) {
-            taken.records.push((index, hashes[index as usize], record));
+            taken.records[position / RECORDS_PER_PIECE].push((index, record));
+            position += 1;
         }
     });
     own.found.clear();
     own.bound.clear();
     // A counting sort by the part.
-    let part = |record: &(u32, ContentHash, V)| (record.1[0] >> (64 - HASH_PARTS.ilog2())) as usize;
-    for record in &taken.records {
-        taken.parts[part(record) + 1] += 1;
+    let part = |hash: &ContentHash| (hash[0] >> (64 - HASH_PARTS.ilog2())) as usize;
+    for hash in &hashes[..count] {
+        taken.parts[part(hash) + 1] += 1;
     }
     for i in 0..HASH_PARTS {
         taken.parts[i + 1] += taken.parts[i];
     }
     let mut next = taken.parts;
-    taken.positions = vec![0; taken.records.len()];
-    for (position, record) in taken.records.iter().enumerate() {
-        let at = &mut next[part(record)];
+    taken.positions = vec![0; count];
+    taken.hashes = vec![[0; 2]; count];
+    for (position, hash) in hashes[..count].iter().enumerate() {
+        let at = &mut next[part(hash)];
         taken.positions[*at as usize] = position as u32;
+        taken.hashes[*at as usize] = *hash;
         *at += 1;
     }
+    taken.firsts = (0..count).map(|_| AtomicU64::new(0)).collect();
     taken
 }
 
@@ -4027,7 +4147,7 @@ impl<'s> OwnStore<'s> {
             }
         }
         // Forwards: the records a record references already have their hashes.
-        let mut hashes: [Vec<ContentHash>; 5] = stores.lengths().map(|len| vec![[0; 2]; len]);
+        let mut hashes: [Hashes<'_>; 5] = marks.0.each_ref().map(Hashes::new);
         for at in 0..stores.log.len() {
             let (kind, index) = entry(at);
             if !marks.0[kind as usize].has(index as usize) {
@@ -4054,17 +4174,18 @@ impl<'s> OwnStore<'s> {
                 }
                 Kind::Type => content_of_type(&stores.types.records.get(index).created, &hashes),
             };
-            hashes[kind as usize][index as usize] = hash;
+            let at = hashes[kind as usize].place(index);
+            hashes[kind as usize].of[at] = hash;
         }
         stores.log.clear();
         stores.unimported_files.0.clear();
         let [atoms, components, mappers, sigs, types] = &marks.0;
         OwnRecords {
-            atoms: take(&mut stores.atoms, atoms, &hashes[0]),
-            components: take(&mut stores.components, components, &hashes[1]),
-            mappers: take(&mut stores.mappers, mappers, &hashes[2]),
-            sigs: take(&mut stores.sigs, sigs, &hashes[3]),
-            types: take(&mut stores.types, types, &hashes[4]),
+            atoms: take(&mut stores.atoms, atoms, &hashes[0].of),
+            components: take(&mut stores.components, components, &hashes[1].of),
+            mappers: take(&mut stores.mappers, mappers, &hashes[2].of),
+            sigs: take(&mut stores.sigs, sigs, &hashes[3].of),
+            types: take(&mut stores.types, types, &hashes[4].of),
         }
     }
 }
@@ -4112,18 +4233,25 @@ fn number<V: Send + Sync>(
     }
     let place = |task: usize, position: usize| (task as u64) << 32 | position as u64;
     // GROUP: for each record, the `place` of the first record with the same hash.
-    let firsts: Vec<Vec<AtomicU64>> = (tasks.iter())
-        .map(|task| (0..task.records.len()).map(|_| AtomicU64::new(0)).collect())
+    let firsts: Vec<Vec<AtomicU64>> = tasks
+        .iter_mut()
+        .map(|task| std::mem::take(&mut task.firsts))
         .collect();
     {
         let tasks: &[&mut Taken<V>] = tasks;
         in_parallel(HASH_PARTS, &|part| {
-            let mut first: FxHashMap<ContentHash, u64> = FxHashMap::default();
+            let records = tasks
+                .iter()
+                .map(|task| (task.parts[part + 1] - task.parts[part]) as usize)
+                .sum();
+            let mut first: FxHashMap<ContentHash, u64> =
+                FxHashMap::with_capacity_and_hasher(records, Default::default());
             for (t, task) in tasks.iter().enumerate() {
                 let (from, to) = (task.parts[part] as usize, task.parts[part + 1] as usize);
-                for &position in &task.positions[from..to] {
+                for (&position, &hash) in
+                    task.positions[from..to].iter().zip(&task.hashes[from..to])
+                {
                     let position = position as usize;
-                    let hash = task.records[position].1;
                     let first = *first.entry(hash).or_insert_with(|| place(t, position));
                     firsts[t][position].store(first, Ordering::Relaxed);
                 }
@@ -4136,15 +4264,19 @@ fn number<V: Send + Sync>(
         task: usize,
         ranks: Vec<u32>,
         count: u32,
+        ids: Box<[u32]>,
     }
     let mut ranks: Vec<Ranks> = (0..tasks.len())
         .map(|task| Ranks {
             task,
             ranks: Vec::new(),
             count: 0,
+            ids: Box::default(),
         })
         .collect();
+    let lengths: Vec<usize> = tasks.iter().map(|task| task.len).collect();
     for_each_mut(&mut ranks, in_parallel, &|it| {
+        it.ids = vec![u32::MAX; lengths[it.task]].into_boxed_slice();
         let (task, mut count) = (it.task, 0);
         it.ranks = (firsts[task].iter().enumerate())
             .map(|(position, first)| {
@@ -4163,29 +4295,66 @@ fn number<V: Send + Sync>(
         })
         .collect();
     // LINK
-    let mut links: Vec<(usize, &mut Taken<V>, Box<[u32]>)> = (tasks.iter_mut().enumerate())
-        .map(|(t, task)| (t, &mut **task, Box::default()))
+    struct Piece<'a, V> {
+        task: usize,
+        first: usize,
+        records: &'a mut Vec<(u32, V)>,
+        joined: Vec<(u32, V)>,
+    }
+    let mut links: Vec<Box<[u32]>> = ranks
+        .iter_mut()
+        .map(|it| std::mem::take(&mut it.ids))
         .collect();
-    for_each_mut(&mut links, in_parallel, &|(t, task, link)| {
-        let mut ids = vec![u32::MAX; task.len].into_boxed_slice();
-        let mut stay = Vec::with_capacity(ranks[*t].count as usize);
-        let records = std::mem::take(&mut task.records);
-        for (position, mut record) in records.into_iter().enumerate() {
-            let first = firsts[*t][position].load(Ordering::Relaxed);
-            let (of, at) = ((first >> 32) as usize, first as u32 as usize);
-            let id = begins[of] + ranks[of].ranks[at];
-            ids[record.0 as usize] = id;
-            record.0 = id;
-            if first == place(*t, position) {
-                stay.push(record);
-            } else if cfg!(debug_assertions) {
-                task.joined.push((id, record.2));
-            }
-        }
-        task.records = stay;
-        *link = ids;
-    });
-    links.into_iter().map(|it| it.2).collect()
+    let mut joined: Vec<&mut Vec<(u32, V)>> = Vec::with_capacity(tasks.len());
+    let mut pieces: Vec<Piece<'_, V>> = Vec::new();
+    for (t, task) in tasks.iter_mut().enumerate() {
+        let task = &mut **task;
+        joined.push(&mut task.joined);
+        pieces.extend(
+            task.records
+                .iter_mut()
+                .enumerate()
+                .map(|(piece, records)| Piece {
+                    task: t,
+                    first: piece * RECORDS_PER_PIECE,
+                    records,
+                    joined: Vec::new(),
+                }),
+        );
+    }
+    {
+        let ids: Vec<&[AtomicU32]> = (links.iter_mut())
+            .map(|ids| {
+                // SAFETY: an `AtomicU32` has the size, the alignment and the values of a `u32`, and `links` stays borrowed exclusively for as long as this is used.
+                unsafe { &*(std::ptr::from_mut::<[u32]>(ids) as *const [AtomicU32]) }
+            })
+            .collect();
+        for_each_mut(&mut pieces, in_parallel, &|it| {
+            let (t, begins_at, ids) = (it.task, it.first, ids[it.task]);
+            let records = std::mem::take(it.records);
+            let joined = &mut it.joined;
+            let stay = (records.into_iter().enumerate()).filter_map(|(offset, mut record)| {
+                let position = begins_at + offset;
+                let first = firsts[t][position].load(Ordering::Relaxed);
+                let (of, at) = ((first >> 32) as usize, first as u32 as usize);
+                let id = begins[of] + ranks[of].ranks[at];
+                ids[record.0 as usize].store(id, Ordering::Relaxed);
+                record.0 = id;
+                if first == place(t, position) {
+                    return Some(record);
+                }
+                if cfg!(debug_assertions) {
+                    joined.push((id, record.1));
+                }
+                None
+            });
+            *it.records = stay.collect();
+        });
+    }
+    for piece in pieces {
+        joined[piece.task].extend(piece.joined);
+    }
+    links
 }
 
 /// What `put` must do with a record, after `follow` has been applied to it.
@@ -4206,33 +4375,48 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
     tasks: Vec<(Taken<V>, &Link)>,
     in_parallel: InParallel<'_>,
     settle: &(dyn Fn(V, &Link, u32) -> Placed<V> + Sync),
+    stored: &(dyn Fn(u32, &V) + Sync),
 ) -> (Vec<(u32, V)>, Vec<(u32, V)>) {
     struct Work<'a, V> {
-        task: Taken<V>,
+        records: Vec<(u32, V)>,
         link: &'a Link,
-        /// The entries to add to the index, by shard.
-        added: Vec<Vec<(u64, u32)>>,
+        /// The entries to add to the index, in the order of their shards.
+        added: Vec<(u64, u32)>,
+        /// The start of each shard in `added`, and the end of the last.
+        shards: Vec<u32>,
         later: Vec<(u32, V)>,
     }
-    let count: usize = tasks.iter().map(|(task, _)| task.records.len()).sum();
+    let count: usize = tasks.iter().map(|(task, _)| task.count()).sum();
     if count == 0 {
         return (Vec::new(), Vec::new());
     }
     // SAFETY: every id that `number` assigned is written below, or by the caller if it is `Later`.
     unsafe { items.reserve(count as u32) };
-    let mut work: Vec<Work<'_, V>> = (tasks.into_iter())
-        .map(|(task, link)| Work {
-            task,
-            link,
-            added: vec![Vec::new(); SHARDS],
-            later: Vec::new(),
-        })
-        .collect();
+    let mut merged: Vec<(Vec<(u32, V)>, &Link)> = Vec::new();
+    let mut work: Vec<Work<'_, V>> = Vec::new();
+    for (task, link) in tasks {
+        if !task.joined.is_empty() {
+            merged.push((task.joined, link));
+        }
+        work.extend(
+            task.records
+                .into_iter()
+                .filter(|records| !records.is_empty())
+                .map(|records| Work {
+                    records,
+                    link,
+                    added: Vec::new(),
+                    shards: Vec::new(),
+                    later: Vec::new(),
+                }),
+        );
+    }
     for_each_mut(&mut work, in_parallel, &|it| {
-        for (id, _, record) in std::mem::take(&mut it.task.records) {
+        let mut indexed: Vec<(u64, u32)> = Vec::with_capacity(it.records.len());
+        for (id, record) in std::mem::take(&mut it.records) {
             let record = match settle(record, it.link, id) {
                 Placed::Indexed(record, spread) => {
-                    it.added[shard_of(spread)].push((spread, id));
+                    indexed.push((spread, id));
                     record
                 }
                 Placed::NotIndexed(record) => record,
@@ -4241,23 +4425,44 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
                     continue;
                 }
             };
+            stored(id, &record);
             // SAFETY: the id is in the range that was reserved, and no other record has it.
             unsafe { items.write(id - first, record) };
+        }
+        // A counting sort by the shard.
+        it.shards = vec![0; SHARDS + 1];
+        for entry in &indexed {
+            it.shards[shard_of(entry.0) + 1] += 1;
+        }
+        for shard in 0..SHARDS {
+            it.shards[shard + 1] += it.shards[shard];
+        }
+        let mut next = it.shards.clone();
+        it.added = vec![(0, 0); indexed.len()];
+        for entry in indexed {
+            let at = &mut next[shard_of(entry.0)];
+            it.added[*at as usize] = entry;
+            *at += 1;
         }
     });
     {
         let work = &work;
+        let of = |it: &'_ Work<'_, V>, shard: usize| {
+            it.shards[shard] as usize..it.shards[shard + 1] as usize
+        };
         in_parallel(SHARDS, &|shard| {
-            let count = work.iter().map(|it| it.added[shard].len()).sum();
-            let added = work.iter().flat_map(|it| it.added[shard].iter().copied());
+            let count = work.iter().map(|it| of(it, shard).len()).sum();
+            let added = work
+                .iter()
+                .flat_map(|it| it.added[of(it, shard)].iter().copied());
             shards[shard].extend(count, added);
         });
     }
     let mut joined = Vec::new();
-    for it in &mut work {
-        for (id, record) in std::mem::take(&mut it.task.joined) {
+    for (merged, link) in merged {
+        for (id, record) in merged {
             if let Placed::Indexed(record, _) | Placed::NotIndexed(record) =
-                settle(record, it.link, id)
+                settle(record, link, id)
             {
                 joined.push((id, record));
             }
@@ -4302,11 +4507,11 @@ impl<'s> TypeStore<'s> {
         let count = |tasks: &[OwnRecords]| {
             let sum = |of: fn(&OwnRecords) -> usize| tasks.iter().map(of).sum::<usize>();
             [
-                sum(|it| it.atoms.records.len()),
-                sum(|it| it.components.records.len()),
-                sum(|it| it.mappers.records.len()),
-                sum(|it| it.sigs.records.len()),
-                sum(|it| it.types.records.len()),
+                sum(|it| it.atoms.count()),
+                sum(|it| it.components.count()),
+                sum(|it| it.mappers.count()),
+                sum(|it| it.sigs.count()),
+                sum(|it| it.types.count()),
             ]
         };
         let linked = count(&tasks);
@@ -4379,10 +4584,16 @@ impl<'s> TypeStore<'s> {
             sigs.push((task.sigs, link));
             types.push((task.types, link));
         }
-        let (_, joined) = put(atoms.halves(), texts, in_parallel, &|text, _, _| {
-            let spread = crate::atom::hash_of(&text);
-            Placed::Indexed(text, spread)
-        });
+        let (_, joined) = put(
+            atoms.halves(),
+            texts,
+            in_parallel,
+            &|text, _, _| {
+                let spread = crate::atom::hash_of(&text);
+                Placed::Indexed(text, spread)
+            },
+            &|_, _| {},
+        );
         check_joined(atoms.halves(), joined, |a, b| **a == **b);
         let (_, joined) = put(
             self.components.halves(),
@@ -4393,6 +4604,7 @@ impl<'s> TypeStore<'s> {
                 let spread = spread_hash(&list);
                 Placed::Indexed(list, spread)
             },
+            &|_, _| {},
         );
         check_joined(self.components.halves(), joined, |a, b| a == b);
         let (_, joined) = put(
@@ -4405,6 +4617,7 @@ impl<'s> TypeStore<'s> {
                 let spread = spread_hash(&Pairs(&pairs));
                 Placed::Indexed((pairs, flags), spread)
             },
+            &|_, _| {},
         );
         check_joined(self.mappers.halves(), joined, |a, b| a == b);
         let (_, joined) = put(
@@ -4416,8 +4629,12 @@ impl<'s> TypeStore<'s> {
                 let spread = spread_hash(&data);
                 Placed::Indexed(data, spread)
             },
+            &|_, _| {},
         );
         check_joined(self.sigs.halves(), joined, |a, b| a == b);
+        debug_assert_eq!(self.summaries.len(), self.types.items.len());
+        // SAFETY: every type that `put` stores has its summary written there, and every one that it leaves for later below.
+        unsafe { self.summaries.reserve(stay[4] as u32) };
         let (later, joined) = put(
             self.types.halves(),
             types,
@@ -4442,11 +4659,12 @@ impl<'s> TypeStore<'s> {
                     }
                 }
             },
+            // SAFETY: room was made for the ids that `number` assigned, and no other record has this one.
+            &|id, record| unsafe { self.summaries.write(id, record.summary()) },
         );
         // On one thread, in ascending id order: the constituents of such a union are already
         // stored, and `sort` reads them.
         for (id, mut record) in later {
-            self.summarize_types(id);
             *record.is_ordered_by_id.get_mut() = false;
             if let TypeData::Union(members) = &mut record.created.0 {
                 sort(members);
@@ -4457,12 +4675,14 @@ impl<'s> TypeStore<'s> {
                 sort(types);
             }
             let spread = spread_hash(&record.created);
-            // SAFETY: `put` has reserved the id and left it to be written here.
-            unsafe { self.types.items.write(id, record) };
+            // SAFETY: `put` has reserved the id and left it to be written here, and room was made for its summary above.
+            unsafe {
+                self.summaries.write(id, record.summary());
+                self.types.items.write(id, record);
+            }
             self.types.shards[shard_of(spread)].extend(1, std::iter::once((spread, id)));
         }
         check_joined(self.types.halves(), joined, |a, b| a.created == b.created);
-        self.summarize_types(self.types.items.len());
         (links, counts)
     }
 }

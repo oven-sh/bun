@@ -94,6 +94,9 @@ const TYPES: &[Param] = &[
     clap::param!("--type-aware                    Also run the rules that need types"),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
     clap::param!(
+        "--aot                           Also report what behaves differently when compiled with <b>bun build --aot<r>"
+    ),
+    clap::param!(
         "--tsconfig <path>               Use this tsconfig.json instead of the nearest one"
     ),
     clap::param!("--type-check                    With <b>--type-aware<r>, report type errors too"),
@@ -545,6 +548,8 @@ pub struct Options {
     pub plugins: Vec<(&'static [u8], bool)>,
     /// `--type-aware`, `--no-type-aware`. `None`: as the configuration says.
     pub type_aware: Option<bool>,
+    /// `--aot`: the rules of `bun/aot` are on.
+    pub aot: bool,
     /// `--infer-globals`, `--no-infer-globals`. `None`: only without a configuration file.
     pub infer_globals: Option<bool>,
     /// `--infer-globals=fast`: `InferGlobals::ByOptions` without a configuration file. It is to become what is done there
@@ -653,6 +658,7 @@ impl Default for Options {
             explain: None,
             plugins: Vec::new(),
             type_aware: None,
+            aot: false,
             infer_globals: None,
             infers_globals_by_options: false,
             tsconfig: None,
@@ -862,6 +868,7 @@ impl Options {
             b"print-config" => self.print_config = owned(),
             b"doctor" => self.doctor = is_on,
             b"type-aware" => self.type_aware = Some(is_on),
+            b"aot" => self.aot = is_on,
             b"infer-globals" => self.infer_globals = Some(is_on),
             b"tsconfig" | b"project" => self.tsconfig = owned(),
             b"threads" | b"concurrency" => match (name, text) {

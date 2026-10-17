@@ -298,7 +298,19 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-extern "C" void on_before_reload_process_posix()
+#if OS(LINUX)
+static uint64_t inheritedFileDescriptors = 0;
+
+extern "C" void bun_remember_inherited_file_descriptors()
+{
+    for (int fd = 3; fd < 64; fd++) {
+        if (fcntl(fd, F_GETFD, 0) != -1)
+            inheritedFileDescriptors |= 1ULL << fd;
+    }
+}
+#endif
+
+extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
     unset_cloexec(STDIN_FILENO);
     unset_cloexec(STDOUT_FILENO);
@@ -308,7 +320,16 @@ extern "C" void on_before_reload_process_posix()
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
-    bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+    if (closeInheritedFileDescriptors)
+        bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
+#if OS(LINUX)
+    if (!closeInheritedFileDescriptors) {
+        for (int fd = 3; fd < 64; fd++) {
+            if (inheritedFileDescriptors & (1ULL << fd))
+                unset_cloexec(fd);
+        }
+    }
 #endif
 
     // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
@@ -804,6 +825,9 @@ extern "C" void bun_initialize_process()
         }
     }
 
+    _setmode(2, _O_BINARY);
+    _set_fmode(_O_BINARY);
+
     // add ctrl+c handler on windows
     Bun__setCTRLHandler(1);
 #endif
@@ -1179,6 +1203,53 @@ struct BlobHeader {
     uint8_t data[];
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
+
+#if !OS(WINDOWS)
+
+extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
+
+extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
+{
+    const char* description = Bun__trimmedFeatures;
+    for (uint32_t feature = door & 255; feature--;)
+        description += strlen(description) + 1;
+    const auto print = [](const char* text) { (void)!write(STDERR_FILENO, text, strlen(text)); };
+    const char* actsAsBun = getenv("BUN_BE_BUN");
+    print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but this executable was built with --compile-trim-runtime, without " : "error: this executable was built with --compile-trim-runtime, without ");
+    print(description);
+    if (actsAsBun && *actsAsBun) {
+        print(".\n");
+        _exit(70);
+    }
+    char digits[9];
+    size_t first = sizeof(digits) - 1;
+    digits[first] = 0;
+    for (uint32_t number = door >> 8; number || !digits[first]; number /= 10)
+        digits[--first] = static_cast<char>('0' + number % 10);
+    print(", and something has just asked for it.");
+    if (getenv("BUN_OPTIONS"))
+        print(" BUN_OPTIONS is set: an option in it may be what asked.");
+    print(" Otherwise this is a bug in Bun: please report it, with this number: ");
+    print(digits + first);
+    print("\n");
+    _exit(70);
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasTypeChecker()
+{
+    bool hasTypeChecker = true;
+    asm volatile("" : "+r"(hasTypeChecker));
+    return hasTypeChecker;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasBundler()
+{
+    uint32_t hasBundler = 2;
+    asm volatile("" : "+r"(hasBundler));
+    return hasBundler;
+}
+
+#endif
 
 #if OS(DARWIN)
 

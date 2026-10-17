@@ -152,6 +152,8 @@ pub(crate) mod js_bundler {
         pub(crate) module_preload: bool,
         /// `check`: see `BundleOptions::type_check`.
         pub(crate) check: bool,
+        pub(crate) dts: bool,
+        pub(crate) is_root_given: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -221,6 +223,8 @@ pub(crate) mod js_bundler {
                 fold_chunks: true,
                 module_preload: true,
                 check: false,
+                dts: false,
+                is_root_given: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -251,6 +255,11 @@ pub(crate) mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        pub(crate) aot_explain: Vec<Box<[u8]>>,
+        pub(crate) aot: bool,
+        pub(crate) logs_type_errors: bool,
+        pub(crate) crash_if_interpreter_is_used: bool,
+        pub(crate) function_source: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
         /// `compile.bytecodeOrder`: payload order files, most important first.
@@ -276,6 +285,11 @@ pub(crate) mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                aot_explain: Vec::new(),
+                aot: false,
+                logs_type_errors: false,
+                crash_if_interpreter_is_used: false,
+                function_source: true,
                 jit_policy: 1.0,
                 bytecode_order: Vec::new(),
             }
@@ -293,6 +307,14 @@ pub(crate) mod js_bundler {
                 ..Default::default()
             };
             // errdefer this.deinit() — Drop handles owned fields
+
+            for name in ["aot", "aotExplain", "aotTypeErrors"] {
+                if config.get(global_this, name)?.is_some() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "{name} is an option of compile. Write compile: {{ {name}: .. }}"
+                    )));
+                }
+            }
 
             let object = 'brk: {
                 let Some(compile_value) = config.get_truthy(global_this, "compile")? else {
@@ -350,6 +372,14 @@ pub(crate) mod js_bundler {
                 }
 
                 this.executable_path.append_slice_exact(slice.slice())?;
+            }
+
+            if let Some(trim_runtime) =
+                object.get_own(global_this, &BunString::static_("trimRuntime"))?
+            {
+                bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(
+                    trim_runtime.to_boolean(),
+                );
             }
 
             if let Some(windows) = object.get_own_truthy(global_this, "windows")? {
@@ -430,6 +460,12 @@ pub(crate) mod js_bundler {
                 }
             }
 
+            if let Some(function_source) =
+                object.get_boolean_loose(global_this, "functionSource")?
+            {
+                this.function_source = function_source;
+            }
+
             if let Some(autoload_dotenv) =
                 object.get_boolean_loose(global_this, "autoloadDotenv")?
             {
@@ -452,6 +488,109 @@ pub(crate) mod js_bundler {
                 object.get_boolean_loose(global_this, "autoloadPackageJson")?
             {
                 this.autoload_package_json = autoload_package_json;
+            }
+
+            if let Some(options) = object.get_object() {
+                let keys = jsc::JSPropertyIterator::init(
+                    global_this,
+                    options,
+                    jsc::JSPropertyIteratorOptions {
+                        skip_empty_name: true,
+                        include_value: true,
+                        ..Default::default()
+                    },
+                )?;
+                while let Some((key, _)) = keys.next()? {
+                    let key = key.to_owned_slice();
+                    let known = crate::cli::aot::COMPILE_OPTIONS;
+                    if key.starts_with(b"aot")
+                        && !known.contains(&&key[..])
+                        && !crate::cli::aot::COMPILE_INTERNAL_OPTIONS.contains(&&key[..])
+                    {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.{} is not an option.{} The options that start with aot are {}",
+                            bstr::BStr::new(&key[..]),
+                            crate::cli::aot::did_you_mean("compile.", &known, &key),
+                            bstr::BStr::new(&known.join(&b", "[..])),
+                        )));
+                    }
+                }
+            }
+
+            if let Some(aot) = object.get_boolean_loose(global_this, "aot")? {
+                this.aot = aot;
+            }
+
+            if let Some(explain) = object.get(global_this, "aotExplain")?
+                && !explain.is_undefined_or_null()
+            {
+                let mut push = |word: JSValue| -> JsResult<()> {
+                    let refused = || {
+                        global_this.throw_invalid_property_type_value(
+                            b"compile.aotExplain",
+                            bun_aot::Explain::REPORTS
+                                .map(|report| format!("\"{report}\""))
+                                .join(" | ")
+                                .as_bytes(),
+                            word,
+                        )
+                    };
+                    if !word.is_string() {
+                        return Err(refused());
+                    }
+                    let slice = word.to_utf8(global_this)?;
+                    if !bun_aot::Explain::default().set(slice.slice()) {
+                        return Err(refused());
+                    }
+                    this.aot_explain.push(Box::from(slice.slice()));
+                    Ok(())
+                };
+                if explain.is_array() {
+                    let mut iter = explain.array_iterator(global_this)?;
+                    while let Some(word) = iter.next()? {
+                        push(word)?;
+                    }
+                } else {
+                    push(explain)?;
+                }
+            }
+
+            if let Some(type_errors) = object.get(global_this, "aotTypeErrors")?
+                && !type_errors.is_undefined()
+            {
+                let slice = type_errors.to_utf8(global_this)?;
+                this.logs_type_errors = match slice.slice() {
+                    b"throw" => false,
+                    b"log" => true,
+                    _ => {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.aotTypeErrors",
+                            b"\"throw\" or \"log\"",
+                            type_errors,
+                        ));
+                    }
+                };
+            }
+
+            if let Some(crash) =
+                object.get_boolean_loose(global_this, "aotCrashIfInterpreterIsUsed")?
+            {
+                this.crash_if_interpreter_is_used = crash;
+            }
+
+            if !this.aot {
+                let needs_aot = if this.logs_type_errors {
+                    Some("aotTypeErrors")
+                } else if this.crash_if_interpreter_is_used {
+                    Some("aotCrashIfInterpreterIsUsed")
+                } else {
+                    (!this.aot_explain.is_empty()).then_some("aotExplain")
+                };
+                if let Some(option) = needs_aot {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "compile.{option} requires compile.aot: true"
+                    )));
+                }
             }
 
             // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
@@ -899,6 +1038,21 @@ pub(crate) mod js_bundler {
             if let Some(check) = config.get_boolean_loose(global_this, "check")? {
                 this.check = check;
             }
+            if let Some(dts) = config.get_boolean_loose(global_this, "dts")? {
+                this.dts = dts;
+            }
+            #[cfg(not(windows))]
+            if this.check || this.dts {
+                unsafe extern "C" {
+                    safe fn Bun__hasTypeChecker() -> bool;
+                }
+                if !Bun__hasTypeChecker() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "{}: this executable was built with --compile-trim-runtime, without the type checker",
+                        if this.check { "check" } else { "dts" }
+                    )));
+                }
+            }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =
                     config.get_boolean_loose(global_this, "foldChunksForTesting")?
@@ -1004,6 +1158,7 @@ pub(crate) mod js_bundler {
             {
                 let path: Utf8Bytes = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
+                        this.is_root_given = true;
                         break 'brk slice;
                     }
 
@@ -1385,6 +1540,42 @@ pub(crate) mod js_bundler {
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }
+            }
+
+            if let Some(compile) = this.compile.as_ref().filter(|compile| compile.aot) {
+                if jsc::virtual_machine::standalone_module_graph().is_some_and(|graph| {
+                    !graph.aot_image().is_empty() && graph.compiled_program_sources().is_empty()
+                }) {
+                    return Err(global_this.throw_invalid_arguments(format_args!("compile.aot is not available in an executable that was itself compiled with --aot. Run the build script with bun.")));
+                }
+                if let Some(why) = crate::cli::aot::unsupported_reason(&compile.compile_target) {
+                    return Err(
+                        global_this.throw_invalid_arguments(format_args!("compile.aot: {why}"))
+                    );
+                }
+                if this.format != options::Format::Esm {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "compile.aot requires format: 'esm'"
+                    )));
+                }
+                let ignored_flags = [
+                    (
+                        "banner with code",
+                        !crate::cli::aot::is_only_comments(&this.banner.list),
+                    ),
+                    (
+                        "footer with code",
+                        !crate::cli::aot::is_only_comments(&this.footer.list),
+                    ),
+                    ("bytecodeDepth", this.bytecode_depth != u32::MAX),
+                    ("compile.bytecodeOrder", !compile.bytecode_order.is_empty()),
+                ];
+                if let Some((option, _)) = ignored_flags.iter().find(|option| option.1) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "compile.aot does not support {option}"
+                    )));
+                }
+                this.bytecode = true;
             }
 
             // ESM bytecode requires compile because module_info (import/export metadata)

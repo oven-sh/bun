@@ -11,7 +11,7 @@ const ArrayIsArray = Array.isArray;
 
 const UV_TCP_IPV6ONLY = 1;
 
-export default class RoundRobinHandle {
+class RoundRobinHandle {
   key;
   all;
   free;
@@ -220,3 +220,5 @@ function makeAcceptedHandle(socket) {
     },
   };
 }
+
+export default RoundRobinHandle;

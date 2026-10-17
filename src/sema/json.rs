@@ -424,7 +424,7 @@ fn private_identifier_token_value(text: &[u8]) -> Vec<u8> {
 }
 
 /// `jsnum.ParsePseudoBigInt`: the base 10 digits of the bigint literal `text`.
-fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
+pub fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
     let text = text.strip_suffix(b"n").unwrap_or(text);
     let (radix, digits) = match text.get(1) {
         Some(b'b' | b'B') => (2, &text[2..]),

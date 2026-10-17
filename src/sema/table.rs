@@ -471,6 +471,10 @@ pub struct ByNode<K, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
 }
 
 impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
+    pub(crate) fn release_pages(&self) {
+        crate::util::memory::release_pages(&self.cells);
+    }
+
     /// How many keys share a cell.
     const PER_CELL: usize = if V::BITS != 0 {
         size_of::<V::Cell>() * 8 / V::BITS as usize
@@ -1219,6 +1223,13 @@ impl<'a, 's> Share<'a, 's> {
             Payload::Part(_) => unreachable!(),
         }
     }
+
+    /// Frees the entries, which have been applied. Those of a table with several parts stay: the other parts read them.
+    pub(crate) fn release(&mut self) {
+        if let Payload::Whole(entries) = &mut self.payload {
+            entries.handed = Handed::Cells(Vec::new());
+        }
+    }
 }
 
 /// Summary of the entries one thread has applied.
@@ -1440,8 +1451,9 @@ impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
         buffer: &mut Buffer<'s>,
         finishing: &mut Finishing<'_, '_>,
     ) -> Option<Entries<'s>> {
-        let mut entries = Vec::new();
-        (buffer.half_mut(self.table_slot())).take_cells(D::dense_key, |key, raw| {
+        let half = buffer.half_mut(self.table_slot());
+        let mut entries = Vec::with_capacity(half.filled_cells());
+        half.take_cells(D::dense_key, |key, raw| {
             if let Some(key) = self.hand_over(key, &D::Value::unpack(raw), finishing) {
                 entries.push((key, raw));
             }
@@ -1508,7 +1520,7 @@ fn finish_indirect<'s, D: Dense<Value = Handle>, T: Follow + Send + Sync + 's>(
     // Every handle in a cell refers to one of the values below.
     buffer.half_mut(slot.number()).clear_cells();
     let kept = buffer.typed_mut(slot)?;
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(kept.len() as usize);
     let held = if holding.is_held { kept.len() } else { 0 };
     let mut places = vec![0; held as usize];
     kept.drain(|handle, (key, mut value)| {

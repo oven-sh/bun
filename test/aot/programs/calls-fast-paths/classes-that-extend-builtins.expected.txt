@@ -1,0 +1,8 @@
+start: Function 0, NativeExecutable 0, Structure 71, PropertyTable 2, GetterSetter 0, Object 2
+60 classes declared: Function 63, NativeExecutable 2, Structure 3, PropertyTable 1, GetterSetter 0, Object 62
+as values: Function 1, NativeExecutable 0, Structure 45, PropertyTable 1, GetterSetter 0, Object 2
+new E, instanceof: Function 62, NativeExecutable 0, Structure 240, PropertyTable 120, GetterSetter 0, Object 2
+thrown, caught, an own field read: Function 1, NativeExecutable 0, Structure 49, PropertyTable 1, GetterSetter 0, Object 2
+30 of them looked at: Function 31, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 2
+message (own) and name (inherited) of all: Function 1, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 2
+2655

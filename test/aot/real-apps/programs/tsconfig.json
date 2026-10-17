@@ -1,0 +1,3 @@
+{
+  "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "moduleDetection": "force", "strict": true, "noUncheckedIndexedAccess": true, "noEmit": true, "lib": ["esnext", "dom"], "types": [] }
+}

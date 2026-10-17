@@ -474,7 +474,7 @@ impl Checker<'_, '_> {
             .unwrap_or(TypeId::ERROR)
         };
         // `IterationUsePossiblyOutOfBounds`
-        let possibly_out_of_bounds_type = if self.p.files.options.no_unchecked_indexed_access {
+        let possibly_out_of_bounds_type = if self.index_may_be_missing(Some(file)) {
             self.optional(in_bounds_type)
         } else {
             in_bounds_type

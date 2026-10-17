@@ -1,0 +1,7 @@
+c-once's: Int32 Int32
+computed: Int32 Int32 Int32 Int32 Int32 Int32 Int32 Int32 Int32 Int32
+fields: Int32 Int32 Int32 Int32 Int32
+elements: Int32 Int32 Int32 Int32 Int32,Int32,Int32 Int32,Int32,Int32
+places: Int32 Int32 Int32,Int32 Int32 Int32
+the ends: Int32 Int32 Int32
+no int32: Double Double Double Double Double Double Double

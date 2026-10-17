@@ -241,6 +241,8 @@ impl<'e> Inferred<'e> {
             errors: &[],
             paths,
             are_entry_points: false,
+            is_one_program: false,
+            code: &[],
             script_kinds: &[],
             script_kinds_by_extension: &[],
             conditions: &[],
@@ -268,7 +270,10 @@ impl<'e> Inferred<'e> {
             uses_typescript_wording: false,
             loaded: None,
             checked: None,
+            compile: None,
             after_file: None,
+            before_visits: None,
+            all_visited_once: None,
             declaration_file_emitted: None,
         };
         bun_sema_driver::check_provided_then(&request, Provided::default(), |report| {

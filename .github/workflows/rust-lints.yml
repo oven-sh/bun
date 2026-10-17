@@ -90,6 +90,7 @@ jobs:
           llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: miri rust-src
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
       - name: cargo miri test
         env:

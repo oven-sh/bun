@@ -1,0 +1,18 @@
+two dates: {"id":1,"createdAt":"2023-11-14T22:13:20.123Z","updatedAt":"2023-11-14T22:14:46.400Z"}: 100 texts finished by compiled code
+a date and null: {"id":1,"createdAt":"1970-01-01T00:00:00.000Z","updatedAt":null}: 100 texts finished by compiled code
+invalid dates: {"id":1,"createdAt":null,"updatedAt":null}: 100 texts finished by compiled code
+before 1970 and the first of the year 0: {"id":1,"createdAt":"1969-12-31T23:59:59.999Z","updatedAt":"0000-01-01T00:00:00.000Z"}: 100 texts finished by compiled code
+before the year 0 and the first date there is: {"id":1,"createdAt":"-000001-12-31T23:59:59.999Z","updatedAt":"-271821-04-20T00:00:00.000Z"}: 100 texts finished by compiled code
+the last of the year 9999 and the one behind it: {"id":1,"createdAt":"9999-12-31T23:59:59.999Z","updatedAt":"+010000-01-01T00:00:00.000Z"}: 100 texts finished by compiled code
+the last date there is and one too late: {"id":1,"createdAt":"+275760-09-13T00:00:00.000Z","updatedAt":null}: 100 texts finished by compiled code
+a leap day and a year that has none: {"id":1,"createdAt":"2024-02-29T23:59:59.999Z","updatedAt":"1900-02-28T12:00:00.000Z"}: 100 texts finished by compiled code
+fractions of a millisecond: {"id":1,"createdAt":"1970-01-01T00:00:00.001Z","updatedAt":"1969-12-31T23:59:59.999Z"}: 100 texts finished by compiled code
+an optional date: {"id":2,"createdAt":"1970-01-01T00:00:00.001Z","updatedAt":null,"deletedAt":"1970-01-01T00:00:00.002Z"}: 100 texts finished by compiled code
+a list of dates: {"name":"log","at":["1970-01-01T00:00:00.001Z","1970-01-01T00:00:00.002Z",null]}: 100 texts finished by compiled code
+set to another time: {"id":1,"createdAt":"1970-01-01T00:00:00.009Z","updatedAt":null}: 100 texts finished by compiled code
+in a plain literal: {"at":"2023-11-14T22:13:20.123Z","none":null}: 100 texts finished by compiled code
+with a toJSON of its own: {"id":1,"createdAt":"mine","updatedAt":null}: 0 texts finished by compiled code
+with a toISOString of its own: {"id":1,"createdAt":"mine too","updatedAt":null}: 0 texts finished by compiled code
+with another property of its own: {"id":1,"createdAt":"1970-01-01T00:00:00.005Z","updatedAt":null}: 0 texts finished by compiled code
+of classes that extend Date: {"id":1,"createdAt":"1970-01-01T00:00:00.006Z","updatedAt":"loud"}: 0 texts finished by compiled code
+a date by itself: "2023-11-14T22:13:20.123Z": 0 texts finished by compiled code

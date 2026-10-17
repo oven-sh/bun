@@ -1,14 +1,12 @@
 //! Native symbols that Bun's C and C++ side provides to the parser, for binaries that link the parser and nothing
-//! else: this crate's command line tool and `bun_sema`'s tests. Plain loops instead of SIMD, and a bump allocator
-//! instead of mimalloc. Never part of the real build.
+//! else: this crate's command line tool and `bun_sema`'s tests. Plain loops instead of SIMD. Never part of the real build.
 
 use core::ffi::{c_char, c_int, c_void};
 
 // ───────────────────────────── mimalloc ─────────────────────────────
 
-// With `--cfg bun_sema_mimalloc` the real mimalloc is linked instead, to measure with Bun's
-// allocator.
-#[cfg(not(bun_sema_mimalloc))]
+// The tool links the real one (the feature `mimalloc`). This is for the tests: a bump allocator: a block of an arena is never freed.
+#[cfg(not(feature = "mimalloc"))]
 mod fake_mimalloc {
     use super::*;
 
@@ -861,6 +859,62 @@ unsafe extern "C" fn simdutf__base64_encode(
     unreachable!("nothing that parses encodes base64")
 }
 
+// ───────────────────────────── collation ─────────────────────────────
+
+/// An approximation. Bun's implementation is ICU's. This has the order of CLDR's root collation for ASCII; what is not
+/// ASCII comes behind it, by its number. The React Compiler sorts the imports that it adds.
+fn collate<T: Iterator<Item = u32> + Clone>(is_numeric_and_base: bool, a: T, b: T) -> i32 {
+    const BEFORE_LETTERS: &[u8] = b"\t\n\x0b\x0c\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789";
+    assert!(!is_numeric_and_base, "only the linter sorts by numbers");
+    let primary = |c: u32| match u8::try_from(c) {
+        Ok(c) if c.is_ascii_alphabetic() => 0x100 + u32::from(c.to_ascii_lowercase()),
+        Ok(c) if c.is_ascii() => BEFORE_LETTERS
+            .iter()
+            .position(|&it| it == c)
+            .map_or(0, |at| at as u32 + 1),
+        _ => 0x200 + c,
+    };
+    let by_letters = a.clone().map(primary).cmp(b.clone().map(primary));
+    // A small letter comes ahead of its capital.
+    by_letters.then_with(|| b.cmp(a)) as i32
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__collateUTF8(
+    is_numeric_and_base: bool,
+    a: *const u8,
+    a_len: usize,
+    b: *const u8,
+    b_len: usize,
+) -> i32 {
+    // SAFETY: the caller passes two slices, as pointers and lengths.
+    let (a, b) = unsafe { (bytes(a, a_len), bytes(b, b_len)) };
+    let (a, b) = (
+        bstr::BStr::new(a).to_string(),
+        bstr::BStr::new(b).to_string(),
+    );
+    collate(
+        is_numeric_and_base,
+        a.chars().map(u32::from),
+        b.chars().map(u32::from),
+    )
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__collateUTF16(
+    is_numeric_and_base: bool,
+    a: *const u16,
+    a_len: usize,
+    b: *const u16,
+    b_len: usize,
+) -> i32 {
+    // SAFETY: the caller passes two slices, as pointers and lengths.
+    let (a, b) = unsafe { (utf16_units(a, a_len), utf16_units(b, b_len)) };
+    fn numbers(units: &[u16]) -> impl Iterator<Item = u32> + Clone {
+        char::decode_utf16(units.iter().copied())
+            .map(|c| c.map_or_else(|lone| u32::from(lone.unpaired_surrogate()), u32::from))
+    }
+    collate(is_numeric_and_base, numbers(a), numbers(b))
+}
+
 // ───────────────────────────── widths ─────────────────────────────
 
 /// An approximation. Bun's implementation is grapheme-aware.
@@ -928,18 +982,18 @@ extern "C" fn Bun__StackCheck__initialize() {
 extern "C" fn WTF__numberOfProcessorCores() -> c_int {
     std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
 }
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_thread_set_in_threadpool() {}
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle() {}
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_start() -> bool {
     false
 }
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_end() {}
 
@@ -956,7 +1010,7 @@ extern "C" fn bun_cpu_features() -> u8 {
 #[unsafe(no_mangle)]
 extern "C" fn bun_restore_stdio() {}
 #[unsafe(no_mangle)]
-extern "C" fn on_before_reload_process_posix() {}
+extern "C" fn on_before_reload_process_posix(_close_inherited_fds: bool) {}
 #[unsafe(no_mangle)]
 extern "C" fn getRSS(rss: &mut usize) -> c_int {
     *rss = 0;
@@ -1102,4 +1156,24 @@ unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut us
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__offsetInCode(_address: *const c_void) -> i64 {
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__describeAddresses(
+    _addresses: *const usize,
+    _count: usize,
+    _buffer: *mut u8,
+    _capacity: usize,
+) -> usize {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__addressOfOffsetInCode(offset: usize) -> usize {
+    offset
 }

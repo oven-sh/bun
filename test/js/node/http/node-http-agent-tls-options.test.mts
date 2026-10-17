@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * All tests in this file run in both Bun and Node.js.
  *

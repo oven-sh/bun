@@ -1,0 +1,13 @@
+function true true false [object Object] own 2 own 2 [object Object]
+true function true true false true
+late id,toString {"id":1} true [object Object] true
+property added to the prototype of a class: no error
+v|undefined|undefined|from prototype|false|false|true|false|false
+another prototype: no error
+late|inherited by late|99|getter tag|true|true|true|false|false label {"label":"late"}
+a store under a getter without a setter: TypeError
+late|inherited by late|1|getter tag|true|true|true|true|false label,size {"label":"late","size":1}
+no prototype: no error
+late 1 getter tag false true [object Object]
+a property defined on Object.prototype: TypeError
+during|undefined|undefined|undefined|false|false|false|false|false

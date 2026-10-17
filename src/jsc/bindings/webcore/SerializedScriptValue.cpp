@@ -68,6 +68,8 @@
 #include <JavaScriptCore/JSSetInlines.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/AOTFunction.h>
+#include <wtf/BitVector.h>
 #include <JavaScriptCore/JSWebAssemblyMemory.h>
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
@@ -2087,10 +2089,11 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSObject* inObject = asObject(inValue);
             if (!startObject(inObject))
                 break;
+            JSC::AOT::Typed::reifyClassPrototypeIfNeeded(inObject);
             // All supported objects other than plain Object have been handled; throw
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
             // are allowed (Node supports structuredClone(process.env) as a plain object).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
+            if (inObject->type() != JSC::FinalObjectType && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()) && !inObject->structure()->compiledLayout())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -3745,6 +3748,11 @@ private:
                 fail();
                 return JSValue();
             }
+            if (m_finishesObjects) {
+                m_isReferencedInObjectPool.set(*index);
+                if (JSObject* finished = m_finishedInObjectPool.get(*index))
+                    return finished;
+            }
             return m_objectPool.at(*index);
         }
         case MessagePortReferenceTag: {
@@ -3952,6 +3960,10 @@ private:
     // Only values the serializer passed to recordObject() may be appended here (via
     // addToObjectPool), in the same order, or every later back-reference is wrong.
     MarkedArgumentBuffer m_objectPool;
+    const bool m_finishesObjects { !!m_globalObject->aotInstance() };
+    BitVector m_isReferencedInObjectPool;
+    HashMap<uint32_t, JSObject*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_finishedInObjectPool;
+    HashMap<JSObject*, uint32_t> m_openObjectPoolIndex;
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
@@ -4043,6 +4055,8 @@ DeserializationResult CloneDeserializer::deserialize()
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSObject* outObject = constructEmptyObject(m_lexicalGlobalObject, m_globalObject->objectPrototype());
+            if (m_finishesObjects)
+                m_openObjectPoolIndex.set(outObject, static_cast<uint32_t>(m_objectPool.size()));
             addToObjectPool(outObject);
             outputObjectStack.append(outObject);
         }
@@ -4056,6 +4070,16 @@ DeserializationResult CloneDeserializer::deserialize()
                     goto error;
 
                 JSObject* outObject = outputObjectStack.last();
+                if (m_finishesObjects) {
+                    if (auto place = m_openObjectPoolIndex.takeOptional(outObject); place && !m_isReferencedInObjectPool.get(*place)) {
+                        JSObject* finished = JSC::AOT::withAllPropertiesInline(m_globalObject, outObject);
+                        if (finished != outObject) {
+                            m_gcBuffer.appendWithCrashOnOverflow(finished);
+                            m_finishedInObjectPool.set(*place, finished);
+                            outObject = finished;
+                        }
+                    }
+                }
                 outValue = outObject;
                 outputObjectStack.removeLast();
                 break;
@@ -4528,6 +4552,30 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             }
         }
 
+        auto collectCompiledObjectFields = [&](JSObject* compiledObject, WTF::Vector<SimpleInMemoryPropertyTableEntry>& properties) -> bool {
+            bool isSimple = true;
+            bool isCompiledObject = JSC::AOT::Typed::forEachCompiledObjectOwnProperty(compiledObject, [&](UniquedStringImpl& name, JSValue fieldValue) {
+                if (name.isSymbol())
+                    return true;
+                if (!fieldValue.isCell()) {
+                    properties.append({ Bun::threadShareableCopy(name), fieldValue });
+                    return true;
+                }
+                if (!fieldValue.isString()) {
+                    isSimple = false;
+                    return false;
+                }
+                String stringValue = asString(fieldValue)->value(&lexicalGlobalObject);
+                if (scope.exception()) {
+                    isSimple = false;
+                    return false;
+                }
+                properties.append({ Bun::threadShareableCopy(name), Bun::toCrossThreadShareable(stringValue) });
+                return true;
+            });
+            return isCompiledObject && isSimple;
+        };
+
         if (canUseStringFastPath) {
             JSC::JSString* jsString = asString(value);
             String stringValue = jsString->value(&lexicalGlobalObject);
@@ -4607,15 +4655,17 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                             break;
                         }
                         auto* objStructure = obj->structure();
-                        if (!isObjectFastPathCandidate(objStructure)) {
+                        WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+                        bool isPlainCandidate = isObjectFastPathCandidate(objStructure);
+                        if (!isPlainCandidate && !collectCompiledObjectFields(obj, properties)) {
+                            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
                             ok = false;
                             break;
                         }
 
                         // Collect properties (same logic as SimpleObject fast path)
-                        WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
                         bool objOk = true;
-                        objStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                        if (isPlainCandidate) objStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                             JSValue propValue = obj->getDirect(entry.offset());
                             if (propValue.isCell()) {
                                 if (!propValue.isString()) {
@@ -4723,6 +4773,12 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             if (canUseObjectFastPath) {
                 return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(properties)));
             }
+        } else if (object && !array) {
+            WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+            bool isSimple = collectCompiledObjectFields(object, properties);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (isSimple)
+                return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(properties)));
         }
     }
 
@@ -5029,7 +5085,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                                    // Check if we can use the cached structure (same property count AND names,
                                                    // and no out-of-line storage — JSFinalObject::create cannot allocate a butterfly).
                                                    bool useCache = cachedStructure && cachedIdentifiers.size() == propCount
-                                                       && cachedStructure->outOfLineCapacity() == 0;
+                                                       && cachedStructure->outOfLineCapacity() == 0 && !cachedStructure->isDictionary();
                                                    if (useCache) {
                                                        for (unsigned j = 0; j < propCount; j++) {
                                                            if (cachedIdentifiers[j].string() != obj.properties[j].propertyName) {

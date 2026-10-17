@@ -912,6 +912,11 @@ impl<'a> File<'a> {
         found.into_iter().map(|id| grouped_expr(self, id))
     }
 
+    #[inline]
+    pub fn has_calls_by_name(&self) -> bool {
+        self.by_kind().calls_by_name.get().is_some()
+    }
+
     /// The same for statements.
     pub fn stmts_of_kind(&'a self, tag: StmtTag) -> impl Iterator<Item = Stmt<'a>> {
         self.stmts_of(tag)

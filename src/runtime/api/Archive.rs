@@ -549,7 +549,7 @@ fn parse_pattern_arg(
     }
 
     // Array of strings
-    if arg.js_type() == jsc::JSType::Array {
+    if arg.js_type().is_array() {
         let len = arg.get_length(global)?;
         // Empty array = no filter
         if len == 0 {

@@ -4,6 +4,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
+#include "JavaScriptCore/AOTProgramData.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/DeferTermination.h"
@@ -322,6 +323,8 @@ WTF::String formatStackTrace(
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
+    uint32_t previousCompiledSource = 0;
+    size_t previousCompiledFrame = 0;
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
@@ -337,6 +340,18 @@ WTF::String formatStackTrace(
 
         if (!frame.hasLineAndColumnInfo()) continue;
 
+        if (frame.isTypedAOTFrame()) {
+            if (auto position = frame.reportedPosition()) {
+                originalLineColumns[i] = position->lineColumn;
+                if (position->source) {
+                    sourceURLs[i] = position->source == previousCompiledSource ? sourceURLs[previousCompiledFrame] : JSC::AOT::ProgramData::get()->sourceNameInFrames(position->source);
+                    previousCompiledSource = position->source;
+                    previousCompiledFrame = i;
+                }
+            }
+            continue;
+        }
+
         originalLineColumns[i] = frame.computeLineAndColumn();
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
@@ -347,6 +362,10 @@ WTF::String formatStackTrace(
         }
 
         sourceURLs[i] = Zig::sourceURL(vm, frame);
+
+        // A position recorded at build time is already the one in the original source.
+        if (auto position = frame.reportedPosition(); position && position->source)
+            continue;
 
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
         bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
@@ -531,10 +550,16 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
                 if (auto* object = callee->getObject()) {
                     globalObjectForFrame = object->globalObject();
                 }
+            } else if (auto* codeGlobalObject = stackFrame.codeGlobalObject()) {
+                globalObjectForFrame = codeGlobalObject;
             }
         }
 
-        if (globalObjectForFrame == globalObject) {
+        // A position recorded at build time is already the one in the original source.
+        auto reportedPosition = stackFrame.reportedPosition();
+        bool isOriginalPosition = reportedPosition && reportedPosition->source;
+
+        if (globalObjectForFrame == globalObject && !isOriginalPosition) {
             if (JSCStackFrame::SourcePositions* sourcePositions = visibleFrame.getSourcePositions()) {
                 frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -696,8 +721,10 @@ static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<Sta
     for (auto& frame : stackTrace) {
         if (auto* callee = frame.callee())
             cells.append(callee);
-        if (auto* codeBlock = frame.codeBlock())
+        if (auto* codeBlock = frame.codeBlockIfExists())
             cells.append(codeBlock);
+        else if (auto* executable = frame.ownerExecutable())
+            cells.append(executable);
     }
 }
 

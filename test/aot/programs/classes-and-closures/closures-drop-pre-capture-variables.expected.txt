@@ -1,0 +1,5 @@
+assigned in a branch: collected, n0 n1 n2 n3 n4 n5 n6 n7 n8 n9 n10 n11 n12 n13 n14 n15
+a defaulted parameter: collected, n0 n1 n2 n3 n4 n5 n6 n7 n8 n9 n10 n11 n12 n13 n14 n15
+assigned in a loop: collected, 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+read by the closure that stays: kept, n032 n132 n232 n332 n432 n532 n632 n732 n832 n932 n1032 n1132 n1232 n1332 n1432 n1532
+2048

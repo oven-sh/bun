@@ -2199,6 +2199,8 @@ fn transpile_source_code_of_any_provenance(
     let (loader, module_type): (Loader, ModuleType) =
         unsafe { ((*extra).loader, (*extra).module_type) };
 
+    // SAFETY: per fn contract: `extra` is live for the call (see above).
+    let function_sources = unsafe { (*extra).function_sources };
     let disable_transpilying = args.flags.disable_transpiling();
     let specifier = args.specifier;
     let referrer = args.referrer;
@@ -2635,6 +2637,8 @@ fn transpile_source_code_of_any_provenance(
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !disable_transpilying
+                        && function_sources.is_null()
+                        && !crate::cli::aot_audit::is_on()
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
                         Some(&mut cache)
@@ -2744,7 +2748,7 @@ fn transpile_source_code_of_any_provenance(
 
                 // Set before the early returns below (cache hit, `// @bun`, async queue):
                 // every later module load is gated on this flag.
-                if is_main && !disable_transpilying {
+                if is_main && !disable_transpilying && function_sources.is_null() {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };
                 }
@@ -2776,6 +2780,24 @@ fn transpile_source_code_of_any_provenance(
                     return Ok(ResolvedSource {
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),
+                        ..Default::default()
+                    });
+                }
+
+                if matches!(loader, L::Text)
+                    && bun_jsc::virtual_machine::standalone_module_graph()
+                        .is_some_and(|graph| !graph.aot_image().is_empty())
+                {
+                    let Ok(jsvalue_for_export) =
+                        bun_core::String::clone_utf8(&parse_result.source.contents)
+                            .into_js(global_object)
+                    else {
+                        return Err(bun_jsc::JsError::Thrown.into());
+                    };
+                    return Ok(ResolvedSource {
+                        source_url: input_specifier.create_if_different(path.text),
+                        jsvalue_for_export,
+                        tag: ResolvedSourceTag::ExportDefaultOnly,
                         ..Default::default()
                     });
                 }
@@ -3096,7 +3118,19 @@ fn transpile_source_code_of_any_provenance(
                 // `writer: &mut BufferPrinter` live inside `print_ast`. After
                 // this block returns, the `printer` binding is rederived from
                 // the raw pointer below — any earlier Unique tag is dead.
-                {
+                if !function_sources.is_null() {
+                    // SAFETY: per fn contract: `jsc_vm` and `extra.source_code_printer` are live.
+                    // `function_sources` is not null here, and whoever set it keeps the list until
+                    // the call returns.
+                    unsafe {
+                        (*jsc_vm).transpiler.print_recording_function_sources(
+                            &arena_guard.1,
+                            parse_result,
+                            &mut *(*extra).source_code_printer,
+                            &mut *function_sources,
+                        )
+                    }?;
+                } else {
                     // SAFETY: `jsc_vm` / `(*extra).source_code_printer` are live
                     // for the call (fn contract); `mapper` does not escape this
                     // scope, so the unbounded `'a` from the raw-deref reborrow
@@ -3125,6 +3159,11 @@ fn transpile_source_code_of_any_provenance(
                         drop(module_info.take());
                     }
                     print_result?;
+                    // SAFETY: per fn contract: the printer is live, and the borrows taken for
+                    // printing have ended.
+                    crate::cli::aot_audit::end_file(unsafe {
+                        (*(*extra).source_code_printer).ctx.get_written()
+                    });
                 }
 
                 // `module_info.asDeserialized()`: finalize the printer-filled
@@ -3773,7 +3812,10 @@ export default db;
             } else {
                 bun_core::String::from_bytes(file.bytecode_origin_path)
             },
-            bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
+            bytecode_cache: match file.program_data_index {
+                Some(number) => Bytecode::compiled_ahead_of_time(number),
+                None => Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
+            },
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
                 let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
@@ -4028,6 +4070,22 @@ unsafe fn get_loader_and_virtual_source<'a>(
             }
             None => return Err(crate::Error::BlobNotFound),
         }
+    } else if virtual_source.is_none()
+        && let Some(file) = bun_standalone_graph::Graph::get_ref()
+            .and_then(|graph| graph.find_module_source(path.text))
+        && !bun_sys::exists(path.text)
+    {
+        // What an executable that runs in place holds for this path is the module's text, where the disk has no such file: a JSON
+        // module is read when it is required, and read again after it is evicted from require.cache, as `bun run` reads it.
+        // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
+        let path_text: &'static [u8] =
+            unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
+        *virtual_source_to_use = Some(bun_ast::Source {
+            path: bun_paths::fs::Path::init(path_text),
+            contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
+            ..Default::default()
+        });
+        virtual_source = virtual_source_to_use.as_ref();
     }
 
     if query == b"?raw" {
@@ -4419,6 +4477,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         } else {
             ptr::null_mut()
         },
+        function_sources: ptr::null_mut(),
     };
     let args = TranspileArgs {
         specifier: lr.specifier,
@@ -4477,6 +4536,120 @@ fn transpile_error_value(
             to_jsc_fetch_error(&err),
         )),
     }
+}
+
+type PrintedFunctionSources = (Box<[u8]>, Vec<bun_js_printer::FunctionSource>);
+
+thread_local! {
+    static FUNCTION_SOURCES_BY_PATH: core::cell::RefCell<bun_sema_driver::FxHashMap<Box<[u8]>, Option<PrintedFunctionSources>>> =
+        Default::default();
+}
+
+fn print_recording_function_sources(
+    global: &JSGlobalObject,
+    specifier_str: &bun_core::String,
+) -> JsResult<Option<PrintedFunctionSources>> {
+    let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
+    let specifier = specifier_str.to_utf8();
+    let mut log = bun_ast::Log::init();
+    let mut virtual_source_to_use: Option<bun_ast::Source> = None;
+    let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
+    // SAFETY: `jsc_vm` is the live per-thread VM of `global`.
+    let found = unsafe {
+        get_loader_and_virtual_source(
+            specifier.slice(),
+            jsc_vm,
+            &mut virtual_source_to_use,
+            &mut blob_to_deinit,
+            None,
+        )
+    };
+    let Ok(lr) = found else {
+        return Ok(None);
+    };
+    let Some(loader) = lr.loader.filter(|loader| loader.is_java_script_like()) else {
+        return Ok(None);
+    };
+    let module_type = match lr.path.name().ext {
+        b".cjs" | b".cts" => ModuleType::Cjs,
+        b".mjs" | b".mts" => ModuleType::Esm,
+        b".js" | b".ts" => lr
+            .package_json
+            .map_or(ModuleType::Unknown, |pkg| pkg.module_type),
+        _ => ModuleType::Unknown,
+    };
+    let _reset_arena = ArenaResetGuard::new(jsc_vm);
+    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
+        let mut p = cell.get();
+        if p.is_null() {
+            let writer = bun_js_printer::BufferWriter::init();
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
+            p = bun_core::heap::into_raw(bp);
+            cell.set(p);
+        }
+        p
+    });
+    let mut function_sources = Vec::new();
+    let mut extra = TranspileExtra {
+        // SAFETY: `TranspileExtra::path` is typed `'static`; the borrow lives only for the call
+        // below. Same erasure as in `Bun__transpileFile`.
+        path: unsafe { lr.path.into_static() },
+        loader,
+        module_type,
+        source_code_printer: printer_ptr,
+        promise_ptr: ptr::null_mut(),
+        function_sources: &raw mut function_sources,
+    };
+    let args = TranspileArgs {
+        specifier: lr.specifier,
+        referrer: b"",
+        input_specifier: specifier_str,
+        log: &raw mut log,
+        virtual_source: lr.virtual_source,
+        global_object: global,
+        flags: FetchFlags::Transpile,
+        extra: &raw mut extra,
+    };
+    let resolved = match transpile_source_code_inner(jsc_vm, &args) {
+        Ok(resolved) => resolved,
+        Err(
+            crate::Error::JSError
+            | crate::Error::Js(_)
+            | crate::Error::Bundler(bun_bundler::Error::Js(_)),
+        ) => return Err(bun_jsc::JsError::Thrown),
+        Err(_) => return Ok(None),
+    };
+    let printed: Box<[u8]> = resolved.source_code.byte_slice().into();
+    bun_js_printer::finish_function_sources(&printed, &mut function_sources);
+    Ok(Some((printed, function_sources)))
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__AOT__functionSourceInFile(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+    place: u32,
+    text: &mut bun_core::String,
+) -> bool {
+    let key = path.to_utf8();
+    let is_known = FUNCTION_SOURCES_BY_PATH.with_borrow(|known| known.contains_key(key.slice()));
+    if !is_known {
+        let Ok(printed) = print_recording_function_sources(global, path) else {
+            return false;
+        };
+        FUNCTION_SOURCES_BY_PATH.with_borrow_mut(|known| known.insert(key.slice().into(), printed));
+    }
+    FUNCTION_SOURCES_BY_PATH.with_borrow(|known| {
+        let Some(Some((printed, texts))) = known.get(key.slice()) else {
+            return false;
+        };
+        let Ok(found) = texts.binary_search_by_key(&(place as i32), |it| it.key) else {
+            return false;
+        };
+        let found = texts[found];
+        *text = bun_core::String::clone_latin1(&printed[found.start as usize..found.end as usize]);
+        true
+    })
 }
 
 /// Transpiles plugin-provided source through the per-thread
@@ -4557,6 +4730,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         module_type: ModuleType::Unknown,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
+        function_sources: ptr::null_mut(),
     };
     let args = TranspileArgs {
         specifier,
@@ -4696,6 +4870,105 @@ fn extract_owner_uid() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
+/// An addon may load libraries by a path from its own place (`$ORIGIN/../lib`, `@loader_path/../lib`). Where the executable holds
+/// shared libraries at their paths, the addon and they are written out at those paths under one folder, which only this user can
+/// write to. `None` where it holds none, or a step fails.
+fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write as _;
+    #[cfg(unix)]
+    let as_path = |bytes: &[u8]| {
+        use std::os::unix::ffi::OsStrExt as _;
+        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    };
+    #[cfg(windows)]
+    let as_path =
+        |bytes: &[u8]| std::path::PathBuf::from(String::from_utf8_lossy(bytes).into_owned());
+
+    let addon_path = bun_paths::string_paths::without_nt_prefix::<u8>(addon_path);
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let addon = graph.find_ref(addon_path)?.contents.as_bytes();
+    let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
+    if files.is_empty() {
+        return None;
+    }
+    let mut hash = bun_wyhash::hash(addon);
+    for (path, contents) in &files {
+        hash = hash.rotate_left(7) ^ bun_wyhash::hash(path) ^ contents.len() as u64;
+    }
+    files.push((addon_path, addon));
+
+    let mut private_folder = std::fs::DirBuilder::new();
+    let mut private_file = std::fs::OpenOptions::new();
+    private_file.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+        private_folder.mode(0o700);
+        private_file.mode(0o600);
+    }
+
+    let uid = extract_owner_uid();
+    let folder = [
+        Fs::RealFS::tmpdir_path(),
+        bun_paths::SEP_STR.as_bytes(),
+        format!(".bun-{uid}-{hash:x}").as_bytes(),
+    ]
+    .concat();
+    let _ = private_folder.create(as_path(&folder));
+    // `lstat`: a planted link is not followed.
+    let is_ours = bun_sys::lstat(&bun_core::ZBox::from_bytes(&folder)).is_ok_and(|it| {
+        #[cfg(unix)]
+        let is_private = it.st_uid == uid && it.st_mode & 0o077 == 0;
+        #[cfg(windows)]
+        let is_private = true;
+        bun_sys::S::ISDIR(it.st_mode as u32) && is_private
+    });
+    if !is_ours {
+        return None;
+    }
+    let written_path = |path: &[u8]| -> Vec<u8> {
+        if cfg!(unix) {
+            return [&folder[..], path].concat();
+        }
+        let under_folder = path
+            .iter()
+            .filter(|&&c| c != b':')
+            .map(|&c| if c == b'/' { b'\\' } else { c });
+        folder
+            .iter()
+            .copied()
+            .chain(std::iter::once(b'\\'))
+            .chain(under_folder)
+            .collect()
+    };
+    private_folder.recursive(true);
+    for (path, contents) in files {
+        let to = bun_core::ZBox::from_vec(written_path(path));
+        let is_written = || {
+            bun_sys::lstat(&to).is_ok_and(|it| {
+                bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len()
+            })
+        };
+        if is_written() {
+            continue;
+        }
+        private_folder.create(as_path(&to).parent()?).ok()?;
+        let scratch = bun_core::ZBox::from_vec(
+            [&to[..], format!(".{}", std::process::id()).as_bytes()].concat(),
+        );
+        let mut file = private_file.open(as_path(&scratch)).ok()?;
+        file.write_all(contents).ok()?;
+        drop(file);
+        if bun_sys::rename(&scratch, &to).is_err() {
+            let _ = bun_sys::unlink(&scratch);
+            if !is_written() {
+                return None;
+            }
+        }
+    }
+    Some(written_path(addon_path))
+}
+
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
@@ -4704,6 +4977,14 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
         return bun_core::String::DEAD;
     }
     let input_path = path.to_utf8();
+    if !bun_standalone_graph::is_bun_standalone_file_path(input_path.slice()) {
+        if bun_sys::exists(input_path.slice()) {
+            return bun_core::String::DEAD;
+        }
+        if let Some(path) = write_next_to_libraries(input_path.slice()) {
+            return bun_core::String::clone_utf8(&path);
+        }
+    }
     let mut path_buf = bun_paths::path_buffer_pool::get();
     match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
         Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),

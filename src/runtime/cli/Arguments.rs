@@ -163,6 +163,22 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--aot                             Run under the rules of bun build --compile --aot: type check first, hold values to their types, immutable built-ins"
+    ),
+    parse_param!(
+        "--aot-type-errors <STR>           With --aot: what to do when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
+    ),
+    parse_param!(
+        "--aot-huge-heap                   With --aot: let each thread have more than 32 GB of objects. The program uses more memory and runs slower"
+    ),
+    parse_param!("--debug-aot"),
+    parse_param!("--aot-crash-if-interpreter-is-used"),
+    parse_param!("--aot-graph-fd <STR>"),
+    parse_param!("--aot-decode-crash-report <STR>"),
+    parse_param!(
+        "--aot-audit                       Run normally and log the places where the program would behave differently under --aot"
+    ),
+    parse_param!(
         "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
     ),
     parse_param!(
@@ -413,6 +429,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
         ),
         parse_param!(
+            "--compile-function-source        With --compile --aot: keep the source text that Function.prototype.toString() returns (default: true)"
+        ),
+        parse_param!(
+            "--no-compile-function-source     With --compile --aot: omit that source text; toString() on a compiled function returns [native code]"
+        ),
+        parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
         ),
         parse_param!(
@@ -437,7 +459,45 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable"
         ),
         parse_param!(
+            "--aot                            Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode"
+        ),
+        parse_param!(
+            "--aot-explain <STR>?...          With --aot: list the places where the compiler cannot use your types, the most expensive first. --aot-explain=costs-json prints them as JSON. --aot-explain=throws lists every type check that can fail when the program runs"
+        ),
+        parse_param!(
+            "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
+        ),
+        parse_param!(
+            "--aot-huge-heap                  With --aot: let each thread have more than 32 GB of objects. The executable uses more memory and runs slower"
+        ),
+        parse_param!("--aot-crash-if-interpreter-is-used"),
+    ],
+    crate::cli::aot::RULE_PARAMS,
+    &[
+        parse_param!(
+            "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
+        ),
+        parse_param!(
+            "--compile-run-arg <STR>...       (internal) An argument for the bun that --compile-run runs"
+        ),
+        parse_param!(
+            "--compile-in-place               With --aot: the executable runs where it was built. Every module keeps its path on disk, and what was not compiled is loaded from there"
+        ),
+        parse_param!("--rewrite-jest-for-tests         (internal) The entry points are test files"),
+        parse_param!(
+            "--expose-internals               (internal) What is built is run with --expose-internals"
+        ),
+        parse_param!(
+            "--experimental-stream-iter       (internal) What is built is run with --experimental-stream-iter"
+        ),
+        parse_param!(
+            "--builtins-manifest <STR>        (internal) With --target=bun_builtins: the tables src/codegen/builtins-manifest.ts wrote"
+        ),
+        parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
+        ),
+        parse_param!(
+            "--compile-trim-runtime           Leave the parts of Bun that no compiled program can reach out of the executable (requires --compile)"
         ),
         parse_param!(
             "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
@@ -524,6 +584,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
+        ),
+        parse_param!(
+            "--dts                            Write TypeScript declaration files (.d.ts) to --outdir, and each output file with its types kept, for --aot. Implies --check"
         ),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -1047,6 +1110,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::BuildCommand
             | CommandTag::TestCommand
     ) {
+        crate::cli::aot::reject_unknown_flags(
+            cmd == CommandTag::BuildCommand,
+            ctx.passthrough.len(),
+        );
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
         }
@@ -1267,6 +1334,41 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        ctx.runtime_options.aot = args.flag(b"--debug-aot");
+        let enforces_aot_rules = args.flag(b"--aot") && !ctx.runtime_options.aot;
+        ctx.runtime_options.aot_crash_if_interpreter_is_used =
+            args.flag(b"--aot-crash-if-interpreter-is-used") && !enforces_aot_rules;
+        ctx.runtime_options.aot_huge_heap = args.flag(b"--aot-huge-heap") && !enforces_aot_rules;
+        if ctx.runtime_options.aot_huge_heap
+            && !ctx.runtime_options.aot
+            && args.option(b"--aot-graph-fd").is_none()
+        {
+            Output::err_generic("--aot-huge-heap requires --aot", ());
+            Global::crash();
+        }
+        ctx.runtime_options.aot_logs_type_errors = match args.option(b"--aot-type-errors") {
+            None | Some(b"throw") => false,
+            Some(b"log") => true,
+            Some(type_errors) => {
+                Output::err_generic(
+                    "Invalid value for --aot-type-errors: \"{}\". Must be \"throw\" or \"log\"",
+                    format_args!("{}", BStr::new(type_errors)),
+                );
+                Global::exit(1);
+            }
+        };
+        ctx.runtime_options.aot_audit = args.flag(b"--aot-audit") || enforces_aot_rules;
+        if ctx.runtime_options.aot_audit {
+            crate::cli::aot_audit::enable();
+            if enforces_aot_rules && !ctx.runtime_options.aot_logs_type_errors {
+                crate::cli::aot_audit::enforce();
+            }
+        }
+        ctx.runtime_options.aot_graph_fd = args
+            .option(b"--aot-graph-fd")
+            .and_then(|fd| core::str::from_utf8(fd).ok()?.parse().ok());
+        ctx.runtime_options.aot_decode_crash_report =
+            args.option(b"--aot-decode-crash-report").map(Box::from);
         // To `node`, `--check` means something else.
         ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
         // Nothing runs unchecked, so the process starts again, as under `--watch`. Decided here: on
@@ -2105,7 +2207,44 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
-    ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    ctx.bundler_options.dts = args.flag(b"--dts");
+    ctx.bundler_options.aot = args.flag(b"--aot");
+    ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
+    if let Some(word) = ctx
+        .bundler_options
+        .aot_explain
+        .iter()
+        .find(|word| !bun_aot::Explain::default().set(word))
+    {
+        Output::err_generic(
+            "--aot-explain does not take \"{}\": it is one of {}",
+            (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")),
+        );
+        Global::exit(1);
+    }
+    let rule_flags = crate::cli::aot::rule_flags(bun_core::argv().into_iter().skip(1));
+    if let Some(flag) = rule_flags.first().filter(|_| !ctx.bundler_options.aot) {
+        Output::err_generic(
+            "{} requires --aot",
+            (BStr::new(strings::split(flag, b"=").next().unwrap_or(flag)),),
+        );
+        Global::exit(1);
+    }
+    ctx.bundler_options.aot_rules.extend(rule_flags);
+    if let Err(problem) = crate::cli::aot::rule_settings(&ctx.bundler_options.aot_rules) {
+        Output::err_generic("{}", (problem,));
+        Global::exit(1);
+    }
+    ctx.bundler_options.compile_run = args.flag(b"--compile-run");
+    ctx.bundler_options.rewrite_jest_for_tests = args.flag(b"--rewrite-jest-for-tests");
+    if args.flag(b"--expose-internals") {
+        bun_resolve_builtins::set_expose_internals_enabled(true);
+    }
+    if args.flag(b"--experimental-stream-iter") {
+        bun_resolve_builtins::set_stream_iter_enabled(true);
+    }
+    ctx.bundler_options.compile_run_args = slice_to_owned(args.options(b"--compile-run-arg"));
+    ctx.bundler_options.bytecode = args.flag(b"--bytecode") || ctx.bundler_options.aot;
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
             Ok(v) => v,
@@ -2140,7 +2279,11 @@ fn parse_build_command_options(
     ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
 
     if ctx.bundler_options.bytecode {
-        ctx.bundler_options.output_format = options::Format::Cjs;
+        ctx.bundler_options.output_format = if ctx.bundler_options.aot {
+            options::Format::Esm
+        } else {
+            options::Format::Cjs
+        };
         ctx.args.target = Some(api::Target::Bun);
     }
 
@@ -2259,6 +2402,7 @@ fn parse_build_command_options(
                     }
                 }
                 b"bun" => api::Target::Bun,
+                b"bun_builtins" => api::Target::BunBuiltins,
                 _ => cli::invalid_target(diag, target),
             }));
 
@@ -2290,6 +2434,21 @@ fn parse_build_command_options(
                     );
                 }
             }
+        }
+    }
+
+    match (
+        opts.target == Some(api::Target::BunBuiltins),
+        args.option(b"--builtins-manifest"),
+    ) {
+        (true, Some(path)) => cli::builtins_manifest::install(path, opts),
+        (false, None) => {}
+        _ => {
+            Output::err_generic(
+                "--target=bun_builtins and --builtins-manifest need each other",
+                (),
+            );
+            Global::exit(1);
         }
     }
 
@@ -2354,6 +2513,26 @@ fn parse_build_command_options(
                 Global::crash();
             }
             ctx.bundler_options.compile_assets = slice_to_owned(assets);
+        }
+    }
+
+    {
+        let has_positive = args.flag(b"--compile-function-source");
+        let has_negative = args.flag(b"--no-compile-function-source");
+
+        if has_positive || has_negative {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--compile-function-source requires --compile", ());
+                Global::crash();
+            }
+            if has_positive && has_negative {
+                Output::err_generic(
+                    "Cannot use both --compile-function-source and --no-compile-function-source",
+                    (),
+                );
+                Global::crash();
+            }
+            ctx.bundler_options.compile_function_source = has_positive;
         }
     }
 
@@ -2439,6 +2618,111 @@ fn parse_build_command_options(
             }
             ctx.bundler_options.compile_autoload_package_json = has_positive;
         }
+    }
+
+    if ctx.bundler_options.compile_run && !ctx.bundler_options.compile {
+        Output::err_generic("--compile-run requires --compile", ());
+        Global::crash();
+    }
+    ctx.bundler_options.compile_in_place = args.flag(b"--compile-in-place");
+    if ctx.bundler_options.compile_in_place {
+        if !ctx.bundler_options.aot {
+            Output::err_generic("--compile-in-place requires --aot", ());
+            Global::crash();
+        }
+        // It resolves what it loads from disk as `bun run` does.
+        ctx.bundler_options.compile_autoload_tsconfig =
+            !args.flag(b"--no-compile-autoload-tsconfig");
+        ctx.bundler_options.compile_autoload_package_json =
+            !args.flag(b"--no-compile-autoload-package-json");
+        // `a.cjs` and `a.mjs` of one folder are two files of the executable.
+        ctx.bundler_options.entry_naming = Box::from(&b"./[dir]/[name]-[hash].[ext]"[..]);
+    }
+    if ctx.bundler_options.aot && !ctx.bundler_options.compile {
+        Output::err_generic("--aot requires --compile", ());
+        Global::crash();
+    }
+    ctx.bundler_options.aot_crash_if_interpreter_is_used =
+        args.flag(b"--aot-crash-if-interpreter-is-used");
+    if ctx.bundler_options.aot_crash_if_interpreter_is_used && !ctx.bundler_options.aot {
+        Output::err_generic("--aot-crash-if-interpreter-is-used requires --aot", ());
+        Global::crash();
+    }
+    ctx.bundler_options.aot_huge_heap = args.flag(b"--aot-huge-heap");
+    if ctx.bundler_options.aot_huge_heap {
+        if !ctx.bundler_options.aot {
+            Output::err_generic("--aot-huge-heap requires --aot", ());
+            Global::crash();
+        }
+        bun_jsc::compile_with_wide_references();
+    }
+    if let Some(type_errors) = args.option(b"--aot-type-errors") {
+        if !ctx.bundler_options.aot {
+            Output::err_generic("--aot-type-errors requires --aot", ());
+            Global::crash();
+        }
+        ctx.bundler_options.aot_logs_type_errors = match type_errors {
+            b"throw" => false,
+            b"log" => true,
+            _ => {
+                Output::err_generic(
+                    "Invalid value for --aot-type-errors: \"{}\". Must be \"throw\" or \"log\"",
+                    format_args!("{}", BStr::new(type_errors)),
+                );
+                Global::exit(1);
+            }
+        };
+    }
+    if ctx.bundler_options.aot {
+        if let Some(why) = crate::cli::aot::unsupported_reason(&ctx.bundler_options.compile_target)
+        {
+            Output::err_generic("--aot: {}", format_args!("{}", why));
+            Global::crash();
+        }
+        let ignored_flags = [
+            (
+                "--banner with code",
+                args.option(b"--banner")
+                    .is_some_and(|text| !crate::cli::aot::is_only_comments(text)),
+            ),
+            (
+                "--footer with code",
+                args.option(b"--footer")
+                    .is_some_and(|text| !crate::cli::aot::is_only_comments(text)),
+            ),
+            (
+                "--bytecode-depth",
+                args.option(b"--bytecode-depth").is_some(),
+            ),
+            (
+                "--bytecode-order",
+                !args.options(b"--bytecode-order").is_empty(),
+            ),
+        ];
+        if let Some((option, _)) = ignored_flags.iter().find(|option| option.1) {
+            Output::err_generic("--aot does not support {}", format_args!("{}", option));
+            Global::crash();
+        }
+        let minifies_identifiers =
+            ctx.bundler_options.minify_identifiers && !ctx.bundler_options.keep_names;
+        if args
+            .option(b"--sourcemap")
+            .is_some_and(|setting| setting != b"none")
+            && !args.flag(b"--compile-run")
+            && !minifies_identifiers
+        {
+            bun_core::note!(
+                "--sourcemap has no effect with --aot: stack traces from compiled code already show the original file, line and column, and any source map that is written is empty"
+            );
+        }
+    }
+
+    if args.flag(b"--compile-trim-runtime") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-trim-runtime requires --compile", ());
+            Global::crash();
+        }
+        bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(true);
     }
 
     if let Some(path) = args.option(b"--compile-executable-path") {
@@ -2635,6 +2919,10 @@ fn parse_build_command_options(
         }
 
         ctx.bundler_options.output_format = format;
+        if ctx.bundler_options.aot && format != options::Format::Esm {
+            Output::err_generic("--aot requires --format=esm", ());
+            Global::exit(1);
+        }
         if ctx.bundler_options.bytecode {
             if format != options::Format::Cjs && format != options::Format::Esm {
                 Output::err_generic("format must be 'cjs' or 'esm' when bytecode is true.", ());

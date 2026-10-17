@@ -47,6 +47,24 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn prelinked_module_name(&self, _index: u32) -> Option<&'static [u8]> {
         None
     }
+    fn is_compiled_module(&self, _name: &[u8]) -> bool {
+        false
+    }
+    fn compiled_program_sources(&self) -> &'static [u8] {
+        &[]
+    }
+    /// Where modules keep their paths: the file of the program that `specifier` names in a file of `source_dir`.
+    fn resolution(
+        &self,
+        _source_dir: &[u8],
+        _specifier: &[u8],
+        _is_require: bool,
+    ) -> Option<&'static [u8]> {
+        None
+    }
+    fn is_internal_module(&self, _name: &[u8]) -> bool {
+        false
+    }
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
     /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
     /// entry point is embedded under a `.js` name -- under the `.js` name for a source extension or no extension
@@ -79,7 +97,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
             .len()
         };
         if let Some(name) = self.find_assume_standalone_path(&buf[..path_len]) {
-            return Some(name);
+            return Some(name).filter(|name| !self.is_internal_module(name));
         }
         // Entry points are embedded under a `.js` name whatever the (case-insensitive) source extension was.
         let extension = bun_paths::extension(&buf[..path_len]);
@@ -105,6 +123,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
         }
         buf[stem_len..stem_len + 3].copy_from_slice(b".js");
         self.find_assume_standalone_path(&buf[..stem_len + 3])
+            .filter(|name| !self.is_internal_module(name))
     }
     /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — the
     /// virtual-root prefix used for embedded modules (e.g. `/$bunfs/root/`).
@@ -137,6 +156,36 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn linked_bytecode_payload(
         &self,
     ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
+        None
+    }
+    fn aot_image(&self) -> &'static [u8] {
+        &[]
+    }
+    /// The number of the module in the program data of `aot_image`.
+    fn program_data_index(&self, _name: &[u8]) -> Option<u32> {
+        None
+    }
+    fn preserves_source_paths(&self) -> bool {
+        false
+    }
+    fn source_path(&self, _name: &[u8]) -> Option<&'static [u8]> {
+        None
+    }
+    fn has_entry_point_paths(&self) -> bool {
+        false
+    }
+    fn entry_point_at(
+        &self,
+        _source_dir: &[u8],
+        _specifier: &[u8],
+        _is_require: bool,
+    ) -> Option<&'static [u8]> {
+        None
+    }
+    fn find_by_source_path(&self, _source_path: &[u8]) -> Option<&'static [u8]> {
+        None
+    }
+    fn aot_image_file(&self) -> Option<(i32, i64)> {
         None
     }
     /// The path of every file, and the path every module's bytecode is keyed on.

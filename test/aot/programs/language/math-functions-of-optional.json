@@ -1,0 +1,1 @@
+{ "skipInShell": "Math.cbrt is the C library's, and the shell and Bun are linked with different ones" }

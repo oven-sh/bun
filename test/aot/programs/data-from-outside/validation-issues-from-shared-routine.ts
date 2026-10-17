@@ -1,0 +1,48 @@
+// The issues of a failed validation are built by one routine that all types share, from a description of the type. No code is emitted per type for them.
+// IR= 0 validate String "invalid_type"
+// IR= 0 validate String "unrecognized_keys"
+// IR= 0 validate String "path"
+// IR= 0 report NewObjectWithShape
+// SIZE< report 14000
+// IR- ^function \d+ "build"
+import type { Default, Int, MaxLength, Message, Min, MinItems, Strict } from "bun";
+interface Address { street: string; zip: string & MaxLength<5> }
+interface Person {
+  name: string;
+  age: number & Int & Min<0> & Message<"age must be a whole number from 0 up">;
+  address: Address;
+  tags: string[] & MinItems<1>;
+  pair: [number, string];
+  scores: Record<string, number>;
+  role: "admin" | "user" | { custom: string };
+  nickname?: string;
+  level: number & Default<1>;
+}
+function issuesOf(run: () => unknown): string {
+  try {
+    return "accepted " + JSON.stringify(run());
+  } catch (error) {
+    const failure = error as Error & { issues?: unknown };
+    return failure.constructor.name + " " + failure.message + " " + JSON.stringify(failure.issues);
+  }
+}
+const good = { name: "n", age: 3, address: { street: "s", zip: "12345" }, tags: ["t"], pair: [1, "p"], scores: { a: 1 }, role: "user" };
+const inputs: unknown[] = [
+  good,
+  { ...good, role: { custom: "c" }, nickname: "k", level: 2, extra: true },
+  {},
+  null,
+  [],
+  { ...good, age: -1 },
+  { ...good, age: 1.5, address: { street: 1, zip: "123456" }, tags: [], pair: [1], scores: { a: "x", b: 2 }, role: "owner", nickname: 5, level: "high" },
+  { ...good, address: null, tags: "t", pair: ["1", 2], scores: [], role: { custom: 1 } },
+];
+for (const input of inputs) {
+  console.log(issuesOf(() => Bun.validate<Person>(input)));
+  const result = Bun.safeValidate<Person>(input);
+  console.log(result.success ? "success" : result.issues.length + " " + result.issues[0].message);
+  console.log(issuesOf(() => Bun.parse<Person>(JSON.stringify(input))));
+}
+console.log(issuesOf(() => Bun.validate<Address & Strict>({ street: "s", zip: "1", city: "c", country: "d" })));
+console.log(JSON.stringify(Bun.schema<Address>()["~standard"].validate({ street: 1 })));
+console.log(issuesOf(() => Bun.parse<Person>("{")), issuesOf(() => Bun.parse<Address[]>('[{"street":"s","zip":"1"},{"street":"s"}]')));

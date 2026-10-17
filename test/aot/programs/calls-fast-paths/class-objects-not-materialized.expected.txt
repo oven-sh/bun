@@ -1,0 +1,12 @@
+declared: Function 0, Structure 71, PropertyTable 2, Object 2
+60 classes as values: Function 63, Structure 22, PropertyTable 2, Object 2
+looked for what they have not, and for what they inherit: Function 1, Structure 42, PropertyTable 1, Object 2
+kept as keys: Function 1, Structure 0, PropertyTable 0, Object 2
+new C through the value: Function 2, Structure 84, PropertyTable 0, Object 122
+a method of each, by name: Function 61, Structure 0, PropertyTable 0, Object 2
+o.constructor: Function 1, Structure 1, PropertyTable 0, Object 3
+C.prototype of 30: Function 1, Structure 30, PropertyTable 30, Object 2
+C.name of 15 more: Function 1, Structure 30, PropertyTable 30, Object 2
+a store to the last 15: Function 1, Structure 78, PropertyTable 31, Object 2
+all of it again: Function 1, Structure 45, PropertyTable 30, Object 2
+785

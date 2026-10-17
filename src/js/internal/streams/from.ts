@@ -1,3 +1,5 @@
+// @ts-check
+const process = globalThis.process;
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const PromisePrototypeThen = Promise.prototype.$then;

@@ -117,7 +117,9 @@ mod ty;
 pub mod tsutils;
 pub mod utils;
 
+pub use bun_sema::check::locked_builtins;
 pub use bun_sema::check::services::ReadLibrary;
+pub use bun_sema::check::{AotCheck, AotCheckKind};
 pub use flags::*;
 pub use id_set::{IdMap, IdSet, Indexed};
 pub use locate::{Locate, NameOf};
@@ -268,6 +270,8 @@ queries! {
     /// `checker.getAccessedPropertyName(node)`: the name of a property access as it is written, and of an
     /// element access what `tryGetElementAccessExpressionName` finds for its key.
     fn accessed_property_name(node: NodeRef) -> Option<&'a [u8]>;
+    /// [`Expr::is_used_only_undefined_safely`](crate::ast::Expr::is_used_only_undefined_safely)
+    fn is_used_only_undefined_safely(node: NodeRef) -> bool;
     fn type_from_type_node(node: NodeRef) -> TypeId;
     fn contextual_type(node: NodeRef) -> Option<TypeId>;
     fn apparent_type_of_contextual_type(node: NodeRef) -> Option<TypeId>;
@@ -323,6 +327,11 @@ queries! {
     fn type_predicate_of_signature(signature: SigId) -> Option<TypePredicateData<'a>>;
     fn deprecation_of_signature(signature: SigId) -> Option<&'a [u8]>;
     fn signature_to_string(signature: SigId) -> Vec<u8>;
+
+    // ── what `--aot` checks when the program runs ──
+    fn aot_check_any_inflow(node: NodeRef) -> Option<bun_sema::check::AotCheck>;
+    fn aot_check_external_data_inflow(node: NodeRef) -> Option<bun_sema::check::AotCheck>;
+    fn aot_describe_any_origin(node: NodeRef) -> Vec<u8>;
 }
 
 /// The answers for a file that is not part of a checked program.

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";

@@ -224,6 +224,8 @@ pub struct File<'a> {
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
     is_later_script: Cell<bool>,
+    /// [`File::active_rule_overlaps`]
+    pub(crate) active_rule_overlaps: Cell<crate::language::RuleOverlaps>,
     /// [`File::in_language`]
     parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
@@ -255,6 +257,7 @@ impl<'a> File<'a> {
         debug_assert!(hir.import_attributes.is_sorted_by_key(|it| it.0));
         File {
             language,
+            active_rule_overlaps: Cell::new(language.active_rule_overlaps),
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
@@ -374,6 +377,12 @@ impl<'a> File<'a> {
     #[inline]
     pub fn language(&self) -> &'a LanguageOptions {
         self.language
+    }
+
+    /// [`LanguageOptions::active_rule_overlaps`], for the rules that run on this file: comments in it and `--quiet` change which do.
+    #[inline]
+    pub fn active_rule_overlaps(&self) -> crate::language::RuleOverlaps {
+        self.active_rule_overlaps.get()
     }
 
     /// ESLint's `context.settings`.

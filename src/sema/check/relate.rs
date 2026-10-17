@@ -24,6 +24,10 @@ pub(super) enum Relation {
     StrictSubtype = 1,
     /// The two types may share a value. Used for `===` and type assertions.
     Comparable = 2,
+    /// `Assignable`, but a target that the program declares has no property that the translated program never stores, and `readonly` on an
+    /// array or a tuple means nothing: see `aot::flows`. At every depth. What is found depends on which names those are, so it is only
+    /// asked once they are known, and nothing of it is published.
+    AssignableAsStored = 3,
     Subtype = 4,
     Identity = 5,
 }
@@ -31,7 +35,10 @@ pub(super) enum Relation {
 impl Relation {
     /// `relation == assignableRelation || relation == comparableRelation`
     pub(super) fn is_lenient(self) -> bool {
-        matches!(self, Relation::Assignable | Relation::Comparable)
+        matches!(
+            self,
+            Relation::Assignable | Relation::Comparable | Relation::AssignableAsStored
+        )
     }
 
     pub(super) fn is_subtype(self) -> bool {
@@ -97,6 +104,8 @@ const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
 pub(super) const STACK_DEPTH_OVERFLOW: u8 = 64;
+const CREATED_DURING_WARMUP: u8 = 128;
+const CREATED_IN_CONDITIONAL_TYPE: u8 = 4;
 const OVERFLOW: u8 = COMPLEXITY_OVERFLOW | STACK_DEPTH_OVERFLOW;
 
 // VarianceFlags
@@ -307,6 +316,13 @@ pub(super) type RecursionId = (u8, u32, u32);
 /// Sentinel `RecursionId`: deciding whether the type has a given identity takes more than an
 /// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
+
+const LARGE_INTERSECTION_SIZE: usize = 16;
+
+pub(super) struct MemberIdentities {
+    by_identity: Box<[(RecursionId, TypeId)]>,
+    by_type: Box<[(TypeId, RecursionId)]>,
+}
 
 /// What `Checker::recursive_relation_key` returns.
 struct RecursiveRelationKey {
@@ -1017,7 +1033,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut missed = None;
         if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
-            if let Some(entry) = self.p.relations.get(&self.task, &key.0) {
+            if let Some(entry) = self.p.relations.get(&self.task, &key.0)
+                && !self.needs_recomparison(entry, key.0)
+            {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
                 if is_marker_comparison {
@@ -1394,10 +1412,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Intersection(parts) = self.data(t) {
             // `Partial<T>[K] & {}` is `T[K] & {}`.
             let has_instantiable = parts.iter().any(|&p| self.is_instantiable(p));
-            let has_nullable_or_empty = parts.iter().any(|&p| {
-                p.is_null() || p.is_undefined() || self.is_empty_anonymous_object_type(p)
-            });
-            if has_instantiable && has_nullable_or_empty {
+            let has_nullable_or_empty = has_instantiable
+                && parts.iter().any(|&p| {
+                    p.is_null() || p.is_undefined() || self.is_empty_anonymous_object_type(p)
+                });
+            if has_nullable_or_empty {
                 let normalized: Vec<TypeId> =
                     parts.iter().map(|&p| self.normalized(p, writing)).collect();
                 if normalized[..] != parts[..] {
@@ -1881,7 +1900,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getDefaultConstraintOfConditionalType`
-    pub(super) fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+    pub fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
         let (yes, no) = (self.cond_inferred_true(t), self.cond_false(t));
         // A branch that is `any` would make the whole assignable to anything.
         if self.is_any(yes) {
@@ -1925,7 +1944,23 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let with_constraint = self.prepend_type_mapping(param, constraint, mapper);
-        let instantiated = self.conditional_type_uncached(file, node, with_constraint, true, None);
+        let instantiated =
+            match self
+                .cond_constraint_instantiations
+                .get(&(file, node, with_constraint))
+            {
+                Some(&known) => known,
+                None => {
+                    let mark = self.non_cacheable_mark();
+                    let instantiated =
+                        self.conditional_type_uncached(file, node, with_constraint, true, None);
+                    if self.non_cacheable_mark() == mark {
+                        self.cond_constraint_instantiations
+                            .insert((file, node, with_constraint), instantiated);
+                    }
+                    instantiated
+                }
+            };
         (!instantiated.is_never()).then_some(instantiated)
     }
 
@@ -2602,6 +2637,15 @@ impl<'p, 's> Checker<'p, 's> {
         if original_source == original_target {
             return Ternary::TRUE;
         }
+        if r.relation == Relation::AssignableAsStored {
+            let (source, target) = (
+                self.without_readonly(original_source),
+                self.without_readonly(original_target),
+            );
+            if (source, target) != (original_source, original_target) {
+                return self.is_related_to_ex::<REPORT>(r, source, target, recursion, state);
+            }
+        }
         let head = if REPORT { r.head_message.take() } else { None };
         let (original_sd, original_td) = (self.data(original_source), self.data(original_target));
         let relation = r.relation;
@@ -2854,7 +2898,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (sd, td) = (self.data(source), self.data(target));
         // `ObjectFlagsJSLiteral` on the target itself: without noImplicitAny a JS literal accepts any property.
-        if !self.p.files.options.no_implicit_any && self.has_js_literal_flag(target) {
+        if !self.p.files.has_no_implicit_any_everywhere() && self.has_js_literal_flag(target) {
             return false;
         }
         // A target that accepts anything accepts any object literal, but not any JSX attribute.
@@ -3748,6 +3792,10 @@ impl<'p, 's> Checker<'p, 's> {
             true => None,
             false => self.p.relations.get(&self.task, &key),
         };
+        let cached = match cached {
+            Some(entry) if self.needs_recomparison(entry, key) => None,
+            cached => cached,
+        };
         if let Some(entry) = cached
             // A cached failure is recomputed to produce its error elaboration.
             && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
@@ -3794,6 +3842,8 @@ impl<'p, 's> Checker<'p, 's> {
             r.overflow = true;
             return Ternary::FALSE;
         }
+        self.record_compared_pair(source, target, r.relation, REPORT);
+        self.burn(1);
         let maybe_start = r.maybe_keys.len();
         let scope = self.begin_scope();
         r.maybe_keys.push(key);
@@ -3904,6 +3954,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
+        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX {
+            entry | CREATED_DURING_WARMUP
+        } else {
+            entry
+        };
+        let entry = if self.is_resolving_conditional_type() {
+            entry | CREATED_IN_CONDITIONAL_TYPE
+        } else {
+            entry
+        };
         if self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
@@ -3912,7 +3972,23 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `relation.set(key, entry)` for a key that has no entry.
+    fn needs_recomparison(&mut self, entry: u8, key: Key) -> bool {
+        let has_unrecorded_pairs = entry & CREATED_DURING_WARMUP != 0
+            || entry & CREATED_IN_CONDITIONAL_TYPE != 0 && !self.is_resolving_conditional_type();
+        has_unrecorded_pairs && self.records_compared_pairs() && self.record_recompared(key)
+    }
+
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
+        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX {
+            entry | CREATED_DURING_WARMUP
+        } else {
+            entry
+        };
+        let entry = if self.is_resolving_conditional_type() {
+            entry | CREATED_IN_CONDITIONAL_TYPE
+        } else {
+            entry
+        };
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
         self.p.relations.insert(&self.task, key, entry, stored);
@@ -3966,6 +4042,28 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (t, data) = self.mapped_target_with_symbol(t);
         if let TypeData::Intersection(parts) = data
+            && parts.len() >= LARGE_INTERSECTION_SIZE
+        {
+            let identities: SmallVec<[(TypeId, RecursionId); 16]> = stack
+                .iter()
+                .map(|&on_stack| (on_stack, self.plain_recursion_identity(on_stack)))
+                .collect();
+            let not_plain = identities
+                .iter()
+                .filter(|entry| entry.1 == NOT_PLAIN)
+                .count();
+            let can_reach_depth = not_plain >= max_depth
+                || identities.iter().any(|entry| {
+                    entry.1 != NOT_PLAIN
+                        && not_plain + identities.iter().filter(|other| other.1 == entry.1).count()
+                            >= max_depth
+                });
+            if !can_reach_depth {
+                return false;
+            }
+            return self.is_deeply_nested_among(t, &identities, max_depth);
+        }
+        if let TypeData::Intersection(parts) = data
             && parts
                 .iter()
                 .any(|&p| self.is_deeply_nested_type(p, stack, max_depth))
@@ -3978,6 +4076,48 @@ impl<'p, 's> Checker<'p, 's> {
         for &on_stack in stack {
             if self.has_matching_recursion_identity(on_stack, identity) {
                 // `t.id >= lastTypeId`
+                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
+                    count += 1;
+                    if count >= max_depth {
+                        return true;
+                    }
+                }
+                last = Some(on_stack);
+            }
+        }
+        false
+    }
+
+    fn is_deeply_nested_among(
+        &mut self,
+        t: TypeId,
+        identities: &[(TypeId, RecursionId)],
+        max_depth: usize,
+    ) -> bool {
+        let (t, data) = self.mapped_target_with_symbol(t);
+        if let TypeData::Intersection(parts) = data
+            && parts
+                .iter()
+                .any(|&p| self.is_deeply_nested_among(p, identities, max_depth))
+        {
+            return true;
+        }
+        let identity = self.recursion_identity_as(t, data);
+        let possible_matches = identities
+            .iter()
+            .filter(|entry| entry.1 == NOT_PLAIN || entry.1 == identity)
+            .count();
+        if possible_matches < max_depth {
+            return false;
+        }
+        let mut count = 0;
+        let mut last = None;
+        for &(on_stack, kept) in identities {
+            let matches = match kept == NOT_PLAIN {
+                true => self.has_matching_recursion_identity(on_stack, identity),
+                false => kept == identity,
+            };
+            if matches {
                 if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
                     count += 1;
                     if count >= max_depth {
@@ -4116,10 +4256,86 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn member_identities(
+        &mut self,
+        intersection: TypeId,
+        parts: &[TypeId],
+    ) -> Option<std::rc::Rc<MemberIdentities>> {
+        if let Some(known) = self.intersection_identities.get(&intersection) {
+            return known.clone();
+        }
+        let mut by_identity = Vec::with_capacity(parts.len());
+        let found = self
+            .add_member_identities(parts, &mut by_identity)
+            .then(|| {
+                by_identity.sort_unstable_by_key(|member| (member.0, member.1.0));
+                by_identity.dedup();
+                let mut by_type: Vec<(TypeId, RecursionId)> = by_identity
+                    .iter()
+                    .map(|member| (member.1, member.0))
+                    .collect();
+                by_type.sort_unstable_by_key(|member| member.0.0);
+                std::rc::Rc::new(MemberIdentities {
+                    by_identity: by_identity.into_boxed_slice(),
+                    by_type: by_type.into_boxed_slice(),
+                })
+            });
+        self.intersection_identities
+            .insert(intersection, found.clone());
+        found
+    }
+
+    fn add_member_identities(
+        &self,
+        parts: &[TypeId],
+        members: &mut Vec<(RecursionId, TypeId)>,
+    ) -> bool {
+        parts.iter().all(|&part| match self.data(part) {
+            data if is_mapped_kind(data) => false,
+            TypeData::Intersection(inner) => self.add_member_identities(inner, members),
+            data => {
+                members.push((self.recursion_identity_as(part, data), part));
+                true
+            }
+        })
+    }
+
+    fn some_member_has_identity(&self, members: &MemberIdentities, identity: RecursionId) -> bool {
+        let start = members
+            .by_identity
+            .partition_point(|member| member.0 < identity);
+        let kept_unchanged = members.by_identity[start..]
+            .iter()
+            .take_while(|member| member.0 == identity);
+        if kept_unchanged
+            .into_iter()
+            .any(|member| self.recursion_identity_by_now(member.1, member.0) == identity)
+        {
+            return true;
+        }
+        identity.0 == 0
+            && identity.2 == 0
+            && members
+                .by_type
+                .binary_search_by_key(&identity.1, |member| member.0.0)
+                .is_ok_and(|at| {
+                    let (member, kept) = members.by_type[at];
+                    self.recursion_identity_by_now(member, kept) == identity
+                })
+    }
+
     /// `hasMatchingRecursionIdentity`
     fn has_matching_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
         let (t, data) = self.mapped_target_with_symbol(t);
         match data {
+            TypeData::Intersection(parts) if parts.len() >= LARGE_INTERSECTION_SIZE => {
+                match self.member_identities(t, parts) {
+                    Some(members) => self.some_member_has_identity(&members, identity),
+                    None => parts
+                        .iter()
+                        .any(|&p| self.has_matching_recursion_identity(p, identity)),
+                }
+            }
             TypeData::Intersection(parts) => parts
                 .iter()
                 .any(|&p| self.has_matching_recursion_identity(p, identity)),
@@ -4559,6 +4775,51 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
+    fn is_rejected_by_annotated_type(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        (object, index): (TypeId, TypeId),
+        access_flags: AccessFlags,
+    ) -> bool {
+        if self.is_boolean(index) || self.is_tuple(object) {
+            return false;
+        }
+        let TypeData::Union(keys) = self.data(index) else {
+            return false;
+        };
+        let is_no_object = tf::PRIMITIVE | tf::NON_PRIMITIVE | tf::UNKNOWN;
+        if !matches!(
+            r.relation,
+            Relation::Assignable | Relation::AssignableAsStored
+        ) || self.has_type_variables(object)
+            || !self.every_type(source, |c, part| c.flags(part) & is_no_object != 0)
+        {
+            return false;
+        }
+        let mut written: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(keys.len());
+        for &key in keys.iter() {
+            let Some(ty) = self.indexed_access_with_flags(object, key, access_flags) else {
+                return false;
+            };
+            if self.is_any(ty) {
+                return false;
+            }
+            if !written.contains(&ty) {
+                written.push(ty);
+            }
+        }
+        let product = (written.iter()).fold(1usize, |size, &ty| {
+            size.saturating_mul(self.parts(ty).len())
+        });
+        product < 100_000
+            && (written.iter()).any(|&ty| {
+                !self
+                    .is_related_to_ex::<false>(r, source, ty, REC_TARGET, STATE_TARGET)
+                    .holds()
+            })
+    }
+
     /// `structuredTypeRelatedToWorker`. `sd`, `td`: the `TypeData` of `source` and `target`.
     pub(super) fn structured_type_related_to_worker<const REPORT: bool>(
         &mut self,
@@ -4718,17 +4979,22 @@ impl<'p, 's> Checker<'p, 's> {
                         self.base_constraint_or_type(object),
                         self.base_constraint_or_type(index),
                     );
+                    let access_flags = if base_object != object {
+                        AccessFlags::WRITING | AccessFlags::NO_INDEX_SIGNATURES
+                    } else {
+                        AccessFlags::WRITING
+                    };
                     if !self.is_generic_object_type(base_object)
                         && !self.is_generic_index_type(base_index)
-                        && let Some(constraint) = self.indexed_access_with_flags(
-                            base_object,
-                            base_index,
-                            if base_object != object {
-                                AccessFlags::WRITING | AccessFlags::NO_INDEX_SIGNATURES
-                            } else {
-                                AccessFlags::WRITING
-                            },
-                        )
+                        && (REPORT
+                            || !self.is_rejected_by_annotated_type(
+                                r,
+                                source,
+                                (base_object, base_index),
+                                access_flags,
+                            ))
+                        && let Some(constraint) =
+                            self.indexed_access_with_flags(base_object, base_index, access_flags)
                     {
                         if REPORT && shared.original_error_chain.is_some() {
                             r.restore_error_state(&shared.save_error_state);
@@ -5905,12 +6171,15 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_empty_array_literal_type(source)
             && !self.is_tuple(source);
         let mut inherited = self.inherited_of(sm.shape());
+        let leaves_out =
+            r.relation == Relation::AssignableAsStored && self.is_created_by_program(target);
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
             if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
                 || (self.property_among(has_properties, &sm, &mut inherited, tp.name)).is_some()
                 // `isStaticPrivateIdentifierProperty`
                 || self.is_static_private_name(tp)
+                || leaves_out && self.is_never_stored(tp.name)
             {
                 continue;
             }
@@ -5979,6 +6248,7 @@ impl<'p, 's> Checker<'p, 's> {
             if excluded.contains(&tp.name)
                 || optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
                 || target_is_class && tp.name == known::prototype
+                || leaves_out && self.is_never_stored(tp.name)
             {
                 continue;
             }
@@ -6044,7 +6314,12 @@ impl<'p, 's> Checker<'p, 's> {
         skip_optional: bool,
     ) -> Ternary {
         let (source, target) = of;
-        let (sf, tf) = (source_prop.flags, target_prop.flags);
+        let (mut sf, tf) = (source_prop.flags, target_prop.flags);
+        if r.relation == Relation::AssignableAsStored
+            && !tf.intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
+        {
+            sf.remove(PropFlags::PRIVATE | PropFlags::PROTECTED);
+        }
         if sf.contains(PropFlags::PRIVATE) || tf.contains(PropFlags::PRIVATE) {
             if Self::value_declaration(source_prop) != Self::value_declaration(target_prop) {
                 if REPORT {
@@ -6332,6 +6607,13 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         if pick(&tm) == 0 {
+            return Ternary::TRUE;
+        }
+        // At run time a function is a function: no signature is there to be compared. What a call hands over is held to the types of the
+        // parameters by the function that is called.
+        if r.relation == Relation::AssignableAsStored
+            && !(sm.shape().call.is_empty() && sm.shape().construct.is_empty())
+        {
             return Ternary::TRUE;
         }
         // Whatever can be called is a `Function`.

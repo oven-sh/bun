@@ -375,7 +375,8 @@ describe.concurrent("bun fmt", () => {
     ["-l", "--write"],
     ["--check", "--write", "--log-level", "warn"],
   ])("standard input with %s %s: nothing is said, and nothing is printed", async (...args) => {
-    const result = await format({ ".prettierrc": "{}" }, [...args, "--stdin-filepath", "a.js"], { stdin: ugly });
+    const flags = [...args].filter((arg): arg is string => typeof arg === "string");
+    const result = await format({ ".prettierrc": "{}" }, [...flags, "--stdin-filepath", "a.js"], { stdin: ugly });
     expect({ stdout: result.raw, stderr: result.stderr, exitCode: result.exitCode }).toEqual({
       stdout: "",
       stderr: "",
@@ -768,7 +769,7 @@ describe.concurrent("bun fmt", () => {
     `);
     expect(stdin.exitCode).toBe(2);
     // The configuration of another tool makes no difference.
-    for (const configuration of [{ ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }]) {
+    for (const configuration of [{ ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }] as Record<string, string>[]) {
       const result = await format({ ...configuration, "b.css": files["b.css"] }, ["b.css"]);
       expect(result.stderr).toStartWith(problem("b.css", "Unclosed string", [7, 6, '  e: "f']) + "\n\n");
       expect(result.exitCode).toBe(2);
@@ -5052,7 +5053,7 @@ try {
         Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
       const texts = units.map(unit => repeated(unit, count));
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
-      for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
+      for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }] as Record<string, string>[]) {
         const run = (text: (index: number) => string) =>
           format(
             {
@@ -6806,7 +6807,11 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     "%s, of which every file is ignored, is no error",
     async (...args) => {
       const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
-      const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
+      const result = await format(
+        files,
+        ["--check", ...[...args].filter((arg): arg is string => typeof arg === "string")],
+        { reads: ["src/a.js"] },
+      );
       expect(result.stderr).not.toMatch(anError);
       expect(result.files).toEqual({ "src/a.js": ugly });
       expect(result.exitCode).toBe(0);

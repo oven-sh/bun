@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";

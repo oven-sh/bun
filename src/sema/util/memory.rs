@@ -328,6 +328,22 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Stable<T, L, A> {
 
 // ───────────────────────────── cells ─────────────────────────────
 
+pub fn release_pages<C: Zeroed>(cells: &[C]) {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: it only reads a constant of the system.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let start = (cells.as_ptr() as usize).next_multiple_of(page);
+        let end = (cells.as_ptr() as usize + size_of_val(cells)) & !(page - 1);
+        if start < end {
+            // SAFETY: whole pages of private anonymous memory inside `cells`, which read as zero afterwards: a value of `C`.
+            unsafe { libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED) };
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = cells;
+}
+
 /// A type for which all zero bytes are a value.
 pub trait Zeroed: Sized {
     /// From the allocator's zeroed memory, which for a long slice comes from the operating system: a

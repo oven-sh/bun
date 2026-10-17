@@ -1,0 +1,2 @@
+error: TS2339: Property 'first' does not exist on type 'number'.
+error: TS2339: Property 'second' does not exist on type 'number'.

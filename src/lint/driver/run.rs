@@ -1208,7 +1208,7 @@ impl Run<'_> {
             let relative =
                 |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
             let (config, example) = (relative(&program.config_path), relative(&program.example));
-            let linted = match program.asked_for {
+            let linted = match program.requested {
                 1 => example,
                 many => [
                     &plural(many, b"file", b"files")[..],

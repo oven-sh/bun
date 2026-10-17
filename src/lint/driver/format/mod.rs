@@ -199,7 +199,7 @@ pub(crate) struct Meta<'m> {
 
 /// The line and column of `message` for a format that ESLint doesn't have. `is_oxlint`: [`Meta::is_oxlint`], where a report at
 /// line 0 is one without a place.
-fn shown_at(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
+fn exposed_at(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
     match is_oxlint {
         true => (message.line, message.column),
         false => message.place(),

@@ -293,7 +293,7 @@ impl Checker<'_, '_> {
                     || hir[p].flags.contains(Flags::REST)
             })
             .collect();
-        if non_simple_parameters.is_empty() || language_version(self) < ScriptTarget::ES2016 {
+        if non_simple_parameters.is_empty() || language_version(self, file) < ScriptTarget::ES2016 {
             return false;
         }
         let mut related = Vec::with_capacity(non_simple_parameters.len());
@@ -847,6 +847,7 @@ impl Checker<'_, '_> {
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
         let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
+        let mut seen_index = crate::util::FxHashMap::<Atom, usize>::default();
         for p in properties.iter() {
             let prop = &hir[p];
             let current_kind = match prop.kind {
@@ -913,10 +914,19 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            let Some(existing) = seen.iter_mut().find(|seen| seen.0 == effective_name) else {
+            let has_many = properties.len() > 16;
+            let place = match has_many {
+                true => seen_index.get(&effective_name).copied(),
+                false => seen.iter().position(|seen| seen.0 == effective_name),
+            };
+            let Some(place) = place else {
+                if has_many {
+                    seen_index.insert(effective_name, seen.len());
+                }
                 seen.push((effective_name, current_kind));
                 continue;
             };
+            let existing = &mut seen[place];
             let name = hir.name(hir.node(p));
             if current_kind & existing.1 & METHOD != 0 {
                 let (start, end) = self.get_error_range_for_node(file, name);

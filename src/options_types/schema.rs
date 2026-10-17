@@ -352,6 +352,7 @@ pub mod api {
         node = 2,
         bun = 3,
         bun_macro = 4,
+        bun_builtins = 5,
     }
 
     impl Target {
@@ -362,6 +363,7 @@ pub mod api {
         pub const Node: Self = Self::node;
         pub const Bun: Self = Self::bun;
         pub const BunMacro: Self = Self::bun_macro;
+        pub const BunBuiltins: Self = Self::bun_builtins;
     }
 
     #[repr(u8)]

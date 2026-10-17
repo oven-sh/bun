@@ -1,0 +1,4 @@
+usedByANestedFunction: true
+usedByTheFunctionItself: true
+notAsync: true
+neverStored: true

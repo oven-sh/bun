@@ -36,6 +36,14 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
     }
 }
 
+fn units_of<'a>(view: &'a JSStringView<'_>) -> std::borrow::Cow<'a, [u16]> {
+    if view.is_utf16() {
+        std::borrow::Cow::Borrowed(view.utf16())
+    } else {
+        std::borrow::Cow::Owned(view.latin1().iter().map(|&unit| u16::from(unit)).collect())
+    }
+}
+
 /// Pooled path scratch carved from the per-VM [`RarePathBuf`].
 ///
 /// JS is single-threaded, so re-using the lazily-allocated tier across calls is
@@ -179,6 +187,18 @@ pub(crate) fn basename(
         .as_ref()
         .filter(|s| !s.is_empty() && s.length() <= path_str.length())
         .map(|s| s.to_utf8());
+    if path_slice.is_owned() || suffix_slice.as_ref().is_some_and(Utf8Bytes::is_owned) {
+        let suffix_units = suffix_str
+            .as_ref()
+            .filter(|s| !s.is_empty() && s.length() <= path_str.length())
+            .map(units_of);
+        return basename_js_t::<u16>(
+            global_object,
+            is_windows,
+            &units_of(&path_str),
+            suffix_units.as_deref(),
+        );
+    }
     basename_js_t::<u8>(
         global_object,
         is_windows,
@@ -232,6 +252,9 @@ fn dirname(
     }
 
     let path_slice = path_str.to_utf8();
+    if path_slice.is_owned() {
+        return dirname_js_t::<u16>(global_object, is_windows, &units_of(&path_str));
+    }
     dirname_js_t::<u8>(global_object, is_windows, path_slice.slice())
 }
 
@@ -280,6 +303,9 @@ fn extname(
     }
 
     let path_slice = path_str.to_utf8();
+    if path_slice.is_owned() {
+        return extname_js_t::<u16>(global_object, is_windows, &units_of(&path_str));
+    }
     extname_js_t::<u8>(global_object, is_windows, path_slice.slice())
 }
 
@@ -540,8 +566,13 @@ pub(crate) fn join(
         views.push(path_str);
     }
     let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
-    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    if owned.iter().any(Utf8Bytes::is_owned) {
+        let wide: SmallVec<[std::borrow::Cow<'_, [u16]>; 8]> = views.iter().map(units_of).collect();
+        let paths: SmallVec<[&[u16]; 8]> = wide.iter().map(|units| &units[..]).collect();
+        return join_js_t::<u16>(global_object, pool, is_windows, &paths);
+    }
+    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
@@ -595,6 +626,9 @@ fn normalize(
 
     let path_slice = path_str.to_utf8();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    if path_slice.is_owned() {
+        return normalize_js_t::<u16>(global_object, pool, is_windows, &units_of(&path_str));
+    }
     normalize_js_t::<u8>(global_object, pool, is_windows, path_slice.slice())
 }
 
@@ -643,6 +677,9 @@ pub(crate) fn parse(
     }
 
     let path_slice = path_str.to_utf8();
+    if path_slice.is_owned() {
+        return parse_js_t::<u16>(global_object, is_windows, &units_of(&path_str));
+    }
     parse_js_t::<u8>(global_object, is_windows, path_slice.slice())
 }
 
@@ -721,6 +758,15 @@ fn relative(
     let from_slice = from_str.to_utf8();
     let to_slice_ = to_str.to_utf8();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    if from_slice.is_owned() || to_slice_.is_owned() {
+        return relative_js_t::<u16>(
+            global_object,
+            pool,
+            is_windows,
+            &units_of(&from_str),
+            &units_of(&to_str),
+        );
+    }
     relative_js_t::<u8>(
         global_object,
         pool,
@@ -814,6 +860,13 @@ fn resolve(
     }
 
     let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    if owned.iter().any(Utf8Bytes::is_owned) {
+        let wide: SmallVec<[std::borrow::Cow<'_, [u16]>; 8]> =
+            views.iter().rev().map(units_of).collect();
+        let paths: SmallVec<[&[u16]; 8]> = wide.iter().map(|units| &units[..]).collect();
+        let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+        return resolve_js_t::<u16>(global_object, pool, is_windows, &paths);
+    }
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
     #[cfg(unix)]

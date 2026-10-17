@@ -75,8 +75,15 @@ impl MachoFile {
     ) -> Result<Box<MachoFile>, MachoError> {
         let header = read_macho_header(obj_file)?;
 
-        let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
-        data.extend_from_slice(obj_file);
+        let size_with_blob = obj_file.len() + blob_to_embed_length;
+        let signature_capacity =
+            MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
+        let mut data: Vec<u8> = Vec::with_capacity(size_with_blob + signature_capacity);
+        // SAFETY: the capacity holds `obj_file.len()` bytes, all of which are written before the length says so.
+        unsafe {
+            bun_core::copy_in_parallel(data.as_mut_ptr(), obj_file.as_ptr(), obj_file.len());
+            data.set_len(obj_file.len());
+        }
 
         Ok(Box::new(MachoFile {
             header,
@@ -88,7 +95,176 @@ impl MachoFile {
         }))
     }
 
-    pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
+    pub fn add_symbols(&mut self, table: &[u8], image_in_payload: u64) -> Option<()> {
+        let lc_base = size_of::<macho::mach_header_64>();
+        let seg_sz = size_of::<macho::segment_command_64>();
+        let sect_sz = size_of::<macho::section_64>();
+        let mut symtab: Option<(usize, macho::symtab_command)> = None;
+        let mut dysymtab: Option<(usize, macho::dysymtab_command)> = None;
+        let mut signature: Option<(usize, macho::linkedit_data_command)> = None;
+        let mut linkedit: Option<(usize, macho::segment_command_64)> = None;
+        let mut bun: Option<(u8, u64)> = None;
+        let mut ordinal: usize = 0;
+        let mut iter = self.iterator();
+        while let Some(entry) = iter.next() {
+            let at = lc_base + entry.offset;
+            match entry.hdr.cmd {
+                macho::LC::SEGMENT_64 => {
+                    let command = entry.cast::<macho::segment_command_64>()?;
+                    let nsects = command.nsects as usize;
+                    if nsects.checked_mul(sect_sz)?.checked_add(seg_sz)? > entry.data.len() {
+                        return None;
+                    }
+                    for i in 0..nsects {
+                        ordinal += 1;
+                        let sect: macho::section_64 =
+                            read_struct(&self.data[at + seg_sz + i * sect_sz..][..sect_sz]);
+                        if command.seg_name() == b"__BUN" && sect.sect_name() == b"__bun" {
+                            bun = Some((u8::try_from(ordinal).ok()?, sect.addr));
+                        }
+                    }
+                    if command.seg_name() == SEG_LINKEDIT {
+                        linkedit = Some((at, command));
+                    }
+                }
+                macho::LC::SYMTAB => symtab = Some((at, entry.cast::<macho::symtab_command>()?)),
+                macho::LC::DYSYMTAB => {
+                    dysymtab = Some((at, entry.cast::<macho::dysymtab_command>()?))
+                }
+                macho::LC::CODE_SIGNATURE => {
+                    signature = Some((at, entry.cast::<macho::linkedit_data_command>()?));
+                }
+                _ => {}
+            }
+        }
+        let (symtab_at, mut symtab) = symtab?;
+        let (dysymtab_at, mut dysymtab) = dysymtab?;
+        let (linkedit_at, mut linkedit) = linkedit?;
+        let (bun_ordinal, bun_address) = bun?;
+
+        let length = self.data.len();
+        let symbols_at = symtab.symoff as usize;
+        let strings_at = symtab.stroff as usize;
+        let strings_end = strings_at.checked_add(symtab.strsize as usize)?;
+        let locals = dysymtab.nlocalsym as usize;
+        let indirect_at = if dysymtab.nindirectsyms == 0 {
+            strings_at
+        } else {
+            dysymtab.indirectsymoff as usize
+        };
+        let after_strings = signature.map_or(length, |(_, command)| command.dataoff as usize);
+        let matches_ld_layout = dysymtab.ilocalsym == 0
+            && dysymtab.iextdefsym == dysymtab.nlocalsym
+            && dysymtab.iundefsym as u64 == dysymtab.iextdefsym as u64 + dysymtab.nextdefsym as u64
+            && symtab.nsyms as u64 == dysymtab.iundefsym as u64 + dysymtab.nundefsym as u64
+            && dysymtab.nextrel == 0
+            && dysymtab.nlocrel == 0
+            && dysymtab.ntoc == 0
+            && dysymtab.nmodtab == 0
+            && dysymtab.nextrefsyms == 0
+            && symbols_at.checked_add(16 * symtab.nsyms as usize)? == indirect_at
+            && indirect_at.checked_add(4 * dysymtab.nindirectsyms as usize)? == strings_at
+            && strings_end <= after_strings
+            && after_strings - strings_end < 16
+            && after_strings <= length
+            && signature.is_none_or(|(_, command)| {
+                command.dataoff as u64 + command.datasize as u64 == length as u64
+            })
+            && linkedit.fileoff.checked_add(linkedit.filesize)? == length as u64;
+        if !matches_ld_layout {
+            return None;
+        }
+
+        let word = |at: usize| -> Option<u32> {
+            Some(u32::from_le_bytes(
+                table.get(at..at.checked_add(4)?)?.try_into().ok()?,
+            ))
+        };
+        let count = word(0)?;
+        let rows_end = (count as usize).checked_mul(12)?.checked_add(16)?;
+        let rows = table.get(16..rows_end)?;
+        let names = table.get(rows_end..rows_end.checked_add(word(4)? as usize)?)?;
+        let code = bun_address
+            .checked_add(size_of::<u64>() as u64)?
+            .checked_add(image_in_payload)?
+            .checked_add(word(8)? as u64)?;
+
+        let mut tail: Vec<u8> =
+            Vec::with_capacity(length - symbols_at + 16 * count as usize + names.len() + 16);
+        tail.extend_from_slice(&self.data[symbols_at..symbols_at + 16 * locals]);
+        for row in rows.as_chunks::<12>().0 {
+            let at = |index: usize| {
+                u32::from_le_bytes([row[index], row[index + 1], row[index + 2], row[index + 3]])
+            };
+            tail.extend_from_slice(&symtab.strsize.checked_add(at(8))?.to_le_bytes());
+            tail.extend_from_slice(&[macho::N_SECT, bun_ordinal, 0, 0]);
+            tail.extend_from_slice(&code.checked_add(at(0) as u64)?.to_le_bytes());
+        }
+        tail.extend_from_slice(&self.data[symbols_at + 16 * locals..indirect_at]);
+        let new_indirect_at = symbols_at + tail.len();
+        for index in self.data[indirect_at..strings_at].as_chunks::<4>().0 {
+            let index = u32::from_le_bytes([index[0], index[1], index[2], index[3]]);
+            let moves =
+                index & macho::INDIRECT_SYMBOL_LOCAL_OR_ABS == 0 && index >= dysymtab.nlocalsym;
+            tail.extend_from_slice(
+                &(if moves {
+                    index.checked_add(count)?
+                } else {
+                    index
+                })
+                .to_le_bytes(),
+            );
+        }
+        let new_strings_at = symbols_at + tail.len();
+        tail.extend_from_slice(&self.data[strings_at..strings_end]);
+        tail.extend_from_slice(names);
+        while !(symbols_at + tail.len()).is_multiple_of(16) {
+            tail.push(0);
+        }
+        let new_after_strings = symbols_at + tail.len();
+        tail.extend_from_slice(&self.data[after_strings..]);
+        let growth = (new_after_strings - after_strings) as u64;
+
+        symtab.nsyms = symtab.nsyms.checked_add(count)?;
+        symtab.stroff = u32::try_from(new_strings_at).ok()?;
+        symtab.strsize = u32::try_from(new_after_strings - new_strings_at).ok()?;
+        dysymtab.nlocalsym = dysymtab.nlocalsym.checked_add(count)?;
+        dysymtab.iextdefsym = dysymtab.iextdefsym.checked_add(count)?;
+        dysymtab.iundefsym = dysymtab.iundefsym.checked_add(count)?;
+        if dysymtab.nindirectsyms != 0 {
+            dysymtab.indirectsymoff = u32::try_from(new_indirect_at).ok()?;
+        }
+        let signature = match signature {
+            Some((at, mut command)) => {
+                command.dataoff = u32::try_from(new_after_strings).ok()?;
+                Some((at, command))
+            }
+            None => None,
+        };
+        linkedit.filesize += growth;
+        linkedit.vmsize = align_size(linkedit.filesize, 16 * 1024);
+
+        self.data.truncate(symbols_at);
+        self.data.extend_from_slice(&tail);
+        write_struct(
+            &mut self.data[symtab_at..][..size_of::<macho::symtab_command>()],
+            &symtab,
+        );
+        write_struct(
+            &mut self.data[dysymtab_at..][..size_of::<macho::dysymtab_command>()],
+            &dysymtab,
+        );
+        write_struct(&mut self.data[linkedit_at..][..seg_sz], &linkedit);
+        if let Some((at, command)) = signature {
+            write_struct(
+                &mut self.data[at..][..size_of::<macho::linkedit_data_command>()],
+                &command,
+            );
+        }
+        Some(())
+    }
+
+    pub fn write_section(&mut self, data: &[u8], has_code: bool) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
@@ -156,8 +332,13 @@ impl MachoFile {
                                     self.segment.vmsize =
                                         align_vmsize(aligned_size, blob_alignment);
                                     self.segment.filesize = aligned_size;
-                                    self.segment.maxprot = macho::PROT::READ | macho::PROT::WRITE;
-                                    self.segment.initprot = macho::PROT::READ | macho::PROT::WRITE;
+                                    let protection = if has_code {
+                                        macho::PROT::READ | macho::PROT::EXECUTE
+                                    } else {
+                                        macho::PROT::READ | macho::PROT::WRITE
+                                    };
+                                    self.segment.maxprot = protection;
+                                    self.segment.initprot = protection;
 
                                     self.section = macho::section_64 {
                                         sectname: SECTNAME,
@@ -168,7 +349,13 @@ impl MachoFile {
                                         align: (blob_alignment as f64).log2() as u32,
                                         reloff: 0,
                                         nreloc: 0,
-                                        flags: macho::S_REGULAR | macho::S_ATTR_NO_DEAD_STRIP,
+                                        flags: macho::S_REGULAR
+                                            | macho::S_ATTR_NO_DEAD_STRIP
+                                            | if has_code {
+                                                macho::S_ATTR_SOME_INSTRUCTIONS
+                                            } else {
+                                                0
+                                            },
                                         reserved1: 0,
                                         reserved2: 0,
                                         reserved3: 0,
@@ -515,13 +702,11 @@ impl MachoFile {
     }
 
     // Returns the byte count written; callers writing over an existing file must truncate to it.
-    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
+    pub fn build_and_sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
-            let mut data: Vec<u8> = Vec::new();
-            self.build(&mut data)?;
-            let mut signer = MachoSigner::init(&data)?;
+            let mut signer = MachoSigner::init(core::mem::take(&mut self.data))?;
             signer.sign(writer)
         } else {
             self.build(writer)?;
@@ -576,7 +761,8 @@ struct MachoSigner {
 }
 
 impl MachoSigner {
-    fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
+    fn init(data: Vec<u8>) -> Result<Box<MachoSigner>, MachoError> {
+        let obj: &[u8] = &data;
         let header_size = size_of::<macho::mach_header_64>();
         let header = read_macho_header(obj)?;
 
@@ -642,9 +828,6 @@ impl MachoSigner {
         if linkedit_off == 0 || sig_off == 0 {
             return Err(MachoError::MissingRequiredSegment);
         }
-
-        let mut data: Vec<u8> = Vec::with_capacity(obj.len());
-        data.extend_from_slice(obj);
 
         let _ = (sig_sz, cs_cmd_off);
         Ok(Box::new(MachoSigner {
@@ -761,29 +944,28 @@ impl MachoSigner {
         self.data.extend_from_slice(id);
 
         // Hash and write pages
-        // reshaped for borrowck — index instead of slicing self.data while pushing.
-        let mut off: usize = 0;
-        let end = self.sig_off;
-        while end - off >= PAGE_SIZE {
-            let mut digest = [0u8; HASH_SIZE];
-            // SAFETY: range [off..off+PAGE_SIZE] is within the original len (sig_off).
-            let page =
-                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), PAGE_SIZE) };
-            sha256_hash(page, &mut digest);
-            self.data.extend_from_slice(&digest);
-            off += PAGE_SIZE;
-        }
-
-        if end - off > 0 {
-            let remaining_len = end - off;
-            // The last partial page is hashed unpadded, as codesign does.
-            let mut digest = [0u8; HASH_SIZE];
-            // SAFETY: range [off..end] is within the original len (sig_off).
-            let page =
-                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), remaining_len) };
-            sha256_hash(page, &mut digest);
-            self.data.extend_from_slice(&digest);
-        }
+        let hashes_start = self.data.len();
+        self.data.resize(hashes_start + hashes_size, 0);
+        let (hashed, hashes) = self.data.split_at_mut(hashes_start);
+        let pages_per_thread = total_pages
+            .div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16))
+            .max(1024);
+        std::thread::scope(|scope| {
+            let page_runs = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
+            for (pages, hashes) in page_runs.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE)) {
+                scope.spawn(move || {
+                    // The last partial page is hashed unpadded, as codesign does.
+                    for (page, hash) in pages
+                        .chunks(PAGE_SIZE)
+                        .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
+                    {
+                        let mut digest = [0u8; HASH_SIZE];
+                        sha256_hash(page, &mut digest);
+                        hash.copy_from_slice(&digest);
+                    }
+                });
+            }
+        });
 
         // Finally, ensure that the length of data we write matches the total data expected
         let final_len = self

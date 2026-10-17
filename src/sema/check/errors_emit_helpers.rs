@@ -330,7 +330,7 @@ impl Checker<'_, '_> {
         checked: &[(FileId, ExprId, (u32, u32))],
     ) -> Vec<Request> {
         // `GetEmitScriptTarget`
-        let target = match self.files().options.target {
+        let target = match self.check_options(file).target {
             ScriptTarget::None => ScriptTarget::ES2025,
             target => target,
         };
@@ -878,7 +878,7 @@ impl Checker<'_, '_> {
                 }
             }
             // `markLinkedReferences` does nothing under `verbatimModuleSyntax`.
-            if options.emit_decorator_metadata && !options.verbatim_module_syntax {
+            if options.emit_decorator_metadata && !self.check_options(file).verbatim_module_syntax {
                 helpers |= METADATA;
             }
             if helpers == 0 {

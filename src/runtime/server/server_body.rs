@@ -825,6 +825,17 @@ impl AnyRoute {
                     return Ok(Some(AnyRoute::Directory(route)));
                 }
 
+                #[cfg(not(windows))]
+                {
+                    unsafe extern "C" {
+                        safe fn Bun__hasBundler() -> bool;
+                    }
+                    if !Bun__hasBundler() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "style: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
+                        )));
+                    }
+                }
                 let style: FrameworkRouter::Style =
                     FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
                 // Style impls Drop; `?` drops it on the error path.

@@ -23,6 +23,7 @@
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/AOTFunction.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
@@ -107,15 +108,21 @@ static String internalModuleSource(uint32_t id)
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id)) {
+        Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
+        RELEASE_AND_RETURN(throwScope, JSC::AOT::Typed::evaluateBuiltinModule(globalObject, id));
+    }
+#endif
     const auto& m = internalModuleRecord(id);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
     maybeAddCodeCoverage(vm, source);
 
-    UnlinkedFunctionExecutable* executable = nullptr;
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
     uint32_t cachedEntryOffset = 0;
+    UnlinkedFunctionExecutable* executable = nullptr;
     if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
         executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)

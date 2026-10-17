@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";

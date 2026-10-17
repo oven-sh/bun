@@ -2085,7 +2085,9 @@ extern "C" napi_status napi_get_all_property_names(
         JSArray* filteredKeys = JSArray::create(JSC::getVM(globalObject), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
             JSValue key = exportKeys->get(globalObject, i);
+            NAPI_RETURN_IF_EXCEPTION(env);
             auto propKey = key.toPropertyKey(globalObject);
+            NAPI_RETURN_IF_EXCEPTION(env);
             PropertyDescriptor desc;
 
             JSObject* owner = object;
@@ -2101,6 +2103,7 @@ extern "C" napi_status napi_get_all_property_names(
                     }
                     owner = proto;
                 }
+                NAPI_RETURN_IF_EXCEPTION(env);
             } else {
                 owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
                 NAPI_RETURN_IF_EXCEPTION(env);
@@ -2134,6 +2137,7 @@ extern "C" napi_status napi_get_all_property_names(
 
             if (include) {
                 filteredKeys->push(globalObject, key);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
         }
         exportKeys = filteredKeys;
@@ -2797,9 +2801,8 @@ extern "C" napi_status napi_create_object(napi_env env, napi_value* result)
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = JSC::getVM(globalObject);
 
-    JSValue value = JSValue(NapiPrototype::create(vm, globalObject->NapiPrototypeStructure()));
+    JSValue value = JSValue(JSC::constructEmptyObject(globalObject));
 
     *result = toNapi(value, globalObject);
     JSC::EnsureStillAliveScope ensureStillAlive(value);
@@ -2843,6 +2846,8 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
 
         switch (cell->type()) {
         case JSC::JSFunctionType:
+        case JSC::SlimClosureType:
+        case JSC::SlimClosureWithPropertiesType:
         case JSC::InternalFunctionType:
             *result = napi_function;
             return napi_clear_last_error(env);

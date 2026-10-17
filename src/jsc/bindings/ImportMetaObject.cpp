@@ -135,7 +135,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
             if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                if (dynamicDowncast<JSC::JSArray>(pathsObject)) {
                     auto pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
@@ -363,7 +363,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
             if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                if (dynamicDowncast<JSC::JSArray>(pathsObject)) {
                     auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
@@ -537,7 +537,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+        auto key = makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark());
+#if OS(WINDOWS)
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && makeStringByReplacingAll(mainKey.data, '/', '\\') == makeStringByReplacingAll(key, '/', '\\')));
+#else
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == key));
+#endif
     }
 
     if (!globalObject->scriptExecutionContext()->isMainThread())

@@ -797,6 +797,8 @@ mod draft {
 
                 PANIC_STAGE.with(|s| s.set(1));
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
+                let addresses_in_trace: [usize; 20];
+                let trace_address_count: usize;
 
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
@@ -1047,6 +1049,8 @@ mod draft {
                         };
                         &trace_buf
                     };
+                    addresses_in_trace = addr_buf;
+                    trace_address_count = trace.index.min(addr_buf.len());
 
                     if debug_trace {
                         // SAFETY: single-threaded mutation under panic_mutex
@@ -1190,6 +1194,74 @@ mod draft {
                 // because if multiple threads segfault (more often the case on Windows), we don't
                 // want another thread to interrupt the crashing of the first one.
                 reset_segfault_handler();
+
+                #[cfg(unix)]
+                {
+                    let mut compiled_frames = [0u8; 4096];
+                    // SAFETY: that many entries of the trace are initialized, and no more than the buffer's length is written; alarm() has no preconditions
+                    let compiled_frames_len = unsafe {
+                        libc::alarm(2);
+                        let len = Bun__AOT__describeAddresses(
+                            addresses_in_trace.as_ptr(),
+                            trace_address_count,
+                            compiled_frames.as_mut_ptr(),
+                            compiled_frames.len(),
+                        );
+                        libc::alarm(0);
+                        len
+                    };
+                    if compiled_frames_len > 0 {
+                        let writer = &mut stderr_writer();
+                        let _ = writer.write_all(b"Compiled JavaScript on the stack:\n");
+                        let _ = writer.write_all(&compiled_frames[..compiled_frames_len]);
+                        let _ = writer.write_all(b"\n");
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    let is_compiled = |address: &usize| {
+                        Bun__AOT__offsetInCode(*address as *const core::ffi::c_void) >= 0
+                    };
+                    if addresses_in_trace[..trace_address_count]
+                        .iter()
+                        .any(is_compiled)
+                    {
+                        static IS_DONE: core::sync::atomic::AtomicBool =
+                            core::sync::atomic::AtomicBool::new(false);
+                        unsafe extern "system" {
+                            safe fn GetCurrentProcess() -> *mut core::ffi::c_void;
+                            safe fn TerminateProcess(
+                                process: *mut core::ffi::c_void,
+                                exit_code: u32,
+                            ) -> i32;
+                        }
+                        let _ = std::thread::Builder::new().spawn(|| {
+                            std::thread::sleep(core::time::Duration::from_secs(2));
+                            if !IS_DONE.load(core::sync::atomic::Ordering::Acquire) {
+                                TerminateProcess(GetCurrentProcess(), 3);
+                            }
+                        });
+                        let mut compiled_frames = [0u8; 4096];
+                        // SAFETY: that many entries of the trace are initialized, and no more than the buffer's length is written
+                        let compiled_frames_len = unsafe {
+                            Bun__AOT__describeAddresses(
+                                addresses_in_trace.as_ptr(),
+                                trace_address_count,
+                                compiled_frames.as_mut_ptr(),
+                                compiled_frames.len(),
+                            )
+                        };
+                        IS_DONE.store(true, core::sync::atomic::Ordering::Release);
+                        if compiled_frames_len > 0 {
+                            let writer = &mut stderr_writer();
+                            let _ = writer.write_all(b"Compiled JavaScript on the stack:\n");
+                            let _ = writer.write_all(&compiled_frames[..compiled_frames_len]);
+                            let _ = writer.write_all(b"\n");
+                        }
+                    }
+                }
+                #[cfg(not(any(unix, windows)))]
+                let _ = (addresses_in_trace, trace_address_count);
 
                 if bun_core::auto_reload_on_crash()
                 // Do not reload if the panic arose FROM the reload function.
@@ -1647,6 +1719,9 @@ mod draft {
             let range = bun_sys::windows::exe_image_range();
             WINDOWS_EXE_IMAGE_BASE.store(range.start, Ordering::Relaxed);
             WINDOWS_EXE_IMAGE_END.store(range.end, Ordering::Relaxed);
+            bun_core::debug::set_keeps_frame_pointer_chain(|address| {
+                Bun__AOT__offsetInCode(address as *const core::ffi::c_void) >= 0
+            });
 
             // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
             unsafe {
@@ -1677,6 +1752,10 @@ mod draft {
                         unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
                     >(handle_unhandled_exception_windows),
                 ));
+                libc::signal(
+                    libc::SIGABRT,
+                    handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
+                );
             }
         }
         #[cfg(any(
@@ -1920,6 +1999,7 @@ mod draft {
             // filter back to the OS default.
             unsafe {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
+                libc::signal(libc::SIGABRT, libc::SIG_DFL);
             }
             return;
         }
@@ -2056,6 +2136,13 @@ mod draft {
                 fp: context as usize,
             },
         );
+    }
+
+    #[cfg(windows)]
+    extern "C" fn handle_abort_windows(_signal: core::ffi::c_int) {
+        bun_core::debug::with_current_context(|pc, context| {
+            crash_handler(CrashReason::Abort, TraceSeed::Fault { pc, fp: context })
+        })
     }
 
     #[cfg(windows)]
@@ -2414,9 +2501,28 @@ mod draft {
         // since the only caller writes into a stack buffer and the value is consumed immediately.
     }
 
+    unsafe extern "C" {
+        safe fn Bun__AOT__offsetInCode(address: *const core::ffi::c_void) -> i64;
+        fn Bun__AOT__describeAddresses(
+            addresses: *const usize,
+            count: usize,
+            buffer: *mut u8,
+            capacity: usize,
+        ) -> usize;
+        safe fn Bun__AOT__addressOfOffsetInCode(offset: usize) -> usize;
+    }
+
     impl StackLine {
         /// `None` implies the trace is not known.
         fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+            let offset_in_aot_code = Bun__AOT__offsetInCode(addr.saturating_sub(1) as *const _);
+            if offset_in_aot_code >= 0 {
+                return Some(StackLine {
+                    address: offset_in_aot_code as i32,
+                    object: Some(Box::from(&b"aot"[..])),
+                });
+            }
+
             #[cfg(windows)]
             {
                 let module = bun_sys::windows::get_module_handle_from_address(addr)?;
@@ -2560,6 +2666,35 @@ mod draft {
             writer.write_all(VLQ::encode(known.address).slice())?;
             Ok(())
         }
+    }
+
+    pub fn report_compiled_frames(report: &[u8]) -> Vec<u8> {
+        const OFFSET_PREFIX: &[u8] = b"CGaot";
+        let mut addresses: Vec<usize> = Vec::new();
+        let mut at = 0;
+        while let Some(found) = strings::index_of(&report[at..], OFFSET_PREFIX) {
+            at += found + OFFSET_PREFIX.len();
+            let offset = bun_base64::vlq::decode(report, at);
+            if offset.start == at {
+                continue;
+            }
+            at = offset.start;
+            if let Ok(offset) = usize::try_from(offset.value) {
+                addresses.push(Bun__AOT__addressOfOffsetInCode(offset + 1));
+            }
+        }
+        let mut frames = vec![0u8; 1024 * addresses.len()];
+        // SAFETY: both are initialized for the lengths that are passed, and no more than the buffer's length is written
+        let len = unsafe {
+            Bun__AOT__describeAddresses(
+                addresses.as_ptr(),
+                addresses.len(),
+                frames.as_mut_ptr(),
+                frames.len(),
+            )
+        };
+        frames.truncate(len);
+        frames
     }
 
     struct TraceString<'a> {

@@ -1,0 +1,8 @@
+{
+  "elision.loud.reexport_type.ts": {
+    "output": "[\"loud\"]\n"
+  },
+  "elision.loud_esm.reexport_type.ts": {
+    "output": "[\"loud_esm\"]\n"
+  }
+}

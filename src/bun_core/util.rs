@@ -2839,6 +2839,34 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
+pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+    const MIN_BYTES_PER_THREAD: usize = 16 << 20;
+    let threads = usize::from(get_thread_count())
+        .min(len / MIN_BYTES_PER_THREAD)
+        .min(16);
+    if threads < 2 {
+        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
+        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+    }
+    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
+    let (to, from) = (to as usize, from as usize);
+    std::thread::scope(|scope| {
+        for start in (share..len).step_by(share) {
+            // SAFETY: a part of what the caller's contract covers, and no two threads get the same
+            // part.
+            scope.spawn(move || unsafe {
+                core::ptr::copy_nonoverlapping(
+                    (from + start) as *const u8,
+                    (to + start) as *mut u8,
+                    share.min(len - start),
+                )
+            });
+        }
+        // SAFETY: the first part, which no thread above was given.
+        unsafe { core::ptr::copy_nonoverlapping(from as *const u8, to as *mut u8, share.min(len)) };
+    });
+}
+
 // ── time ──────────────────────────────────────────────────────────────────
 // Time-unit constants plus `{nano,milli,}timestamp()`. Callers `as`-cast at the
 // use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in
@@ -4310,6 +4338,18 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
+static BEFORE_RELOAD: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+static KEEP_OPEN_ACROSS_RELOAD: core::sync::atomic::AtomicI32 =
+    core::sync::atomic::AtomicI32::new(-1);
+
+pub fn before_reload(hook: fn()) {
+    let _ = BEFORE_RELOAD.set(hook);
+}
+
+pub fn keep_open_across_reload(fd: i32) {
+    KEEP_OPEN_ACROSS_RELOAD.store(fd, AOrdering::SeqCst);
+}
+
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
@@ -4369,24 +4409,66 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
+    {
+        let dupe_argv: Vec<ZBox> = argv_storage()
+            .iter()
+            .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
+            .collect();
+        if let Some(hook) = BEFORE_RELOAD.get() {
+            hook();
+        }
+        let kept_open = KEEP_OPEN_ACROSS_RELOAD.load(AOrdering::SeqCst);
+        let errno = execve_self(
+            &dupe_argv,
+            (kept_open >= 0).then(|| Fd::from_native(kept_open)),
+            true,
+        );
+        if may_return {
+            crate::output::pretty_errorln(format_args!(
+                "error: Failed to reload process: errno {}",
+                errno
+            ));
+            return;
+        }
+        panic!("Unexpected error while reloading: errno {}", errno);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (clear_terminal, may_return);
+        compile_error!("unsupported platform for reload_process");
+    }
+}
+
+#[cfg(unix)]
+pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+    let mut argv: Vec<ZBox> = Vec::with_capacity(args.len() + 1);
+    argv.push(ZBox::from_bytes(
+        argv_storage().first().map_or(&b"bun"[..], ZBox::as_bytes),
+    ));
+    argv.extend(args.iter().map(ZBox::from_bytes));
+    execve_self(&argv, keep_open, false)
+}
+
+#[cfg(unix)]
+fn execve_self(argv: &[ZBox], keep_open: Option<Fd>, close_inherited_fds: bool) -> i32 {
     // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
     // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_posix();
+                safe fn on_before_reload_process_posix(close_inherited_fds: bool);
             }
-            on_before_reload_process_posix();
+            on_before_reload_process_posix(close_inherited_fds);
+        }
+        if let Some(fd) = keep_open {
+            let flags = libc::fcntl(fd.native(), libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+            }
         }
 
-        // We clone argv so that the memory address isn't the same as the libc one.
-        let args = argv_storage();
-        let dupe_argv: Vec<ZBox> = args
-            .iter()
-            .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
-            .collect();
-        let mut newargv: Vec<*const core::ffi::c_char> =
-            dupe_argv.iter().map(|z| z.as_ptr()).collect();
+        let mut newargv: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
         newargv.push(core::ptr::null());
 
         // We clone envp so that the memory address of environment variables isn't
@@ -4406,23 +4488,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
         libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
         // execve only returns on error.
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
-        if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
-            return;
-        }
-        panic!("Unexpected error while reloading: errno {}", errno);
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        // Bun only targets POSIX + Windows; any other target
-        // is a build-time error, not a runtime panic.
-        let _ = (clear_terminal, may_return);
-        compile_error!("unsupported platform for reload_process");
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
     }
 }
 

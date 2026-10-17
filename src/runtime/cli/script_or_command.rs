@@ -29,6 +29,8 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
         b"--help" | b"-h" | b"--no-script" => true,
         b"--help-all" | b"--doctor" => command != b"check",
         b"--explain" => command == b"lint",
+        b"--aot" => command != b"fmt",
+        b"--aot-explain" => command == b"check",
         _ => false,
     }
 }

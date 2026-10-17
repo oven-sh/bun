@@ -2819,6 +2819,16 @@ impl JSValue {
         })
     }
 
+    pub fn jest_copy_along_property_matchers(
+        self,
+        matchers: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || {
+            JSC__JSValue__jestCopyAlongPropertyMatchers(self, matchers, global)
+        })
+    }
+
     // ── BigInt ordering. ────────────────────────────────
     /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
     /// Number. Returns [`ComparisonResult::InvalidComparison`] if `self` is
@@ -2929,6 +2939,11 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         replace_props: bool,
     ) -> bool;
+    safe fn JSC__JSValue__jestCopyAlongPropertyMatchers(
+        this: JSValue,
+        matchers: JSValue,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     safe fn JSC__JSValue__asBigIntCompare(
         this: JSValue,
         global: &JSGlobalObject,

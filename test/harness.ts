@@ -613,6 +613,16 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+export function tempDirWithBunTypes(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
+  fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
+  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
+  return dir;
+}
+
 /**
  * Windows only. Makes `dir` the root of a new drive with `subst`, and removes the drive on dispose.
  * A test cannot write to the root of a real drive.
@@ -960,7 +970,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -997,7 +1007,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -1028,7 +1038,7 @@ if (expect.extend)
       }
     },
     toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
+      if (require("bun:internal-for-testing").jscInternals.isLatin1String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a Latin1 string`,
@@ -1041,7 +1051,7 @@ if (expect.extend)
       };
     },
     toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
+      if (require("bun:internal-for-testing").jscInternals.isUTF16String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a UTF16 string`,
@@ -1283,17 +1293,6 @@ declare global {
      */
     toUnixString(): string;
   }
-
-  interface String {
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isLatin1(): boolean;
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isUTF16(): boolean;
-  }
 }
 
 Buffer.prototype.toUnixString = function () {
@@ -1420,7 +1419,7 @@ export async function describeWithContainer(
   }
 
   if (!isDockerServiceEnabled(actualService)) {
-    describe.todo(label);
+    describe.todo(label, () => {});
     return;
   }
 
@@ -1816,14 +1815,6 @@ export function disableAggressiveGCScope() {
     },
   };
 }
-
-String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
-};
-
-String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
-};
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;

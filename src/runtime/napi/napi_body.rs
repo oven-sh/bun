@@ -2803,6 +2803,13 @@ impl ThreadSafeFunction {
     /// microtasks one call queued are drained before the next call
     /// (https://github.com/nodejs/node/pull/38506), but not before the first.
     pub(crate) fn dispatch_one(&mut self, is_first: bool) -> Result<bool, bun_jsc::Stopped> {
+        // A checkpoint can stop the worker. Keep every payload in the queue
+        // (and the C callback intact) until it succeeds, so teardown owns them.
+        // The previous callback's microtasks still run after it aborts the TSFN.
+        if !is_first && let Some(loop_) = self.loop_mut() {
+            loop_.drain_microtasks()?;
+        }
+
         let mut queue_finalizer_after_call = false;
         let task = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
@@ -2850,11 +2857,7 @@ impl ThreadSafeFunction {
             break 'brk t;
         };
 
-        let called = match self.loop_mut() {
-            Some(loop_) if !is_first => loop_.drain_microtasks(),
-            _ => Ok(()),
-        }
-        .and_then(|()| self.call(task));
+        let called = self.call(task);
 
         // The last queued call finalizes even when the VM is stopping.
         if queue_finalizer_after_call {
@@ -2871,7 +2874,8 @@ impl ThreadSafeFunction {
     /// left pending is folded here. `Err`: the VM is stopping.
     fn call(&mut self, task: *mut c_void) -> Result<(), bun_jsc::Stopped> {
         let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
-            // env torn down; nothing to call into.
+            // A dequeued payload still belongs to the native consumer when JS is gone.
+            self.hand_back([task]);
             return Ok(());
         };
         // SAFETY: env is valid while the TSF is live.
@@ -2933,7 +2937,7 @@ impl ThreadSafeFunction {
     /// the signal napi_threadsafe_function_call_js documents for "free this,
     /// JS is no longer reachable" (Node's ThreadSafeFunction::EmptyQueue). A
     /// function created without a call_js_cb has nothing to give back.
-    fn hand_back(&self, items: Vec<*mut c_void>) {
+    fn hand_back(&self, items: impl IntoIterator<Item = *mut c_void>) {
         let TsfnCallback::C {
             napi_threadsafe_function_call_js,
             ..

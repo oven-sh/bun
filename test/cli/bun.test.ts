@@ -345,7 +345,7 @@ describe("bun", () => {
     });
 
     test.concurrent("for an unknown $SHELL, the note names a command that writes a completion script", async () => {
-      // PATH has the executable as `bun`, the name the note uses, and as bunx. With bunx on PATH,
+      // PATH starts with the executable as `bun`, the name the note uses, and as bunx. With bunx on PATH,
       // `bun completions` installs no bunx symlink, so nothing is written outside the temporary directory.
       using dir = tempDir("completions-unknown-shell", { bin: {} });
       for (const name of ["bun", bunxName]) fs.symlinkSync(bunExe(), join(String(dir), "bin", name));
@@ -353,7 +353,7 @@ describe("bun", () => {
       async function run(cmd: string[]) {
         await using proc = Bun.spawn({
           cmd,
-          env: { ...bunEnv, PATH: join(String(dir), "bin"), SHELL: "/bin/dash" },
+          env: { ...bunEnv, PATH: `${join(String(dir), "bin")}:${bunEnv.PATH}`, SHELL: "/bin/dash" },
           cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",
@@ -366,7 +366,7 @@ describe("bun", () => {
       expect(unknown.stdout).toBe("");
       expect(unknown.stderr).toContain("Unknown or unsupported shell");
       const command = unknown.stderr.match(/^note: To manually output completions, run '(.+)'$/m)?.[1];
-      expect(command).toBe("SHELL=bash bun completions > file");
+      expect(command).toBe("env SHELL=bash bun completions > file");
       expect(unknown.exitCode).toBe(1);
 
       // Run the command the way a user pastes it.

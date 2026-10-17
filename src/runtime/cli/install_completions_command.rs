@@ -226,7 +226,7 @@ impl InstallCompletionsCommand {
                         format_args!(""),
                     );
                     note!(
-                        "To manually output completions, run 'SHELL=bash bun completions \\> file'"
+                        "To manually output completions, run 'env SHELL=bash bun completions \\> file'"
                     );
                     Global::exit(fail_exit_code);
                 }

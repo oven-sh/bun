@@ -3,6 +3,23 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const runtimePath = path.join(import.meta.dir, "..", "..", "..", "packages", "bun-lambda", "runtime.ts");
+const buildLayerPath = path.join(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "packages",
+  "bun-lambda",
+  "scripts",
+  "build-layer.ts",
+);
+
+test("build-layer.ts does not stub process.{stdout,stderr}.getWindowSize (#2081 is fixed)", async () => {
+  // https://github.com/oven-sh/bun/issues/2081
+  const source = await Bun.file(buildLayerPath).text();
+  expect(source).not.toMatch(/process\.std(out|err)\.getWindowSize\s*=/);
+  expect(source).not.toContain("issues/2081");
+});
 
 // The runtime only uses aws4fetch for outgoing WebSocket messages, which these
 // tests never send, so a stub keeps the test offline.

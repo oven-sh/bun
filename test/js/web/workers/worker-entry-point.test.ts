@@ -46,7 +46,9 @@ describe.concurrent("package.json imports alias as the entry point", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("message: hi\nclosed\n");
     expect(exitCode).toBe(0);
-  });
+    // LeakSanitizer's check at exit costs 4-5 s of wall time on a debug ASAN build by itself (`bun -e 1`
+    // with detect_leaks=1 takes as long), which is the whole default budget.
+  }, 30_000);
 
   test("an alias of a builtin fires the error event", async () => {
     // `new Worker("node:fs")` fails to resolve. An alias of a builtin resolves to the builtin marked
@@ -64,5 +66,49 @@ describe.concurrent("package.json imports alias as the entry point", () => {
       'error: BuildMessage: Cannot use "#fs" as an entry point: it resolves to a builtin module\nclosed\n',
     );
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("relative specifier and preload resolve from the cwd at construction", () => {
+  // The worker thread resolves the specifier some time after `new Worker()` returns. A process.chdir()
+  // in between must not change which file the specifier (or a relative `preload`) names. Several
+  // workers are created back to back so that the later threads have not resolved anything yet when
+  // chdir runs.
+  describe.each(["Worker", "worker_threads.Worker"])("%s", kind => {
+    test("process.chdir() right after new Worker()", async () => {
+      const post =
+        kind === "Worker"
+          ? `postMessage(where + " " + globalThis.preloaded);`
+          : `require("node:worker_threads").parentPort.postMessage(where + " " + globalThis.preloaded);`;
+      const { stdout, stderr, exitCode } = await runWorkerFixture({
+        "preload.js": `globalThis.preloaded = "top";`,
+        "worker.js": `const where = "top"; ${post}`,
+        "other/preload.js": `globalThis.preloaded = "other";`,
+        "other/worker.js": `const where = "other"; ${post}`,
+        "main.js": `
+          const WorkerClass = ${kind === "Worker" ? `globalThis.Worker` : `require("node:worker_threads").Worker`};
+          function start() {
+            const worker = new WorkerClass("./worker.js", { preload: "./preload.js" });
+            return new Promise(resolve => {
+              const done = value => { resolve(value); worker.terminate(); };
+              if (WorkerClass === globalThis.Worker) {
+                worker.onmessage = event => done(event.data);
+                worker.onerror = event => done("error: " + event.message);
+              } else {
+                worker.on("message", done);
+                worker.on("error", error => done("error: " + error.message));
+              }
+            });
+          }
+          const before = [start(), start(), start(), start()];
+          process.chdir("other");
+          const after = start();
+          Promise.all([...before, after]).then(results => console.log(JSON.stringify(results)));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["top top", "top top", "top top", "top top", "other other"]);
+      expect(exitCode).toBe(0);
+    });
   });
 });

@@ -2144,7 +2144,7 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
   expect(exitCode).toBe(0);
 });
 
-test("a SyntaxError gets an `at <parse>` line only if it has a source", () => {
+test("a SyntaxError gets an `at <parse>` line only if it has a source", async () => {
   const thrownBy = fn => {
     try {
       fn();
@@ -2159,13 +2159,21 @@ test("a SyntaxError gets an `at <parse>` line only if it has a source", () => {
     "a subclass": new Sub("m"),
     "JSON.parse": thrownBy(() => JSON.parse("{")),
     "eval": thrownBy(() => (0, eval)("{")),
+    "eval with a sourceURL comment": thrownBy(() => (0, eval)("{\n//# sourceURL=named.js")),
     "new Function": thrownBy(() => new Function("{")),
     "new RegExp": thrownBy(() => new RegExp("[")),
     "BigInt": thrownBy(() => BigInt("x")),
+    "Response.prototype.json": await new Response("").json().catch(e => e),
     "structuredClone": structuredClone(new SyntaxError("m")),
   };
   for (const error of Object.values(withoutSource)) expect(error).toBeInstanceOf(SyntaxError);
   expect(Object.keys(withoutSource).filter(name => withoutSource[name].stack.includes("<parse>"))).toEqual([]);
+
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 1;
+  const { stack } = new SyntaxError("m");
+  Error.stackTraceLimit = limit;
+  expect(stack.split("\n").length).toBe(2);
 
   using dir = tempDir("syntax-error-parse-line", { "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n` });
   const file = join(String(dir), "bad-regex.cjs");

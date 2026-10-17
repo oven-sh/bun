@@ -72,7 +72,7 @@ use bun_jsc::{
     JSObject, JSPromise, JSString, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
-use crate::cli::open::Editor;
+use crate::cli::open::{BatchArg, Editor, OpenError};
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
@@ -917,11 +917,35 @@ pub(crate) fn open_in_editor<'a>(
             return Err(heap.error(format_args!("No file path specified")));
         }
 
-        if let Err(err) = editor.open(edit.path, path, options.line, options.column) {
-            return Err(heap.error(format_args!("Opening editor failed {}", err.name())));
+        match editor.open(edit.path, path, options.line, options.column) {
+            Ok(()) => Ok(()),
+            Err(OpenError::BatchEditor(editor)) => Err(heap.error_with_code(
+                ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The editor path contains a cmd.exe special character and cannot be safely passed to cmd.exe, which runs a .bat/.cmd editor. Received {}",
+                    bun_core::fmt::quote(editor)
+                ),
+            )),
+            Err(OpenError::BatchArg { editor, arg, value }) => {
+                let name = match arg {
+                    BatchArg::Path => "argument 'path'",
+                    BatchArg::Line => "property 'options.line'",
+                    BatchArg::Column => "property 'options.column'",
+                };
+                Err(heap.error_with_code(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The {} contains a cmd.exe special character and cannot be safely passed to the .bat/.cmd editor {}. Received {}",
+                        name,
+                        bun_core::fmt::quote(editor),
+                        bun_core::fmt::quote(value)
+                    ),
+                ))
+            }
+            Err(OpenError::Failed(err)) => {
+                Err(heap.error(format_args!("Opening editor failed {}", err.name())))
+            }
         }
-
-        Ok(())
     })
 }
 

@@ -59,6 +59,57 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// The argument of `Editor::open` that a `.bat` or `.cmd` editor cannot take.
+pub(crate) enum BatchArg {
+    Path,
+    Line,
+    Column,
+}
+
+pub(crate) enum OpenError<'a> {
+    /// cmd.exe would read the path of this batch editor as syntax, so it was not started.
+    BatchEditor(&'a [u8]),
+    /// cmd.exe would read this argument of the batch editor as syntax, so it was not started.
+    BatchArg {
+        editor: &'a [u8],
+        arg: BatchArg,
+        value: &'a [u8],
+    },
+    Failed(crate::Error),
+}
+
+impl From<crate::Error> for OpenError<'_> {
+    fn from(err: crate::Error) -> Self {
+        OpenError::Failed(err)
+    }
+}
+
+/// What cmd.exe would read as syntax in this command line, when the editor is a batch file.
+fn batch_error<'a>(
+    binary: &'a [u8],
+    file: &'a [u8],
+    line: Option<&'a [u8]>,
+    column: Option<&'a [u8]>,
+) -> Option<OpenError<'a>> {
+    // A NUL ends the editor path: the spawn passes it as a C string.
+    let editor = bun_core::slice_to_nul(binary);
+    if !bun_which::is_batch_file(editor) {
+        return None;
+    }
+    if bun_which::batch_arg_has_cmd_metachars(editor) {
+        return Some(OpenError::BatchEditor(editor));
+    }
+    let args = [
+        (BatchArg::Path, Some(file)),
+        (BatchArg::Line, line),
+        (BatchArg::Column, column),
+    ];
+    args.into_iter().find_map(|(arg, value)| {
+        let value = value.filter(|value| bun_which::batch_arg_has_cmd_metachars(value))?;
+        Some(OpenError::BatchArg { editor, arg, value })
+    })
+}
+
 impl Editor {
     pub(crate) fn by_name(name: &[u8]) -> Option<Editor> {
         if let Some(i) = strings::index_of_char(name, b' ') {
@@ -151,17 +202,29 @@ impl Editor {
         None
     }
 
-    pub(crate) fn is_jet_brains(self) -> bool {
-        matches!(self, Editor::Intellij | Editor::Webstorm)
-    }
-
-    pub(crate) fn open(
+    pub(crate) fn open<'a>(
         self,
-        binary: &[u8],
-        file: &[u8],
-        line: Option<&[u8]>,
-        column: Option<&[u8]>,
-    ) -> crate::Result<()> {
+        binary: &'a [u8],
+        file: &'a [u8],
+        line: Option<&'a [u8]>,
+        column: Option<&'a [u8]>,
+    ) -> Result<(), OpenError<'a>> {
+        // The line and column this editor takes. The check below reads exactly what the argv holds.
+        let (line, column) = match self {
+            Editor::Sublime | Editor::Atom | Editor::Vscode | Editor::Textmate => (line, column),
+            Editor::Webstorm | Editor::Intellij => (line, None),
+            _ => (None, None),
+        };
+        let line = line.filter(|line| !line.is_empty());
+        let column = column.filter(|column| line.is_some() && !column.is_empty());
+
+        // Windows runs a .bat or .cmd editor through cmd.exe, which reads the command line as syntax.
+        if cfg!(windows)
+            && let Some(err) = batch_error(binary, file, line, column)
+        {
+            return Err(err);
+        }
+
         let mut spawned = Box::new(SpawnedEditorContext::default());
 
         let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
@@ -189,7 +252,7 @@ impl Editor {
 
         push_arg!(binary);
 
-        if self == Editor::Vscode && line.is_some() && !line.unwrap().is_empty() {
+        if self == Editor::Vscode && line.is_some() {
             push_arg!(b"--goto");
         }
 
@@ -202,19 +265,13 @@ impl Editor {
                 cursor
                     .write_all(file)
                     .map_err(|_| crate::Error::WriteFailed)?;
-                if let Some(line_) = line {
-                    if !line_.is_empty() {
-                        write!(cursor, ":{}", bstr::BStr::new(line_))
-                            .map_err(|_| crate::Error::WriteFailed)?;
+                if let Some(line) = line {
+                    write!(cursor, ":{}", bstr::BStr::new(line))
+                        .map_err(|_| crate::Error::WriteFailed)?;
 
-                        if !self.is_jet_brains() {
-                            if let Some(col) = column {
-                                if !col.is_empty() {
-                                    write!(cursor, ":{}", bstr::BStr::new(col))
-                                        .map_err(|_| crate::Error::WriteFailed)?;
-                                }
-                            }
-                        }
+                    if let Some(column) = column {
+                        write!(cursor, ":{}", bstr::BStr::new(column))
+                            .map_err(|_| crate::Error::WriteFailed)?;
                     }
                 }
                 let pos = usize::try_from(cursor.position()).expect("int cast");
@@ -233,22 +290,18 @@ impl Editor {
                 // hoist all writes/position reads above the slice reads so NLL can
                 // end the cursor borrow before we re-borrow `file_path_buf` immutably.
                 let mut end_pos = file_path_len;
-                if let Some(line_) = line {
-                    if !line_.is_empty() {
-                        push_arg!(b"--line");
+                if let Some(line) = line {
+                    push_arg!(b"--line");
 
-                        write!(cursor, "{}", bstr::BStr::new(line_))
+                    write!(cursor, "{}", bstr::BStr::new(line))
+                        .map_err(|_| crate::Error::WriteFailed)?;
+
+                    if let Some(column) = column {
+                        write!(cursor, ":{}", bstr::BStr::new(column))
                             .map_err(|_| crate::Error::WriteFailed)?;
-
-                        if let Some(col) = column {
-                            if !col.is_empty() {
-                                write!(cursor, ":{}", bstr::BStr::new(col))
-                                    .map_err(|_| crate::Error::WriteFailed)?;
-                            }
-                        }
-
-                        end_pos = usize::try_from(cursor.position()).expect("int cast");
                     }
+
+                    end_pos = usize::try_from(cursor.position()).expect("int cast");
                 }
                 // cursor's borrow of spawned.file_path_buf ends here (NLL).
 

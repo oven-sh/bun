@@ -249,6 +249,41 @@ pub fn copy_file(in_: InputType<'_>, out: InputType<'_>) -> CopyFileReturnType {
     copy_file_with_state(in_, out, &mut state)
 }
 
+/// Path form of `Dir::create_fresh_file_z`: copy `in_` to a new file at `out`, replacing the old one.
+#[cfg(windows)]
+pub fn copy_file_replacing(in_: &bun_core::WStr, out: &bun_core::WStr) -> CopyFileReturnType {
+    use crate::windows::{
+        CopyFileW, FILE_ATTRIBUTE_DIRECTORY, INVALID_FILE_ATTRIBUTES, Win32Error,
+    };
+    use bun_windows_sys::externs::GetFileAttributesW;
+    // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
+    let copy = || unsafe { CopyFileW(in_.as_ptr(), out.as_ptr(), 1) } != 0;
+    if copy() {
+        return Ok(());
+    }
+    let err = Win32Error::get();
+    let exists = match err {
+        Win32Error::FILE_EXISTS | Win32Error::ALREADY_EXISTS => true,
+        // A directory at the name is reported as a denied access, not as an existing file.
+        Win32Error::ACCESS_DENIED => {
+            // SAFETY: FFI call; `out` is a NUL-terminated WStr.
+            let attrs = unsafe { GetFileAttributesW(out.as_ptr()) };
+            attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
+        }
+        _ => false,
+    };
+    if !exists {
+        return Err(crate::Error::from_win32(err, Tag::copyfile));
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let out_utf8 = bun_core::convert_utf16_to_utf8_in_buffer(&mut buf[..], out.as_slice());
+    crate::Dir::cwd().delete_tree(out_utf8)?;
+    if copy() {
+        return Ok(());
+    }
+    Err(crate::Error::from_win32(Win32Error::get(), Tag::copyfile))
+}
+
 static CAN_USE_COPY_FILE_RANGE: AtomicI32 = AtomicI32::new(0);
 
 #[inline]

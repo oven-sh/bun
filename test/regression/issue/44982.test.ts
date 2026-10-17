@@ -37,12 +37,18 @@ test.skipIf(!isLinux)(
 
         const keep = [];
         for (let i = 0; i < 10_000; i++) keep.push({ i, s: "x" + i });
-        // BUN_IDLE_GC_SECONDS=1: the idle collection is requested after 1 s of quiet, and the
-        // collector runs it while this thread waits for the timer.
-        setTimeout(() => console.log("done", keep.length), 3500);
+        // The GC timer (every 250 ms) requests the idle collection after 1 s of quiet, so by about
+        // 1.3 s, and the collector runs it while this thread waits for the timer. Nothing in JS
+        // observes an idle collection, so the timer is the proof that the loop came back.
+        setTimeout(() => console.log("done", keep.length), 2500);
         `,
       ],
-      env: { ...bunEnv, BUN_IDLE_GC_SECONDS: "1" },
+      env: {
+        ...bunEnv,
+        BUN_IDLE_GC_SECONDS: "1",
+        BUN_GC_TIMER_INTERVAL: "250",
+        BUN_GC_TIMER_DISABLE: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -64,5 +70,4 @@ test.skipIf(!isLinux)(
     expect(stdout).toBe("done 10000\n");
     expect(exited).toBe(0);
   },
-  30_000,
 );

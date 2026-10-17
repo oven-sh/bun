@@ -4092,11 +4092,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
-    );
+    // Bun.listen reports the address it tried. After the IPv4 fallback that is not `hostname`.
+    const address = isUnix ? path : typeof err?.address === "string" && err.address ? err.address : hostname;
+    process.nextTick(emitErrorNextTick, this, formatListenError(err, address, isUnix ? undefined : port));
   }
   return this;
 };
@@ -4114,6 +4112,7 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  hostDefaulted,
 ) {
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
@@ -4169,7 +4168,7 @@ Server.prototype[kRealListen] = function (
       pauseOnConnect: this.pauseOnConnect,
     });
   } else {
-    this._handle = Bun.listen({
+    const listenOptions = {
       port,
       hostname,
       tls,
@@ -4180,7 +4179,15 @@ Server.prototype[kRealListen] = function (
       socket: serverHandlersFor(this),
       data: this,
       pauseOnConnect: this.pauseOnConnect,
-    });
+    };
+    try {
+      this._handle = Bun.listen(listenOptions);
+    } catch (err) {
+      // Node binds "::" when no host is given and falls back to "0.0.0.0" on a kernel without IPv6.
+      if (!hostDefaulted || err?.code !== "EAFNOSUPPORT") throw err;
+      listenOptions.hostname = "0.0.0.0";
+      this._handle = Bun.listen(listenOptions);
+    }
   }
 
   this._handle[owner_symbol] = this;
@@ -4317,6 +4324,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      address == null,
     );
     return;
   }
@@ -4539,6 +4547,8 @@ function uvListenErrorDescription(code) {
       return "address not available";
     case "EINVAL":
       return "invalid argument";
+    case "EAFNOSUPPORT":
+      return "address family not supported";
     default:
       return undefined;
   }

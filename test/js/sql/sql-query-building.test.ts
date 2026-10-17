@@ -296,21 +296,45 @@ function suite(dialect: Dialect, url: () => string) {
       expect(await sql`select id from ${table} where id in ${sql`${sql([2, 3])}`}`).toEqual([{ id: 2 }]);
     });
 
-    test("insert takes the keys of every row", async () => {
+    test("insert takes the keys of the first row: a column that only a later row names gets its default", async () => {
       await using sql = connect();
-      const table = sql(await tableOf(sql, "id int, a varchar(20), b varchar(20)"));
+      const table = sql(await tableOf(sql, "id int, a varchar(20), b varchar(20) default 'default'"));
       await sql`insert into ${table} ${sql([
         { id: 1, a: "only a" },
-        { id: 2, a: "both", b: "kept" },
-        { id: 3, b: "only b" },
+        { id: 2, a: "both", b: "dropped" },
+        { id: 3, b: "dropped" },
       ])}`;
-      await sql`insert into ${table} ${sql([{}, { id: 4 }])}`;
-      expect(await sql`select * from ${table} where id is not null order by id`).toEqual([
-        { id: 1, a: "only a", b: null },
-        { id: 2, a: "both", b: "kept" },
-        { id: 3, a: null, b: "only b" },
-        { id: 4, a: null, b: null },
+      expect(await sql`select * from ${table} order by id`).toEqual([
+        { id: 1, a: "only a", b: "default" },
+        { id: 2, a: "both", b: "default" },
+        { id: 3, a: null, b: "default" },
       ]);
+    });
+
+    test("insert takes the columns that it is given, whatever the first row has", async () => {
+      await using sql = connect();
+      const table = sql(await tableOf(sql, "id int, a varchar(20), b varchar(20) default 'default'"));
+      await sql`insert into ${table} ${sql(
+        [
+          { id: 1, a: "left out" },
+          { id: 2, b: "kept" },
+        ],
+        "id",
+        "b",
+      )}`;
+      expect(await sql`select * from ${table} order by id`).toEqual([
+        { id: 1, a: null, b: null },
+        { id: 2, a: null, b: "kept" },
+      ]);
+    });
+
+    test("a first row without keys is no insert", async () => {
+      await using sql = connect();
+      for (const rows of [[{}, { id: 4 }], [{}], {}, [], [null, { id: 4 }]]) {
+        const error = await sql`insert into t ${sql(rows as any)}`.catch((e: any) => e);
+        expect(error).toBeInstanceOf(SyntaxError);
+        expect(error.message).toBe("Cannot INSERT with no columns");
+      }
     });
 
     test("many rows arrive in their places, with and without a fragment among the cells", async () => {

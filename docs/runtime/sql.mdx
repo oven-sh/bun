@@ -306,7 +306,7 @@ const users = [
 await sql`INSERT INTO users ${sql(users)}`;
 ```
 
-The columns are the union of the keys of all rows. A key that a row lacks, or whose value is `undefined`, is `NULL` in that row. Bun leaves out a column that is `undefined` in every row, so the column's default applies, unless [`transform.undefined`](#column-name-transforms) is set.
+The columns are the keys of the first row. Bun ignores a key that only a later row has, so that column gets its default in every row. A key that a later row lacks, or whose value is `undefined`, is `NULL` in that row. Bun leaves out a column that is `undefined` in every row, so the column's default applies, unless [`transform.undefined`](#column-name-transforms) is set.
 
 A value can also be a fragment:
 

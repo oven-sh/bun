@@ -170,20 +170,6 @@ class SQLHelper<T> {
   constructor(value: T[], keys: (keyof T)[]) {
     if (keys.length === 0 && $isObject(value[0])) {
       keys = Object.keys(value[0]) as (keyof T)[];
-      let seen: Set<keyof T> | undefined;
-      for (let i = 1; i < value.length; i++) {
-        const row = value[i];
-        if (row == null) continue;
-        const rowKeys = Object.keys(row) as (keyof T)[];
-        for (let j = 0; j < rowKeys.length; j++) {
-          const key = rowKeys[j];
-          if (key === keys[j]) continue;
-          seen ??= new Set(keys);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          keys.push(key);
-        }
-      }
     } else {
       for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
@@ -497,6 +483,9 @@ class QueryBuilder {
   insert(rows: any[], columns: PropertyKey[]) {
     const rowCount = rows.length;
     const columnCount = columns.length;
+    if (columnCount === 0) {
+      throw new SyntaxError("Cannot INSERT with no columns");
+    }
     const cells = $newArrayWithSize<unknown>(rowCount * columnCount);
     const defined = $newArrayWithSize<boolean>(columnCount);
     // `cells` is the list of the query's parameters as it is

@@ -476,7 +476,13 @@ async function runOneFile(
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+    env: {
+      ...(opts.env ?? process.env),
+      BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      [kRunChildEnv]: kRunChildEnvValue,
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/runner.js#L496-L502
+      NODE_TEST_WORKER_ID: "1",
+    },
     stdout: "pipe",
     stderr: "pipe",
     signal: opts.signal,
@@ -1715,7 +1721,10 @@ class TestContext {
   }
 
   get workerId(): number | undefined {
-    return Number(process.env.NODE_TEST_WORKER_ID) || undefined;
+    const { NODE_TEST_WORKER_ID, BUN_TEST_WORKER_ID } = process.env;
+    if (NODE_TEST_WORKER_ID !== undefined) return Number(NODE_TEST_WORKER_ID) || undefined;
+    // `bun test` does not set Node's variable: libraries take it as the sign of Node's runner. A serial run is worker 1.
+    return Number(BUN_TEST_WORKER_ID) || 1;
   }
 
   get tags(): readonly string[] {

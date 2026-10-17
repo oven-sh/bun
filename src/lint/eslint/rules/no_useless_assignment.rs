@@ -1,6 +1,7 @@
 use bun_lint::code_path::{CurrentSegments, Event, Step, starts_code_path, steps_of_code_path};
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
+use bun_lint::types::IdSet;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::is_type_only_reference;
 use bun_lint_oxlint::module_record::ModuleRecord;
@@ -57,7 +58,7 @@ pub struct State<'a> {
     stack: Vec<ScopeStack<'a>>,
     /// Only the reachable ones.
     current_segments: CurrentSegments<'a>,
-    code_path_start_scopes: FxHashSet<Scope<'a>>,
+    code_path_start_scopes: IdSet<Scope<'a>>,
     /// For `is_read_after_declaration`: the statement that an expression is evaluated in.
     evaluated_in: AncestorMemo<'a, Option<Stmt<'a>>>,
     /// Of the variable that is looked at.
@@ -102,9 +103,9 @@ fn is_identifier_used_between_assigned_and_equal_sign(
 
 fn get_code_path_start_scope<'a>(
     scope: Scope<'a>,
-    code_path_start_scopes: &FxHashSet<Scope<'a>>,
+    code_path_start_scopes: &IdSet<Scope<'a>>,
 ) -> Option<Scope<'a>> {
-    scope.chain().find(|it| code_path_start_scopes.contains(it))
+    scope.chain().find(|it| code_path_start_scopes.contains(*it))
 }
 
 /// Whether `reference`, which is in the code path that starts with `scope` by its own scope, is in the decorator of a parameter
@@ -419,7 +420,7 @@ impl<'a, 'v> Variable<'a, 'v> {
         target: &Assignment<'a>,
         mut overwritten: impl FnMut(&Assignment<'a>),
     ) -> bool {
-        let mut seen: FxHashSet<u32> = FxHashSet::default();
+        let mut seen: IdSet<Segment<'a>> = IdSet::new();
         let mut stack: SmallVec<[Segment<'a>; 16]> = target
             .segments
             .iter()
@@ -427,7 +428,7 @@ impl<'a, 'v> Variable<'a, 'v> {
             .collect();
         while let Some(segment) = stack.pop() {
             let id = segment.id();
-            if !seen.insert(id) {
+            if !seen.insert(segment) {
                 continue;
             }
             let first = self.first_assignment_in(id, target);
@@ -685,7 +686,7 @@ struct Uses<'a> {
     /// For every variable: for `written_by`.
     writers: AncestorMemo<'a, Writer<'a>>,
     /// The loops whose body has been looked at from its start.
-    loops: SmallVec<[Stmt<'a>; 2]>,
+    loops: IdSet<Stmt<'a>>,
     /// How many more statements to look at.
     budget: u32,
     /// What a module exports is not reported.
@@ -1147,8 +1148,7 @@ impl<'a> Uses<'a> {
         test: Option<Expr<'a>>,
         body: Stmt<'a>,
     ) -> bool {
-        if !self.loops.contains(&a_loop) {
-            self.loops.push(a_loop);
+        if self.loops.insert(a_loop) {
             if self.statement(body) == Flow::Read {
                 return true;
             }
@@ -1184,8 +1184,7 @@ impl<'a> Uses<'a> {
                 _ => false,
             },
             StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
-                if !self.loops.contains(&a_loop) {
-                    self.loops.push(a_loop);
+                if self.loops.insert(a_loop) {
                     if self.first_within(left.span()).is_none()
                         && self.statement(body) == Flow::Read
                     {

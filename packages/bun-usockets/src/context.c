@@ -262,7 +262,7 @@ void us_internal_socket_group_unlink_connecting_socket(struct us_socket_group_t 
 struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_group_t *group,
                                     unsigned char kind, int old_ext_size, int ext_size) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
-        return s;
+        return NULL;
     }
     struct us_socket_group_t *old_group = s->group;
     struct us_loop_t *loop = old_group->loop;

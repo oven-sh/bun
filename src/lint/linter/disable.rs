@@ -27,6 +27,8 @@ pub(crate) struct Parent<'a> {
     pub(crate) justification: &'a [u8],
     /// Where the comment starts.
     pub(crate) start: (u32, u32),
+    /// `eslint`, or `oxlint`: what it is called after.
+    pub(crate) tool: &'static str,
 }
 
 /// One rule of such a comment, or all rules if it names none.
@@ -225,15 +227,14 @@ impl Input<'_, '_> {
         fix: Fix,
     ) -> LintMessage {
         let directive = &self.directives[directive as usize];
-        let (what, why) = match directive.kind {
-            Kind::Enable => (
-                "enable",
-                &b"no matching eslint-disable directives were found"[..],
+        let tool = parent.tool;
+        let mut message = match directive.kind {
+            Kind::Enable => format!(
+                "Unused {tool}-enable directive (no matching {tool}-disable directives were found"
             ),
-            _ => ("disable", &b"no problems were reported"[..]),
-        };
-        let mut message = format!("Unused eslint-{what} directive (").into_bytes();
-        message.extend_from_slice(why);
+            _ => format!("Unused {tool}-disable directive (no problems were reported"),
+        }
+        .into_bytes();
         if !description.is_empty() {
             message.extend_from_slice(if directive.kind == Kind::Enable {
                 b" for "
@@ -256,6 +257,7 @@ impl Input<'_, '_> {
             column,
             end: None,
             is_fatal: false,
+            claim: None,
             fix: self.wants_fixes.then_some(fix),
             suggestions: Vec::new(),
             suppressions: Vec::new(),
@@ -314,8 +316,9 @@ impl Input<'_, '_> {
         let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
         let mut next = 0;
         for message in messages {
+            let place = (message.line as i32, message.column as i32);
             while let Some(switch) = switches.get(next)
-                && (switch.line, switch.column) <= (message.line, message.column)
+                && (switch.line as i32, switch.column as i32) <= place
             {
                 match (switch.disables, self.rule(switch)) {
                     (true, None) => active_for_all.push(next as u32),
@@ -437,8 +440,8 @@ pub(crate) fn apply_disable_directives(input: &Input, messages: &mut Vec<LintMes
             source,
         });
     }
-    crate::utils::sort::sort_by_key(&mut blocks, |it| (it.line, it.column));
-    crate::utils::sort::sort_by_key(&mut lines, |it| (it.line, it.column));
+    crate::utils::sort::sort_by_key(&mut blocks, |it| (it.line as i32, it.column as i32));
+    crate::utils::sort::sort_by_key(&mut lines, |it| (it.line as i32, it.column as i32));
     let mut unused = Vec::new();
     input.apply(&blocks, messages, &mut unused);
     input.apply(&lines, messages, &mut unused);

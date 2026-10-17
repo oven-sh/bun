@@ -169,7 +169,7 @@ async function run(path: string, beside: string, folder: string, carrier: string
     expect({ signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ signal: null, stderr: "" });
     // The executable really ran compiled code and did not fall back to the embedded source.
     expect(ran.stderr).toContain("[aot] module: ");
-    const compiled = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\n/gm, "") });
+    const compiled = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") });
 
     if (existsSync(beside + ".expected.txt")) {
       const text = compiled.stdout + (compiled.exitCode ? `exit code ${compiled.exitCode}\n${compiled.stderr}\n` : compiled.stderr);

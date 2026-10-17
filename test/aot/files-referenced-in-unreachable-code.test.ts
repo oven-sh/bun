@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const here = process.platform;
@@ -59,7 +59,7 @@ test("an addon is embedded in an executable only if it is named where the progra
 
   const build = await run([bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", "program"], String(dir), bunEnv);
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  const executable = Buffer.from(await Bun.file(join(String(dir), "program")).bytes());
+  const executable = Buffer.from(await Bun.file(join(String(dir), isWindows ? "program.exe" : "program")).bytes());
   expect(Object.keys(packages).filter(name => executable.includes(markOf(name)))).toEqual(Object.keys(reachable));
 
   const compiled = await run([join(String(dir), "program")], String(dir), env);

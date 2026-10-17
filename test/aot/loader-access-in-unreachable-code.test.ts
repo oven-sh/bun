@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,7 +17,7 @@ async function built(entry: string, files: Record<string, string>) {
   const build = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"], String(dir), bunEnv);
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const ran = await run([join(String(dir), "program")], String(dir), wire);
-  return { stdout: ran.stdout, exitCode: ran.exitCode, size: statSync(join(String(dir), "program")).size };
+  return { stdout: ran.stdout, exitCode: ran.exitCode, size: statSync(join(String(dir), isWindows ? "program.exe" : "program")).size };
 }
 
 const main = `import { double } from "./lib.mjs";\nconsole.log(double(21));\n`;

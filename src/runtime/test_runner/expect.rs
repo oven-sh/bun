@@ -486,6 +486,22 @@ impl Expect {
         Ok(())
     }
 
+    fn has_settled_before_timeout(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<bool> {
+        let running = bun_test::clone_active_strong();
+        global_this
+            .bun_vm()
+            .as_mut()
+            .event_loop_mut()
+            .wait_for_promise_unless(promise, || {
+                running.as_ref().is_some_and(|buntest| buntest.get().execution.has_timed_out_entry())
+            })
+            .map_err(|stopped| stopped.throw(global_this))
+    }
+
+    fn throw_promise_not_settled(global_this: &JSGlobalObject) -> JsError {
+        global_this.throw(format_args!("The promise had not settled when the test timed out"))
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -506,12 +522,12 @@ impl Expect {
 
                     Self::call_then_if_pending(global_this, value, promise)?;
 
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+                    if !Self::has_settled_before_timeout(global_this, promise)? {
+                        if silent {
+                            return Err(JsError::Thrown);
+                        }
+                        return Err(Self::throw_promise_not_settled(global_this));
+                    }
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -890,9 +906,11 @@ impl Expect {
                 scope.apply(vm);
                 return Err(err);
             }
-            let waited = vm.wait_for_promise(promise);
+            let waited = Self::has_settled_before_timeout(global_this, promise);
             scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
+            if !waited? {
+                return Err(Self::throw_promise_not_settled(global_this));
+            }
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -1464,12 +1482,9 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+            if !Self::has_settled_before_timeout(global_this, promise)? {
+                return Err(Self::throw_promise_not_settled(global_this));
+            }
 
             result = promise.result(vm);
             result.ensure_still_alive();

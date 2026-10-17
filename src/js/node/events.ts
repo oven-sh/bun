@@ -1,3 +1,4 @@
+// @ts-check
 // Reimplementation of https://nodejs.org/api/events.html
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js

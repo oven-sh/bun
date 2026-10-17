@@ -1,5 +1,6 @@
-use crate::check::Checker;
-use crate::hir::{ExprId, ExprKind, FileKind};
+use crate::bind::{FnOwner, MemberOwner, Parent};
+use crate::check::{Checker, ContextFlags};
+use crate::hir::{Chain, ExprId, ExprKind, ExprTag, FileKind, FnId, StmtKind};
 use crate::program::{FileId, Sym};
 use crate::types::{ElemFlags, EnumValue, Intrinsic, PropFlags, TypeData, TypeId};
 use crate::util::FxHashMap;
@@ -95,6 +96,7 @@ pub struct ValidationPlan {
     pub root: u32,
     pub unsupported: Vec<String>,
     pub is_strict_everywhere: bool,
+    pub is_exact: bool,
 }
 
 fn write_json_text(out: &mut Vec<u8>, text: &[u8]) {
@@ -288,7 +290,7 @@ impl ValidationPlan {
 
     pub fn node_identity(&self, node: u32) -> Option<(TypeId, bool, bool)> {
         let described = &self.nodes[node as usize];
-        if self.is_strict_everywhere || !described.rules.is_empty() || described.message.is_some() || described.default.is_some() {
+        if self.is_strict_everywhere && !self.is_exact || !described.rules.is_empty() || described.message.is_some() || described.default.is_some() {
             return None;
         }
         let (ty, is_strict) = match described.planned {
@@ -297,6 +299,43 @@ impl ValidationPlan {
             _ => return None,
         };
         Some((ty, is_strict, self.omits_members_below(node)))
+    }
+
+    fn replace_types_no_text_satisfies(&mut self) {
+        let mut is_satisfiable = vec![false; self.nodes.len()];
+        loop {
+            let mut has_changed = false;
+            for node in 0..self.nodes.len() {
+                if is_satisfiable[node] {
+                    continue;
+                }
+                let holds = |other: &u32| is_satisfiable[*other as usize];
+                let found = match &self.nodes[node].planned {
+                    Planned::Nothing | Planned::Primitive(PlannedPrimitive::BigInt) | Planned::Value(Constant::Undefined) => false,
+                    Planned::Object { members, .. } => members.iter().all(|member| member.is_optional || holds(&member.node)),
+                    Planned::Tuple { elements, .. } => elements.iter().all(holds),
+                    Planned::Union { arms, .. } => arms.iter().any(holds),
+                    _ => true,
+                };
+                is_satisfiable[node] = found;
+                has_changed |= found;
+            }
+            if !has_changed {
+                break;
+            }
+        }
+        for (node, is_satisfiable) in self.nodes.iter_mut().zip(&is_satisfiable) {
+            if !is_satisfiable {
+                node.planned = Planned::Nothing;
+            }
+        }
+        for node in &mut self.nodes {
+            match &mut node.planned {
+                Planned::Union { arms, .. } => arms.retain(|&arm| is_satisfiable[arm as usize]),
+                Planned::Object { members, .. } => members.retain(|member| is_satisfiable[member.node as usize]),
+                _ => {}
+            }
+        }
     }
 
     fn reaches_inline(&self, from: u32, target: u32, seen: &mut Vec<u32>) -> bool {
@@ -315,6 +354,10 @@ impl ValidationPlan {
     }
 }
 
+const MAX_EXACT_PLAN_NODES: usize = 1024;
+const MAX_DESTINATION_STEPS: u32 = 4;
+const MAX_DESTINATIONS: usize = 16;
+
 #[derive(Default)]
 struct Tags {
     rules: Vec<Rule>,
@@ -329,6 +372,7 @@ struct Planning {
     known: FxHashMap<(TypeId, bool), u32>,
     is_strict_everywhere: bool,
     omits_invalid_optional_members: bool,
+    is_exact: bool,
 }
 
 impl Planning {
@@ -372,6 +416,169 @@ impl Checker<'_, '_> {
         }
         planning.plan.is_strict_everywhere = planning.is_strict_everywhere;
         planning.plan
+    }
+
+    fn calls_promise_then(&mut self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        let ExprKind::Call(call) = hir[e].kind else { return false };
+        let ExprKind::Dot { obj, name, .. } = hir[hir[call].callee].kind else { return false };
+        if self.atoms().bytes(name) != b"then" {
+            return false;
+        }
+        let Some((declared_in, func, _)) = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)) else { return self.type_of_expr(file, obj).is_any() };
+        if !self.is_declaration_only(declared_in) {
+            return false;
+        }
+        let (hir, bound) = (self.hir(declared_in), self.bound(declared_in));
+        let FnOwner::Member(member) = bound.fns[func.idx()].owner else { return false };
+        let MemberOwner::Interface(interface) = bound.member_owner[member.idx()] else { return false };
+        matches!(self.atoms().bytes(hir[interface].name), b"Promise" | b"PromiseLike")
+    }
+
+    fn destination_of_value(&mut self, file: FileId, e: ExprId, depth: u32) -> Option<TypeId> {
+        if depth > MAX_DESTINATION_STEPS {
+            return None;
+        }
+        let hir = self.hir(file);
+        let mut produced = e;
+        while let Parent::Expr(parent) = self.bound(file).expr_parent[produced.idx()] {
+            if parent.is_none() {
+                break;
+            }
+            match hir[parent].kind {
+                ExprKind::As { ty, .. } => {
+                    let written = self.type_from_node(file, ty);
+                    if !self.is_uninformative(written) {
+                        return Some(written);
+                    }
+                }
+                ExprKind::NonNull(_) | ExprKind::Satisfies { .. } => {}
+                _ => break,
+            }
+            produced = parent;
+        }
+        self.prepare_enclosing(file, produced);
+        let expected = self.contextual_type(file, produced, ContextFlags::empty()).filter(|&expected| !self.is_uninformative(expected));
+        if expected.is_some_and(|expected| !self.has_type_variables(expected)) {
+            return expected;
+        }
+        self.destination_of_fulfillment_value(file, produced, depth).or(expected)
+    }
+
+    fn destination_of_fulfillment_value(&mut self, file: FileId, returned: ExprId, depth: u32) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let returning = match self.bound(file).expr_parent[returned.idx()] {
+            Parent::FnBody(func) => func,
+            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Return(_)) => self.enclosing_fn(file, Parent::Stmt(statement))?,
+            _ => return None,
+        };
+        let FnOwner::Expr(callback) = self.bound(file).fns[returning.idx()].owner else { return None };
+        let Parent::Expr(then) = self.bound(file).expr_parent[callback.idx()] else { return None };
+        let ExprKind::Call(call) = hir[then].kind else { return None };
+        if hir[call].args.len == 0 || hir.id_at(hir[call].args, 0) != callback || !self.calls_promise_then(file, then) {
+            return None;
+        }
+        let promise = self.destination_of_value(file, then, depth + 1)?;
+        Some(self.fulfillment_type(promise))
+    }
+
+    fn fulfillment_type(&mut self, promise: TypeId) -> TypeId {
+        let awaited = self.awaited(promise);
+        self.unwrap_awaited_type(awaited)
+    }
+
+    fn add_destinations_at_call_sites(&mut self, declared_in: FileId, generic: FnId, parameter: TypeId, depth: u32, found: &mut Vec<TypeId>) {
+        let name = self.hir(declared_in)[generic].name;
+        if name.is_none() {
+            return;
+        }
+        for file in (0..self.files().modules.len() as u32).map(FileId) {
+            if self.files().module(file).is_untyped() || self.is_declaration_only(file) {
+                continue;
+            }
+            let hir = self.hir(file);
+            for &site in self.file_exprs_by_kind(file).of(ExprTag::Call) {
+                let ExprKind::Call(call) = hir[site].kind else { continue };
+                if !matches!(hir[hir[call].callee].kind, ExprKind::Dot { name: called, .. } | ExprKind::Ident(called) if called == name) {
+                    continue;
+                }
+                self.prepare_enclosing(file, site);
+                let Some((of, func, mapper)) = self.resolved_signature(file, site).sig.and_then(|sig| self.sig_decl(sig)) else { continue };
+                if (of, func) != (declared_in, generic) {
+                    continue;
+                }
+                let destination = match self.types().map(mapper, parameter).filter(|&argument| !self.is_uninformative(argument)) {
+                    Some(argument) => Some(argument),
+                    None => match self.bound(file).expr_parent[site.idx()] {
+                        Parent::Expr(parent) if parent.is_some() && matches!(hir[parent].kind, ExprKind::Await(_)) => self.destination_of_value(file, parent, depth + 1),
+                        _ => self.destination_of_value(file, site, depth + 1).map(|promise| self.fulfillment_type(promise)),
+                    },
+                };
+                if let Some(destination) = destination {
+                    self.add_destinations(file, site, destination, depth + 1, found);
+                }
+            }
+        }
+    }
+
+    fn add_destinations(&mut self, file: FileId, e: ExprId, destination: TypeId, depth: u32, found: &mut Vec<TypeId>) {
+        for &part in self.parts(destination) {
+            let TypeData::TypeParam(declared_in, parameter, _) = *self.data(part) else {
+                if !found.contains(&part) && found.len() < MAX_DESTINATIONS {
+                    found.push(part);
+                }
+                continue;
+            };
+            if declared_in != file || depth > MAX_DESTINATION_STEPS {
+                continue;
+            }
+            let mut enclosing = self.enclosing_fn_of_expr(file, e);
+            while let Some(func) = enclosing.filter(|func| func.is_some()) {
+                if self.hir(file)[func].type_params.iter().any(|declared| declared == parameter) {
+                    let declared = self.type_param(file, parameter);
+                    self.add_destinations_at_call_sites(file, func, declared, depth, found);
+                    break;
+                }
+                enclosing = Some(self.bound(file).fns[func.idx()].enclosing);
+            }
+        }
+    }
+
+    pub fn parsed_text_destination(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let ExprKind::Call(call) = hir[e].kind else { return None };
+        let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[hir[call].callee].kind else { return None };
+        if hir[call].chain != Chain::No || !self.refers_to_global_object(file, obj, b"JSON") || !self.is_syntactically_fresh_graph(file, e) {
+            return None;
+        }
+        self.destination_of_parsed_value(file, e)
+    }
+
+    fn destination_of_parsed_value(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let destination = self.destination_of_value(file, e, 0)?;
+        let mut found = Vec::new();
+        self.add_destinations(file, e, destination, 0, &mut found);
+        match found[..] {
+            [] => None,
+            [only] => Some(only),
+            _ => Some(self.union(&found)),
+        }
+    }
+
+    pub fn exact_parse_plan(&mut self, ty: TypeId) -> Option<ValidationPlan> {
+        let mut planning = Planning { is_strict_everywhere: true, is_exact: true, ..Planning::default() };
+        planning.plan.root = self.plan_type(&mut planning, ty, "");
+        planning.plan.replace_types_no_text_satisfies();
+        if planning.plan.nodes.len() > MAX_EXACT_PLAN_NODES || matches!(planning.plan.nodes[planning.plan.root as usize].planned, Planned::Nothing) {
+            return None;
+        }
+        for node in 0..planning.plan.nodes.len() as u32 {
+            planning.plan.nodes[node as usize].is_recursive = planning.plan.reaches_inline(node, node, &mut Vec::new());
+        }
+        planning.plan.unsupported.clear();
+        planning.plan.is_strict_everywhere = true;
+        planning.plan.is_exact = true;
+        Some(planning.plan)
     }
 
     fn primitive_constant(&self, ty: TypeId) -> Option<Constant> {
@@ -468,10 +675,16 @@ impl Checker<'_, '_> {
                 _ => self.intersection(&others),
             };
         }
+        if planning.is_exact {
+            tags = Tags::default();
+        }
         let is_tagged = !tags.rules.is_empty() || tags.message.is_some() || tags.default.is_some();
         let is_strict = tags.is_strict || planning.is_strict_everywhere;
         if !is_tagged && let Some(&known) = planning.known.get(&(base, is_strict)) {
             return known;
+        }
+        if planning.is_exact && planning.plan.nodes.len() > MAX_EXACT_PLAN_NODES {
+            return planning.add(Planned::Nothing);
         }
         let node = planning.add(Planned::Anything);
         if !is_tagged {
@@ -479,16 +692,24 @@ impl Checker<'_, '_> {
         }
         let template_rule = self.template_literal_rule(base);
         let planned = if template_rule.is_some() { Planned::Primitive(PlannedPrimitive::Text) } else { self.plan_untagged(planning, base, is_strict, at) };
-        let rules = template_rule.into_iter().chain(tags.rules).collect();
+        let rules = template_rule.into_iter().filter(|_| !planning.is_exact).chain(tags.rules).collect();
         planning.plan.nodes[node as usize] = PlanNode { planned, rules, message: tags.message, default: tags.default, is_recursive: false };
         node
     }
 
     fn plan_untagged(&mut self, planning: &mut Planning, ty: TypeId, is_strict: bool, at: &str) -> Planned {
         if let Some(constant) = self.primitive_constant(ty) {
-            return Planned::Value(constant);
+            return match constant {
+                Constant::Text(_) if planning.is_exact => Planned::Primitive(PlannedPrimitive::Text),
+                Constant::Number(_) if planning.is_exact => Planned::Primitive(PlannedPrimitive::Number),
+                Constant::Boolean(_) if planning.is_exact => Planned::Primitive(PlannedPrimitive::Boolean),
+                constant => Planned::Value(constant),
+            };
         }
         let unsupported = |checker: &mut Self, planning: &mut Planning| {
+            if planning.is_exact {
+                return Planned::Nothing;
+            }
             planning.plan.unsupported.push(format!("{at}: {}", String::from_utf8_lossy(&checker.type_to_string(ty))));
             Planned::Anything
         };
@@ -511,7 +732,11 @@ impl Checker<'_, '_> {
                     if is_boolean_whole && matches!(self.data(part), TypeData::BoolLit { .. }) {
                         continue;
                     }
-                    arms.push(self.plan_type(planning, part, at));
+                    let arm = self.plan_type(planning, part, at);
+                    let is_repeated = planning.is_exact && matches!(planning.plan.nodes[arm as usize].planned, Planned::Primitive(kind) if arms.iter().any(|&other| matches!(planning.plan.nodes[other as usize].planned, Planned::Primitive(same) if same == kind)));
+                    if !is_repeated {
+                        arms.push(arm);
+                    }
                 }
                 if let [only] = arms[..] {
                     return planning.plan.nodes[only as usize].planned.clone();
@@ -533,7 +758,7 @@ impl Checker<'_, '_> {
             TypeData::Ref { .. } | TypeData::Anon { .. } | TypeData::Synth(_) | TypeData::Intersection(_) | TypeData::ReverseMapped { .. } => {
                 let Some(members) = self.members(ty) else { return unsupported(self, planning) };
                 let shape = members.shape();
-                if !shape.call.is_empty() || !shape.construct.is_empty() {
+                if !shape.call.is_empty() || !shape.construct.is_empty() || planning.is_exact && self.is_instance_type(ty) {
                     return unsupported(self, planning);
                 }
                 let retained = shape.index.iter().find(|info| info.key == TypeId::STRING).map(|info| info.value);

@@ -72,7 +72,7 @@ generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
     JSC::JSValue value)
 {
 
-    if (value.isObject() && !dynamicDowncast<JSC::JSArray>(value)) {
+    if (value.isObject() && value.asCell()->classInfo() != JSC::JSArray::info()) {
         return generateObjectModuleSourceCodeForJSON(globalObject,
             value.getObject());
     }

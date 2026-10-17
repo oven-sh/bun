@@ -10,7 +10,7 @@
 // CALLS+ written StringSplitString
 // CALLS+ pushedTo StringSplitString
 // CALLS+ farField StringSplitString
-// CALLS+ longSeparator StringSplitString
+// CALLS- longSeparator StringSplitString
 // CALLS+ limited StringSplitString
 let guard = 0;
 function parsed(line: string): string {

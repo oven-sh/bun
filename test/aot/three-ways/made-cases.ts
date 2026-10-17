@@ -52,7 +52,7 @@ export function madeCases(topic: string, { without = [], seeds = 0 }: { without?
     if (unsupported) return void test.skip(unsupported, () => {});
     if (!python) return void test.skip("python3 is not installed", () => {});
     for (const words of seeds ? Array.from({ length: seeds }, (_, i) => [String(i + 1), join(root, "made", `seed-${String(i + 1).padStart(3, "0")}`)]) : [[join(root, "made")]]) {
-      const made = spawnSync({ cmd: [python, "-B", join(import.meta.dir, "made", `${topic}.py`), ...words], stdout: "ignore", stderr: "pipe" });
+      const made = spawnSync({ cmd: [python, "-B", join(import.meta.dir, "made", `${topic}.py`), ...words], env: { ...process.env, PYTHONUTF8: "1" }, stdout: "ignore", stderr: "pipe" });
       if (made.exitCode !== 0) throw new Error(`${topic}.py: ${made.stderr}`);
     }
     // A case that has no tsconfig.json of its own gets the options and the types of ../programs. Without this, whether a folder above the temporary folder holds node_modules/@types would decide what TypeScript says of it.

@@ -39,6 +39,25 @@ for (const text of subjects) {
   show("  statics", statics());
 }
 
+function digest(text: string): string {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) % 1000003;
+  return text.length + " " + sum + " " + JSON.stringify(text.slice(0, 20)) + " " + JSON.stringify(text.slice(-20));
+}
+for (const count of [1, 2, 3, 15, 16, 17, 31, 32, 33, 34, 64, 65, 1000, 40000]) {
+  const spread = "a&".repeat(count), tight = "&".repeat(count), words = "eco ".repeat(count), run = "a".repeat(count);
+  show("spread " + count, digest(spread.replace(/&/g, "&amp;"))); show("  statics", digest(statics()));
+  show("tight " + count, digest(tight.replace(/&/g, "<>")));
+  show("same length " + count, digest(tight.replace(/&/g, "+")));
+  show("shorter " + count, digest(words.replace(/eco/g, "e"))); show("  statics", digest(statics()));
+  show("much longer " + count, digest(words.replace(/eco/g, "green and a good deal more")));
+  show("overlapping " + count, digest(run.replace(/aa/g, "b")));
+  show("ends " + count, digest(("&" + run + "&").replace(/&/g, "[]")));
+  show("whole " + count, digest(run.replace(new RegExp(run, "g"), "z")));
+}
+show("one character out", "eco".replace(/eco/g, "e")); show("two out", "ecoeco".replace(/eco/g, "e"));
+show("high Latin-1", "caf\u00e9 & cr\u00e8me".replace(/\u00e9/g, "e").replace(/&/g, "\u00a7"));
+
 const kept = /&/g;
 for (const start of [0, 1, 5, 100, -1, 1.5]) {
   kept.lastIndex = start;

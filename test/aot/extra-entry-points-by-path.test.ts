@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
@@ -122,6 +122,6 @@ test("a program with one entry point holds no path", async () => {
   using dir = tempDir("entry-points-by-path-one", { "main.cjs": `console.log(require(["node:", "path"].join("")).sep);\n` });
   const build = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", "program"], String(dir), bunEnv);
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  const bytes = await Bun.file(join(String(dir), "program")).bytes();
+  const bytes = await Bun.file(join(String(dir), isWindows ? "program.exe" : "program")).bytes();
   expect(Buffer.from(bytes).includes(join(String(dir), "main.cjs") + "\0")).toBe(false);
 }, 120_000);

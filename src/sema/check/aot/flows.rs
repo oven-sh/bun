@@ -3632,7 +3632,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn add_inspected_casts(&mut self, file: FileId, out: &mut Vec<InspectedCast>) {
         let hir = self.hir(file);
-        let leaves_casts_unchecked = self.leaves_casts_unchecked();
+        let leaves_casts_unchecked = self.leaves_casts_unchecked() && self.files().module(file).builtin.is_none();
         let casts = self.file_exprs_by_kind(file).of(ExprTag::As).iter().filter(|_| !leaves_casts_unchecked).filter_map(|&cast| match hir[cast].kind {
             ExprKind::As { expr, ty } => Some((ty, expr, Some(cast))),
             _ => None,
@@ -4468,7 +4468,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let by_kind = self.file_exprs_by_kind(file);
         let mut pending: Vec<ExprId> = Vec::new();
-        let leaves_casts_unchecked = self.leaves_casts_unchecked();
+        let leaves_casts_unchecked = self.leaves_casts_unchecked() && self.files().module(file).builtin.is_none();
         for &call in by_kind.of(ExprTag::Call) {
             if self.is_external_data_source(file, call) {
                 pending.push(call);
@@ -5612,6 +5612,16 @@ impl<'p, 's> Checker<'p, 's> {
                     held.pairs.extend(arguments.iter().copied().zip(arguments_as.iter().copied()));
                     continue;
                 }
+                if !is_large
+                    && self.parts(target).len() > 1
+                    && matches!(self.data(from), TypeData::Ref { .. })
+                    && !self.type_arguments(from).is_empty()
+                    && self.declares_properties(from)
+                    && self.declares_properties(to)
+                    && self.is_accepted_by_other_union_part(from, to, target)
+                {
+                    continue;
+                }
                 if self.declares_properties(from) && self.declares_properties(to) {
                     let erased = (self.erase_cloned_type_params(from), self.erase_cloned_type_params(to));
                     if erased != (from, to) {
@@ -5811,6 +5821,15 @@ impl<'p, 's> Checker<'p, 's> {
             self.aot.flows.erased_cloned_type_params.insert(ty, found);
         }
         found
+    }
+
+    fn is_accepted_by_other_union_part(&mut self, from: TypeId, to: TypeId, union: TypeId) -> bool {
+        let unknown_before = self.aot.flows.unknown_count;
+        let (permissive_from, permissive_to) = (self.permissive_instantiation(from), self.permissive_instantiation(to));
+        if self.is_provably_assignable(permissive_from, permissive_to) || self.aot.flows.unknown_count != unknown_before {
+            return false;
+        }
+        self.parts(union).iter().any(|&part| part != to && (part == from || self.is_upcast_safe(from, part)))
     }
 
     fn large_union_info(&mut self, union: TypeId) -> std::rc::Rc<LargeUnionInfo> {

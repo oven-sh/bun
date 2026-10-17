@@ -130,9 +130,9 @@ export const python = Bun.which("python3");
 
 export function program(name: string, extension: string, options: Options, seed: number): { file: string; text: string; files?: Record<string, string> } {
   const words = options.words?.(seed) ?? [seed];
-  const { exitCode, stdout, stderr } = spawnSync({ cmd: [python!, "-B", join(import.meta.dir, "python", `${name}.py`), ...words.map(String)], stderr: "pipe" });
+  const { exitCode, stdout, stderr } = spawnSync({ cmd: [python!, "-B", join(import.meta.dir, "python", `${name}.py`), ...words.map(String)], env: { ...process.env, PYTHONUTF8: "1" }, stderr: "pipe" });
   if (exitCode !== 0) throw new Error(`${name}.py: ${stderr}`);
-  const [text, ...others] = stdout.toString().split("\n//// ");
+  const [text, ...others] = stdout.toString().replaceAll("\r\n", "\n").split("\n//// ");
   const files = Object.fromEntries(others.map(other => [other.slice(0, other.indexOf("\n")), other.slice(other.indexOf("\n") + 1) + "\n"]));
   return { file: `main.${extension}`, text: others.length ? text + "\n" : text, files };
 }

@@ -10,7 +10,7 @@ function expectToHaveUsedImage(stderr: string) {
   expect(stderr).toContain("[aot] program data: ");
   expect(stderr).toContain("[aot] image: ");
   expect(stderr).not.toContain("[aot] not using");
-  return stderr.replace(/^\[aot\] .*\n/gm, "");
+  return stderr.replace(/^\[aot\] .*\r?\n/gm, "");
 }
 
 const theReportOfAThrownErrorNamesTheSameLineAndAnotherColumnUnderAot =
@@ -280,8 +280,6 @@ describe.skipIf(!supported)("bun test --aot", () => {
         `,
       },
       ["./sub/a.test.ts"],
-      true,
-      ["preload.ts"],
     );
     expect(stderr).toContain(" 1 pass");
   });

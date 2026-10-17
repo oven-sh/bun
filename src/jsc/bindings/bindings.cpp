@@ -7181,7 +7181,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
 
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(value);
-    if (!array)
+    if (!array || array->classInfo() != JSC::JSArray::info())
         return 1;
 
     JSC::MarkedArgumentBuffer values;

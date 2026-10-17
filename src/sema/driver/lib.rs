@@ -3088,6 +3088,9 @@ fn check_project_of(
         // `with_early_run`, where the scanned files are alive.
         let scanned_early = request.plan_options.early_run.map(|it| unsafe { it.scanned_files() });
         if let (true, Some(scanned_early)) = (request.plan_options.early_scan_only, scanned_early) {
+            let entry_points: Vec<Vec<u8>> = request.paths.iter().map(|path| host::from_argument(&cwd, path)).collect();
+            let mut others = others;
+            others.sort_by_cached_key(|file| entry_points.iter().map(|entry_point| shared_directory_length(file, entry_point)).max().unwrap_or(0));
             disk.parallel(others.len(), &|at| {
                 if disk.is_early_parse_cancelled() || disk.has_bundler_source(others[at]) || disk.is_scheduled_by_bundler(others[at]) {
                     return;
@@ -3399,6 +3402,11 @@ fn find_global_declarations(disk: &host::Disk, others: &[&Vec<u8>], scanned_earl
         .map(|(file, _)| (*file).clone())
         .collect();
     (sources, of_packages)
+}
+
+fn shared_directory_length(path: &[u8], other: &[u8]) -> usize {
+    let shared = path.iter().zip(other).take_while(|(byte, other_byte)| byte == other_byte).count();
+    path[..shared].iter().rposition(|&byte| byte == b'/').map_or(0, |slash| slash + 1)
 }
 
 const SCANNING_THREADS: usize = 6;

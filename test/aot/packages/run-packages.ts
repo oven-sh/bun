@@ -133,7 +133,7 @@ export function packages(topic: string, cases: Case[], part = 1, parts = 1, root
       expect({ signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ signal: null, stderr: "" });
       // The executable really ran compiled code and did not fall back to the embedded source.
       expect(ran.stderr).toContain("[aot] module: ");
-      const output = result({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\n/gm, "") });
+      const output = result({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\r?\n/gm, "") });
 
       if (updates) {
         if (output === (await plain())) delete answers[file];

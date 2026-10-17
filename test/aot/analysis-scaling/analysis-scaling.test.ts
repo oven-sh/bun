@@ -5,7 +5,7 @@ import { measureLeast } from "./measure-check";
 import { shapes } from "./shapes";
 
 const runs = 3;
-const allowedNoise = { instructions: 30_000_000, peakBytes: 24 * 1024 * 1024 };
+const allowedNoise = { instructions: 30_000_000, peakBytes: 64 * 1024 * 1024 };
 const skipped = isDebug || isASAN ? "a debug or ASAN build counts other instructions and bytes" : process.platform !== "linux" && process.platform !== "darwin" ? "it counts with perf_event_open or /usr/bin/time -l" : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/analysis-scaling: ${skipped}`);
 

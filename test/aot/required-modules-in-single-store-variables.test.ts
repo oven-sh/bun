@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { describe, test } from "./supported";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -44,7 +44,7 @@ test("a function that only an export nobody reads leads to is left out, however 
     expect({ name, stderr: build.stderr, exitCode: build.exitCode }).toEqual({ name, stderr: expect.any(String), exitCode: 0 });
     const compiled = await run([join(String(dir), "program")], String(dir), env);
     expect({ name, stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ name, stdout: "3  modern legacy\n", exitCode: 0 });
-    sizes[name] = statSync(join(String(dir), "program")).size;
+    sizes[name] = statSync(join(String(dir), isWindows ? "program.exe" : "program")).size;
   }
   for (const name of Object.keys(servers)) {
     expect({ name, grows: sizes[name] - sizes["initialized"] > 64 * 1024 }).toEqual({ name, grows: false });

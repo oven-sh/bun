@@ -16,7 +16,7 @@ function expectToHaveUsedImage(stderr: string) {
   expect(stderr).toContain("[aot] program data: ");
   expect(stderr).toContain("[aot] image: ");
   expect(stderr).not.toContain("[aot] not using");
-  return stderr.replace(/^\[aot\] .*\n/gm, "");
+  return stderr.replace(/^\[aot\] .*\r?\n/gm, "");
 }
 
 async function run(

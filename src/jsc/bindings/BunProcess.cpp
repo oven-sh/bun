@@ -2385,7 +2385,7 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
             return jsUndefined();
     }
 
-    if (!type.isNull() && type.isObject() && !dynamicDowncast<JSArray>(type)) {
+    if (!type.isNull() && type.isObject() && type.asCell()->classInfo() != JSArray::info()) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 

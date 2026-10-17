@@ -866,7 +866,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 let to = self.non_null_ty(fx, e);
                 let text = self.reference_text(fx, expr);
-                if self.shared.constants.leaves_casts_unchecked {
+                if self.shared.constants.leaves_casts_unchecked && !self.is_builtin_file(fx.file) {
                     return self.expr_into(fx, expr, to, CoerceReason::Store);
                 }
                 let held = self.expr_into(fx, expr, to, CoerceReason::NonNull(text));
@@ -2158,7 +2158,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn is_cast_left_unchecked(&mut self, fx: &Fx, operand: ExprId, checked: TypeId, to: TyId) -> bool {
-        if !self.shared.constants.leaves_casts_unchecked || to.is_none() || to == self.out.tys.anything {
+        if !self.shared.constants.leaves_casts_unchecked || self.is_builtin_file(fx.file) || to.is_none() || to == self.out.tys.anything {
             return false;
         }
         let written = self.c.type_of_expr(fx.file, operand);
@@ -2226,7 +2226,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::NonNull(_) => {
                 let to = self.non_null_ty(fx, e);
                 let text = self.reference_text(fx, expr);
-                let why = if self.shared.constants.leaves_casts_unchecked { CoerceReason::Store } else { CoerceReason::NonNull(text) };
+                let why = if self.shared.constants.leaves_casts_unchecked && !self.is_builtin_file(fx.file) { CoerceReason::Store } else { CoerceReason::NonNull(text) };
                 self.coerce_at(fx, expr, value, to, why)
             }
             _ => value,
@@ -3846,6 +3846,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.coerce_to_expr_type(fx, value, e);
         }
         if let Some(value) = self.validation_call(fx, e, call) {
+            return self.coerce_to_expr_type(fx, value, e);
+        }
+        if let Some(value) = self.parse_for_destination_type(fx, e, call) {
             return self.coerce_to_expr_type(fx, value, e);
         }
         if let Some(value) = self.direct_eval(fx, call) {

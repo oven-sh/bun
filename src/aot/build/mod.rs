@@ -294,8 +294,6 @@ pub struct Shared<'a> {
     pub(crate) json_modules_loaded_whole: FxHashSet<FileId>,
     lazy_module_dependencies: Vec<OnceLock<Vec<(FileId, Dependency)>>>,
     dependencies: Vec<OnceLock<Vec<Dependency>>>,
-    builtin_modules_loaded_by_import: Vec<OnceLock<Vec<Atom>>>,
-    loaded_by_every_entry_point: OnceLock<LoadedGraph>,
     unresolved_imports: FxHashMap<FileId, Vec<(FileId, Atom)>>,
 }
 
@@ -367,8 +365,6 @@ impl<'a> Shared<'a> {
             json_modules_loaded_whole: FxHashSet::default(),
             lazy_module_dependencies: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             dependencies: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
-            builtin_modules_loaded_by_import: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
-            loaded_by_every_entry_point: OnceLock::new(),
             unresolved_imports: FxHashMap::default(),
         };
         let mut c = program.checker();
@@ -717,7 +713,7 @@ pub fn builtin_modules_of_entry_points(c: &mut Checker<'_, '_>, shared: &Shared<
     let build = FileBuild::new(c, shared, NO_FILE);
     let of_entry_point = |roots: &Vec<FileId>| {
         let mut in_order = Vec::new();
-        build.load_graph(roots, &LoadedGraph::default(), &mut LoadedGraph::default(), &mut in_order);
+        build.load_graph(roots, &mut LoadedGraph::default(), &mut in_order);
         in_order.into_iter().map(|specifier| build.c.atoms().bytes(specifier).into()).collect()
     };
     shared.entry_points.iter().map(of_entry_point).collect()
@@ -1121,10 +1117,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         shared.dependencies[file.idx()].get_or_init(|| self.dependencies_of(file))
     }
 
-    fn load_graph(&self, roots: &[FileId], already_loaded: &LoadedGraph, loaded: &mut LoadedGraph, builtin_modules_in_order: &mut Vec<Atom>) {
+    fn load_graph(&self, roots: &[FileId], loaded: &mut LoadedGraph, builtin_modules_in_order: &mut Vec<Atom>) {
         let mut pending: Vec<FileId> = roots.iter().rev().copied().collect();
         while let Some(file) = pending.pop() {
-            if self.is_declaration_only(file) || already_loaded.files.contains(&file) || !loaded.files.insert(file) {
+            if self.is_declaration_only(file) || !loaded.files.insert(file) {
                 continue;
             }
             let first_imported = pending.len();
@@ -1133,7 +1129,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     Dependency::Module(imported) => pending.push(imported),
                     Dependency::External(specifier) => {
                         let specifier = self.host_specifier(specifier);
-                        if imports::is_builtin_specifier(self.c.atoms().bytes(specifier)) && !already_loaded.builtin_modules.contains(&specifier) && loaded.builtin_modules.insert(specifier) {
+                        if imports::is_builtin_specifier(self.c.atoms().bytes(specifier)) && loaded.builtin_modules.insert(specifier) {
                             builtin_modules_in_order.push(specifier);
                         }
                     }
@@ -1141,31 +1137,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             pending[first_imported..].reverse();
         }
-    }
-
-    fn loaded_by_every_entry_point(&self) -> &'c LoadedGraph {
-        let shared = self.shared;
-        shared.loaded_by_every_entry_point.get_or_init(|| {
-            let mut common: Option<LoadedGraph> = None;
-            for roots in shared.entry_points() {
-                let mut loaded = LoadedGraph::default();
-                self.load_graph(roots, &LoadedGraph::default(), &mut loaded, &mut Vec::new());
-                common = Some(match common {
-                    Some(common) => LoadedGraph { files: &common.files & &loaded.files, builtin_modules: &common.builtin_modules & &loaded.builtin_modules },
-                    None => loaded,
-                });
-            }
-            common.unwrap_or_default()
-        })
-    }
-
-    fn builtin_modules_loaded_by_import(&self, imported: FileId) -> &'c [Atom] {
-        let shared = self.shared;
-        shared.builtin_modules_loaded_by_import[imported.idx()].get_or_init(|| {
-            let mut in_order = Vec::new();
-            self.load_graph(&[imported], self.loaded_by_every_entry_point(), &mut LoadedGraph::default(), &mut in_order);
-            in_order
-        })
     }
 
     fn is_side_effect_import(&self, file: FileId, imported: FileId) -> bool {
@@ -2172,10 +2143,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn emit_dynamic_import(&mut self, fx: &mut Fx, file: FileId, is_node_mode: bool, ticket: V) {
-        for &specifier in self.builtin_modules_loaded_by_import(file) {
-            let global = self.external_module_global(file, specifier);
-            self.load_external_module(fx, global, file, specifier);
-        }
         let undefined = self.emit(fx, Op::Undefined);
         self.emit_throwing(fx, Op::Await(undefined));
         let later_roots: Vec<FileId> = self.shared.entry_points().iter().filter(|roots| roots.first() == Some(&file)).flat_map(|roots| roots[1..].iter().rev().copied()).collect();

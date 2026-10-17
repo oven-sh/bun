@@ -261,7 +261,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLArray<IDL>> : Bun::DefaultTryConverte
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (dynamicDowncast<JSC::JSArray>(value))
+        if (value.isCell() && value.asCell()->classInfo() == JSC::JSArray::info())
             return Bun::convertIDL<typename Bun::Bindgen::IDLArray<IDL>::Base>(globalObject, value, ctx);
         return std::nullopt;
     }

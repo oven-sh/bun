@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * fs.read()/fs.readSync(fd, buffer, offset, length) validated `offset` before
  * the type of `buffer`. With both arguments invalid, Bun threw ERR_OUT_OF_RANGE

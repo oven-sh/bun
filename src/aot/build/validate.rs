@@ -63,8 +63,9 @@ fn utf16_length(text: &[u8]) -> i64 {
 pub(crate) struct Validators {
     plans: Vec<Rc<ValidationPlan>>,
     plan_numbers: FxHashMap<(TypeId, bool), u32>,
+    exact_plan_numbers: FxHashMap<TypeId, Option<u32>>,
     functions: FxHashMap<GeneratedFunction, FuncId>,
-    functions_by_type: FxHashMap<(TypeId, bool, bool, bool, bool), GeneratedFunction>,
+    functions_by_type: FxHashMap<(TypeId, bool, bool, bool, bool, bool), GeneratedFunction>,
     sources: Vec<GeneratedFunction>,
     rejection_marker: Option<GlobalId>,
     is_building_recursive_node: bool,
@@ -140,6 +141,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let validated = self.emit_root_validation(fx, &plan, number, None, value, which != ValidationCall::Parse);
         Some(self.coerce_to(fx, validated, Ty { id: created, checked: ty }, CoerceReason::Cast))
+    }
+
+    fn exact_plan(&mut self, ty: TypeId) -> Option<(Rc<ValidationPlan>, u32)> {
+        let number = match self.validators.exact_plan_numbers.get(&ty) {
+            Some(&known) => known,
+            None => {
+                let plan = self.c.exact_parse_plan(ty).filter(parse::is_parsed_by_type);
+                let number = plan.map(|plan| {
+                    self.validators.plans.push(Rc::new(plan));
+                    self.validators.plans.len() as u32 - 1
+                });
+                self.validators.exact_plan_numbers.insert(ty, number);
+                number
+            }
+        }?;
+        Some((self.validators.plans[number as usize].clone(), number))
+    }
+
+    pub(crate) fn parse_for_destination_type(&mut self, fx: &mut Fx, e: ExprId, call: CallId) -> Option<V> {
+        if !fx.is_typed {
+            return None;
+        }
+        let ty = self.c.parsed_text_destination(fx.file, e)?;
+        let (plan, number) = self.exact_plan(ty)?;
+        let hir = self.hir(fx.file);
+        let text = self.expr(fx, hir.id_at(hir[call].args, 0));
+        Some(self.emit_exact_parse(fx, &plan, number, text))
     }
 
     fn emit_safe_result(&mut self, fx: &mut Fx, declared: Option<TypeId>, is_success: bool, name: &[u8], value: V) -> V {
@@ -723,8 +751,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             GeneratedFunction::Parser(number, node) => (number, node, true, false),
             _ => return created,
         };
-        match self.validators.plans[number as usize].node_identity(node) {
-            Some((ty, is_strict, omits_members)) => *self.validators.functions_by_type.entry((ty, is_strict, omits_members, is_parser, records_issues)).or_insert(created),
+        let plan = &self.validators.plans[number as usize];
+        match plan.node_identity(node) {
+            Some((ty, is_strict, omits_members)) => *self.validators.functions_by_type.entry((ty, is_strict, omits_members, is_parser, records_issues, plan.is_exact)).or_insert(created),
             None => created,
         }
     }

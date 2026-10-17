@@ -613,6 +613,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             operand.is_untyped = false;
         }
+        if self.files.module(file).builtin.is_some() {
+            operand.is_untyped = false;
+        }
         let types = operand.types;
         let kind = if operand.depends_on_type_parameter {
             Operand::DependsOnTypeParameter
@@ -958,7 +961,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         self.recorded_mutations().sites[mutation as usize][Operand::BuiltInAsValue as usize] += 1;
-        if of_place.is_empty() {
+        if of_place.is_empty() && self.files.module(file).builtin.is_none() {
             self.record_untyped_site(mutation, file, None, e);
             let at = Place { file, pos: self.hir(file)[e].pos };
             let recorded = self.recorded_mutations();

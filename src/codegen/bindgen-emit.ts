@@ -149,7 +149,7 @@ const kindTests: Record<Exclude<ValueKind, JSClass>, { ofValue?: (value: string)
   bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "cell->isHeapBigInt()" },
   string: { ofCell: "cell->isString()" },
   stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
-  array: { ofCell: "cell->inherits<JSC::JSArray>()" },
+  array: { ofCell: "cell->classInfo() == JSC::JSArray::info()" },
   arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
   arrayBufferView: { ofCell: "cell->inherits<JSC::JSArrayBufferView>()" },
 };

@@ -273,6 +273,189 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.read(result)
     }
 
+    pub(super) fn emit_exact_parse(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, source: V) -> V {
+        let (general_path, done) = (fx.b.new_block(), fx.b.new_block());
+        let result = self.new_temporary(fx);
+        let is_text = self.emit_typeof_test(fx, source, b"string");
+        self.continue_if(fx, is_text, general_path);
+        let text = self.claim_type(fx, source, self.known.string);
+        let (char_code_at, one, space) = (self.out.strs.intern(b"charCodeAt"), self.emit(fx, Op::Int(1)), self.emit(fx, Op::Int(0x20)));
+        let second = self.emit_throwing(fx, Op::CallMethod { obj: text, name: char_code_at, args: [one].into_iter().collect() });
+        let is_compact = self.emit(fx, Op::Relational { op: RelOp::Gt, a: second, b: space });
+        self.continue_if(fx, is_compact, general_path);
+        let opened = self.emit_parser_operation(fx, Operation::JSONOpen, &[source], self.known.counter);
+        self.continue_if_parsed(fx, opened, general_path);
+        let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
+        let (value, end) = self.emit_parsed(fx, plan, number, plan.root, opened, Found::Expected, general_path);
+        self.validators.is_speculative = was_speculative;
+        let is_complete = self.emit_parser_operation(fx, Operation::JSONClose, &[end], self.known.boolean);
+        let complete = fx.b.new_block();
+        fx.b.branch(is_complete, complete, general_path);
+        fx.b.seal(complete);
+        fx.b.switch_to(complete);
+        fx.b.write(result, value);
+        fx.b.jump(done);
+        fx.b.seal(general_path);
+        fx.b.switch_to(general_path);
+        self.emit_parser_operation(fx, Operation::JSONAbandon, &[], self.known.undefined);
+        let parsed = self.emit_global_method_call(fx, b"JSON", b"parse", &[source]);
+        fx.b.write(result, parsed);
+        fx.b.jump(done);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+        fx.b.read(result)
+    }
+
+    fn emit_compact_object_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, start: V, malformed: BlockId) {
+        let Planned::Object { members, .. } = &plan.nodes[node as usize].planned else { return };
+        let is_recursive = reaches(plan, node, node, &mut Vec::new());
+        let fails = if is_recursive { malformed } else { fx.b.new_block() };
+        let cursor = fx.b.new_var(self.known.counter);
+        fx.b.write(cursor, start);
+        let has_members = self.new_flag(fx);
+        let no = self.emit(fx, Op::Bool(false));
+        fx.b.write(has_members, no);
+        let undefined = self.emit(fx, Op::Undefined);
+        let mut values = Vec::with_capacity(members.len());
+        let mut follows_member = false;
+        for (at, member) in members.iter().enumerate() {
+            let opener = opening_byte(plan, member.node);
+            let key = [b"\"", &member.name[..], b"\":", opener.as_slice()].concat();
+            let held = self.new_temporary(fx);
+            fx.b.write(held, undefined);
+            let next = fx.b.new_block();
+            let absent = if member.is_optional { next } else { fails };
+            let before = fx.b.read(cursor);
+            let within = if follows_member {
+                self.continue_after_text(fx, before, &[b",", &key[..]].concat(), !member.is_optional, absent)
+            } else if at == 0 {
+                self.continue_after_text(fx, before, &key, !member.is_optional, absent)
+            } else {
+                let key_start = fx.b.new_var(self.known.counter);
+                fx.b.write(key_start, before);
+                let (after_comma, at_key) = (fx.b.new_block(), fx.b.new_block());
+                let follows_member = fx.b.read(has_members);
+                fx.b.branch(follows_member, after_comma, at_key);
+                fx.b.seal(after_comma);
+                fx.b.switch_to(after_comma);
+                let after = self.continue_after_text(fx, before, b",", false, absent);
+                fx.b.write(key_start, after);
+                fx.b.jump(at_key);
+                fx.b.seal(at_key);
+                fx.b.switch_to(at_key);
+                let key_start = fx.b.read(key_start);
+                self.continue_after_text(fx, key_start, &key, !member.is_optional, absent)
+            };
+            let (value, after) = self.emit_parsed(fx, plan, number, member.node, within, Found::Opened, fails);
+            fx.b.write(held, value);
+            fx.b.write(cursor, after);
+            if !follows_member {
+                let yes = self.emit(fx, Op::Bool(true));
+                fx.b.write(has_members, yes);
+            }
+            fx.b.jump(next);
+            fx.b.seal(next);
+            fx.b.switch_to(next);
+            values.push(fx.b.read(held));
+            follows_member |= !member.is_optional;
+        }
+        let before = fx.b.read(cursor);
+        let end = self.continue_after_text(fx, before, b"}", true, fails);
+        let created = self.emit(fx, Op::NewObject);
+        for (member, &value) in members.iter().zip(&values) {
+            let name = self.emit_text(fx, &member.name);
+            if !member.is_optional {
+                self.operation(fx, Operation::DefineField, &[created, name, value]);
+                continue;
+            }
+            let is_absent = self.emit(fx, Op::StrictEq { a: value, b: undefined });
+            let next = fx.b.new_block();
+            self.continue_unless(fx, is_absent, next);
+            self.operation(fx, Operation::DefineField, &[created, name, value]);
+            fx.b.jump(next);
+            fx.b.seal(next);
+            fx.b.switch_to(next);
+        }
+        self.return_parsed(fx, created, end);
+        if !is_recursive {
+            fx.b.seal(fails);
+            fx.b.switch_to(fails);
+            let back = self.emit(fx, Op::Int(-1));
+            let brace = self.emit(fx, Op::Binary { op: BinOp::Add, a: start, b: back });
+            fx.b.func.values[brace.idx()].ty = self.known.counter;
+            let value = self.emit_parser_operation(fx, Operation::JSONValueAt, &[brace], self.out.tys.anything);
+            let end = self.continue_after_parsed_value(fx, malformed);
+            self.return_parsed(fx, value, end);
+        }
+    }
+
+    fn continue_after_compact_separator(&mut self, fx: &mut Fx, cursor: Var, closer: &[u8], continues: BlockId, fails: BlockId) {
+        let at = fx.b.read(cursor);
+        let after = self.advance(fx, at, 1);
+        fx.b.write(cursor, after);
+        let (ends, done) = (fx.b.new_block(), fx.b.new_block());
+        self.branch_on_text(fx, at, b",", false, continues, ends);
+        fx.b.seal(ends);
+        fx.b.switch_to(ends);
+        self.branch_on_text(fx, at, closer, true, done, fails);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+    }
+
+    fn emit_compact_list_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, held: u32, is_dictionary: bool, start: V, fails: BlockId) {
+        let closer: &[u8] = if is_dictionary { b"}" } else { b"]" };
+        let created = if is_dictionary { self.emit(fx, Op::NewObject) } else { self.emit_throwing(fx, Op::NewArray(Args::new())) };
+        let cursor = fx.b.new_var(self.known.counter);
+        fx.b.write(cursor, start);
+        let (is_empty, turn, done) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+        self.branch_on_text(fx, start, closer, false, is_empty, turn);
+        fx.b.seal(is_empty);
+        fx.b.switch_to(is_empty);
+        let after = self.advance(fx, start, 1);
+        fx.b.write(cursor, after);
+        fx.b.jump(done);
+        fx.b.switch_to(turn);
+        self.emit(fx, Op::Poll);
+        let at = fx.b.read(cursor);
+        if is_dictionary {
+            let key_start = self.continue_after_text(fx, at, b"\"", true, fails);
+            let key = self.emit_parser_operation(fx, Operation::JSONKeyAt, &[key_start], self.known.string);
+            let after_key = self.continue_after_parsed_value(fx, fails);
+            let within = self.continue_after_text(fx, after_key, b":", true, fails);
+            let (value, after) = self.emit_parsed(fx, plan, number, held, within, Found::Expected, fails);
+            self.operation(fx, Operation::PutByValDirect, &[created, key, value]);
+            fx.b.write(cursor, after);
+        } else {
+            let (item, after) = self.emit_parsed(fx, plan, number, held, at, Found::Expected, fails);
+            let push = self.out.strs.intern(b"push");
+            self.emit_throwing(fx, Op::CallMethod { obj: created, name: push, args: [item].into_iter().collect() });
+            fx.b.write(cursor, after);
+        }
+        self.continue_after_compact_separator(fx, cursor, closer, turn, fails);
+        fx.b.seal(turn);
+        fx.b.jump(done);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+        let end = fx.b.read(cursor);
+        self.return_parsed(fx, created, end);
+    }
+
+    fn emit_compact_tuple_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, elements: &[u32], start: V, fails: BlockId) {
+        let mut cursor = start;
+        let mut items = Vec::with_capacity(elements.len());
+        for (at, &element) in elements.iter().enumerate() {
+            if at > 0 {
+                cursor = self.continue_after_text(fx, cursor, b",", true, fails);
+            }
+            let (item, after) = self.emit_parsed(fx, plan, number, element, cursor, Found::Expected, fails);
+            items.push(item);
+            cursor = after;
+        }
+        let end = self.continue_after_text(fx, cursor, b"]", true, fails);
+        let created = self.emit_list(fx, &items);
+        self.return_parsed(fx, created, end);
+    }
+
     fn parser_for(&mut self, fx: &Fx, number: u32, node: u32, ty: TypeId) -> FuncId {
         let function = self.helper_function(fx, GeneratedFunction::Parser(number, node), 1);
         self.out.funcs[function.idx()].params = vec![self.known.counter];
@@ -285,6 +468,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn emit_parsed(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, cursor: V, found: Found, fails: BlockId) -> (V, V) {
         let described = &plan.nodes[node as usize];
+        if plan.is_exact && !is_parsed_in_place(plan, node) && matches!(described.planned, Planned::Object { .. }) {
+            self.jump_to_unreachable(fx, fails);
+            return (self.emit(fx, Op::Undefined), cursor);
+        }
         if !is_parsed_in_place(plan, node) {
             let value = self.emit_parser_operation(fx, Operation::JSONValueAt, &[cursor], self.out.tys.anything);
             let end = self.continue_after_parsed_value(fx, fails);
@@ -360,7 +547,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 (self.emit_text(fx, wanted), end)
             }
             Planned::Object { ty, .. } | Planned::Array { ty, .. } | Planned::Tuple { ty, .. } | Planned::Dictionary { ty, .. } => {
-                let parser = self.parser_for(fx, number, node, if matches!(described.planned, Planned::Dictionary { .. }) { TypeId::UNRESOLVED } else { *ty });
+                let parser = self.parser_for(fx, number, node, if plan.is_exact || matches!(described.planned, Planned::Dictionary { .. }) { TypeId::UNRESOLVED } else { *ty });
                 let created = self.emit_throwing(fx, Op::CallDirect { func: parser, args: [cursor].into_iter().collect() });
                 let undefined = self.emit(fx, Op::Undefined);
                 let is_refused = self.emit(fx, Op::StrictEq { a: created, b: undefined });
@@ -430,6 +617,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(next);
         }
         match &plan.nodes[node as usize].planned {
+            Planned::Dictionary { held, .. } if plan.is_exact => self.emit_compact_list_parser(fx, &plan, number, *held, true, start, fails),
+            Planned::Array { element, .. } if plan.is_exact => self.emit_compact_list_parser(fx, &plan, number, *element, false, start, fails),
+            Planned::Object { .. } if plan.is_exact => self.emit_compact_object_parser(fx, &plan, number, node, start, fails),
+            Planned::Tuple { elements, .. } if plan.is_exact => self.emit_compact_tuple_parser(fx, &plan, number, elements, start, fails),
             Planned::Dictionary { held, .. } => self.emit_dictionary_parser(fx, &plan, number, *held, start, fails),
             Planned::Object { .. } => self.emit_object_parser(fx, &plan, number, node, start, fails),
             Planned::Array { ty, element } => self.emit_array_parser(fx, &plan, number, node, *ty, *element, start, fails),

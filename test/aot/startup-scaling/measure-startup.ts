@@ -60,6 +60,7 @@ function openLibc() {
     ptrace: { args: [FFIType.i64, FFIType.i32, FFIType.u64, FFIType.u64], returns: FFIType.i64_fast },
     waitpid: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
     personality: { args: [FFIType.u64], returns: FFIType.i32 },
+    prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
     __errno_location: { args: [], returns: FFIType.ptr },
   }).symbols;
 }
@@ -91,7 +92,7 @@ function spawnWithoutASLR({ personality }: Libc, request: Request) {
 }
 
 function openInstructionCounter({ syscall }: Libc, pid: number, allThreads: boolean) {
-  const SYS_perf_event_open = 298,
+  const SYS_perf_event_open = process.arch === "arm64" ? 241 : 298,
     PERF_TYPE_HARDWARE = 0,
     PERF_COUNT_HW_INSTRUCTIONS = 1n,
     sizeofAttr = 128;
@@ -231,7 +232,11 @@ export async function profileStartup(request: Request): Promise<Profile> {
 export async function measureStartup(request: Request): Promise<Measurement> {
   if (process.platform === "darwin") return measureWithRusage(request);
   const libc = openLibc();
-  return (!request.forcePtrace && (await measureWithPerf(libc, request))) || measureWithPtrace(libc, request);
+  const PR_SET_THP_DISABLE = 41;
+  libc.prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+  const measured = !request.forcePtrace && (await measureWithPerf(libc, request));
+  if (!measured && process.arch === "arm64") throw new Error("this machine has no hardware instruction counter, and single-stepping cannot count on arm64: a store-exclusive never succeeds under it");
+  return measured || measureWithPtrace(libc, request);
 }
 
 if (import.meta.main) console.log(JSON.stringify(await measureStartup(await Bun.stdin.json())));

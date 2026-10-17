@@ -49,7 +49,8 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
 
     bool isStrictFrame = encounteredStrictFrame;
     JSC::JSCell* callee = stackFrame.callee();
-    if (!isStrictFrame) {
+    bool isHiddenBuiltin = !stackFrame.codeBlock() && stackFrame.stackFrame().codeBlockIfExists();
+    if (!isStrictFrame && !isHiddenBuiltin) {
         if (auto* executable = stackFrame.stackFrame().ownerExecutable()) {
             isStrictFrame = executable->isInStrictContext();
         } else if (stackFrame.stackFrame().isTypedAOTFrame()) {
@@ -95,7 +96,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (!stackFrame.stackFrame().hasLineAndColumnInfo()) {
+    if (isHiddenBuiltin || !stackFrame.stackFrame().hasLineAndColumnInfo()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {

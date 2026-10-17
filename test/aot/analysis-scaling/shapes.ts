@@ -104,7 +104,32 @@ console.log(typeof new Wide<{}>().input(1).schema);
 `;
 }
 
+function genericBuilderEnteringUnionWithAnotherClass(methods: number) {
+  const indexes = Array.from({ length: methods }, (_, index) => index);
+  return `class Router {
+  routes: string[] = [];
+${indexes.map(index => `  m${index}(path: string): Router { this.routes.push(path); return this; }\n`).join("")}  fetch(request: string): string { return request + this.routes.length; }
+}
+class Builder<Routes> {
+  constructor(readonly held: Routes) {}
+${indexes.map(index => `  m${index}(path: string): Builder<Routes & { r${index}: string }> { return new Builder({ ...this.held, r${index}: path }); }\n`).join("")}  fetch(request: string): string { return request + Object.keys(this.held as object).length; }
+}
+function mount(input: ((request: string) => string) | { fetch(request: string): string } | Router): string {
+  return typeof input === "function" ? input("f") : input.fetch("o");
+}
+export const mounted = mount(new Builder({})) + mount(new Router());
+`;
+}
+
 export const shapes: Shape[] = [
+  {
+    name: "generic builder entering a union with another class",
+    counted: "methods of the same names in both classes",
+    sizes: [8, 12, 16],
+    instructionsPerItem: 10_000_000,
+    bytesPerItem: 1024 * 1024,
+    write: count => ({ "main.ts": genericBuilderEnteringUnionWithAnotherClass(count) }),
+  },
   {
     name: "builder interfaces that return one another",
     counted: "methods that merge two context arguments",

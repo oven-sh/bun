@@ -2269,6 +2269,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if self.out.funcs[func.idx()].kind != FuncKind::Constructor {
                 for view in self.layout_types_in(this) {
                     self.c.record_untyped_inflow(view);
+                    if !self.c.is_instance_type(view) {
+                        self.c.record_any_inflow(view);
+                    }
                 }
             }
         }

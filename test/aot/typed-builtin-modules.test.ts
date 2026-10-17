@@ -49,7 +49,7 @@ const modulesWithUntypedFunctions = [
   "node:_http_incoming", "node:_http_server", "node:_stream_duplex", "node:_stream_passthrough",
   "node:_stream_readable", "node:_stream_transform", "node:_stream_wrap", "node:_stream_writable", "node:_tls_common", "node:_tls_wrap",
   "node:assert", "node:assert/strict", "node:async_hooks", "node:child_process", "node:cluster", "node:console", "node:crypto",
-  "node:dgram", "node:diagnostics_channel", "node:dns", "node:dns/promises", "node:domain", "node:events", "node:fs", "node:fs/promises",
+  "node:dgram", "node:diagnostics_channel", "node:dns", "node:dns/promises", "node:domain", "node:fs", "node:fs/promises",
   "node:http", "node:http2", "node:https", "node:inspector", "node:inspector/promises", "node:net", "node:os", "node:path/posix",
   "node:path/win32", "node:perf_hooks", "node:punycode", "node:quic", "node:readline", "node:readline/promises", "node:repl",
   "node:stream", "node:stream/consumers", "node:stream/iter", "node:stream/promises", "node:stream/web", "node:test", "node:timers",

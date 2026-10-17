@@ -15,7 +15,7 @@
 // option must only print: the executable has to be the same bytes with and without it.
 import { expect } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { test } from "../supported";
 
@@ -82,7 +82,7 @@ function program(modules: number): Record<string, string> {
 type Build = { cpu: number; phases: Map<string, number>; hash: number | bigint };
 
 function build(folder: string, logs: boolean): Build {
-  const executable = join(folder, "main");
+  const executable = join(folder, isWindows ? "main.exe" : "main");
   const built = Bun.spawnSync({
     cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", executable],
     cwd: folder,

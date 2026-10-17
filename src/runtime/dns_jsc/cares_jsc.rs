@@ -388,8 +388,7 @@ fn txt_reply_to_js_for_any(
     })
 }
 
-/// One inner array of strings per TXT record, split on `is_record_start()`.
-/// `wrap` turns each inner array into the outer array element.
+/// One inner array per TXT record, split on `is_record_start()`. `wrap` builds each outer element.
 fn txt_records_to_js_array(
     head: &c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,

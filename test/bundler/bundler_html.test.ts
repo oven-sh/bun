@@ -304,6 +304,33 @@ h1 {
     },
   });
 
+  itBundled("html/font-face-quoted-values", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./index.css">
+  </head>
+</html>`,
+      "/index.css": `
+@font-face {
+  font-family: "Custom Test Font";
+  src: url(test.woff2) format("woff2-variations");
+}`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+      const cssMatch = htmlContent.match(/href="(.*?\.css)"/);
+      if (!cssMatch) throw new Error("Could not find CSS file reference in HTML");
+      const cssBundle = api.readFile("out/" + cssMatch[1]);
+      expect(cssBundle).toMatch(/font-family:\s*"Custom Test Font"/);
+      expect(cssBundle).toMatch(/format\("woff2-variations"\)/);
+    },
+  });
+
   // Test multiple HTML entry points
   itBundled("html/multiple-entries", {
     outdir: "out/",

@@ -166,3 +166,36 @@ describe.each([
     }
   });
 });
+
+test("Bun.serve's Date header timer is not enrolled in fake timers", async () => {
+  using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("hi") });
+
+  jest.useFakeTimers();
+  try {
+    // Accepting the connection arms the internal 1s Date header timer.
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    await res.text();
+
+    expect(jest.getTimerCount()).toBe(0);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("runAllTimers returns while Bun.serve holds a keep-alive connection", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", path.join(import.meta.dir, "test-timers-date-header-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // On a regressed build runAllTimers() never returns (the Date header timer
+    // re-arms itself into the fake heap on every pop), so bound the child.
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error(stderr);
+  expect(stdout).toContain("RUN_ALL_OK");
+  // null => exited on its own; non-null => killed by the spawn timeout (spun).
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

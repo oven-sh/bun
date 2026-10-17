@@ -70,15 +70,36 @@ fn is_npm_alias(version: &dependency::Version) -> bool {
     version.tag == VersionTag::Npm && version.npm().is_alias
 }
 
+/// Which ranges a rule keyed `name@<range>` selects.
+#[derive(Clone, Copy)]
+enum Selects {
+    /// Every range that overlaps with the key's, as in npm and pnpm.
+    Overlapping,
+    /// Only the key's own range, compared as text, as in yarn.
+    SameRange,
+}
+
 /// Whether a rule keyed `name@<range>` selects a dependency declared as `declared`.
-fn range_selects(range: &dependency::Version, declared: &dependency::Version, buf: &[u8]) -> bool {
+fn range_selects(
+    range: &dependency::Version,
+    declared: &dependency::Version,
+    selects: Selects,
+    buf: &[u8],
+) -> bool {
     match (range.tag, declared.tag) {
         (VersionTag::Npm, VersionTag::Npm) => {
+            let text = |version: &dependency::Version| {
+                dependency::without_npm_protocol(version.literal.slice(buf))
+            };
+            let is_same_text = text(range) == text(declared);
             let (range, declared) = (range.npm(), declared.npm());
             // An alias key selects aliases of the same package. A plain key never selects an alias.
             range.is_alias == declared.is_alias
                 && (!range.is_alias || range.name.eql(declared.name, buf, buf))
-                && range.version.intersects(buf, &declared.version, buf)
+                && match selects {
+                    Selects::Overlapping => range.version.intersects(buf, &declared.version, buf),
+                    Selects::SameRange => is_same_text,
+                }
         }
         (VersionTag::Catalog, VersionTag::Catalog) => {
             CatalogMap::same_name(range.catalog().slice(buf), declared.catalog().slice(buf))
@@ -214,6 +235,24 @@ impl OverrideMap {
         self.lookup_declared(lockfile, dependency_id, name_hash, declared)
     }
 
+    /// The rule that yarn applies: a key with a range only selects a dependency that declares the
+    /// same range.
+    pub(crate) fn lookup_as_yarn(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+    ) -> Option<OverrideRule<'_>> {
+        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+        self.lookup_selecting(
+            lockfile,
+            dependency_id,
+            name_hash,
+            declared,
+            Selects::SameRange,
+        )
+    }
+
     /// `declared` is the version being resolved. `enqueue_pinned` resolves another one than the row's.
     pub(crate) fn lookup_declared(
         &self,
@@ -222,9 +261,28 @@ impl OverrideMap {
         name_hash: PackageNameHash,
         declared: &dependency::Version,
     ) -> Option<OverrideRule<'_>> {
+        self.lookup_selecting(
+            lockfile,
+            dependency_id,
+            name_hash,
+            declared,
+            Selects::Overlapping,
+        )
+    }
+
+    fn lookup_selecting(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+        declared: &dependency::Version,
+        selects: Selects,
+    ) -> Option<OverrideRule<'_>> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if !self.scoped.is_empty() && self.scoped_names.contains(&name_hash) {
-            if let Some(rule) = self.scoped_rule_for(lockfile, dependency_id, name_hash, declared) {
+            if let Some(rule) =
+                self.scoped_rule_for(lockfile, dependency_id, name_hash, declared, selects)
+            {
                 return Some(OverrideRule::Scoped(rule));
             }
         }
@@ -246,6 +304,7 @@ impl OverrideMap {
         dependency_id: DependencyID,
         name_hash: PackageNameHash,
         declared: &dependency::Version,
+        selects: Selects,
     ) -> Option<&'s ScopedOverride> {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let mut owner: Option<Option<(PackageNameHash, Option<SemverVersion>)>> = None;
@@ -288,7 +347,7 @@ impl OverrideMap {
                 if best.is_some_and(|(_, best_tier)| best_tier > tier + 1) {
                     continue;
                 }
-                if !range_selects(&rule.target_range, declared, buf) {
+                if !range_selects(&rule.target_range, declared, selects, buf) {
                     continue;
                 }
                 tier += 1;

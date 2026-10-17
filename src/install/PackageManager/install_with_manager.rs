@@ -2384,21 +2384,19 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .collect()
 }
 
-/// Whether the key of the rule for `row` has another range than `row` declares, and `row` resolves
-/// to a version in the range that it declares.
-fn follows_another_range(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
+/// Whether `row` resolves to a version that the rule allows that yarn applies to it, or, if yarn
+/// applies none, the range that `row` declares.
+fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependency = &lockfile.buffers.dependencies[row as usize];
-    let Some(lockfile::override_map::OverrideRule::Scoped(rule)) =
-        crate::dedupe::applied_override(lockfile, row, dependency)
-    else {
-        return false;
-    };
-    rule.has_target_range()
-        && !(rule.target_range.literal).eql(dependency.version.literal, buf, buf)
-        && dependency.version.try_npm().is_some_and(|npm| {
+    (lockfile.overrides)
+        .lookup_as_yarn(lockfile, row, dependency.name_hash)
+        .map_or(&dependency.version, |rule| rule.version())
+        .try_npm()
+        .is_some_and(|npm| {
             let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
-            npm.version.satisfies(resolved.version, buf, buf)
+            npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
+                && npm.version.satisfies(resolved.version, buf, buf)
         })
 }
 
@@ -2415,13 +2413,13 @@ fn reresolve_rows_outside_overrides(
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
     // yarn applies a `resolutions` key that has a range only to a dependency declared with exactly
-    // that range. For any other range, a migrated yarn.lock has the version that yarn resolved.
+    // that range, so a migrated yarn.lock has versions that follow that reading of the rules.
     if manager.lockfile.overrides.has_scoped()
         && overrides_field(manager, root_package_json_path)
             == lockfile::override_map::Field::Resolutions
     {
         let lockfile: &Lockfile = &manager.lockfile;
-        outside.retain(|&(row, package_id)| !follows_another_range(lockfile, row, package_id));
+        outside.retain(|&(row, package_id)| !is_as_yarn_resolves(lockfile, row, package_id));
     }
     let lockfile: &Lockfile = &manager.lockfile;
     let dependencies = lockfile.buffers.dependencies.as_slice();

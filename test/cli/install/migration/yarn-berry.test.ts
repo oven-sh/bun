@@ -614,6 +614,95 @@ describe("yarn berry migration", () => {
     expect(exitCode).toBe(0);
   });
 
+  describe("a bun.lock row that the resolution for its range does not allow", () => {
+    const npmEntry = (version: string) => [
+      `version: ${version}`,
+      `resolution: "no-deps@npm:${version}"`,
+      "languageName: node",
+      "linkType: hard",
+    ];
+    const row = (bunLock: string, version: string) =>
+      bunLock.match(new RegExp(`\\["no-deps@${version.replaceAll(".", "\\.")}"[^\\]]*\\]`))![0];
+
+    /** Puts no-deps@1.1.0, which every range below allows, where bun.lock has no-deps@`version`. */
+    async function lockAt110(dir: string, version: string) {
+      const { packageDir: scratch } = await testRegistry.createTestDir({
+        files: { "package.json": JSON.stringify({ name: "scratch", dependencies: { "no-deps": "1.1.0" } }) },
+      });
+      expect((await run(scratch, "install", "--lockfile-only")).exitCode).toBe(0);
+      const [bunLock, other] = await Promise.all([dir, scratch].map(at => Bun.file(join(at, "bun.lock")).text()));
+      await Bun.write(join(dir, "bun.lock"), bunLock.replace(row(bunLock, version), row(other, "1.1.0")));
+    }
+
+    async function expectFrozenInstallToFail(dir: string) {
+      const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile");
+      expect(stderr).toContain(
+        "error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has no-deps@1.1.0, ",
+      );
+      expect(exitCode).toBe(1);
+    }
+
+    // Both keys overlap with the root's ^1.0.1. yarn goes by the key that has that range.
+    test.concurrent("next to a key with another range that overlaps", async () => {
+      const { packageDir: dir } = await testRegistry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "berry-two-range-resolutions",
+            dependencies: { "no-deps": "^1.0.1", "one-range-dep": "^1.0.0" },
+            resolutions: { "no-deps@npm:^1.0.0": "1.0.0", "no-deps@npm:^1.0.1": "1.0.1" },
+          }),
+          "yarn.lock": yarnLock({
+            "berry-two-range-resolutions@workspace:.": [
+              "version: 0.0.0-use.local",
+              'resolution: "berry-two-range-resolutions@workspace:."',
+              "dependencies:",
+              '  no-deps: "npm:^1.0.1"',
+              '  one-range-dep: "npm:^1.0.0"',
+              "languageName: unknown",
+              "linkType: soft",
+            ],
+            "no-deps@npm:1.0.0": npmEntry("1.0.0"),
+            "no-deps@npm:1.0.1": npmEntry("1.0.1"),
+            "one-range-dep@npm:^1.0.0": [
+              "version: 1.0.0",
+              'resolution: "one-range-dep@npm:1.0.0"',
+              "dependencies:",
+              '  no-deps: "npm:^1.0.0"',
+              "languageName: node",
+              "linkType: hard",
+            ],
+          }),
+        },
+      });
+      expect((await run(dir, "pm", "migrate")).exitCode).toBe(0);
+      expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0", "no-deps@1.0.1", "one-range-dep@1.0.0"]);
+      await expectFrozenInstall(dir);
+
+      await lockAt110(dir, "1.0.1");
+      await expectFrozenInstallToFail(dir);
+    });
+
+    // `npm:^1.0.0` and `^1.0.0` are one range to yarn.
+    test.concurrent.each(["npm:^1.0.0", "^1.0.0"])("declared as %s", async range => {
+      const { packageDir: dir } = await testRegistry.createTestDir({
+        files: {
+          "package.json": JSON.stringify({
+            name: "range-resolution",
+            dependencies: { "no-deps": range },
+            resolutions: { "no-deps@npm:^1.0.0": "1.0.0" },
+          }),
+        },
+      });
+      expect((await run(dir, "install", "--lockfile-only")).exitCode).toBe(0);
+      expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
+      await expectFrozenInstall(dir);
+
+      await lockAt110(dir, "1.0.0");
+      await expectFrozenInstallToFail(dir);
+    });
+  });
+
   test.concurrent("a parent/name resolution only rebinds that parent's edge", async () => {
     const { packageDir: dir } = await testRegistry.createTestDir({
       bunfigOpts: { linker: "hoisted" },

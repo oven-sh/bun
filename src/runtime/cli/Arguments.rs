@@ -1094,9 +1094,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
-            if args.flag(b"--no-clear-screen") {
-                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
-            }
         } else if args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
 
@@ -1106,21 +1103,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             {
                 bun_core::set_auto_reload_on_crash(true);
             }
-
-            if args.flag(b"--no-clear-screen") {
-                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
-            }
         }
-
-        if let Some(kill_signal) = args.option(b"--watch-kill-signal") {
-            // Node reads --watch-kill-signal only in watch mode; elsewhere it is
-            // accepted and ignored.
-            if ctx.debug.hot_reload == HotReload::Watch {
-                super::set_watch_kill_signal(ctx, kill_signal);
-            } else {
-                ctx.debug.unused_watch_kill_signal = Some(kill_signal.into());
-            }
-        }
+        ctx.debug.no_clear_screen = args.flag(b"--no-clear-screen");
+        ctx.debug.watch_kill_signal_arg = args.option(b"--watch-kill-signal").map(Into::into);
 
         if let Some(origin) = args.option(b"--origin") {
             opts.origin = Some(origin.into());
@@ -1264,6 +1249,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if ctx.runtime_options.check {
             super::watch_instead_of_hot_for_check(ctx);
         }
+        super::apply_watch_mode_flags(ctx);
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));

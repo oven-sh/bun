@@ -185,6 +185,7 @@ async function start() {
 
   const fetch = app?.server.fetch ?? (() => new Response("Not found", { status: 404 }));
   const server = serveOnFreePort(
+    "bun bake",
     port =>
       ({
         routes,

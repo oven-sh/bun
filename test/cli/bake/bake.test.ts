@@ -194,6 +194,13 @@ test.concurrent.each([
     args: ["--port"],
     error: `"--port" needs a value.`,
   },
+  {
+    // An empty hostname would make the dev server listen on every interface, not on localhost.
+    name: "an empty host",
+    files: { "app/pages/index.html": page },
+    args: ["--host="],
+    error: `"--host" needs a hostname.`,
+  },
 ])("bun bake rejects $name", async ({ files, args, error }) => {
   using dir = tempDir("bake-command-error", files);
 
@@ -360,23 +367,56 @@ test.concurrent.each([
 });
 
 // Windows has no signal handlers to run before a reload.
-test.concurrent.skipIf(isWindows)(
-  "bun --watch-kill-signal bake --watch sends that signal before a reload",
-  async () => {
+test.concurrent.skipIf(isWindows).each([{ args: ["--watch-kill-signal", "SIGINT", "bake", "--watch"] }])(
+  "bun $args.0 $args.1 ... sends that signal before a reload: %j",
+  async ({ args }) => {
     using dir = tempDir("bake-command-kill-signal", {
+      "tsconfig.json": checkedTsconfig,
       "app/server.ts": `
+      declare const Response: any;
+      declare const process: any;
       process.on("SIGINT", () => console.log("SIGINT before reload"));
       export default { fetch: () => new Response("v1") };
     `,
     });
 
-    await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGINT", "bake", "--watch", "--port=0"]);
+    await using proc = spawnBake(String(dir), [...args, "--port=0"]);
     const output = collectOutput(proc);
     await output.waitFor(/url: /);
 
-    await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+    );
     const [line] = await output.waitFor(/SIG\w+ before reload/);
 
     expect(line).toBe("SIGINT before reload");
   },
 );
+
+test.concurrent("bun bake --hot keeps one server when it started on a later port", async () => {
+  // Take the port that `bun bake` tries first, so it starts on the next one.
+  await using blocker = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("blocker") });
+  using dir = tempDir("bake-command-hot-port", {
+    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "bake", "--hot", "--host=127.0.0.1"],
+    env: { ...env, PORT: String(blocker.port) },
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(new URL(url).port).not.toBe(String(blocker.port));
+
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  const [, next] = await output.waitFor(/url: http:\/\/\S+[\s\S]*url: (http:\/\/\S+)/);
+
+  // The reload updated the server it started, instead of starting another one.
+  expect(next).toBe(url);
+  expect(await get(url, "/")).toBe("200 v2");
+});

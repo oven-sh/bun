@@ -2801,9 +2801,8 @@ impl RunCommand {
                     }
                 }
             }
-            // Also when `--watch` or `--hot` came before `bake`.
-            if no_clear_screen && ctx.debug.hot_reload != cli::command::HotReload::None {
-                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
+            if no_clear_screen {
+                ctx.debug.no_clear_screen = true;
             }
             if check {
                 ctx.runtime_options.check = true;
@@ -2812,13 +2811,8 @@ impl RunCommand {
             if ctx.runtime_options.check {
                 cli::watch_instead_of_hot_for_check(ctx);
             }
-            // `bun --watch-kill-signal SIGINT bake --watch`: the signal was given before watch mode.
-            if hot_reload != cli::command::HotReload::Watch
-                && ctx.debug.hot_reload == cli::command::HotReload::Watch
-                && let Some(kill_signal) = ctx.debug.unused_watch_kill_signal.take()
-            {
-                cli::set_watch_kill_signal(ctx, &kill_signal);
-            }
+            // Flags before `bake` that only apply in watch mode, which may only be on now.
+            cli::apply_watch_mode_flags(ctx);
             if hot_reload != ctx.debug.hot_reload {
                 cli::set_up_watch_restarts(ctx);
             }

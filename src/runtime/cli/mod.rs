@@ -2318,8 +2318,19 @@ pub(crate) fn set_up_watch_restarts(ctx: &command::ContextData) {
     let _ = ctx;
 }
 
-/// `--watch-kill-signal` under `--watch`. Matching is case-insensitive (node uppercases).
-pub(crate) fn set_watch_kill_signal(ctx: &mut command::ContextData, kill_signal: &[u8]) {
+/// `--no-clear-screen` and `--watch-kill-signal`, once the watch mode is final. Node reads
+/// `--watch-kill-signal` only in watch mode; elsewhere it is accepted and ignored. Matching is
+/// case-insensitive (node uppercases).
+pub(crate) fn apply_watch_mode_flags(ctx: &mut command::ContextData) {
+    if ctx.debug.no_clear_screen && ctx.debug.hot_reload != command::HotReload::None {
+        let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
+    }
+    if ctx.debug.hot_reload != command::HotReload::Watch {
+        return;
+    }
+    let Some(kill_signal) = ctx.debug.watch_kill_signal_arg.as_deref() else {
+        return;
+    };
     let upper = kill_signal.to_ascii_uppercase();
     match bun_core::SignalCode::from_name(&upper) {
         Some(sig) => ctx.debug.watch_kill_signal = sig,

@@ -17,24 +17,24 @@ function defaultServeFlags(): ServeFlags {
 }
 
 /** Sets the hostname, and the port if there is one: `host`, `host:3000`, `::1`, `[::1]` or `[::1]:3000`. */
-function applyHost(value: string, flags: ServeFlags) {
-  if (value.startsWith("[")) {
-    const end = value.indexOf("]");
-    if (end !== -1) {
-      flags.hostname = value.slice(1, end);
-      const rest = value.slice(end + 1);
-      if (rest.startsWith(":")) flags.port = parseInt(rest.slice(1), 10);
-      return;
+function applyHost(name: string, value: string, flags: ServeFlags) {
+  const end = value.startsWith("[") ? value.indexOf("]") : -1;
+  if (end !== -1) {
+    flags.hostname = value.slice(1, end);
+    const rest = value.slice(end + 1);
+    if (rest.startsWith(":")) flags.port = parseInt(rest.slice(1), 10);
+  } else {
+    const colon = value.indexOf(":");
+    // More than one `:` is an IPv6 address without a port.
+    if (colon !== -1 && colon === value.lastIndexOf(":")) {
+      flags.hostname = value.slice(0, colon);
+      flags.port = parseInt(value.slice(colon + 1), 10);
+    } else {
+      flags.hostname = value;
     }
   }
-  const colon = value.indexOf(":");
-  // More than one `:` is an IPv6 address without a port.
-  if (colon !== -1 && colon === value.lastIndexOf(":")) {
-    flags.hostname = value.slice(0, colon);
-    flags.port = parseInt(value.slice(colon + 1), 10);
-  } else {
-    flags.hostname = value;
-  }
+  // `Bun.serve` reads an empty hostname as none, and listens on every interface, not on localhost.
+  if (flags.hostname === "") throw new Error(`"${name}" needs a hostname.`);
 }
 
 /**
@@ -67,7 +67,7 @@ function parseServeFlag(args: string[], i: number, flags: ServeFlags): number {
     if (name === "--port") {
       flags.port = parseInt(value, 10);
     } else {
-      applyHost(value, flags);
+      applyHost(name, value, flags);
     }
     return used;
   }
@@ -78,16 +78,24 @@ function parseServeFlag(args: string[], i: number, flags: ServeFlags): number {
  * `Bun.serve(options(port))`. When the port is in use, tries the next ports, up to 5 times.
  * `port` undefined uses Bun.serve's default port.
  */
-function serveOnFreePort(options: (port: number | undefined) => Serve.Options<undefined>, port: number | undefined) {
+function serveOnFreePort(
+  id: string,
+  options: (port: number | undefined) => Serve.Options<undefined>,
+  port: number | undefined,
+) {
+  // Under `--hot`, a reload calls this again and `Bun.serve` finds the running server by `id`.
+  // Without a fixed `id`, it looks for one on the first port, and starts a second server when the
+  // first one is on a port that the retries picked.
+  const withId = (port: number | undefined) => ({ ...options(port), id }) as Serve.Options<undefined>;
   try {
-    return Bun.serve(options(port));
+    return Bun.serve(withId(port));
   } catch (error: any) {
     if (error?.code === "EADDRINUSE") {
       let defaultPort = port || parseInt(env.PORT || env.BUN_PORT || env.NODE_PORT || "3000", 10);
       for (let remainingTries = 5; remainingTries > 0; remainingTries--) {
         try {
           // Retry with a different port up to 4 times.
-          return Bun.serve(options(defaultPort++));
+          return Bun.serve(withId(defaultPort++));
         } catch (error: any) {
           if (error?.code === "EADDRINUSE") {
             continue;

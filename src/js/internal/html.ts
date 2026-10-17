@@ -205,6 +205,7 @@ yourself with Bun.serve().
     {} as Record<string, HTMLBundle>,
   );
   const server = serveOnFreePort(
+    "bun html",
     port => ({
       routes: staticRoutes,
       development:

@@ -1517,18 +1517,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     ssl_ptr,
                 )) == 0
                 {
-                    if let Some(server_name) = this.server_name.get() {
-                        let host: &[u8] = server_name.as_ref();
-                        if !host.is_empty() {
-                            let host_z = bun_core::ZBox::from_bytes(host);
-                            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                            unsafe {
-                                boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr())
-                            };
-                        }
-                    } else if let Some(connection) = this.connection.get() {
-                        if let super::listener::UnixOrHost::Host { host, .. } = connection {
-                            let host = bun_core::ip_address::strip_ipv6_brackets(host.as_ref());
+                    // Only a client sends a server name: a server's `SSL` keeps the ClientHello's.
+                    if !this.acts_as_tls_server() {
+                        if let Some(server_name) = this.server_name.get() {
+                            let host: &[u8] = server_name.as_ref();
                             if !host.is_empty() {
                                 let host_z = bun_core::ZBox::from_bytes(host);
                                 // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
@@ -1538,6 +1530,20 @@ impl<const SSL: bool> NewSocket<SSL> {
                                         host_z.as_ptr(),
                                     )
                                 };
+                            }
+                        } else if let Some(connection) = this.connection.get() {
+                            if let super::listener::UnixOrHost::Host { host, .. } = connection {
+                                let host = bun_core::ip_address::strip_ipv6_brackets(host.as_ref());
+                                if !host.is_empty() {
+                                    let host_z = bun_core::ZBox::from_bytes(host);
+                                    // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+                                    unsafe {
+                                        boringssl_sys::SSL_set_tlsext_host_name(
+                                            ssl_ptr,
+                                            host_z.as_ptr(),
+                                        )
+                                    };
+                                }
                             }
                         }
                     }

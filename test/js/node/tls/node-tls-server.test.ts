@@ -5754,6 +5754,28 @@ describe("server names for a connection handed in with server.emit('connection')
     );
   });
 
+  // Only tls.connect() reads the option in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1803-L1805
+  describe.each(["listen", ...emitDoors] as Door[])("a server that was given a servername option, %s", door => {
+    it("asks for the name the client sent, and reports that name", async () => {
+      const calls: string[] = [];
+      const server = createServer({
+        ...agent2,
+        servername: "configured.test",
+        SNICallback(name, cb) {
+          calls.push(name);
+          cb(null, undefined);
+        },
+      } as tls.TlsOptions);
+      const named = await connectThrough(server, door, { servername: "client.test" });
+      const unnamed = await connectThrough(server, door, {});
+      expect({ calls, named: named.servername, unnamed: unnamed.servername }).toEqual({
+        calls: ["client.test"],
+        named: "client.test",
+        unnamed: false,
+      });
+    });
+  });
+
   // A client can send early data behind its ClientHello. BoringSSL skips it when the server takes none, up to 16384 bytes.
   describe.each(["Duplex", "net.Socket with unflushed writes"] as Door[])(
     "over a %s, what the peer sends before the SNICallback answered",

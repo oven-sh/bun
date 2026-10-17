@@ -99,7 +99,7 @@ pub(crate) struct NodeHTTPResponse {
     pub(crate) request_trailers: JsCell<Vec<u8>>,
     /// The JS wrapper whose `ondata` slot was armed for THIS request body. `get_this_value()`
     /// resolves through the socket's current response, which under pipelining is a different
-    /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
+    /// one; delivering through it loses the body. Rooted by the server socket; cleared on finalize.
     pub(crate) armed_this_value: Cell<JSValue>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /

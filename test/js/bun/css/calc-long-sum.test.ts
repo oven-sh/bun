@@ -1,36 +1,23 @@
 import type { Subprocess } from "bun";
 import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, runCommandMaxRSS, tempDir } from "harness";
 import path from "node:path";
 
-// A calc() sum was a binary tree with one level for each term that did not
-// fold. A long sum went wrong in three ways. The tests are in this order.
-//
-// Time: to add one value, the fold cloned the tree once for each level. A
-// difference of 800 terms (12 KB) took 39 s. This came with the port to Rust.
-// Memory: each clone stayed alive while the fold went one level down. A sum of
-// 3,000 terms and one `1vw` (45 KB) used 980 MB.
-// Stack: each pass over the tree went one frame down for each level. A sum of
-// 25,796 terms (387 KB) ran a bundler thread out of stack, and `bun build`
-// died with SIGSEGV and printed nothing. This is older than the port.
+// The time, the memory and the stack that a long calc() sum takes: https://github.com/oven-sh/bun/pull/45442
 
 // A term that does not fold, as written and as printed.
 const f = "min(1px,1em)";
 const F = "min(1px, 1em)";
 
 const slow = 2_000;
-// More terms than main had stack for, on the 4 MB stack of a bundler thread.
-// A debug build of main held 5,000 and died at 6,000. A release build held
-// 25,698 and died at 25,796. A release build with ASAN was not run, so 50,000
-// is an estimate. A thread of Windows has 18 MB, and main was not run there.
+// The stack of a bundler thread held 5,000 terms in a debug build and 25,698 in a release build.
 const long = isDebug ? 12_000 : isASAN ? 50_000 : 200_000;
 
 const repeat = (unit: string, count: number) => Buffer.alloc(unit.length * count, unit).toString();
 /** `count` copies of `unit` with `separator` between them. */
 const join = (unit: string, separator: string, count: number) => repeat(unit + separator, count - 1) + unit;
 
-// A test that times out does not stop its child, and the slow sums did not
-// finish. Stop every child that still runs after the last test.
+// A test that times out leaves its child running.
 const children = new Set<Subprocess>();
 afterAll(() => {
   for (const child of children) child.kill("SIGKILL");
@@ -50,16 +37,23 @@ async function run(cmd: string[], files: Record<string, string>) {
   children.add(proc);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   children.delete(proc);
-  const file = Bun.file(path.join(String(dir), "out", "a.css"));
-  const output = (await file.exists()) ? await file.text() : "";
-  return { stdout, stderr, output, exitCode, signalCode: proc.signalCode, maxRSS: proc.resourceUsage()?.maxRSS };
+  return { stdout, stderr, output: await outputOf(String(dir)), exitCode, signalCode: proc.signalCode };
+}
+
+async function outputOf(dir: string) {
+  const file = Bun.file(path.join(dir, "out", "a.css"));
+  return (await file.exists()) ? await file.text() : "";
 }
 
 const build = (css: string, ...flags: string[]) =>
   run(["build", "a.css", "--outdir", "out", ...flags], { "a.css": css });
 
 /** The strings are megabytes long, so a failure must not print them. */
-function expectSame(result: Awaited<ReturnType<typeof run>>, actual: string, expected: string) {
+function expectSame(
+  result: { stderr: string; exitCode: number | null; signalCode: NodeJS.Signals | null },
+  actual: string,
+  expected: string,
+) {
   const same = actual === expected;
   expect({ length: actual.length, same, stderr: same ? "" : result.stderr.slice(0, 2000) }).toEqual({
     length: expected.length,
@@ -93,9 +87,10 @@ for (const property of ["width", "outline-width"]) {
 // Memory
 
 test.concurrent("a value added to a sum of 3000 terms does not clone the sum", async () => {
-  const result = await build(`.a{width:calc(${join(f, " + ", 3000)} + 1vw)}`);
-  expectSame(result, result.output, rule(`width: calc(${join(F, " + ", 3000)} + 1vw)`));
-  // A release build uses 31 MB here. A debug build uses about 300 MB for any stylesheet.
+  using dir = tempDir("css-calc-long-sum", { "a.css": `.a{width:calc(${join(f, " + ", 3000)} + 1vw)}` });
+  const result = await runCommandMaxRSS({ cmd: [bunExe(), "build", "a.css", "--outdir", "out"], cwd: String(dir) });
+  expectSame(result, await outputOf(String(dir)), rule(`width: calc(${join(F, " + ", 3000)} + 1vw)`));
+  // The clones took 980 MB in a release build.
   expect(result.maxRSS).toBeLessThan((isDebug || isASAN ? 1024 : 256) * 1024 * 1024);
 });
 

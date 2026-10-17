@@ -52,6 +52,9 @@ private:
     void finishCreation(VM&);
 };
 
+// Whether `name` is the source URL of one of the JS modules built into Bun: "node:events", "ws".
+bool isInternalModuleName(StringView name);
+
 JSC_DECLARE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode);
 JSC_DECLARE_HOST_FUNCTION(jsInternalModuleBytecode);
 

@@ -1898,13 +1898,11 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
       leftOut: { devDependencies: { b: "^2.0.0" } },
       noCache: true,
     },
-    // The project's own scripts could have created `n/node_modules/b`, and they do not run again.
     {
       title: "--production --ignore-scripts, in a project with a prepare script",
       args: ["--production", "--ignore-scripts"],
       leftOut: { devDependencies: { b: "^2.0.0" }, scripts: { prepare: "echo prepared" } },
     },
-    // The scripts of `n` could have created `n/node_modules/b` too.
     {
       title: "--production, below a trusted package with a script",
       args: ["--production"],
@@ -1955,7 +1953,11 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
     expect(layout(dir)).toEqual(["b@1.0.0", ...(member ? [] : ["m@1.0.0"]), "n@1.0.0", "n/b@2.0.0"]);
     if (noCache) rmSync(join(dir, ".bun-cache"), { recursive: true });
     await pull();
-    if (!atOnce) await run(dir, "install", ...args);
+    if (!atOnce) {
+      // The copy has the version in bun.lock. It goes all the same: what it loads from further up moves on without it.
+      await run(dir, "install", ...args);
+      expect(layout(dir)).not.toContain("n/b@2.0.0");
+    }
 
     graph.b = { ...before, "2.1.0": published };
     await run(dev, "update");
@@ -1972,7 +1974,7 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
 });
 
 // Bun installs no node_modules out of a folder or a git checkout, so `n/node_modules/b` is not a part of `n`. An archive
-// from GitHub can hold one. The cache entry shows that this one does not. Without the entry, the version decides.
+// from GitHub can hold one. It only counts if the cache entry has it.
 test.concurrent.each([
   "file: folder",
   "git repository",
@@ -2033,8 +2035,7 @@ test.concurrent.each([
   if (kind.endsWith("cache")) rmSync(join(dir, ".bun-cache"), { recursive: true });
   await pull();
   await run(dir, "install", "--production");
-  // The copy has the version that bun.lock resolves. It only stays where it may be a part of `n`.
-  expect(layout(dir).includes("n/b@2.0.0")).toBe(kind.endsWith("cache"));
+  expect(layout(dir)).not.toContain("n/b@2.0.0");
 
   graph.b = { ...before, "2.1.0": published };
   await run(dev, "update", "b");
@@ -2088,224 +2089,6 @@ test.concurrent(
     expect(await run(join(dir, "pk", "w1"), "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
   },
 );
-
-// `n/node_modules/b` has the version that bun.lock resolves and may be from the script, so it stays. It needs c@1 and
-// loads `n/node_modules/c`, which `n` shared with it. By now `n` has moved on to the c@2 at the top.
-test.concurrent("a nested copy that stays keeps the dependency that it loads from the same folder", async () => {
-  const graph: Record<string, Record<string, object>> = {
-    m: { "1.0.0": { dependencies: { b: "^1.0.0", c: "^0.9.0" } } },
-    n: { "1.0.0": { dependencies: { b: "^2.0.0", c: "*" } } },
-    b: { "1.0.0": {}, "2.0.0": { dependencies: { c: "^1.0.0" } } },
-    c: { "0.9.0": {}, "1.0.0": {}, "2.0.0": {} },
-  };
-  using server = await serveGraph(graph, {
-    "n-1.0.0": { "index.js": `module.exports = require("b");` },
-    "b-2.0.0": { "index.js": `module.exports = require("c/package.json").version;` },
-  });
-  const { "2.0.0": published, ...before } = graph.c;
-  graph.c = before;
-
-  const files = (root: object) => ({
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "app",
-      scripts: { prepare: "echo prepared" },
-      dependencies: { m: "1.0.0", n: "1.0.0" },
-      ...root,
-    }),
-  });
-  using laptop = tempDir("hoist-older-siblings-laptop", files({ devDependencies: { b: "^2.0.0", c: ">=1.0.0" } }));
-  using machine = tempDir("hoist-older-siblings-machine", files({}));
-  const [dev, dir] = [String(laptop), String(machine)];
-
-  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
-  await run(dir, "install");
-  expect(layout(dir)).toEqual(["b@1.0.0", "c@0.9.0", "m@1.0.0", "n@1.0.0", "n/b@2.0.0", "n/c@1.0.0"]);
-
-  graph.c = { ...before, "2.0.0": published };
-  await run(dev, "install");
-  expect(layout(dev)).toEqual(expect.arrayContaining(["b@2.0.0", "b/c@1.0.0", "c@2.0.0"]));
-  await write(join(dir, "package.json"), file(join(dev, "package.json")));
-  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-  await run(dir, "install", "--production", "--ignore-scripts");
-  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.0.0\n");
-});
-
-// `n/node_modules/b` stays, as above. The `c` in its node_modules needs e@1 and loads `n/node_modules/e`, which `n`
-// shared with it. By now `n` has moved on to the e@2 at the top.
-test.concurrent("a nested copy that stays keeps what the packages below it load from the same folder", async () => {
-  const graph: Record<string, Record<string, object>> = {
-    m: { "1.0.0": { dependencies: { b: "^1.0.0", c: "^0.9.0", e: "^0.9.0" } } },
-    n: { "1.0.0": { dependencies: { b: "^2.0.0", e: "*" } } },
-    b: { "1.0.0": {}, "2.0.0": { dependencies: { c: "^1.0.0" } } },
-    c: { "0.9.0": {}, "1.0.0": { dependencies: { e: "^1.0.0" } } },
-    e: { "0.9.0": {}, "1.0.0": {}, "2.0.0": {} },
-  };
-  using server = await serveGraph(graph, {
-    "n-1.0.0": { "index.js": `module.exports = require("b");` },
-    "b-2.0.0": { "index.js": `module.exports = require("c");` },
-    "c-1.0.0": { "index.js": `module.exports = require("e/package.json").version;` },
-  });
-  const { "2.0.0": published, ...before } = graph.e;
-  graph.e = before;
-
-  const files = (root: object) => ({
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "app",
-      scripts: { prepare: "echo prepared" },
-      dependencies: { m: "1.0.0", n: "1.0.0" },
-      ...root,
-    }),
-  });
-  const devDependencies = { b: "^2.0.0", c: "^1.0.0", e: ">=1.0.0" };
-  using laptop = tempDir("hoist-older-below-laptop", files({ devDependencies }));
-  using machine = tempDir("hoist-older-below-machine", files({}));
-  const [dev, dir] = [String(laptop), String(machine)];
-
-  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
-  await run(dir, "install");
-  expect(layout(dir)).toEqual(expect.arrayContaining(["e@0.9.0", "n/b@2.0.0", "n/b/c@1.0.0", "n/e@1.0.0"]));
-
-  graph.e = { ...before, "2.0.0": published };
-  await run(dev, "install");
-  expect(layout(dev)).toEqual(expect.arrayContaining(["c/e@1.0.0", "e@2.0.0"]));
-  await write(join(dir, "package.json"), file(join(dev, "package.json")));
-  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-  await run(dir, "install", "--production", "--ignore-scripts");
-  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.0.0\n");
-});
-
-// `n/node_modules/b` stays, as above, and `n/node_modules/c@1.0.0` stays for it. That `c` needs e@1. The c@1.1.0 in
-// bun.lock needs nothing.
-test.concurrent("a nested copy that stays for another one keeps what it loads from the same folder", async () => {
-  const graph: Record<string, Record<string, object>> = {
-    m: { "1.0.0": { dependencies: { b: "^1.0.0", c: "^0.9.0", e: "^0.9.0" } } },
-    n: { "1.0.0": { dependencies: { b: "^2.0.0", c: "^1.0.0", e: "*" } } },
-    b: { "1.0.0": {}, "2.0.0": { dependencies: { c: "^1.0.0" } } },
-    c: { "0.9.0": {}, "1.0.0": { dependencies: { e: "^1.0.0" } }, "1.1.0": {} },
-    e: { "0.9.0": {}, "1.0.0": {}, "2.0.0": {} },
-  };
-  using server = await serveGraph(graph, {
-    "n-1.0.0": { "index.js": `module.exports = require("b");` },
-    "b-2.0.0": { "index.js": `module.exports = require("c");` },
-    "c-1.0.0": { "index.js": `module.exports = "c@1.0.0 loads e@" + require("e/package.json").version;` },
-    "c-1.1.0": { "index.js": `module.exports = "c@1.1.0";` },
-  });
-  const all = { c: graph.c, e: graph.e };
-  const { "1.1.0": _c, ...c } = graph.c;
-  const { "2.0.0": _e, ...e } = graph.e;
-  Object.assign(graph, { c, e });
-
-  const files = (root: object) => ({
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "app",
-      scripts: { prepare: "echo prepared" },
-      dependencies: { m: "1.0.0", n: "1.0.0" },
-      ...root,
-    }),
-  });
-  const devDependencies = { b: "^2.0.0", c: "^1.0.0", e: ">=1.0.0" };
-  using laptop = tempDir("hoist-older-held-laptop", files({ devDependencies }));
-  using machine = tempDir("hoist-older-held-machine", files({}));
-  const [dev, dir] = [String(laptop), String(machine)];
-
-  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
-  await run(dir, "install");
-  expect(layout(dir)).toEqual(expect.arrayContaining(["n/b@2.0.0", "n/c@1.0.0", "n/e@1.0.0"]));
-
-  Object.assign(graph, all);
-  await run(dev, "install");
-  expect(layout(dev)).toEqual(expect.arrayContaining(["c@1.1.0", "e@2.0.0"]));
-  await write(join(dir, "package.json"), file(join(dev, "package.json")));
-  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-  await run(dir, "install", "--production", "--ignore-scripts");
-  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("c@1.0.0 loads e@1.0.0\n");
-});
-
-// `x/node_modules/n/node_modules/b` stays. It needs e@1 and loads `x/node_modules/e`, one folder further up, which `x`
-// shared with it. By now `x` has moved on to the e@2 at the top.
-test.concurrent("a nested copy that stays keeps what it loads from a folder further up", async () => {
-  const graph: Record<string, Record<string, object>> = {
-    m: { "1.0.0": { dependencies: { n: "^0.9.0", b: "^1.0.0", e: "^0.9.0" } } },
-    x: { "1.0.0": { dependencies: { n: "^1.0.0", e: "*" } } },
-    n: { "0.9.0": {}, "1.0.0": { dependencies: { b: "^2.0.0" } } },
-    b: { "1.0.0": {}, "2.0.0": { dependencies: { e: "^1.0.0" } } },
-    e: { "0.9.0": {}, "1.0.0": {}, "2.0.0": {} },
-  };
-  using server = await serveGraph(graph, {
-    "x-1.0.0": { "index.js": `module.exports = require("n");` },
-    "n-1.0.0": { "index.js": `module.exports = require("b");` },
-    "b-2.0.0": { "index.js": `module.exports = require("e/package.json").version;` },
-  });
-  const { "2.0.0": published, ...before } = graph.e;
-  graph.e = before;
-
-  const files = (root: object) => ({
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "app",
-      scripts: { prepare: "echo prepared" },
-      dependencies: { m: "1.0.0", x: "1.0.0" },
-      ...root,
-    }),
-  });
-  using laptop = tempDir("hoist-older-further-up-laptop", files({ devDependencies: { b: "^2.0.0", e: ">=1.0.0" } }));
-  using machine = tempDir("hoist-older-further-up-machine", files({}));
-  const [dev, dir] = [String(laptop), String(machine)];
-
-  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
-  await run(dir, "install");
-  expect(layout(dir)).toEqual(expect.arrayContaining(["e@0.9.0", "x/e@1.0.0", "x/n@1.0.0", "x/n/b@2.0.0"]));
-
-  graph.e = { ...before, "2.0.0": published };
-  await run(dev, "install");
-  expect(layout(dev)).toEqual(expect.arrayContaining(["b/e@1.0.0", "e@2.0.0", "x/n@1.0.0"]));
-  await write(join(dir, "package.json"), file(join(dev, "package.json")));
-  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-  await run(dir, "install", "--production", "--ignore-scripts");
-  expect(await run(dir, "--no-install", "-p", "require('x')")).toBe("1.0.0\n");
-});
-
-// `n/node_modules/b` stays, as above, but it has a `c` of its own. So nothing holds the older `n/node_modules/c`.
-test.concurrent("a nested copy that stays keeps no dependency that it has a copy of", async () => {
-  const graph: Record<string, Record<string, object>> = {
-    m: { "1.0.0": { dependencies: { b: "^1.0.0", c: "^2.0.0" } } },
-    n: { "1.0.0": { dependencies: { b: "^2.0.0", c: "^1.0.0" } } },
-    b: { "1.0.0": {}, "2.0.0": { dependencies: { c: "^0.9.0" } } },
-    c: { "0.9.0": {}, "1.0.0": {}, "1.1.0": {}, "2.0.0": {} },
-  };
-  using server = await serveGraph(graph, {
-    "n-1.0.0": { "index.js": `module.exports = require("c/package.json").version;` },
-  });
-  const { "1.1.0": published, ...before } = graph.c;
-  graph.c = before;
-
-  const files = (root: object) => ({
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "app",
-      scripts: { prepare: "echo prepared" },
-      dependencies: { m: "1.0.0", n: "1.0.0" },
-      ...root,
-    }),
-  });
-  using laptop = tempDir("hoist-older-own-copy-laptop", files({ devDependencies: { b: "^2.0.0", c: "^1.0.0" } }));
-  using machine = tempDir("hoist-older-own-copy-machine", files({}));
-  const [dev, dir] = [String(laptop), String(machine)];
-
-  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
-  await run(dir, "install");
-  expect(layout(dir)).toEqual(expect.arrayContaining(["c@2.0.0", "n/b@2.0.0", "n/b/c@0.9.0", "n/c@1.0.0"]));
-
-  graph.c = { ...before, "1.1.0": published };
-  await run(dev, "install");
-  await write(join(dir, "package.json"), file(join(dev, "package.json")));
-  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-  await run(dir, "install", "--production", "--ignore-scripts");
-  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.1.0\n");
-});
 
 // What is in `pk/two/node_modules` is judged by what bun.lock now places in that folder, whatever the workspace is called.
 describe.concurrent("the copies in the node_modules of a workspace", () => {
@@ -2379,46 +2162,6 @@ describe.concurrent("the copies in the node_modules of a workspace", () => {
   });
 });
 
-// `x/node_modules/n` is from the older bun. The same run installs `y/node_modules/n`, the same package.
-test.concurrent("an older bun's nested copy goes while the run installs its owner at another place", async () => {
-  using server = await serveGraph({
-    m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
-    n: { "1.0.0": { dependencies: { b: "^2.0.0" } }, "2.0.0": {} },
-    x: { "1.0.0": { dependencies: { n: "^1.0.0" } } },
-    y: { "1.0.0": { dependencies: { n: "^1.0.0" } } },
-    b: { "1.0.0": {}, "2.0.0": {} },
-  });
-  const files = (root: object) => ({
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({ name: "app", ...root }),
-  });
-  const dependencies = { m: "1.0.0", n: "2.0.0", x: "1.0.0" };
-  using laptop = tempDir("hoist-older-two-places-laptop", {
-    ...files({ dependencies: { ...dependencies, y: "1.0.0" }, devDependencies: { b: "^2.0.0" } }),
-  });
-  using machine = tempDir("hoist-older-two-places-machine", files({ dependencies }));
-  const [dev, dir] = [String(laptop), String(machine)];
-  await run(dev, "install");
-
-  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
-  await run(dir, "install");
-  expect(layout(dir)).toContain("x/n/b@2.0.0");
-  await write(join(dir, "package.json"), file(join(dev, "package.json")));
-  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-
-  await run(dir, "install", "--production");
-  expect(layout(dir)).toEqual([
-    "b@2.0.0",
-    "m@1.0.0",
-    "m/b@1.0.0",
-    "n@2.0.0",
-    "x@1.0.0",
-    "x/n@1.0.0",
-    "y@1.0.0",
-    "y/n@1.0.0",
-  ]);
-});
-
 // An install removes a folder only if the bun.lock it started from placed a package there.
 describe.concurrent("a folder that no bun.lock placed stays", () => {
   const bunfig = (server: { url: URL }) => `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`;
@@ -2488,26 +2231,17 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
-  // Without the root's own b, an older bun gave m's b@1.0.0 the root, and `ships` and `runs` a b of their own.
-  test("below a package, from its tarball or its script, where an older bun nested a copy", async () => {
-    const own = (from: string) => JSON.stringify({ name: "b", version: "2.0.0", from });
-    const dependencies = { b: "^2.0.0" };
+  // Without the root's own b, an older bun gave m's b@1.0.0 the root, and `ships` a b of its own.
+  test("below a package, from its tarball, where an older bun nested a copy", async () => {
+    const own = JSON.stringify({ name: "b", version: "2.0.0", from: "the tarball" });
     using server = await serveGraph(
       {
         m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
-        ships: { "1.0.0": { dependencies } },
-        runs: { "1.0.0": { dependencies, scripts: { postinstall: `${bunExe()} build.js` } } },
+        ships: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
         b: { "1.0.0": {}, "2.0.0": {} },
         other: { "1.0.0": {} },
       },
-      {
-        "ships-1.0.0": { "node_modules/b/package.json": own("the tarball") },
-        "runs-1.0.0": {
-          "build.js": `require("fs").rmSync("node_modules/b", { recursive: true, force: true });
-            require("fs").mkdirSync("node_modules/b", { recursive: true });
-            require("fs").writeFileSync("node_modules/b/package.json", ${JSON.stringify(own("the script"))});`,
-        },
-      },
+      { "ships-1.0.0": { "node_modules/b/package.json": own } },
     );
     using tmp = tempDir("hoist-own-older-place", {
       "bunfig.toml": bunfig(server),
@@ -2515,120 +2249,15 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
         name: "root",
         dependencies: { m: "1.0.0" },
         devDependencies: { b: "^2.0.0" },
-        trustedDependencies: ["runs"],
       }),
     });
     const dir = String(tmp);
-    const seen = () =>
-      ["ships", "runs"].map(owner =>
-        readFileSync(join(dir, "node_modules", owner, "node_modules", "b", "package.json"), "utf8"),
-      );
     await run(dir, "install", "--omit=dev");
-    // The run that lays them keeps m, and the next one keeps them.
-    for (const added of [["ships", "runs"], ["other"]]) {
-      await run(dir, "add", ...added, "--omit=dev");
-      expect(seen()).toEqual([own("the tarball"), own("the script")]);
+    // The run that installs `ships` keeps m, and the next one keeps `ships`.
+    for (const added of ["ships", "other"]) {
+      await run(dir, "add", added, "--omit=dev");
+      expect(await file(join(dir, "node_modules", "ships", "node_modules", "b", "package.json")).text()).toBe(own);
     }
-  });
-
-  // The folder of `runs` is new, so nothing in it is left over from an older bun, whatever its version.
-  test("below a package that this run installs, from its script, with another version than bun.lock has", async () => {
-    const own = JSON.stringify({ name: "b", version: "2.0.5", from: "the script" });
-    using server = await serveGraph(
-      {
-        m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
-        runs: { "1.0.0": { dependencies: { b: "^2.0.0" }, scripts: { postinstall: `${bunExe()} build.js` } } },
-        b: { "1.0.0": {}, "2.0.0": {} },
-      },
-      {
-        "runs-1.0.0": {
-          "build.js": `require("fs").mkdirSync("node_modules/b", { recursive: true });
-            require("fs").writeFileSync("node_modules/b/package.json", ${JSON.stringify(own)});`,
-        },
-      },
-    );
-    using tmp = tempDir("hoist-own-new-folder", {
-      "bunfig.toml": bunfig(server),
-      "package.json": JSON.stringify({
-        name: "root",
-        dependencies: { m: "1.0.0" },
-        devDependencies: { b: "^2.0.0" },
-        trustedDependencies: ["runs"],
-      }),
-    });
-    const dir = String(tmp);
-    await run(dir, "install", "--omit=dev");
-    await run(dir, "add", "runs", "--omit=dev");
-    expect(await file(join(dir, "node_modules", "runs", "node_modules", "b", "package.json")).text()).toBe(own);
-  });
-
-  // The folder of a workspace is the user's own. `svc` arrives with a pull, and this run runs its script.
-  test("in the node_modules of a workspace, from its script, with another version than bun.lock has", async () => {
-    const own = JSON.stringify({ name: "b", version: "2.0.5", from: "the script" });
-    using server = await serveGraph({ y: { "1.0.0": {} }, b: { "1.0.0": {}, "2.0.0": {} } });
-    const files = {
-      "bunfig.toml": bunfig(server),
-      "package.json": JSON.stringify({
-        name: "root",
-        workspaces: ["pk/*"],
-        dependencies: { y: "1.0.0" },
-        devDependencies: { b: "^2.0.0" },
-      }),
-      "pk/other/package.json": JSON.stringify({ name: "other", dependencies: { b: "^1.0.0" } }),
-    };
-    using laptop = tempDir("hoist-own-workspace-folder-laptop", files);
-    using machine = tempDir("hoist-own-workspace-folder-machine", files);
-    const [dev, dir] = [String(laptop), String(machine)];
-    const installBoth = async () => {
-      await run(dev, "install", "--ignore-scripts");
-      await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-      await run(dir, "install", "--production");
-    };
-    await installBoth();
-
-    for (const at of [dev, dir]) {
-      await write(
-        join(at, "pk", "svc", "package.json"),
-        JSON.stringify({
-          name: "svc",
-          dependencies: { b: "^2.0.0" },
-          scripts: { postinstall: `${bunExe()} build.js` },
-        }),
-      );
-      await write(
-        join(at, "pk", "svc", "build.js"),
-        `require("fs").mkdirSync("node_modules/b", { recursive: true });
-          require("fs").writeFileSync("node_modules/b/package.json", ${JSON.stringify(own)});`,
-      );
-    }
-    await installBoth();
-    expect(await file(join(dir, "pk", "svc", "node_modules", "b", "package.json")).text()).toBe(own);
-  });
-
-  test("below a package, from the script of the project, where an older bun nested a copy", async () => {
-    const own = JSON.stringify({ name: "b", version: "2.0.0", from: "the project" });
-    using server = await serveGraph({
-      m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
-      n: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
-      b: { "1.0.0": {}, "2.0.0": {} },
-      other: { "1.0.0": {} },
-    });
-    using tmp = tempDir("hoist-project-script-older-place", {
-      "bunfig.toml": bunfig(server),
-      "package.json": JSON.stringify({
-        name: "root",
-        scripts: { postinstall: `${bunExe()} build.js` },
-        dependencies: { m: "1.0.0", n: "1.0.0" },
-        devDependencies: { b: "^2.0.0" },
-      }),
-      "build.js": `require("fs").rmSync("node_modules/n/node_modules/b", { recursive: true, force: true });
-        require("fs").mkdirSync("node_modules/n/node_modules/b", { recursive: true });
-        require("fs").writeFileSync("node_modules/n/node_modules/b/package.json", ${JSON.stringify(own)});`,
-    });
-    const dir = String(tmp);
-    await run(dir, "install", "--omit=dev");
-    await run(dir, "add", "other", "--omit=dev", "--ignore-scripts");
-    expect(await file(join(dir, "node_modules", "n", "node_modules", "b", "package.json")).text()).toBe(own);
   });
 
   test("in a member's node_modules and below a package, by hand", async () => {

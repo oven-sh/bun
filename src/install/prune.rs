@@ -27,10 +27,7 @@ use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
-use crate::{
-    Dependency, DependencyID, Features, PackageID, PackageManager, ResolutionTag,
-    invalid_package_id,
-};
+use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
 const ROOT_DIR: &[u8] = b"node_modules";
@@ -1702,31 +1699,19 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     remove_planned(plan, Layout::Hoisted, manager);
 }
 
-/// What `remove_copies_of_the_older_layout` does with a nested copy of the version that bun.lock
-/// resolves for that dependency. Such a copy is a harmless duplicate until the version changes.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SameVersion {
-    Remove,
-    Keep,
-}
-
 /// When a run skipped dependencies, Bun 1.4.3 and earlier installed nested copies in folders that
 /// have no key in bun.lock. This removes them, because they hide the package further up the tree.
-/// It keeps any folder that the owning package's tarball may have shipped. A folder that a script
-/// may have created is only removed if it holds another version than bun.lock resolves.
+/// It keeps any folder that the owning package's tarball may have shipped.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     mut places: Vec<(u64, PackageID)>,
-    mut replaced_places: Vec<u64>,
-    same_version: SameVersion,
 ) {
     let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
         return;
     };
     places.sort_unstable_by_key(|&(key, _)| key);
-    replaced_places.sort_unstable();
     // Hoisting can change what a peer resolves to, so the resolutions are restored afterwards.
     let resolutions = manager.lockfile.buffers.resolutions.clone();
     if let Ok(saved) = hoist_tree(
@@ -1736,43 +1721,20 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, &replaced_places, cache, same_version);
+        remove_from_older_places(manager, &places, cache);
         restore_tree(&mut manager.lockfile, saved);
     }
     manager.lockfile.buffers.resolutions = resolutions;
 }
 
-/// Whether lifecycle scripts of the package installed in the folder `alias` may have run. A script
-/// can create any file or folder.
-fn can_have_run_scripts(lockfile: &Lockfile, alias: &[u8], pkg_id: PackageID) -> bool {
-    let Some(res) = lockfile.packages.items_resolution().get(pkg_id as usize) else {
-        return true;
-    };
-    if res.tag == ResolutionTag::Workspace {
-        return lockfile.packages.items_scripts()[pkg_id as usize].has_any();
-    }
-    // A bun.lock written by Bun 1.4.3 does not record which packages have scripts, so every trusted
-    // package is assumed to have them.
-    let name = lockfile.packages.items_name()[pkg_id as usize];
-    lockfile.has_trusted_dependency(alias, name.slice(&lockfile.buffers.string_bytes), res)
-}
-
-/// Whether `node_modules/<alias>` is part of a package itself, in which case it must be kept.
-enum Shipped {
-    Yes,
-    No,
-    Unknown,
-}
-
+/// Whether `node_modules/<alias>` may be part of the package itself, in which case it must be kept.
 /// The caller has ruled out bundled dependencies.
-fn shipped(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: &[u8]) -> Shipped {
+fn may_ship(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: &[u8]) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
     let entry: Box<[u8]> = match res.tag {
         // Bun installs no other `node_modules` out of a workspace, a `file:` folder or a git checkout.
-        ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => {
-            return Shipped::No;
-        }
+        ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
             crate::package_manager::cached_npm_package_folder_name(
@@ -1786,50 +1748,14 @@ fn shipped(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: &
             crate::package_manager::cached_github_folder_name(manager, res.github(), None)
         }
         // A tarball can hold anything.
-        _ => return Shipped::Yes,
+        _ => return true,
     }
     .as_bytes()
     .into();
-    let is_folder =
-        |path: &[u8]| sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&zname(path)));
-    match is_folder(&join(&join(&entry, b"node_modules"), alias)) {
-        Ok(false) => {}
-        _ => return Shipped::Yes,
-    }
     // A package that is already installed is never downloaded again, so a missing cache entry stays
-    // missing. Package managers pack no `node_modules` but bundled ones, so a registry package has
-    // none. An archive from GitHub holds whatever the repository does.
-    if res.tag == ResolutionTag::Npm || matches!(is_folder(&entry), Ok(true)) {
-        Shipped::No
-    } else {
-        Shipped::Unknown
-    }
-}
-
-/// Opens `<alias>` in a `node_modules`. The alias can have a scope.
-fn open_package(node_modules: &Dir, alias: &[u8]) -> Option<Dir> {
-    let mut parts = strings::split(alias, b"/");
-    let mut package = node_modules.open_at(parts.next()?).ok()?;
-    for part in parts {
-        package = package.open_at(part).ok()?;
-    }
-    Some(package)
-}
-
-/// Returns true if the folder `package` holds the same version as the package `pkg_id`, or if its
-/// version cannot be read.
-fn may_hold_version_of(lockfile: &Lockfile, package: &Dir, pkg_id: PackageID) -> bool {
-    let Some(res) = lockfile.packages.items_resolution().get(pkg_id as usize) else {
-        return true;
-    };
-    if res.tag != ResolutionTag::Npm {
-        return true;
-    }
-    let Some((_, Some(version))) = installed_package_json(package) else {
-        return true;
-    };
-    let resolved = (res.npm().version.fmt(&lockfile.buffers.string_bytes)).to_string();
-    without_build(&version) == without_build(resolved.as_bytes())
+    // missing. It counts as one without the folder.
+    let folder = zname(&join(&join(&entry, b"node_modules"), alias));
+    sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
 }
 
 /// The path of a tree's `node_modules`, relative to the project root.
@@ -1852,39 +1778,22 @@ fn tree_path(lockfile: &Lockfile, tree_id: usize) -> Box<[u8]> {
 }
 
 /// `manager.lockfile` must hold the tree of the older layout. `places` is the
-/// `tree::Builder::places` of the current layout, sorted by key. `replaced_places` is sorted too.
-fn remove_from_older_places(
-    manager: &PackageManager,
-    places: &[(u64, PackageID)],
-    replaced_places: &[u64],
-    cache: sys::Fd,
-    same_version: SameVersion,
-) {
+/// `tree::Builder::places` of the current layout, sorted by key.
+fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)], cache: sys::Fd) {
     let lockfile: &Lockfile = &manager.lockfile;
     let trees = lockfile.buffers.trees.as_slice();
     let rows = lockfile.buffers.hoisted_dependencies.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let buf = lockfile.buffers.string_bytes.as_slice();
     let folders = tree::folder_keys(trees, deps);
     let today = |place: u64| {
         let found = places.binary_search_by_key(&place, |&(key, _)| key);
         found.ok().map(|i| places[i].1)
     };
-    struct Folder<'a> {
-        id: usize,
-        dir: Dir,
-        only_older: Vec<(&'a Dependency, PackageID)>,
-        shipped: Vec<u64>,
-        stays: Vec<(&'a Dependency, PackageID)>,
-    }
-    let mut found: Vec<Folder<'_>> = Vec::new();
-    let mut keeps_older_copy = vec![false; trees.len()];
     let mut plan = Plan::default();
     for (id, older) in trees.iter().enumerate().skip(1) {
-        let only_older: Vec<(&Dependency, PackageID)> = (older.dependencies.get(rows).iter())
-            .map(|&row| (&deps[row as usize], resolutions[row as usize]))
-            .filter(|(dep, _)| today(tree::place_key(folders[id], dep.name_hash)).is_none())
+        let only_older: Vec<u64> = (older.dependencies.get(rows).iter())
+            .map(|&row| deps[row as usize].name_hash)
+            .filter(|&name_hash| today(tree::place_key(folders[id], name_hash)).is_none())
             .collect();
         if only_older.is_empty() {
             continue;
@@ -1896,122 +1805,27 @@ fn remove_from_older_places(
             continue;
         }
         // A package with bundled dependencies ships folders at any depth, so a tree inside one is
-        // skipped. So is a tree inside a package folder that this run created or replaced: nothing
-        // in it is left over from an older Bun. Scripts can create anything, so inside a package
-        // whose scripts may have run, only a folder that hides the version in bun.lock is removed.
-        // The `node_modules` of a workspace with scripts is skipped, because that folder is the
-        // user's own. The packages that Bun installed in it are not.
-        let mut same_version = same_version;
+        // skipped.
         let mut above = id;
-        while above != 0 {
-            let owner = tree_owner(lockfile, above);
-            let is_new = replaced_places.binary_search(&folders[above]).is_ok();
-            if is_new || has_bundled_deps(lockfile, owner) {
-                break;
-            }
-            if can_have_run_scripts(lockfile, trees[above].folder_name(deps, buf), owner) {
-                if above == id && is_member_tree(lockfile, above) {
-                    break;
-                }
-                same_version = SameVersion::Keep;
-            }
+        while above != 0 && !has_bundled_deps(lockfile, tree_owner(lockfile, above)) {
             above = trees[above].parent as usize;
         }
         if above != 0 {
             continue;
         }
+        let path = tree_path(lockfile, id);
         let Some(dir) = open_tree_folder(lockfile, older.id, &mut plan.linked_folders) else {
             continue;
         };
-        // A clean install has what the owner ships too, so that is no older copy.
-        let mut shipped_names: Vec<u64> = Vec::new();
-        let mut stays: Vec<(&Dependency, PackageID)> = (only_older.iter())
-            .filter(|&&(dep, resolved)| {
-                let alias = dep.name.slice(buf);
-                let Some(package) = open_package(&dir, alias) else {
-                    return false;
-                };
-                let keeps_same_version = match shipped(manager, cache, owner, alias) {
-                    Shipped::Yes => {
-                        shipped_names.push(dep.name_hash);
-                        return false;
-                    }
-                    Shipped::No => same_version == SameVersion::Keep,
-                    Shipped::Unknown => true,
-                };
-                keeps_same_version && may_hold_version_of(lockfile, &package, resolved)
-            })
-            .copied()
-            .collect();
-        // What a copy that stays can load from this folder stays with it. Without a `node_modules`
-        // of its own, that is what it depends on. With one, the packages in there load from this
-        // folder too, whatever they are: any name that is not in that `node_modules`. A copy that
-        // only stays for another one is not the version in bun.lock, so what it depends on is not
-        // known either.
-        let known = stays.len();
-        let mut next = 0;
-        while let Some(&(kept, package)) = stays.get(next) {
-            let is_known = next < known;
-            next += 1;
-            let Some(needs) = lockfile.packages.items_dependencies().get(package as usize) else {
-                continue;
-            };
-            let Some(kept) = open_package(&dir, kept.name.slice(buf)) else {
-                continue;
-            };
-            let own = kept.open_at(b"node_modules").ok();
-            for &(dep, resolved) in &only_older {
-                let can_load = match &own {
-                    Some(own) => open_package(own, dep.name.slice(buf)).is_none(),
-                    None => {
-                        !is_known
-                            || (needs.get(deps).iter()).any(|need| need.name_hash == dep.name_hash)
-                    }
-                };
-                if can_load
-                    && !shipped_names.contains(&dep.name_hash)
-                    && !stays.iter().any(|kept| kept.0.name_hash == dep.name_hash)
-                {
-                    stays.push((dep, resolved));
-                }
-            }
-        }
-        keeps_older_copy[id] = !stays.is_empty();
-        found.push(Folder {
-            id,
-            dir,
-            only_older,
-            shipped: shipped_names,
-            stays,
-        });
-    }
-    // A copy that stays also loads from the folders above its own, so nothing is removed from those.
-    // A tree comes after its parent.
-    let mut keeps_one_below = vec![false; trees.len()];
-    for id in (1..trees.len()).rev() {
-        if (keeps_older_copy[id] || keeps_one_below[id])
-            && let Some(parent) = keeps_one_below.get_mut(trees[id].parent as usize)
-        {
-            *parent = true;
-        }
-    }
-    for folder in found {
-        if keeps_one_below[folder.id] {
-            continue;
-        }
         scan_folder(
-            folder.dir,
-            &tree_path(lockfile, folder.id),
+            dir,
+            &path,
             false,
             &|entry: &Entry| {
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
-                    || !(folder.only_older.iter()).any(|(dep, _)| dep.name_hash == name_hash)
-                    || folder.shipped.contains(&name_hash)
-                    || folder
-                        .stays
-                        .iter()
-                        .any(|kept| kept.0.name_hash == name_hash)
+                    || !only_older.contains(&name_hash)
+                    || may_ship(manager, cache, owner, entry.alias)
             },
             &mut plan,
         );

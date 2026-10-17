@@ -4,11 +4,7 @@
 //! errors.
 //! For everything else: TypeScript's plain format, which editors, continuous integration and other
 //! tools already parse.
-//!
-//! What the checked files have chosen (a message argument, a path, a source line), those of an
-//! installed package too, is in TypeScript's format byte for byte what `tsc` prints, and the `file`
-//! of a workflow command is the path that GitHub looks for. Everywhere else its control characters
-//! are escape sequences: [`escaped`], [`write_message`].
+//! Only that format has the text of the checked files as `tsc` prints it. In the others it is [`escaped`].
 
 use crate::{Category, Diagnostic, MessageChain, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
@@ -61,14 +57,12 @@ pub struct Style<'a> {
     pub show_all: bool,
 }
 
-/// Whether `text` may have a control character: it has one that is ASCII, or something that is not
-/// ASCII. Most text has neither, and is printed as it is.
+/// Whether `text` has an ASCII control character or what is not ASCII. Most text has neither, and is printed as it is.
 fn may_have_control_characters(text: &[u8]) -> bool {
     strings::index_of_newline_or_non_ascii(text, 0).is_some() || strings::contains_char(text, 0x7f)
 }
 
-/// `text` on one line, with its control characters as escape sequences (`\x1b`): neither a line of a
-/// layout nor a command of the terminal.
+/// `text` on one line, with its control characters as escape sequences such as `\x1b`.
 pub fn escaped(text: impl Into<BString>) -> BString {
     let text = text.into();
     match may_have_control_characters(&text) {
@@ -97,8 +91,8 @@ pub fn write_escaped_lines(out: &mut Vec<u8>, text: &[u8]) {
     }
 }
 
-/// Relative to the working directory, or absolute when that would need two or more `../`. [`escaped`]:
-/// no layout of `tsc` has it.
+/// Relative to the working directory, or absolute when that would need two or more `../`.
+/// [`escaped`]: no layout of `tsc` has it.
 fn display_path(path: &[u8], style: &Style) -> BString {
     let relative = relative_path(path, style.cwd, style);
     if relative.starts_with(b"../../") {
@@ -113,8 +107,7 @@ fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
 }
 
-/// The message of `d` where the layout is not TypeScript's: `d.text` with its control characters as
-/// escape sequences, and with each argument on one line, so that only the elaboration starts a line.
+/// `d.text` where the layout is Bun's own: [`escaped`], with each argument on one line, so that only the elaboration starts a line.
 pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
     if !may_have_control_characters(&d.text) {
         out.extend_from_slice(&d.text);
@@ -157,8 +150,7 @@ pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
         });
         chain.collect()
     }
-    // If these arguments do not make the start of `d.text`, it is not known what does: then its lines are escaped as they
-    // are. What was added to the text since it was composed follows.
+    // A text that does not start as these arguments compose it is escaped as it is. What was added to it since follows.
     let again = composed(d.code, &d.args, &d.message_chain);
     let Some(added) = d.text.strip_prefix(&again[..]) else {
         return write_escaped_lines(out, &d.text);
@@ -410,8 +402,7 @@ fn attribute(text: &[u8]) -> BString {
     out
 }
 
-/// The offset in `line` of its column `column`, which is counted from 0 in UTF-16 code units. `units`: how many of them
-/// bytes that are not UTF-8 are to whoever has counted the column.
+/// The offset in `line` of its UTF-16 column `column`, from 0. `units` counts a run of bytes that is not UTF-8.
 pub fn offset_of_column(line: &[u8], column: usize, units: fn(&[u8]) -> u32) -> usize {
     if line.is_ascii() {
         return column.min(line.len());
@@ -435,8 +426,8 @@ pub fn offset_of_column(line: &[u8], column: usize, units: fn(&[u8]) -> u32) -> 
 }
 
 /// The `<source>` of a problem, for an agent: `lines`, which are not none and of which the first has the number `first`, and
-/// carets below the line with the number `at`, from its byte `from` up to its byte `to`: [`offset_of_column`]. `None`: up
-/// to the end of the line.
+/// carets below the line with the number `at`, from the byte `from` up to the byte `to` of it: [`offset_of_column`]. `None`: up to the
+/// end of the line.
 pub fn write_agent_source(
     out: &mut Vec<u8>,
     first: u32,
@@ -454,8 +445,7 @@ pub fn write_agent_source(
         if line == at {
             let from = from.min(text.len());
             let to = to.unwrap_or(text.len()).clamp(from, text.len());
-            // As many as are printed for it: an escape sequence is longer than its character. The end of `out` is where
-            // it is written, to be counted.
+            // The columns of what is printed, counted at the end of `out`: an escape sequence is longer than its character.
             let mut columns = |part: &[u8]| {
                 if !may_have_control_characters(part) {
                     return part.len();

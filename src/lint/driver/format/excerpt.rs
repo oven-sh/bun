@@ -52,8 +52,8 @@ impl Problem<'_> {
     }
 }
 
-/// Relative to the working directory, or absolute when that would need two or more `../`. [`escaped`]:
-/// the formats that have it are Bun's own.
+/// Relative to the working directory, or absolute when that would need two or more `../`.
+/// [`escaped`]: the formats that print it are Bun's own.
 fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     let path = paths::from_native(path);
     if !paths::is_absolute(&path) {

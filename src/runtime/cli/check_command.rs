@@ -725,8 +725,8 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     report.is_ok()
 }
 
-/// `TS2322: Type 'string' is not assignable to type 'number'.`, where it is. `is_printed`: the message
-/// is `format::write_message`, as `bun check` prints it in a terminal, not the text that `tsc` has.
+/// `TS2322: Type 'string' is not assignable to type 'number'.`, where it is.
+/// `is_printed`: the message is as `format::write_message` has it, not as `tsc` has it.
 fn log_data_of(reported: &Diagnostic, is_printed: bool) -> bun_ast::Data {
     use std::borrow::Cow;
     let mut text = Vec::with_capacity(reported.text.len() + 8);

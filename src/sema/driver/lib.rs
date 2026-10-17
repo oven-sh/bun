@@ -2752,8 +2752,7 @@ impl Graph<'_> {
         if let Some(&index) = self.index_of.get(&path) {
             // `analyzing`
             if index.is_none() && !in_circular_context {
-                // The argument is what `tsc` has: the paths, a line each. Each path follows it, for no placeholder:
-                // `format::write_message` escapes a path and keeps the lines.
+                // `tsc` has the paths in one argument, a line each. Each follows it for `format::write_message`, which escapes a path.
                 let stack = self.circularity_stack.join(&b'\n');
                 let paths = self.circularity_stack.iter().map(Vec::as_slice);
                 let args: Vec<&[u8]> = std::iter::once(&stack[..]).chain(paths).collect();

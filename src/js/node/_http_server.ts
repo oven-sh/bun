@@ -767,20 +767,17 @@ function listenOnOwnSocket(server, tls, port, host, socketPath, reusePort, fd) {
   }
 }
 
-// The primary's bind takes what node's takes. Bun.serve({ unix }) also binds a path longer than sun_path.
 function primaryCanBind(port, host, socketPath, fd) {
   if (fd !== undefined) return true;
-  if (socketPath) {
-    return typeof socketPath === "string" && Buffer.byteLength(socketPath) < (process.platform === "linux" ? 108 : 104);
-  }
+  if (socketPath) return typeof socketPath === "string";
   if (host != null && typeof host !== "string") return false;
   return typeof port === "number" && port === (port | 0) && port >= 0 && port <= 65535;
 }
 
 // The worker binds its own socket (SO_REUSEPORT) and reports it, so cluster.on("listening") fires.
 function listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd) {
-  notifyPrimaryWhenListening(server, port, host, socketPath);
   listenOnOwnSocket(server, tls, port, host, socketPath, true, fd);
+  notifyPrimaryWhenListening(server, port, host, socketPath);
 }
 
 function notifyPrimaryWhenListening(server, port, host, socketPath) {
@@ -847,20 +844,17 @@ function queryPrimary(server, listeningId, tls, port, host, socketPath, fd, addr
       return;
     }
     const sharedFd = handle?.sharedFd;
+    let hint = reply?.bunHint;
     if (!err && typeof sharedFd !== "number") {
-      // A round-robin handle despite sharedOnly: a primary that is not bun. Bind as before the query.
+      // A round-robin handle despite sharedOnly: a primary that is not bun.
       handle?.close();
-      try {
-        listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd);
-      } catch (bindError) {
-        if (server[serverSymbol]) server.close();
-        process.nextTick(emitListenErrorNextTick, server, bindError);
-      }
-      return;
+      err = process.binding("uv").UV_EINVAL;
+      hint =
+        "a bun http worker accepts on a shared socket; set cluster.schedulingPolicy = cluster.SCHED_NONE in the primary";
     }
     if (err) {
       const ex = new ExceptionWithHostPort(err, "bind", address, queryPort);
-      if (typeof reply?.bunHint === "string") ex.message += `\n  note: ${reply.bunHint}`;
+      if (typeof hint === "string") ex.message += `\n  note: ${hint}`;
       server.emit("error", ex);
       return;
     }

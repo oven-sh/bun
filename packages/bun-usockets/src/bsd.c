@@ -1617,6 +1617,55 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 }
 
 
+/* A bound, not yet listening, unix socket for a cluster primary to share. Takes the paths
+ * bsd_create_listen_socket_unix takes, including one longer than sun_path. */
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_unix(const char *path, size_t len, int *error) {
+    int dirfd_workaround_for_unix_path_len = -1;
+    struct sockaddr_un server_address;
+    size_t addrlen = 0;
+    if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        *error = LIBUS_ERR;
+        return LIBUS_SOCKET_ERROR;
+    }
+
+#if defined(__APPLE__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
+            close(dirfd_workaround_for_unix_path_len);
+            *error = ENAMETOOLONG;
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+#endif
+
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error);
+    if (fd != LIBUS_SOCKET_ERROR) {
+        int rc;
+        do
+            rc = bind(fd, (struct sockaddr *) &server_address, (socklen_t) addrlen);
+        while (IS_EINTR(rc));
+        if (rc != 0) {
+            *error = LIBUS_ERR;
+            bsd_close_socket(fd);
+            fd = LIBUS_SOCKET_ERROR;
+        }
+    }
+
+#if defined(__APPLE__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        __pthread_fchdir(-1);
+        close(dirfd_workaround_for_unix_path_len);
+    }
+#elif defined(__linux__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        close(dirfd_workaround_for_unix_path_len);
+    }
+#endif
+
+    return fd;
+}
+
+
 /* Receive-path options every UDP socket needs, whether freshly created or
  * adopted from an existing fd: destination-address and TOS reporting for
  * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR (opt-in). */

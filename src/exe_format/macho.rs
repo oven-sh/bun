@@ -46,7 +46,7 @@ pub enum MachoError {
     )]
     MissingInfoPlistSection,
     #[error(
-        "the Info.plist is {len} bytes, but the base Bun executable reserves {capacity} bytes for it"
+        "the Info.plist is {len} bytes, but the base Bun executable reserves {capacity} bytes for it (a binary property list is smaller)"
     )]
     InfoPlistTooLarge { len: usize, capacity: usize },
 }

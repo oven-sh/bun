@@ -725,7 +725,7 @@ describe("--macos-info-plist", () => {
         throw: false,
       });
       expect(result.logs.map(log => log.message)).toEqual([
-        "failed to embed the Info.plist: the Info.plist is 4097 bytes, but the base Bun executable reserves 4096 bytes for it",
+        "failed to embed the Info.plist: the Info.plist is 4097 bytes, but the base Bun executable reserves 4096 bytes for it (a binary property list is smaller)",
       ]);
       expect(result.success).toBe(false);
       expect(existsSync(out)).toBe(false);

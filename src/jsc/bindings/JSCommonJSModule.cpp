@@ -1166,7 +1166,7 @@ void populateESMExports(
                 });
             } else {
                 JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
                 RETURN_IF_EXCEPTION(scope, );
 
                 for (auto property : properties) {

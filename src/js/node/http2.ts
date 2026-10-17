@@ -6642,6 +6642,7 @@ function emitFrameErrorEventNT(stream, frameType, errorCode) {
 interface Http2SecureServer extends UpgradableSecureServer {}
 class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase) {
   declare keepAliveTimeout: number | undefined;
+  declare keepAliveTimeoutBuffer: number | undefined;
   declare headersTimeout: number | undefined;
   declare requestTimeout: number | undefined;
   declare maxHeadersCount: number | null;
@@ -6667,6 +6668,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       this[kHttp1Connections] = new SafeSet();
       const http1Options = { ...options, ...options.http1Options };
       this.keepAliveTimeout = http1Options.keepAliveTimeout ?? 5000;
+      this.keepAliveTimeoutBuffer = http1Options.keepAliveTimeoutBuffer ?? 1000;
       this.headersTimeout = http1Options.headersTimeout ?? 60000;
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;

@@ -88,7 +88,7 @@ extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
         if let Some(i) = INSTANCE.load(Ordering::Relaxed).as_mut() {
-            kill_tree(&i.process);
+            kill_tree(i);
         }
     }
 }
@@ -109,6 +109,7 @@ extern "C" fn Bun__Chrome__retire() {
         GENERATION.fetch_add(1, Ordering::Relaxed);
         chrome.pipes.close();
     }
+    kill_tree(chrome);
     // The exit hook can no longer reach this Chrome through INSTANCE.
     if let Some(profile) = chrome.temp_profile.take() {
         PARKED.lock().push(Parked {
@@ -116,30 +117,23 @@ extern "C" fn Bun__Chrome__retire() {
             profile,
         });
     }
-    kill_tree(&chrome.process);
 }
 
-/// SIGKILLs a running Chrome and, on POSIX, its whole process group.
-fn kill_tree(process: &ProcessHandle) {
+/// SIGKILLs a running Chrome and, on POSIX, its helpers.
+fn kill_tree(chrome: &ChromeProcess) {
     #[cfg(unix)]
     {
-        let process = process.process_mut();
+        let process = chrome.process.process_mut();
         // A reaped pid can belong to another process by now.
         if process.has_exited() {
             return;
         }
-        kill_pid_and_group(process.pid);
+        // SAFETY: plain syscall on a pid; no memory is passed.
+        unsafe { libc::kill(process.pid, libc::SIGKILL) };
+        kill_group(process.pid);
     }
     #[cfg(windows)]
-    let _ = process.kill(9);
-}
-
-/// The browser first, in case it does not lead a group, then the group.
-#[cfg(unix)]
-fn kill_pid_and_group(pid: bun_spawn::PidT) {
-    // SAFETY: plain syscall on a pid; no memory is passed.
-    unsafe { libc::kill(pid, libc::SIGKILL) };
-    kill_group(pid);
+    let _ = chrome.process.kill(9);
 }
 
 /// Chrome's helpers outlive the browser by a few ms and write to the profile on the way out.
@@ -149,16 +143,28 @@ fn kill_group(pid: bun_spawn::PidT) {
     unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
-/// Not through [`Process`]: its exit handler must not run from here.
+/// Unlike `Process::kill_and_reap`, blocks on macOS too: the thread that one hands a slow reap to is never joined here.
 #[cfg(unix)]
 fn kill_and_reap(pid: bun_spawn::PidT) {
-    kill_pid_and_group(pid);
     let mut status = 0;
-    // ECHILD means the waiter thread reaped it first.
-    // SAFETY: `status` is a valid out-pointer for the call.
-    while unsafe { libc::waitpid(pid, &raw mut status, 0) } == -1
-        && bun_sys::last_errno() == libc::EINTR
-    {}
+    // SAFETY: plain syscalls on a pid; `status` is a valid out-pointer.
+    unsafe {
+        let reaped = libc::waitpid(pid, &raw mut status, libc::WNOHANG);
+        // ECHILD: the waiter thread reaped it earlier, and the pid may be another process's by now.
+        if reaped < 0 {
+            return;
+        }
+        // A child we cannot signal (EPERM) would never be waited out.
+        if reaped == 0 && libc::kill(pid, libc::SIGKILL) != 0 {
+            return;
+        }
+        kill_group(pid);
+        if reaped == 0 {
+            while libc::waitpid(pid, &raw mut status, 0) == -1
+                && bun_sys::last_errno() == libc::EINTR
+            {}
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -687,8 +693,11 @@ fn spawn(
             },
             extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
             argv0: Some(chrome.as_ptr()),
-            // Chrome leads its own group, so `kill_group` reaches its helpers too.
-            new_process_group: true,
+            // Own session (and so own process group, for `kill_group`), off the
+            // terminal's job control: a background-group Chrome writing an
+            // inherited stderr to a `stty tostop` terminal would stop on SIGTTOU.
+            #[cfg(unix)]
+            detached: true,
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: event_loop,

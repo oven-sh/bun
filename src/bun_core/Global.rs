@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{c_char, c_int};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -830,6 +830,45 @@ pub struct SyncCStr(pub *const c_char);
 unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
+
+/// The certificate authorities that TLS connections trust by default.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum CAStore {
+    Bundled,
+    Openssl,
+    System,
+}
+#[unsafe(no_mangle)]
+static Bun__Node__CAStore: AtomicU8 = AtomicU8::new(CAStore::Bundled as u8);
+/// `root_certs.cpp` reads this when it builds the default store.
+#[unsafe(no_mangle)]
+pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
+
+/// Applies `--use-bundled-ca`, `--use-openssl-ca` and `--use-system-ca`, and exits if more than one
+/// was passed. `has_flag` looks a flag up in the parsed arguments. Without a flag,
+/// `NODE_USE_SYSTEM_CA` decides.
+pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
+    let flags: [(&'static [u8], CAStore); 3] = [
+        (b"--use-bundled-ca", CAStore::Bundled),
+        (b"--use-openssl-ca", CAStore::Openssl),
+        (b"--use-system-ca", CAStore::System),
+    ];
+    let mut passed =
+        (flags.into_iter()).filter_map(|(flag, store)| has_flag(flag).then_some(store));
+    let store = passed.next();
+    if passed.next().is_some() {
+        crate::pretty_errorln!(
+            "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
+        );
+        exit(1);
+    }
+    let from_env = || crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
+    let store = store.or_else(|| from_env().then_some(CAStore::System));
+    if let Some(store) = store {
+        Bun__Node__CAStore.store(store as u8, Ordering::Relaxed);
+    }
+    Bun__Node__UseSystemCA.store(store == Some(CAStore::System), Ordering::Relaxed);
+}
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
 /// only ever called from C/C++ (so rustc sees no Rust caller). Expands to one

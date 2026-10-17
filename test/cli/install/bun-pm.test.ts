@@ -1657,7 +1657,7 @@ function refused(cacheDir: string, what: string, bunx = "Cleared") {
     stdout: `${bunx} 0 cached 'bunx' packages\n`,
     stderr:
       `error: refusing to clear "${cacheDir}": is or contains ${what}\n` +
-      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir or $BUN_INSTALL. " +
+      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir, ~/.bunfig.toml, ~/.npmrc or $BUN_INSTALL. " +
       "point it at a directory used only for the bun install cache\n",
     exitCode: 1,
   };
@@ -2248,6 +2248,7 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     return {
       envCache,
       mine,
+      home: join(String(side), "home"),
       proj: join(String(root), "proj"),
       spawnEnv: cacheEnv(String(side)),
       [Symbol.dispose]() {
@@ -2260,6 +2261,20 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
   test("--cache-dir names it", async () => {
     using box = caches(`pm-cache-${action}-flag`);
     expect(await pmCache([action, "--cache-dir", box.mine], box.proj, box.spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(left);
+    expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  test.each([
+    [".bunfig.toml", (dir: string) => `[install.cache]\ndir = ${JSON.stringify(dir)}\n`],
+    [".npmrc", (dir: string) => `cache=${dir}\n`],
+  ])("the user's own %s names it", async (name, contents) => {
+    using box = caches(`pm-cache-${action}-user${name}`);
+    const spawnEnv = { ...box.spawnEnv, XDG_CONFIG_HOME: undefined };
+    await writeFile(join(box.home, name), contents(box.mine));
+    expect(await pmCache([], box.proj, spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, spawnEnv)).toEqual(done);
     expect(await entries(box.mine)).toEqual(left);
     expect(await entries(box.envCache)).toEqual(envCacheEntries);
   });

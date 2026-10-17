@@ -1653,14 +1653,24 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     remove_planned(plan, Layout::Hoisted, manager);
 }
 
+/// What `remove_copies_of_the_older_layout` does with a nested copy of the version that bun.lock
+/// resolves for that dependency. Such a copy is a harmless duplicate until the version changes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SameVersion {
+    Remove,
+    Keep,
+}
+
 /// When a run skipped dependencies, Bun 1.4.3 and earlier installed nested copies in folders that
 /// have no key in bun.lock. This removes them, because they hide the package further up the tree.
-/// It keeps any folder that the owning package's tarball or scripts may have created.
+/// It keeps any folder that the owning package's tarball may have shipped. A folder that a script
+/// may have created is only removed if it holds another version than bun.lock resolves.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     mut places: Vec<(u64, PackageID)>,
+    same_version: SameVersion,
 ) {
     let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
         return;
@@ -1675,7 +1685,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache);
+        remove_from_older_places(manager, &places, cache, same_version);
         restore_tree(&mut manager.lockfile, saved);
     }
     manager.lockfile.buffers.resolutions = resolutions;
@@ -1722,6 +1732,24 @@ fn may_ship(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: 
     sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&shipped)).unwrap_or(true)
 }
 
+/// Returns true if the folder `entry` holds the same version as the package `pkg_id`, or if its
+/// version cannot be read.
+fn may_hold_version_of(lockfile: &Lockfile, entry: &Entry, pkg_id: PackageID) -> bool {
+    let Some(res) = lockfile.packages.items_resolution().get(pkg_id as usize) else {
+        return true;
+    };
+    if res.tag != ResolutionTag::Npm {
+        return true;
+    }
+    let Some((_, Some(version))) =
+        (entry.dir.open_at(entry.name).ok()).and_then(|package| installed_package_json(&package))
+    else {
+        return true;
+    };
+    let resolved = (res.npm().version.fmt(&lockfile.buffers.string_bytes)).to_string();
+    without_build(&version) == without_build(resolved.as_bytes())
+}
+
 /// The path of a tree's `node_modules`, relative to the project root.
 fn tree_path(lockfile: &Lockfile, tree_id: usize) -> Box<[u8]> {
     if tree_id == 0 {
@@ -1743,11 +1771,17 @@ fn tree_path(lockfile: &Lockfile, tree_id: usize) -> Box<[u8]> {
 
 /// `manager.lockfile` must hold the tree of the older layout. `places` is the
 /// `tree::Builder::places` of the current layout, sorted by key.
-fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)], cache: sys::Fd) {
+fn remove_from_older_places(
+    manager: &PackageManager,
+    places: &[(u64, PackageID)],
+    cache: sys::Fd,
+    same_version: SameVersion,
+) {
     let lockfile: &Lockfile = &manager.lockfile;
     let trees = lockfile.buffers.trees.as_slice();
     let rows = lockfile.buffers.hoisted_dependencies.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
     let buf = lockfile.buffers.string_bytes.as_slice();
     let folders = tree::folder_keys(trees, deps);
     let today = |place: u64| {
@@ -1756,9 +1790,9 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
     };
     let mut plan = Plan::default();
     for (id, older) in trees.iter().enumerate().skip(1) {
-        let only_older: Vec<u64> = (older.dependencies.get(rows).iter())
-            .map(|&row| deps[row as usize].name_hash)
-            .filter(|&name_hash| today(tree::place_key(folders[id], name_hash)).is_none())
+        let only_older: Vec<(u64, PackageID)> = (older.dependencies.get(rows).iter())
+            .map(|&row| (deps[row as usize].name_hash, resolutions[row as usize]))
+            .filter(|&(name_hash, _)| today(tree::place_key(folders[id], name_hash)).is_none())
             .collect();
         if only_older.is_empty() {
             continue;
@@ -1769,14 +1803,18 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
         if !is_member_tree(lockfile, id) && today(folders[id]) != Some(owner) {
             continue;
         }
-        // A package with bundled dependencies ships folders at any depth, and scripts can create
-        // anything, so a tree inside a package with either is skipped.
+        // A package with bundled dependencies ships folders at any depth, so a tree inside one is
+        // skipped. Scripts can create anything, so inside a package whose scripts may have run,
+        // only a folder that hides the version in bun.lock is removed.
+        let mut same_version = same_version;
         let mut above = id;
         while above != 0 {
             let owner = tree_owner(lockfile, above);
-            let folder = trees[above].folder_name(deps, buf);
-            if has_bundled_deps(lockfile, owner) || can_have_run_scripts(lockfile, folder, owner) {
+            if has_bundled_deps(lockfile, owner) {
                 break;
+            }
+            if can_have_run_scripts(lockfile, trees[above].folder_name(deps, buf), owner) {
+                same_version = SameVersion::Keep;
             }
             above = trees[above].parent as usize;
         }
@@ -1793,9 +1831,13 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
             false,
             &|entry: &Entry| {
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
+                let Some(&(_, resolved)) = only_older.iter().find(|row| row.0 == name_hash) else {
+                    return true;
+                };
                 entry.kind != EntryKind::Directory
-                    || !only_older.contains(&name_hash)
                     || may_ship(manager, cache, owner, entry.alias)
+                    || (same_version == SameVersion::Keep
+                        && may_hold_version_of(lockfile, entry, resolved))
             },
             &mut plan,
         );

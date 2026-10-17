@@ -1886,16 +1886,29 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
       leftOut: { devDependencies: { b: "^2.0.0" } },
       noCache: true,
     },
+    // The project's own scripts could have created `n/node_modules/b`, and they do not run again.
+    {
+      title: "--production --ignore-scripts, in a project with a prepare script",
+      args: ["--production", "--ignore-scripts"],
+      leftOut: { devDependencies: { b: "^2.0.0" }, scripts: { prepare: "echo prepared" } },
+    },
+    // The scripts of `n` could have created `n/node_modules/b` too.
+    {
+      title: "--production, below a trusted package with a script",
+      args: ["--production"],
+      leftOut: { devDependencies: { b: "^2.0.0" }, trustedDependencies: ["n"] },
+      script: "echo built",
+    },
     {
       title: "a package for another os, without the older bun's cache",
       args: [],
       leftOut: { optionalDependencies: { "a-os": "1.0.0" } },
       noCache: true,
     },
-  ])("$title", async ({ args, leftOut, member, atOnce, noCache }) => {
+  ])("$title", async ({ args, leftOut, member, atOnce, noCache, script }) => {
     const graph: Record<string, Record<string, object>> = {
       m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
-      n: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
+      n: { "1.0.0": { dependencies: { b: "^2.0.0" }, ...(script && { scripts: { postinstall: script } }) } },
       b: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} },
       a: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
       "a-os": { "1.0.0": { os: [otherOs], dependencies: { b: "^2.0.0" } } },

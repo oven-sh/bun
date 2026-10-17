@@ -380,6 +380,74 @@ describe.concurrent("certificate authority", () => {
     expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
   });
 
+  // With the system store on, every file in $SSL_CERT_DIR is read. The default store only finds files there that are
+  // named after a hash of the certificate, so `my-ca.pem` tells the two apart. Other systems keep their store elsewhere.
+  describe.skipIf(!isLinux)("--use-system-ca", () => {
+    async function run(args: string[], extraEnv: Record<string, string> = {}) {
+      const { packageDir, packageJson, env } = await setupTest();
+      using server = Bun.serve({
+        port: 0,
+        fetch: mockRegistryFetch(),
+        ...tls,
+      });
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.1.1",
+            dependencies: { "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz` },
+          }),
+        ),
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: `https://localhost:${server.port}/` } }),
+        ),
+        write(join(packageDir, "certs", "my-ca.pem"), tls.cert),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env: {
+          ...env,
+          SSL_CERT_DIR: join(packageDir, "certs"),
+          SSL_CERT_FILE: "",
+          BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+          ...extraEnv,
+        },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    test("the certificate is not trusted without it", async () => {
+      const { out, err, exitCode } = await run(["install"]);
+      expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(out).not.toContain("+ no-deps@");
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      [["install", "--use-system-ca"], {}],
+      [["--use-system-ca", "install"], {}],
+      [["install"], { BUN_OPTIONS: "--use-system-ca" }],
+      [["install"], { NODE_USE_SYSTEM_CA: "1" }],
+    ])("bun %j with %j trusts the system's certificates", async (args, extraEnv) => {
+      const { out, err, exitCode } = await run(args, extraEnv);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("+ no-deps@");
+      expect(exitCode).toBe(0);
+    });
+
+    test("is refused together with --use-bundled-ca", async () => {
+      const { err, exitCode } = await run(["install", "--use-system-ca", "--use-bundled-ca"]);
+      expect(err).toBe("error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test(`non-existent --cafile`, async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));

@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, githubTarball, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, githubTarball, isMacOS, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
@@ -869,7 +869,8 @@ describe.concurrent("template given as a path", () => {
     ["one name of 5000 bytes", ["tpl", long(5000)]],
     ["a name of 5000 bytes in a folder", ["tpl", "d/" + long(5000)]],
     ["25 folders of 200 bytes", ["tpl", (long(200) + "/").repeat(25)]],
-    ["named after a 4090-byte template path", ["/" + long(4090)]],
+    // A path holds 1024 bytes on macOS and 4096 on Linux. The template's path fits, the destination's does not.
+    ["named after a template path that just fits", ["/" + long(isMacOS ? 1020 : 4090)]],
   ])("refuses a destination longer than a path: %s", async (_, args) => {
     using dir = tempDir("create-long-destination", {
       "home/.keep": "",

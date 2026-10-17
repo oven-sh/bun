@@ -1029,19 +1029,25 @@ pub fn install_with_manager(
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
-    // `skipped > 0` means that parts of an earlier install are still in place. Folders that the
-    // root's scripts created may be removed too, so this only runs if they run again afterwards.
+    // `skipped > 0` means that parts of an earlier install are still in place.
     if !install_summary.places.is_empty()
         && install_summary.success > 0
         && install_summary.skipped > 0
         && install_summary.fail == 0
-        && (runs_root_scripts || manager.root_lifecycle_scripts.is_none())
     {
+        // The root's scripts may have created one of these folders. If they do not run again
+        // afterwards, only a folder that hides the version in bun.lock is removed.
+        let same_version = if runs_root_scripts || manager.root_lifecycle_scripts.is_none() {
+            crate::prune::SameVersion::Remove
+        } else {
+            crate::prune::SameVersion::Keep
+        };
         crate::prune::remove_copies_of_the_older_layout(
             manager,
             install_root_dependencies,
             &workspace_filters,
             core::mem::take(&mut install_summary.places),
+            same_version,
         );
     }
     if manager.options.global && manager.options.do_.install_packages() {

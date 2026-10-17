@@ -628,19 +628,8 @@ class Interface extends InterfaceConstructor {
       this[kSawReturnAt] = 0;
     }
 
-    if (hasOnlyLineFeeds(string)) {
-      let newline = StringPrototypeIndexOf(string, "\n");
-      if (newline === -1) {
-        if (string) {
-          // No newlines this time, save what we have for next time
-          if (this[kLine_buffer]) {
-            this[kLine_buffer] += string;
-          } else {
-            this[kLine_buffer] = string;
-          }
-        }
-        return;
-      }
+    let newline = StringPrototypeIndexOf(string, "\n");
+    if (newline !== -1 && hasOnlyLineFeeds(string)) {
       // The legacy _line_buffer setter can put any text in the buffer.
       const buffer = this[kLine_buffer];
       if (!buffer || hasOnlyLineFeeds(buffer)) {

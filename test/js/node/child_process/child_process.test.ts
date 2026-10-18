@@ -774,6 +774,46 @@ describe("spawn()", () => {
     },
   );
 
+  it.skipIf(isWindows)("small child.stdin writes report EPIPE when the child closes stdin", async () => {
+    const child = spawn(
+      bunExe(),
+      ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", () => reject(new Error("child exited before ready")));
+        child.stdout!.once("data", () => resolve());
+      });
+      child.removeAllListeners("error");
+      child.removeAllListeners("exit");
+
+      const errEv = Promise.withResolvers<any>();
+      const cb = Promise.withResolvers<any>();
+      child.stdin!.on("error", e => errEv.resolve(e));
+      child.stdin!.write("hello\n", e => cb.resolve(e));
+
+      const cbErr = await cb.promise;
+      expect(cbErr?.code).toBe("EPIPE");
+
+      const err = await errEv.promise;
+      expect({
+        err: err.code,
+        syscall: err.syscall,
+        destroyed: child.stdin!.destroyed,
+        writable: child.stdin!.writable,
+      }).toEqual({
+        err: "EPIPE",
+        syscall: "write",
+        destroyed: true,
+        writable: false,
+      });
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
   it.skipIf(isWindows)("stdin write to a child that exits before draining it fails with EPIPE", async () => {
     // The child exits with most of the 16 MiB (more than any socket buffer
     // holds) unread. Whether the kernel fails the next send or the exit handler

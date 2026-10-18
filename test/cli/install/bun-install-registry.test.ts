@@ -7302,6 +7302,60 @@ describe.concurrent("hoisting", async () => {
       expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.0.0");
     });
 
+    // For example, elysia needs @sinclair/typebox >=0.34.0 as a peer, and @jest/schemas depends on ^0.27.8.
+    describe("a copy that only an unrelated package depends on is not used", () => {
+      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0. peer-deps-fixed needs ^1.0.0.
+      async function expectOwnCopies(dir: string, unrelated: string[]) {
+        expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+        expect(await versionSeenFrom(dir, unrelated, "no-deps")).toBe("2.0.0");
+      }
+
+      test("in a fresh install", async () => {
+        const dir = await project({
+          "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" } },
+        });
+        expect(await peerWarnings(dir)).toEqual([]);
+        await expectOwnCopies(dir, ["one-fixed-dep"]);
+
+        const lock = await file(join(dir, "bun.lock")).text();
+        await rm(join(dir, "node_modules"), { recursive: true, force: true });
+        expect(await peerWarnings(dir, "--frozen-lockfile")).toEqual([]);
+        await expectOwnCopies(dir, ["one-fixed-dep"]);
+        expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
+      });
+
+      test("when the package with the peer is added later", async () => {
+        const dir = await project({ "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0" } } });
+        expect(await peerWarnings(dir)).toEqual([]);
+        expect(await peerWarnings(dir, "peer-deps-fixed@1.0.0")).toEqual([]);
+        await expectOwnCopies(dir, ["one-fixed-dep"]);
+      });
+
+      test("when the unrelated package is another workspace", async () => {
+        const dir = await project({
+          "package.json": { name: "mono", workspaces: ["packages/*"] },
+          "packages/a/package.json": { name: "a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } },
+          "packages/b/package.json": { name: "b", version: "1.0.0", dependencies: { "peer-deps-fixed": "1.0.0" } },
+        });
+        expect(await peerWarnings(dir)).toEqual([]);
+        expect(await versionSeenFrom(join(dir, "packages", "b"), ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+        expect(await versionSeenFrom(join(dir, "packages", "a"), [], "no-deps")).toBe("2.0.0");
+      });
+    });
+
+    test("a workspace that depends on both shares its copy", async () => {
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([rootsNoDeps2]);
+      expect(await versionSeenFrom(join(dir, "packages", "a"), ["peer-deps-fixed"], "no-deps")).toBe("2.0.0");
+    });
+
     test("one line for each dependent", async () => {
       const dir = await project({
         "package.json": {

@@ -3555,7 +3555,7 @@ fn get_or_put_resolved_package(
                     Some(result)
                 }
                 Npm::FindVersionResult::Err(err_type) => {
-                    // The leftover `existing_peer_target` passed over is all there is.
+                    // No version fits, so the copy that `existing_peer_target` passed over is used.
                     if install_peer && behavior.is_peer() {
                         if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
                         {
@@ -3966,7 +3966,30 @@ fn existing_peer_target(
         return Some(id);
     }
     let highest = highest_peer_candidate(lockfile, name_hash, version)?;
-    (!would_revive_leftover(lockfile, row, highest)).then_some(highest)
+    (shares_copy_with_dependent(lockfile, name_hash, row)
+        && !would_revive_leftover(lockfile, row, highest))
+    .then_some(highest)
+}
+
+/// True if the root, or a package that depends on the peer's declaring package, has a dependency
+/// of its own with the peer's name. The peer then uses that copy, even one outside its range. A
+/// copy that only unrelated packages depend on is not meant for it.
+fn shares_copy_with_dependent(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    row: DependencyID,
+) -> bool {
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let Some(package) = lockfile.get_parent_pkg_of_dependency(row) else {
+        return true;
+    };
+    (lockfile.packages.items_dependencies().iter().enumerate()).any(|(dependent, list)| {
+        let mut own =
+            (list.begin() as usize..list.end() as usize).filter(|&id| !deps[id].behavior.is_peer());
+        own.clone().any(|id| deps[id].name_hash == name_hash)
+            && (dependent == 0 || own.any(|id| resolutions[id] == package))
+    })
 }
 
 /// By a `file:`, `link:`, tarball or git row: the tree builder binds the peer to the nearest copy.

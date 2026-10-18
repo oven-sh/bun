@@ -252,34 +252,38 @@ function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
   };
   const done = Promise.all([pump(proc.stdout), pump(proc.stderr)]);
   return {
-    async waitFor(pattern: RegExp) {
-      while (!pattern.test(text)) {
+    async waitFor(pattern: RegExp, from = 0) {
+      while (!pattern.test(text.slice(from))) {
         const closed = await Promise.race([changed.promise.then(() => false), done.then(() => true)]);
-        if (closed && !pattern.test(text)) {
+        if (closed && !pattern.test(text.slice(from))) {
           await proc.exited;
           throw new Error(`Exited with code ${proc.exitCode} before ${pattern}:\n${text}`);
         }
       }
-      return text.match(pattern)!;
+      return text.slice(from).match(pattern)!;
     },
-    // One write can reach the watcher as more than one change. Each restarts a `--watch` process, on a new port, so the
-    // last URL can be out of date by the time it is used. The next one is then on its way.
+    // One write can reach the watcher as several changes, and each restarts a `--watch` process on a new port. A
+    // refused or reset connection means the URL is out of date and the next one is on its way. A crash restarts it too.
     async get(path: string) {
+      let from = 0;
       while (true) {
-        const urls = text.match(/(?<=url: )http:\/\/\S+/g)!;
+        await this.waitFor(/url: http:/, from);
+        const newest = text.lastIndexOf("url: http:");
+        const [, url] = await this.waitFor(/url: (http:\/\/\S+)/, newest);
         try {
-          return await get(urls.at(-1)!, path);
+          return await get(url, path);
         } catch (error: any) {
           if (error.code !== "ECONNREFUSED" && error.code !== "ECONNRESET") throw error;
-          await this.waitFor(new RegExp(`(url: http:[\\s\\S]*){${urls.length + 1}}`));
+          if (text.includes("auto-restarting due to crash")) throw error;
+          from = newest + 1;
         }
       }
     },
-    // On Windows `--watch` runs the program in a child of `proc`. The system ends it after `proc` is killed, and until
-    // then the project is its working directory, which cannot be removed. It holds these pipes too: their end is its end.
+    // On Windows `--watch` runs the program in a child of `proc` that outlives a killed `proc` for a moment. Until it
+    // is gone its working directory, the project, cannot be removed. It holds these pipes, so they end when it does.
     async [Symbol.asyncDispose]() {
       proc.kill();
-      await done;
+      await Promise.all([done, proc.exited]);
     },
   };
 }
@@ -299,15 +303,13 @@ test.concurrent.each([
     `,
   });
 
-  await using proc = spawnBake(String(dir), [...args, "--port=0"]);
-  await using output = collectOutput(proc);
+  await using output = collectOutput(spawnBake(String(dir), [...args, "--port=0"]));
   await output.waitFor(/TS2322/);
 
   await Bun.write(
     join(String(dir), "app/server.ts"),
     `declare const Response: any;\nconst count: number = 1;\nexport default { fetch: () => new Response(String(count)) };\n`,
   );
-  await output.waitFor(/url: http:/);
 
   expect(await output.get("/missing")).toBe("200 1");
 });
@@ -368,8 +370,7 @@ test.concurrent.each([
     "app/server.ts": `export default { fetch: () => new Response("v1") };`,
   });
 
-  await using proc = spawnBake(String(dir), ["bake", flag, "--port=0"]);
-  await using output = collectOutput(proc);
+  await using output = collectOutput(spawnBake(String(dir), ["bake", flag, "--port=0"]));
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
   expect(await get(url, "/")).toBe("200 v1");
 
@@ -394,8 +395,7 @@ test.concurrent.skipIf(isWindows).each([{ args: ["--watch-kill-signal", "SIGINT"
     `,
     });
 
-    await using proc = spawnBake(String(dir), [...args, "--port=0"]);
-    await using output = collectOutput(proc);
+    await using output = collectOutput(spawnBake(String(dir), [...args, "--port=0"]));
     await output.waitFor(/url: /);
 
     await Bun.write(
@@ -415,15 +415,16 @@ test.concurrent("bun bake --hot keeps one server when it started on a later port
     "app/server.ts": `export default { fetch: () => new Response("v1") };`,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "bake", "--hot", "--host=127.0.0.1"],
-    env: { ...env, PORT: String(blocker.port) },
-    cwd: String(dir),
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await using output = collectOutput(proc);
+  await using output = collectOutput(
+    Bun.spawn({
+      cmd: [bunExe(), "bake", "--hot", "--host=127.0.0.1"],
+      env: { ...env, PORT: String(blocker.port) },
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    }),
+  );
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
   expect(new URL(url).port).not.toBe(String(blocker.port));
 
@@ -503,8 +504,7 @@ test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export 
     `export default { unix: ${JSON.stringify(socket)}, fetch: () => new Response("via unix") };`,
   );
 
-  await using proc = spawnBake(String(dir), ["bake"]);
-  await using output = collectOutput(proc);
+  await using output = collectOutput(spawnBake(String(dir), ["bake"]));
   await output.waitFor(/url: unix:/);
 
   const res = await fetch("http://localhost/", { unix: socket });

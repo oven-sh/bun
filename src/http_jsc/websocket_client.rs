@@ -406,7 +406,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.send_fin_if_done();
     }
 
-    /// Only a TLS renegotiation reaches this: the upgrade client handles the first handshake.
+    /// The upgrade client handles the first handshake. This gets the end of a renegotiation, and a
+    /// read that failed (`success` is 0).
     pub fn handle_handshake(
         &self,
         socket: Socket<SSL>,
@@ -426,6 +427,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             success == 1 && ssl_error.error_no == 0,
             &self.verified_hostname,
         ) {
+            self.parse_initial_data();
             self.fail(ErrorCode::TlsHandshakeFailed);
         }
     }
@@ -1123,7 +1125,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         match self.io() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             Io::Socket => usize::try_from(self.tcp.get().write(bytes)).ok(),
-            Io::Tunnel(tunnel) => WebSocketProxyTunnel::write(tunnel, bytes).ok(),
+            Io::Tunnel(tunnel) => match WebSocketProxyTunnel::write(tunnel, bytes) {
+                Ok(wrote) => Some(wrote),
+                // Like a socket, a tunnel that refuses a write took 0 bytes: `handle_tunnel_writable` follows
+                // (a renegotiation ended) or `handle_tunnel_close` (a read failed, its data comes first).
+                Err(_) => Some(0),
+            },
             Io::Stream => {
                 self.cpp_websocket()?.stream_write(bytes);
                 Some(bytes.len())
@@ -1791,7 +1798,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.finish(Outcome::Closed);
     }
 
-    /// Called by the WebSocketProxyTunnel when the underlying socket drains.
+    /// Called by the WebSocketProxyTunnel when the underlying socket drains or a renegotiation ends.
     /// Flushes any buffered plaintext data through the tunnel.
     pub(crate) fn handle_tunnel_writable(this: ThisPtr<Self>) {
         // send_buffer → tunnel.write() can re-enter finish() synchronously

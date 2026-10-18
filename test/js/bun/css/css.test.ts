@@ -239,8 +239,7 @@ describe("css tests", () => {
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
   describe("calc, lightningcss test_calc", () => {
-    // The rows of lightningcss v1.33.0, src/lib.rs:8064-8169, in that order. Four of them have another
-    // expected value here, each with a comment.
+    // lightningcss v1.33.0, src/lib.rs:8064-8169, in that order. Four rows have another value here, each with a comment.
     minify_test(".foo { width: calc(20px * 2) }", ".foo{width:40px}");
     minify_test(".foo { font-size: calc(100vw / 35) }", ".foo{font-size:2.85714vw}");
     minify_test(".foo { width: calc(20px * 2 * 3) }", ".foo{width:120px}");
@@ -369,8 +368,7 @@ describe("css tests", () => {
       `a{background:conic-gradient(red calc(30deg + 5%),#00f)}`,
     );
   });
-  // These sums print in the form that they keep when they are minified again. A sum times a number
-  // below zero does not: `calc(-1 * (1px - 10%) + 1em)` changes the order of its first two terms.
+  // These sums keep their form on a second minify. A sum times a number below zero does not: `calc(-1 * (1px - 10%) + 1em)`.
   const minify_twice_test = (source: string, expected: string) =>
     test(source, () => {
       const once = minify_test_with_options(source, "");
@@ -490,8 +488,7 @@ describe("css tests", () => {
     );
   });
   describe("calc percentages of a length are not ordered", () => {
-    // What a percentage of a length refers to can be below zero, and then 20% is less than 10%:
-    // https://drafts.csswg.org/css-values-4/#calc-simplification
+    // A percentage of a length can refer to a size below zero: https://drafts.csswg.org/css-values-4/#calc-simplification
     const value = (prop: string, source: string, expected: string) =>
       minify_twice_test(`a { ${prop}: ${source} }`, `a{${prop}:${expected}}`);
     value("background-position", `min(1%, 2%, 3%) 0`, `min(1%,2%,3%) 0`);

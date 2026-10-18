@@ -116,14 +116,11 @@ pub use sum::SumTerms;
 mod sum {
     use super::{Calc, CalcValue};
 
-    /// The terms of a `Calc::Sum` in source order: two or more, none of them a
-    /// `Calc::Sum`. A sum is one level of the tree, however many terms it has,
-    /// so nothing that walks a `Calc` recurses once for each term.
+    /// The terms of a `Calc::Sum` in source order: two or more, and none of them is a `Calc::Sum`.
     pub struct SumTerms<V>(Box<[Calc<V>]>);
 
     impl<V: CalcValue> Calc<V> {
-        /// The sum of `terms`. A term that is a sum gives its own terms, and a
-        /// value that adds nothing is left out. One term is that term.
+        /// Takes the terms of each term that is a sum, and leaves out each value that adds nothing.
         pub(crate) fn sum(mut terms: Vec<Calc<V>>) -> Calc<V> {
             let (mut nested, mut zeros) = (false, 0);
             for term in &mut terms {
@@ -210,19 +207,13 @@ pub trait CalcValue:
     + protocol::ToCss
     + protocol::IsCompatible
 {
-    /// `sum + next`, for `parse_sum`.
-    ///
-    /// A sum that does not reduce to one value is itself a value of `Length`
-    /// and of `DimensionPercentage`. They keep the terms and add a value to the
-    /// term that has its unit: `RunningSum::add_term`. The other types add two
-    /// values: `RunningSum::add_value`.
+    /// `sum + next` for `parse_sum`: `add_term` for a type that holds a sum, `add_value` for the others.
     fn add_to_sum(
         sum: RunningSum<Self>,
         next: Calc<Self>,
         input: &mut css::Parser,
     ) -> CssResult<RunningSum<Self>>;
-    /// What a sum keeps in place of this value when it is zero. `None` leaves it out, and not
-    /// every zero is left out: https://drafts.csswg.org/css-values-4/#calc-simplification
+    /// What a sum keeps for this value of zero, if anything: https://drafts.csswg.org/css-values-4/#calc-simplification
     fn zero_in_sum(&self) -> Option<Self>;
     /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
@@ -1269,8 +1260,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
         }
     }
 
-    /// A value is added to the first value it can be added to. A math function,
-    /// a product and a number go to the end with no search.
+    /// A value is added to the first value it can be added to. Every other term goes to the end.
     fn add_term(&mut self, rhs: Calc<V>) {
         if let Calc::Value(b) = &rhs {
             if let Some((i, sum)) = self.find_value_to_add(b) {
@@ -1303,8 +1293,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
     fn find_value_to_add(&mut self, b: &V) -> Option<(usize, V)> {
         if self.values.is_none() && self.terms.len() > Self::SCAN_MAX {
             let values: Vec<usize> = self.value_positions().collect();
-            // A value is added to the first value it can be added to, so no two values
-            // of a sum can be added, and a sum has at most one value for each unit.
+            // Each value was added to the first value it could be added to, so no two values can be added.
             debug_assert!(values.iter().all(|&i| {
                 values
                     .iter()
@@ -1330,8 +1319,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
         }
     }
 
-    /// Each later term moves one place. A value that is added again goes to the
-    /// end, so a term moves at most once for each unit, in each pair of brackets.
+    /// Each later term moves one place: at most once for each unit, in each pair of brackets.
     fn remove(&mut self, i: usize) {
         self.terms.remove(i);
         if let Some(values) = &mut self.values {
@@ -1359,11 +1347,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
     }
 }
 
-/// A sum while `parse_sum` reads its terms. The terms are in a list from the
-/// third term on, and the `Calc::Sum` is made once, at the end.
-///
-/// `parse_sum` recurses once for each bracket, so the list is boxed and this
-/// is as large as a `Calc`.
+/// A sum while `parse_sum` reads its terms, as large as a `Calc` because `parse_sum` recurses for each bracket.
 pub struct RunningSum<V>(Running<V>);
 
 enum Running<V> {
@@ -1394,8 +1378,7 @@ impl<V: CalcValue> RunningSum<V> {
 }
 
 impl<V: ScalarCalcValue> RunningSum<V> {
-    /// `self + next` for a type that cannot hold a sum. `add` adds two values.
-    /// A sum of this type takes one more math function and nothing else.
+    /// `self + next` for a type that cannot hold a sum: `add` adds two values, and a sum takes only a math function.
     pub(crate) fn add_value(
         self,
         next: Calc<V>,
@@ -2177,8 +2160,7 @@ macro_rules! dim_pct_protocol {
         }
     };
 }
-// What a percentage of a length refers to is not known here. It can be nothing, and then the
-// value is `auto` also at `0%`. It can be below zero, and then `20%` is less than `10%`.
+// A percentage of a length can refer to nothing (`auto`, also at `0%`) or to a size below zero (`20%` under `10%`).
 dim_pct_protocol!(LengthValue, percentage_basis_known: false);
 // A percentage of an angle is a part of a full turn.
 dim_pct_protocol!(Angle, percentage_basis_known: true, parse_to_css: forward,);

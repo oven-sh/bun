@@ -5,6 +5,8 @@ import {
   ArrayType,
   BoolType,
   BufferSourceType,
+  type BytesOptions,
+  BytesType,
   type ClassOptions,
   ClassType,
   type DictionaryOptions,
@@ -16,6 +18,7 @@ import {
   type MemberOptions,
   ModuleDefinition,
   NamespaceDefinition,
+  type NamespaceOptions,
   RefType,
   type SignatureOptions,
   StringType,
@@ -30,7 +33,7 @@ export { null_ as null };
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
 
-/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. */
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
 export const { u8, u16, i32, u32, u64, usize } = integers;
 
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. */
@@ -42,8 +45,11 @@ export const string = new StringType();
 /** The JS value itself, as a `JsLocal<'a>`. */
 export const any = new AnyType();
 
-/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.bytes`, `.arrayBuffer`. */
+/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
+
+/** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
+export const bytes = (options: BytesOptions) => new BytesType(options);
 
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType(
@@ -82,8 +88,9 @@ export const fn = (signature: SignatureOptions) => new FunctionDefinition([signa
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
 
-/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions. */
-export const namespace = (functions: Record<string, SignatureOptions>) => new NamespaceDefinition(functions);
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. */
+export const namespace = (functions: Record<string, SignatureOptions>, options?: NamespaceOptions) =>
+  new NamespaceDefinition(functions, options);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
 export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

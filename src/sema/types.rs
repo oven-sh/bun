@@ -10,7 +10,7 @@ use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
-use crate::util::memory::{Fill, Flat, OWN, Placeholder, Placeholders};
+use crate::util::memory::{Fill, OWN, Placeholder, Placeholders, Segmented};
 use crate::util::{
     FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, SharedSort, for_each_mut,
     shard_among, spread_hash,
@@ -1612,11 +1612,11 @@ type MapperRecord<'s> = (Mapping<'s>, ObjectFlags);
 const _: () = assert!(LOCAL == OWN);
 
 /// What is published of one kind, by id.
-type Shared<'s, T> = Flat<'s, T, AtomicU32>;
+type Shared<'s, T> = Segmented<'s, T, AtomicU32, &'s Session>;
 
 /// What one task has of one kind, by id without `LOCAL`. It is laid over what is published of the
 /// kind, so that `of_either` takes any id.
-type Mine<'s, T> = Flat<'s, T, Cell<u32>>;
+type Mine<'s, T> = Segmented<'s, T, Cell<u32>, &'s Arena>;
 
 /// Where a type comes in `Types::content_order`. Computed once, from the interning key, when the type is created. No id is
 /// in it, so it is the same in every task, at every thread count and in every run.
@@ -1899,7 +1899,7 @@ impl Record for TypeRecord<'_> {
 /// - There is one record for a key at any time (`place`), so there is nothing to merge.
 struct Interned<'s, V> {
     index: Box<GrowingPlaces<&'s Session, INDEX_SHARDS>, &'s Session>,
-    /// In an arena, where a task can borrow them for as long as it may exist: see `Flat::of_either`. An id from `first_placed`
+    /// In an arena, where a task can borrow them for as long as it may exist: see `Segmented::of_either`. An id from `first_placed`
     /// on that no record has got yet has a hole.
     items: &'s Shared<'s, V>,
     /// More than any id: nothing is placed.
@@ -1911,7 +1911,7 @@ const INDEX_SHARDS: usize = 64;
 
 impl<'s, V: Record> Interned<'s, V> {
     fn new_in(session: &'s Session) -> Self {
-        let items = Shared::new_in(session.block(Shared::<V>::ROOM));
+        let items = Shared::new_in(session);
         Interned {
             index: Box::new_in(GrowingPlaces::new_in(session), session),
             items: session.arena().alloc(items),
@@ -2038,8 +2038,9 @@ struct Own<'s, V> {
 
 impl<'s, V> Own<'s, V> {
     /// `published`: the published records of the kind, if `of_either` is to find them.
-    fn new_in(session: &'s Session, published: Option<&'s Shared<'s, V>>) -> Self {
-        let mut records = Mine::new_in(session.block_of_task(Mine::<V>::ROOM));
+    /// `arena`: `OwnStore::arena`
+    fn new_in(arena: &'s Arena, published: Option<&'s Shared<'s, V>>) -> Self {
+        let mut records = Mine::new_in(arena);
         if let Some(published) = published {
             records.lay_over(published.elements());
         }
@@ -2110,7 +2111,7 @@ impl Home<'_> {
 /// `Task`. No other task sees it. At the end of the task `finish` extracts the records the task
 /// publishes, and the rest is dropped with the task.
 pub struct OwnStore<'s> {
-    /// Of the thread that runs the task: for the lists of the records, which may be published.
+    /// Of the thread that runs the task: for the records, and for their lists, which may be published.
     arena: &'s Arena,
     atoms: Own<'s, List<'s, u8>>,
     components: Own<'s, List<'s, IndexComponent>>,
@@ -2151,16 +2152,15 @@ impl<'s> OwnStore<'s> {
     /// `arena`: of the thread that runs the task. `published`: what the task reads beside its own
     /// records. It is the only store that a `Types` may pair this one with.
     pub fn new_in(arena: &'s Arena, published: &TypeStore<'s>) -> Self {
-        let session = published.session;
-        let mut summaries = Mine::new_in(session.block_of_task(Mine::<Summary>::ROOM));
+        let mut summaries = Mine::new_in(arena);
         summaries.lay_over(published.summaries.elements());
         OwnStore {
             arena,
-            atoms: Own::new_in(session, None),
-            components: Own::new_in(session, Some(published.components.items)),
-            mappers: Own::new_in(session, Some(published.mappers.items)),
-            sigs: Own::new_in(session, Some(published.sigs.items)),
-            types: Own::new_in(session, Some(published.types.items)),
+            atoms: Own::new_in(arena, None),
+            components: Own::new_in(arena, Some(published.components.items)),
+            mappers: Own::new_in(arena, Some(published.mappers.items)),
+            sigs: Own::new_in(arena, Some(published.sigs.items)),
+            types: Own::new_in(arena, Some(published.types.items)),
             summaries,
             log: LocalVec::new(),
             is_read_later: true,
@@ -2594,7 +2594,7 @@ impl<'s> TypeStore<'s> {
     }
 
     fn with_order_in(session: &'s Session, texts: Option<Interner<'s>>) -> Self {
-        let summaries = Shared::new_in(session.block(Shared::<Summary>::ROOM));
+        let summaries = Shared::new_in(session);
         let store = TypeStore {
             session,
             types: Interned::new_in(session),

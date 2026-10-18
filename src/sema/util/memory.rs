@@ -1,28 +1,25 @@
 //! The memory that the checker manages by hand. The containers of this crate that need `unsafe` are
-//! here. What it asks of the system (`os`, `aside`) has a stand-in under Miri, so its tests run there.
+//! here. The file depends on `std` only but for the way out of memory, so its tests run under Miri.
 //!
 //! An element never moves and is never freed before its container, so a reference to one stays
 //! valid while others are added:
 //!
 //! - `AppendVec`: a vector that any thread appends to and reads without a lock.
 //! - `LocalVec`: the same for one thread, without atomic read-modify-write operations.
-//! - `Flat`: either of the two with its elements next to each other, in a range of addresses that is
-//!   reserved at the start. The address of an element is a multiplication and an addition.
+//! - `Segmented`: either of the two in chunks of one size.
 //! - `Cells`: atomic integers for a range of indices that keeps growing, initially all zero.
 //! - `Newest`: the newest of a series of slices of cells, read without a lock.
 //!
-//! All but a `Flat` get their memory from the allocator that they hold, and return it there. Any
-//! thread that adds to an `AppendVec`, a `Cells` or a `Newest` may allocate, and the thread that drops
-//! it frees.
+//! Each gets its memory from the allocator that it holds, and returns it there. Any thread that
+//! adds to an `AppendVec`, a `Cells` or a `Newest` may allocate, and the thread that drops it frees.
 
-use bun_threading::Guarded;
 use std::alloc::{Allocator, Global, Layout};
-use std::cell::Cell;
+use std::cell::{Cell, UnsafeCell};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr::{NonNull, null_mut, slice_from_raw_parts_mut};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 /// Makes its owner `Send` if `E` is, and `Sync` if `E` is both: through a shared reference one
 /// thread adds an element that another thread reads or drops. Those are the bounds of `OnceLock`.
@@ -363,577 +360,84 @@ impl<T, L: Length, A: Allocator + Clone> Fill<T> for Stable<T, L, A> {
     }
 }
 
-// ───────────────────────────── reserved addresses ─────────────────────────────
+// ───────────────────────────── segmented vectors ─────────────────────────────
 
-/// A range gets memory in steps of this many bytes: a multiple of the page size of every platform.
-const STEP: usize = 64 << 10;
+/// A segment has two to the power of this many elements. Every task has a few vectors of its own, most
+/// of them short, and a directory that threads share has `OWN >> SEGMENT_BITS` entries.
+const SEGMENT_BITS: u32 = 14;
 
-/// A range starts at a multiple of this.
-const SMALLEST_PAGE: usize = 4 << 10;
+const SEGMENT: usize = 1 << SEGMENT_BITS;
 
-/// A range of addresses is reserved first, which takes no memory. Parts of it get memory later.
-#[cfg(all(unix, not(miri)))]
-mod os {
-    use std::ptr::null_mut;
-
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const WITHOUT_MEMORY: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    const WITHOUT_MEMORY: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANON;
-
-    // A tool that looks for what a process still refers to when it ends does not look into a mapping
-    // that it is not told about.
-    #[cfg(bun_asan)]
-    unsafe extern "C" {
-        pub(super) safe fn __lsan_register_root_region(start: *const std::ffi::c_void, len: usize);
-        pub(super) safe fn __lsan_unregister_root_region(
-            start: *const std::ffi::c_void,
-            len: usize,
-        );
-    }
-
-    /// Null: the addresses are not to be had.
-    pub(super) fn reserve(len: usize) -> *mut u8 {
-        // SAFETY: no address is asked for, so no mapping that exists changes.
-        let at = unsafe { libc::mmap(null_mut(), len, libc::PROT_NONE, WITHOUT_MEMORY, -1, 0) };
-        if at == libc::MAP_FAILED {
-            return null_mut();
-        }
-        #[cfg(bun_asan)]
-        __lsan_register_root_region(at, len);
-        at.cast()
-    }
-
-    /// Whether the range has memory now. What had memory keeps its content.
-    ///
-    /// # Safety
-    /// The range is part of one that `reserve` returned and `release` has not been given.
-    pub(super) unsafe fn commit(at: *mut u8, len: usize) -> bool {
-        // SAFETY: the caller's.
-        unsafe { libc::mprotect(at.cast(), len, libc::PROT_READ | libc::PROT_WRITE) == 0 }
-    }
-
-    /// # Safety
-    /// As for `commit`, and nothing in the range is in use.
-    pub(super) unsafe fn decommit(at: *mut u8, len: usize) {
-        let fixed = WITHOUT_MEMORY | libc::MAP_FIXED;
-        // SAFETY: the caller's. A new mapping replaces the pages of the range, which stays reserved.
-        // If it fails, the range has kept its memory, which `commit` allows for.
-        unsafe { libc::mmap(at.cast(), len, libc::PROT_NONE, fixed, -1, 0) };
-    }
-
-    /// # Safety
-    /// `reserve(len)` returned `at`, this is the only call for it, and nothing in the range is in
-    /// use.
-    pub(super) unsafe fn release(at: *mut u8, len: usize) {
-        #[cfg(bun_asan)]
-        __lsan_unregister_root_region(at.cast(), len);
-        // SAFETY: the caller's.
-        unsafe { libc::munmap(at.cast(), len) };
-    }
-}
-
-#[cfg(all(windows, not(miri)))]
-mod os {
-    use std::ffi::c_void;
-    use std::ptr::null_mut;
-
-    const MEM_COMMIT: u32 = 0x1000;
-    const MEM_RESERVE: u32 = 0x2000;
-    const MEM_DECOMMIT: u32 = 0x4000;
-    const MEM_RELEASE: u32 = 0x8000;
-    const PAGE_NOACCESS: u32 = 0x01;
-    const PAGE_READWRITE: u32 = 0x04;
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn VirtualAlloc(at: *mut c_void, len: usize, kind: u32, protection: u32) -> *mut c_void;
-        fn VirtualFree(at: *mut c_void, len: usize, kind: u32) -> i32;
-    }
-
-    /// Null: the addresses are not to be had.
-    pub(super) fn reserve(len: usize) -> *mut u8 {
-        // SAFETY: no address is asked for, so no allocation that exists changes.
-        unsafe { VirtualAlloc(null_mut(), len, MEM_RESERVE, PAGE_NOACCESS) }.cast()
-    }
-
-    /// Whether the range has memory now. What had memory keeps its content.
-    ///
-    /// # Safety
-    /// The range is part of one that `reserve` returned and `release` has not been given.
-    pub(super) unsafe fn commit(at: *mut u8, len: usize) -> bool {
-        // SAFETY: the caller's.
-        !unsafe { VirtualAlloc(at.cast(), len, MEM_COMMIT, PAGE_READWRITE) }.is_null()
-    }
-
-    /// # Safety
-    /// As for `commit`, and nothing in the range is in use.
-    pub(super) unsafe fn decommit(at: *mut u8, len: usize) {
-        // SAFETY: the caller's. If it fails, the range has kept its memory, which `commit` allows
-        // for.
-        unsafe { VirtualFree(at.cast(), len, MEM_DECOMMIT) };
-    }
-
-    /// # Safety
-    /// `reserve` returned `at`, this is the only call for it, and nothing in the range is in use.
-    pub(super) unsafe fn release(at: *mut u8, _: usize) {
-        // SAFETY: the caller's.
-        unsafe { VirtualFree(at.cast(), 0, MEM_RELEASE) };
-    }
-}
-
-/// All of a range has memory from the start: for short ranges.
-#[cfg(any(miri, not(any(unix, windows))))]
-mod os {
-    use std::alloc::{Layout, alloc_zeroed, dealloc};
-    use std::ptr::null_mut;
-
-    fn layout(len: usize) -> Option<Layout> {
-        Layout::from_size_align(len, super::SMALLEST_PAGE).ok()
-    }
-
-    /// Null: the memory is not to be had.
-    pub(super) fn reserve(len: usize) -> *mut u8 {
-        match layout(len) {
-            // SAFETY: the length is not 0: see `Reserved::new`.
-            Some(layout) => unsafe { alloc_zeroed(layout) },
-            None => null_mut(),
-        }
-    }
-
-    /// # Safety
-    /// None: there is nothing to do.
-    pub(super) unsafe fn commit(_: *mut u8, _: usize) -> bool {
-        true
-    }
-
-    /// # Safety
-    /// None: there is nothing to do.
-    pub(super) unsafe fn decommit(_: *mut u8, _: usize) {}
-
-    /// # Safety
-    /// `reserve(len)` returned `at`, this is the only call for it, and nothing in the range is in
-    /// use.
-    pub(super) unsafe fn release(at: *mut u8, len: usize) {
-        if let Some(layout) = layout(len) {
-            // SAFETY: the caller's.
-            unsafe { dealloc(at, layout) };
-        }
-    }
-}
-
-/// Where the system counts the addresses that a process has reserved like the memory that it uses
-/// (`RLIMIT_AS`), or has few to give (39 bits), a range is set aside, not reserved: nothing is mapped
-/// there until a part of it gets memory, so it takes as many addresses as it has memory.
-///
-/// The system does not know about such a range. All of them are in a quarter of the address space that
-/// is far from what the system and the allocators give out by themselves: stacks, libraries and
-/// mappings at the top, or from a third of the way up where the layout is bottom-up, the program and
-/// its heap at two thirds or at the bottom, and the hints of the allocator below 30 TB. Memory is asked
-/// for in a way that fails if anything is there all the same.
-#[cfg(all(any(target_os = "linux", target_os = "android"), not(miri)))]
-mod aside {
-    use super::STEP;
-    use bun_threading::Guarded;
-    use std::ptr::NonNull;
-    use std::sync::OnceLock;
-
-    /// The ranges, by address: where each starts and ends.
-    static RANGES: Guarded<Vec<(usize, usize)>> = Guarded::new(Vec::new());
-
-    const FLAGS: libc::c_int =
-        libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE | libc::MAP_FIXED_NOREPLACE;
-
-    /// Whether `len` bytes at `at` are mapped now, and were not before.
-    fn map(at: usize, len: usize, protection: libc::c_int) -> bool {
-        let wanted = std::ptr::with_exposed_provenance_mut(at);
-        // SAFETY: with `MAP_FIXED_NOREPLACE` no mapping that exists changes.
-        let got = unsafe { libc::mmap(wanted, len, protection, FLAGS, -1, 0) };
-        if got == libc::MAP_FAILED || got == wanted {
-            return got == wanted;
-        }
-        // A system that does not know the flag takes the address for a hint.
-        // SAFETY: the call above has made this mapping, and nothing has its address.
-        unsafe { libc::munmap(got, len) };
-        false
-    }
-
-    /// The length of the quarter of the largest address space.
-    const LARGEST: usize = 2 << 44;
-
-    /// A range of so many bytes is as long in every address space.
-    const SHORT: usize = 64 << 20;
-
-    /// Where the quarter starts and ends. `None`: there is no such quarter.
-    fn quarter() -> Option<(usize, usize)> {
-        static QUARTER: OnceLock<Option<(usize, usize)>> = OnceLock::new();
-        *QUARTER.get_or_init(|| {
-            // The sizes of an address space, in bits.
-            [47, 39].into_iter().find_map(|bits| {
-                let (start, end) = (3_usize << (bits - 3), 5_usize << (bits - 3));
-                if !map(end - STEP, STEP, libc::PROT_NONE) {
-                    return None;
-                }
-                // SAFETY: `map` has made this mapping, and nothing has its address.
-                unsafe { libc::munmap(std::ptr::with_exposed_provenance_mut(end - STEP), STEP) };
-                Some((start, end))
-            })
-        })
-    }
-
-    /// Where a range of `len` bytes, a multiple of `STEP`, starts and ends in `quarter`, beside `ranges`,
-    /// to which it is added. `None`: there is no room at all.
-    ///
-    /// In the quarter of a small address space a long range is a sixteenth as long. That is room for a
-    /// program and thirty tasks, each with 2^24 records of every kind or more. Whatever comes when a
-    /// quarter is nearly full is half as long as it would be, or half of that, and so on.
-    pub(super) fn place(
-        ranges: &mut Vec<(usize, usize)>,
-        quarter: (usize, usize),
-        len: usize,
-    ) -> Option<(usize, usize)> {
-        let is_small = quarter.1 - quarter.0 < LARGEST;
-        let mut len = match is_small {
-            true => (len / 16).max(len.min(SHORT)).next_multiple_of(STEP),
-            false => len,
-        };
-        loop {
-            let mut start = quarter.0;
-            // Before the first range that leaves room enough after the one before it.
-            let at = ranges.iter().position(|&range| {
-                let fits = range.0 - start >= len;
-                if !fits {
-                    start = range.1;
-                }
-                fits
-            });
-            if quarter.1 - start >= len {
-                ranges.insert(at.unwrap_or(ranges.len()), (start, start + len));
-                return Some((start, start + len));
-            }
-            if len == STEP {
-                return None;
-            }
-            len = (len / 2).next_multiple_of(STEP);
-        }
-    }
-
-    /// A range of `len` bytes, a multiple of `STEP`, or fewer (`place`), and its length. `None`: there
-    /// is none to be had.
-    pub(super) fn claim(len: usize) -> Option<(NonNull<u8>, usize)> {
-        let (start, end) = place(&mut RANGES.lock(), quarter()?, len)?;
-        let base = NonNull::<u8>::new(std::ptr::with_exposed_provenance_mut(start))?;
-        #[cfg(bun_asan)]
-        super::os::__lsan_register_root_region(base.as_ptr().cast(), end - start);
-        Some((base, end - start))
-    }
-
-    /// Whether the range has memory now. One thread at a time.
-    ///
-    /// # Safety
-    /// The range is part of one that `claim` returned and `release` has not been given, and has no
-    /// memory.
-    pub(super) unsafe fn commit(at: *mut u8, len: usize) -> bool {
-        map(at.addr(), len, libc::PROT_READ | libc::PROT_WRITE)
-    }
-
-    /// # Safety
-    /// `commit` has given the range memory, and nothing in it is in use.
-    pub(super) unsafe fn decommit(at: *mut u8, len: usize) {
-        // SAFETY: the caller's.
-        unsafe { libc::munmap(at.cast(), len) };
-    }
-
-    /// # Safety
-    /// `claim(len)` returned `at`, this is the only call for it, and none of the range has memory.
-    pub(super) unsafe fn release(at: *mut u8, len: usize) {
-        #[cfg(bun_asan)]
-        super::os::__lsan_unregister_root_region(at.cast(), len);
-        RANGES
-            .lock()
-            .retain(|&range| range != (at.addr(), at.addr() + len));
-    }
-}
-
-#[cfg(not(all(any(target_os = "linux", target_os = "android"), not(miri))))]
-mod aside {
-    use std::ptr::NonNull;
-
-    pub(super) fn claim(_: usize) -> Option<(NonNull<u8>, usize)> {
-        None
-    }
-
-    /// # Safety
-    /// None: `claim` returns nothing.
-    pub(super) unsafe fn commit(_: *mut u8, _: usize) -> bool {
-        false
-    }
-
-    /// # Safety
-    /// None: `claim` returns nothing.
-    pub(super) unsafe fn decommit(_: *mut u8, _: usize) {}
-
-    /// # Safety
-    /// None: `claim` returns nothing.
-    pub(super) unsafe fn release(_: *mut u8, _: usize) {}
-}
-
-/// What a `Reserved` is made for.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) struct Room {
-    pub(crate) bytes: usize,
-}
-
-/// A range of addresses that nothing else in the process gets. Its first bytes have memory, as many
-/// as were asked for so far. It is used through a `Taken`, by one owner after the other.
-pub(crate) struct Reserved {
-    base: NonNull<u8>,
-    /// In bytes: a multiple of `STEP`, and so is `committed`.
-    len: usize,
-    /// See `aside`.
-    is_set_aside: bool,
-    /// What `new` was given.
-    room: Room,
-    /// How many bytes have memory.
-    committed: AtomicUsize,
-    /// Held by the thread that gives it more.
-    is_growing: Guarded<()>,
-    is_taken: AtomicBool,
-}
-
-// SAFETY: it owns the range, and its own fields are atomic or never change. What is in the range is
-// reached through a `Taken` only, and what may be done with that from which thread is up to `Flat`.
-unsafe impl Send for Reserved {}
-// SAFETY: as above.
-unsafe impl Sync for Reserved {}
-
-impl Reserved {
-    pub(crate) fn new(room: Room) -> Reserved {
-        let (base, len, is_set_aside) = Self::addresses(room.bytes.next_multiple_of(STEP));
-        Reserved {
-            base,
-            len,
-            is_set_aside,
-            room,
-            committed: AtomicUsize::new(0),
-            is_growing: Guarded::new(()),
-            is_taken: AtomicBool::new(false),
-        }
-    }
-
-    /// `base`, `len` and `is_set_aside` of a range of `len` bytes.
-    fn addresses(mut len: usize) -> (NonNull<u8>, usize, bool) {
-        if len == 0 {
-            return (NonNull::dangling(), 0, false);
-        }
-        if let Some((base, len)) = aside::claim(len) {
-            return (base, len, true);
-        }
-        // Where so many are not to be had, half as many, or half of that, and so on: whoever needs more
-        // than it has is out of memory.
-        loop {
-            match NonNull::new(os::reserve(len)) {
-                Some(base) => return (base, len, false),
-                None if len == STEP => bun_alloc::out_of_memory(),
-                None => len = (len / 2).next_multiple_of(STEP),
-            }
-        }
-    }
-
-    /// Its first address, as that of a `T`.
-    fn first<T>(&self) -> NonNull<T> {
-        self.base.cast()
-    }
-
-    /// How many of its bytes have memory.
-    pub(crate) fn committed_bytes(&self) -> usize {
-        self.committed.load(Ordering::Relaxed)
-    }
-
-    /// `None`: somebody has it, or it was made for another `Room`.
-    pub(crate) fn take(&self, room: Room) -> Option<Taken<'_>> {
-        // Looked at first, so that a search does not write to what others have.
-        if self.room != room || self.is_taken.load(Ordering::Relaxed) {
-            return None;
-        }
-        let taken =
-            (self.is_taken).compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed);
-        taken.is_ok().then(|| Taken(self))
-    }
-
-    /// Gives memory to the first `bytes` bytes, and to some more. Returns how many have it. Any
-    /// thread.
-    fn commit(&self, bytes: usize) -> usize {
-        if bytes > self.len {
-            bun_alloc::out_of_memory();
-        }
-        let _held = self.is_growing.lock();
-        let had = self.committed.load(Ordering::Relaxed);
-        if bytes <= had {
-            return had;
-        }
-        let grow_to = |wanted: usize| {
-            let (at, more) = (self.base.as_ptr().wrapping_add(had), wanted - had);
-            // SAFETY: `had < wanted <= len`, so the range is in the one that `new` got, and it has no
-            // memory. The lock is held.
-            unsafe {
-                match self.is_set_aside {
-                    true => aside::commit(at, more),
-                    false => os::commit(at, more),
-                }
-            }
-        };
-        // Half as much again, so that the number of calls grows with the logarithm of the size. If
-        // that is not to be had, what is needed.
-        let generous = (bytes.max(had + had / 2).next_multiple_of(STEP)).min(self.len);
-        let Some(wanted) = [generous, bytes.next_multiple_of(STEP)]
-            .into_iter()
-            .find(|&wanted| grow_to(wanted))
-        else {
-            bun_alloc::out_of_memory();
-        };
-        self.committed.store(wanted, Ordering::Release);
-        wanted
-    }
-
-    /// Takes the memory back from all but the first `keep` bytes. Returns how many have memory.
-    ///
-    /// # Safety
-    /// Nothing beyond the first `keep` bytes is in use, and no other thread is in `commit`.
-    unsafe fn decommit(&self, keep: usize) -> usize {
-        let keep = keep.next_multiple_of(STEP);
-        let had = self.committed.load(Ordering::Relaxed);
-        if keep >= had {
-            return had;
-        }
-        let (at, len) = (self.base.as_ptr().wrapping_add(keep), had - keep);
-        // SAFETY: `keep < had <= len`, so the range is in the one that `new` got, and it has memory.
-        // The rest is the caller's.
-        unsafe {
-            match self.is_set_aside {
-                true => aside::decommit(at, len),
-                false => os::decommit(at, len),
-            }
-        }
-        self.committed.store(keep, Ordering::Relaxed);
-        keep
-    }
-}
-
-impl Drop for Reserved {
-    fn drop(&mut self) {
-        if self.len == 0 {
-            return;
-        }
-        // SAFETY: `new` got it, and a `Taken` borrows this, so there is none.
-        unsafe {
-            if self.is_set_aside {
-                self.decommit(0);
-                aside::release(self.base.as_ptr(), self.len);
-            } else {
-                os::release(self.base.as_ptr(), self.len);
-            }
-        }
-    }
-}
-
-/// The right to use a `Reserved`, which one owner has at a time.
-pub(crate) struct Taken<'a>(&'a Reserved);
-
-impl Drop for Taken<'_> {
-    fn drop(&mut self) {
-        self.0.is_taken.store(false, Ordering::Release);
-    }
-}
-
-// ───────────────────────────── flat vectors ─────────────────────────────
-
-/// The number of elements that a `Flat` which threads share has addresses for: as many as an id can
-/// number.
-#[cfg(not(miri))]
-const MOST: usize = 1 << 30;
-/// There all of a range has memory from the start.
-#[cfg(miri)]
-const MOST: usize = 1 << 14;
-
-/// A `Flat` of one thread has addresses for one in so many of `MOST`. There is a dozen of them for
-/// each thread, and a process has 128 TB of addresses.
-const SHARE_OF_ONE_THREAD: usize = 4;
-
-/// How many elements of a `Flat` keep their memory when it is emptied, so that one large use does not
-/// grow its owner permanently.
-const KEPT: usize = 1 << 16;
-
-/// The address of the first element of a `Flat`, or an address at a fixed distance from it.
-struct Base<T>(*mut MaybeUninit<T>);
-
-impl<T> Clone for Base<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for Base<T> {}
-
-// SAFETY: it stands for the elements, which one thread adds and another reads or drops.
-unsafe impl<T: Send + Sync> Send for Base<T> {}
-// SAFETY: as above.
-unsafe impl<T: Send + Sync> Sync for Base<T> {}
-
-/// In a number that `Flat::of_either` takes: the element is in the vector itself, not in the one
-/// that it is laid over.
+/// In a number that `Segmented::of_either` takes: the element is in the vector itself, not in the
+/// one that it is laid over. No vector has so many elements.
 pub(crate) const OWN: u32 = 1 << 30;
 
-/// A `Stable` whose elements are next to each other: the address of an element is that of the first
-/// plus the index times the size. They never move, because the addresses for all that can ever be
-/// added are reserved from the start.
-pub(crate) struct Flat<'a, T, L: Length> {
-    base: Base<T>,
-    /// For `of_either`, by the two highest bits of a number: the address that the number times the
-    /// size is added to ..
-    bases: [Base<T>; 4],
+/// Where a segment starts. Null: it is not allocated.
+type Segment<T> = AtomicPtr<MaybeUninit<T>>;
+
+/// A `Stable` whose chunks are all of one size: the chunk of an element is a shift and its place
+/// there a mask, with nothing to count and nothing to compare.
+pub(crate) struct Segmented<'a, T, L: Length, A: Allocator + Clone = Global> {
+    /// The segments, in order. Threads that share the vector find it as long as it can get. One thread
+    /// replaces it by a longer one.
+    directory: UnsafeCell<Box<[Segment<T>], A>>,
+    /// For `of_either`, by the two highest bits of a number: the address that the number of the
+    /// segment, with these bits, is an index from ..
+    directories: [Cell<*const Segment<T>>; 4],
     /// .. and what the number is less than, if it stands for an element.
     limits: [L; 4],
     /// As in `Stable`.
     len: L,
-    /// The elements below it have memory.
-    committed: AtomicU32,
-    block: Taken<'a>,
+    alloc: A,
+    /// What it is laid over.
+    below: PhantomData<&'a [T]>,
+    owns: Owns<T>,
 }
 
-impl<'a, T, L: Length> Flat<'a, T, L> {
-    /// How many elements it has addresses for.
-    const MOST: usize = match L::IS_CHECKED {
-        true => MOST / SHARE_OF_ONE_THREAD,
-        false => MOST,
-    };
+// SAFETY: it owns its elements. The addresses in `directories` are of its own directory and of one
+// that it borrows, which threads share.
+unsafe impl<T: Send + Sync, L: Length + Send, A: Allocator + Clone + Send> Send
+    for Segmented<'_, T, L, A>
+{
+}
+// SAFETY: with this `Length`, nothing replaces `directory` or writes to `directories` through a shared
+// reference. For the elements see `Owns`.
+unsafe impl<T: Send + Sync, A: Allocator + Clone + Sync> Sync for Segmented<'_, T, AtomicU32, A> {}
 
-    /// What to ask of `Reserved::new`.
-    pub(crate) const ROOM: Room = Room {
-        bytes: size_of::<T>() * Self::MOST,
-    };
-
-    /// `block`: whatever it holds is lost. With less room than `ROOM` it is out of memory earlier.
-    pub(crate) fn new_in(block: Taken<'a>) -> Self {
-        const { assert!(size_of::<T>() != 0 && align_of::<T>() <= SMALLEST_PAGE) };
-        let committed = block.0.committed.load(Ordering::Relaxed);
-        let base = Base(block.0.first().as_ptr());
-        let mut bases = [Base(NonNull::dangling().as_ptr()); 4];
-        bases[1] = Base(base.0.wrapping_sub(OWN as usize));
+impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
+    pub(crate) fn new_in(alloc: A) -> Self {
+        let segments = match L::IS_CHECKED {
+            true => 0,
+            false => OWN as usize >> SEGMENT_BITS,
+        };
         let limits: [L; 4] = Default::default();
         limits[1].add(OWN);
-        Flat {
-            base,
-            bases,
+        Segmented {
+            directory: UnsafeCell::new(Self::new_directory(segments, &[], &alloc)),
+            directories: [const { Cell::new(std::ptr::null()) }; 4],
             limits,
             len: L::default(),
-            committed: AtomicU32::new(Self::elements_in(committed)),
-            block,
+            alloc,
+            below: PhantomData,
+            owns: PhantomData,
         }
     }
 
-    fn elements_in(bytes: usize) -> u32 {
-        (bytes / size_of::<T>()).min(Self::MOST) as u32
+    /// `len` segments: those of `old`, and then none. From the allocator's zeroed memory: see
+    /// `Zeroed::zeroed_slice_in`.
+    fn new_directory(len: usize, old: &[Segment<T>], alloc: &A) -> Box<[Segment<T>], A> {
+        // SAFETY: all zero bytes are a null pointer.
+        let mut new = unsafe { Box::new_zeroed_slice_in(len, alloc.clone()).assume_init() };
+        for (new, old) in std::iter::zip(&mut new, old) {
+            *new = AtomicPtr::new(old.load(Ordering::Relaxed));
+        }
+        new
+    }
+
+    #[inline]
+    fn directory(&self) -> &[Segment<T>] {
+        // SAFETY: only `install` replaces it, for one thread, which holds no reference to it then.
+        unsafe { &*self.directory.get() }
     }
 
     #[inline]
@@ -941,21 +445,43 @@ impl<'a, T, L: Length> Flat<'a, T, L> {
         self.len.get()
     }
 
-    /// The address of the element `index`. Meaningless if it has no memory.
+    /// The address of the element `index`. Meaningless if its segment is not allocated.
     #[inline]
     fn slot(&self, index: u32) -> *mut MaybeUninit<T> {
-        self.base.0.wrapping_add(index as usize)
+        (self.directory()[(index >> SEGMENT_BITS) as usize].load(Ordering::Relaxed))
+            .wrapping_add(index as usize % SEGMENT)
     }
 
-    /// Any thread.
+    /// Allocates the segment of the element `index`. Several threads may race here: the first to
+    /// install its segment wins.
     #[cold]
     #[inline(never)]
-    fn commit(&self, index: u32) {
-        if index as usize >= Self::MOST {
+    fn install(&self, index: u32) {
+        let at = (index >> SEGMENT_BITS) as usize;
+        if at >= OWN as usize >> SEGMENT_BITS {
             bun_alloc::out_of_memory();
         }
-        let committed = self.block.0.commit((index as usize + 1) * size_of::<T>());
-        (self.committed).fetch_max(Self::elements_in(committed), Ordering::Release);
+        if at >= self.directory().len() {
+            let longer = (at + 1).next_power_of_two().max(4);
+            let longer = Self::new_directory(longer, self.directory(), &self.alloc);
+            // As many before its start as the number of a segment is too high by.
+            self.directories[1].set(longer.as_ptr().wrapping_sub(OWN as usize >> SEGMENT_BITS));
+            // SAFETY: a directory that threads share is as long as it can get, so this is the only
+            // thread, and it holds no reference to the old one.
+            unsafe { *self.directory.get() = longer };
+        }
+        let fresh = Box::<[T], A>::new_uninit_slice_in(SEGMENT, self.alloc.clone());
+        let fresh = Box::into_raw_with_allocator(fresh).0;
+        let installed = self.directory()[at].compare_exchange(
+            null_mut(),
+            fresh.cast(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        if installed.is_err() {
+            // SAFETY: it comes from `into_raw_with_allocator` above, and nobody else has seen it.
+            drop(unsafe { Box::from_raw_in(fresh, self.alloc.clone()) });
+        }
     }
 
     /// Returns the index of the element.
@@ -979,12 +505,12 @@ impl<'a, T, L: Length> Flat<'a, T, L> {
         } else {
             debug_assert!(index < self.len.get());
         }
-        // SAFETY: the element was initialized before its index reached this thread. Nothing writes
-        // to it again before `&mut self`.
+        // SAFETY: the element was initialized before its index reached this thread, so its segment is
+        // allocated. Nothing writes to it again before `&mut self`.
         unsafe { (*self.slot(index)).assume_init_ref() }
     }
 
-    /// Moves the elements out, in order, and leaves it empty. See `KEPT`.
+    /// Moves the elements out, in order, and leaves it empty. Only the first segment stays allocated.
     pub(crate) fn drain(&mut self, mut take: impl FnMut(u32, T)) {
         self.limits[1].take();
         self.limits[1].add(OWN);
@@ -993,51 +519,59 @@ impl<'a, T, L: Length> Flat<'a, T, L> {
             // none is read again, even if `take` panics.
             take(index, unsafe { (*self.slot(index)).assume_init_read() });
         }
-        // SAFETY: there is no element, and `&mut self` shows that no thread is adding one.
-        let committed = unsafe { self.block.0.decommit(KEPT * size_of::<T>()) };
-        *self.committed.get_mut() = Self::elements_in(committed);
+        self.release(1);
     }
 
     pub(crate) fn clear(&mut self) {
         self.drain(|_, value| drop(value));
     }
-}
 
-impl<T, L: Length> Drop for Flat<'_, T, L> {
-    fn drop(&mut self) {
-        self.clear();
+    /// Frees all but the first `keep` segments. There is no element.
+    fn release(&mut self, keep: usize) {
+        let alloc = self.alloc.clone();
+        for segment in self.directory.get_mut().iter_mut().skip(keep) {
+            let start = std::mem::replace(segment.get_mut(), null_mut());
+            if !start.is_null() {
+                // SAFETY: `install` got it from a box of this length and this allocator.
+                drop(unsafe { Box::from_raw_in(slice_from_raw_parts_mut(start, SEGMENT), alloc.clone()) });
+            }
+        }
     }
 }
 
-impl<T, L: Length> Fill<T> for Flat<'_, T, L> {
+impl<T, L: Length, A: Allocator + Clone> Drop for Segmented<'_, T, L, A> {
+    fn drop(&mut self) {
+        self.clear();
+        self.release(0);
+    }
+}
+
+impl<T, L: Length, A: Allocator + Clone> Fill<T> for Segmented<'_, T, L, A> {
     #[inline]
     fn get(&self, index: u32) -> &T {
-        Flat::get(self, index)
+        Segmented::get(self, index)
     }
 
     unsafe fn reserve(&self, count: u32) -> u32 {
-        let first = self.len.add(count);
-        if count != 0 && first + (count - 1) >= self.committed.load(Ordering::Acquire) {
-            self.commit(first + (count - 1));
-        }
-        first
+        self.len.add(count)
     }
 
     #[inline]
     unsafe fn write(&self, index: u32, value: T) {
-        if index >= self.committed.load(Ordering::Acquire) {
-            self.commit(index);
+        let segment = self.directory().get((index >> SEGMENT_BITS) as usize);
+        if segment.is_none_or(|segment| segment.load(Ordering::Acquire).is_null()) {
+            self.install(index);
         }
-        // SAFETY: the element has memory. Only this call accesses it, and what it holds is not
-        // dropped.
+        // SAFETY: the segment is allocated. Only this call accesses the element, and what it holds is
+        // not dropped.
         unsafe { self.slot(index).write(MaybeUninit::new(value)) };
     }
 }
 
-/// Elements of one `Flat` that stand for what is to come, one after the other. Nobody but the owner of
-/// this can replace them.
+/// Elements of one `Segmented` that stand for what is to come, one after the other. Nobody but the
+/// owner of this can replace them.
 pub(crate) struct Placeholders<'a> {
-    /// The address of the first element of the vector.
+    /// The address of the vector.
     of: usize,
     next: u32,
     end: u32,
@@ -1087,17 +621,16 @@ impl<'a> Placeholders<'a> {
 }
 
 impl Placeholder<'_> {
-    /// Not for `Flat::get` before `Flat::replace` has returned.
+    /// Not for `Segmented::get` before `Segmented::replace` has returned.
     #[inline]
     pub(crate) fn index(&self) -> u32 {
         self.index
     }
 }
 
-/// The elements of a `Flat` that threads share, those to come too, for reading. Like a `&'a [T]` it
-/// can pass for one of elements that live for a shorter time.
+/// The elements of a `Segmented` that threads share, those to come too, for reading.
 pub(crate) struct Elements<'a, T> {
-    first: NonNull<MaybeUninit<T>>,
+    directory: *const Segment<T>,
     borrowed: PhantomData<&'a [T]>,
 }
 
@@ -1109,7 +642,7 @@ impl<T> Clone for Elements<'_, T> {
 
 impl<T> Copy for Elements<'_, T> {}
 
-impl<T> Flat<'_, T, AtomicU32> {
+impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
     /// Adds `count` elements. Any thread.
     pub(crate) fn add_placeholders(&self, count: u32, new: impl Fn() -> T) -> Placeholders<'_> {
         // SAFETY: each index is written below, and goes nowhere before.
@@ -1119,7 +652,7 @@ impl<T> Flat<'_, T, AtomicU32> {
             unsafe { self.write(index, new()) };
         }
         Placeholders {
-            of: self.base.0.addr(),
+            of: std::ptr::from_ref(self).addr(),
             next,
             end: next + count,
             borrowed: PhantomData,
@@ -1133,8 +666,8 @@ impl<T> Flat<'_, T, AtomicU32> {
         reason = "the placeholder ends here, so no second write has one"
     )]
     pub(crate) fn replace(&self, placeholder: Placeholder<'_>, value: T) -> &T {
-        // It borrows its vector, so the range has had no other owner since.
-        assert!(placeholder.of == self.base.0.addr());
+        // It borrows its vector, which has not moved or made way for another one since.
+        assert!(placeholder.of == std::ptr::from_ref(self).addr());
         // SAFETY: there is one `Placeholder` for the index, which ends here, so nothing else writes to
         // the element. Nothing reads it: see `Placeholder::index`.
         unsafe { self.write(placeholder.index, value) };
@@ -1143,22 +676,22 @@ impl<T> Flat<'_, T, AtomicU32> {
 
     pub(crate) fn elements(&self) -> Elements<'_, T> {
         Elements {
-            first: self.block.0.first(),
+            directory: self.directory().as_ptr(),
             borrowed: PhantomData,
         }
     }
 }
 
-impl<'a, T> Flat<'a, T, Cell<u32>> {
+impl<'a, T, A: Allocator + Clone> Segmented<'a, T, Cell<u32>, A> {
     /// From now on `of_either` finds `shared` too.
     pub(crate) fn lay_over(&mut self, shared: Elements<'a, T>) {
-        self.bases[0] = Base(shared.first.as_ptr());
+        self.directories[0].set(shared.directory);
         self.limits[0].set(OWN);
     }
 
     /// Whether `lay_over(shared)` was the last call of `lay_over`.
     pub(crate) fn is_laid_over(&self, shared: Elements<'_, T>) -> bool {
-        std::ptr::eq(self.bases[0].0, shared.first.as_ptr())
+        std::ptr::eq(self.directories[0].get(), shared.directory)
     }
 
     /// The element `number` of the vector that this one is laid over, or with `OWN` in `number` the
@@ -1168,13 +701,20 @@ impl<'a, T> Flat<'a, T, Cell<u32>> {
         let which = (number >> 30) as usize;
         // No number without `OWN` is less than its limit before `lay_over`.
         assert!(number < self.limits[which].get());
-        // SAFETY: as in `get`, for the one of the two that the number is an index of: `lay_over` was
-        // given a borrow of the other that lasts as long as this one can exist.
-        unsafe { (*self.bases[which].0.wrapping_add(number as usize)).assume_init_ref() }
+        let segment = (self.directories[which].get()).wrapping_add((number >> SEGMENT_BITS) as usize);
+        // SAFETY: the directory of the one of the two that the number is an index of has a segment
+        // for every number below the limit. `lay_over` was given a borrow of the other that lasts as
+        // long as this one can exist. The rest is as in `get`.
+        unsafe {
+            let start = (*segment).load(Ordering::Relaxed);
+            (*start.wrapping_add(number as usize % SEGMENT)).assume_init_ref()
+        }
     }
 }
 
 // ───────────────────────────── cells ─────────────────────────────
+
+const SMALLEST_PAGE: usize = 4 << 10;
 
 /// A type for which all zero bytes are a value.
 ///
@@ -1868,141 +1408,12 @@ mod tests {
         });
     }
 
-    fn room_of(bytes: usize) -> Room {
-        Room { bytes }
-    }
-
     #[test]
-    fn a_range_has_one_owner_at_a_time() {
-        let (room, other) = (room_of(STEP), room_of(2 * STEP));
-        let range = Reserved::new(room);
-        let taken = range.take(room).unwrap();
-        // Being refused takes it from nobody.
-        for _ in 0..2 {
-            assert!(range.take(room).is_none());
-            assert!(range.take(other).is_none());
-        }
-        drop(taken);
-        assert!(range.take(other).is_none());
-        assert!(range.take(room).is_some());
-        assert!(range.take(room).is_some());
-    }
-
-    #[test]
-    #[cfg(all(target_os = "linux", not(miri)))]
-    fn threads_give_memory_to_a_range_that_is_set_aside() {
-        let room = room_of(64 * STEP);
-        let range = Reserved::new(room);
-        // Short enough to be as long in a small address space.
-        assert!(range.is_set_aside && range.len == 64 * STEP);
-        let mut vec = Flat::<u64, AtomicU32>::new_in(range.take(room).unwrap());
-        std::thread::scope(|scope| {
-            for _ in 0..4 {
-                scope.spawn(|| {
-                    for value in 0..50_000 {
-                        vec.push(value);
-                    }
-                });
-            }
-        });
-        assert_eq!(vec.len(), 200_000);
-        let sum: u64 = (0..vec.len()).map(|index| *vec.get(index)).sum();
-        assert_eq!(sum, 4 * (49_999 * 50_000 / 2));
-        vec.clear();
-        assert_eq!(range.committed_bytes(), KEPT * size_of::<u64>());
-    }
-
-    #[test]
-    #[cfg(all(target_os = "linux", not(miri)))]
-    fn an_address_space_of_39_bits_has_room_for_a_large_program() {
-        let quarter = (3 << 36, 5 << 36);
-        let mut ranges = Vec::new();
-        // How many records of `size` bytes a vector for `most` of them has room for.
-        let mut room_for = |size: usize, most: usize| {
-            let (start, end) = aside::place(&mut ranges, quarter, size * most).unwrap();
-            assert!(quarter.0 <= start && end <= quarter.1);
-            (end - start) / size
-        };
-        // The records of a program are about so long, and those of a task.
-        for size in [64, 32, 56, 40, 16] {
-            assert_eq!(room_for(size, MOST), 1 << 26);
-        }
-        for _ in 0..30 {
-            for size in [64, 32, 56, 40, 16, 16] {
-                assert_eq!(room_for(size, MOST / SHARE_OF_ONE_THREAD), 1 << 24);
-            }
-        }
-        // What is left is for 13 more ranges, and then for ever shorter ones.
-        let later = std::iter::from_fn(|| {
-            let len = 48 * MOST / SHARE_OF_ONE_THREAD;
-            aside::place(&mut ranges, quarter, len).map(|(start, end)| (end - start) / 48)
-        });
-        let later: Vec<usize> = later.collect();
-        assert!(later[..13].iter().all(|&records| records == 1 << 24));
-        assert!(later.len() > 14 && later[12..].is_sorted_by(|a, b| a > b));
-    }
-
-    #[test]
-    #[cfg(all(target_os = "linux", not(miri)))]
-    fn a_range_is_shorter_in_a_small_address_space_only_if_it_is_long() {
-        let place = |bits: u32, len| {
-            let (start, end) =
-                aside::place(&mut Vec::new(), (3 << (bits - 3), 5 << (bits - 3)), len)?;
-            Some(end - start)
-        };
-        for len in [STEP, 64 << 20, 1 << 30, 64 << 30] {
-            assert_eq!(place(47, len), Some(len));
-        }
-        assert_eq!(place(39, STEP), Some(STEP));
-        assert_eq!(place(39, 64 << 20), Some(64 << 20));
-        assert_eq!(place(39, (64 << 20) + STEP), Some(64 << 20));
-        assert_eq!(place(39, 1 << 30), Some(64 << 20));
-        assert_eq!(place(39, 2 << 30), Some(128 << 20));
-        assert_eq!(place(39, 64 << 30), Some(4 << 30));
-    }
-
-    #[test]
-    #[cfg(all(target_os = "linux", not(miri)))]
-    fn ranges_that_are_set_aside_do_not_overlap() {
-        let lengths = [3, 1, 64, 2, 1 << 20, 5].map(|steps: usize| steps * STEP);
-        let mut ranges: Vec<Reserved> = Vec::new();
-        for round in 0..4 {
-            ranges.extend(lengths.map(|len| Reserved::new(room_of(len))));
-            // Leaves gaps of all lengths for the next round.
-            let mut at = 0;
-            ranges.retain(|_| {
-                at += 1;
-                (at + round) % 3 != 0
-            });
-            let span = |range: &Reserved| {
-                let start = range.base.as_ptr().addr();
-                (start, start + range.len)
-            };
-            for (at, one) in ranges.iter().map(span).enumerate() {
-                let is_apart = |other: (usize, usize)| one.1 <= other.0 || other.1 <= one.0;
-                assert!(ranges[at + 1..].iter().map(span).all(is_apart));
-            }
-        }
-    }
-
-    #[test]
-    fn a_range_of_no_bytes_is_not_reserved() {
-        let room = room_of(0);
-        let range = Reserved::new(room);
-        assert_eq!(range.len, 0);
-        let flat = Flat::<u32, Cell<u32>>::new_in(range.take(room).unwrap());
-        assert_eq!(flat.len(), 0);
-    }
-
-    #[test]
-    fn a_flat_vector_keeps_its_elements_where_they_are() {
-        let room = room_of(4 * STEP);
-        let range = Reserved::new(room);
-        let vec = Flat::<Box<u32>, Cell<u32>>::new_in(range.take(room).unwrap());
+    fn a_segmented_vector_keeps_its_elements_where_they_are() {
+        let vec = Segmented::<Box<u32>, Cell<u32>>::new_in(Global);
         let first = vec.get(vec.push(Box::new(0)));
-        // More than the first step has room for.
-        let many = (STEP / size_of::<Box<u32>>()) as u32 + 5;
-        let many = if cfg!(miri) { 300 } else { many };
+        // More than two segments. 131,077 elements take a minute under Miri.
+        let many = if cfg!(miri) { 300 } else { 2 * SEGMENT as u32 + 5 };
         for value in 1..many {
             assert_eq!(vec.push(Box::new(value)), value);
         }
@@ -2019,11 +1430,9 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_vector_drops_and_drains_like_the_others() {
+    fn a_segmented_vector_drops_and_drains_like_the_others() {
         let alive = AtomicUsize::new(0);
-        let room = room_of(STEP);
-        let range = Reserved::new(room);
-        let mut vec = Flat::<Counted, Cell<u32>>::new_in(range.take(room).unwrap());
+        let mut vec = Segmented::<Counted, Cell<u32>>::new_in(Global);
         for round in 0..2 {
             for value in 0..100 {
                 vec.push(Counted::new(value + round, &alive));
@@ -2040,40 +1449,36 @@ mod tests {
         vec.push(Counted::new(1, &alive));
         drop(vec);
         assert_eq!(alive.load(Ordering::Relaxed), 0);
-        // The next owner finds the memory that the last one had.
-        let next = Flat::<u64, Cell<u32>>::new_in(range.take(room).unwrap());
-        assert_eq!(
-            next.committed.load(Ordering::Relaxed) as usize,
-            STEP / size_of::<u64>()
-        );
     }
 
-    /// 65,537 elements and more take a minute under Miri.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn an_emptied_flat_vector_keeps_the_memory_of_its_first_elements() {
-        let room = room_of(64 * STEP);
-        let range = Reserved::new(room);
-        let mut vec = Flat::<u64, Cell<u32>>::new_in(range.take(room).unwrap());
-        for value in 0..3 * KEPT as u64 {
+    fn an_emptied_segmented_vector_keeps_its_first_segment() {
+        let blocks = AtomicUsize::new(0);
+        let count = || blocks.load(Ordering::Relaxed);
+        let mut vec = Segmented::<u64, Cell<u32>, _>::new_in(Counting(&blocks));
+        assert_eq!(count(), 0);
+        for value in 0..5 * SEGMENT as u64 {
             vec.push(value);
         }
-        assert!(vec.committed.load(Ordering::Relaxed) as usize >= 3 * KEPT);
+        // Five segments and the directory.
+        assert_eq!(count(), 6);
         vec.clear();
-        assert_eq!(vec.committed.load(Ordering::Relaxed) as usize, KEPT);
-        for value in 0..2 * KEPT as u64 {
+        assert_eq!(count(), 2);
+        for value in 0..2 * SEGMENT as u64 {
             assert_eq!(u64::from(vec.push(value)), value);
         }
-        assert_eq!(*vec.get(2 * KEPT as u32 - 1), 2 * KEPT as u64 - 1);
+        assert_eq!(*vec.get(2 * SEGMENT as u32 - 1), 2 * SEGMENT as u64 - 1);
+        drop(vec);
+        assert_eq!(count(), 0);
     }
 
     #[test]
-    fn threads_fill_a_flat_vector_that_one_thread_made_room_in() {
+    fn threads_fill_a_segmented_vector_that_one_thread_made_room_in() {
         const THREADS: u32 = 4;
-        const EACH: u32 = if cfg!(miri) { 300 } else { 5_000 };
-        let room = room_of(8 * STEP);
-        let range = Reserved::new(room);
-        let vec = Flat::<Box<u32>, AtomicU32>::new_in(range.take(room).unwrap());
+        const EACH: u32 = if cfg!(miri) { 300 } else { SEGMENT as u32 };
+        let blocks = AtomicUsize::new(0);
+        let vec = Segmented::<Box<u32>, AtomicU32, _>::new_in(Counting(&blocks));
         vec.push(Box::new(u32::MAX));
         // SAFETY: every index is written below, once, before it is read.
         let first = unsafe { vec.reserve(THREADS * EACH) };
@@ -2093,37 +1498,36 @@ mod tests {
         for index in first..vec.len() {
             assert_eq!(**vec.get(index), index);
         }
+        // A thread that has lost the race for a segment has freed its own.
+        let segments = (vec.len() as usize).div_ceil(SEGMENT);
+        assert_eq!(blocks.load(Ordering::Relaxed), segments + 1);
     }
 
-    /// Under Miri a range has memory from the start, and these are of gigabytes.
     #[test]
-    #[cfg_attr(miri, ignore)]
-    fn a_flat_vector_finds_the_elements_of_the_one_that_it_is_laid_over() {
-        let rooms = (Flat::<u64, AtomicU32>::ROOM, Flat::<u64, Cell<u32>>::ROOM);
-        let (below, above) = (Reserved::new(rooms.0), Reserved::new(rooms.1));
-        let shared = Flat::<u64, AtomicU32>::new_in(below.take(rooms.0).unwrap());
-        let mut own = Flat::<u64, Cell<u32>>::new_in(above.take(rooms.1).unwrap());
+    fn a_segmented_vector_finds_the_elements_of_the_one_that_it_is_laid_over() {
+        let shared = Segmented::<u64, AtomicU32>::new_in(Global);
+        let mut own = Segmented::<u64, Cell<u32>>::new_in(Global);
         assert!(!own.is_laid_over(shared.elements()));
         own.lay_over(shared.elements());
         assert!(own.is_laid_over(shared.elements()));
-        for value in 0..MANY {
+        // Both sides of the end of a segment, and so many segments that the directory grows twice.
+        let many = if cfg!(miri) { 300 } else { 9 * SEGMENT as u32 + 1 };
+        for value in 0..many {
             shared.push(u64::from(value));
-            own.push(u64::from(value) + 1_000_000);
+            own.push(u64::from(value) + 1_000_000_000);
         }
-        for number in 0..MANY {
+        for number in 0..many {
             assert!(std::ptr::eq(own.of_either(number), shared.get(number)));
             assert!(std::ptr::eq(own.of_either(number | OWN), own.get(number)));
             assert_eq!(*own.of_either(number), u64::from(number));
-            assert_eq!(*own.of_either(number | OWN), u64::from(number) + 1_000_000);
+            assert_eq!(*own.of_either(number | OWN), u64::from(number) + 1_000_000_000);
         }
     }
 
     #[test]
     #[should_panic]
     fn a_number_of_an_element_that_is_gone_is_refused() {
-        let room = room_of(STEP);
-        let range = Reserved::new(room);
-        let mut own = Flat::<u64, Cell<u32>>::new_in(range.take(room).unwrap());
+        let mut own = Segmented::<u64, Cell<u32>>::new_in(Global);
         own.push(1);
         assert_eq!(*own.of_either(OWN), 1);
         own.clear();
@@ -2133,18 +1537,14 @@ mod tests {
     #[test]
     #[should_panic]
     fn a_number_of_the_vector_below_is_refused_if_there_is_none() {
-        let room = room_of(STEP);
-        let range = Reserved::new(room);
-        let own = Flat::<u64, Cell<u32>>::new_in(range.take(room).unwrap());
+        let own = Segmented::<u64, Cell<u32>>::new_in(Global);
         own.push(1);
         own.of_either(0);
     }
 
     #[test]
     fn threads_replace_the_placeholders_that_they_add() {
-        let room = room_of(16 * STEP);
-        let range = Reserved::new(room);
-        let store = Flat::<u64, AtomicU32>::new_in(range.take(room).unwrap());
+        let store = Segmented::<u64, AtomicU32>::new_in(Global);
         std::thread::scope(|scope| {
             for thread in 0..8 {
                 let store = &store;
@@ -2177,10 +1577,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn a_placeholder_is_replaced_in_its_own_vector_only() {
-        let room = room_of(STEP);
-        let ranges = [Reserved::new(room), Reserved::new(room)];
-        let [one, other] = (ranges.each_ref())
-            .map(|range| Flat::<u64, AtomicU32>::new_in(range.take(room).unwrap()));
+        let [one, other] = [(), ()].map(|()| Segmented::<u64, AtomicU32>::new_in(Global));
         other.push(1);
         let placeholder = one.add_placeholders(1, || 0).take_first().unwrap();
         other.replace(placeholder, 2);
@@ -2197,9 +1594,9 @@ mod tests {
         is_send::<Cells<AtomicU32>>();
         is_sync::<Cells<AtomicU32>>();
         is_sync::<Newest<AtomicU64>>();
-        is_send::<Flat<'static, Box<u32>, AtomicU32>>();
-        is_sync::<Flat<'static, Box<u32>, AtomicU32>>();
-        is_send::<Flat<'static, Box<u32>, Cell<u32>>>();
+        is_send::<Segmented<'static, Box<u32>, AtomicU32>>();
+        is_sync::<Segmented<'static, Box<u32>, AtomicU32>>();
+        is_send::<Segmented<'static, Box<u32>, Cell<u32>>>();
     }
 
     #[test]

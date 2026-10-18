@@ -17,20 +17,15 @@
 //! - A container that several threads add to holds `&Session`, which allocates in the arena of the
 //!   calling thread: `AppendVec`, `Cells`, `Newest`.
 //! - A list that never changes after it is built is `&[T]`, from `Arena::alloc_slice_copy`.
-//! - A vector whose elements are next to each other (`Flat`) has a range of addresses of its own, from
-//!   `Session::block`, or from `Session::block_of_task` if it is a task's. A task gives its ranges back
-//!   when it ends, with part of the memory that they have, and the next task takes them.
 
 pub use bun_alloc::{Arena, ArenaBox, ArenaVec, ArenaVecExt, transfer_arena, vec_from_iter_in};
 
-use crate::util::memory::{Reserved, Room, Taken};
 use crate::util::{AppendVec, FxBuild};
 use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::thread::ThreadId;
 
 /// `FxHashMap` in an arena.
@@ -55,47 +50,6 @@ pub struct Session {
     first: Link,
     /// What `keep` was given.
     kept: AppendVec<Box<dyn Any + Send + Sync>>,
-    /// For `block`.
-    blocks: Blocks,
-    /// For `block_of_task`. The sessions of programs that are checked at the same time have it in
-    /// common: together they run no more tasks at a time than there are threads, so there are about
-    /// as many ranges as one of them would have alone.
-    blocks_of_tasks: Arc<Blocks>,
-}
-
-/// Ranges of addresses, each used by one owner after the other. They are released together.
-#[derive(Default)]
-struct Blocks {
-    reserved: AppendVec<Reserved>,
-    /// How many of them any thread may look at.
-    ready: AtomicU32,
-    /// Held by the thread that adds one.
-    is_added_to: Guarded<()>,
-}
-
-impl Blocks {
-    /// A range for `room`: one that was given back, with the memory and the bytes that it had then,
-    /// or else a new one. It is given back when the result is dropped.
-    ///
-    /// The search is linear in the number of ranges, of which a running task has about a dozen.
-    fn take(&self, room: Room) -> Taken<'_> {
-        let known = self.all().find_map(|range| range.take(room));
-        known.unwrap_or_else(|| {
-            let _held = self.is_added_to.lock();
-            let at = self.reserved.push(Reserved::new(room));
-            let taken = self.reserved.get(at).take(room);
-            self.ready.store(at + 1, Ordering::Release);
-            taken.expect("nobody else has seen it")
-        })
-    }
-
-    fn all(&self) -> impl Iterator<Item = &Reserved> {
-        (0..self.ready.load(Ordering::Acquire)).map(|at| self.reserved.get(at))
-    }
-
-    fn committed_bytes(&self) -> usize {
-        self.all().map(Reserved::committed_bytes).sum()
-    }
 }
 
 type Link = OnceLock<Box<ThreadArena>>;
@@ -114,21 +68,9 @@ impl Default for Session {
 
 impl Session {
     pub fn new() -> Session {
-        Session::with_blocks_of_tasks(Arc::default())
-    }
-
-    /// For a program that is checked while others are: see `blocks_of_tasks`. `other`: the session
-    /// of one of them, or of what they have in common.
-    pub fn beside(other: &Session) -> Session {
-        Session::with_blocks_of_tasks(Arc::clone(&other.blocks_of_tasks))
-    }
-
-    fn with_blocks_of_tasks(blocks_of_tasks: Arc<Blocks>) -> Session {
         Session {
             first: OnceLock::new(),
             kept: AppendVec::new(),
-            blocks: Blocks::default(),
-            blocks_of_tasks,
         }
     }
 
@@ -153,12 +95,11 @@ impl Session {
         }
     }
 
-    /// The bytes that are in use in the arenas, and those that the ranges of `block` have memory for.
-    /// For a moment at which no thread allocates in them.
+    /// The bytes that are in use in the arenas. For a moment at which no thread allocates in them.
     pub fn allocated_bytes(&self) -> usize {
-        let arenas = std::iter::successors(self.first.get(), |node| node.next.get());
-        let in_arenas: usize = arenas.map(|node| node.arena.allocated_bytes()).sum();
-        in_arenas + self.blocks.committed_bytes()
+        std::iter::successors(self.first.get(), |node| node.next.get())
+            .map(|node| node.arena.allocated_bytes())
+            .sum()
     }
 
     /// Takes over a value that owns memory on the regular heap, and drops it with the session. For
@@ -167,16 +108,6 @@ impl Session {
         let at = self.kept.push(Box::new(value));
         let kept: &(dyn Any + Send + Sync) = &**self.kept.get(at);
         kept.downcast_ref().expect("it was boxed as a `T`")
-    }
-
-    /// A range of addresses for what lives as long as the session, which releases it.
-    pub(crate) fn block(&self, room: Room) -> Taken<'_> {
-        self.blocks.take(room)
-    }
-
-    /// A range of addresses for what a task has. See `Blocks::take`.
-    pub(crate) fn block_of_task(&self, room: Room) -> Taken<'_> {
-        self.blocks_of_tasks.take(room)
     }
 
     /// Drops the session of a process that is about to end. Every thread destroys an arena, its own if it has one, and the
@@ -302,29 +233,6 @@ mod tests {
         });
         assert_ne!(own.addr(), other);
         assert_eq!(session.thread_count(), 2);
-    }
-
-    #[test]
-    fn a_range_that_a_task_gives_back_goes_to_the_next_task_of_any_session_beside_it() {
-        let session = Session::new();
-        let beside = Session::beside(&session);
-        let count = || session.blocks_of_tasks.reserved.len();
-        let room = |bytes| Room { bytes };
-        let (first, _second) = (
-            session.block_of_task(room(1 << 16)),
-            beside.block_of_task(room(1 << 16)),
-        );
-        assert_eq!(count(), 2);
-        drop(first);
-        let _third = beside.block_of_task(room(1 << 16));
-        assert_eq!(count(), 2);
-        // Made for another size.
-        let _fourth = session.block_of_task(room(1 << 17));
-        assert_eq!(count(), 3);
-        // What lives as long as a session is its own.
-        let _fifth = session.block(room(1 << 16));
-        assert_eq!((count(), session.blocks.reserved.len()), (3, 1));
-        assert_eq!(beside.blocks.reserved.len(), 0);
     }
 
     #[test]

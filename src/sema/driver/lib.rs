@@ -4079,7 +4079,7 @@ fn check_named_files(
     }
     // Declared before everything that is allocated in it, so it is dropped last.
     let session = Dropped {
-        session: run.map_or_else(Session::new, Run::session_of_program),
+        session: Session::new(),
         before_the_process_ends: (host.ends_the_process() && run.is_none()).then_some(host),
     };
     let session = &session.session;

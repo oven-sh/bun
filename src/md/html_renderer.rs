@@ -25,8 +25,6 @@ pub(crate) struct HtmlRenderer<'src> {
     pub saved_img_title: Box<[u8]>,
     pub tag_filter: bool,
     pub autolink_headings: bool,
-    /// The heading in `heading_buf` has a link of its own. HTML has no link in a link.
-    pub heading_has_link: bool,
     pub heading_buf: Vec<u8>,
     pub heading_tracker: helpers::HeadingIdTracker,
 }
@@ -43,7 +41,6 @@ impl<'src> HtmlRenderer<'src> {
             saved_img_title: Box::default(),
             tag_filter: render_opts.tag_filter,
             autolink_headings: render_opts.autolink_headings,
-            heading_has_link: false,
             heading_buf: Vec::new(),
             heading_tracker: helpers::HeadingIdTracker::init(render_opts.heading_ids),
         }
@@ -200,7 +197,7 @@ impl<'src> HtmlRenderer<'src> {
                     self.out.write(b" id=\"");
                     self.out.write(slug);
                     self.out.write(b"\">");
-                    let autolink = self.autolink_headings && !self.heading_has_link;
+                    let autolink = self.autolink_headings && !has_a_start_tag(&self.heading_buf);
                     if autolink {
                         self.out.write(b"<a href=\"#");
                         self.out.write(slug);
@@ -220,7 +217,6 @@ impl<'src> HtmlRenderer<'src> {
                         _ => b"</h6>\n",
                     });
                     self.heading_buf.clear();
-                    self.heading_has_link = false;
                     self.heading_tracker.clear_after_heading();
                 } else {
                     let tag: &[u8] = match data {
@@ -269,7 +265,6 @@ impl<'src> HtmlRenderer<'src> {
             SpanType::Latexmath => self.write(b"<x-equation>"),
             SpanType::LatexmathDisplay => self.write(b"<x-equation type=\"display\">"),
             SpanType::A => {
-                self.heading_has_link |= self.heading_tracker.in_heading;
                 self.write(b"<a href=\"");
                 if detail.permissive_autolink {
                     // Permissive autolinks use HTML-escaping for href
@@ -377,9 +372,6 @@ impl<'src> HtmlRenderer<'src> {
                 }
             }
             TextType::Html => {
-                self.heading_has_link |= self.heading_tracker.in_heading
-                    && content.first() == Some(&b'<')
-                    && match_tag_name_ci(content, 1, b"a");
                 if self.tag_filter {
                     self.write_html_with_tag_filter(content);
                 } else {
@@ -664,6 +656,18 @@ fn is_disallowed_tag(content: &[u8]) -> bool {
     ];
     for tag in DISALLOWED.iter() {
         if match_tag_name_ci(content, after_lt, tag) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `html` has an `<a>` start tag. The link to a heading goes around none.
+fn has_a_start_tag(html: &[u8]) -> bool {
+    let mut rest = html;
+    while let Some(lt) = strings::index_of_char_usize(rest, b'<') {
+        rest = &rest[lt + 1..];
+        if match_tag_name_ci(rest, 0, b"a") {
             return true;
         }
     }

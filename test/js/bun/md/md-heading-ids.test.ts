@@ -91,8 +91,27 @@ describe("autolinkHeadings option", () => {
     expect(result).toBe('<h2 id="hello-world"><a href="#hello-world">Hello <strong>World</strong></a></h2>\n');
   });
 
-  // HTML has no link in a link. The heading keeps its id, and its content is what `headings: { ids: true }` gives.
-  test.each([
+  /** How many `<a>` start tags of `html` are inside another `<a>`, for a tokenizer of HTML. */
+  function linksInLinks(html: string): number {
+    let open = 0;
+    let nested = 0;
+    new HTMLRewriter()
+      .on("a", {
+        element(a) {
+          if (open > 0) nested++;
+          open++;
+          a.onEndTag(() => {
+            open--;
+          });
+        },
+      })
+      .transform(html);
+    return nested;
+  }
+
+  // The link to a heading goes around no other link. Such a heading keeps its id, and its content is what
+  // `headings: { ids: true }` gives.
+  const noLinkToItself: [name: string, md: string, html: string, options?: Bun.markdown.Options][] = [
     [
       "an inline link",
       "## See [the docs](https://example.com/a)\n",
@@ -112,11 +131,13 @@ describe("autolinkHeadings option", () => {
       "a www autolink",
       "## Visit www.example.com now\n",
       '<h2 id="visit-wwwexamplecom-now">Visit <a href="http://www.example.com">www.example.com</a> now</h2>\n',
+      { autolinks: true },
     ],
     [
       "an email autolink",
       "## Mail me@example.com\n",
       '<h2 id="mail-meexamplecom">Mail <a href="mailto:me@example.com">me@example.com</a></h2>\n',
+      { autolinks: true },
     ],
     [
       "an <a> tag",
@@ -148,11 +169,46 @@ describe("autolinkHeadings option", () => {
       "See [the docs](https://example.com/a)\n===\n",
       '<h1 id="see-the-docs">See <a href="https://example.com/a">the docs</a></h1>\n',
     ],
-  ])("a heading with %s gets no link to itself", (_, md, html) => {
-    expect(Markdown.html(md, { headings: true, autolinks: true })).toBe(html);
+    // Markdown ends these three at `-->`, `]]>` and `?>`. HTML ends them before the `<a>` tag.
+    [
+      "an <a> tag after a comment that --!> ends",
+      '## Foo <!-- x --!> <a href="u">y</a> --> bar\n',
+      '<h2 id="foo-bar">Foo <!-- x --!> <a href="u">y</a> --> bar</h2>\n',
+    ],
+    [
+      "an <a> tag after a > in a CDATA section",
+      '## Foo <![CDATA[ > <a href="u">y</a> ]]> bar\n',
+      '<h2 id="foo-bar">Foo <![CDATA[ > <a href="u">y</a> ]]> bar</h2>\n',
+    ],
+    [
+      "an <a> tag after a > in a processing instruction",
+      '## Foo <? > <a href="u">y</a> ?> bar\n',
+      '<h2 id="foo-bar">Foo <? > <a href="u">y</a> ?> bar</h2>\n',
+    ],
+    [
+      "an <a> tag in an attribute of a tag that the tag filter makes text",
+      '## Foo <script x="<a href=u>">y</a> bar\n',
+      '<h2 id="foo-y-bar">Foo &lt;script x="<a href=u>">y</a> bar</h2>\n',
+      { tagFilter: true },
+    ],
+    // No link for a tokenizer of HTML. The bytes of the heading are what counts.
+    [
+      "an <a> tag in a comment",
+      '## Foo <!-- <a href="u"> --> bar\n',
+      '<h2 id="foo-bar">Foo <!-- <a href="u"> --> bar</h2>\n',
+    ],
+    [
+      "an <a> tag in an attribute",
+      '## The <abbr title="<a href=u>">API</abbr>\n',
+      '<h2 id="the-api">The <abbr title="<a href=u>">API</abbr></h2>\n',
+    ],
+  ];
+  test.each(noLinkToItself)("a heading with %s gets no link to itself", (_, md, html, options = {}) => {
+    const result = Markdown.html(md, { headings: true, ...options });
+    expect({ result, linksInLinks: linksInLinks(result) }).toEqual({ result: html, linksInLinks: 0 });
   });
 
-  test.each([
+  const linkToItself: [name: string, md: string, html: string, options?: Bun.markdown.Options][] = [
     [
       "an image",
       "## ![alt](a.png) pic\n",
@@ -167,6 +223,7 @@ describe("autolinkHeadings option", () => {
       "a wiki link",
       "## See [[Page]]\n",
       '<h2 id="see-page"><a href="#see-page">See <x-wikilink data-target="Page">Page</x-wikilink></a></h2>\n',
+      { wikiLinks: true },
     ],
     [
       "an <abbr> tag",
@@ -174,17 +231,98 @@ describe("autolinkHeadings option", () => {
       '<h2 id="the-api"><a href="#the-api">The <abbr title="x">API</abbr></a></h2>\n',
     ],
     [
+      "an <a> tag in a code span",
+      '## The `<a href="u">` tag\n',
+      '<h2 id="the-a-hrefu-tag"><a href="#the-a-hrefu-tag">The <code>&lt;a href=&quot;u&quot;&gt;</code> tag</a></h2>\n',
+    ],
+    [
       "a link before it",
       "[x](https://example.com/a)\n\n## Title\n",
       '<p><a href="https://example.com/a">x</a></p>\n<h2 id="title"><a href="#title">Title</a></h2>\n',
+    ],
+    [
+      "an <a> tag before it",
+      '<a href="https://example.com/a">x</a>\n\n## Title\n',
+      '<p><a href="https://example.com/a">x</a></p>\n<h2 id="title"><a href="#title">Title</a></h2>\n',
+    ],
+    [
+      "an <a> tag in a block of HTML before it",
+      '<div>\n<a href="https://example.com/a">x</a>\n</div>\n\n## Title\n',
+      '<div>\n<a href="https://example.com/a">x</a>\n</div>\n<h2 id="title"><a href="#title">Title</a></h2>\n',
     ],
     [
       "a heading with a link before it",
       "## [a](https://example.com/a)\n\n## b\n",
       '<h2 id="a"><a href="https://example.com/a">a</a></h2>\n<h2 id="b"><a href="#b">b</a></h2>\n',
     ],
-  ])("a heading with %s keeps the link to itself", (_, md, html) => {
-    expect(Markdown.html(md, { headings: true, wikiLinks: true })).toBe(html);
+  ];
+  test.each(linkToItself)("a heading with %s keeps the link to itself", (_, md, html, options = {}) => {
+    const result = Markdown.html(md, { headings: true, ...options });
+    expect({ result, linksInLinks: linksInLinks(result) }).toEqual({ result: html, linksInLinks: 0 });
+  });
+
+  test("headings: true is headings: { ids: true } with a link to each heading that has no link", () => {
+    let seed = 1;
+    const next = (n: number) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+    const pick = (from: string[]) => from[next(from.length)];
+    const links = [
+      "[docs](https://example.com/a)",
+      "[ref][r]",
+      "<https://example.com/b>",
+      "www.example.com",
+      '<a href="/c">raw</a>',
+      "**[bold](https://example.com/d)**",
+      "[![img](a.png)](https://example.com/e)",
+      '<!-- x --!> <a href="/f">late</a> -->',
+    ];
+    const rest = [
+      "alpha",
+      "Beta",
+      "*em*",
+      "**strong**",
+      "`code`",
+      "![img](a.png)",
+      "<abbr>ab</abbr>",
+      "<!-- c -->",
+      "&amp;",
+    ];
+    const piece = () => (next(4) === 0 ? pick(links) : pick(rest));
+    const line = () => Array.from({ length: 1 + next(4) }, piece).join(" ");
+
+    const wrong: string[] = [];
+    for (let doc = 0; doc < 150; doc++) {
+      const md =
+        Array.from({ length: 1 + next(4) }, () =>
+          next(3) === 0 ? line() : `${pick(["#", "##", "###"])} ${line()}`,
+        ).join("\n\n") + "\n\n[r]: https://example.com/r\n";
+      const options = { autolinks: true, tagFilter: next(2) === 0 };
+      const withIds = Markdown.html(md, { ...options, headings: { ids: true } });
+      const withLinks = Markdown.html(md, { ...options, headings: true });
+
+      // Each heading of `withIds`: does it have a link, for a tokenizer of HTML?
+      const hasLink: boolean[] = [];
+      new HTMLRewriter()
+        .on("h1, h2, h3", { element: () => void hasLink.push(false) })
+        .on("h1 a, h2 a, h3 a", { element: () => void (hasLink[hasLink.length - 1] = true) })
+        .transform(withIds);
+      const linked = Array.from(withLinks.matchAll(/<h[1-3] id="([^"]*)">(<a href="#\1">)?/g), m => m[2] !== undefined);
+      const withoutLinks = withLinks.replace(
+        /(<h[1-3] id="([^"]*)">)<a href="#\2">([^]*?)<\/a>(<\/h[1-3]>)/g,
+        "$1$3$4",
+      );
+
+      if (
+        linksInLinks(withLinks) !== linksInLinks(withIds) ||
+        withoutLinks !== withIds ||
+        !Bun.deepEquals(
+          linked,
+          hasLink.map(has => !has),
+        )
+      ) {
+        wrong.push(md);
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 
   test("autolink with deduplication", () => {

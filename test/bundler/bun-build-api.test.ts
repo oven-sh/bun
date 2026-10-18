@@ -2000,6 +2000,54 @@ test.skipIf(!isASAN)("Bun.build / Bun.Transpiler option error path does not leak
   expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
 });
 
+// The bundle thread hands a finished build back to the JS thread first and frees what the build used afterwards. A
+// process that exits in between is in the middle of that: nothing the bundle thread still holds may be a leak to
+// LeakSanitizer. `env: "inline"` makes a define of every environment variable, so with this many of them the bundle
+// thread is still freeing the build's transpiler when the exit checks for leaks.
+test.skipIf(!isASAN)(
+  "a process that exits as soon as Bun.build() settles has no leak",
+  async () => {
+    let dotenv = "";
+    for (let i = 0; i < 90_000; i++) dotenv += `W${i}=1\n`;
+    using dir = tempDir("bun-build-exit-at-settle", {
+      ".env": dotenv,
+      "entry.ts": "export const n: number = 1;\n",
+      // Nothing between the `await` and the exit: the exit has to come while the bundle thread is still busy.
+      "build.js": `
+        const { success } = await Bun.build({ entrypoints: ["./entry.ts"], throw: false, env: "inline" });
+        process.exit(success ? 0 : 42);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        // Bun's built-in ASAN defaults turn LSan off. abort_on_error=0: a leak is an exit code, not a SIGABRT.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "abort_on_error=0"].filter(Boolean).join(":"),
+        // verbosity=1 makes the check at exit say that it ran.
+        LSAN_OPTIONS: `verbosity=1:print_suppressions=0:suppressions=${join(import.meta.dirname, "..", "leaksan.supp")}`,
+        // Frees what JS still referenced, so that only lost allocations are reported.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // LSan prints one block per leaking allocation stack, with an empty line between them.
+    const leaks = stderr.split(/\n\s*\n/).filter(block => /^(?:Direct|Indirect) leak of /.test(block));
+    expect({
+      stdout,
+      checked: stderr.includes("LeakSanitizer: checking for leaks"),
+      leaks: leaks.length,
+      first: leaks[0] ?? "",
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({ stdout: "", checked: true, leaks: 0, first: "", exitCode: 0, signalCode: null });
+  },
+  180_000,
+);
+
 // On release builds mimalloc's large-allocation arenas make RSS growth too
 // non-deterministic to draw a clean line between "leaking" and "not leaking"
 // for this path. Under debug/ASAN the allocator behaviour is stable enough to

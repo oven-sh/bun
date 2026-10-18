@@ -386,11 +386,8 @@ enum ForeignFlag {
     AliasOf(&'static [u8]),
     /// Asks for something Bun always does, whatever its configuration, so the flag is ignored.
     Satisfied,
-    /// Similar to this Bun flag, but ignoring it would install into the wrong directory or save to
-    /// the wrong package.json. It stays an error that suggests this flag.
-    Near(&'static [u8]),
 }
-use ForeignFlag::{AliasOf, Near, Satisfied};
+use ForeignFlag::{AliasOf, Satisfied};
 
 /// An entry written as `--name=value` also matches `--name value`. A flag that isn't listed here
 /// or in `IGNORED_FOREIGN_FLAGS`, and isn't one of Bun's own, is an error.
@@ -439,17 +436,10 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--node-linker=node-modules", AliasOf(b"--linker=hoisted")),
     (b"--node-linker=isolated", AliasOf(b"--linker=isolated")),
     (b"--node-linker=pnpm", AliasOf(b"--linker=isolated")),
-    (b"--workspace", Near(b"--filter")),
-    (b"--prefix", Near(b"--cwd")),
-    (b"--dir", Near(b"--cwd")),
-    (b"--before", Near(b"--minimum-release-age")),
-    (b"--min-release-age", Near(b"--minimum-release-age")),
 ];
 
 /// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove` and
 /// `update` skip them, like Bun 1.4 and earlier did, so scripts written for those tools keep working.
-/// A flag isn't listed, so it stays an error, if it changes where packages are installed or saved,
-/// which version is installed, or which `.npmrc` is read.
 const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     #[rustfmt::skip]
     flags: &[
@@ -461,40 +451,42 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"flat", b"focus", b"foreground-scripts", b"format-package-lock", b"frozen-store", b"fund",
     b"global-style", b"har", b"hoist", b"ignore-manifest-check", b"ignore-platform",
     b"ignore-pnpmfile", b"ignore-workspace", b"ignore-workspace-root-check", b"immutable-cache",
-    b"include-github-actions", b"inline-builds", b"install-links",
+    b"include-github-actions", b"include-workspace-root", b"inline-builds", b"install-links", b"iwr",
     b"json", b"legacy-bundling", b"link-duplicates", b"link-workspace-packages",
     b"lockfile", b"long", b"merge-git-branch-lockfiles", b"no-frozen-lockfile", b"no-immutable",
     b"no-prefer-frozen-lockfile", b"no-production", b"no-proxy", b"node-version-check",
     b"omit-lockfile-registry-resolved", b"package-lock", b"parseable", b"patches", b"pnp",
     b"prefer-dedupe", b"prefer-online", b"prefer-workspace-packages", b"progress", b"pure-lockfile",
-    b"rebuild-bundle", b"refresh-lockfile", b"resolution-only",
+    b"rebuild-bundle", b"recursive", b"refresh-lockfile", b"resolution-only",
     b"resolve-peers-from-workspace-root", b"reverse", b"runtime", b"save-build", b"save-bundle",
     b"save-types", b"scripts-prepend-node-path", b"shared-workspace-lockfile",
     b"shrinkwrap", b"side-effects-cache", b"skip-integrity-check", b"sort", b"stream",
     b"strict-allow-scripts", b"strict-peer-dependencies", b"strict-peer-deps", b"strict-semver",
     b"strict-ssl", b"symlink", b"tilde", b"timing", b"trust-lockfile", b"unicode",
     b"update-checksums", b"update-notifier", b"use-running-store-server", b"use-stderr",
-    b"use-store-server", b"verify-store-integrity", b"workspaces-update",
+    b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
     b"yes",
     ],
     #[rustfmt::skip]
     options: &[
-    b"allow-build", b"allow-scripts", b"also", b"cache", b"cache-folder", b"cache-max",
-    b"cache-min", b"cert", b"changed-files-ignore-pattern", b"child-concurrency",
-    b"fetch-min-speed-ki-bps", b"fetch-retries", b"fetch-retry-factor", b"fetch-retry-maxtimeout",
+    b"allow-build", b"allow-scripts", b"also", b"before", b"cache", b"cache-folder", b"cache-max",
+    b"cache-min", b"cert", b"changed-files-ignore-pattern", b"child-concurrency", b"dir",
+    b"enjoy-by", b"fetch-min-speed-ki-bps", b"fetch-retries", b"fetch-retry-factor", b"fetch-retry-maxtimeout",
     b"fetch-retry-mintimeout", b"fetch-timeout", b"fetch-warn-timeout-ms", b"filter-prod",
-    b"global-pnpmfile", b"hoist-pattern", b"http-proxy",
-    b"https-proxy", b"include", b"install-strategy", b"key", b"local-address",
-    b"location", b"lockfile-version", b"loglevel", b"logs-dir", b"logs-max",
-    b"maxsockets", b"merge-git-branch-lockfiles-branch-pattern", b"mode",
+    b"global-folder", b"global-pnpmfile", b"globalconfig", b"hoist-pattern", b"http-proxy",
+    b"https-proxy", b"include", b"install-strategy", b"key", b"link-folder", b"local-address",
+    b"location", b"lockfile-dir", b"lockfile-version", b"loglevel", b"logs-dir", b"logs-max",
+    b"maxsockets", b"merge-git-branch-lockfiles-branch-pattern", b"min-release-age", b"mode",
     b"mutex", b"network-timeout", b"node-gyp", b"node-linker", b"node-options",
-    b"noproxy", b"only", b"otp", b"package-import-method", b"pnpmfile",
-    b"pnpr-server", b"preferred-cache-folder", b"proxy", b"public-hoist-pattern",
-    b"replace-registry-host", b"reporter", b"save-prefix", b"scope",
-    b"script-shell", b"state-dir", b"store-dir", b"test-pattern", b"umask", b"use-yarnrc",
-    b"user-agent", b"workspace-concurrency",
+    b"noproxy", b"npmrc-auth-file", b"only", b"otp", b"package-import-method", b"pnpmfile",
+    b"pnpr-server", b"preferred-cache-folder", b"prefix", b"proxy", b"public-hoist-pattern",
+    b"replace-registry-host", b"reporter", b"save-catalog-name", b"save-prefix", b"scope",
+    b"script-shell", b"state-dir", b"store-dir", b"tag", b"test-pattern", b"umask", b"use-yarnrc",
+    b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace", b"workspace-concurrency",
     b"workspace-packages",
     ],
+    // pnpm's `--config.<setting>=<value>`.
+    prefixes: &[b"config."],
 };
 
 /// `bun update` accepts these flags too, but there they select which dependencies to update, so no
@@ -1439,7 +1431,6 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     }
                 }
                 Satisfied => Some((flag, b"".as_slice())),
-                Near(_) => None,
             })
             .collect();
 
@@ -1479,15 +1470,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                         "bun {} has no <b>--{}<r> flag.",
                         (command, bstr::BStr::new(flag)),
                     );
-                    let near = foreign_flags.iter().find_map(|&(name, kind)| match kind {
-                        Near(own) if name[2..] == *flag && has(&own[2..]) => Some(own),
-                        _ => None,
-                    });
-                    if let Some(own) = near {
-                        bun_core::note!("Did you mean <b>{}<r>?", bstr::BStr::new(own));
-                    } else {
-                        bun_core::note!("Run 'bun {} --help' for more information", command);
-                    }
+                    bun_core::note!("Run 'bun {} --help' for more information", command);
                     Global::exit(1);
                 }
                 Self::print_help(subcommand);

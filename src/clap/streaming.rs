@@ -168,6 +168,12 @@ where
                             .is_some_and(|positive| ignored.flags.contains(&positive))
                     {
                         next == b"true" || next == b"false"
+                    } else if ignored
+                        .prefixes
+                        .iter()
+                        .any(|prefix| name.starts_with(prefix))
+                    {
+                        false
                     } else {
                         return Err(self.err(arg, None, Some(name), ArgError::InvalidArgument));
                     };

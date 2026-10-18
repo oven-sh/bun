@@ -17003,6 +17003,27 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--yes", "true"],
     // The next flag isn't this option's value.
     ["--cache", "--no-progress"],
+    // Bun 1.4 ignored these too, so scripts that pass them keep working.
+    ["--prefix=dep"],
+    ["--prefix", "dep"],
+    ["--dir", "dep"],
+    ["--workspace=dep"],
+    ["--workspace", "dep"],
+    ["--ws"],
+    ["--workspace-root"],
+    ["--include-workspace-root"],
+    ["--save-catalog-name=tools"],
+    ["--lockfile-dir", "dep"],
+    ["--virtual-store-dir=dep"],
+    ["--tag=next"],
+    ["--userconfig=dep/.npmrc"],
+    ["--userconfig", "dep"],
+    ["--globalconfig=dep/.npmrc"],
+    ["--npmrc-auth-file=dep/.npmrc"],
+    ["--before=2026-01-01"],
+    ["--min-release-age", "7"],
+    ["--config.frozen-lockfile=true"],
+    ["--config.ignore-scripts=true"],
     // Unlike `--noproxy`, this one has no value, so the package after it still counts.
     ["--no-proxy"],
   ].flat();
@@ -17026,24 +17047,6 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
       expect(await outcome([command, ...args, ...ignored], pkg, true)).toEqual(plain);
     },
   );
-
-  it.each([
-    [["install", "--workspace=dep"], "install", "--workspace", "--filter"],
-    [["add", "--workspace", "dep", "./dep"], "add", "--workspace", "--filter"],
-    [["install", "--prefix=dep"], "install", "--prefix", "--cwd"],
-    [["add", "--dir", "dep", "./dep"], "add", "--dir", "--cwd"],
-    [["install", "--before=2026-01-01"], "install", "--before", "--minimum-release-age"],
-    [["install", "--min-release-age", "7"], "install", "--min-release-age", "--minimum-release-age"],
-  ])("bun %j is an error that names the closest flag", async (cmd, command, theirs, ours) => {
-    expect(await outcome(cmd, {})).toEqual({
-      stdout: "",
-      stderr: `error: bun ${command} has no ${theirs} flag.\nnote: Did you mean ${ours}?\n`,
-      exitCode: 1,
-      packageJson: { name: "foo", version: "0.0.1" },
-      files: ["dep", "dev", "opt", "package.json"],
-      installed: [],
-    });
-  });
 
   // They say where a new dependency is saved.
   it.each([
@@ -17111,22 +17114,6 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["link", "--no-fund"], "link", "--no-fund"],
     [["install", "--frozen-lockfil"], "install", "--frozen-lockfil"],
     [["install", "--no-ignore-script"], "install", "--no-ignore-script"],
-    [["add", "--recursive", "./dep"], "add", "--recursive"],
-    // These choose which package.json a dependency is saved to.
-    [["add", "--workspace-root", "./dep"], "add", "--workspace-root"],
-    [["install", "--ws", "./dep"], "install", "--ws"],
-    [["add", "--save-catalog-name=tools", "./dep"], "add", "--save-catalog-name"],
-    [["install", "--lockfile-dir=dep"], "install", "--lockfile-dir"],
-    [["install", "--virtual-store-dir=dep"], "install", "--virtual-store-dir"],
-    // This one chooses the version.
-    [["add", "--tag=next", "./dep"], "add", "--tag"],
-    // These choose the file that registries and tokens are read from.
-    [["install", "--userconfig=dep/.npmrc"], "install", "--userconfig"],
-    [["install", "--globalconfig=dep/.npmrc"], "install", "--globalconfig"],
-    [["install", "--npmrc-auth-file=dep/.npmrc"], "install", "--npmrc-auth-file"],
-    // Ignoring these would turn a safety setting off.
-    [["install", "--config.frozen-lockfile=true"], "install", "--config.frozen-lockfile"],
-    [["install", "--config.ignore-scripts=true"], "install", "--config.ignore-scripts"],
   ] as [string[], string, string][])("bun %j is still an error", async (cmd, command, flag) => {
     const { stderr, packageJson, exitCode } = await outcome(cmd);
     expect(stderr).toBe(

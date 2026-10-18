@@ -206,6 +206,7 @@ impl Checker<'_, '_> {
         let stays = |file: FileId| !leaves.contains(file.idx());
         self.literals_checked_under.retain(|key, _| stays(key.0));
         self.discriminated.retain(|key, _| stays(key.0));
+        self.conditional_roots.retain(|key, _| stays(key.0));
         self.non_existent_properties.retain(|key, _| stays(key.0));
         self.rechecked_exprs.retain(|key, _| stays(key.0));
         self.rechecked_members.retain(|key, _| stays(key.0));
@@ -228,6 +229,7 @@ impl Checker<'_, '_> {
     fn entries_by_node(&self) -> usize {
         self.literals_checked_under.len()
             + self.discriminated.len()
+            + self.conditional_roots.len()
             + self.non_existent_properties.len()
             + self.rechecked_exprs.len()
             + self.rechecked_members.len()

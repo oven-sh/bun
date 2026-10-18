@@ -39,6 +39,22 @@ pub(super) struct MappedInstantiation {
     nesting: u8,
 }
 
+/// The parts of tsgo's `ConditionalRoot` that `getConditionalType` reads on every call. See
+/// `Checker::conditional_roots`.
+#[derive(Clone)]
+pub(super) struct ConditionalRoot {
+    /// `root.checkType`
+    check_declared: TypeId,
+    /// `getActualTypeVariable(root.checkType)`
+    check_variable: TypeId,
+    /// `root.extendsType`
+    extends_declared: TypeId,
+    /// True if the check and extends nodes are tuples of the same length without optional or rest elements.
+    check_tuples: bool,
+    /// `root.inferTypeParameters`
+    infer_params: SmallVec<[TypeId; 4]>,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// The pairs of `mapper`, followed by `param` mapped to `ty`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
@@ -1634,10 +1650,21 @@ impl<'p, 's> Checker<'p, 's> {
             else {
                 return TypeId::UNRESOLVED;
             };
-            let check_declared = self.type_from_node(file, check);
-            let check_variable = self.actual_type_variable(check_declared);
+            // A cache hit skips the lookups below. A miss does them in tsgo's order and fills the cache afterwards.
+            let root = self.conditional_roots.get(&(file, node)).cloned();
+            let mark = self.non_cacheable_mark();
+            let (check_declared, check_variable) = match &root {
+                Some(root) => (root.check_declared, root.check_variable),
+                None => {
+                    let check_declared = self.type_from_node(file, check);
+                    (check_declared, self.actual_type_variable(check_declared))
+                }
+            };
             let check_ty = self.instantiate(check_variable, mapper);
-            let extends_declared = self.type_from_node(file, extends);
+            let extends_declared = match &root {
+                Some(root) => root.extends_declared,
+                None => self.type_from_node(file, extends),
+            };
             if check_ty == TypeId::UNRESOLVED {
                 return TypeId::UNRESOLVED;
             }
@@ -1650,24 +1677,46 @@ impl<'p, 's> Checker<'p, 's> {
                 return TypeId::WILDCARD;
             }
             // `[A] extends [B]` is deferred on its elements like `A extends B` would be.
-            let check_tuples = match (
-                self.simple_tuple_len(file, check),
-                self.simple_tuple_len(file, extends),
-            ) {
-                (Some(a), Some(b)) => a == b,
-                _ => false,
+            let check_tuples = match &root {
+                Some(root) => root.check_tuples,
+                None => match (
+                    self.simple_tuple_len(file, check),
+                    self.simple_tuple_len(file, extends),
+                ) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => false,
+                },
             };
             let check_is_generic =
                 self.is_generic(check_ty) || check_tuples && self.has_generic_element(check_ty);
 
-            let mut infer_params = Vec::new();
-            self.collect_infer_params(file, extends, &mut infer_params);
+            let params: SmallVec<[TypeId; 4]> = match root {
+                Some(root) => root.infer_params,
+                None => {
+                    let mut infer_params = Vec::new();
+                    self.collect_infer_params(file, extends, &mut infer_params);
+                    let params: SmallVec<[TypeId; 4]> = infer_params
+                        .iter()
+                        .map(|&p| self.type_param(file, p))
+                        .collect();
+                    if self.non_cacheable_mark() == mark
+                        && self.is_type_node_settled(file, check)
+                        && self.is_type_node_settled(file, extends)
+                    {
+                        let root = ConditionalRoot {
+                            check_declared,
+                            check_variable,
+                            extends_declared,
+                            check_tuples,
+                            infer_params: params.clone(),
+                        };
+                        self.conditional_roots.insert((file, node), root);
+                    }
+                    params
+                }
+            };
             let mut combined = mapper;
-            if !infer_params.is_empty() {
-                let params: SmallVec<[TypeId; 4]> = infer_params
-                    .iter()
-                    .map(|&p| self.type_param(file, p))
-                    .collect();
+            if !params.is_empty() {
                 if !check_is_generic {
                     // The `infer` positions are found in the `extends` type with everything else
                     // instantiated.

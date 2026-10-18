@@ -856,8 +856,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.get_symbol_id_of_object_type_alias(ty);
         }
         self.instantiations_computed += 1;
-        // See `instantiations_in_progress`.
-        let is_listed = self.task.writes_at_once();
+        // See `instantiations_in_progress`. A call that stores nothing in the table doesn't need to be listed.
+        let is_listed = !skips_table && self.task.writes_at_once();
         let is_inner = is_listed && self.instantiations_in_progress.contains(&(ty, mapper));
         if is_listed {
             self.instantiations_in_progress.push((ty, mapper));

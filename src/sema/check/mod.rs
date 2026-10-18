@@ -982,6 +982,7 @@ impl<'s> Program<'s> {
             reverse_expanding: 0,
             flow_memo: Default::default(),
             discriminated: Default::default(),
+            conditional_roots: Default::default(),
             contextual_properties: Default::default(),
             apparent_types_of_intersections: Default::default(),
             apparent_types_with_this_argument: Default::default(),
@@ -1946,6 +1947,8 @@ pub struct Checker<'p, 's> {
     /// `discriminatedContextualTypes`: the result of `discriminate_by_object_members` for an object
     /// literal and a union, where it is final.
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
+    /// Caches a `ConditionalRoot` per conditional type node, once the types of its check and extends nodes are final.
+    conditional_roots: FxHashMap<(FileId, TypeNodeId), mapped::ConditionalRoot>,
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom, Option<TypeId>), Option<TypeId>>,
     /// `resolvedApparentType` of an intersection: the `this` argument is the intersection.

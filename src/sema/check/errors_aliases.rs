@@ -433,8 +433,7 @@ impl Checker<'_, '_> {
     /// `getExternalModuleMember`, or by `resolveESModuleSymbol` for `import * as ns`.
     fn has_alias_from_exports_of_module(&self, file: FileId, module: Sym) -> bool {
         let (files, hir) = (self.files(), self.hir(file));
-        let aliases = self.bound(file).symbols.iter();
-        let aliases = aliases.filter(|symbol| symbol.flags.contains(SymFlags::ALIAS));
+        let aliases = self.bound(file).symbols.with_flags(SymFlags::ALIAS);
         aliases.flat_map(|symbol| symbol.decls.iter()).any(|&decl| {
             let specifier = match decl {
                 Decl::ImportNamespace(import) => {

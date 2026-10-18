@@ -262,6 +262,25 @@ function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
       }
       return text.match(pattern)!;
     },
+    // One write can reach the watcher as more than one change. Each restarts a `--watch` process, on a new port, so the
+    // last URL can be out of date by the time it is used. The next one is then on its way.
+    async get(path: string) {
+      while (true) {
+        const urls = text.match(/(?<=url: )http:\/\/\S+/g)!;
+        try {
+          return await get(urls.at(-1)!, path);
+        } catch (error: any) {
+          if (error.code !== "ECONNREFUSED" && error.code !== "ECONNRESET") throw error;
+          await this.waitFor(new RegExp(`(url: http:[\\s\\S]*){${urls.length + 1}}`));
+        }
+      }
+    },
+    // On Windows `--watch` runs the program in a child of `proc`. The system ends it after `proc` is killed, and until
+    // then the project is its working directory, which cannot be removed. It holds these pipes too: their end is its end.
+    async [Symbol.asyncDispose]() {
+      proc.kill();
+      await done;
+    },
   };
 }
 
@@ -281,16 +300,16 @@ test.concurrent.each([
   });
 
   await using proc = spawnBake(String(dir), [...args, "--port=0"]);
-  const output = collectOutput(proc);
+  await using output = collectOutput(proc);
   await output.waitFor(/TS2322/);
 
   await Bun.write(
     join(String(dir), "app/server.ts"),
     `declare const Response: any;\nconst count: number = 1;\nexport default { fetch: () => new Response(String(count)) };\n`,
   );
-  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  await output.waitFor(/url: http:/);
 
-  expect(await get(url, "/missing")).toBe("200 1");
+  expect(await output.get("/missing")).toBe("200 1");
 });
 
 // Creating a symlink on Windows needs a privilege that CI does not have.
@@ -350,15 +369,15 @@ test.concurrent.each([
   });
 
   await using proc = spawnBake(String(dir), ["bake", flag, "--port=0"]);
-  const output = collectOutput(proc);
+  await using output = collectOutput(proc);
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
   expect(await get(url, "/")).toBe("200 v1");
 
   await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
   // `--watch` starts the process again, on a new port; `--hot` keeps it. Each prints the URL again.
-  const [, next] = await output.waitFor(/url: http:\/\/\S+[\s\S]*url: (http:\/\/\S+)/);
+  await output.waitFor(/url: http:[\s\S]*url: http:/);
 
-  expect(await get(next, "/")).toBe("200 v2");
+  expect(await output.get("/")).toBe("200 v2");
 });
 
 // Windows has no signal handlers to run before a reload.
@@ -376,7 +395,7 @@ test.concurrent.skipIf(isWindows).each([{ args: ["--watch-kill-signal", "SIGINT"
     });
 
     await using proc = spawnBake(String(dir), [...args, "--port=0"]);
-    const output = collectOutput(proc);
+    await using output = collectOutput(proc);
     await output.waitFor(/url: /);
 
     await Bun.write(
@@ -404,7 +423,7 @@ test.concurrent("bun bake --hot keeps one server when it started on a later port
     stdout: "pipe",
     stderr: "pipe",
   });
-  const output = collectOutput(proc);
+  await using output = collectOutput(proc);
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
   expect(new URL(url).port).not.toBe(String(blocker.port));
 
@@ -485,7 +504,7 @@ test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export 
   );
 
   await using proc = spawnBake(String(dir), ["bake"]);
-  const output = collectOutput(proc);
+  await using output = collectOutput(proc);
   await output.waitFor(/url: unix:/);
 
   const res = await fetch("http://localhost/", { unix: socket });

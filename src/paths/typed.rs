@@ -222,6 +222,15 @@ impl<C: PathUnit> Path<C> {
         }
     }
 
+    /// The directory that holds this path. `None` for a root, an empty path and one that ends in `..`.
+    #[inline]
+    pub fn parent(&self) -> Option<&Self> {
+        self.basename()?;
+        let root = root_len(&self.0);
+        let end = last_sep(&self.0[root..]).map_or(root, |i| root + i);
+        Some(Self::wrap_units(&self.0[..end]))
+    }
+
     /// The last name. `None` for a root, an empty path and a path that ends in `..`.
     #[inline]
     pub fn basename(&self) -> Option<&Component<C>> {
@@ -976,6 +985,24 @@ pub fn relative_in<C: PathUnit, S: Storage<C>>(
     out.push(below);
     out
 }
+
+macro_rules! boxed {
+    ($name:ident) => {
+        impl<C: Copy> From<&$name<C>> for Box<$name<C>> {
+            /// For a path that outlives the buffer it was built in.
+            fn from(path: &$name<C>) -> Self {
+                let units: Box<[C]> = Box::from(&path.0);
+                // SAFETY: `repr(transparent)` over `[C]`.
+                unsafe { Box::from_raw(Box::into_raw(units) as *mut $name<C>) }
+            }
+        }
+    };
+}
+boxed!(Path);
+boxed!(AbsPath);
+boxed!(RelPath);
+boxed!(SubPath);
+boxed!(Component);
 
 /// The project's directory.
 #[inline]

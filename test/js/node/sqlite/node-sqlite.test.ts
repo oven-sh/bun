@@ -205,9 +205,10 @@ describe("DatabaseSync", () => {
     const tag = db.createTagStore();
     expect(tag.get`SELECT typeof(${ab}) AS t`).toEqual({ t: "blob" });
 
-    // Node binds a zero-length or detached ArrayBuffer or SharedArrayBuffer as
-    // NULL (V8's ArrayBuffer::Data() is nullptr for both, and SQLite binds
-    // NULL for a null pointer). A zero-length or detached view stays a
+    // Node binds a detached buffer and a fixed-length buffer of byteLength 0
+    // as NULL (V8's ArrayBuffer::Data() is nullptr for both, and SQLite binds
+    // NULL for a null pointer). A resizable, growable or WebAssembly.Memory
+    // buffer at byteLength 0, and a zero-length or detached view, are a
     // zero-length BLOB. Both as a first argument (not a named-parameter bag)
     // and as a later one.
     const detached = new ArrayBuffer(4);
@@ -216,6 +217,16 @@ describe("DatabaseSync", () => {
     expect(typeOf.get(new ArrayBuffer(0), detached)).toEqual({ t: "null", u: "null" });
     expect(typeOf.get(new SharedArrayBuffer(0), new Uint8Array(0))).toEqual({ t: "null", u: "blob" });
     expect(db.prepare("SELECT ?, typeof(?) AS t").get(detached, "x")).toEqual({ "?": null, t: "text" });
+    const detachedView = new Uint8Array(4);
+    structuredClone(detachedView.buffer, { transfer: [detachedView.buffer] });
+    const detachedResizable = new ArrayBuffer(0, { maxByteLength: 16 });
+    structuredClone(detachedResizable, { transfer: [detachedResizable] });
+    expect(typeOf.get(detachedView, detachedResizable)).toEqual({ t: "blob", u: "null" });
+    const resizable = new ArrayBuffer(0, { maxByteLength: 16 });
+    const growable = new SharedArrayBuffer(0, { maxByteLength: 16 });
+    expect(typeOf.get(resizable, growable)).toEqual({ t: "blob", u: "blob" });
+    const wasm = new WebAssembly.Memory({ initial: 0 }).buffer;
+    expect(typeOf.get(wasm, wasm)).toEqual({ t: "blob", u: "blob" });
 
     // User-defined functions return an ArrayBuffer or a SharedArrayBuffer as a BLOB.
     db.function("ab", () => new Uint8Array([1, 2, 3]).buffer);

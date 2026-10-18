@@ -404,18 +404,22 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, TopExceptionScope& 
 //
 // sqlite3_bind_blob64(nullptr, 0) and sqlite3_result_blob64(nullptr, 0) set
 // NULL, not an empty BLOB (sqlite3.c:bindText's `if(zData!=0)` guard). Node's
-// ArrayBufferViewContents (src/util-inl.h) gives a view with no backing store
-// non-null stack storage, so an empty or detached view is a zero-length BLOB.
-// For an ArrayBuffer it passes V8's ArrayBuffer::Data() through unchanged,
-// which is nullptr for a zero-length or detached buffer, so those bind NULL.
-// Both are reproduced here: the returned span's data pointer decides.
+// ArrayBufferViewContents (src/util-inl.h) gives a view whose buffer data is
+// null non-null stack storage, so an empty or detached view is a zero-length
+// BLOB. For an ArrayBuffer it passes V8's ArrayBuffer::Data() through
+// unchanged. That is nullptr for a detached buffer and for a fixed-length
+// buffer of byteLength 0 (V8 allocates no backing store for it), so those
+// bind NULL. A resizable, growable or WebAssembly.Memory buffer reserves its
+// maximum up front, so it is a zero-length BLOB even at byteLength 0. The
+// returned span's data pointer reproduces that.
 static std::optional<std::span<const uint8_t>> sqliteBlobSpan(JSGlobalObject* globalObject, JSValue value)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
         return Bun::Bindgen::withNonNullData(view->span());
     if (auto* buffer = JSC::toPossiblySharedArrayBuffer(getVM(globalObject), value)) {
-        auto bytes = buffer->span();
-        return bytes.empty() ? std::span<const uint8_t> {} : bytes;
+        if (buffer->isDetached() || (buffer->byteLength() == 0 && buffer->isFixedLength() && !buffer->isWasmMemory()))
+            return std::span<const uint8_t> {};
+        return Bun::Bindgen::withNonNullData(buffer->span());
     }
     return std::nullopt;
 }

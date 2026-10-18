@@ -23,8 +23,9 @@ struct Options {
     /// The paths, `--project`, `--build`, `--strict`, `--target es2022` and so on.
     command_line: CommandLine,
     threads: usize,
-    /// `--pretty`, `--no-pretty`. If neither is given, it depends on the output destination.
-    pretty: Option<bool>,
+    /// `--format`, `--pretty`, `--no-pretty`. If none is given, it depends on the output
+    /// destination.
+    layout: Option<Layout>,
     /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
@@ -49,6 +50,9 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     ),
     clap::param!(
         "--no-pretty        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>"
+    ),
+    clap::param!(
+        "-f, --format <name>  <b>pretty<r>, <b>plain<r>, <b>agent<r> or <b>json<r> <d>(one document with every field of each error)<r>"
     ),
     clap::param!(
         "--all              Show every error <d>(above 50, identical errors are grouped)<r>"
@@ -78,7 +82,7 @@ fn names_build(args: &[&ZStr]) -> bool {
         .any(|arg| match arg {
             b"--build" => true,
             [b'-', shorts @ ..] if !shorts.starts_with(b"-") => (shorts.iter())
-                .take_while(|short| **short != b'p')
+                .take_while(|short| !matches!(**short, b'p' | b'f'))
                 .any(|short| *short == b'b'),
             _ => false,
         })
@@ -159,12 +163,31 @@ fn parse(args: &[&ZStr]) -> Options {
     if command_line.build && projects > 1 {
         usage_error(format_args!("--build takes one project"));
     }
-    options.pretty = match parsed.flag(b"--no-pretty") {
-        true => Some(false),
-        false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
+    options.layout = match parsed.option(b"--format") {
+        Some(name) => Some(layout_by_name(name)),
+        None if parsed.flag(b"--no-pretty") => Some(Layout::Plain),
+        None => match bun_sema_driver::tristate(&command_line.compiler_options, b"pretty") {
+            Some(true) => Some(Layout::Pretty),
+            Some(false) => Some(Layout::Plain),
+            None => None,
+        },
     };
     options.command_line = command_line;
     options
+}
+
+/// `--format <name>`
+fn layout_by_name(name: &[u8]) -> Layout {
+    match name {
+        b"pretty" => Layout::Pretty,
+        b"plain" => Layout::Plain,
+        b"agent" => Layout::Agent,
+        b"json" => Layout::Json,
+        _ => usage_error(format_args!(
+            "Unknown format \"{}\"\n  Available formats: pretty, plain, agent, json",
+            BStr::new(name)
+        )),
+    }
 }
 
 fn reject(rejected: &RejectedFlag) -> ! {
@@ -264,7 +287,7 @@ fn run(
         );
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
-    let style = style_for(cwd, Some(true), Destination::stderr(), false);
+    let style = style_for(cwd, Some(Layout::Pretty), Destination::stderr(), false);
     std::thread::scope(|scope| {
         let shown = scope.spawn(|| show_progress(&progress, &is_done, &style));
         let progress = Some(&progress);
@@ -394,14 +417,16 @@ impl Destination {
 /// A terminal user gets a source excerpt around each error, and so does an agent, in tags and
 /// without colors, which saves it from opening the files. A pipe or continuous integration gets one
 /// line per error.
-fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) -> Style<'_> {
-    let layout = match pretty {
-        Some(true) => Layout::Pretty,
-        Some(false) => Layout::Plain,
-        None if Output::is_ai_agent() => Layout::Agent,
-        None if to.is_tty => Layout::Pretty,
-        None => Layout::Plain,
-    };
+fn style_for(cwd: &[u8], layout: Option<Layout>, to: Destination, show_all: bool) -> Style<'_> {
+    let layout = layout.unwrap_or_else(|| {
+        if Output::is_ai_agent() {
+            Layout::Agent
+        } else if to.is_tty {
+            Layout::Pretty
+        } else {
+            Layout::Plain
+        }
+    });
     Style {
         layout,
         color: layout == Layout::Pretty && to.colors,
@@ -482,7 +507,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             is_case_sensitive: report.is_case_sensitive,
             ..style_for(
                 &shown_from,
-                options.pretty,
+                options.layout,
                 Destination::stdout(),
                 options.all,
             )
@@ -498,7 +523,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             is_case_sensitive: report.is_case_sensitive,
             ..style_for(
                 &shown_from,
-                options.pretty,
+                options.layout,
                 Destination::stderr(),
                 options.all,
             )

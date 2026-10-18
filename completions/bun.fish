@@ -223,6 +223,7 @@ complete -c bun -n "__fish_seen_subcommand_from check" -s "p" -l "project" -r -F
 complete -c bun -n "__fish_seen_subcommand_from check" -l "pretty" -d "Show source code around each error"
 complete -c bun -n "__fish_seen_subcommand_from check" -s "b" -l "build" -d "Check the projects in references too, like tsc -b"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "no-pretty" -d "One line per error"
+complete -c bun -n "__fish_seen_subcommand_from check" -s "f" -l "format" -r -d "pretty, plain, agent or json"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "all" -d "Show every error"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "threads" -r -d "Number of threads"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "timing" -d "Print load and check times"

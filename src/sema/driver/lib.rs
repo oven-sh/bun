@@ -1445,7 +1445,7 @@ fn message_chain_of(lines: &[(u32, u32, Vec<Vec<u8>>)]) -> Vec<MessageChain> {
 }
 
 /// TypeScript's messages say how to install types with npm.
-fn in_terms_of_bun(text: Vec<u8>) -> Vec<u8> {
+pub(crate) fn in_terms_of_bun(text: Vec<u8>) -> Vec<u8> {
     const NPM: &[u8] = b"npm i --save-dev ";
     if strings::contains(&text, NPM) {
         strings::replace_owned(&text, NPM, b"bun add -d ")

@@ -617,6 +617,221 @@ describe.concurrent("bun check", () => {
     `);
   });
 
+  describe("--format json", () => {
+    // `run` rewrites backslashes, and the document has them in its escapes.
+    async function checkJson(dir: { toString(): string }, args: string[], extra: Record<string, string> = {}) {
+      await using proc = spawn({
+        cmd: [bunExe(), "check", ...args],
+        cwd: String(dir),
+        env: { ...env, ...extra },
+        timeout: longLimit,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: stderr.trim(), exitCode };
+    }
+
+    // A Cyrillic letter before the error: the column counts UTF-16 code units, the byte offset counts bytes.
+    const files = {
+      "index.ts": [
+        `interface A { a: { b: { c: number } } }`,
+        `const x = { a: { b: { c: "no" } } };`,
+        `const y: A = x;`,
+        `function f(a: number, b: string) {}`,
+        `const ж = 1; f(ж);`,
+        `export { y };`,
+        ``,
+      ].join("\n"),
+    };
+
+    test("every field of each error, in order", async () => {
+      using dir = project(files);
+      const { stdout, stderr, exitCode } = await checkJson(dir, ["--format", "json"]);
+      expect(JSON.parse(stdout)).toEqual({
+        diagnostics: [
+          {
+            file: "index.ts",
+            line: 3,
+            column: 7,
+            endLine: 3,
+            endColumn: 8,
+            byteStart: 83,
+            byteEnd: 84,
+            code: 2322,
+            category: "error",
+            text: [
+              `Type '{ a: { b: { c: string; }; }; }' is not assignable to type 'A'.`,
+              `  The types of 'a.b.c' are incompatible between these types.`,
+              `    Type 'string' is not assignable to type 'number'.`,
+            ].join("\n"),
+            messageChain: [
+              {
+                code: 2200,
+                text: "The types of 'a.b.c' are incompatible between these types.",
+                messageChain: [
+                  { code: 2322, text: "Type 'string' is not assignable to type 'number'.", messageChain: [] },
+                ],
+              },
+            ],
+            related: [],
+          },
+          {
+            file: "index.ts",
+            line: 5,
+            column: 14,
+            endLine: 5,
+            endColumn: 15,
+            byteStart: 143,
+            byteEnd: 144,
+            code: 2554,
+            category: "error",
+            text: "Expected 2 arguments, but got 1.",
+            messageChain: [],
+            related: [
+              {
+                file: "index.ts",
+                line: 4,
+                column: 23,
+                endLine: 4,
+                endColumn: 32,
+                byteStart: 115,
+                byteEnd: 124,
+                code: 6210,
+                category: "message",
+                text: "An argument for 'b' was not provided.",
+                messageChain: [],
+              },
+            ],
+          },
+        ],
+        incomplete: [],
+        resolutionTrace: [],
+        listedFiles: [],
+      });
+      expect(stderr).toMatch(/^Found 2 errors in 1 file, checked 1 file \[/);
+      expect(exitCode).toBe(1);
+    });
+
+    test("every spelling of the flag", async () => {
+      using dir = project(files);
+      const spellings = [
+        ["--format=json"],
+        ["-f", "json"],
+        ["-fjson"],
+        // `--format` decides, whatever `--pretty` says.
+        ["--format", "json", "--pretty"],
+        ["--no-pretty", "--format", "json"],
+        ["--pretty", "false", "--format=json"],
+      ];
+      const [expected, ...results] = await Promise.all([
+        checkJson(dir, ["--format", "json"]),
+        ...spellings.map(args => checkJson(dir, args)),
+      ]);
+      expect(JSON.parse(expected.stdout).diagnostics).toHaveLength(2);
+      expect(results.map(it => [it.stdout, it.exitCode])).toEqual(spellings.map(() => [expected.stdout, 1]));
+    });
+
+    test("the other formats by name", async () => {
+      using dir = project({ "a.ts": `export const a: string = 1;\n` });
+      const [plain, noPretty, pretty, agent] = await Promise.all([
+        check(dir, ["--format", "plain"]),
+        check(dir, ["--no-pretty"]),
+        check(dir, ["--format", "pretty"]),
+        check(dir, ["--format", "agent"]),
+      ]);
+      expect(plain.stdout).toBe(noPretty.stdout);
+      expect(pretty.stdout).toMatchInlineSnapshot(`
+        "1 | export const a: string = 1;
+                         ^
+        error: TS2322: Type 'number' is not assignable to type 'string'.
+            at a.ts:1:14"
+      `);
+      expect(agent.stdout.split("\n")[0]).toBe(`<error file="a.ts" line="1" column="14" code="TS2322">`);
+    });
+
+    test("an unknown format", async () => {
+      using dir = project({ "a.ts": `export const a = 1;\n` });
+      const { stdout, stderr, exitCode } = await check(dir, ["--format", "yaml"]);
+      expect(stdout).toBe("");
+      expect(stderr.split("\n").slice(0, 2)).toEqual([
+        `error: Unknown format "yaml"`,
+        "  Available formats: pretty, plain, agent, json",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("nothing else goes to stdout: no annotations, no grouping, the trace and the file list are in the document", async () => {
+      using dir = project({
+        "a.ts": Array.from({ length: 60 }, (_, i) => `console.lgo(${i});`).join("\n") + `\nimport "./b";\n`,
+        "b.ts": `export {};\n`,
+      });
+      const { stdout, stderr, exitCode } = await checkJson(
+        dir,
+        ["--format", "json", "--traceResolution", "--listFiles"],
+        {
+          GITHUB_ACTIONS: "true",
+        },
+      );
+      const report = JSON.parse(stdout);
+      expect(report.diagnostics).toHaveLength(60);
+      expect(report.diagnostics.map((d: { line: number }) => d.line)).toEqual(
+        Array.from({ length: 60 }, (_, i) => i + 1),
+      );
+      expect(report.resolutionTrace[0]).toMatch(/^======== Resolving module '\.\/b' from '.*a\.ts'\. ========$/);
+      const listed = report.listedFiles.filter((line: string) => !line.startsWith("bundled:///libs/lib."));
+      expect(listed.map((line: string) => basename(line))).toEqual(["b.ts", "a.ts", "console.d.ts"]);
+      expect(stdout).not.toContain("::error");
+      expect(stderr).toContain("Found 60 errors in 1 file");
+      expect(exitCode).toBe(1);
+    });
+
+    test("--quiet leaves the document without diagnostics", async () => {
+      using dir = project({ "a.ts": `export const a: string = 1;\n` });
+      const { stdout, exitCode } = await checkJson(dir, ["--format", "json", "--quiet"]);
+      expect(JSON.parse(stdout)).toEqual({ diagnostics: [], incomplete: [], resolutionTrace: [], listedFiles: [] });
+      expect(exitCode).toBe(1);
+    });
+
+    test("an error without a file, and a file that could not be finished", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, types: ["nothing-here"] },
+        }),
+        "a.ts": `export const a = 1;\n`,
+      });
+      using deep = project({ "a.ts": `${repeat("@", 100_000)}\n` });
+      const [config, unfinished] = await Promise.all([
+        checkJson(dir, ["--format", "json"]),
+        checkJson(deep, ["--format", "json"]),
+      ]);
+      const [error] = JSON.parse(config.stdout).diagnostics;
+      expect(error).toMatchObject({
+        file: null,
+        line: null,
+        column: null,
+        endLine: null,
+        endColumn: null,
+        byteStart: null,
+        byteEnd: null,
+        code: 2688,
+        category: "error",
+      });
+      expect(error.text.split("\n")[0]).toBe("Cannot find type definition file for 'nothing-here'.");
+      expect(error.related[0]).toMatchObject({ file: "tsconfig.json", line: 1, code: 1419, category: "message" });
+      expect(config.exitCode).toBe(1);
+      expect(JSON.parse(unfinished.stdout)).toEqual({
+        diagnostics: [],
+        incomplete: [
+          { file: "a.ts", message: "the code in a.ts is nested too deeply: errors in this file may be missing." },
+        ],
+        resolutionTrace: [],
+        listedFiles: [],
+      });
+      expect(unfinished.exitCode).toBe(1);
+    });
+  });
+
   test("output is sorted by file and position, independent of thread scheduling", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 60; i++) {
@@ -1451,6 +1666,10 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         [["--no-pretty"], whole],
         [["--pretty", "--no-pretty"], whole],
         [["--no-pretty", "--pretty"], whole],
+        [["--format", "plain"], whole],
+        [["--format=plain"], whole],
+        [["-f", "plain"], whole],
+        [["--pretty", "--format", "plain"], whole],
         // It never emits.
         [["--no-emit"], whole],
         [["--noEmit"], whole],
@@ -1480,6 +1699,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         [["--pretty=maybe"], `--pretty does not take "maybe"`],
         [["--threads", "0"], `--threads takes a number above zero, not "0"`],
         [["--threads", "many"], `--threads takes a number above zero, not "many"`],
+        [["--format", "yaml"], `Unknown format "yaml"`],
         [["-b", "a", "b"], `--build takes one project`],
         [["-b", "-p", "a", "b"], `--build takes one project`],
         [["--cwd", "nowhere"], `Could not change directory to "nowhere"`],
@@ -16352,6 +16572,7 @@ describe.concurrent("--check", () => {
         [["check", "--build"], "TS5096"],
         [["check", "-b", ...project], "TS5096"],
         [["check", "-bp", "tsconfig.json"], "TS5096"],
+        [["check", "-bf", "plain"], "TS5096"],
         [["-b", "check", "-b"], "TS5096"],
         [["-b", "check", "-bp", "tsconfig.json"], "TS5096"],
       ],

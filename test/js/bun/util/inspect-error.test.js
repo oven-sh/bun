@@ -558,7 +558,10 @@ describe("lines of the name and the message that look like stack frames are not 
     expect(printedFrames(madeAtTopLevel)).toEqual(["at this file"]);
   });
 
-  test("none, the message is now as long as all that is before the first frame with a position", () => {
+  test.each([
+    ["message", (err, length) => (err.message = Buffer.alloc(length - "RangeError: ".length, "x").toString())],
+    ["name", (err, length) => ((err.message = ""), (err.name = Buffer.alloc(length, "x").toString()))],
+  ])("none, the %s is now as long as all that is before the first frame with a position", (_, change) => {
     function make() {
       try {
         "".repeat(-1);
@@ -567,7 +570,7 @@ describe("lines of the name and the message that look like stack frames are not 
       }
     }
     const err = make();
-    err.message = "x".repeat(err.stack.indexOf(at + "make") - "RangeError: ".length);
+    change(err, err.stack.indexOf(at + "make"));
     expect(printedFrames(err)).toEqual(["at repeat (unknown:1:1)", "at make (this file)", "at this file"]);
   });
 

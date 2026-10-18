@@ -616,7 +616,7 @@ function connectionListenerHTTP1(server, socket, options) {
       req.push(null);
     }
     // Node's parserOnMessageComplete: the next request is read while this body is still buffered.
-    readStart(socket);
+    if (socket.readableFlowing === false) readStart(socket);
   };
 
   function onHttp1SocketError(err, rawPacket) {

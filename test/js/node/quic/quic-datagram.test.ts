@@ -6,8 +6,9 @@ import { createPrivateKey, randomBytes } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import { SocketAddress } from "node:net";
 import { join } from "node:path";
-import { connect, listen } from "node:quic";
+import { connect, listen, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -140,38 +141,35 @@ async function sessionThroughRelay() {
     ),
   );
   setup.defer(() => void serverSession.promise.then(session => session.destroy()));
-  const relay = setup.use(await relayTo(server.address.port));
+  const relay = setup.use(await relayTo(server.address!.port));
 
   const statuses = new Map<number, string[]>();
   let onStatus = () => {};
   let fromServer = 0;
   let onServerDatagram = () => {};
   let onServerStream = () => {};
-  const client = await connect(
-    { address: "127.0.0.1", port: relay.port },
-    {
-      alpn: "quic-test",
-      servername: "localhost",
-      verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 10 },
-      onerror: failed.reject,
-      ondatagram() {
-        fromServer++;
-        onServerDatagram();
-      },
-      ondatagramstatus(id: bigint, status: string) {
-        statuses.set(Number(id), [...(statuses.get(Number(id)) ?? []), status]);
-        onStatus();
-      },
-      async onstream(stream: any) {
-        stream.closed.catch(() => {});
-        try {
-          for await (const _ of stream);
-        } catch {}
-        onServerStream();
-      },
+  const client = await connect(new SocketAddress({ address: "127.0.0.1", port: relay.port }), {
+    alpn: "quic-test",
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 10 },
+    onerror: failed.reject,
+    ondatagram() {
+      fromServer++;
+      onServerDatagram();
     },
-  );
+    ondatagramstatus(id: bigint, status: string) {
+      statuses.set(Number(id), [...(statuses.get(Number(id)) ?? []), status]);
+      onStatus();
+    },
+    async onstream(stream: any) {
+      stream.closed.catch(() => {});
+      try {
+        for await (const _ of stream);
+      } catch {}
+      onServerStream();
+    },
+  } as SessionOptions);
   setup.defer(() => client.destroy());
   failWith(client, failed);
   await client.opened;
@@ -208,7 +206,7 @@ async function sessionThroughRelay() {
     /** The ids of the datagrams that the server received, in ascending order. */
     received: () => received.toSorted((a, b) => a - b),
     /** Every status reported for each id: one per id when all is right. */
-    statuses: () => Object.fromEntries(statuses),
+    statuses: (): Record<string, unknown[]> => Object.fromEntries(statuses),
     /**
      * Round trips of two datagrams, because the server acknowledges every
      * second packet at once. After them the retransmission timers of the
@@ -344,8 +342,7 @@ async function sessionThroughRelay() {
 /** The ids from `from` to `to`. */
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
 /** `{ [id]: [status] }` for each id from `from` to `to`. */
-const all = (status: unknown, from: number, to: number) =>
-  Object.fromEntries(range(from, to).map(id => [id, [status]]));
+const all = <T>(status: T, from: number, to: number) => Object.fromEntries(range(from, to).map(id => [id, [status]]));
 
 describe("ondatagramstatus", () => {
   test.each([
@@ -515,7 +512,7 @@ describe("ondatagramstatus", () => {
       { sni, alpn: ["quic-test"], ondatagram() {} },
     );
     const calls: string[] = [];
-    const client = await connect(server.address, {
+    const client = await connect(server.address!, {
       alpn: "quic-test",
       servername: "localhost",
       verifyPeer: "manual",
@@ -527,7 +524,7 @@ describe("ondatagramstatus", () => {
         // and so one acknowledgement, for datagrams 2, 3 and 4.
         for (let i = 0; i < 3; i++) client.sendDatagram(new Uint8Array(SMALL));
       },
-    });
+    } as SessionOptions);
     await client.opened;
     await client.sendDatagram(new Uint8Array(SMALL));
 
@@ -560,12 +557,12 @@ describe("ondatagramstatus", () => {
 
     // A first server hands out a session ticket and a token.
     const first = cleanup.use(await listen(onSession, { sni, alpn: ["quic-test"], endpoint: { tokenSecret } }));
-    const firstClient = await connect(first.address, {
+    const firstClient = await connect(first.address!, {
       alpn: "quic-test",
       verifyPeer: "manual",
       onsessionticket: ticket.resolve,
       onnewtoken: token.resolve,
-    });
+    } as SessionOptions);
     cleanup.defer(() => firstClient.destroy());
     failWith(firstClient, ticket, token);
     await Promise.all([firstClient.opened, ticket.promise, token.promise]);
@@ -596,7 +593,7 @@ describe("ondatagramstatus", () => {
     );
     const statuses = new Map<number, string[]>();
     const reported = Promise.withResolvers<void>();
-    const client = await connect(second.address, {
+    const client = await connect(second.address!, {
       alpn: "quic-test",
       verifyPeer: "manual",
       sessionTicket: await ticket.promise,
@@ -607,7 +604,7 @@ describe("ondatagramstatus", () => {
         statuses.set(Number(id), [...(statuses.get(Number(id)) ?? []), status]);
         onProgress();
       },
-    });
+    } as SessionOptions);
     cleanup.defer(() => client.destroy());
     failWith(client, reported);
 

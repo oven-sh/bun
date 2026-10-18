@@ -3606,6 +3606,8 @@ impl Property {
                 if let Some(c) = parse_value::<SmallList<animation::Animation, 1>>(input, options) {
                     return Ok(Property::Animation((c, pre)));
                 }
+                input.reset(&state);
+                return animation::parse_unparsed(property_id, input, options);
             }
             PropertyId::AnimationName(pre) => {
                 if let Some(c) =
@@ -3613,6 +3615,8 @@ impl Property {
                 {
                     return Ok(Property::AnimationName((c, pre)));
                 }
+                input.reset(&state);
+                return animation::parse_unparsed(property_id, input, options);
             }
             PropertyId::Transform(pre) => {
                 if let Some(c) = parse_value::<transform::TransformList>(input, options) {

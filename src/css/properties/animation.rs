@@ -1,11 +1,13 @@
 use crate as css;
 use crate::CSSString;
+use crate::css_properties::custom::{TokenList, TokenOrValue, UnparsedProperty};
+use crate::css_properties::{Property, PropertyId};
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::time::Time;
 use crate::generics::CssEql;
-use crate::{Parser, PrintErr, Printer};
+use crate::{Parser, PrintErr, Printer, Token};
 use bun_core::strings;
 
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
@@ -371,6 +373,88 @@ impl AnimationName {
                 return dest.write_ident(name, css_module_animation_enabled);
             }
         }
+    }
+}
+
+/// The raw-token fallback of `animation` and `animation-name`. In a CSS module it tags the keyframes names.
+#[cold]
+pub(crate) fn parse_unparsed(
+    property_id: PropertyId,
+    input: &mut Parser,
+    options: &css::ParserOptions,
+) -> css::Result<Property> {
+    let mut unparsed = UnparsedProperty::parse(property_id, input, options)?;
+    if input.flags.css_modules() {
+        tag_unparsed_names(
+            &mut unparsed.value,
+            matches!(property_id, PropertyId::Animation(_)),
+        );
+    }
+    Ok(Property::Unparsed(unparsed))
+}
+
+/// Whether `ident` is a keyword of an `animation` sub-property other than `animation-name`.
+fn is_single_animation_keyword(ident: &[u8]) -> bool {
+    EasingFunction::is_ident(ident)
+        || <AnimationDirection as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || <AnimationFillMode as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || <AnimationPlayState as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || strings::eql_any_case_insensitive_ascii(ident, &[b"infinite", b"auto"])
+}
+
+/// Whether `token` is a space or a comma.
+fn is_separator(token: &TokenOrValue) -> bool {
+    matches!(
+        token,
+        TokenOrValue::Token(Token::Whitespace(_) | Token::Comma)
+    )
+}
+
+/// Tags each keyframes name in the tokens of an `animation` (`shorthand`) or `animation-name` value.
+fn tag_unparsed_names(list: &mut TokenList, shorthand: bool) {
+    let tokens = &mut list.v;
+    // Whether the single animation at hand has its name: a dashed ident after the name is a timeline.
+    let mut named = false;
+    for i in 0..tokens.len() {
+        let name = match &tokens[i] {
+            TokenOrValue::Token(Token::Comma) => {
+                named = false;
+                continue;
+            }
+            TokenOrValue::Token(Token::Ident(ident)) => {
+                let keyword = if shorthand {
+                    is_single_animation_keyword(ident)
+                } else {
+                    strings::eql_case_insensitive_ascii_check_length(ident, b"none")
+                };
+                // `animation: inherit` has no typed form either.
+                if keyword || is_reserved_custom_ident(ident) {
+                    continue;
+                }
+                AnimationName::Ident(CustomIdent {
+                    v: std::ptr::from_ref::<[u8]>(ident),
+                })
+            }
+            TokenOrValue::DashedIdent(ident) if !named => {
+                AnimationName::Ident(CustomIdent { v: ident.v })
+            }
+            TokenOrValue::Token(Token::QuotedString(string)) => {
+                // The name prints as an ident, which joins any token that touches it except a `)` before it.
+                let joins_previous = i > 0
+                    && !is_separator(&tokens[i - 1])
+                    && !matches!(
+                        &tokens[i - 1],
+                        TokenOrValue::Var(_) | TokenOrValue::Env(_) | TokenOrValue::Function(_)
+                    );
+                if joins_previous || tokens.get(i + 1).is_some_and(|next| !is_separator(next)) {
+                    continue;
+                }
+                AnimationName::String(std::ptr::from_ref::<[u8]>(string))
+            }
+            _ => continue,
+        };
+        named = true;
+        tokens[i] = TokenOrValue::AnimationName(name);
     }
 }
 

@@ -1077,8 +1077,8 @@ describe("@types/bun integration test", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr.trim()).toBe("");
-      expect(stdout.match(/^\S+\(\d+,\d+\): error/gm)).toEqual([
-        `sqlite-run.ts(3,${call.indexOf("user.born") + 1}): error`,
+      expect(stdout.match(/^\S+\(\d+,\d+\): error TS\d+/gm)).toEqual([
+        `sqlite-run.ts(3,${call.indexOf("user.born") + 1}): error TS2769`,
       ]);
       expect(exitCode).not.toBe(0);
     });

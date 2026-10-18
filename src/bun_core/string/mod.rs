@@ -2058,8 +2058,7 @@ pub mod printer {
 
     const MALFORMED: i32 = -1;
 
-    /// Same algorithm as `bun_js_printer::write_pre_quoted_string` for UTF-8 and Latin-1 input,
-    /// except malformed UTF-8 becomes U+FFFD.
+    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except malformed UTF-8 becomes U+FFFD.
     /// PERF: (quote_char, ascii_only, json, encoding) are runtime params —
     /// profile if it shows up on a hot path.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(

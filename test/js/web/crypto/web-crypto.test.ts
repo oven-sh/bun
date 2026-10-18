@@ -1395,6 +1395,48 @@ it("RSA importKey with an unsupported usage names the algorithm", async () => {
   });
 });
 
+// The Import Key steps in https://w3c.github.io/webcrypto/#rsassa-pkcs1-operations throw DataError
+// for a JWK that is not a valid RSA key. No valid RSA key has a component of value zero.
+it("RSA importKey rejects a JWK with a component of value zero", async () => {
+  const algorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
+  const { publicKey, privateKey } = await crypto.subtle.generateKey(
+    { ...algorithm, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+    true,
+    ["sign", "verify"],
+  );
+  const publicJwk = await crypto.subtle.exportKey("jwk", publicKey);
+  const privateJwk = await crypto.subtle.exportKey("jwk", privateKey);
+  const outcome = (jwk: JsonWebKey) =>
+    crypto.subtle.importKey("jwk", jwk, algorithm, true, [jwk.d === undefined ? "verify" : "sign"]).then(
+      key => `imported a ${key.type} key`,
+      e => `${e.name}: ${e.message}`,
+    );
+  expect({
+    publicKey: await outcome(publicJwk),
+    privateKey: await outcome(privateJwk),
+    // importKey drops one leading zero byte of n, so "AA" is an empty modulus and "AAA" is a zero.
+    n: await outcome({ ...publicJwk, n: "AAA" }),
+    e: await outcome({ ...publicJwk, e: "AA" }),
+    d: await outcome({ ...privateJwk, d: "AA" }),
+    p: await outcome({ ...privateJwk, p: "AA" }),
+    q: await outcome({ ...privateJwk, q: "AA" }),
+    dp: await outcome({ ...privateJwk, dp: "AA" }),
+    dq: await outcome({ ...privateJwk, dq: "AA" }),
+    qi: await outcome({ ...privateJwk, qi: "AA" }),
+  }).toEqual({
+    publicKey: "imported a public key",
+    privateKey: "imported a private key",
+    n: "DataError: Invalid keyData",
+    e: "DataError: Invalid keyData",
+    d: "DataError: Invalid keyData",
+    p: "DataError: Invalid keyData",
+    q: "DataError: Invalid keyData",
+    dp: "DataError: Invalid keyData",
+    dq: "DataError: Invalid keyData",
+    qi: "DataError: Invalid keyData",
+  });
+});
+
 // CryptoKey.usages and the JWK key_ops it is built from are ordered by the
 // KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
 // alphabetically, and not by the order the caller passed them in.

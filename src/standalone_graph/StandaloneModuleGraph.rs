@@ -2765,12 +2765,23 @@ fn is_closed_world(runtime_use: &[u8]) -> bool {
     runtime_use == b"closed" || runtime_use.starts_with(b"closed\n")
 }
 
-fn options_named_in(compile_exec_argv: &[u8]) -> Vec<u8> {
+fn name_of_option(option: &[u8]) -> &[u8] {
+    &option[..strings::index_of_any(option, b"= \t\n\x0C\r\0").unwrap_or(option.len())]
+}
+
+fn option_that_runs_uncompiled_code(compile_exec_argv: &[u8]) -> Option<Vec<u8>> {
+    let mut arguments: Vec<Box<ZStr>> = vec![ZStr::boxed(b"")];
+    bun_core::append_options_env(compile_exec_argv, &mut arguments);
+    let mut arguments = arguments[1..].iter().map(|argument| argument.as_bytes());
+    arguments.find(|argument| bun_core::is_bootstrap_flag(argument)).map(|option| name_of_option(option).to_vec())
+}
+
+fn options_named_in(compile_exec_argv: &[u8], is_declared_option: fn(&[u8]) -> bool) -> Vec<u8> {
     let mut arguments: Vec<Box<ZStr>> = vec![ZStr::boxed(b"")];
     bun_core::append_options_env(compile_exec_argv, &mut arguments);
     let fact_of = |option: &[u8]| -> Vec<u8> {
-        let name = &option[..strings::index_of_any(option, b"= \t\n\x0C\r").unwrap_or(option.len())];
-        let name: &[u8] = if name.starts_with(b"--") || name.len() <= 2 { name } else { b"*" };
+        let name = name_of_option(option);
+        let name: &[u8] = if is_declared_option(name) { name } else { b"*" };
         [&b"exec-argv "[..], name, b"\n"].concat()
     };
     let mut facts: Vec<Vec<u8>> = arguments[1..].iter().map(|argument| argument.as_bytes()).filter(|argument| argument.starts_with(b"-")).map(fact_of).collect();
@@ -2779,8 +2790,8 @@ fn options_named_in(compile_exec_argv: &[u8]) -> Vec<u8> {
     facts.concat()
 }
 
-pub fn facts_of_build(output_files: &[OutputFile], compile_exec_argv: &[u8], flags: Flags) -> Vec<u8> {
-    let options = options_named_in(compile_exec_argv);
+pub fn facts_of_build(output_files: &[OutputFile], compile_exec_argv: &[u8], is_declared_option: fn(&[u8]) -> bool, flags: Flags) -> Vec<u8> {
+    let options = options_named_in(compile_exec_argv, is_declared_option);
     let facts: [(&[u8], bool); 9] = [
         (b"autoload bunfig\n", !flags.contains(Flags::DISABLE_AUTOLOAD_BUNFIG)),
         (b"autoload package-json\n", !flags.contains(Flags::DISABLE_AUTOLOAD_PACKAGE_JSON)),
@@ -2789,7 +2800,7 @@ pub fn facts_of_build(output_files: &[OutputFile], compile_exec_argv: &[u8], fla
         (b"environment BUN_JSC\n", true),
         (b"environment BUN_OPTIONS\n", true),
         (options.as_slice(), true),
-        (b"option compile-exec-argv\n", !compile_exec_argv.is_empty()),
+        (b"option compile-exec-argv\n", !compile_exec_argv.is_empty() && options != b"exec-argv --disallow-code-generation-from-strings\n"),
         (b"option sourcemap\n", output_files.iter().any(|file| file.source_map_index != u32::MAX)),
     ];
     facts.iter().filter(|fact| fact.1).flat_map(|fact| fact.0).copied().collect()
@@ -4070,6 +4081,7 @@ pub fn to_executable(
     output_format: Format,
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],
+    is_declared_option: fn(&[u8]) -> bool,
     self_exe_path: Option<&[u8]>,
     flags: Flags,
     runtime_options: RuntimeOptions,
@@ -4079,10 +4091,12 @@ pub fn to_executable(
     let runtime_use: Option<&[u8]> = (output_files.iter())
         .find(|file| file.output_kind == options::OutputKind::RuntimeUse)
         .map(|facts| facts.value.as_slice());
+    let option_that_runs_uncompiled_code = option_that_runs_uncompiled_code(compile_exec_argv);
     let runtime_options = RuntimeOptions {
         runs_static_code_only: trims_runtime()
             && output_files.iter().any(|file| file.output_kind == options::OutputKind::AotImage)
-            && runtime_use.is_some_and(is_closed_world),
+            && runtime_use.is_some_and(is_closed_world)
+            && option_that_runs_uncompiled_code.is_none(),
         ..runtime_options
     };
     let mut aot_image_at: Option<usize> = None;
@@ -4110,12 +4124,13 @@ pub fn to_executable(
         return Ok(CompileResult::fail(CompileErrorReason::NoOutputFiles));
     }
     // bytes drops at end of scope
-    let opened_runtime_use: Option<Vec<u8>> = runtime_use.zip(uncompiled_module).map(|(facts, path)| {
-        bun_ast::type_tags::open_world(facts, &[&b"something is not compiled in "[..], &path].concat())
-    });
+    let why_open: Option<Vec<u8>> = uncompiled_module
+        .map(|path| [&b"something is not compiled in "[..], &path].concat())
+        .or_else(|| option_that_runs_uncompiled_code.map(|option| [&option[..], b" runs built-in JavaScript that is not compiled into the executable"].concat()));
+    let opened_runtime_use: Option<Vec<u8>> = runtime_use.zip(why_open).map(|(facts, why)| bun_ast::type_tags::open_world(facts, &why));
     let runtime_use_of_build: Option<Vec<u8>> = opened_runtime_use.as_deref().or(runtime_use).map(|facts| {
         let before_facts_of_build: &[u8] = if facts.ends_with(b"\n") { b"" } else { b"\n" };
-        [facts, before_facts_of_build, &facts_of_build(output_files, compile_exec_argv, flags)].concat()
+        [facts, before_facts_of_build, &facts_of_build(output_files, compile_exec_argv, is_declared_option, flags)].concat()
     });
     let runtime_use = runtime_use_of_build.as_deref();
 

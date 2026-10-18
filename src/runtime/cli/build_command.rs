@@ -1123,7 +1123,7 @@ impl BuildCommand {
                 }
 
                 if ctx.bundler_options.aot_explain.iter().any(|word| **word == *b"runtime-use") {
-                    let facts = bun_standalone_module_graph::StandaloneModuleGraph::facts_of_build(output_files, compile_exec_argv, graph_flags);
+                    let facts = bun_standalone_module_graph::StandaloneModuleGraph::facts_of_build(output_files, compile_exec_argv, crate::cli::arguments::is_option_of_a_compiled_executable, graph_flags);
                     for fact in strings::split(&facts, b"\n").filter(|fact| !fact.is_empty()) {
                         Output::print_errorln(format_args!("aot: runtime use: {}", bstr::BStr::new(fact)));
                     }
@@ -1140,6 +1140,7 @@ impl BuildCommand {
                     opt_output_format,
                     &ctx.bundler_options.windows,
                     compile_exec_argv,
+                    crate::cli::arguments::is_option_of_a_compiled_executable,
                     ctx.bundler_options.compile_executable_path.as_deref(),
                     graph_flags,
                     graph_runtime_options,

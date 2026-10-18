@@ -307,6 +307,9 @@ pub(crate) mod js_bundler {
                 ..Default::default()
             };
             // errdefer this.deinit() — Drop handles owned fields
+            bun_core::set_code_generation_from_strings_in_built_executable(
+                bun_core::CodeGenerationFromStrings::Allowed,
+            );
 
             for name in ["aot", "aotExplain", "aotTypeErrors"] {
                 if config.get(global_this, name)?.is_some() {
@@ -356,6 +359,36 @@ pub(crate) mod js_bundler {
                     }
                 }
             }
+
+            if let Some(level) = object.get_own(
+                global_this,
+                &BunString::static_("disallowCodeGenerationFromStrings"),
+            )? {
+                let flag: &[u8] = if level.is_string() {
+                    let value = level.to_utf8(global_this)?;
+                    if value.slice() != b"strict" {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "disallowCodeGenerationFromStrings must be a boolean or \"strict\""
+                        )));
+                    }
+                    b"--disallow-code-generation-from-strings=strict"
+                } else if level.to_boolean() {
+                    b"--disallow-code-generation-from-strings"
+                } else {
+                    b""
+                };
+                if !flag.is_empty() {
+                    let given = core::mem::take(&mut this.exec_argv.list);
+                    this.exec_argv.append_slice(flag)?;
+                    if !given.is_empty() {
+                        this.exec_argv.append_char(b' ')?;
+                        this.exec_argv.append_slice(&given)?;
+                    }
+                }
+            }
+            bun_core::set_code_generation_from_strings_in_built_executable(
+                bun_core::CodeGenerationFromStrings::in_exec_argv(&this.exec_argv.list),
+            );
 
             if let Some(executable_path) =
                 object.get_own(global_this, &BunString::static_("executablePath"))?

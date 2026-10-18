@@ -1453,21 +1453,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(first);
         let func = self.exported_object_import(source, file);
         let func = self.emit(fx, Op::FuncRef(func));
-        let value = if is_default {
-            self.operation(fx, Operation::CallNoInline, &[func, undefined])
-        } else {
-            let key = self.emit(fx, Op::Str(name));
-            self.operation(fx, Operation::CallNoInline, &[func, undefined, key])
-        };
+        let value = self.operation(fx, Operation::CallNoInline, &[func, undefined]);
         self.write(fx, result, value);
         fx.b.jump(join);
         fx.b.switch_to(direct);
-        let value = if is_default { known } else { self.emit_throwing(fx, Op::PropGet { obj: known, name }) };
-        self.write(fx, result, value);
+        self.write(fx, result, known);
         fx.b.jump(join);
         fx.b.seal(join);
         fx.b.switch_to(join);
-        self.read(fx, result)
+        let found = self.read(fx, result);
+        if is_default { found } else { self.emit_throwing(fx, Op::PropGet { obj: found, name }) }
     }
 
     fn exported_object_import(&mut self, source: super::Source, file: FileId) -> crate::id::FuncId {
@@ -1481,22 +1476,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let name = self.name_with_file("import from", file);
         let module = self.module_of(file);
         let func = self.add_func(name, module, 0, ir::FuncKind::Plain, source);
-        if which == 0 {
-            self.out.funcs[func.idx()].params = vec![crate::id::TyId::NONE];
-            self.out.funcs[func.idx()].length = 1;
-        }
         self.exported_object_imports.insert((file, which), func);
         func
     }
 
     pub(crate) fn emit_exported_object_member(&mut self, fx: &mut Fx, file: FileId) {
-        let name = self.add_entry_param(fx, Ty::NONE);
         let global = self.module_global(file, "exported object");
         if self.hir(file).kind == FileKind::Json {
             let members = self.json_members(fx, file);
             self.emit(fx, Op::GlobalSet(global, members));
-            let value = self.emit_throwing(fx, Op::ElemGet { obj: members, key: name });
-            return self.terminate_with_return(fx, value);
+            return self.terminate_with_return(fx, members);
         }
         let exported = self.exported_object(fx, file);
         let is_object = self.operation(fx, Operation::IsObject, &[exported]);
@@ -1506,12 +1495,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(general);
         fx.b.switch_to(general);
         let namespace = self.exported_object_namespace(fx, file, file);
-        let value = self.emit_throwing(fx, Op::ElemGet { obj: namespace, key: name });
-        self.terminate_with_return(fx, value);
+        self.terminate_with_return(fx, namespace);
         fx.b.switch_to(keep);
         self.emit(fx, Op::GlobalSet(global, exported));
-        let value = self.emit_throwing(fx, Op::ElemGet { obj: exported, key: name });
-        self.terminate_with_return(fx, value);
+        self.terminate_with_return(fx, exported);
     }
 
     pub(crate) fn emit_exported_object_default(&mut self, fx: &mut Fx, file: FileId, is_node_mode: bool) {

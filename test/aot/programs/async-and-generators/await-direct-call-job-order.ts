@@ -1,4 +1,4 @@
-// `await f()` of an async function called by name takes the same turns of the job queue as any other await: against then callbacks that arm the next one, other awaits and each other.
+// `await f()` of a directly called async function takes the same number of microtask ticks as any other await, checked against then callbacks, other awaits and nested calls.
 const trace: string[] = [];
 const ready = Promise.resolve("ready");
 function beat(label: string, beats: number): void {

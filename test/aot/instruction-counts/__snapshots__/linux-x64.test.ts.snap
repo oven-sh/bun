@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`replaces the values of four declared fields of a class instance that comes out of a Map whose values are of type any 1`] = `
+"typed, function: 97.83 instructions (kernel 97.71, module 0.12), 747 bytes
+typed, module level: 98.65 instructions (module 98.65), 2090 bytes
+untyped, function: 112.85 instructions (kernel 112.73, module 0.12), 1076 bytes
+untyped, module level: 112.67 instructions (module 112.67), 3056 bytes"
+`;
+
 exports[`filters records, makes a smaller record of each and sums a field of those 1`] = `
 "typed, function: 20.03 instructions (kernel 19.91, module 0.12), 513 bytes
 typed, module level: 19.89 instructions (module 19.89), 1808 bytes
@@ -232,4 +239,11 @@ exports[`copies an instance of a class, one of whose methods is replaced, with O
 typed, module level: 701.19 instructions (the runtime 615.58, module 29.33, Point.copy 25, elsewhere 24.27, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedTryCloneWithPrototype 2), 1685 bytes
 untyped, function: 652.79 instructions (the runtime 491, kernel 57.49, Point.copy 53, stub CallMethodByName0 21, stub OperationVoidWithInstance 14, stub CallValue0 12, Point 2, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.12, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 706 bytes
 untyped, module level: 650.66 instructions (the runtime 491, module 55.48, Point.copy 53, stub CallMethodByName0 21, stub OperationVoidWithInstance 14, stub CallValue0 12, Point 2, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 2655 bytes"
+`;
+
+exports[`passes non-extensible plain objects that hold a typed object and an array to a typed function, which reads three fields 1`] = `
+"typed, function: 1742.98 instructions (the runtime 1514.15, stub ColdOperationValue 59, kernel 49.17, elsewhere 35.46, stub CallHostFunction1 27, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValue to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, module 0.12), 689 bytes
+typed, module level: 1711.90 instructions (the runtime 1514.21, module 50.15, elsewhere 35.46, stub CallHostFunction1 27, stub ColdOperationValueWithoutFPRs 27, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3), 1772 bytes
+untyped, function: 396.86 instructions (the runtime 191.16, kernel 78.17, stub GetById 30, stub CallHostFunction1 27, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.34, module 0.12), 535 bytes
+untyped, module level: 353.72 instructions (the runtime 191.16, module 39.15, stub CallHostFunction1 27, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.34), 1303 bytes"
 `;

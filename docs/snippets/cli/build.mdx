@@ -204,6 +204,12 @@ bun build <entry points>
   Prepend arguments to the standalone executable’s <code>execArgv</code>
 </ParamField>
 
+<ParamField path="--disallow-code-generation-from-strings" type="string">
+  In the standalone executable, <code>eval()</code> and <code>new Function()</code> throw an <code>EvalError</code>, as
+  with the flag of the same name in Node.js. <code>=strict</code> refuses every way a string becomes code. Requires{" "}
+  <code>--compile</code>
+</ParamField>
+
 <ParamField path="--aot" type="boolean">
   Compile JavaScript to machine code when the executable is built. Requires <code>--compile</code>. Implies{" "}
   <code>--bytecode</code> and <code>--format=esm</code>

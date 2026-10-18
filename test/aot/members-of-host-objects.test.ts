@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const lines = readFileSync(join(import.meta.dir, "../../src/sema/driver/members-of-host-objects.txt"), "utf8").trimEnd().split("\n");
 const membersOf = (host: string) => lines.map(line => line.trimEnd().split(" ")).find(words => words[0] === host)!.slice(1);
@@ -27,4 +28,30 @@ test("every member of performance is found before EventTarget.prototype", () => 
 test("nothing that a program can write lies above Bun and the global object", () => {
   expect(Object.getPrototypeOf(Bun)).toBe(Object.prototype);
   expect(Object.getPrototypeOf(globalThis)).toBe(Object.prototype);
+});
+
+// A function that a program stores under one of these names may be called by native code with the object as its receiver.
+test("every function that Bun, console, the global object, performance and process have or inherit is listed", () => {
+  const script = `
+    require("node:events");
+    const found = {};
+    for (const [host, object] of Object.entries({ Bun, console, global: globalThis, performance, process })) {
+      const names = new Set();
+      for (let holder = object; holder; holder = Object.getPrototypeOf(holder)) for (const key of Reflect.ownKeys(holder)) if (typeof key === "string") names.add(key);
+      found[host] = [...names].filter(name => typeof object[name] === "function");
+    }
+    console.log(JSON.stringify(found));
+  `;
+  using dir = tempDir("members-of-host-objects", { "list.cjs": script });
+  const ran = Bun.spawnSync({ cmd: [bunExe(), "list.cjs"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const found: Record<string, string[]> = JSON.parse(ran.stdout.toString());
+  for (const [host, functions] of Object.entries(found)) {
+    const listed = new Set(membersOf("functions-of-" + host));
+    expect({ host, missing: functions.filter(name => !listed.has(name)) }).toEqual({ host, missing: [] });
+  }
+});
+
+// A free name in this list is taken for what the runtime made.
+test("every listed member of the global object is one", () => {
+  expect(membersOf("global").filter(name => !Object.hasOwn(globalThis, name))).toEqual([]);
 });

@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`reads four declared fields of a class instance that comes out of a Map whose values are of type any 1`] = `
+"typed, function: 62.82 instructions (kernel 62.70, module 0.12), 559 bytes
+typed, module level: 63.65 instructions (module 63.65), 1859 bytes
+untyped, function: 91.76 instructions (kernel 51.64, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 40, module 0.12), 350 bytes
+untyped, module level: 92.68 instructions (module 52.68, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 30, stub GetByNameWithDirectColumnWithReceiverInRCX 10), 1865 bytes"
+`;
+
 exports[`passes plain objects that lack an optional key of the type to a typed function, which reads three fields 1`] = `
 "typed, function: 57.79 instructions (kernel 27.23, stub NewObjectFromDescriptor3 23.08, the runtime 7.02, elsewhere 0.34, module 0.12), 467 bytes
 typed, module level: 55.62 instructions (module 25.18, stub NewObjectFromDescriptor3 23.08, the runtime 7.02, elsewhere 0.34), 1566 bytes
@@ -71,8 +78,8 @@ untyped, module level: 87.26 instructions (module 47.26, stub GetByNameWithDirec
 `;
 
 exports[`makes a record of sixteen fields, twelve of them born undefined, and stores to three of those through a parameter of type any 1`] = `
-"typed, function: 380.94 instructions (stub PutThroughSlotByName 233.78, kernel 58.28, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 26, stub AllocateTypedObject 17, module 0.12, elsewhere 0.07, the runtime -0.31), 556 bytes
-typed, module level: 376.86 instructions (stub PutThroughSlotByName 233.78, module 58.29, stub PutByNameThroughSlotsPreservingTwo 23, stub PutByNameThroughSlots 19, stub AllocateTypedObject 17, stub PutByNameWithDirectColumn 13, stub PutByNameWithDirectColumnPreservingTwo 13, elsewhere 0.07, the runtime -0.28), 1699 bytes
+"typed, function: 190.10 instructions (kernel 100.28, stub CreateTypedFieldOutOfLine 64.89, stub AllocateTypedObject 17, the runtime 7.46, elsewhere 0.34, module 0.12), 805 bytes
+typed, module level: 192.63 instructions (module 103.26, stub CreateTypedFieldOutOfLine 64.89, stub AllocateTypedObject 17, the runtime 7.14, elsewhere 0.34), 2107 bytes
 untyped, function: 172.64 instructions (kernel 100.23, stub NewObjectFromDescriptor4 53.86, the runtime 16.59, elsewhere 1.83, module 0.12), 1110 bytes
 untyped, module level: 172.68 instructions (module 100.20, stub NewObjectFromDescriptor4 53.86, the runtime 16.79, elsewhere 1.83), 2134 bytes"
 `;
@@ -242,4 +249,11 @@ exports[`counts the small bytes of a Uint8Array, adds up the others and counts e
 typed, module level: 13.96 instructions (module 13.96), 2292 bytes
 untyped, function: 19.47 instructions (kernel 19.23, module 0.12, outlined code 0.12), 1884 bytes
 untyped, module level: 19.24 instructions (module 19.24), 3379 bytes"
+`;
+
+exports[`passes sealed plain objects that hold a typed object and an array to a typed function, which reads three fields 1`] = `
+"typed, function: 1789.85 instructions (the runtime 1561.02, stub ColdOperationValue 59, kernel 49.17, elsewhere 35.46, stub CallHostFunction1 27, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValue to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, module 0.12), 689 bytes
+typed, module level: 1758.90 instructions (the runtime 1561.21, module 50.15, elsewhere 35.46, stub CallHostFunction1 27, stub ColdOperationValueWithoutFPRs 27, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3), 1772 bytes
+untyped, function: 443.86 instructions (the runtime 238.16, kernel 78.17, stub GetById 30, stub CallHostFunction1 27, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.34, module 0.12), 535 bytes
+untyped, module level: 400.72 instructions (the runtime 238.16, module 39.15, stub CallHostFunction1 27, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.34), 1303 bytes"
 `;

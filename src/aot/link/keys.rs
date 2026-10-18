@@ -98,7 +98,8 @@ fn is_only_looked_at(func: &Func, found: V, casts_followed: u32) -> bool {
     };
     let by_operations = func.values.iter().enumerate().all(|(index, value)| match &value.def {
         Def::Op(op) if is_operand(op) => match op {
-            Op::StrictEq { .. } | Op::LooseEq { .. } | Op::InstanceOf { .. } | Op::TypeOf(_) | Op::Truthy(_) | Op::Not(_) | Op::IsNullish(_) | Op::PropHas { .. } | Op::PropGet { .. } => true,
+            Op::StrictEq { .. } | Op::LooseEq { .. } | Op::TypeOf(_) | Op::Truthy(_) | Op::Not(_) | Op::IsNullish(_) | Op::PropHas { .. } | Op::PropGet { .. } => true,
+            &Op::InstanceOf { value, .. } => value != found,
             &Op::ElemGet { obj, key } => obj == found && key != found && matches!(func.op(key), Some(Op::Int(_) | Op::Str(_) | Op::Symbol(_))),
             Op::Coerce { .. } => casts_followed > 0 && is_only_looked_at(func, V::new(index), casts_followed - 1),
             _ => false,
@@ -155,12 +156,27 @@ const MAKE_OR_LOAD_CODE: [&[u8]; 17] = [
 ];
 
 fn may_find_what_makes_or_loads_code(program: &Program, func: &Func, at: V, op: &Op, is_own: &[bool]) -> bool {
-    let is_such = |obj: V, name: StrId| MAKE_OR_LOAD_CODE.contains(&program.strs.get(name)) && !matches!(func.op(obj), Some(Op::FreeGet { .. })) && may_be_a_function(program.tys.get(func.ty(obj)), is_own);
+    let is_refused = |name: &[u8]| matches!(name, b"Function" | b"eval") && bun_core::code_generation_from_strings_in_built_executable() != bun_core::CodeGenerationFromStrings::Allowed;
+    let is_such = |obj: V, name: StrId| MAKE_OR_LOAD_CODE.contains(&program.strs.get(name)) && !is_refused(program.strs.get(name)) && !matches!(func.op(obj), Some(Op::FreeGet { .. })) && may_be_a_function(program.tys.get(func.ty(obj)), is_own);
     match op {
         &Op::CallMethod { obj, name, .. } => is_such(obj, name),
         &Op::PropGet { obj, name } => is_such(obj, name) && !is_only_looked_at(func, at, 2),
         _ => false,
     }
+}
+
+pub(super) fn stores_under_a_key_that_is_not_seen(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
+    let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
+    program.funcs.iter().filter(is_of_program).any(|func| {
+        func.values.iter().any(|value| {
+            let key = match &value.def {
+                &Def::Op(Op::ElemSet { key, .. }) => key,
+                Def::Op(Op::Operation { which: Operation::SuperSet, args }) => args[1],
+                _ => return false,
+            };
+            !matches!(func.op(key), Some(Op::Str(_) | Op::Int(_) | Op::Symbol(_))) && may_be_a_name(program, func, key, &mut Vec::new())
+        })
+    })
 }
 
 pub(super) struct Reads {
@@ -176,7 +192,7 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files_
         for func in funcs.iter().filter(|func| func.module.is_some()) {
             let file = modules[func.module.idx()];
             let is_of_runtime = func.has(func_flags::IS_BUILTIN) || func.has(func_flags::IS_IN_BUILTIN_MODULE);
-            if !is_of_runtime && !files_of_prelude.contains(&file) && finding_constructor.last().is_none_or(|last| last.0 != file) {
+            if is_of_runtime || files_of_prelude.contains(&file) || finding_constructor.last().is_none_or(|last| last.0 != file) {
                 let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op, &is_own)));
                 finding_constructor.extend(finds.map(|(_, value)| (file, value.pos)));
             }

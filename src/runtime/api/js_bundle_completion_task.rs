@@ -473,6 +473,7 @@ impl JSBundleCompletionTask {
                 copyright: opt_box(&compile_options.windows_copyright.list),
             },
             &compile_options.exec_argv.list,
+            crate::cli::arguments::is_option_of_a_compiled_executable,
             if compile_options.executable_path.list.is_empty() {
                 None
             } else {

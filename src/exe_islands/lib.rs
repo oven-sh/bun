@@ -608,7 +608,7 @@ pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
     Ok(Table::parse(&file[range])?.features)
 }
 
-const KINDS_OF_FACTS: [&[u8]; 19] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"exec-argv", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option", b"Intl", b"syntax"];
+const KINDS_OF_FACTS: [&[u8]; 20] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"exec-argv", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option", b"Intl", b"syntax", b"regexp"];
 const SYNTAX_THAT_IS_A_FACT: [&[u8]; 2] = [b"regexp-literal", b"bigint-literal"];
 
 pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {

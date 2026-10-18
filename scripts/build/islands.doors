@@ -49,10 +49,6 @@ feature nodehttp2 node:http2
 feature sql Bun.sql and Bun.SQL for PostgreSQL and MySQL
 feature node_assert the diff that node:assert prints
 feature urlpattern URLPattern
-feature segmenter Intl.Segmenter
-feature display_names Intl.DisplayNames
-feature intl Intl.ListFormat, Locale, PluralRules, RelativeTimeFormat, getCanonicalLocales and supportedValuesOf
-feature libdeflate_compressor gzip and deflate compression in one call
 feature compression_calls Bun.gzipSync, gunzipSync, deflateSync, inflateSync, zstdCompress, zstdDecompress and their Sync forms
 feature compression_streams CompressionStream and DecompressionStream
 feature inspector the debugger and node:inspector
@@ -60,19 +56,50 @@ feature node_vm node:vm
 feature bun_jsc bun:jsc
 feature atomics Atomics
 feature message_channel MessageChannel, MessagePort and BroadcastChannel
-feature brotli_encoder compression with Brotli
 feature node_zlib the native half of node:zlib
-feature text what turns text and files into code at run time
-feature bundler Bun.build, HTML imports and the development server
-feature zstd compression with zstd
-feature package_files reading package.json and tsconfig.json at run time
-feature performance_timeline performance.mark, performance.measure, PerformanceObserver and the entries they make
 feature source_maps reading source maps: those inside the executable and node:module's SourceMap
 feature module_graph Bun.ModuleGraph
 feature histogram node:perf_hooks' createHistogram and monitorEventLoopDelay
 feature dialogs alert, confirm and prompt
 feature node_v8 node:v8's native half
 feature post_message the global postMessage
+feature valkey_calls Bun.redis and Bun.RedisClient in the program's hands
+feature worker_calls Worker and node:worker_threads in the program's hands
+feature segmenter Intl.Segmenter
+feature display_names Intl.DisplayNames
+feature intl Intl.ListFormat, Locale, PluralRules, RelativeTimeFormat, getCanonicalLocales and supportedValuesOf
+feature libdeflate_compressor gzip and deflate compression in one call
+feature brotli_encoder compression with Brotli
+feature performance_timeline performance.mark, performance.measure, PerformanceObserver and the entries they make
+feature text what turns text and files into code at run time
+feature bundler Bun.build, HTML imports and the development server
+feature zstd compression with zstd
+feature package_files reading package.json and tsconfig.json at run time
+feature napi native addons: N-API and the V8 and libuv symbols
+feature terminal Bun.Terminal
+feature cryptohasher Bun.CryptoHasher
+feature udp Bun.udpSocket and node:dgram
+feature process_report process.report
+feature deep_equals Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual and assert.partialDeepStrictEqual
+feature parse_args util.parseArgs
+feature legacy_encodings TextDecoder for encodings other than UTF-8, UTF-16 and Latin-1
+feature websocket the WebSocket client
+feature nodecrypto node:crypto
+feature node_os the native half of node:os
+feature node_fs the native half of node:fs
+feature spawn Bun.spawn and Bun.spawnSync
+feature sockets Bun.listen, Bun.connect and node:net
+feature dns Bun.dns and node:dns
+feature http_parser node:http's own parser (process.binding('http_parser'))
+feature string_decoder node:string_decoder
+feature console_table console.table and Bun.inspect.table
+feature process_binding process.binding
+feature process_exec_argv process.execArgv
+feature process_usage process.memoryUsage, cpuUsage, threadCpuUsage, resourceUsage, uptime, availableMemory and constrainedMemory
+feature node_cluster node:cluster's native half
+feature node_url_natives node:url's domainToASCII and domainToUnicode
+feature bun_misc Bun.stripANSI, mmap, which, indexOfLine, sleep, sleepSync, gc, shrink, allocUnsafe, nanoseconds, peek and concatArrayBuffers
+feature weak_references WeakRef and FinalizationRegistry
 feature float16array Float16Array
 feature biguint64array BigUint64Array
 feature bigint64array BigInt64Array
@@ -84,72 +111,66 @@ feature float32array Float32Array
 feature int32array Int32Array
 feature float64array Float64Array
 feature uint32array Uint32Array
-feature napi native addons: N-API and the V8 and libuv symbols
-feature terminal Bun.Terminal
-feature cryptohasher Bun.CryptoHasher
-feature udp Bun.udpSocket and node:dgram
 feature net_addresses net.BlockList and net.SocketAddress
-feature process_report process.report
-feature deep_equals Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual and assert.partialDeepStrictEqual
-feature parse_args util.parseArgs
 feature outside_bytes values that arrive serialized from another program: IPC with advanced serialization, deserialize of bun:jsc and node:v8
-feature legacy_encodings TextDecoder for encodings other than UTF-8, UTF-16 and Latin-1
-feature websocket the WebSocket client
 feature webcrypto crypto.subtle, SubtleCrypto and CryptoKey
-feature nodecrypto node:crypto
-feature node_os the native half of node:os
-feature node_fs the native half of node:fs
-feature spawn Bun.spawn and Bun.spawnSync
-feature sockets Bun.listen, Bun.connect and node:net
-feature dns Bun.dns and node:dns
-feature http_parser node:http's own parser (process.binding('http_parser'))
 feature structured_clone structuredClone and every other copy of a value by serialization
-feature string_decoder node:string_decoder
-feature console_table console.table and Bun.inspect.table
-feature process_binding process.binding
-feature process_exec_argv process.execArgv
-feature process_usage process.memoryUsage, cpuUsage, threadCpuUsage, resourceUsage, uptime, availableMemory and constrainedMemory
+feature ipc process.send, disconnect, channel, connected and the 'message' and 'disconnect' events
+feature dataview DataView
 feature process_about process.versions, release, config, features, allowedNodeEnvironmentFlags, revision, mainModule, finalization, assert, ref, unref, openStdin, loadEnvFile, getBuiltinModule and the capture callback
 feature text_codec TextDecoder and TextEncoder
-feature node_cluster node:cluster's native half
-feature node_url_natives node:url's domainToASCII and domainToUnicode
-feature bun_misc Bun.stripANSI, mmap, which, indexOfLine, sleep, sleepSync, gc, shrink, allocUnsafe, nanoseconds, peek and concatArrayBuffers
-feature ipc process.send, disconnect, channel, connected and the 'message' and 'disconnect' events
-feature process_control process.kill, chdir, umask, execve, title and the functions for users and groups
-feature mux HTTP/2 and HTTP/3 in Bun.serve
-feature bun_info the /bun:info route of a development server
-feature node_http the native half of node:http's server
-feature serve Bun.serve
-feature worker Worker and node:worker_threads
-feature profiler the CPU and heap profilers, heap snapshots and code coverage
+feature base64_globals atob and btoa
+feature fetch_calls requests through the HTTP client: fetch, S3, a WebSocket's upgrade, a download
 feature image Bun.Image
 feature temporal Temporal and Date.prototype.toTemporalInstant
-feature valkey Bun.redis and Bun.RedisClient
-feature s3 reading what an S3 server answers
-feature s3client Bun.s3, Bun.S3Client and s3: URLs
-feature regexp_properties Unicode property escapes in regular expressions
 feature cookie Bun.Cookie and Bun.CookieMap
 feature glob Bun.Glob
 feature collation Intl.Collator and localeCompare
 feature units units in Intl.NumberFormat, Intl.DurationFormat and toLocaleString
 feature date_formatting Intl.DateTimeFormat and toLocaleString, toLocaleDateString and toLocaleTimeString of a Date or a Temporal object
 feature number_formatting Intl.NumberFormat, Intl.DurationFormat and toLocaleString of a Number or a BigInt
-feature brotli_decoder decompression of Brotli
-feature cli_options options given to the executable by --compile-exec-argv or BUN_OPTIONS
-feature bunfig reading bunfig.toml when the executable starts
 feature node_path the native half of node:path
-feature http3 HTTP/3 in Bun.serve and fetch
-feature x509 X509Certificate and KeyObject
-feature tls TLS
-feature fetch fetch and Bun.FetchSession
-feature crypto_object the global crypto: getRandomValues, randomUUID, timingSafeEqual
 feature string_width Bun.stringWidth
 feature node_validators the native validators of Node's built-in modules
 feature node_util_natives the native helpers of node:util, util.inspect and node:events
 feature node_small_modules the native modules node:util/types and node:constants
-feature base64_globals atob and btoa
+feature s3 reading what an S3 server answers
+feature s3client Bun.s3, Bun.S3Client and s3: URLs
+feature regexp_properties Unicode property escapes in regular expressions
+feature brotli_decoder decompression of Brotli
+feature crypto_object the global crypto: getRandomValues, randomUUID, timingSafeEqual
+feature sum_precise Math.sumPrecise
+feature legacy_accessors __defineGetter__, __defineSetter__, __lookupGetter__ and __lookupSetter__
+feature get_or_insert getOrInsert and getOrInsertComputed of Map and WeakMap
+feature set_methods Set.prototype.union, intersection, difference, symmetricDifference, isSubsetOf, isSupersetOf and isDisjointFrom
+feature json_raw JSON.rawJSON
+feature promise_all Promise.all
+feature promise_all_settled Promise.allSettled
+feature promise_any Promise.any
+feature promise_race Promise.race
+feature rare_array_methods Array.prototype.copyWithin, toSpliced, toReversed, toSorted, with, lastIndexOf and flat
+feature typedarray_sort sort and toSorted of typed arrays
+feature uint8array_base64 Uint8Array's toBase64, fromBase64, setFromBase64, toHex, fromHex and setFromHex
+feature string_locale_case String.prototype.toLocaleLowerCase and toLocaleUpperCase
+feature number_to_text Number.prototype.toFixed, toExponential and toPrecision
+feature string_padding String.prototype.padStart and padEnd
+feature string_html String.prototype.anchor, big, blink, bold and the other nine HTML methods
+feature string_normalize String.prototype.normalize
+feature string_well_formed String.prototype.isWellFormed and toWellFormed
+feature string_repeat String.prototype.repeat
+feature string_last_index_of String.prototype.lastIndexOf
+feature escape_unescape escape and unescape
+feature uri_coding encodeURI, encodeURIComponent, decodeURI and decodeURIComponent
+feature regexp regular expressions
+feature tls_users a TLS socket or server in the program's hands
+feature x509_users a certificate or a key in the program's hands
+feature process_control process.kill, chdir, umask, execve, title and the functions for users and groups
+feature mux HTTP/2 and HTTP/3 in Bun.serve
+feature bun_info the /bun:info route of a development server
+feature node_http the native half of node:http's server
+feature serve Bun.serve
+feature http3 HTTP/3 in Bun.serve and fetch
 feature url URL and URLSearchParams
-feature buffer Buffer
 feature events Event, CustomEvent, ErrorEvent, MessageEvent and CloseEvent
 feature abort_signal AbortController and AbortSignal
 feature headers Headers
@@ -157,6 +178,15 @@ feature form_data FormData and .formData()
 feature fs_stats the classes fs.Stats, BigIntStats, StatFs and Dirent
 feature web_streams ReadableStream, WritableStream, TransformStream, the native sources and sinks behind them
 feature bodies Blob, File, Request, Response, Bun.file, Bun.write, Bun.stdin, Bun.stdout and Bun.stderr
+feature buffer Buffer
+feature worker Worker and node:worker_threads
+feature profiler the CPU and heap profilers, heap snapshots and code coverage
+feature valkey Bun.redis and Bun.RedisClient
+feature cli_options options given to the executable by --compile-exec-argv or BUN_OPTIONS
+feature bunfig reading bunfig.toml when the executable starts
+feature x509 X509Certificate and KeyObject
+feature tls TLS
+feature fetch fetch and Bun.FetchSession
 door tools exit ^bun_runtime::cli::command::(exec_\w+|bun_info|bun_create|bun_getcompletes|which|tag_print_help)$
 door tools return ^Bun__AOT__hasCompiler$
 door tools return ^Bun__hasTypeChecker$
@@ -354,7 +384,8 @@ when toml Bun TOML
 door toml exit ^Bun::Bindgen::Generated::TOMLObject::createTOML\(
 smallest bunfig 0
 when bunfig autoload bunfig
-when bunfig option compile-exec-argv
+when bunfig exec-argv --config
+when bunfig exec-argv -c
 when bunfig environment BUN_OPTIONS
 door bunfig exit ^<bun_bunfig::bunfig::Bunfig>::parse$
 smallest xml 0
@@ -603,8 +634,9 @@ door mux exit ^<*bun_uws_sys::h2::
 door mux exit ^Bun__HTTPRequestContext(Debug)?Mux(TLS)?__
 door mux exit ^<bun_runtime::server::request_context::RequestContext<bun_runtime::server::NewServer<(true|false), (true|false)>, (true|false), (true|false), true>>::(?!render_metadata_corked$)
 smallest valkey 0
-when valkey Bun redis
-when valkey Bun RedisClient
+when valkey feature valkey_calls
+when valkey_calls Bun redis
+when valkey_calls Bun RedisClient
 door valkey exit ^BunObject_lazyPropCb_wrap_(ValkeyClient|valkey)\(
 door valkey exit ^WebCore::JSRedisClient::create(Prototype|Structure|Constructor)\(
 door valkey exit ^RedisClient(Prototype|Class)__
@@ -706,14 +738,15 @@ when nodecrypto native node_crypto_binding.rs:createNodeCryptoBindingZig
 door nodecrypto exit ^Bun::createNodeCryptoBinding\(
 door nodecrypto exit ^JS2Rust___src_runtime_node_node_crypto_binding_rs__createNodeCryptoBindingZig_workaround$
 door nodecrypto exit ^Bun::setup(CipherClassStructure|DiffieHellmanClassStructure|DiffieHellmanGroupClassStructure|ECDHClassStructure|JSHashClassStructure|JSHmacClassStructure|JSSignClassStructure|JSVerifyClassStructure)\(
-when fetch Bun file
-when fetch Bun write
+when fetch feature fetch_calls
+when fetch_calls Bun file
+when fetch_calls Bun write
 smallest fetch 0
-when fetch global fetch
-when fetch Bun fetch
-when fetch Bun FetchSession
-when fetch Bun s3
-when fetch Bun S3Client
+when fetch_calls global fetch
+when fetch_calls Bun fetch
+when fetch_calls Bun FetchSession
+when fetch_calls Bun s3
+when fetch_calls Bun S3Client
 door fetch exit ^Bun__fetch(Preconnect)?$
 door fetch exit ^Bun::constructBunFetchObject\(
 door fetch exit ^BunObject_lazyPropCb_wrap_FetchSession\(
@@ -722,70 +755,72 @@ door fetch exit ^<*bun_runtime::webcore::fetch::
 door fetch exit ^<*bun_http::(?!ssl_config::|error::|header_value_iterator::|headers::|lshpack::|websocket::|async_http::(load_env|breaks_header_line)$|http_thread::shutdown_for_exit$|h3_client::|(write_connect_request|normalize_idle_timeout_seconds|strip_ipv6_brackets|configure_http_client_with_alpn|header_has_token|fold_transfer_encoding|is_successful_connect_status|(set_)?max_http_header_size|(set_)?insecure_http_parser)$)
 door fetch exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::HTTPClient<(true|false)>>>::
 smallest x509 0
-when x509 module node:crypto
-when x509 native node_crypto_binding.cpp:createNodeCryptoBinding
-when x509 global crypto
-when x509 global Crypto
-when x509 global SubtleCrypto
-when x509 global CryptoKey
-when x509 Bun serve
-when x509 Bun listen
-when x509 Bun connect
-when x509 module node:tls
-when x509 native SecureContext.rs:js.getConstructor
-when x509 global fetch
-when x509 Bun fetch
-when x509 Bun FetchSession
-when x509 global WebSocket
-when x509 native Undici.cpp:createUndiciInternalBinding
-when x509 Bun WebView
-when x509 native JSWebSocket.cpp:createWebSocketBindingForWs
-when x509 Bun redis
-when x509 Bun RedisClient
-when x509 Bun sql
-when x509 Bun SQL
-when x509 Bun postgres
-when x509 module bun:sql
-when x509 native postgres.rs:createBinding
-when x509 native mysql.rs:createBinding
-when x509 Bun s3
-when x509 Bun S3Client
-when x509 Bun file
-when x509 Bun write
-when x509 module node:quic
-when x509 native node_quic_binding.rs:createNodeQuicBinding
+when x509 feature x509_users
+when x509_users module node:crypto
+when x509_users native node_crypto_binding.cpp:createNodeCryptoBinding
+when x509_users global crypto
+when x509_users global Crypto
+when x509_users global SubtleCrypto
+when x509_users global CryptoKey
+when x509_users Bun serve
+when x509_users Bun listen
+when x509_users Bun connect
+when x509_users module node:tls
+when x509_users native SecureContext.rs:js.getConstructor
+when x509_users global fetch
+when x509_users Bun fetch
+when x509_users Bun FetchSession
+when x509_users global WebSocket
+when x509_users native Undici.cpp:createUndiciInternalBinding
+when x509_users Bun WebView
+when x509_users native JSWebSocket.cpp:createWebSocketBindingForWs
+when x509_users Bun redis
+when x509_users Bun RedisClient
+when x509_users Bun sql
+when x509_users Bun SQL
+when x509_users Bun postgres
+when x509_users module bun:sql
+when x509_users native postgres.rs:createBinding
+when x509_users native mysql.rs:createBinding
+when x509_users Bun s3
+when x509_users Bun S3Client
+when x509_users Bun file
+when x509_users Bun write
+when x509_users module node:quic
+when x509_users native node_quic_binding.rs:createNodeQuicBinding
 door x509 exit ^(i2d_X509|PEM_write_bio_PUBKEY|PEM_write_bio_PKCS8PrivateKey)$
 door x509 exit ^Bun::setup(X509CertificateClassStructure|AsymmetricKeyObjectPrototype|KeyObjectClassStructure|PrivateKeyObjectClassStructure|PublicKeyObjectClassStructure|SecretKeyObjectClassStructure)\(
 door x509 exit ^WebCore::CloneDeserializer::read(KeyObject|X509Certificate)\(
 door x509 exit ^Bun::JSX509Certificate::
 door x509 exit ^Bun::JS(KeyObject|PublicKeyObject|PrivateKeyObject|SecretKeyObject)::(?!finishCreation)
 smallest tls 0
-when tls Bun serve
-when tls Bun listen
-when tls Bun connect
-when tls module node:tls
-when tls native SecureContext.rs:js.getConstructor
-when tls global fetch
-when tls Bun fetch
-when tls Bun FetchSession
-when tls global WebSocket
-when tls native Undici.cpp:createUndiciInternalBinding
-when tls Bun WebView
-when tls native JSWebSocket.cpp:createWebSocketBindingForWs
-when tls Bun redis
-when tls Bun RedisClient
-when tls Bun sql
-when tls Bun SQL
-when tls Bun postgres
-when tls module bun:sql
-when tls native postgres.rs:createBinding
-when tls native mysql.rs:createBinding
-when tls Bun s3
-when tls Bun S3Client
-when tls Bun file
-when tls Bun write
-when tls module node:quic
-when tls native node_quic_binding.rs:createNodeQuicBinding
+when tls feature tls_users
+when tls_users Bun serve
+when tls_users Bun listen
+when tls_users Bun connect
+when tls_users module node:tls
+when tls_users native SecureContext.rs:js.getConstructor
+when tls_users global fetch
+when tls_users Bun fetch
+when tls_users Bun FetchSession
+when tls_users global WebSocket
+when tls_users native Undici.cpp:createUndiciInternalBinding
+when tls_users Bun WebView
+when tls_users native JSWebSocket.cpp:createWebSocketBindingForWs
+when tls_users Bun redis
+when tls_users Bun RedisClient
+when tls_users Bun sql
+when tls_users Bun SQL
+when tls_users Bun postgres
+when tls_users module bun:sql
+when tls_users native postgres.rs:createBinding
+when tls_users native mysql.rs:createBinding
+when tls_users Bun s3
+when tls_users Bun S3Client
+when tls_users Bun file
+when tls_users Bun write
+when tls_users module node:quic
+when tls_users native node_quic_binding.rs:createNodeQuicBinding
 door tls return ^us_internal_ssl_detach$
 door tls return ^us_internal_free_loop_ssl_data$
 door tls return ^us_internal_listen_socket_ssl_free$
@@ -1038,9 +1073,10 @@ door webview exit ^Bun::setupJSWebViewClassStructure\(
 door webview exit ^Bun::(JSWebView\w*|WebView\w*|CDP)::
 door webview exit ^Bun::(?!retireWebViewsForTestIsolation)\w*WebView\w*\(
 door webview exit ^Bun__Chrome__died$
-when worker global Worker
-when worker module node:worker_threads
-when worker native Worker.cpp:createNodeWorkerThreadsBinding
+when worker feature worker_calls
+when worker_calls global Worker
+when worker_calls module node:worker_threads
+when worker_calls native Worker.cpp:createNodeWorkerThreadsBinding
 smallest worker 20000
 door worker exit ^WebCore::JS(Worker)(Prototype|Constructor|Owner)?::(?!toWrapped\()
 door worker exit ^WebCore::JSDOMConstructor(NotConstructable)?<WebCore::JS(Worker)[,>]
@@ -1260,7 +1296,7 @@ when outside_bytes process channel
 when outside_bytes process disconnect
 smallest outside_bytes 0
 when structured_clone feature outside_bytes
-when x509 feature outside_bytes
+when x509_users feature outside_bytes
 when webcrypto feature outside_bytes
 when regexp_properties feature outside_bytes
 when regexp_properties global URLPattern
@@ -1268,22 +1304,22 @@ when regexp_properties property compile
 when s3client native bun:jsc
 when s3client feature outside_bytes
 when s3client feature image
-when s3client feature fetch
+when s3client feature fetch_calls
 when s3 feature s3client
-when fetch feature s3client
-when fetch feature websocket
+when fetch_calls feature s3client
+when fetch_calls feature websocket
 when tls feature fetch
-when tls feature sockets
-when tls feature serve
+when tls_users feature sockets
+when tls_users feature serve
 when tls feature valkey
-when tls feature sql
-when tls feature websocket
-when tls feature nodequic
-when tls feature testing
+when tls_users feature sql
+when tls_users feature websocket
+when tls_users feature nodequic
+when tls_users feature testing
 when x509 feature tls
-when http3 feature fetch
+when http3 feature fetch_calls
 when http3 feature serve
-when brotli_decoder feature fetch
+when brotli_decoder feature fetch_calls
 when mux feature serve
 when bun_info feature serve
 when node_http feature serve
@@ -1302,22 +1338,37 @@ when profiler environment BUN_OPTIONS
 when profiler environment BUN_JSC
 when valkey environment BUN_OPTIONS
 when worker environment BUN_DESTRUCT_VM_ON_EXIT
-when fetch option compile-exec-argv
-when valkey option compile-exec-argv
-when sql option compile-exec-argv
-when profiler option compile-exec-argv
-when inspector option compile-exec-argv
-when text option compile-exec-argv
+when fetch exec-argv --fetch-preconnect
+when valkey exec-argv --redis-preconnect
+when sql exec-argv --sql-preconnect
+when profiler exec-argv --cpu-prof
+when profiler exec-argv --cpu-prof-md
+when profiler exec-argv --heap-prof
+when profiler exec-argv --heap-prof-md
+when inspector exec-argv --inspect
+when inspector exec-argv --inspect-wait
+when inspector exec-argv --inspect-brk
+when text exec-argv --hot
+when text exec-argv --watch
+when text exec-argv --sql-preconnect
+when text exec-argv --stack-trace-limit
+when text exec-argv --trace-env
+when text exec-argv --trace-env-js-stack
+when text exec-argv --trace-env-native-stack
+when text exec-argv --trace-exit
+when text exec-argv --trace-events-enabled
+when text exec-argv --trace-event-categories
+when text exec-argv --trace-event-file-pattern
 when net_addresses feature outside_bytes
 when net_addresses feature nodequic
 when napi feature ffi
-when x509 feature nodecrypto
+when x509_users feature nodecrypto
 when text feature inspector
 when text feature node_vm
 when package_files feature text
 when bundler feature testing
 when temporal feature bundler
-when fetch Bun build
+when fetch_calls Bun build
 door tools exit ^simdutf::(?!westmere::implementation::(convert_(valid_)?utf32_to_latin1|convert_(valid_)?utf16(le|be)_to_utf32|convert_(valid_)?utf16be_to_latin1|count_utf16(le|be)|utf32_length_from_utf16(le|be))\(|icelake::implementation::convert_(valid_)?utf32_to_(latin1|utf16le)\(|haswell::implementation::convert_(valid_)?(utf16be|utf32)_to_latin1\(|\w+::implementation::convert_utf16(le|be)_to_utf8_with_replacement\()\w+::implementation::\w*(utf32|utf16be)\w*\(
 door tools exit ^simdutf::(?!westmere::implementation::(convert_(valid_)?utf32_to_latin1|convert_(valid_)?utf16(le|be)_to_utf32|convert_(valid_)?utf16be_to_latin1|count_utf16(le|be)|utf32_length_from_utf16(le|be))\(|icelake::implementation::convert_(valid_)?utf32_to_(latin1|utf16le)\(|haswell::implementation::convert_(valid_)?(utf16be|utf32)_to_latin1\(|\w+::implementation::convert_utf16(le|be)_to_utf8_with_replacement\()\w+::implementation::(detect_encodings|count_utf8|count_utf16le|change_endianness_utf16|convert_utf8_to_latin1(_with_errors)?|convert_valid_utf8_to_(latin1|utf16le)|latin1_length_from_utf8|binary_length_from_base64|validate_utf16le_with_errors|validate_utf16le_as_ascii|convert_utf16le_to_utf8_with_replacement)\(
 door tools exit ^simdutf::implementation::autodetect_encoding\(
@@ -1634,9 +1685,8 @@ when url global URLSearchParams
 when url Bun pathToFileURL
 when url native Undici.cpp:createUndiciInternalBinding
 when url feature serve
-when url feature tls
+when url feature tls_users
 smallest url 0
-when buffer road a-warning-to-a-stderr-that-blocks
 when buffer global Buffer
 when buffer native node:buffer
 when buffer module node:buffer
@@ -1680,13 +1730,13 @@ when buffer feature string_decoder
 when buffer feature terminal
 when buffer feature testing
 when buffer feature text
-when buffer feature tls
+when buffer feature tls_users
 when buffer feature udp
 when buffer feature uuid
-when buffer feature valkey
+when buffer feature valkey_calls
 when buffer feature websocket
 when buffer feature webview
-when buffer feature x509
+when buffer feature x509_users
 smallest buffer 0
 when events global Event
 when events global CustomEvent
@@ -1703,11 +1753,11 @@ when events feature message_channel
 when events feature mux
 when events feature s3client
 when events feature serve
-when events feature tls
+when events feature tls_users
 when events feature web_streams
 when events feature websocket
 when events feature webview
-when events feature worker
+when events feature worker_calls
 smallest events 0
 when abort_signal global AbortController
 when abort_signal global AbortSignal
@@ -1718,7 +1768,7 @@ when abort_signal feature bodies
 when abort_signal feature bundler
 when abort_signal feature compression_streams
 when abort_signal feature cron
-when abort_signal feature fetch
+when abort_signal feature fetch_calls
 when abort_signal feature form_data
 when abort_signal feature message_channel
 when abort_signal feature mux
@@ -1733,13 +1783,13 @@ when abort_signal feature sockets
 when abort_signal feature spawn
 when abort_signal feature sql
 when abort_signal feature test
-when abort_signal feature tls
+when abort_signal feature tls_users
 when abort_signal feature udp
-when abort_signal feature valkey
+when abort_signal feature valkey_calls
 when abort_signal feature web_streams
 when abort_signal feature websocket
 when abort_signal feature webview
-when abort_signal feature worker
+when abort_signal feature worker_calls
 smallest abort_signal 0
 when headers global Headers
 when headers native Undici.cpp:createUndiciInternalBinding
@@ -1747,13 +1797,13 @@ when headers native NodeFetch.cpp:createNodeFetchInternalBinding
 when headers feature bodies
 when headers feature bundler
 when headers feature deep_equals
-when headers feature fetch
+when headers feature fetch_calls
 when headers feature form_data
 when headers feature htmlrewriter
 when headers feature mux
 when headers feature serve
 when headers feature test
-when headers feature tls
+when headers feature tls_users
 when headers feature webassembly
 when headers feature websocket
 smallest headers 0
@@ -1796,7 +1846,7 @@ when web_streams native streams/BunStreamConsumers.cpp:jsFunctionTransferToNativ
 when web_streams feature bodies
 when web_streams feature bundler
 when web_streams feature compression_streams
-when web_streams feature fetch
+when web_streams feature fetch_calls
 when web_streams feature form_data
 when web_streams feature htmlrewriter
 when web_streams feature mux
@@ -1806,8 +1856,8 @@ when web_streams feature shell
 when web_streams feature spawn
 when web_streams feature testing
 when web_streams feature text
-when web_streams feature tls
-when web_streams feature valkey
+when web_streams feature tls_users
+when web_streams feature valkey_calls
 when web_streams feature webassembly
 when web_streams Bun Image
 when web_streams process stdin
@@ -1844,7 +1894,7 @@ when bodies native Undici.cpp:createUndiciInternalBinding
 when bodies native NodeFetch.cpp:createNodeFetchInternalBinding
 when bodies feature archive
 when bodies feature bundler
-when bodies feature fetch
+when bodies feature fetch_calls
 when bodies feature form_data
 when bodies feature fsrouter
 when bodies feature histogram
@@ -1863,13 +1913,13 @@ when bodies feature spawn
 when bodies feature sql
 when bodies feature test
 when bodies feature text
-when bodies feature tls
-when bodies feature valkey
+when bodies feature tls_users
+when bodies feature valkey_calls
 when bodies feature web_streams
 when bodies feature webassembly
 when bodies feature websocket
 when bodies feature webview
-when bodies feature worker
+when bodies feature worker_calls
 smallest bodies 0
 when text Bun registerMacro
 door module_graph exit ^Bun::constructModuleGraphObject\(
@@ -2011,3 +2061,222 @@ door ipc exit ^<*bun_runtime::ipc(_host)?::
 door ipc exit ^Bun__(Process__send|closeChildIPC|GlobalObject__(hasIPC|connectedIPC)|ensureProcessIPCInitialized|shouldIgnoreOneDisconnectEventListener)$
 door ipc exit ^JS2Rust___src_runtime_ipc\w*_rs__
 exported napi ffi sqlite
+when tls_users feature fetch_calls
+when tls_users feature valkey_calls
+when x509_users feature tls_users
+when sum_precise property sumPrecise
+smallest sum_precise 0
+door sum_precise exit ^JSC::mathProtoFuncSumPrecise\(
+when legacy_accessors property __defineGetter__
+when legacy_accessors property __defineSetter__
+when legacy_accessors property __lookupGetter__
+when legacy_accessors property __lookupSetter__
+smallest legacy_accessors 0
+door legacy_accessors exit ^JSC::objectProtoFunc(Define|Lookup)(Getter|Setter)\(
+when get_or_insert property getOrInsert
+when get_or_insert property getOrInsertComputed
+smallest get_or_insert 0
+door get_or_insert exit ^JSC::(mapProtoFunc|protoFuncWeakMap)GetOrInsert(Computed)?\(
+when set_methods property union
+when set_methods property intersection
+when set_methods property difference
+when set_methods property symmetricDifference
+when set_methods property isSubsetOf
+when set_methods property isSupersetOf
+when set_methods property isDisjointFrom
+smallest set_methods 0
+door set_methods exit ^JSC::setProtoFunc(Union|Intersection|Difference|SymmetricDifference|IsSubsetOf|IsSupersetOf|IsDisjointFrom)\(
+when weak_references global WeakRef
+when weak_references global FinalizationRegistry
+smallest weak_references 0
+door weak_references exit ^JSC::JSWeakObjectRef::(?!createStructure\(|info\()
+door weak_references exit ^JSC::(construct|call)WeakRef\(
+door weak_references exit ^JSC::protoFuncWeakRef\w+\(
+door weak_references exit ^JSC::JSFinalizationRegistry::(?!createStructure\(|info\()
+door weak_references exit ^JSC::(construct|call)FinalizationRegistry\(
+door weak_references exit ^JSC::protoFuncFinalizationRegistry\w+\(
+when dataview global DataView
+when dataview feature outside_bytes
+when dataview feature napi
+smallest dataview 0
+door dataview exit ^JSC::JSDataView::(?!createStructure\(|info\(|toWrapped\w*\()
+door dataview exit ^JSC::DataView::
+door dataview exit ^JSC::constructDataView\(
+door dataview exit ^JSC::dataViewProto(Func|Getter)\w+\(
+door dataview exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSDataView>\(
+when json_raw property rawJSON
+when json_raw global rawJSON
+smallest json_raw 0
+door json_raw exit ^JSC::jsonProtoFuncRawJSON\(
+when promise_all property all
+when promise_all global all
+when promise_all world open
+smallest promise_all 0
+door promise_all exit ^JSC::promiseConstructorFuncAll\(JSC::JSGlobalObject\*, JSC::CallFrame\*\)$
+when promise_all_settled property allSettled
+when promise_all_settled global allSettled
+when promise_all_settled world open
+smallest promise_all_settled 0
+door promise_all_settled exit ^JSC::promiseConstructorFuncAllSettled\(JSC::JSGlobalObject\*, JSC::CallFrame\*\)$
+when promise_any property any
+when promise_any global any
+when promise_any world open
+smallest promise_any 0
+door promise_any exit ^JSC::promiseConstructorFuncAny\(JSC::JSGlobalObject\*, JSC::CallFrame\*\)$
+when promise_race property race
+when promise_race global race
+when promise_race world open
+smallest promise_race 0
+door promise_race exit ^JSC::promiseConstructorFuncRace\(JSC::JSGlobalObject\*, JSC::CallFrame\*\)$
+when rare_array_methods property copyWithin
+when rare_array_methods property toSpliced
+when rare_array_methods property toReversed
+when rare_array_methods property toSorted
+when rare_array_methods property with
+when rare_array_methods property lastIndexOf
+when rare_array_methods property flat
+smallest rare_array_methods 0
+door rare_array_methods exit ^JSC::arrayProtoFunc(CopyWithin|ToSpliced|ToReversed|ToSorted|With|LastIndexOf|Flat)\(
+when typedarray_sort property sort
+when typedarray_sort property toSorted
+smallest typedarray_sort 0
+door typedarray_sort exit ^JSC::typedArrayViewProtoFunc(Sort|ToSorted)\(
+when uint8array_base64 property toBase64
+when uint8array_base64 property fromBase64
+when uint8array_base64 property setFromBase64
+when uint8array_base64 property toHex
+when uint8array_base64 property fromHex
+when uint8array_base64 property setFromHex
+smallest uint8array_base64 0
+door uint8array_base64 exit ^JSC::uint8Array(Prototype|Constructor)(SetFrom|To|From)(Base64|Hex)\(
+when string_locale_case property toLocaleLowerCase
+when string_locale_case global toLocaleLowerCase
+when string_locale_case property toLocaleUpperCase
+when string_locale_case global toLocaleUpperCase
+when string_locale_case world open
+smallest string_locale_case 0
+door string_locale_case exit ^JSC::stringProtoFuncToLocale(Lower|Upper)Case\(
+when number_to_text property toFixed
+when number_to_text global toFixed
+when number_to_text property toExponential
+when number_to_text global toExponential
+when number_to_text property toPrecision
+when number_to_text global toPrecision
+when number_to_text world open
+smallest number_to_text 0
+door number_to_text exit ^JSC::numberProtoFuncTo(Fixed|Exponential|Precision)\(
+when string_padding property padStart
+when string_padding global padStart
+when string_padding property padEnd
+when string_padding global padEnd
+when string_padding world open
+smallest string_padding 0
+door string_padding exit ^JSC::stringProtoFuncPad(Start|End)\(
+when string_html property anchor
+when string_html global anchor
+when string_html property big
+when string_html global big
+when string_html property blink
+when string_html global blink
+when string_html property bold
+when string_html global bold
+when string_html property fixed
+when string_html global fixed
+when string_html property fontcolor
+when string_html global fontcolor
+when string_html property fontsize
+when string_html global fontsize
+when string_html property italics
+when string_html global italics
+when string_html property link
+when string_html global link
+when string_html property small
+when string_html global small
+when string_html property strike
+when string_html global strike
+when string_html property sub
+when string_html global sub
+when string_html property sup
+when string_html global sup
+when string_html feature markdown
+when string_html world open
+smallest string_html 0
+door string_html exit ^JSC::stringProtoFunc(Anchor|Big|Blink|Bold|Fixed|Fontcolor|Fontsize|Italics|Link|Small|Strike|Sub|Sup)\(
+when string_normalize property normalize
+when string_normalize global normalize
+when string_normalize world open
+smallest string_normalize 0
+door string_normalize exit ^JSC::stringProtoFuncNormalize\(
+when string_well_formed property isWellFormed
+when string_well_formed global isWellFormed
+when string_well_formed property toWellFormed
+when string_well_formed global toWellFormed
+when string_well_formed world open
+smallest string_well_formed 0
+door string_well_formed exit ^JSC::stringProtoFunc(Is|To)WellFormed\(
+when string_repeat property repeat
+when string_repeat global repeat
+when string_repeat world open
+smallest string_repeat 0
+door string_repeat exit ^JSC::stringProtoFuncRepeat\(
+when string_last_index_of property lastIndexOf
+when string_last_index_of global lastIndexOf
+when string_last_index_of world open
+smallest string_last_index_of 0
+door string_last_index_of exit ^JSC::stringProtoFuncLastIndexOf\(
+when escape_unescape property escape
+when escape_unescape global escape
+when escape_unescape property unescape
+when escape_unescape global unescape
+when escape_unescape world open
+smallest escape_unescape 0
+door escape_unescape exit ^JSC::globalFunc(Escape|Unescape)\(
+when uri_coding property encodeURI
+when uri_coding global encodeURI
+when uri_coding property encodeURIComponent
+when uri_coding global encodeURIComponent
+when uri_coding property decodeURI
+when uri_coding global decodeURI
+when uri_coding property decodeURIComponent
+when uri_coding global decodeURIComponent
+when uri_coding world open
+smallest uri_coding 0
+door uri_coding exit ^JSC::globalFunc(Encode|Decode)URI(Component)?\(
+when regexp syntax regexp-literal
+when regexp global RegExp
+when regexp property match
+when regexp property matchAll
+when regexp property search
+when regexp global match
+when regexp global matchAll
+when regexp global search
+when regexp feature text
+when regexp feature urlpattern
+when regexp feature plugin
+when regexp feature bundler
+when regexp feature inspector
+when regexp feature test
+when regexp feature structured_clone
+smallest regexp 0
+door regexp exit ^JSC::Yarr::(BytecodePattern::~BytecodePattern|YarrCodeBlock::(clear|~YarrCodeBlock)|YarrPattern::(YarrPattern|~YarrPattern)|FlagsString::span|byteCompile|errorToThrow|flagsString|interpret|interpretBytecode|parseFlags)\(
+door regexp exit ^JSC::RegExp::(?!createStructure\(|info\(|matchConcurrently\(|firstCharacterBitmap\(|toSourceString\(|sourceIsPattern\()
+door regexp exit ^JSC::RegExpObject::(?!createStructure\(|info\(|create\(|testInline\(|literalAsReceiverSlow\()
+door regexp exit ^JSC::RegExpCache::(lookupOrCreate|ensureEmptyRegExpSlow|addToStrongCache|finalize)\(
+door regexp exit ^JSC::RegExpCachedResult::(lastResult|leftContext|rightContext|setInput)\(
+door regexp exit ^JSC::RegExpGlobalData::(getBackref|getLastParen|getLeftContext|getRightContext|setInput|performMatch|recordMatch|resetResultFromCache)\(
+door regexp exit ^JSC::RegExpSubstringGlobalAtomCache::collectMatches\(
+door regexp exit ^JSC::regExp\w+\(
+door regexp exit ^JSC::(call|constructWith)RegExpConstructor\(
+door regexp exit ^JSC::constructRegExp\(
+door regexp exit ^JSC::esSpecRegExpCreate\(
+door regexp exit ^JSC::create(Empty)?RegExpMatchesArray(?!\w*Structure)\w*\(
+door regexp exit ^JSC::JSRegExpStringIterator::(?!createStructure\(|info\()
+door regexp exit ^JSC::replaceUsingRegExpSearch\w*\(
+door regexp exit ^JSC::stringProtoFunc(Match|MatchAll|Search)\(
+door regexp exit ^operationAOT\w*RegExp\w*$
+door regexp exit ^JSC::AOT::tryReplaceEveryAtom\(
+door regexp exit ^JSC::AOT::Typed::State::regExpLiteral\(
+door regexp exit ^JSC::AOT::Image::(codeForRegExp\w*|findRegExp\w*|regExpSource)\(
+when profiler feature inspector
+when buffer module node:events
+when buffer feature worker_calls

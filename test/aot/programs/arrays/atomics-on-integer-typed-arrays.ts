@@ -1,4 +1,4 @@
-// Atomics on integer typed arrays with numbers for the index and the operands are machine instructions. What they return, what they leave in the array and what they throw is what the functions of the engine do.
+// Atomics on integer typed arrays with number index and operands compile to atomic instructions. Results, stored values and exceptions must match the runtime functions.
 declare const console: { log(...v: unknown[]): void };
 function counts(slots: Int32Array, n: number): number { let t = 0; for (let i = 0; i < n; i++) { t += Atomics.add(slots, 0, 1); Atomics.sub(slots, 1, 2); Atomics.store(slots, 2, i); t += Atomics.load(slots, 2); } return t + Atomics.load(slots, 0) * 3 + Atomics.load(slots, 1) * 5; }
 function swaps(slots: Int32Array, n: number): number { let retries = 0; for (let i = 0; i < n; i++) { let held = Atomics.load(slots, 3); while (Atomics.compareExchange(slots, 3, held, held + 3) !== held) { retries++; held = Atomics.load(slots, 3); } } return retries * 1000 + Atomics.exchange(slots, 3, -1) + Atomics.load(slots, 3); }

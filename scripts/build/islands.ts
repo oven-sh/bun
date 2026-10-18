@@ -766,6 +766,7 @@ interface MachOReferences {
   pieceOfEntry: Map<string, string>;
   calledByTheLoader: string[];
   stringsNotRead: number;
+  textOfExternalName: Map<string, string>;
   isX64: boolean;
 }
 
@@ -810,7 +811,7 @@ function readMachOObject(path: string, mayBeADoor: (name: string) => boolean): M
     }
     at += commands.readUInt32LE(at + 4);
   }
-  const result: MachOReferences = { references: new Map(), sightings: new Map(), namingsOfDoors: [], externals: [], kept: [], keptByAFlagAlone: [], pieceOfEntry: new Map(), calledByTheLoader: [], stringsNotRead: 0, isX64 };
+  const result: MachOReferences = { references: new Map(), sightings: new Map(), namingsOfDoors: [], externals: [], kept: [], keptByAFlagAlone: [], pieceOfEntry: new Map(), calledByTheLoader: [], stringsNotRead: 0, textOfExternalName: new Map(), isX64 };
   if (symbolTable === undefined) {
     closeSync(fd);
     return result;
@@ -860,6 +861,12 @@ function readMachOObject(path: string, mayBeADoor: (name: string) => boolean): M
     const end = text.indexOf(0, at);
     return text.toString("latin1", at === 0 ? 0 : text.lastIndexOf(0, at - 1) + 1, end < 0 ? text.length : end);
   };
+  for (const symbol of symbols) {
+    if ((symbol.type & 0xe0) !== 0 || (symbol.type & 0x0f) !== 0x0f || !holdsStrings(symbol.section)) continue;
+    const text = stringWith(symbol.section, symbol.value);
+    if (text === undefined) result.stringsNotRead++;
+    else result.textOfExternalName.set(symbol.name, text);
+  }
   const refer = (from: string, to: string) => {
     const set = result.references.get(from);
     if (set === undefined) result.references.set(from, new Set([to]));
@@ -965,6 +972,40 @@ function readMachOObject(path: string, mayBeADoor: (name: string) => boolean): M
   });
   closeSync(fd);
   return result;
+}
+
+function* pointersInMachO(path: string): Generator<[at: number, target: number]> {
+  const fd = openSync(path, "r");
+  const commands = readAt(fd, 32, readAt(fd, 0, 32).readUInt32LE(20));
+  const segments: { address: number; offset: number; size: number }[] = [];
+  let fixups: Buffer | undefined;
+  for (let at = 0; at < commands.length; at += commands.readUInt32LE(at + 4)) {
+    const kind = commands.readUInt32LE(at);
+    if (kind === 0x19) segments.push({ address: Number(commands.readBigUInt64LE(at + 24)), offset: Number(commands.readBigUInt64LE(at + 40)), size: Number(commands.readBigUInt64LE(at + 48)) });
+    else if (kind === 0x80000034) fixups = readAt(fd, commands.readUInt32LE(at + 8), commands.readUInt32LE(at + 12));
+  }
+  const base = segments.find(segment => segment.offset === 0 && segment.size > 0)?.address ?? 0;
+  const starts = fixups?.readUInt32LE(4) ?? 0;
+  for (let index = 0; index < (fixups?.readUInt32LE(starts) ?? 0); index++) {
+    const inSegment = fixups!.readUInt32LE(starts + 4 + index * 4);
+    if (inSegment === 0) continue;
+    const [sizeOfPage, format, pages] = [4, 6, 20].map(field => fixups!.readUInt16LE(starts + inSegment + field)) as [number, number, number];
+    if (format !== 2 && format !== 6) continue;
+    const { address, offset, size } = segments[index]!;
+    const data = readAt(fd, offset, size);
+    for (let page = 0; page < pages; page++) {
+      const first = fixups!.readUInt16LE(starts + inSegment + 22 + page * 2);
+      if (first === 0xffff) continue;
+      for (let at = page * sizeOfPage + first; ; ) {
+        const high = data.readUInt32LE(at + 4);
+        if (high >>> 31 === 0) yield [address + at, data.readUInt32LE(at) + (high & 15) * 0x100000000 + (format === 6 ? base : 0)];
+        const next = (high >>> 19) & 0xfff;
+        if (next === 0) break;
+        at += next * 4;
+      }
+    }
+  }
+  closeSync(fd);
 }
 
 function machOImageOf(path: string): Image {
@@ -1254,6 +1295,13 @@ function readMachOGraph(executable: string, mapPath: string, compiledFromBitcode
     graph.hashOfString.set(index, Number(xxh3(Buffer.from(text, "latin1")) & 0x7fffffffn));
   });
   const filesThatNameString = new Map<number, Set<number>>();
+  const namesString = (file: number, node: number) => {
+    const files = filesThatNameString.get(node);
+    if (files === undefined) filesThatNameString.set(node, new Set([file]));
+    else files.add(file);
+  };
+  const stringWithExternalName = new Map<string, { text: string; file: number }>();
+  for (const [file, read] of objects) for (const [name, text] of read?.textOfExternalName ?? []) stringWithExternalName.set(name, { text, file });
   let stringsNotFound = 0;
   let stringsElsewhere = 0;
   for (const [file, read] of objects) {
@@ -1263,16 +1311,16 @@ function readMachOGraph(executable: string, mapPath: string, compiledFromBitcode
       const from = here(file, source);
       if (from === undefined) continue;
       for (const target of targets) {
-        if (target[0] !== "S") continue;
-        const node = stringWithText.get(target.slice(1));
+        const named = target[0] === "G" ? stringWithExternalName.get(target.slice(1)) : undefined;
+        if (target[0] !== "S" && named === undefined) continue;
+        const node = stringWithText.get(named?.text ?? target.slice(1));
         if (node === undefined) {
           stringsNotFound++;
           continue;
         }
         successors[from]!.add(node);
-        const files = filesThatNameString.get(node);
-        if (files === undefined) filesThatNameString.set(node, new Set([file]));
-        else files.add(file);
+        namesString(file, node);
+        if (named !== undefined) namesString(named.file, node);
       }
     }
   }
@@ -1299,7 +1347,11 @@ function readMachOGraph(executable: string, mapPath: string, compiledFromBitcode
         else if (address !== undefined) stringsElsewhere++;
         continue;
       }
-      if (node < 0 || found[node]!.file === 0 || !/^__(TEXT,__(text|const|bun_builtins)|DATA)/.test(graph.output[node]!)) continue;
+      if (node < 0 || found[node]!.file === 0 || !/^__(TEXT,__(text|const|bun_builtins|cstring)|DATA)/.test(graph.output[node]!)) continue;
+      if (target[0] === "G" && node === stringWithText.get(stringWithExternalName.get(target.slice(1))?.text ?? "\0")) {
+        graph.confirmedByTheBytes++;
+        continue;
+      }
       const isAnotherEntryOfIt = () => target[0] === "L" && [...read.pieceOfEntry].some(([entry, piece]) => piece === target.slice(1) && here(file, entry) === node);
       if (node === ((target[0] === "L" ? here(file, target.slice(1)) : undefined) ?? anywhere(target.slice(1))) || isAnotherEntryOfIt()) {
         graph.confirmedByTheBytes++;
@@ -1310,6 +1362,40 @@ function readMachOGraph(executable: string, mapPath: string, compiledFromBitcode
         const from = targets.has(target) ? here(file, source) : undefined;
         if (from !== undefined && from !== node) successors[from]!.add(node);
       }
+    }
+  }
+  const canMove = /^__(TEXT,__(text|const|bun_builtins|cstring)|DATA_CONST,__const)$/;
+  const followTheBytes = (from: number, address: number) => {
+    const to = nodeAt(address);
+    if (from < 0 || to < 0 || from === to || found[from]!.file === 0 || found[to]!.file === 0 || !canMove.test(graph.output[to]!) || successors[from]!.has(to)) return;
+    successors[from]!.add(to);
+    for (const twin of successors[from]!) if (twin !== to && successors[twin]!.has(to) && (successors[twin]!.has(from) || successors[to]!.has(twin))) return;
+    graph.boundElsewhere.push(`${graph.object[from]}:${graph.section[from]} holds the address of ${graph.object[to]}:${graph.section[to]}, which no name in it says`);
+    if (!doorNodes.has(to)) return;
+    const sources = graph.namedInWaysThatCannotBeRewritten.get(to);
+    if (sources === undefined) graph.namedInWaysThatCannotBeRewritten.set(to, new Set([from]));
+    else sources.add(from);
+  };
+  for (const [at, target] of pointersInMachO(executable)) followTheBytes(nodeAt(at), target);
+  for (const { name, address, size } of graph.isArm64 ? sections : []) {
+    if (name !== "__TEXT,__text") continue;
+    const signed = (value: number, bits: number) => (value >= 2 ** (bits - 1) ? value - 2 ** bits : value);
+    let from = nodeAt(address);
+    for (let at = address; at < address + size; at += 4) {
+      while (from + 1 < found.length && found[from + 1]!.address <= at) from++;
+      const word = image.unsigned32(at)!;
+      if ((word & 0x7c000000) >>> 0 === 0x14000000) followTheBytes(from, at + signed(word & 0x3ffffff, 26) * 4);
+      if ((word & 0x1f000000) >>> 0 !== 0x10000000) continue;
+      const distance = signed((((word >>> 5) & 0x7ffff) << 2) | ((word >>> 29) & 3), 21);
+      if (word >>> 31 === 0) {
+        followTheBytes(from, at + distance);
+        continue;
+      }
+      const next = image.unsigned32(at + 4) ?? 0;
+      if (((next >>> 5) & 31) !== (word & 31)) continue;
+      const page = at - (at % 4096) + distance * 4096;
+      if ((next & 0x7fc00000) >>> 0 === 0x11000000) followTheBytes(from, page + ((next >>> 10) & 0xfff));
+      else if ((next & 0x3b000000) >>> 0 === 0x39000000) followTheBytes(from, page + ((next >>> 10) & 0xfff) * 2 ** ((next >>> 30) + ((next >>> 26) & (next >>> 23) & 1) * 4));
     }
   }
   const slotOf = new Map<number, number>();
@@ -1853,7 +1939,7 @@ function listedDoors(graph: Graph, check: Analysis, declared: Doors, work: strin
       "the doors by number, and the first that names each:\n" +
         ordered.map(({ node, feature }, number) => `door ${number} ${feature} ${check.plainName.get(node)} <- ${(namedBy.get(node) ?? []).slice(0, 1).map(spell).join("")}`.slice(0, 240)).join("\n"),
     );
-    console.log(`${pairs.length} times code of one feature names a door of another that the conditions do not keep with it:\n` + pairs.map(pair => pair.split("\n")[0]).join("\n"));
+    console.log(`${pairs.length} times code of one feature names a door of another that the conditions do not keep with it:\n` + pairs.map(pair => pair.split("\n").slice(0, 2).join("\n").slice(0, 400)).join("\n"));
   }
   return ordered;
 }
@@ -1893,13 +1979,21 @@ function whatHolds(graph: Graph, analysis: Analysis, declared: Doors, feature: s
   );
 }
 
+const goesByFacts = (declared: Doors, feature: string) =>
+  declared.conditions.some(condition => condition.feature === feature) || declared.doors.some(door => door.isOperation && door.feature === feature);
+
 function islandsBySize(graph: Graph, analysis: Analysis, declared: Doors, isMovable: (output: string) => boolean) {
   const bytesOf = new Map<string, number>();
   for (const [node, features] of analysis.neededBy) {
     if (isMovable(graph.output[node]!)) bytesOf.set(features, (bytesOf.get(features) ?? 0) + graph.size[node]!);
   }
   const rankOf = new Map(declared.features.map((feature, index) => [feature.name, index]));
-  const rank = (features: string) => Math.max(...features.split(",").map(feature => rankOf.get(feature)!));
+  const firstThatAlwaysGoes = declared.features.findIndex(feature => !goesByFacts(declared, feature.name));
+  const rank = (features: string) => {
+    const ranks = features.split(",").map(feature => rankOf.get(feature)!);
+    const aheadOfWhatAlwaysGoes = ranks.filter(rank => rank < firstThatAlwaysGoes);
+    return aheadOfWhatAlwaysGoes.length > 0 ? Math.min(...aheadOfWhatAlwaysGoes) : Math.max(...ranks);
+  };
   const islands = [...bytesOf.keys()]
     .filter(features => bytesOf.get(features)! >= smallestIsland)
     .sort((a, b) => rank(a) - rank(b) || bytesOf.get(b)! - bytesOf.get(a)!);
@@ -2266,8 +2360,7 @@ function machO({ work, output, declared, demangler, command, assemble, link }: L
       const stem = (name: string) => name.split(".llvm.")[0]!.split(".__uniq.")[0]!;
       const spell = (object: string, name: string) => (graph.externalNames.has(name) ? name : `${base(object)}:${name}`);
       const namesOf = (node: number): [string, string][] => [[graph.object[node]!, graph.section[node]!], ...(graph.aliases.get(node) ?? [])];
-      const goesByFacts = (feature: string) => declared.conditions.some(condition => condition.feature === feature) || declared.doors.some(door => door.isOperation && door.feature === feature);
-      const aheadOfWhatAlwaysGoes = new Set(islands.slice(0, Math.max(0, islands.findIndex(features => !features.split(",").some(goesByFacts)))));
+      const aheadOfWhatAlwaysGoes = new Set(islands.slice(0, Math.max(0, islands.findIndex(features => !features.split(",").some(feature => goesByFacts(declared, feature))))));
       const moves = (node: number) =>
         analysis.neededBy.has(node) &&
         isMovable(graph.output[node]!) &&
@@ -2276,7 +2369,7 @@ function machO({ work, output, declared, demangler, command, assemble, link }: L
       const taken = new Set<string>();
       const takenAnywhere = new Set<string>();
       for (let node = 0; node < graph.address.length; node++) {
-        if (moves(node)) continue;
+        if (moves(node) && numberOf.has(analysis.neededBy.get(node)!)) continue;
         for (const [object, name] of namesOf(node)) {
           taken.add(base(graph.object[node]!) + "\0" + stem(name));
           taken.add(base(object) + "\0" + stem(name));
@@ -2284,12 +2377,10 @@ function machO({ work, output, declared, demangler, command, assemble, link }: L
           if (graph.externalNames.has(name)) taken.add("\0" + stem(name));
         }
       }
-      const canBeNamed = (node: number) =>
-        namesOf(node).every(([object, name]) =>
-          graph.externalNames.has(name)
-            ? !takenAnywhere.has(stem(name))
-            : !taken.has(base(graph.object[node]!) + "\0" + stem(name)) && !taken.has(base(object) + "\0" + stem(name)) && !taken.has("\0" + stem(name)),
-        );
+      const findsNothingThatStays = (node: number, object: string, name: string) =>
+        graph.externalNames.has(name)
+          ? !takenAnywhere.has(stem(name))
+          : !taken.has(base(graph.object[node]!) + "\0" + stem(name)) && !taken.has(base(object) + "\0" + stem(name)) && !taken.has("\0" + stem(name));
       const stringsThatStay = new Set<number>();
       for (const [node, hash] of graph.hashOfString) if (!moves(node) || !numberOf.has(analysis.neededBy.get(node)!)) stringsThatStay.add(hash);
       const first = [...stringsThatStay].map(hash => "CSTR;" + hash);
@@ -2298,15 +2389,36 @@ function machO({ work, output, declared, demangler, command, assemble, link }: L
         if (staysFirstIn(graph.output[node]!) && !(moves(node) && numberOf.has(analysis.neededBy.get(node)!))) first.push(spell(graph.object[node]!, graph.section[node]!));
       }
       const plan = { doors: [], first, islands: islands.map(features => ({ features, names: [] as string[], behindWhatStays: [] as string[] })), bytesOf, nodes: [] as number[], nameless: new Map() };
+      const lineOf = (node: number, name: string) => (graph.externalNames.has(name) ? stem(name) : `${base(graph.object[node]!)}:${stem(name)}`);
+      const lastIslandOf = new Map<string, number>();
+      const laidBehindWhatStays = new Set<string>();
+      const written = new Set<string>();
+      const isNamed = (node: number) => graph.hashOfString.get(node) === undefined && !isOneUnitOfAssembly(graph.output[node]!);
+      for (let node = 0; node < graph.address.length; node++) {
+        const island = moves(node) && isNamed(node) ? numberOf.get(analysis.neededBy.get(node)!) : undefined;
+        if (island === undefined) continue;
+        for (const [object, name] of namesOf(node)) {
+          for (const line of [lineOf(node, name), `${base(object)}:${stem(name)}`, stem(name)]) {
+            lastIslandOf.set(line, Math.max(lastIslandOf.get(line) ?? 0, island));
+            if (staysFirstIn(graph.output[node]!)) laidBehindWhatStays.add(line);
+          }
+        }
+      }
       for (let node = 0; node < graph.address.length; node++) {
         const island = moves(node) ? numberOf.get(analysis.neededBy.get(node)!) : undefined;
         if (island === undefined) continue;
         const hash = graph.hashOfString.get(node);
         if (hash !== undefined && stringsThatStay.has(hash)) continue;
         if (hash !== undefined) plan.islands[island - 1]!.behindWhatStays.push("CSTR;" + hash);
-        else if (!isOneUnitOfAssembly(graph.output[node]!) && !canBeNamed(node)) continue;
-        else if (!isOneUnitOfAssembly(graph.output[node]!)) {
-          for (const [object, name] of namesOf(node)) plan.islands[island - 1]![staysFirstIn(graph.output[node]!) ? "behindWhatStays" : "names"].push(spell(object, name));
+        else if (isNamed(node)) {
+          const names = namesOf(node).filter(([object, name]) => findsNothingThatStays(node, object, name));
+          if (names.length === 0) continue;
+          for (const [, name] of names) {
+            const line = lineOf(node, name);
+            if (written.has(line)) continue;
+            written.add(line);
+            plan.islands[lastIslandOf.get(line)! - 1]![laidBehindWhatStays.has(line) ? "behindWhatStays" : "names"].push(spell(graph.object[node]!, name));
+          }
         }
         plan.nodes.push(node);
       }

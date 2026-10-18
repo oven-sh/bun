@@ -1884,6 +1884,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalO
         return JSValue::encode(jsUndefined());
     if (remaining == bytes.length())
         return JSValue::encode(callFrame->argument(0));
+    bool isForSink = callFrame->argument(1).isTrue();
+    if (isForSink) {
+        auto* rest = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), remaining);
+        RETURN_IF_EXCEPTION(scope, {});
+        memcpy(rest->typedVector(), next, remaining);
+        return JSValue::encode(rest);
+    }
     RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(next), remaining)));
 #endif
 }

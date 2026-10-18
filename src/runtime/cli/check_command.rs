@@ -66,6 +66,7 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
         "--aot              Also report what <b>bun build --compile --aot<r> would reject in these entry points"
     ),
     clap::param!("--aot-explain <word>?...  With <b>--aot<r>: list the places where the compiler cannot use your types, the most expensive first. <b>costs-json<r> prints them as JSON. <b>throws<r> lists every type check that can fail when the program runs"),
+    clap::param!("--disallow-code-generation-from-strings <word>?  With <b>--aot<r>: as for an executable built with that flag"),
     clap::param!("--cwd <path>       Set the working directory"),
     // `script_or_command` reads it.
     clap::param!(
@@ -143,6 +144,13 @@ fn parse(ctx: &mut crate::cli::command::ContextData, args: &[&ZStr]) -> Options 
     }
     if !options.aot && !options.aot_explain.is_empty() {
         usage_error(format_args!("--aot-explain requires --aot"));
+    }
+    if let Some(value) = parsed.option(b"--disallow-code-generation-from-strings") {
+        match bun_core::CodeGenerationFromStrings::from_flag_value(value) {
+            Some(level) if options.aot => bun_core::set_code_generation_from_strings_in_built_executable(level),
+            Some(_) => usage_error(format_args!("--disallow-code-generation-from-strings requires --aot")),
+            None => usage_error(format_args!("--disallow-code-generation-from-strings does not take \"{}\": it is \"strict\", or no value", BStr::new(value))),
+        }
     }
     let rule_flags = crate::cli::aot::rule_flags(args.iter().map(|arg| arg.as_bytes()));
     if let Some(flag) = rule_flags.first().filter(|_| !options.aot) {
@@ -872,7 +880,6 @@ struct EarlyAnalysis {
     is_cancelled: std::sync::Arc<AtomicBool>,
     is_scan_cancelled: std::sync::Arc<AtomicBool>,
     shared_directory_cache: std::sync::Arc<bun_sema_driver::host::SharedDirectoryCache>,
-    has_started_early: AtomicBool,
     is_early_load_abandoned: std::sync::Arc<AtomicBool>,
 }
 
@@ -888,7 +895,7 @@ impl Drop for EarlyAnalysis {
     fn drop(&mut self) {
         self.stop_early_passes();
         self.is_early_load_abandoned.store(self.message_sender.is_some(), Ordering::Relaxed);
-        if self.message_sender.take().is_some() && self.has_started_early.load(Ordering::Relaxed) {
+        if self.message_sender.take().is_some() {
             let _ = self.result_receiver.recv();
         }
     }
@@ -1023,6 +1030,7 @@ pub(crate) fn __bun_runtime_start_early_analysis(
                     };
                     if let Some((checked, log)) = request {
                         let found = analyze_on_this_thread(checked, log, early, is_restarted);
+                        wait_for_early_parse();
                         bun_core::Output::flush();
                         let _ = result_sender.send(Handed(found));
                     }
@@ -1030,7 +1038,7 @@ pub(crate) fn __bun_runtime_start_early_analysis(
             });
         })
         .expect("failed to spawn the analysis thread");
-    (Box::new(EarlyAnalysis { message_sender: Some(message_sender), result_receiver, is_cancelled, is_scan_cancelled, shared_directory_cache: cache_of_bundler, has_started_early: AtomicBool::new(false), is_early_load_abandoned }), path_sender)
+    (Box::new(EarlyAnalysis { message_sender: Some(message_sender), result_receiver, is_cancelled, is_scan_cancelled, shared_directory_cache: cache_of_bundler, is_early_load_abandoned }), path_sender)
 }
 
 #[unsafe(no_mangle)]
@@ -1044,9 +1052,7 @@ pub(crate) fn __bun_runtime_analyze_early_sources(
     let Some(message_sender) = early.message_sender.as_ref().filter(|_| bun_core::env_var::BUN_AOT_TYPED_SNAPSHOT.get().is_none()) else { return false };
     early.is_scan_cancelled.store(true, Ordering::Relaxed);
     early.shared_directory_cache.request_early_parse_pause();
-    let has_started = message_sender.send(AnalysisMessage::EarlyStart(EarlyStart { sources, printed_react_compiler_outputs, preserve_source_paths })).is_ok();
-    early.has_started_early.store(has_started, Ordering::Relaxed);
-    has_started
+    message_sender.send(AnalysisMessage::EarlyStart(EarlyStart { sources, printed_react_compiler_outputs, preserve_source_paths })).is_ok()
 }
 
 /// `BundleOptions::analyze` for `bun build --compile --aot`: the entry points are checked as `bun check` checks them, and the bundle is

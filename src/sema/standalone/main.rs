@@ -230,7 +230,7 @@ fn run(args: &[String]) {
             }
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
-            const OWN_FLAGS: [&str; 54] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-baseline", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-update-baseline", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
+            const OWN_FLAGS: [&str; 55] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-baseline", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-update-baseline", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--disallow-code-generation-from-strings", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
             const EXPLAINED: [&str; 21] = ["mutations", "builtins", "costs", "costs-json", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "rules-json", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
@@ -248,6 +248,9 @@ fn run(args: &[String]) {
                     error_line!("error: Unknown flag \"{flag}={value}\"");
                     std::process::exit(1);
                 }
+            }
+            if let Some(level) = args.iter().find_map(|a| a.strip_prefix("--disallow-code-generation-from-strings")).and_then(|value| bun_core::CodeGenerationFromStrings::from_flag_value(value.strip_prefix('=').unwrap_or(value).as_bytes())) {
+                bun_core::set_code_generation_from_strings_in_built_executable(level);
             }
             let Some(lib_dir) = variable(bun_core::zstr!("BUN_SEMA_TS_LIB")) else {
                 error_line!(

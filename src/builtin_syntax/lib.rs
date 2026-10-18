@@ -170,12 +170,12 @@ impl Manifest {
                 b"behalf" => {
                     let function = number(field()?).ok_or_else(error)?;
                     let name = field()?.into();
-                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.map(Into::into).collect() });
+                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.filter(|fact| !fact.is_empty()).map(Into::into).collect() });
                 }
                 b"behalf-module" => {
                     let function = MODULE_ROOT | number(field()?).ok_or_else(error)?;
                     let name = field()?.into();
-                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.map(Into::into).collect() });
+                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.filter(|fact| !fact.is_empty()).map(Into::into).collect() });
                 }
                 b"root" => {
                     let kind = if field()? == b"module" { MODULE_ROOT } else { 0 };
@@ -342,10 +342,6 @@ impl Manifest {
     pub fn builtin_function_id(&self, path: &[u8], name: &[u8]) -> Option<u32> {
         let path = path.strip_prefix(VIRTUAL_ROOT).unwrap_or(path);
         find(&self.builtin_functions, &[path, name].join(&b'\t'))
-    }
-
-    pub fn is_vouched_for(&self, function: u32) -> bool {
-        self.on_behalf_of.iter().any(|entry| entry.function == function)
     }
 
     pub fn on_behalf_of(&self, function: u32, name: &[u8]) -> Option<&[Box<[u8]>]> {

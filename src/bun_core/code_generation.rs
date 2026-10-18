@@ -31,6 +31,31 @@ impl CodeGenerationFromStrings {
             _ => None,
         }
     }
+
+    pub fn in_exec_argv(exec_argv: &[u8]) -> Self {
+        let mut arguments: Vec<Box<crate::ZStr>> = vec![crate::ZStr::boxed(b"")];
+        crate::append_options_env(exec_argv, &mut arguments);
+        let levels = arguments[1..].iter().map(|argument| argument.as_bytes()).filter_map(|argument| match argument.strip_suffix(b"\0").unwrap_or(argument).strip_prefix(b"--disallow-code-generation-from-strings")? {
+            b"" => Self::from_flag_value(b""),
+            [b'=', value @ ..] => Self::from_flag_value(value),
+            _ => None,
+        });
+        levels.max().unwrap_or(Self::Allowed)
+    }
+}
+
+static LEVEL_IN_BUILT_EXECUTABLE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
+
+pub fn set_code_generation_from_strings_in_built_executable(level: CodeGenerationFromStrings) {
+    LEVEL_IN_BUILT_EXECUTABLE.store(level as u8, core::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn code_generation_from_strings_in_built_executable() -> CodeGenerationFromStrings {
+    match LEVEL_IN_BUILT_EXECUTABLE.load(core::sync::atomic::Ordering::Relaxed) {
+        0 => CodeGenerationFromStrings::Allowed,
+        1 => CodeGenerationFromStrings::DisallowedLikeNode,
+        _ => CodeGenerationFromStrings::Strict,
+    }
 }
 
 /// Whether this build is at [`CodeGenerationFromStrings::Strict`] with no flag given.

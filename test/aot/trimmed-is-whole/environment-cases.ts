@@ -129,8 +129,11 @@ export const cases: Case[] = [
   { name: "package.json and tsconfig.json in the working directory", files: { "package.json": `{ "name": "own", "type": "commonjs" }`, "tsconfig.json": `{ "compilerOptions": { "paths": { "x": ["./y"] } } }` } },
   { name: "package.json and tsconfig.json, built to read them", build: ["--compile-autoload-package-json", "--compile-autoload-tsconfig"], files: { "package.json": `{ "name": "own" }`, "tsconfig.json": `{ "compilerOptions": { "paths": { "x": ["./y"] } } }` } },
 
-  ...["--smol", "--expose-gc", "--console-depth=1", "--title=own", "--no-deprecation", "--throw-deprecation", "--unhandled-rejections=strict", "--inspect=127.0.0.1:0", "--cpu-prof", "--heap-prof", "--dns-result-order=ipv4first", "--max-http-header-size=64", "--use-system-ca", "--zero-fill-buffers", "--user-agent=own", "--port=0", "--conditions=own", "--config=own.toml", "--env-file=other.env", "--preload=./pre.ts"].map(
+  ...["--smol", "--expose-gc", "--console-depth=1", "--title=own", "--no-deprecation", "--throw-deprecation", "--unhandled-rejections=strict", "--inspect=127.0.0.1:0", "--cpu-prof", "--heap-prof", "--dns-result-order=ipv4first", "--max-http-header-size=64", "--use-system-ca", "--zero-fill-buffers", "--user-agent=own", "--port=0", "--conditions=own", "--config=own.toml", "-c=own.toml", "--env-file=other.env", "--preload=./pre.ts"].map(
     (option): Case => ({ name: "built with --compile-exec-argv=" + option, build: ["--compile-exec-argv=" + option], files: filesOfOptions, programs: shows }),
+  ),
+  ...["--sql-preconnect", "--fetch-preconnect=http://127.0.0.1:9", "--stack-trace-limit=3", "--trace-env", "--trace-env-js-stack", "--trace-env-native-stack", "--trace-exit", "--trace-events-enabled", "--trace-event-categories=node", "--trace-event-file-pattern=x"].map(
+    (option): Case => ({ name: "built with --compile-exec-argv=" + option, build: ["--compile-exec-argv=" + option], programs: ["hello"] }),
   ),
 
   ...(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGPIPE", "SIGWINCH", "SIGCONT", "SIGALRM", "SIGCHLD", "SIGURG", "SIGTSTP"] as NodeJS.Signals[]).map((signal): Case => ({ name: signal, signal })),
@@ -276,10 +279,10 @@ export const cases: Case[] = [
 
 export const refused = /^BUN_OPTIONS=(--preload|-r|--require|--import|--eval|-e|--print|-p)\b|--compile-exec-argv=--preload|built to read it: preload/;
 
-export const knownToDiffer: [RegExp, string][] = [
+export const knownToDiffer: [RegExp, string, "in a closed world"?][] = [
   [/^BUN_BE_BUN=1 (a file|-e|and nothing else)$/, "documented: the Bun command line is left out"],
   [/^BUN_OPTIONS=(--help|-h|-Z)$/, "documented: the help of the Bun command line is left out"],
-  [/^BUN_INSPECT( that waits|_NOTIFY nobody)?$/, "the debugger evaluates text"],
+  [/^BUN_INSPECT( that waits|_NOTIFY nobody)?$/, "the debugger evaluates text", "in a closed world"],
   [/^BUN_JSC_dumpOptions=3$/, "it lists the option that a closed world sets"],
   [/^BUN_OPTIONS=--sql-preconnect$/, "the JavaScript of bun:sql is not in the image"],
   [/^BUN_OPTIONS=--(trace-event-categories|trace-event-file-pattern|trace-env|trace-env-js-stack|trace-exit|stack-trace-limit)\b/, "internal/process/pre_execution is not in the image"],

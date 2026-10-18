@@ -165,7 +165,10 @@ export function inJail(jail: Jail, cmd: string[], { cwd, env, seconds, core }: {
 export function jailOfThisMachine(): Jail {
   if (process.platform !== "linux") return "none";
   const jails: Jail[] = ["a unit of the user's systemd", "a unit of the system's systemd", "a process tree of its own"];
-  const works = (jail: Jail) => Bun.spawnSync({ cmd: inJail(jail, ["true"], { cwd: "/", env: { PATH: process.env.PATH }, seconds: 5, core: "0" }), stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  const works = (jail: Jail) => {
+    const cmd = inJail(jail, ["true"], { cwd: "/", env: { PATH: process.env.PATH }, seconds: 5, core: "0" });
+    return Bun.which(cmd[0]!) !== null && Bun.spawnSync({ cmd, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  };
   return jails.find(works) ?? "none";
 }
 

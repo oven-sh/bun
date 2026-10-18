@@ -92,8 +92,8 @@ untyped, module level: 250.66 instructions (a function without a name 54, stub N
 `;
 
 exports[`reads three fields that were born undefined and never stored, through a parameter of type any 1`] = `
-"typed, function: 158.31 instructions (stub ReadThroughSlotsByNamePreservingTwo 50, kernel 42.19, stub GetByNameGeneric 34, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 28, stub GetThroughSlotByName 4, module 0.12), 327 bytes
-typed, module level: 159.12 instructions (stub ReadThroughSlotsByNamePreservingTwo 50, module 43.12, stub GetByNameGeneric 34, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 28, stub GetThroughSlotByName 4), 1559 bytes
+"typed, function: 67.29 instructions (kernel 67.17, module 0.12), 481 bytes
+typed, module level: 67.14 instructions (module 67.14), 1799 bytes
 untyped, function: 28.33 instructions (kernel 28.21, module 0.12), 977 bytes
 untyped, module level: 73.26 instructions (module 43.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 30), 1910 bytes"
 `;

@@ -1,4 +1,4 @@
-// A small object that one function returns and the next one only reads is never made, nor is one that meets other fresh objects where two paths join.
+// Escape analysis across calls: a small object returned by one function and only read by the next is not allocated, including when it merges with other fresh objects at a phi.
 // IR= 0 handedOn NewObjectWithShape|CallDirect
 // IR= 0 handedOnTwice NewObjectWithShape|CallDirect
 // IR= 0 joinedWithItsSource NewObjectWithShape|CallDirect

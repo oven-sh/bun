@@ -111,6 +111,7 @@ async function said(cmd: string[], cwd: string, env: Record<string, string | und
 
 export class Bench {
   #built = new Map<string, Promise<string>>();
+  #closedWorlds = new Set<string>();
   #servers: Bun.Server<undefined>[] = [];
   #reports = new Map<string, string[]>();
   #building = 0;
@@ -133,13 +134,14 @@ export class Bench {
     if (!built) {
       const outfile = join(this.folder, "built", String(this.#built.size), how, "app");
       mkdirSync(dirname(outfile), { recursive: true });
-      const trim = how === "trimmed" ? ["--compile-trim-runtime"] : [];
+      const trim = how === "trimmed" ? ["--compile-trim-runtime", "--aot-explain=runtime-use"] : [];
       built = (async () => {
         if (this.#building >= this.buildsAtOnce) await new Promise<void>(resolve => this.#waitingToBuild.push(resolve));
         else this.#building++;
         try {
           const build = await said([this.bun, "build", "--compile", "--aot", ...trim, ...flags, program + ".ts", "--outfile", outfile], join(this.folder, "source"), this.env);
           if (build.exitCode !== 0) throw new Error(`${key}: the build failed: ${build.stderr}`);
+          if (/^aot: runtime use: closed$/m.test(build.stderr)) this.#closedWorlds.add(key);
           return outfile;
         } finally {
           const next = this.#waitingToBuild.shift();
@@ -150,6 +152,11 @@ export class Bench {
       this.#built.set(key, built);
     }
     return built;
+  }
+
+  async hasClosedWorld(program: Program, flags: string[] = []): Promise<boolean> {
+    await this.executable(program, "trimmed", flags);
+    return this.#closedWorlds.has([program, "trimmed", ...flags].join(" "));
   }
 
   servers() {
@@ -179,6 +186,7 @@ export class Bench {
       .replace(/\b(CPU|Heap)\.[\d.]+(?=\.(cpuprofile|heapprofile|md)\b)/g, "$1.<when>")
       .replace(/\bpid[ =:]+\d+/gi, "pid <pid>")
       .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
+      .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
       .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>");
   }
 
@@ -262,7 +270,7 @@ export class Bench {
       }
       const exitCode = await child.exited;
       for (let waited = 0; reports && waited < 3000 && !this.#reports.has(number); waited += 50) await Bun.sleep(50);
-      if (reports) answers.push("reported " + (this.#reports.get(number) ?? []).join(" "));
+      if (reports) answers.push("reported " + (this.#reports.get(number) ?? []).map(report => report.replace(/^(\/[^\/]+\/).*?(\/ack)?$/, "$1<trace>$2")).join(" "));
       const written = (readdirSync(cwd, { recursive: true }) as string[]).filter(path => !laid.has(path)).map(path => path.replace(/\d+/g, "N")).sort();
       return {
         stdout: this.plain(usesTerminal ? shown : stdout),

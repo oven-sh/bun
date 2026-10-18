@@ -103,7 +103,6 @@ for (const name of names) console.log(isBuiltin(name));
 //@ ext cjs
 console.log(module.children.length, module.parent, typeof module.paths, module.id, typeof module.loaded);
 //// arguments-of-wrapper
-//@ todo F4
 //@ ext cjs
 for (const name of names) show(arguments[1](name));
 //// this-is-exports

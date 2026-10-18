@@ -11,7 +11,6 @@ console.log(escapeRegExp("a.b"));
 //// bun-wrap
 try { console.log(Object.keys(await import("bun:wrap")).sort().join()); } catch (error) { console.log(error.name, error.message); }
 //// bun-main
-//@ todo F5
 try { console.log(Object.keys(await import("bun:main")).sort().join()); } catch (error) { console.log(error.name, error.message); }
 //// bun-app
 try { console.log(Object.keys(await import("bun:app")).sort().join()); } catch (error) { console.log(error.name, error.message); }

@@ -272,18 +272,37 @@ for (const line of fs.readFileSync(path.join(ENGINE, "functions.txt"), "utf8").s
   functionIds.set(`engine/${file}\t${name}`, Number(id));
 }
 
-const keysAreIndexesOrSymbols = { "property *": [] };
-const keysAreCountedAtTheCaller = { "property *": [] };
-const readsOnlyItsOwnNewObject = { "property *": [] };
+const keysAreIndexesOrSymbols = { "property *": [], "finds Function": [] };
+const keysAreCountedAtTheCaller = { "property *": [], "finds Function": [] };
+const readsOnlyItsOwnNewObject = { "property *": [], "finds Function": [] };
 const buffers = { "*": ["global Buffer", "native node:buffer"] };
+const whereTheProgramNames = (...names: string[]) => [...names.flatMap(name => [`program-property ${name}`, `program-key ${name}`]), "program-key *"];
+const keysAreSymbolsIndexesOrOfFixedLists = { "finds Function": [] };
+const readsPlainObjectsAndFixedLists = { "finds Function": [] };
+const readsTablesWithoutPrototypeOrByTheirOwnKeys = { "finds Function": [] };
+const neitherCallsNorHandsOutWhatItReads = { "finds Function": [] };
+const givesAnObjectAnotherPrototype = ["program-property setPrototypeOf", "program-property __proto__"];
+const readsTheTableOfListeners = { "finds Function": [...whereTheProgramNames("_events"), ...givesAnObjectAnotherPrototype] };
 const onBehalfOf: Record<string, Record<string, string[]>> = {
   "JSBufferConstructor.ts\tfrom": { ...keysAreIndexesOrSymbols, ...buffers },
   "JSBufferConstructor.ts\tisBuffer": buffers,
   "JSBufferPrototype.ts\toffset": buffers,
   "JSBufferPrototype.ts\tparent": buffers,
   "JSBufferPrototype.ts\ttoJSON": buffers,
+  "UtilInspect.ts\tgetStylizeWithColor": { "finds Function": whereTheProgramNames("stylize") },
+  "Bake.ts\trenderRoutesForProdStatic": neitherCallsNorHandsOutWhatItReads,
+  "BundlerPlugin.ts\trunOnLoadPlugins": readsPlainObjectsAndFixedLists,
+  "BundlerPlugin.ts\trunOnResolvePlugins": readsPlainObjectsAndFixedLists,
+  "CommonJS.ts\tcreateRequireCache": readsPlainObjectsAndFixedLists,
   "CommonJS.ts\tinternalRequire": { "process dlopen": ["loader napi"] },
   "CommonJS.ts\toverridableRequire": { "Bun jest": ["native bun:test"] },
+  "ConsoleObject.ts\tasyncIterator": keysAreSymbolsIndexesOrOfFixedLists,
+  "ConsoleObject.ts\tcreateConsoleConstructor": keysAreSymbolsIndexesOrOfFixedLists,
+  "Peek.ts\tpeekStatus": keysAreSymbolsIndexesOrOfFixedLists,
+  "ProcessObjectInternals.ts\tbuildAllowedNodeEnvironmentFlags": neitherCallsNorHandsOutWhatItReads,
+  "ProcessObjectInternals.ts\tgetNodeWorkerStdioStream": keysAreSymbolsIndexesOrOfFixedLists,
+  "ProcessObjectInternals.ts\tgetStdioWriteStream": keysAreSymbolsIndexesOrOfFixedLists,
+  "ProcessObjectInternals.ts\tloadEnvFile": readsPlainObjectsAndFixedLists,
   "ProcessObjectInternals.ts\twindowsEnv": keysAreCountedAtTheCaller,
   "engine/ArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
   "engine/ArrayConstructor.js\tfromAsync": keysAreIndexesOrSymbols,
@@ -300,11 +319,11 @@ const onBehalfOf: Record<string, Record<string, string[]>> = {
   "engine/JSIteratorConstructor.js\tgetIteratorFlattenable": keysAreIndexesOrSymbols,
   "engine/JSIteratorConstructor.js\tgetIteratorSync": keysAreIndexesOrSymbols,
   "engine/JSIteratorConstructor.js\titeratorCloseAllNormal": keysAreIndexesOrSymbols,
-  "engine/JSIteratorConstructor.js\tzipKeyed": { "property *": ["property zipKeyed"] },
+  "engine/JSIteratorConstructor.js\tzipKeyed": { "property *": ["property zipKeyed"], "finds Function": [] },
   "engine/MapConstructor.js\tgroupBy": keysAreIndexesOrSymbols,
   "engine/ObjectConstructor.js\tgroupBy": readsOnlyItsOwnNewObject,
   "engine/ReflectObject.js\tget": keysAreCountedAtTheCaller,
-  "engine/ShadowRealmPrototype.js\timportValue": { "property *": ["global ShadowRealm"] },
+  "engine/ShadowRealmPrototype.js\timportValue": { "property *": ["global ShadowRealm"], "finds Function": ["global ShadowRealm"] },
   "engine/TypedArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
   "engine/TypedArrayPrototype.js\tat": keysAreIndexesOrSymbols,
   "engine/TypedArrayPrototype.js\ttoLocaleString": { "*": ["property toLocaleString"] },
@@ -317,8 +336,56 @@ for (const [key, names] of Object.entries(onBehalfOf)) {
   }
 }
 
+const handsProcessToTheQueueOfTicks = { "process *": [] };
 const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
-  "internal/util/inspect": { "global Buffer": [], "native node:buffer": [] },
+  "internal/cluster/RoundRobinHandle": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/cluster/child": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/cluster/primary": neitherCallsNorHandsOutWhatItReads,
+  "internal/fifo": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/fixed_queue": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/fs/glob": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/fs/streams": readsTablesWithoutPrototypeOrByTheirOwnKeys,
+  "internal/http": handsProcessToTheQueueOfTicks,
+  "internal/http1_server_fallback": neitherCallsNorHandsOutWhatItReads,
+  "internal/primordials": { "finds Function": [] },
+  "internal/promisify": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/readline/emitKeypressEvents": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/readline/interface": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/repl/history": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/repl/node-primordials": { "finds Function": ["module node:repl"] },
+  "internal/serialization_buffers": neitherCallsNorHandsOutWhatItReads,
+  "internal/stream": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/duplex": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/fast-utf8-stream": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/iter/classic": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/iter/from": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/iter/pull": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/lazy_transform": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/legacy": readsTheTableOfListeners,
+  "internal/streams/readable": { ...readsTablesWithoutPrototypeOrByTheirOwnKeys, ...handsProcessToTheQueueOfTicks },
+  "internal/streams/state": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/writable": handsProcessToTheQueueOfTicks,
+  "internal/tls": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/tty": neitherCallsNorHandsOutWhatItReads,
+  "internal/util/inspect": { "global Buffer": [], "native node:buffer": [], "finds Function": whereTheProgramNames("stylize") },
+  "node:_http_agent": neitherCallsNorHandsOutWhatItReads,
+  "node:_http_client": { "finds Function": whereTheProgramNames("_defaultAgent", "globalAgent") },
+  "node:_http_common": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:_http_incoming": { ...neitherCallsNorHandsOutWhatItReads, ...handsProcessToTheQueueOfTicks },
+  "node:_http_outgoing": readsTablesWithoutPrototypeOrByTheirOwnKeys,
+  "node:_http_server": { ...readsTablesWithoutPrototypeOrByTheirOwnKeys, ...handsProcessToTheQueueOfTicks },
+  "node:child_process": neitherCallsNorHandsOutWhatItReads,
+  "node:crypto": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:dgram": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:diagnostics_channel": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:events": { ...readsTheTableOfListeners, "process *": [] },
+  "node:https": { "finds Function": whereTheProgramNames("_getSession") },
+  "node:net": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:os": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:readline": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:readline/promises": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:tls": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:util": readsTablesWithoutPrototypeOrByTheirOwnKeys,
 };
 for (const [specifier, names] of Object.entries(onBehalfOfInModules)) {
   for (const [name, facts] of Object.entries(names)) {

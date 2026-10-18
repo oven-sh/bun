@@ -344,6 +344,42 @@ fn is_implied_by_operands(program: &Program, func: &Func, op: &Op, yields: &Decl
     }
 }
 
+fn hands_frame_to_program(program: &Program, func: &Func, call: V) -> bool {
+    let is_global = |v: V| matches!(func.op(strip_casts(func, v)), Some(Op::FreeGet { is_typeof: false, .. }));
+    match func.op(call) {
+        Some(&Op::Call { callee, .. }) => !is_global(callee) && !matches!(func.op(strip_casts(func, callee)), Some(&Op::PropGet { obj, .. }) if is_global(obj)),
+        Some(&Op::CallMethod { obj, .. }) => {
+            let receiver = program.tys.get(func.ty(obj));
+            !is_global(obj) && (receiver.any_object || receiver.any_function || receiver.parts.iter().any(|part| matches!(part, Part::Class(_))))
+        }
+        Some(Op::CallDirect { .. }) => true,
+        _ => false,
+    }
+}
+
+fn is_cast_left_to_receivers(program: &Program, func: &Func, cast: V) -> bool {
+    let mut call = cast;
+    while let Some(&Op::Coerce { value, .. }) = func.op(call) {
+        call = value;
+    }
+    if !matches!(func.op(call), Some(Op::Call { .. } | Op::CallMethod { .. } | Op::CallDirect { .. })) || !func.values[call.idx()].is_in_tail_position() || !hands_frame_to_program(program, func, call) {
+        return false;
+    }
+    let Some(ops) = func.blocks.iter().find_map(|block| block.ops.iter().position(|&op| op == call).map(|at| &block.ops[at + 1..])) else { return false };
+    let mut held = call;
+    let mut is_behind_call = false;
+    for &next in ops {
+        match func.op(next) {
+            Some(&Op::Coerce { value, .. }) if value == held => {
+                is_behind_call |= next == cast;
+                held = next;
+            }
+            _ => break,
+        }
+    }
+    is_behind_call
+}
+
 struct CoercionSite {
     is_known_only_at_link: bool,
     what: String,
@@ -359,6 +395,9 @@ fn coercion_site(program: &Program, func: &Func, v: V, is_linked: bool, linked: 
     let anything = program.tys.anything;
     let none = crate::id::StrId::NONE;
     if let Op::Coerce { value: from, to, why } = *op {
+        if linked.is_some() && is_cast_left_to_receivers(program, func, v) {
+            return None;
+        }
         let (what, text) = match why {
             CoerceReason::Upcast | CoerceReason::Forced | CoerceReason::ArgumentClaim(_) => return None,
             CoerceReason::Store => ("Store", none),
@@ -379,6 +418,12 @@ fn coercion_site(program: &Program, func: &Func, v: V, is_linked: bool, linked: 
     if value.ty.is_none() || value.ty == anything || program.tys.get(value.ty).is_never() {
         return None;
     }
+    if let Op::CallDirect { func: called, .. } = op
+        && !value.is_in_tail_position()
+        && linked.is_some_and(|linked| linked.returns_unconverted[called.idx()])
+    {
+        return Some(CoercionSite { is_known_only_at_link: false, what: "Coerce".to_owned(), to: value.ty, result: value.ty, text: none, from: V::NONE });
+    }
     let is_held = match op {
         Op::PropGet { obj, name } if program.strs.get(*name) == b"length" && {
             let read_of = program.tys.get(func.ty(*obj));
@@ -388,7 +433,7 @@ fn coercion_site(program: &Program, func: &Func, v: V, is_linked: bool, linked: 
             false
         }
         Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } => may_hold_untyped_object(program, program.tys.get(func.ty(*obj)), is_linked),
-        Op::Call { .. } if linked.is_some() && value.is_in_tail_position() => false,
+        Op::Call { .. } | Op::CallMethod { .. } if linked.is_some() && value.is_in_tail_position() && hands_frame_to_program(program, func, v) => false,
         Op::CallDirect { func: called, .. } => !value.is_in_tail_position() && linked.is_some_and(|linked| linked.returns_unchecked[called.idx()]),
         Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } | Op::Await(_) | Op::Yield(_) | Op::Operation { .. } | Op::IterGet { .. } | Op::Caught | Op::FreeGet { is_typeof: false, .. } => true,
         Op::Binary { .. } | Op::Unary { .. } => !is_implied_by_operands(program, func, op, program.tys.get(value.ty)),
@@ -459,6 +504,7 @@ struct Linked {
     seen_as: Vec<Vec<u32>>,
     gives_up: Vec<bool>,
     returns_unchecked: Vec<bool>,
+    returns_unconverted: Vec<bool>,
     slot_primitives: FxHashMap<(u32, crate::id::StrId), u32>,
 }
 
@@ -522,23 +568,30 @@ impl Linked {
             .collect();
         let mut is_allocated_by_op = vec![false; program.layouts.len()];
         let mut returns_unchecked = vec![false; program.funcs.len()];
+        let mut returns_unconverted = vec![false; program.funcs.len()];
         let mut direct_tail_calls: Vec<(usize, usize)> = Vec::new();
         for (index, func) in program.funcs.iter().enumerate() {
             for &v in func.blocks.iter().flat_map(|block| &block.ops) {
                 match func.op(v) {
                     Some(&(Op::New(layout) | Op::NewWith { layout, .. })) => is_allocated_by_op[layout.idx()] = true,
-                    Some(Op::Call { .. }) if func.values[v.idx()].is_in_tail_position() && func.ty(v).is_some() && func.ty(v) != program.tys.anything && !program.tys.get(func.ty(v)).is_never() => returns_unchecked[index] = true,
+                    Some(Op::Call { .. } | Op::CallMethod { .. }) if func.values[v.idx()].is_in_tail_position() && func.ty(v).is_some() && func.ty(v) != program.tys.anything && !program.tys.get(func.ty(v)).is_never() && hands_frame_to_program(program, func, v) => returns_unchecked[index] = true,
+                    Some(&Op::Coerce { why: CoerceReason::Coerce | CoerceReason::CoerceFreshGraph, .. }) if is_cast_left_to_receivers(program, func, v) => {
+                        returns_unchecked[index] = true;
+                        returns_unconverted[index] = true;
+                    }
+                    Some(&Op::Coerce { value, to, why }) if !matches!(why, CoerceReason::Upcast | CoerceReason::Forced | CoerceReason::ArgumentClaim(_)) && (func.ty(value).is_none() || !program.tys.get(func.ty(value)).is_subset_of(program.tys.get(to))) && is_cast_left_to_receivers(program, func, v) => returns_unchecked[index] = true,
                     Some(&Op::CallDirect { func: called, .. }) if func.values[v.idx()].is_in_tail_position() => direct_tail_calls.push((index, called.idx())),
                     _ => {}
                 }
             }
         }
         while direct_tail_calls.iter().fold(false, |grew, &(caller, called)| {
-            let grows = returns_unchecked[called] && !returns_unchecked[caller];
-            returns_unchecked[caller] |= grows;
+            let grows = (returns_unchecked[called] && !returns_unchecked[caller]) || (returns_unconverted[called] && !returns_unconverted[caller]);
+            returns_unchecked[caller] |= returns_unchecked[called];
+            returns_unconverted[caller] |= returns_unconverted[called];
             grew || grows
         }) {}
-        Linked { keys, is_allocated_by_op, seen_as, gives_up, returns_unchecked, slot_primitives }
+        Linked { keys, is_allocated_by_op, seen_as, gives_up, returns_unchecked, returns_unconverted, slot_primitives }
     }
 }
 

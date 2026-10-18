@@ -536,7 +536,7 @@ export function createOnWarning(process, redirectPath, disabledArr, writeToUntou
     let sink;
     let hasEmittedError = false;
     writeWithoutStreams = text => {
-      const rest = sink ? text : writeToUntouchedStderr(text);
+      const rest = sink ? text : writeToUntouchedStderr(text, true);
       if (rest === undefined) return;
       if (!sink) {
         sink = $newRustFunction("runtime/webcore/FileSink.rs", "standardErrorSink", 1)(kindOfStandardError === socket);

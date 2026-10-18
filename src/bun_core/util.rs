@@ -3924,6 +3924,11 @@ impl OptionsEnvArg for Box<ZStr> {
     }
 }
 
+pub fn is_bootstrap_flag(argument: &[u8]) -> bool {
+    let traced = argument.strip_prefix(b"--trace-e");
+    traced.is_some_and(|what| what.starts_with(b"vent") || what.starts_with(b"nv") || what.starts_with(b"xit")) || argument.starts_with(b"--stack-trace-limit")
+}
+
 /// Parse a `BUN_OPTIONS`-style string
 /// (`--flag=value --flag2 "quoted value" bare`) and insert each token into
 /// `args` starting at index 1 (callers prepend a placeholder at [0]).

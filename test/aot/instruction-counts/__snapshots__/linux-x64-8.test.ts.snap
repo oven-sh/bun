@@ -223,3 +223,17 @@ typed, module level: 1104.32 instructions (the runtime 997.86, module 53.62, stu
 untyped, function: 1142.61 instructions (the runtime 997.86, kernel 68.79, stub RegExpExecWithFastPath 33, stub StringMatchOrCallValue 26, stub GetByValAtIndex 15, elsewhere 1.84, module 0.12), 657 bytes
 untyped, module level: 1129.58 instructions (the runtime 994.95, module 58.79, stub RegExpExecWithFastPath 33, stub StringMatchOrCallMethod 26, stub GetByValAtIndex 15, elsewhere 1.84), 3466 bytes"
 `;
+
+exports[`takes the value and a flag out of the own property descriptors of an instance of a class, name by name 1`] = `
+"typed, function: 155.28 instructions (kernel 104.20, stub GetOwnFieldByKeyIfCached 50.96, module 0.12), 648 bytes
+typed, module level: 146.09 instructions (module 95.13, stub GetOwnFieldByKeyIfCached 50.96), 2335 bytes
+untyped, function: 101.18 instructions (kernel 101.06, module 0.12), 1196 bytes
+untyped, module level: 78.02 instructions (module 78.02), 3477 bytes"
+`;
+
+exports[`reads the value and the flags out of the own property descriptor of a plain object under a key that varies 1`] = `
+"typed, function: 83.81 instructions (kernel 83.69, module 0.12), 565 bytes
+typed, module level: 75.83 instructions (module 75.83), 2016 bytes
+untyped, function: 89.82 instructions (kernel 89.70, module 0.12), 676 bytes
+untyped, module level: 83.33 instructions (module 83.33), 1759 bytes"
+`;

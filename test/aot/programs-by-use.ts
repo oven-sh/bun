@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { slot } from "./run-programs";
 import { test } from "./supported";
 
-export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number };
+export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number; runsTextAsCode?: true };
 
 using probe = tempDir("aot-built-in-functions-by-use-probe", { "hello.ts": `console.log("hello world");` });
 export const canTrim = !Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stdout: "pipe", stderr: "pipe" })
@@ -56,7 +56,7 @@ export function describePrograms(what: string, programs: Record<string, Program>
           };
           const expected = await run(name.endsWith(".cjs") ? await build([], join(cwd, "reference.exe")) : [bunExe(), name], cwd, program, bunEnv);
           expect({ title, exitCode: expected.exitCode, stderr: expected.stderr }).toEqual({ title, exitCode: program.exitCode ?? 0, stderr: expect.not.stringContaining("error:") });
-          expect(await run(await build(["--aot"], join(cwd, "program.exe")), cwd, program, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(expected);
+          expect(await run(await build(["--aot"], join(cwd, "program.exe")), cwd, program, program.runsTextAsCode ? bunEnv : { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(expected);
           if (canTrim) expect(await run(await build(["--aot", "--compile-trim-runtime"], join(cwd, "trimmed.exe")), cwd, program, bunEnv)).toEqual(expected);
         });
       }, 120_000);

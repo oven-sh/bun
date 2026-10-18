@@ -41,13 +41,14 @@ const all: Case[] = [
 
 (!hasIslands || unsupported || isWindows ? describe.skip : describe.concurrent)("a trimmed executable does in every environment what the whole one does", () => {
   for (const it of all.filter(it => !refused.test(it.name))) {
-    const why = knownToDiffer.find(([name]) => name.test(it.name))?.[1];
+    const [, why, where] = knownToDiffer.find(([name]) => name.test(it.name)) ?? [];
     for (const program of programsOf(it)) {
-      (why ? test.failing : test)(
-        `${program}: ${it.name}${why ? ` (differs: ${why})` : ""}`,
+      test(
+        `${program}: ${it.name}${why ? ` (differs${where ? " " + where : ""}: ${why})` : ""}`,
         async () => {
           const { whole, trimmed } = await bench.both(program, it);
-          expect(trimmed).toEqual(whole);
+          if (why && (!where || (await bench.hasClosedWorld(program, it.build)))) expect(trimmed).not.toEqual(whole);
+          else expect(trimmed).toEqual(whole);
         },
         120_000,
       );

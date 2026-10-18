@@ -3848,6 +3848,14 @@ declare module "bun" {
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
+    /**
+     * In the executable, `eval()` and the `Function` constructors throw an
+     * `EvalError`, as with Node.js's `--disallow-code-generation-from-strings`.
+     * `"strict"` refuses every way a string becomes code.
+     *
+     * Equivalent CLI flag: `--disallow-code-generation-from-strings`
+     */
+    disallowCodeGenerationFromStrings?: boolean | "strict";
     executablePath?: string;
     /**
      * Leave the parts of Bun that no compiled program can reach out of the executable.

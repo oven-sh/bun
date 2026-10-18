@@ -812,6 +812,15 @@ impl<'p, 's> Checker<'p, 's> {
                     && let ExprKind::Ident(name) = hir[obj].kind
                     && let Some(sym) = self.symbol_of_identifier(file, obj, name)
                 {
+                    for (of, decl) in self.files.decls(sym) {
+                        if let Decl::Var(pat) = decl
+                            && let Some(initial) = self.predict(Subject::Pat(of, pat))
+                        {
+                            let initial = self.non_nullable(initial);
+                            let element = self.cached_index_type(initial, kind).and_then(|element| self.informative_type(element));
+                            self.add(&mut found, element);
+                        }
+                    }
                     let stored = self.elements_stored_in_file(file);
                     for &value in stored.get(&sym).into_iter().flatten().take(MAX_STORED_ELEMENTS) {
                         let value = self.predicted_expr_type(file, value);

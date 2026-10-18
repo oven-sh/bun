@@ -588,6 +588,17 @@ const roads: Record<string, Road> = {
     stay: ["member_one", "member_two"],
     skipsWitnessCheck: true,
   },
+  "a distance from the start of a section, by the name that the linker gives it": {
+    more: `extern const char builtins_text[20000]; int more(int x) { return builtins_text[x % 20000]; }`,
+    files: { "builtins.S": `.section __TEXT,__bun_builtins,regular,no_dead_strip\n.globl _builtins_text\n.p2align 4\n_builtins_text:\n.fill 20000, 1, 0x61\n` },
+    objects: ["behind", "door", "more", "main", "builtins"],
+    main: `
+      extern const char start_of_the_text[] __asm__("section$start$__TEXT$__bun_builtins");
+      int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : start_of_the_text[16] == 'a' ? 0 : 1; }
+    `,
+    stay: ["builtins_text"],
+    skipsWitnessCheck: true,
+  },
   "a function in an archive, and a string that it names": {
     more: `
       ${mixes("behind_target", 3)}
@@ -1359,6 +1370,20 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       });
     }
 
+    test("that what stays names from another input, by a name that the input that holds it gives it, stays; one that only the feature names so can go", async () => {
+      const [namedByWhatStays, namedBehind] = ["words with a name, which what stays reads", "words with a name, which only the feature reads"];
+      using dir = tempDir("islands-macho-strings", {
+        ...strings,
+        "named.S": `.section __TEXT,__cstring,cstring_literals\n.private_extern _read_by_what_stays, _read_behind\n_read_by_what_stays: .asciz ${JSON.stringify(namedByWhatStays)}\n_read_behind: .asciz ${JSON.stringify(namedBehind)}\n.subsections_via_symbols\n`,
+        "more_words.c": `extern const char read_by_what_stays[], read_behind[]; int more_words(int x) { return read_by_what_stays[x & 7] + read_behind[x & 7]; }`,
+        "main.c": strings["main.c"].replace("int main(", "extern const char read_by_what_stays[]; int main(").replace("stays_end()[argc] == 'n'", "stays_end()[argc] == 'n' && read_by_what_stays[argc] == 'o'"),
+      });
+      const { said, stringAt, canGoAt, exitCodes } = await linked(machine, String(dir), { objects: [...objects, "named"] });
+      expect([namedByWhatStays, namedBehind, onlyBehind].map(text => [Number.isNaN(stringAt(text)), canGoAt(stringAt(text))])).toEqual([[false, false], [false, true], [false, true]]);
+      expect(said).toContain("; 0 references lead where the names did not");
+      expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
+    });
+
     test("cannot go, none of them, once one reference leads to no string that the map holds", async () => {
       const lea = (name: string, to: string) => `${name}:${perMachine(`adrp x0, ${to}@PAGE\nadd x0, x0, ${to}@PAGEOFF`, `leaq ${to}(%rip), %rax`)}ret\n`;
       using dir = tempDir("islands-macho-strings", {
@@ -1512,6 +1537,66 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
         writeFileSync(join(folder, "earlier.plan"), readFileSync(join(folder, "program.plan")));
       }
+    });
+
+    test.each([
+      ["in an island of its own", 6000, false],
+      ["too small for an island of its own", 1, false],
+      ["another of its names is a name of what stays", 6000, true],
+    ])("a function folded with one of another input is not laid in an earlier island, though that input's name for it is another function's in its own: %s", async (_, length, sharesANameWithWhatStays) => {
+      const twin = (name: string) => `static __attribute__((noinline)) int ${name}(int x) { __asm__ volatile(".rept ${length}\\nnop\\n.endr"); for (int i = 0; i < 3; i++) x = x * 3 + i; return x ^ 77; }`;
+      using dir = tempDir("islands-macho-layout", {
+        ...sources,
+        "door.c": doorTo("early"),
+        "early.c": `
+          static ${mixes("same_name", 5)} static ${mixes("name_of_what_stays", 11)} ${twin("kept_copy")}
+          int early(int x) { return same_name(x) + kept_copy(x + 1); }
+          int stays(int x) { return name_of_what_stays(x); }
+          int behind_every_twin(int x) { return x; }
+        `,
+        "late.c": `
+          ${twin("same_name")} ${sharesANameWithWhatStays ? twin("name_of_what_stays") : ""}
+          __attribute__((noinline)) int door_of_another(int x) { __asm__ volatile(".rept 6000\\nnop\\n.endr"); return same_name(x) * 5${sharesANameWithWhatStays ? " + name_of_what_stays(x + 2)" : ""}; }
+          int behind_every_other_twin(int x) { return x; }
+        `,
+        "main.c": `${start} int door_of_another(int); int stays(int); int main(int argc, char **argv) { return argc > 6 ? door_of_another(argc) : argc > 5 ? the_door(argc) : stays(argc) & 0; }`,
+        "doors": sources.doors + "feature another something else\ndoor another exit ^door_of_another$\n",
+      });
+      const folder = String(dir);
+      for (const plan of ["none", "earlier.plan"]) {
+        const { table, addressOf, exitCodes } = await linked(machine, folder, { objects: ["early", "behind", "door", "late", "main"], plan });
+        const copy = addressOf("kept_copy");
+        if (sharesANameWithWhatStays) expect(addressOf("name_of_what_stays")).toBe(copy);
+        expect(table.islands.filter(({ start, end }) => start <= copy && copy < end).map(({ features }) => features)).toEqual(["extra,another"]);
+        expect(Math.max(...["early", "behind", "behind_0", `behind_${count - 1}`].map(addressOf))).toBeLessThan(copy);
+        expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
+        writeFileSync(join(folder, "earlier.plan"), readFileSync(join(folder, "program.plan")));
+      }
+    });
+
+    test("what a feature declared ahead of those that always go shares with a later one is laid with the first", async () => {
+      const long = (name: string, by: number) => `__attribute__((noinline)) int ${name}(int x) { __asm__ volatile(".rept 6000\\nnop\\n.endr"); return x * ${by}; }`;
+      using dir = tempDir("islands-macho-layout", {
+        ...sources,
+        "more.c": `
+          ${long("of_both", 3)} ${long("only_of_the_first", 5)} ${long("only_of_the_last", 7)}
+          __attribute__((noinline)) int door_of_the_first(int x) { return of_both(x) + only_of_the_first(x); }
+          __attribute__((noinline)) int door_of_the_last(int x) { return of_both(x) - only_of_the_last(x); }
+        `,
+        "main.c": `
+          ${start} int door_of_the_first(int); int door_of_the_last(int);
+          int main(int argc, char **argv) { return argc > 7 ? door_of_the_first(argc) : argc > 6 ? door_of_the_last(argc) : argc > 5 ? the_door(argc) : 0; }
+        `,
+        "doors":
+          "feature first what most programs keep\n" + sources.doors + "feature last something else\n" +
+          "when first global First\nwhen last global Last\ndoor first exit ^door_of_the_first$\ndoor last exit ^door_of_the_last$\n",
+      });
+      const { addressOf, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "main"] });
+      expect(["of_both", "only_of_the_first", "only_of_the_last", "behind"].map(canGo)).toEqual([true, true, true, true]);
+      const alwaysGoes = ["behind", "behind_0", `behind_${count - 1}`].map(addressOf);
+      expect(Math.max(addressOf("of_both"), addressOf("only_of_the_first"))).toBeLessThan(Math.min(...alwaysGoes));
+      expect(addressOf("only_of_the_last")).toBeGreaterThan(Math.max(...alwaysGoes));
+      expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
 
     test("a section of the interpreter's assembly that is one unit goes whole with the feature that alone names it", async () => {

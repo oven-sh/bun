@@ -81,7 +81,7 @@ exports[`calls an arrow function that is a field of a class, outside loops 1`] =
 "typed, function: 12 instructions (kernel 9, module 3), 675 bytes
 typed, function that no loop calls: 17.75 instructions (kernel 8.25, add 6, module 3.50), 202 bytes
 untyped, function: 87.75 instructions (kernel 40.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 30, stub PutByNameWithDirectColumnPreservingTwo 14, module 3), 1116 bytes
-untyped, function that no loop calls: 112.75 instructions (add 18, kernel 16.25, stub Add 16, stub PutByNameWithDirectColumn 14, stub CallValueNamed1 12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 3.50, exports of call-arrow-function-field.untyped.function-that-no-loop-calls.js 3), 343 bytes"
+untyped, function that no loop calls: 115.75 instructions (stub CallMethodByName1 of 1069 20, add 18, stub Add 16, stub PutByNameWithDirectColumn 14, kernel 11.25, stub CallValue1 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 3.50, exports of call-arrow-function-field.untyped.function-that-no-loop-calls.js 3), 255 bytes"
 `;
 
 exports[`calls a function that a variable holds, outside loops 1`] = `

@@ -49,7 +49,6 @@ for (const name of names) console.log(name in process);
 function read(object, name) { return object[name]; }
 for (const name of names) show(read(process, name));
 //// emitter-this
-//@ todo F3
 process.once("ping", function () { for (const name of names) show(this[name]); });
 process.emit("ping");
 //// report-getReport

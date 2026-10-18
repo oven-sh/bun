@@ -249,6 +249,7 @@ pub struct Program<'s> {
     pub reads_of_any_property: Guarded<Vec<(FileId, u32)>>,
     pub reads_that_may_find_the_constructor_of_functions: Guarded<Vec<(FileId, u32)>>,
     pub reads_that_may_find_what_makes_or_loads_code: Guarded<Vec<(FileId, u32)>>,
+    pub stores_under_a_key_that_is_not_seen: AtomicBool,
     pub releases_roots: AtomicBool,
     /// `autoArrayType`
     auto_array_type: TypeId,
@@ -535,6 +536,7 @@ impl<'s> Program<'s> {
             reads_of_any_property: Default::default(),
             reads_that_may_find_the_constructor_of_functions: Default::default(),
             reads_that_may_find_what_makes_or_loads_code: Default::default(),
+            stores_under_a_key_that_is_not_seen: Default::default(),
             releases_roots: AtomicBool::new(false),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
@@ -648,6 +650,7 @@ impl<'s> Program<'s> {
         *self.reads_of_any_property.get_mut() = Default::default();
         *self.reads_that_may_find_the_constructor_of_functions.get_mut() = Default::default();
         *self.reads_that_may_find_what_makes_or_loads_code.get_mut() = Default::default();
+        *self.stores_under_a_key_that_is_not_seen.get_mut() = false;
         self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
         unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };

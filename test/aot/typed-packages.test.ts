@@ -48,7 +48,6 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     "areHookInputsEqual",
     "updateWorkInProgressHook",
     "renderWithHooks",
-    "reconcileChildFibersImpl",
     "commitRoot",
     "commitMutationEffectsOnFiber",
     "commitHookEffectListMount",

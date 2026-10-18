@@ -258,3 +258,24 @@ typed, module level: 21.13 instructions (module 21.13), 1729 bytes
 untyped, function: 39.26 instructions (kernel 39.14, module 0.12), 801 bytes
 untyped, module level: 37.14 instructions (module 37.14), 1809 bytes"
 `;
+
+exports[`passes frozen plain objects that hold a typed object and an array to a typed function, which reads three fields 1`] = `
+"typed, function: 1804.85 instructions (the runtime 1576.02, stub ColdOperationValue 59, kernel 49.17, elsewhere 35.46, stub CallHostFunction1 27, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValue to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, module 0.12), 689 bytes
+typed, module level: 1773.71 instructions (the runtime 1576.02, module 50.15, elsewhere 35.46, stub CallHostFunction1 27, stub ColdOperationValueWithoutFPRs 27, stub NewObjectFromDescriptor3 23.08, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 17, stub ConvertByPlan 15, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3), 1772 bytes
+untyped, function: 458.73 instructions (the runtime 253.02, kernel 78.17, stub GetById 30, stub CallHostFunction1 27, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.34, module 0.12), 535 bytes
+untyped, module level: 415.59 instructions (the runtime 253.02, module 39.15, stub CallHostFunction1 27, stub Add 24, stub NewObjectFromDescriptor3 23.08, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 13, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, elsewhere 0.34), 1303 bytes"
+`;
+
+exports[`asks Object.prototype.toString for the tag of an instance of a class that extends another 1`] = `
+"typed, function: 43.23 instructions (kernel 43.11, module 0.12), 405 bytes
+typed, module level: 39.19 instructions (module 39.19), 2112 bytes
+untyped, function: 63.36 instructions (kernel 63.24, module 0.12), 788 bytes
+untyped, module level: 67.22 instructions (module 67.22), 2872 bytes"
+`;
+
+exports[`reads two fields of an instance of a class that a function taking any value has frozen 1`] = `
+"typed, function: 26.30 instructions (kernel 26.18, module 0.12), 601 bytes
+typed, module level: 25.22 instructions (module 25.22), 2295 bytes
+untyped, function: 94.38 instructions (kernel 64.26, stub Add 16, stub GetLengthByNamePreservingTwo 14, module 0.12), 684 bytes
+untyped, module level: 87.27 instructions (module 41.27, stub Add 16, stub GetTwoByName 16, stub GetLengthByNamePreservingTwo 14), 2212 bytes"
+`;

@@ -3551,10 +3551,7 @@ impl VirtualMachine {
         // be missed by the global scan — also scan this VM's own worker
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
-        fn is_bootstrap_flag(arg: &[u8]) -> bool {
-            let traced = arg.strip_prefix(b"--trace-e");
-            traced.is_some_and(|what| what.starts_with(b"vent") || what.starts_with(b"nv") || what.starts_with(b"xit")) || arg.starts_with(b"--stack-trace-limit")
-        }
+        use bun_core::is_bootstrap_flag;
         let arguments_of_the_program = if self.is_main_thread && self.standalone_module_graph.is_some() { self.argv.len() } else { 0 };
         let argv = bun_core::argv();
         let needs_pre_execution = argv.iter().take(argv.len().saturating_sub(arguments_of_the_program)).any(is_bootstrap_flag)
@@ -4293,6 +4290,7 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByTrimming")]
     pub(crate) extern "C" fn is_code_generation_disallowed_by_trimming_for_cpp() -> bool {
         bun_core::is_code_generation_disallowed_by_trimming()
+            && bun_core::code_generation_from_strings_by_flags() == bun_core::CodeGenerationFromStrings::Allowed
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).

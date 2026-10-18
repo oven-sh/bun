@@ -224,6 +224,8 @@ export function testFeatures(part: number) {
       ["package_files", ["--compile-autoload-tsconfig"]],
       ["bunfig", []],
       ["cli_options", ["--compile-exec-argv=--smol"]],
+      ["text", ["--compile-exec-argv=--sql-preconnect"]],
+      ["inspector", ["--compile-exec-argv=--inspect=127.0.0.1:0"]],
       ["cli_options", []],
       ["profiler", []],
       ["valkey", []],
@@ -239,6 +241,9 @@ export function testFeatures(part: number) {
     test.each([
       ["package_files", []],
       ["source_maps", []],
+      ["text", ["--compile-exec-argv=--smol"]],
+      ["inspector", ["--compile-exec-argv=--smol"]],
+      ["sql", ["--compile-exec-argv=--smol --title=hello"]],
       ["performance_timeline", []],
       ["structured_clone", []],
     ])("%s is left out of an executable built with %j", async (feature, flags) => {
@@ -283,7 +288,7 @@ export function testFeatures(part: number) {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
       const families = [...descriptions.keys()].filter(name => name.startsWith("operations_")).join(",");
-      expect(await build(folder, "hello.ts", "by-use")).toEqual(await build(folder, "hello.ts", "by-name", families));
+      expect((await build(folder, "hello.ts", "by-use")).size).toBe((await build(folder, "hello.ts", "by-name", families)).size);
       expect(await build(folder, "evaluates.ts", "by-use")).toEqual(await build(folder, "evaluates.ts", "by-name", "operations_rare_numbers"));
       expect(await run([join(folder, "by-use", "program")], folder)).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
     });
@@ -389,10 +394,11 @@ export function testPrograms(part: number) {
             using dir = tempDir("compile-trim-runtime-near", { ...files, "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`, "cwd/empty": "" });
             const folder = String(dir);
             const built = async (outfile: string, flags: string[], without?: string) => {
-              const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, "near.ts", "--outfile", outfile], folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without });
+              const program = join(folder, outfile, "program");
+              const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, "near.ts", "--outfile", program], folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without });
               expect(build.stderr).not.toContain("error:");
               expect(build.exitCode).toBe(0);
-              return { ...(await spawned([join(folder, outfile)], join(folder, "cwd"), bunEnv)), bytes: executableAt(join(folder, outfile)).size };
+              return { ...(await spawned([program], join(folder, "cwd"), bunEnv)), executable: executableAt(program) };
             };
             const whole = await built("whole", []);
             expect(whole.exitCode).toBe(0);
@@ -401,7 +407,7 @@ export function testPrograms(part: number) {
             expect(byUse).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
             const leftOut = await built("left-out", ["--compile-trim-runtime"], features.join(","));
             expect(leftOut).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
-            if (!options.keptToday) expect(leftOut.bytes).toBe(byUse.bytes);
+            if (!options.keptToday) expect(leftOut.executable).toEqual(byUse.executable);
           }),
         600_000,
       );

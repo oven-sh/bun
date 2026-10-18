@@ -423,6 +423,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--disallow-code-generation-from-strings <STR>?  In the standalone executable, eval() and new Function() throw an EvalError, as with Node.js's flag; \"strict\" refuses every way a string becomes code"
+        ),
+        parse_param!(
             "--bytecode-order <STR>...        With --compile --bytecode: lay the bytecode out by order file(s) a run of the executable wrote (BUN_BYTECODE_ORDER_OUT); comma-separated or repeated, most important first"
         ),
         parse_param!(
@@ -853,6 +856,14 @@ pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_ar
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+
+pub(crate) fn is_option_of_a_compiled_executable(name: &[u8]) -> bool {
+    match name {
+        [b'-', b'-', long @ ..] => AUTO_PARAMS.iter().any(|param| param.names.matches_long(long)),
+        [b'-', short] => AUTO_PARAMS.iter().any(|param| param.names.short == Some(*short)),
+        _ => false,
+    }
+}
 
 /// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
 fn disallow_code_generation_from_strings(value: &[u8]) {
@@ -2456,6 +2467,28 @@ fn parse_build_command_options(
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
     }
+
+    if let Some(value) = args.option(b"--disallow-code-generation-from-strings") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--disallow-code-generation-from-strings requires --compile", ());
+            Global::crash();
+        }
+        if bun_core::CodeGenerationFromStrings::from_flag_value(value).is_none() {
+            Output::err_generic(
+                "Invalid value for --disallow-code-generation-from-strings: \"{}\". Must be \"strict\", or no value\n",
+                format_args!("{}", BStr::new(value)),
+            );
+            Global::exit(1);
+        }
+        let before_value: &[u8] = if value.is_empty() { b"" } else { b"=" };
+        let given = ctx.bundler_options.compile_exec_argv.take();
+        let before_given: &[u8] = if given.is_some() { b" " } else { b"" };
+        ctx.bundler_options.compile_exec_argv =
+            Some([b"--disallow-code-generation-from-strings", before_value, value, before_given, given.as_deref().unwrap_or_default()].concat().into());
+    }
+    bun_core::set_code_generation_from_strings_in_built_executable(bun_core::CodeGenerationFromStrings::in_exec_argv(
+        ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or_default(),
+    ));
 
     for order_files in args.options(b"--bytecode-order") {
         if !ctx.bundler_options.compile || !ctx.bundler_options.bytecode {

@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`passes plain objects, made by a function that the call does not know, to a typed function that reads one field and passes them on to another, which reads three; neither is inlined 1`] = `
+"typed, function: 366.39 instructions (stub ConvertByPlan 150, stub CastInRegister 60, kernel 46.20, read 28, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.16, stub CastInRegister with arguments 4, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34, module 0.12), 420 bytes
+typed, module level: 364.22 instructions (stub ConvertByPlan 150, stub CastInRegister 60, module 44.15, read 28, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.16, stub CastInRegister with arguments 4, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34), 1513 bytes
+untyped, function: 211.27 instructions (kernel 50.21, read 38, stub Add 36, stub NewObjectFromDescriptor3 23.08, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 20, stub GetLengthByNamePreservingTwo 13, stub CallValue3 12, the runtime 7.02, growToo 7, grow 4.50, elsewhere 0.34, module 0.12), 441 bytes
+untyped, module level: 206.25 instructions (module 45.18, read 38, stub Add 36, stub NewObjectFromDescriptor3 23.08, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 20, stub GetLengthByNamePreservingTwo 13, stub CallValue3 12, the runtime 7.16, growToo 7, grow 4.50, elsewhere 0.34), 1419 bytes"
+`;
+
 exports[`passes plain objects, made by a function that the call does not know, to a typed function, which reads three fields 1`] = `
 "typed, function: 162.26 instructions (kernel 84.20, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.02, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34, module 0.12), 735 bytes
 typed, module level: 160.23 instructions (module 82.15, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.16, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34), 1825 bytes

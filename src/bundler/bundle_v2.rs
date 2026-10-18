@@ -9771,8 +9771,9 @@ pub mod bv2_impl {
                         && !this.graph.input_files.items_flags()[result_source_index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                     {
                         let contents: &[u8] = &this.graph.input_files.items_source()[result_source_index].contents;
-                        // SAFETY: the graph keeps a source's contents in place, unchanged, until the bundle is dropped. Only the early
-                        // parse reads what is sent, and it is joined before `type_check` returns.
+                        // SAFETY: the graph keeps a source's contents in place, unchanged, until the bundle is torn down. Only the early
+                        // analysis reads what is sent. It has read for the last time when it answers, and the drop of an `EarlyAnalysis`
+                        // that was not asked waits for its thread to end: one of the two comes before the teardown.
                         let contents: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(contents) };
                         let _ = early_source_paths.send((source_path_text.to_vec(), Some(contents)));
                     }

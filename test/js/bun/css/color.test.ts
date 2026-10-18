@@ -574,6 +574,13 @@ describe("input forms", () => {
     expect(color("#gg0000", "hex")).toBeNull();
   });
 
+  // atan2(96px, 10px) is 84.05deg. A round() over two units is not evaluated, so atan2() has
+  // no number to use and the color cannot be converted.
+  test("a hue from atan2() of lengths in different units", () => {
+    expect(color("hsl(atan2(1in, 10px) 50% 50%)", "css")).toBe("#8cbf40");
+    expect(color("hsl(atan2(round(1in, 10px), 1px) 50% 50%)", "css")).toBeNull();
+  });
+
   test("alpha survives the object and array forms", () => {
     expect(color("#f00", "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
     expect(color("#f00", "[rgba]")).toEqual([255, 0, 0, 255]);

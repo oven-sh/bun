@@ -681,20 +681,11 @@ impl protocol::TryMap for LengthValue {
 impl protocol::TryOp for LengthValue {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        // `LengthValue::try_op` takes a 2-arg closure (ctx folded
-        // in by caller); the `protocol::TryOp` shape passes `C` by-value with
-        // no `Copy` bound, so we can't capture `ctx` in an `Fn` closure that
-        // might be called more than once. Inline the same-unit + px-convert
-        // dispatch here so `f` is invoked exactly once on the chosen path.
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));
         }
-        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
-        // for behavioral compatibility.
-        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
-            return Some(LengthValue::Px(f(ctx, a, b)));
-        }
+        // A px fold can land a whole step off: `to_px` rounds, and round()/rem()/mod() jump.
         None
     }
 }
@@ -704,9 +695,7 @@ impl protocol::TryOpTo for LengthValue {
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             return Some(f(ctx, self.value(), rhs.value()));
         }
-        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
-        // for behavioral compatibility.
-        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
+        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
             return Some(f(ctx, a, b));
         }
         None

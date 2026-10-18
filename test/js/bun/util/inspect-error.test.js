@@ -517,7 +517,9 @@ test("lines of the message that look like stack frames are not printed as stack 
     const printed = Bun.inspect(err);
     return printed
       .slice(printed.lastIndexOf(name + ": "))
-      .replaceAll(/[^\s(]*inspect-error\.test\.js:\d+:\d+/g, "this file");
+      .replaceAll("\\", "/")
+      .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
+      .replaceAll(/\[dir\]\/inspect-error\.test\.js:\d+:\d+/g, "this file");
   };
 
   const err = new Error(message);

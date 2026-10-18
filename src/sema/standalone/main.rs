@@ -56,6 +56,8 @@ fn list_loaded(program: &bun_sema::check::Program) {
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
 fn main() {
+    // Before the first thread and before `each` forks: a thread takes its `Output` streams from the process.
+    bun_core::output::stdio::init();
     // The main thread parses tsconfig.json. Its stack is 8 MB on macOS and Linux.
     bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();

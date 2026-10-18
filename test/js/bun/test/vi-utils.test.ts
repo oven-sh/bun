@@ -677,7 +677,13 @@ describe.concurrent("vi.setConfig", () => {
           failed: results(stderr).filter(line => !line.startsWith("(pass)")),
           passed: results(stderr).filter(line => line.startsWith("(pass)")).length,
           exitCode,
-        }).toEqual({ seen: [calls, "started: 2"], failed: [], passed: (1 + 5 + 5) * runsOfEachFile, exitCode: 1 });
+        }).toEqual({
+          seen: [calls, "started: 2"],
+          // After more than 20 passes, what failed is listed again at the end.
+          failed: runsOfEachFile === 2 ? ["(fail) c-does-not-load.test.ts"] : [],
+          passed: (1 + 5 + 5) * runsOfEachFile,
+          exitCode: 1,
+        });
       });
     },
   );

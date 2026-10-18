@@ -462,14 +462,12 @@ fn hashed_lists_its_entries_in_insertion_order() {
     hashed.replace(spread_word(keys[6]), keys[6], 77);
     assert_eq!(hashed.place(spread_word(keys[6]), &keys[6]), Some(6));
     assert_eq!(hashed.get(spread_word(5000), &5000), None);
-    let listed = hashed.take();
-    assert!(hashed.is_empty());
-    assert_eq!(listed.len(), 1000);
-    for (place, &(key, value)) in listed.iter().enumerate() {
+    assert_eq!(hashed.len(), 1000);
+    for (place, &key) in keys.iter().enumerate() {
         let expected = if place == 6 { 77 } else { place as u32 };
-        assert_eq!((key, value), (keys[place], expected));
+        assert_eq!(hashed.entry(place as u32), Some(&(key, expected)));
     }
-    assert_eq!(hashed.get(spread_word(keys[5]), &keys[5]), None);
+    assert_eq!(hashed.entry(1000), None);
 }
 
 #[test]

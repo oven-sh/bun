@@ -2925,21 +2925,6 @@ impl Host for WithOutputs<'_> {
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.with_helpers(helpers, count, work);
     }
-    fn parallel_while_others_wait(
-        &self,
-        blocked: usize,
-        count: usize,
-        work: &(dyn Fn(usize) + Sync),
-    ) {
-        match self.built_now {
-            // Each project has a thread of its own and as many helpers as this one.
-            Some(built_now) => {
-                let helpers = (self.helpers(built_now) + 1) * (blocked + 1) - 1;
-                self.disk.with_helpers(helpers, count, work);
-            }
-            None => self.disk.parallel(count, work),
-        }
-    }
     fn loaded(&self) {
         // The threads go on to parse the files of the next project.
         if (self.built_now).is_none_or(|it| it.load(Ordering::Relaxed) < 2) {

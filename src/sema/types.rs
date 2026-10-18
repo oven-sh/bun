@@ -2121,10 +2121,6 @@ const KINDS: [Kind; 5] = [
 struct Bits(Vec<u64>);
 
 impl Bits {
-    fn with_len(len: usize) -> Bits {
-        Bits(vec![0; len.div_ceil(64)])
-    }
-
     #[inline]
     fn has(&self, index: usize) -> bool {
         (self.0.get(index / 64)).is_some_and(|word| word >> (index % 64) & 1 != 0)
@@ -4188,13 +4184,6 @@ pub trait Follow {
         self.visit(&mut visitor);
         visitor.0
     }
-
-    /// Marks the task-local records that it references. `OwnStore::finish` adds the records those
-    /// reference.
-    #[inline]
-    fn mark(&self, marks: &mut Marks) {
-        self.visit(marks);
-    }
 }
 
 /// For types that reference nothing: `visit` reports the whole value as data to hash.
@@ -4940,54 +4929,6 @@ impl Visitor for MentionsOwn {
     #[inline]
     fn ty(&mut self, id: TypeId) {
         self.0 |= id.is_local();
-    }
-    #[inline]
-    fn file(&mut self, _: FileId) {}
-    #[inline]
-    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
-}
-
-// ───────────────────────────── the end of a task ─────────────────────────────
-
-/// Which task-local records of one task are published. The entries that the task publishes are the
-/// roots: `Follow::mark`.
-pub struct Marks([Bits; 5]);
-
-impl Marks {
-    pub fn new(own: &OwnStore) -> Marks {
-        Marks(own.lengths().map(Bits::with_len))
-    }
-
-    #[inline]
-    fn add(&mut self, kind: Kind, id: u32) {
-        if id & LOCAL != 0 {
-            self.0[kind as usize].set((id & !LOCAL) as usize);
-        }
-    }
-}
-
-impl Visitor for Marks {
-    #[inline]
-    fn atom(&mut self, atom: Atom) {
-        if atom.is_own() {
-            self.add(Kind::Atom, atom.0);
-        }
-    }
-    #[inline]
-    fn components(&mut self, id: ComponentsId) {
-        self.add(Kind::Components, id.0);
-    }
-    #[inline]
-    fn mapper(&mut self, id: MapperId) {
-        self.add(Kind::Mapper, id.0);
-    }
-    #[inline]
-    fn sig(&mut self, id: SigId) {
-        self.add(Kind::Sig, id.0);
-    }
-    #[inline]
-    fn ty(&mut self, id: TypeId) {
-        self.add(Kind::Type, id.0);
     }
     #[inline]
     fn file(&mut self, _: FileId) {}

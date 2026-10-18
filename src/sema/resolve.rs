@@ -226,15 +226,6 @@ pub trait Host: Sync {
             work(index);
         }
     }
-    /// `parallel` for a program that `blocked` other programs are waiting for. It may use their threads too.
-    fn parallel_while_others_wait(
-        &self,
-        _blocked: usize,
-        count: usize,
-        work: &(dyn Fn(usize) + Sync),
-    ) {
-        self.parallel(count, work);
-    }
     /// A program is loaded, and `parse` is not called again before it is checked: what the threads
     /// retain for the next file can be freed. Outside `parallel`.
     fn loaded(&self) {}

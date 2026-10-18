@@ -298,9 +298,6 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
     }
 }
 
-/// `in_parallel(count, work)` runs `work(i)` exactly once for every `i` below `count`, on the pool, and returns when all have returned.
-pub type InParallel<'a> = &'a dyn Fn(usize, &(dyn Fn(usize) + Sync));
-
 const MAP_SHARDS: usize = 256;
 
 /// Mixes a hash into all of its bits: the top bits select the shard, the low half is the tag, which

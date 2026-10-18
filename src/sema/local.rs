@@ -272,12 +272,6 @@ impl<K: Eq, V> Hashed<K, V> {
     pub fn entry(&self, place: u32) -> Option<&(K, V)> {
         self.entries.get(place as usize)
     }
-
-    /// The entries in insertion order. It is empty afterwards.
-    pub fn take(&mut self) -> Vec<(K, V)> {
-        self.found.clear();
-        std::mem::take(&mut self.entries)
-    }
 }
 
 /// The hash of a one-word key. `Found` uses the low half, so that half has to depend on both halves

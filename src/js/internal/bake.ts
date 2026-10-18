@@ -221,7 +221,11 @@ async function loadAppServer(
 
 /** How many times `start()` ran: once, then once more for each reload. */
 let runs = 0;
-/** Whether this process is `bun bake` started again after a change: under `--check`, or of `bake.config.ts`. */
+/**
+ * Whether this process is a restart: a new process that a change started, not the first start.
+ * Under `--check` every change restarts; otherwise only a change to `bake.config.ts` does. An error
+ * at the start of a restart waits for a fix instead of exiting, since the session goes on.
+ */
 let restarted = false;
 
 async function start() {

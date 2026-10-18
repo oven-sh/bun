@@ -15,12 +15,13 @@ mod range;
 mod sort_package_json;
 mod writer;
 
-pub use sort_package_json::{SortPackageJson, sort_package_json};
+pub use sort_package_json::{Plugin as PackageJsonPlugin, SortPackageJson};
 
 use crate::options::{Expand, Flavor, IndentStyle, QuoteProperties, QuoteStyle};
 use crate::syntax_error::{Message, SyntaxError};
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
+use bun_lint::paths::file_name;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Parser {
@@ -49,7 +50,7 @@ impl Parser {
 
 /// The parser that Prettier infers from the name of a file. `None` if it is not JSON.
 pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
-    let basename = bun_lint::paths::file_name(path).to_ascii_lowercase();
+    let basename = file_name(path).to_ascii_lowercase();
     let basename = &basename[..];
     if matches!(
         basename,
@@ -296,6 +297,14 @@ fn format_normalized(
         ..
     } = scratch;
     parser::parse(text, config, tree)?;
+    // With this parser a comment is a syntax error, so there is none that would have to move with a member.
+    if config.is_stringify()
+        && tree.comments.is_empty()
+        && let Some(how) = &options.sort_package_json
+        && (options.filepath.as_deref()).is_some_and(|it| file_name(it) == b"package.json")
+    {
+        sort_package_json::sort(text, tree, how);
+    }
     // The writer does not mark a line break in a string. See `FormatOptions::is_in_markdown`.
     let has_marks = options.is_in_markdown && bun_core::strings::contains(text, b"\\\n");
     if tree.comments.is_empty() && !has_marks {

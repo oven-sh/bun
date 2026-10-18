@@ -37,7 +37,7 @@ Bun.serve({
 
 ---
 
-It's common to read cookies/headers from the incoming request to identify the connecting client.
+It's common to read cookies/headers from the incoming request to identify the connecting client. If you authenticate with a cookie, [check the `Origin` header](/runtime/http/websockets#contextual-data) before calling `server.upgrade()`.
 
 ```ts server.ts icon="/icons/typescript.svg"
 type WebSocketData = {

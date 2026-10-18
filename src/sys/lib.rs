@@ -7685,7 +7685,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     #[cfg(target_os = "macos")]
     {
         out.0.fill(0);
-        fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
+        if let Err(mut err) = fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize) {
+            // `F_GETPATH` reports a path longer than `MAXPATHLEN` as `ENOSPC`.
+            if err.get_errno() == E::ENOSPC {
+                err.errno = E::ENAMETOOLONG as _;
+            }
+            return Err(err);
+        }
         // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
         let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
         return Ok(&mut out.0[..len]);

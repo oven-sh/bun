@@ -395,7 +395,7 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
       env: {
         ...env,
         npm_config_registry: registry.url,
-        PATH: `${decoyBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+        PATH: `${decoyBinDir}${delimiter}${env.PATH}`,
       },
     });
   });
@@ -682,7 +682,7 @@ it.concurrent("should pass --version to the package if specified", async () => {
       ...env,
       npm_config_registry: registry.url,
       // unversioned, so an esbuild already on PATH would be run instead of the fixture
-      PATH: pathWithout("esbuild", env.PATH ?? process.env.PATH),
+      PATH: pathWithout("esbuild", env.PATH),
     },
   });
 
@@ -772,8 +772,7 @@ describe("bunx --no-install", () => {
       // An unversioned `bunx <pkg>` runs a matching bin from PATH before it looks
       // at its cache, so a tsc/eslint/http-server installed on this machine
       // would satisfy both runs without the cache ever being consulted.
-      // (bunEnv spreads process.env, whose key is `Path` on Windows.)
-      ctx.env.PATH = pathWithout(bin, ctx.env.PATH ?? process.env.PATH);
+      ctx.env.PATH = pathWithout(bin, ctx.env.PATH);
 
       // not cached
       {
@@ -850,7 +849,7 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
     env: {
       ...env,
       npm_config_registry: registry.url,
-      PATH: `${x_dir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+      PATH: `${x_dir}${delimiter}${env.PATH}`,
     },
   });
 
@@ -1277,7 +1276,7 @@ describe("scoped packages should not match unrelated system binaries", () => {
       env: {
         ...env,
         npm_config_registry: `http://localhost:${port}/`,
-        PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+        PATH: `${fakeBinDir}${delimiter}${env.PATH}`,
       },
     });
 
@@ -1341,7 +1340,7 @@ describe("scoped packages should not match unrelated system binaries", () => {
       stderr: "pipe",
       env: {
         ...env,
-        PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+        PATH: `${fakeBinDir}${delimiter}${env.PATH}`,
       },
     });
 
@@ -1447,7 +1446,7 @@ describe("scoped packages should not match unrelated system binaries", () => {
     const runEnv = {
       ...env,
       npm_config_registry: `http://localhost:${port}/`,
-      PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+      PATH: `${fakeBinDir}${delimiter}${env.PATH}`,
     };
 
     // First run: installs into the bunx cache (no local node_modules).
@@ -2499,7 +2498,7 @@ describe("a package in node_modules", () => {
       using box = sandbox(registry, { elsewhere: {} });
       const elsewhere = join(box.dir, "elsewhere");
       addLocalPackage(where === "$PATH" ? elsewhere : box.cwd, "other", "1.0.0", "lint");
-      const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH ?? process.env.PATH].join(delimiter);
+      const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH].join(delimiter);
 
       expect(await box.run(["-p", "mypkg", "lint"], { env: { ...box.env, PATH } })).toMatchObject({
         stdout: "lint 1.0.0\n",
@@ -2520,7 +2519,7 @@ describe("a package in node_modules", () => {
         "caller",
         `console.log("caller got " + require("child_process").execSync("lint", { encoding: "utf8" }).trim());`,
       );
-      const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH ?? process.env.PATH].join(delimiter);
+      const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH].join(delimiter);
       const env = { ...box.env, PATH };
 
       const ran = { stdout: "caller got lint 1.0.0\n", exitCode: 0 };

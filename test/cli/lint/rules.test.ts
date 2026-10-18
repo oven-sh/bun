@@ -1,7 +1,9 @@
 // Tests for rule behavior that the recorded cases from the rules' own test suites can't cover, because it takes a
 // project or the command line.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { readdirSync, statSync, utimesSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
@@ -218,6 +220,47 @@ describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
     ]);
   });
 
+  // To read a directory takes as long as it has entries, and a project can be in one with tens of thousands, like `$TMPDIR`.
+  describe.skipIf(!isLinux)("the directory above a project is not read", () => {
+    const files: Record<string, string> = {
+      "above/project/bunfig.toml": rules("default"),
+      "above/project/package.json": `{ "name": "project", "type": "module" }`,
+      "above/project/tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [] }, "include": ["src"] }`,
+    };
+    // Enough for every thread to look for packages and configuration files all the way up.
+    for (let i = 0; i < 40; i++) {
+      files[`above/project/src/a${i}.ts`] =
+        `import b from "./b${i}";\nimport c from "not-installed-${i % 5}";\nexport const a = [b, c];\n`;
+      files[`above/project/src/b${i}.ts`] = "export const b = 1;\n";
+    }
+    /** Sets the time of the last access back. Reading the directory moves it, if it is before the last change. */
+    const forget = (directory: string) => {
+      utimesSync(directory, new Date(Date.now() - 3 * 86_400_000), statSync(directory).mtime);
+      return statSync(directory).atimeMs;
+    };
+
+    test.each(["lint -f unix .", "lint -f unix --type-aware .", "check"])("by bun %s", async command => {
+      using dir = tempDir("bun-lint-rules", files);
+      const above = join(String(dir), "above");
+      let before = forget(above);
+      readdirSync(above);
+      // Mounted with `noatime`: nothing shows whether it is read.
+      if (statSync(above).atimeMs === before) return;
+      before = forget(above);
+      await using proc = spawn({
+        cmd: [bunExe(), ...command.split(" "), "--threads", "8"],
+        env,
+        cwd: join(above, "project"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const found = (stdout + stderr).split("\n").filter(it => /import\/default|TS2613/.test(it)).length;
+      expect({ found, exitCode }).toEqual({ found: 40, exitCode: 1 });
+      expect(statSync(above).atimeMs).toBe(before);
+    });
+  });
+
   test("`bun` and `bun:test` are builtin modules for import/order", async () => {
     const files = (code: string) => ({ "bunfig.toml": rules("order"), "a.ts": code });
     const first = `import { serve } from "bun";\nimport fs from "node:fs";\nimport { test } from "bun:test";\nexport default [serve, fs, test];\n`;
@@ -251,4 +294,29 @@ describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
     );
     expect(reports).toEqual(["1:8 import/no-unresolved Unable to resolve path to module './user'."]);
   });
+});
+
+// Most of what is looked for to resolve an import is not there: `./b.tsx`, `./b.d.ts`, `./b/package.json`.
+test("to find that a directory lacks a name does not take longer the more it has", async () => {
+  const count = 6_000;
+  async function cpu(pathOf: (i: number) => string) {
+    // oxlint looks for `.js` and others before `.ts`.
+    const files: Record<string, string> = {
+      ".oxlintrc.json": `{ "plugins": ["import"], "categories": { "correctness": "off" }, "rules": { "import/default": "error" } }`,
+    };
+    for (let i = 0; i < count; i++) {
+      const other = relative(dirname(pathOf(i)), pathOf((i * 7 + 3) % count));
+      files[`${pathOf(i)}.ts`] = `import a from "./${other.replaceAll("\\", "/")}";\nexport default a;\n`;
+    }
+    using dir = tempDir("bun-lint-rules", files);
+    await using proc = spawn({ cmd: [bunExe(), "lint", "."], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ output: (stdout + stderr).trim().replace(/ \[.*/, ""), exitCode }).toEqual({
+      output: `✓ No problems in ${count} files`,
+      exitCode: 0,
+    });
+    return Number(proc.resourceUsage()!.cpuTime.user);
+  }
+  const [together, apart] = [await cpu(i => `module${i}`), await cpu(i => `${i % 50}/module${i}`)];
+  expect(together / apart).toBeLessThan(3);
 });

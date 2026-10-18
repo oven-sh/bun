@@ -687,7 +687,6 @@ pub(crate) mod js_bundler {
                         min: 0,
                         max: i128::from(u32::MAX),
                         field_name: b"bytecodeDepth",
-                        always_allow_zero: false,
                     },
                 )?;
             }

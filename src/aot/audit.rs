@@ -1674,6 +1674,7 @@ pub fn fragment_program(fragment: crate::fragment::Fragment, shown_from: &[u8], 
                 blocks: Vec::new(),
                 values: Vec::new(),
                 spans: Vec::new(),
+                accesses_by_name: Vec::new(),
             })
         })
         .collect();

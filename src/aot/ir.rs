@@ -1,5 +1,7 @@
 use crate::declared::DeclaredTable;
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
+use bun_sema::check::ObjectOrigin;
+use bun_sema::hir::{ExprId, PatId};
 use std::ptr::NonNull;
 
 pub use crate::builtins_generated::Operation;
@@ -813,6 +815,14 @@ pub struct Span {
     pub step: i32,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct AccessByName {
+    pub value: V,
+    pub receiver: ExprId,
+    pub pattern: PatId,
+    pub origin: ObjectOrigin,
+}
+
 pub struct Func {
     pub name: StrId,
     pub module: ModuleId,
@@ -830,6 +840,7 @@ pub struct Func {
     pub blocks: Vec<Block>,
     pub values: Vec<Value>,
     pub spans: Vec<Span>,
+    pub accesses_by_name: Vec<AccessByName>,
 }
 
 impl Func {

@@ -1049,7 +1049,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn loop_variable_iterable(&self, file: FileId, d: VarDeclId) -> ExprId {
+    pub(super) fn loop_variable_iterable(&self, file: FileId, d: VarDeclId) -> ExprId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let left = bound.var_stmt[d.idx()];
         if left.is_none() {
@@ -4759,7 +4759,7 @@ impl<'p, 's> Checker<'p, 's> {
             Ok(birth) if self.has_tainted_part(birth.born_as) => "its type also describes data from outside the type system",
             Ok(birth) if !self.parts(birth.born_as).to_vec().into_iter().any(|part| birth.stored.iter().all(|stored| self.type_of_property_of_type(part, stored.0).is_some())) => "its type does not declare every property that is stored to it",
             Ok(birth) if !self.parts(birth.born_as).to_vec().into_iter().any(|part| self.fits_what_is_stored(file, part, &birth.stored)) => "a value stored to it is not known to fit the declared type of its property",
-            Ok(_) => "its type names no one record with a layout",
+            Ok(_) => return None,
         })
     }
 

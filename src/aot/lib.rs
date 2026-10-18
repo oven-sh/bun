@@ -249,7 +249,7 @@ impl<'a> Translation<'a> {
     }
 
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) {
-        program.rule_scopes.get_or_init(|| rules::Scopes::new(&self.rules, program.files, &self.constants.root).collecting_everything(self.explain.costs || self.explain.costs_json));
+        program.rule_scopes.get_or_init(|| rules::Scopes::new(&self.rules, program.files, &self.constants.root).collecting_everything(self.explain.causes || self.explain.causes_json));
         let mut partially_parsed = program.partially_parsed_files();
         partially_parsed.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
         if let Some(resolved) = self.constants.resolved.as_ref().filter(|_| !partially_parsed.is_empty()) {

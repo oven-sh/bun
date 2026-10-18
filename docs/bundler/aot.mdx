@@ -72,7 +72,7 @@ console.log(`Listening on ${server.url}`);
 ```txt
  [282ms]  bundle  1 modules
  [100ms] compile  server
-aot: 100.0% of reads typed, 0 of 1 type open, 0 classes without a layout, 0 packages and 0 files untyped
+aot: 100% typed
 ```
 
 Run it like any other program.
@@ -97,11 +97,11 @@ curl localhost:3000/todos/1
 
 ### The last line of the build
 
-The line that starts with `aot:` says how much of your program the compiler has types for. The percentage counts the property reads that go through your own classes, interfaces and object types. A read is typed if the compiler knows the layout of the object that it reads from.
+The line that starts with `aot:` says how much of your program the compiler could compile with your types. The percentage counts property accesses: reads, writes and method calls on objects of your own classes, interfaces and object types. An access is typed if the compiler knows the layout of the object.
 
-Reads of what Bun and JavaScript provide, such as `req.params`, `server.url` and `console.log`, are not counted. You cannot change them.
+What Bun and JavaScript provide, such as `req.params`, `server.url` and `console.log`, is not counted. You cannot change it.
 
-When something is not typed, the line ends in `(--aot-explain lists them)`. `--aot-explain` lists the lines of your program that cause it, the most expensive first. [See what the compiler did](/bundler/aot-reports) runs it on an example.
+Under 95%, a second line names the flag that says why. `bun compile --explain` lists what keeps the compiler from using your types, the most expensive cause first, with a fix for each. [Get more of your program typed](/bundler/aot-explain) shows how to work through it.
 
 ### Type errors stop the build
 
@@ -183,22 +183,22 @@ Servers start faster and use less memory. Requests per second depend on how much
 
 Eight small servers, Bun 1.4.3 against the same application built with `--aot`:
 
-|                  | Requests per second | Peak memory (RSS) | Start to first response |
-| ---------------- | ------------------: | ----------------: | ----------------------: |
-| `Bun.serve`      |               +7.7% |        42 → 33 MB |              16 → 10 ms |
-| `node:http`      |               +3.0% |        66 → 45 MB |              32 → 13 ms |
-| Hono             |               +1.1% |        48 → 34 MB |              19 → 11 ms |
-| Elysia           |               -3.1% |        48 → 40 MB |              36 → 13 ms |
-| TanStack Start   |               -4.4% |        62 → 40 MB |              44 → 13 ms |
-| Express          |              -12.2% |        82 → 53 MB |              71 → 21 ms |
-| Fastify          |              -18.1% |        82 → 52 MB |              79 → 18 ms |
-| Effect           |              -22.3% |        75 → 46 MB |             105 → 32 ms |
+|                  | Requests per second | Peak memory (RSS) | Start to first response | CPU time per request |
+| ---------------- | ------------------: | ----------------: | ----------------------: | -------------------: |
+| `Bun.serve`      |               +5.5% |        42 → 32 MB |              16 → 10 ms |                -3.1% |
+| Hono             |               +2.5% |        48 → 34 MB |              19 → 11 ms |                -0.2% |
+| `node:http`      |               +1.3% |        66 → 45 MB |              35 → 13 ms |                +3.2% |
+| Elysia           |               -2.9% |        48 → 41 MB |              37 → 14 ms |                +4.8% |
+| TanStack Start   |               -3.2% |        61 → 42 MB |              46 → 14 ms |                +5.9% |
+| Express          |               -5.2% |        83 → 54 MB |              71 → 22 ms |               +12.9% |
+| Fastify          |              -12.3% |        82 → 53 MB |              82 → 19 ms |               +19.3% |
+| Effect           |              -16.4% |        75 → 47 MB |             107 → 32 ms |               +21.1% |
 
-One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, among them plain text, JSON, path parameters, a validated `POST`, async and streaming. Requests per second are ±0.3 to ±0.6 points. The time to the first response is a median.
+One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, among them plain text, JSON, path parameters, a validated `POST`, async and streaming. These are two whole runs on two machines. Each application was built with `--aot` five times, with its machine code laid out in a different order each time, and the figure is the mean of the five. Requests per second are ±0.3 to ±0.8 points. The time to the first response is a median.
 
 - **Startup.** Every server answers its first request sooner. There's no source to parse and no bytecode to generate.
-- **Memory.** Peak memory is 17% to 39% lower. The process holds no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
-- **Throughput.** Express, Fastify and Effect are slower today. Most of their code is untyped JavaScript from npm that runs once per request. A JIT learns the types of that code by watching it run. The compiler can't, so each property access is a lookup by name.
+- **Memory.** Peak memory is 16% to 38% lower. The process holds no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
+- **Throughput.** Five of the eight are slower today, Express, Fastify and Effect by the most. Most of their code is untyped JavaScript from npm that runs once per request. A JIT learns the types of that code by watching it run. The compiler can't, so each property access is a lookup by name.
 
 Typed code does better. Two programs written in strict TypeScript:
 
@@ -213,7 +213,7 @@ The same issue tracker written in Go handles 5,300 requests per second, and in R
 
 Two things get worse:
 
-- **The executable is larger.** It holds a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The todo server at the top of this page grows by 0.4 MB. A large application grows by tens of megabytes. [`--compile-trim-runtime`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach: that server is about 20 MB with it.
+- **The executable is larger.** It holds a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The todo server at the top of this page grows by 0.4 MB. A large application grows by tens of megabytes. [`bun compile --trim`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach: that server is under 20 MB with it.
 - **The build takes longer.** Bun type checks the whole program and compiles every function in it.
 
 ## Compare on your application
@@ -262,6 +262,7 @@ Use routes that do what your application does in production. A route that return
 ## Read next
 
 - [How `--aot` uses your types](/bundler/aot-types): what a type buys, and what happens where `any`, `as` and `JSON.parse` meet typed code.
+- [Get more of your program typed](/bundler/aot-explain): what the percentage at the end of a build counts, and how to raise it.
 - [See what the compiler did](/bundler/aot-reports): every report, run on one small program.
 - [Compatibility with `--aot`](/bundler/aot-compatibility): what works the same, what differs on purpose, what isn't available.
 - [Adopting `--aot`](/bundler/aot-adoption): find what changes in your program before you ship it.

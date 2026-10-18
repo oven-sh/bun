@@ -24,7 +24,7 @@ ${body}
 `;
   using dir = tempDir("aot-freezing-what-object-create-made", { "tsconfig.json": tsconfig, "main.ts": main });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--aot-explain=costs-json", "main.ts"],
+    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--aot-warn=reshaped-layout", "--aot-explain=rules-json", "main.ts"],
     cwd: String(dir),
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",
@@ -33,7 +33,7 @@ ${body}
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const rows: { rule: string; message: string }[] = stdout
     .split("\n")
-    .filter(line => line.startsWith('{"rank"'))
+    .filter(line => line.startsWith('{"rule"'))
     .map(line => JSON.parse(line));
   return { exitCode, errors: (stdout + stderr).split("\n").filter(line => /error TS|panic/.test(line)), freezesAnything: rows.some(row => row.message.includes("can freeze any object of the program")) };
 }

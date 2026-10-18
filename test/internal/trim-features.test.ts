@@ -39,6 +39,20 @@ test("a line that says what else stops working stands for a feature that does ne
   expect(idle).toEqual([]);
 });
 
+test("what is undefined or throws once a name is removed is a way into one of its features that the link knows", () => {
+  const owners: Record<string, string> = { Bun: "Bun", Intl: "Intl", process: "process", console: "console" };
+  const known = new Set(doors.split("\n").flatMap(line => (line.startsWith("when ") ? [line.split(" ").slice(1).join(" ")] : [])));
+  const unknown = all.names.flatMap(each =>
+    [...each.absent, ...each.throws].filter(path => {
+      const parts = path.split(".");
+      const key = parts.at(-1)!;
+      const kinds = parts.length === 1 ? [`global ${key}`] : parts.includes("prototype") ? [`property ${key}`] : owners[parts[0]!] ? [`${owners[parts[0]!]} ${key}`] : [`global ${parts[0]}`];
+      return !each.features.some(feature => kinds.some(kind => known.has(`${feature} ${kind}`)));
+    }),
+  );
+  expect(unknown).toEqual([]);
+});
+
 test("every vendored library stands in a library line, with the version that is built", () => {
   const plain = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
   const folder = join(dirname(doorsPath), "deps");

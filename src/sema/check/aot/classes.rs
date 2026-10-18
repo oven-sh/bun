@@ -10,6 +10,7 @@ use crate::program::{Builtin, FileId, LoadedBy, Sym};
 use crate::types::{Origin, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use super::OnceLock;
+use super::findings::ObjectOrigin;
 use super::flows::Place;
 use super::storage::Primitive;
 use crate::aot_rules::{Rule, Scopes};
@@ -2636,6 +2637,40 @@ impl<'p, 's> Checker<'p, 's> {
     fn class_display_name(&self, (file, class): (FileId, ClassId)) -> Vec<u8> {
         let c = &self.hir(file)[class];
         if c.name.is_some() { self.atoms().bytes(c.name).to_vec() } else { b"(anonymous)".to_vec() }
+    }
+
+    pub fn origin_of_untyped_base(&mut self, class: (FileId, ClassId)) -> ObjectOrigin {
+        const MAX_BASE_CLASSES_FOLLOWED: usize = 64;
+        let mut class = class;
+        for _ in 0..MAX_BASE_CLASSES_FOLLOWED {
+            match self.resolve_superclass(class.0, class.1) {
+                Superclass::Known(base) if self.is_untyped_file(base.0) => return self.origin_of_declarations_in(base.0),
+                Superclass::Known(base) => class = base,
+                Superclass::None => break,
+                Superclass::Unknown => {
+                    if self.bound(class.0).class_symbol[class.1.idx()].is_none() {
+                        break;
+                    }
+                    let bases = self.base_types(self.class_sym(class.0, class.1)).into_vec();
+                    let declared_elsewhere = bases.into_iter().filter_map(|base| self.type_declaration_site(base)).find(|at| self.hir(at.file).kind == FileKind::Declaration || self.is_untyped_file(at.file));
+                    return declared_elsewhere.map_or(ObjectOrigin::Program, |at| self.origin_of_declarations_in(at.file));
+                }
+            }
+        }
+        ObjectOrigin::Program
+    }
+
+    pub fn find_untyped_file_declaring_base(&mut self, class: (FileId, ClassId)) -> Option<FileId> {
+        const MAX_BASE_CLASSES_FOLLOWED: usize = 64;
+        let mut class = class;
+        for _ in 0..MAX_BASE_CLASSES_FOLLOWED {
+            match self.resolve_superclass(class.0, class.1) {
+                Superclass::Known(base) if self.is_untyped_file(base.0) => return Some(base.0),
+                Superclass::Known(base) => class = base,
+                _ => break,
+            }
+        }
+        None
     }
 
     pub fn find_lost_layouts(&mut self, classes: &[((FileId, ClassId), bool)], scopes: &Scopes) -> Vec<CompilerDiagnostic> {

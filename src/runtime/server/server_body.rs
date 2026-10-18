@@ -696,7 +696,7 @@ impl AnyRoute {
         path: &mut Node::PathOrFileDescriptor<'static>,
     ) -> JsResult<AnyRoute> {
         // The file/static route doesn't ref it.
-        let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);
+        let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global);
 
         if blob.needs_to_read_file() {
             // Throw a more helpful error upfront if the file does not exist.

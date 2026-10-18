@@ -28,7 +28,7 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     match name {
         b"--help" | b"-h" | b"--no-script" => true,
         b"--help-all" | b"--doctor" => matches!(command, b"lint" | b"fmt"),
-        b"--explain" => command == b"lint",
+        b"--explain" => matches!(command, b"lint" | b"compile"),
         b"--aot" => matches!(command, b"check" | b"lint"),
         b"--aot-explain" => command == b"check",
         b"--library" => command == b"compile",

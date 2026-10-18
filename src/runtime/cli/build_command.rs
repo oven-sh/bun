@@ -205,6 +205,7 @@ impl BuildCommand {
                 texts: &mut std::iter::empty(),
                 assets: &mut std::iter::empty(),
                 has_late_strings: false,
+                has_native_addon: false,
                 cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
@@ -974,20 +975,11 @@ impl BuildCommand {
                 }
             };
 
-            let mut all_paths: Vec<&[u8]> = vec![&[] as &[u8]; output_files.len()];
             let mut max_path_len: usize = 0;
-            for (dest, src) in all_paths.iter_mut().zip(output_files.iter()) {
-                *dest = &src.dest_path;
-            }
-            debug_assert_eq!(all_paths.len(), output_files.len());
-
-            let from_path = resolve_path::longest_common_path(&all_paths);
-
             let mut size_padding: usize = 0;
 
             for f in output_files.iter() {
-                max_path_len =
-                    max_path_len.max(from_path.len().max(f.dest_path.len()) + 2 - from_path.len());
+                max_path_len = max_path_len.max(strings::trim_prefix(&f.dest_path, b"./").len() + 2);
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
                     bun_fmt::size(f.size, Default::default())
@@ -1285,8 +1277,10 @@ impl BuildCommand {
                 } else {
                     bun_core::pretty!("\n");
                 }
-                if let Some(line) = crate::cli::check_command::take_typedness_line() {
-                    bun_core::pretty!("<d>{}<r>", line);
+                let explain_flag = if ctx.bundler_options.is_compile_command { "--explain" } else { "--aot-explain" };
+                let is_explained = ctx.bundler_options.aot_explain.iter().any(|word| matches!(&**word, b"" | b"json"));
+                if let Some(lines) = crate::cli::check_command::take_typedness_lines(explain_flag, is_explained) {
+                    bun_core::pretty!("<d>{}<r>", lines);
                 }
 
                 Output::flush();

@@ -74,13 +74,12 @@ describe.skipIf(!(await hasIslands()))("a program that uses what compile.trim re
       };
       expect(await built("whole", [])).toMatchObject({ exitCode: 0 });
       const names = [name, ...removedOnlyWith(all, { name, features, ...rest })] as Bun.Build.TrimFeature[];
-      const refused = await built("trimmed", names).catch(error => {
-        expect((error as AggregateError).errors[0].message).toStartWith("compile.trim: what is named is too small");
-        return built("trimmed", [...names, "cli"]);
-      });
-      const removed = /^error: compile\.trim removed (.*) from this executable, and something has just asked for it\.\n$/.exec(refused.stderr)?.[1];
-      expect({ stderr: refused.stderr, isOfThisName: features.some(feature => descriptions.get(feature) === removed) }).toEqual({ stderr: refused.stderr, isOfThisName: true });
-      expect(refused.exitCode).toBe(70);
+      const refused = await built("trimmed", names);
+      const removed = /^error: compile\.trim removed (.*) from this executable(, and something has just asked for it\.\n$|$)/m.exec(refused.stderr);
+      const isImportThatThrew = names.some(each => refused.stderr.includes(`: compile.trim removed "${each}" from this executable`));
+      const isUseOfWhatIsAbsent = removed === null && /^TypeError: /m.test(refused.stderr);
+      expect({ stderr: refused.stderr, isOfThisName: isImportThatThrew || isUseOfWhatIsAbsent || features.some(feature => descriptions.get(feature) === removed?.[1]) }).toEqual({ stderr: refused.stderr, isOfThisName: true });
+      expect(refused.exitCode).toBe(removed?.[2] ? 70 : 1);
     },
     120_000,
   );

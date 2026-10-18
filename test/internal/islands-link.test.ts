@@ -685,9 +685,9 @@ describe.skipIf(!canLink)("a link with islands", () => {
   });
 
   test.each([
-    ["native code", []],
-    ["bitcode", ["-flto=thin"]],
-  ])("the strings and constants of an input that is linked unmerged go, each by itself, with what names them: %s", async (_, flags) => {
+    ["native code: they go, each by itself, with what names them", [], [0, 0, 1, 1, 1]],
+    ["bitcode: they stay merged", ["-flto=thin"], [1, 1, 1, 1, 1]],
+  ])("the strings and constants of an input that is linked unmerged: %s", async (_, flags, left) => {
     const sixteen = (text: string) => `(sixteen){ ${[...text].map(character => `'${character}'`).join(", ")} }`;
     const withStrings = {
       ...sources,
@@ -731,7 +731,7 @@ describe.skipIf(!canLink)("a link with islands", () => {
     }
     using dir = tempDir("islands-link", { ...withStrings, doors: sources.doors + "unmerged (^|[/.])both\\.o" + "\n" });
     const { ranTrimmed } = await linked(String(dir), "none", objects, { both: flags });
-    expect(timesIn(String(dir))).toEqual([0, 0, 1, 1, 1]);
+    expect(timesIn(String(dir))).toEqual(left);
     expect(ranTrimmed).toEqual({ stdout: "a sentence that both say\n", stderr: "", exitCode: 0 });
   }, 60_000);
 
@@ -760,15 +760,38 @@ describe.skipIf(!canLink)("a link with islands", () => {
         int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : stays(argc) == '1' ? 0 : 1; }
       `,
     });
-    const { said, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "both", "door", "table", "main"]);
+    const { said, table, addressOf, canGo, isDoor, ranTrimmed } = await linked(String(dir), "none", ["behind", "both", "door", "table", "main"]);
     expect(said).toMatch(/; [1-9]\d* more stretch(es)?, \d+ bytes, can only be overwritten; /);
     expect(["variable_behind", "behind_says", "variable_that_stays", "stays_says"].map(canGo)).toEqual([true, true, false, false]);
+    expect([isDoor("the_door"), canGo("the_door")]).toEqual([true, false]);
+    expect(table.islands.filter(({ start }) => start === addressOf.get("the_door")! + 10).map(({ end, features }) => [end > addressOf.get("the_door")! + 10, features])).toEqual([[true, "extra"]]);
     const trimmed = readFileSync(join(String(dir), "trimmed")).toString("latin1");
     const texts = ["a variable of the library", "the first variable stays", "a variable that stays"];
     expect(texts.map(text => trimmed.split(text).length - 1)).toEqual([0, 1, 1]);
     expect(ranTrimmed).toEqual({ stdout: "the first variable stays\na variable that stays\n", stderr: "", exitCode: 0 });
     const report = readFileSync(join(String(dir), "work", "needed-by.txt"), "utf8");
     expect(report).toMatch(/^[0-9a-f]+ 26 \S+ \.data \S*variable_behind$/m);
+  });
+
+  test("a door that throws or answers undefined is listed so; one that takes other parameters stops the link", async () => {
+    const host = `
+      namespace JSC { struct JSGlobalObject; struct CallFrame; struct VM; struct JSObject; }
+      extern "C" int behind(int);
+      __attribute__((noinline)) long hostFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame*) { return behind(globalObject != nullptr) * 3; }
+      __attribute__((noinline)) long lazyProperty(JSC::VM&, JSC::JSObject* owner) { return behind(owner != nullptr) * 5; }
+      extern "C" int the_door(int x) { return hostFunction(nullptr, nullptr) + lazyProperty(*(JSC::VM*)&x, nullptr); }
+    `;
+    const doors = (first: string, second: string) => sources.doors.replace(/^door .*$/m, `door extra ${first} ^hostFunction\\(\ndoor extra ${second} ^lazyProperty\\(`);
+    {
+      using dir = tempDir("islands-link", { ...sources, "door.c": host, doors: doors("throw", "undefined") });
+      const { table, addressOf } = await linked(String(dir), "none", ["behind", "door", "table", "main"], { door: ["-x", "c++"] });
+      const answersOf = (name: string) => table.doors.find(door => door.address === addressOf.get(name))?.answers;
+      expect([answersOf("_Z12hostFunctionPN3JSC14JSGlobalObjectEPNS_9CallFrameE"), answersOf("_Z12lazyPropertyRN3JSC2VMEPNS_8JSObjectE")]).toEqual(["throw", "undefined"]);
+    }
+    using dir = tempDir("islands-link", { ...sources, "door.c": host, doors: doors("undefined", "undefined") });
+    const said = await wrapped(String(dir), "none", ["behind", "door", "table", "main"], { door: ["-x", "c++"] }, []);
+    expect(said.exitCode).not.toBe(0);
+    expect(said.stdout + said.stderr).toContain("is to answer undefined and does not take (JSC::VM&, JSC::JSObject*)");
   });
 
   test("by its own plan it links once and lists the same", async () => {

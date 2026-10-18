@@ -20,7 +20,7 @@ export const sum = (point: Point) => point.x + point.y + point.kind.length;
 `;
   using dir = tempDir("aot-objects-born-by-object-create", { "tsconfig.json": tsconfig, "main.ts": main });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--aot-explain=costs-json", "main.ts"],
+    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--aot-explain=json", "main.ts"],
     cwd: String(dir),
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",

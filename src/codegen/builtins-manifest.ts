@@ -272,27 +272,17 @@ for (const line of fs.readFileSync(path.join(ENGINE, "functions.txt"), "utf8").s
   functionIds.set(`engine/${file}\t${name}`, Number(id));
 }
 
-const keysAreIndexesOrSymbols = { "property *": [], "finds Function": [] };
-const keysAreCountedAtTheCaller = { "property *": [], "finds Function": [] };
-const readsOnlyItsOwnNewObject = { "property *": [], "finds Function": [] };
+const keysAreIndexesOrSymbols = { "property *": [] };
+const keysAreCountedAtTheCaller = { "property *": [] };
+const readsOnlyItsOwnNewObject = { "property *": [] };
+const keysAreSymbolsIndexesOrOfFixedLists = { "property *": [] };
+const readsPlainObjectsAndFixedLists = { "property *": [] };
+const readsTablesWithoutPrototypeOrByTheirOwnKeys = { "property *": [] };
 const buffers = { "*": ["global Buffer", "native node:buffer"] };
-const whereTheProgramNames = (...names: string[]) => [...names.flatMap(name => [`program-property ${name}`, `program-key ${name}`]), "program-key *"];
-const keysAreSymbolsIndexesOrOfFixedLists = { "finds Function": [] };
-const readsPlainObjectsAndFixedLists = { "finds Function": [] };
-const readsTablesWithoutPrototypeOrByTheirOwnKeys = { "finds Function": [] };
-const neitherCallsNorHandsOutWhatItReads = { "finds Function": [] };
-const answersForAProxyWhoseKeysAreCountedAtTheCallerOrReadsItsOwnTables = { "finds Function": [] };
-const holdsForEveryProperty = (reason: { "finds Function": string[] }) => ({ ...reason, "property *": reason["finds Function"] });
-const givesAnObjectAnotherPrototype = ["program-property setPrototypeOf", "program-property __proto__"];
-const allOf = (...lists: string[][]) => lists.reduce((all, list) => all.flatMap(one => list.map(other => `${one} & ${other}`)));
-const whereTheProgramMayHaveAnInspectorOfItsOwn = [
-  "program-symbol nodejs.util.inspect.custom",
-  ...allOf(["program-module node:util", "Bun inspect"], ["program-symbol-key *"]),
-];
-const whereAnInspectorOfTheProgramMayReplaceTheStyles = allOf(whereTheProgramMayHaveAnInspectorOfItsOwn, ["program-property styles", "program-key styles"]);
 const whereInspectMayCallGettersOrReadReplacedTables = [
-  ...whereTheProgramMayHaveAnInspectorOfItsOwn,
+  "program-symbol nodejs.util.inspect.custom",
   "program-module node:util",
+  "Bun inspect",
   "program-module node:console",
   "console Console",
   "program-defined-key *",
@@ -303,31 +293,26 @@ const whereInspectMayCallGettersOrReadReplacedTables = [
   "module node:repl",
 ];
 const definesAnInspectorAndCallsNone = { "symbol nodejs.util.inspect.custom": [] };
-const whereTheProgramTakes = (holders: string[], ...names: string[]) => [...whereTheProgramNames(...names), ...allOf(holders, ["program-member *"])];
-const readsTheTableOfListeners = {
-  "finds Function": [...whereTheProgramTakes(["module node:events"], "_events", "listeners", "rawListeners", "getEventListeners"), ...givesAnObjectAnotherPrototype],
-};
 const onBehalfOf: Record<string, Record<string, string[]>> = {
   "JSBufferConstructor.ts\tfrom": { ...keysAreIndexesOrSymbols, ...buffers },
   "JSBufferConstructor.ts\tisBuffer": buffers,
   "JSBufferPrototype.ts\toffset": buffers,
   "JSBufferPrototype.ts\tparent": buffers,
   "JSBufferPrototype.ts\ttoJSON": buffers,
-  "Bake.ts\trenderRoutesForProdStatic": { ...neitherCallsNorHandsOutWhatItReads, "property *": ["Bun build"] },
-  "BundlerPlugin.ts\trunOnLoadPlugins": { ...readsPlainObjectsAndFixedLists, "property *": ["Bun build", "Bun plugin", "loader html"] },
-  "BundlerPlugin.ts\trunOnResolvePlugins": { ...readsPlainObjectsAndFixedLists, "property *": ["Bun build", "Bun plugin", "loader html"] },
+  "Bake.ts\trenderRoutesForProdStatic": { "property *": ["Bun build"] },
+  "BundlerPlugin.ts\trunOnLoadPlugins": { "property *": ["Bun build", "Bun plugin", "loader html"] },
+  "BundlerPlugin.ts\trunOnResolvePlugins": { "property *": ["Bun build", "Bun plugin", "loader html"] },
   "CommonJS.ts\tcreateRequireCache": { ...keysAreCountedAtTheCaller, ...definesAnInspectorAndCallsNone },
   "CommonJS.ts\tgetWrapperArrayProxy": keysAreCountedAtTheCaller,
   "CommonJS.ts\tinternalRequire": { "process dlopen": ["loader napi"] },
   "CommonJS.ts\toverridableRequire": { "Bun jest": ["native bun:test"] },
-  "ConsoleObject.ts\tasyncIterator": { ...keysAreSymbolsIndexesOrOfFixedLists, "property *": ["console *"] },
-  "ConsoleObject.ts\tcreateConsoleConstructor": { ...keysAreSymbolsIndexesOrOfFixedLists, "property *": ["console Console"] },
+  "ConsoleObject.ts\tasyncIterator": { "property *": ["console *"] },
+  "ConsoleObject.ts\tcreateConsoleConstructor": { "property *": ["console Console"] },
   "Ipc.ts\tserialize": keysAreIndexesOrSymbols,
   "Peek.ts\tpeekStatus": keysAreIndexesOrSymbols,
-  "ProcessObjectInternals.ts\tbuildAllowedNodeEnvironmentFlags": neitherCallsNorHandsOutWhatItReads,
   "ProcessObjectInternals.ts\tgetNodeWorkerStdioStream": keysAreIndexesOrSymbols,
   "ProcessObjectInternals.ts\tgetStdioWriteStream": keysAreIndexesOrSymbols,
-  "ProcessObjectInternals.ts\tloadEnvFile": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
+  "ProcessObjectInternals.ts\tloadEnvFile": readsPlainObjectsAndFixedLists,
   "ProcessObjectInternals.ts\twindowsEnv": keysAreCountedAtTheCaller,
   "engine/ArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
   "engine/ArrayConstructor.js\tfromAsync": keysAreIndexesOrSymbols,
@@ -344,11 +329,11 @@ const onBehalfOf: Record<string, Record<string, string[]>> = {
   "engine/JSIteratorConstructor.js\tgetIteratorFlattenable": keysAreIndexesOrSymbols,
   "engine/JSIteratorConstructor.js\tgetIteratorSync": keysAreIndexesOrSymbols,
   "engine/JSIteratorConstructor.js\titeratorCloseAllNormal": keysAreIndexesOrSymbols,
-  "engine/JSIteratorConstructor.js\tzipKeyed": { "property *": ["property zipKeyed"], "finds Function": [] },
+  "engine/JSIteratorConstructor.js\tzipKeyed": { "property *": ["property zipKeyed"] },
   "engine/MapConstructor.js\tgroupBy": keysAreIndexesOrSymbols,
   "engine/ObjectConstructor.js\tgroupBy": readsOnlyItsOwnNewObject,
   "engine/ReflectObject.js\tget": keysAreCountedAtTheCaller,
-  "engine/ShadowRealmPrototype.js\timportValue": { "property *": ["global ShadowRealm"], "finds Function": ["global ShadowRealm"] },
+  "engine/ShadowRealmPrototype.js\timportValue": { "property *": ["global ShadowRealm"] },
   "engine/TypedArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
   "engine/TypedArrayPrototype.js\tat": keysAreIndexesOrSymbols,
   "engine/TypedArrayPrototype.js\ttoLocaleString": { "*": ["property toLocaleString"] },
@@ -363,103 +348,27 @@ for (const [key, names] of Object.entries(onBehalfOf)) {
 
 const handsProcessToTheQueueOfTicks = { "process *": [] };
 const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
-  "bun/sql": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "bun:sqlite": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/assert/assertion_error": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
-  "internal/cluster/RoundRobinHandle": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/cluster/child": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/cluster/primary": holdsForEveryProperty(neitherCallsNorHandsOutWhatItReads),
-  "internal/fifo": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/fixed_queue": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/fs/cp-sync": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/fs/glob": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/fs/streams": {
-    ...readsTablesWithoutPrototypeOrByTheirOwnKeys,
-    "property *": whereTheProgramTakes(["program-module node:fs", "program-module node:fs/promises"], "createReadStream", "createWriteStream", "ReadStream", "WriteStream", "FileReadStream", "FileWriteStream"),
-  },
+  "bun:sqlite": keysAreSymbolsIndexesOrOfFixedLists,
   "internal/http": handsProcessToTheQueueOfTicks,
-  "internal/http/FakeSocket": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/http1_server_fallback": holdsForEveryProperty(neitherCallsNorHandsOutWhatItReads),
-  "internal/primordials": { ...holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists), "symbol *": [] },
-  "internal/process/pre_execution": holdsForEveryProperty(answersForAProxyWhoseKeysAreCountedAtTheCallerOrReadsItsOwnTables),
-  "internal/promisify": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/quic/http2util": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "internal/quic/quic": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "internal/quic/stats": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/readline/emitKeypressEvents": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/readline/interface": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/repl/history": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/repl/node-primordials": holdsForEveryProperty({ "finds Function": ["module node:repl"] }),
-  "internal/serialization_buffers": holdsForEveryProperty(neitherCallsNorHandsOutWhatItReads),
-  "internal/shared": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/sql/errors": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/sql/options": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
-  "internal/sql/pool": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/sql/postgres": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
-  "internal/sql/shared": neitherCallsNorHandsOutWhatItReads,
-  "internal/stream": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/add-abort-signal": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/duplex": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/fast-utf8-stream": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/iter/broadcast": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/iter/classic": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/iter/consumers": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/iter/from": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/iter/pull": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/iter/share": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/iter/transform": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "internal/streams/iter/utils": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/lazy_transform": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/legacy": readsTheTableOfListeners,
-  "internal/streams/readable": { ...holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys), ...handsProcessToTheQueueOfTicks },
-  "internal/streams/state": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/streams/writable": { ...holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists), ...handsProcessToTheQueueOfTicks },
-  "internal/tls": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/trace_events": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/tty": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
+  "internal/primordials": { ...keysAreSymbolsIndexesOrOfFixedLists, "symbol *": [] },
+  "internal/shared": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/streams/readable": handsProcessToTheQueueOfTicks,
+  "internal/streams/writable": handsProcessToTheQueueOfTicks,
   "internal/util/inspect": {
     "global Buffer": [],
     "native node:buffer": [],
     "regexp computed": [],
     "symbol *": [],
     "property *": whereInspectMayCallGettersOrReadReplacedTables,
-    "finds Function": whereAnInspectorOfTheProgramMayReplaceTheStyles,
   },
-  "node:_http_agent": { ...neitherCallsNorHandsOutWhatItReads, "property *": whereTheProgramNames("getName") },
-  "node:_http_client": { "finds Function": whereTheProgramNames("_defaultAgent", "globalAgent"), "property *": [] },
-  "node:_http_common": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:_http_incoming": {
-    ...neitherCallsNorHandsOutWhatItReads,
-    ...handsProcessToTheQueueOfTicks,
-    "property *": whereTheProgramTakes(["module node:_http_incoming"], "_addHeaderLine", "_addHeaderLineDistinct", "_events"),
-  },
-  "node:_http_outgoing": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "node:_http_server": { ...holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys), ...handsProcessToTheQueueOfTicks },
-  "node:_tls_common": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
-  "node:assert": { "finds Function": whereTheProgramNames("constructor") },
-  "node:child_process": { ...neitherCallsNorHandsOutWhatItReads, "property *": whereTheProgramTakes(["program-module node:child_process"], "spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork") },
-  "node:crypto": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:dgram": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:diagnostics_channel": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:events": { ...readsTheTableOfListeners, "process *": [] },
-  "node:http2": holdsForEveryProperty(answersForAProxyWhoseKeysAreCountedAtTheCallerOrReadsItsOwnTables),
-  "node:https": holdsForEveryProperty({ "finds Function": whereTheProgramTakes(["program-module node:https"], "_getSession", "_sessionCache") }),
-  "node:inspector": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:net": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:os": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:punycode": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:querystring": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "node:readline": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:readline/promises": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:tls": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:url": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "node:util": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "node:v8": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:wasi": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
-  "node:worker_threads": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "node:zlib": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
-  "thirdparty/node-fetch": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "thirdparty/ws": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
+  "node:_http_incoming": handsProcessToTheQueueOfTicks,
+  "node:_http_server": handsProcessToTheQueueOfTicks,
+  "node:diagnostics_channel": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:events": handsProcessToTheQueueOfTicks,
+  "node:os": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:punycode": keysAreSymbolsIndexesOrOfFixedLists,
+  "node:querystring": readsTablesWithoutPrototypeOrByTheirOwnKeys,
+  "node:url": readsTablesWithoutPrototypeOrByTheirOwnKeys,
 };
 for (const [specifier, names] of Object.entries(onBehalfOfInModules)) {
   for (const [name, facts] of Object.entries(names)) {

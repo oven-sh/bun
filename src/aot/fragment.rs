@@ -407,7 +407,7 @@ pub fn for_each_func_id(func: &mut Func, ids: &mut impl Ids) {
 }
 
 fn for_each_header_id(func: &mut Func, ids: &mut impl Ids) {
-    let Func { name, module, pos: _, source_start: _, source_end: _, kind: _, flags: _, length: _, captures, declared_this_type, params, annotated: _, result, blocks: _, values: _, spans: _ } = func;
+    let Func { name, module, pos: _, source_start: _, source_end: _, kind: _, flags: _, length: _, captures, declared_this_type, params, annotated: _, result, blocks: _, values: _, spans: _, accesses_by_name: _ } = func;
     pass!(ids.str(name));
     pass!(ids.module(module));
     for capture in captures {

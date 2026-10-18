@@ -115,6 +115,60 @@ function memberOf(input: any, member: any[]): any {
   return Object.prototype.propertyIsEnumerable.call(input, member[0]) ? input[member[0]] : undefined;
 }
 
+function copyOf(nodes: any[], alternatives: number[], input: any): any {
+  if (!isObject(input)) return input;
+  const isArray = Array.isArray(input);
+  const described: any[] = [];
+  for (let i = 0; i < alternatives.length; i++) {
+    const node = nodes[alternatives[i]];
+    if (node[0] === 9) alternatives = alternatives.concat(node[1]);
+    else if (isArray ? node[0] === 5 || node[0] === 6 : node[0] === 7 || node[0] === 8) described.push(node);
+  }
+  if (described.length === 0) return input;
+  if (isArray) {
+    const made = Array.from(input);
+    for (let i = 0; i < made.length; i++) {
+      const below: number[] = [];
+      for (let j = 0; j < described.length; j++) {
+        if (described[j][0] === 5) below.push(described[j][1]);
+        else if (i < described[j][1].length) below.push(described[j][1][i]);
+      }
+      made[i] = copyOf(nodes, below, made[i]);
+    }
+    return made;
+  }
+  const made: any = { ...input };
+  const keys = new Set<string>();
+  for (let j = 0; j < described.length; j++) {
+    const members = described[j][0] === 8 ? described[j][1] : [];
+    for (let i = 0; i < members.length; i++) {
+      if (Object.prototype.propertyIsEnumerable.call(made, members[i][0])) keys.add(members[i][0]);
+    }
+  }
+  const all = Object.keys(made);
+  for (let i = 0; i < all.length; i++) keys.add(all[i]);
+  for (const key of keys) {
+    const held = made[key];
+    if (!isObject(held)) continue;
+    const below: number[] = [];
+    for (let j = 0; j < described.length; j++) {
+      const node = described[j];
+      let at = node[0] === 7 ? node[1] : node[2];
+      for (let k = 0; node[0] === 8 && k < node[1].length; k++) {
+        if (node[1][k][0] === key) at = node[1][k][1];
+      }
+      if (at >= 0) below.push(at);
+    }
+    const copied = copyOf(nodes, below, held);
+    if (copied !== held) define(made, key, copied);
+  }
+  return made;
+}
+
+function holdsDefault(plan: any[]): boolean {
+  return (plan[3] ??= plan[1].some((node: any[]) => node[5]));
+}
+
 function build(nodes: any[], at: number, input: any, refused: object, copies: boolean): any {
   const node = nodes[at];
   if (node[5] && input === undefined) input = node[6];
@@ -551,12 +605,9 @@ let parsedSchemas: Map<string, any[]> | undefined;
 
 export function __validate(value: any, schema: string, isShared?: boolean): any {
   let plan = (parsedSchemas ??= new Map()).get(schema);
-  if (plan === undefined) {
-    plan = JSON.parse(schema) as any[];
-    plan[3] = plan[1].some((node: any[]) => node[5]);
-    parsedSchemas.set(schema, plan);
-  }
-  const made = build(plan[1], plan[0], value, parsedSchemas, isShared || plan[3]);
+  if (plan === undefined) parsedSchemas.set(schema, (plan = JSON.parse(schema) as any[]));
+  if (isShared) value = copyOf(plan[1], [plan[0]], value);
+  const made = build(plan[1], plan[0], value, parsedSchemas, holdsDefault(plan));
   if (made !== parsedSchemas) return made;
   const error = errorWith(issuesOf(plan, value));
   (Error as any).captureStackTrace?.(error, __validate);
@@ -565,13 +616,15 @@ export function __validate(value: any, schema: string, isShared?: boolean): any 
 
 export function validateByPlan(plan: any[], value: any): any {
   const refused = {};
-  const made = build(plan[1], plan[0], value, refused, true);
+  value = copyOf(plan[1], [plan[0]], value);
+  const made = build(plan[1], plan[0], value, refused, holdsDefault(plan));
   return made === refused ? throwIssues(issuesOf(plan, value)) : made;
 }
 
 export function safeValidateByPlan(plan: any[], value: any): any {
   const refused = {};
-  const made = build(plan[1], plan[0], value, refused, true);
+  value = copyOf(plan[1], [plan[0]], value);
+  const made = build(plan[1], plan[0], value, refused, holdsDefault(plan));
   return made === refused ? failureWithIssues(plan, value) : { success: true, data: made };
 }
 
@@ -582,7 +635,8 @@ export function planSchema(plan: any[]): any {
       vendor: "bun",
       validate(value: any): any {
         const refused = {};
-        const made = build(plan[1], plan[0], value, refused, true);
+        value = copyOf(plan[1], [plan[0]], value);
+        const made = build(plan[1], plan[0], value, refused, holdsDefault(plan));
         return made === refused ? { issues: issuesOf(plan, value) } : { value: made };
       },
     },

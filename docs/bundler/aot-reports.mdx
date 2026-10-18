@@ -9,14 +9,14 @@ A build with [`--aot`](/bundler/aot) never tells you that a line is slow. It com
 
 | Question                                                     | Command                                            |
 | ------------------------------------------------------------ | -------------------------------------------------- |
-| Which lines of my program cost the most?                     | [`--aot-explain`](#the-most-expensive-lines)       |
+| What keeps the compiler from using my types?                 | [`--explain`](#what-is-not-typed-and-why)          |
 | Which types and classes lost their layout, and why?          | [`--aot-warn=all`](#every-finding)                 |
 | How do I keep a fixed problem from coming back?              | [`--aot-deny`](#fail-the-build)                    |
 | Which type checks can fail when the program runs?            | [`--aot-explain=throws`](#checks-that-can-fail)    |
 | What changes under `--aot` with the data my tests use?       | [`bun --aot-audit`](#run-with-your-own-data)       |
 | What should I look at in my source before I build?           | [`bun lint --aot`](#lint-your-source)              |
 | Which checks fail in production?                             | [`--aot-type-errors=log`](#log-in-production)      |
-| How much of my program has types?                            | [the last line of a build](#the-summary-line)      |
+| How much of my program is typed?                             | [the last line of a build](#the-summary-line)      |
 
 `--aot-explain`, `--aot-warn`, `--aot-deny`, `--aot-allow` and `--aot-baseline` work with `bun check --aot` and with `bun compile`. `bun check --aot` builds nothing, so it's the faster of the two.
 
@@ -72,36 +72,32 @@ bun main.ts
 40
 ```
 
-## The most expensive lines
+## What is not typed, and why
 
-Start here. `--aot-explain` traces everything that the compiler gives up back to the line that causes it, and prints the most expensive lines first.
+Start here. `bun compile --explain` traces every property access that is not typed back to the line that causes it. It prints one entry per cause, the most expensive first, with a fix. With `bun check --aot` and `bun build`, the flag is `--aot-explain`.
 
 ```bash terminal icon="terminal"
 bun check --aot ./main.ts --aot-explain
 ```
 
 ```txt
-aot: 3 places where the compiler gives something up, 3 with a cost that can be counted. The most expensive first:
+aot: 75.0% typed (6 of 8 property accesses)
+aot: 1 cause, the most expensive first. Fix one, then run this again: a fix can uncover another cause behind it.
 
-  1. main.ts:6:25 [can-throw]
-     | const saved: any = JSON.parse(await Bun.file("stock.json").text());
-     The value comes from JSON.parse(..).
-     cost: 1 check that may copy the object into another layout in 1 function
-     fix: validate the value once, where it enters the program, and build a typed value from it
-
-  2. main.ts:7:27 [open-layout]
-     | for (const item of saved) stock.add(item);
-     A value of type 'any' or 'unknown' is assigned to it here.
-     cost: 5 field accesses that test the object first in 2 functions
-     types: 'Item'
-     fix: give the value its type before it gets here, or copy its fields into a new object literal of the declared type
+  1. json-parse main.ts:6:20: fixing it types up to 2 accesses (+25.0 points)
+     6 | const saved: any = JSON.parse(await Bun.file("stock.json").text());
+                            ^~~~~~~~~~
+     JSON.parse() returns 'any'.
+     main.ts:7:37: The value is used as 'Item' here, so the compiler cannot rely on the layout of that type.
+     types that lose their layout: 'Item'
+     not typed because of it: stock.ts:16:43, stock.ts:16:56
+     fix: write JSON.parse<Item[]>(..) and declare the variable 'Item[]': the value is checked once, here, and is typed from then on. Data that does not match throws a TypeError. Add: import type { Item } from "./stock";
+     https://bun.com/docs/bundler/aot-explain#json-parse
 ```
 
-Both problems are in `main.ts`, and the cost is in `stock.ts`: one `any` makes every access to an `Item`, anywhere in the program, test the object first.
+The cause is in `main.ts`, and the cost is in `stock.ts`: one `any` makes every access to an `Item`, anywhere in the program, test the object first.
 
-The third place is in Bun's own type declarations. Objects that Bun provides, such as the result of `Bun.file()`, have no layout that the compiler knows. You can't change that, and the report marks it `(in a dependency)`.
-
-[What costs the most](/bundler/aot-debugging#what-costs-the-most) explains each line of an entry. `--aot-explain=costs-json` prints the entries as JSON, for a script or a coding agent.
+[Get more of your program typed](/bundler/aot-explain) explains each line of an entry and has a section for each cause. `--explain=json` prints the entries as JSON, for a script or a coding agent.
 
 ## Every finding
 
@@ -272,7 +268,7 @@ bun check --aot ./main.ts --aot-warn=all --aot-explain=throws
 ```txt
 [aot] type-check summary: 0 checks can fail when the program runs, 0 always fail; 1 more fails only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists it)
 ✓ No type errors in 2 files [44.16ms]
-aot: 100.0% of reads typed, 0 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped
+aot: 100% typed
 ```
 
 The mistake in `stock.json` is now reported where the data enters, in your own words, with and without `--aot`.
@@ -287,26 +283,52 @@ TypeError: stock.json: price must be a number
       at /$bunfs/root/main.ts:17:38
 ```
 
-## The summary line
+### Or let Bun write the check
 
-Every build, and every `bun check --aot`, ends with a line about the whole program. This is the line of the example before the fix.
+[`Bun.validate`](/bundler/aot-types#check-data-with-bunvalidate) checks a value against a type that you've already written, and returns a copy that the compiler trusts.
 
-```txt
-aot: 66.7% of reads typed, 1 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-explain lists them)
+```ts main.ts icon="/icons/typescript.svg"
+import { Stock, type Item } from "./stock";
+
+const stock = new Stock();
+stock.add({ sku: "A-1", price: 2.5, quantity: 4 });
+
+const saved = Bun.validate<Item[]>(await Bun.file("stock.json").json());
+for (const item of saved) stock.add(item);
+
+console.log(stock.value());
 ```
 
-| Part                            | Counts                                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `66.7% of reads typed`          | Property reads through your own classes, interfaces and object types, where the compiler knows the layout    |
-| `1 of 2 types open`             | Declared types that can also hold objects that typed code did not create. The rule is `open-layout`          |
-| `0 classes without a layout`    | Classes whose instances are accessed by name. The rules are `lost-layout` and `untyped-base`                 |
-| `0 packages and 0 files untyped` | JavaScript dependencies, and files of your own that are compiled without types                               |
+```bash terminal icon="terminal"
+bun check --aot ./main.ts --aot-warn=all --aot-explain=throws
+```
 
-Get the last three to zero in the code that has to be fast.
+```txt
+[aot] type-check summary: 0 checks can fail when the program runs, 0 always fail; 2 more fail only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists them)
+✓ No type errors in 2 files [46.84ms]
+aot: 100% typed
+```
 
-The example has six reads through `Stock` and `Item`. The two through `Item`, `item.price` and `item.quantity`, test the object first, because `Item` is open. After the fix the line reads `100.0%`, and the hint at its end is gone.
+```bash terminal icon="terminal"
+bun compile ./main.ts && ./main
+```
 
-Reads of what Bun and JavaScript provide, such as `console.log`, `Bun.file` and `items.push`, are not counted, because you cannot change them. A read of a property of an `any`, of data from outside that is cast to a type, or of a class without a layout is counted, and it is never typed. So is every read in a JavaScript file of your own.
+```txt
+TypeError: 0.price: Invalid input: expected number, received string
+```
+
+## The summary line
+
+Every build, and every `bun check --aot`, ends with a line about the whole program. These are the lines of the example before the fix.
+
+```txt
+aot: 75.0% typed (6 of 8 property accesses)
+aot: --aot-explain shows what is not typed and how to fix it
+```
+
+The example has eight property accesses on a `Stock` or an `Item`. The two through `Item`, `item.price` and `item.quantity`, test the object first, because an `any` reaches `Item`. After the fix the line reads `100% typed`, and the second line is gone.
+
+What Bun and JavaScript provide, such as `console.log`, `Bun.file` and `items.push`, is not counted, because you cannot change it. Code in `node_modules` is counted apart, as `dependencies`. [What is counted](/bundler/aot-explain#what-is-counted) has the details.
 
 ## More reports
 
@@ -315,4 +337,4 @@ Reads of what Bun and JavaScript provide, such as `console.log`, `Bun.file` and 
 | `--aot-deny=interpreted`      | `eval`, `new Function` and `node:vm` in your program and its dependencies. The executable has no JIT, so Bun interprets that code                     |
 | `--aot-deny=untyped-package`  | Each JavaScript file of your own. Each dependency that is JavaScript, and how much of the program it is: only a build reports those                  |
 | `--aot-explain=rules-json`    | The findings of the rules, one JSON object per line                                                                                                  |
-| `--aot-explain=runtime-use`   | The globals, `Bun` APIs and built-in modules that your program names. [`--compile-trim-runtime`](/bundler/executables#parts-your-program-does-not-use) goes by this list |
+| `--aot-explain=runtime-use`   | The globals, `Bun` APIs and built-in modules that your program names. [`--trim`](/bundler/aot-size#see-what-the-compiler-found) goes by this list |

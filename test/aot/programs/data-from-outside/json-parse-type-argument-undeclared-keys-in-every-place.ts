@@ -118,6 +118,13 @@ for (let i = 0; i < 600; i++) {
 }
 check("many sets of undeclared keys in turn", sets, point);
 
+const between: string[] = [];
+for (const count of [1, 2, 3, 63, 64, 65, 126, 127, 128, 129, 130, 131, 132, 133, 200, 513, 1200, 5000]) {
+  const others = Array.from({ length: count }, (_, at) => `"k${at}":${at}`);
+  between.push(asObject(['"x":1', ...others, '"y":2', '"m0":0']), asObject([...others, '"x":1', '"m0":0', '"y":2', '"m1":1']), asObject(['"a":0', '"x":1', ...others, '"label":"l"', '"m0":0', '"y":2']));
+}
+check("a few and very many between the members", between, point);
+
 const kept: Point[] = [];
 const texts: string[] = [];
 for (let i = 0; i < 3000; i++) {

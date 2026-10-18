@@ -4973,6 +4973,7 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
 /// source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
+    global: &JSGlobalObject,
     specifier: &bun_core::String,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
@@ -4989,6 +4990,10 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let Some(alias) = bun_jsc::module_loader::bun_aliases_get(spec_utf8.slice()) else {
         return false;
     };
+    if let Some(removed) = bun_jsc::module_loader::removed_by_trimming(global, alias.path.as_bytes()) {
+        *ret = removed;
+        return true;
+    }
     let Some(&hardcoded) = HardcodedModule::MAP.get(alias.path.as_bytes()) else {
         debug_assert!(false);
         return false;

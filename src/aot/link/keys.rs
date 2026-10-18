@@ -1,6 +1,6 @@
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{StrId, V};
-use crate::ir::{Def, Func, Op, Operation, Program, Strs, Term, class_flags, func_flags};
+use crate::ir::{Def, Func, LayoutKind, Op, Operation, Program, Strs, Term, class_flags, func_flags};
 use bun_sema::atom::{Interner, known};
 use bun_sema::bind::{AccessKind, Decl, Parent, PatParent, SymFlags, SymbolId};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, PropKey, PropKind, StmtKind, UnOp, VarKind};
@@ -55,7 +55,9 @@ fn may_be_a_name(program: &Program, func: &Func, key: V, joins_seen: &mut Vec<V>
     match func.values[key.idx()].def {
         Def::Op(Op::PropGet { obj, name }) => !(WELL_KNOWN_SYMBOLS.contains(&program.strs.get(name)) && matches!(func.op(obj), Some(&Op::FreeGet { name, .. }) if program.strs.get(name) == b"Symbol")),
         Def::Op(Op::Coerce { value, .. }) => may_be_a_name(program, func, value, joins_seen),
-        Def::Op(Op::Operation { which: Operation::ToLength, .. }) => false,
+        Def::Op(Op::Operation { which: Operation::ToLength | Operation::Increment | Operation::Decrement, .. } | Op::Unary { .. }) => false,
+        Def::Op(Op::Binary { op: crate::ir::BinOp::Add, a, b }) => may_be_a_name(program, func, a, joins_seen) || may_be_a_name(program, func, b, joins_seen),
+        Def::Op(Op::Binary { .. }) => false,
         Def::Op(Op::StrConcat(ref pieces)) => !pieces.iter().any(|&piece| matches!(func.op(piece), Some(&Op::Str(text)) if program.strs.get(text).iter().any(|&byte| byte.is_ascii() && !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'$')))),
         Def::Param(block, index) if block != Func::ENTRY && !joins_seen.contains(&key) => {
             joins_seen.push(key);
@@ -151,6 +153,18 @@ fn may_find_the_constructor_of_functions(program: &Program, func: &Func, at: V, 
             }
             None => false,
         },
+    }
+}
+
+fn may_take_out_descriptors_from_a_holder_without_a_name(program: &Program, func: &Func, at: V, op: &Op) -> bool {
+    let hands_out_descriptors = |name: StrId| matches!(program.strs.get(name), b"getOwnPropertyDescriptor" | b"getOwnPropertyDescriptors");
+    let is_judged_by_its_name = |obj: V| matches!(func.op(obj), Some(&Op::FreeGet { name, .. }) if matches!(program.strs.get(name), b"Object" | b"Reflect"));
+    let may_hold_them = |obj: V| program.tys.get(func.ty(obj)).has_objects() && !is_judged_by_its_name(obj);
+    match op {
+        &Op::CallMethod { obj, name, .. } => hands_out_descriptors(name) && may_hold_them(obj),
+        &Op::PropGet { obj, name } => hands_out_descriptors(name) && may_hold_them(obj) && !is_only_looked_at(&program.strs, func, at, STEPS_OF_A_LOOK),
+        Op::Operation { which: Operation::SuperGet, args } => matches!(func.op(args[1]), Some(&Op::Str(name)) if hands_out_descriptors(name)),
+        _ => matches!(read_by_any_key(op), Some((obj, key)) if matches!(func.op(key), Some(&Op::Str(name)) if hands_out_descriptors(name)) && may_hold_them(obj) && !is_only_looked_at(&program.strs, func, at, STEPS_OF_A_LOOK)),
     }
 }
 
@@ -366,6 +380,9 @@ fn members_ignore_the_receiver(module: &Module<'_>, literal: ExprId) -> bool {
 
 fn hands_the_receiver_to_nothing_that_keeps_it(module: &Module<'_>, literal: ExprId, member: ExprId, call_of_member: ExprId) -> bool {
     let (hir, bound) = (&module.hir, &module.bound);
+    if literal.is_none() {
+        return false;
+    }
     let (ExprKind::Call(call), ExprKind::Object(members)) = (hir[call_of_member].kind, hir[literal].kind) else { return false };
     if !members_ignore_the_receiver(module, literal) {
         return false;
@@ -416,6 +433,35 @@ fn member_read_from(module: &Module<'_>, mention: ExprId, literal: ExprId) -> Op
 
 const EXPRESSIONS_FOLLOWED: u32 = 8;
 
+fn is_surely_a_primitive(module: &Module<'_>, value: ExprId, followed: u32) -> bool {
+    let hir = &module.hir;
+    match hir[without_assertions(module, value)].kind {
+        ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Template { .. } | ExprKind::Unary { .. } => true,
+        ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } | ExprKind::Cond { yes: left, no: right, .. } => followed > 0 && is_surely_a_primitive(module, left, followed - 1) && is_surely_a_primitive(module, right, followed - 1),
+        ExprKind::Binary { op: BinOp::Comma, right, .. } => followed > 0 && is_surely_a_primitive(module, right, followed - 1),
+        ExprKind::Binary { .. } => true,
+        _ => false,
+    }
+}
+
+fn member_stored_a_primitive(module: &Module<'_>, mention: ExprId) -> Option<ExprId> {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let receiver = with_assertions(module, mention);
+    let Parent::Expr(member) = bound.expr_parent[receiver.idx()] else { return None };
+    if !matches!(hir[member].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == receiver) {
+        return None;
+    }
+    let stored_to = with_assertions(module, member);
+    let Parent::Expr(store) = bound.expr_parent[stored_to.idx()] else { return None };
+    let stores_a_primitive = match hir[store].kind {
+        ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => true,
+        ExprKind::Assign { op: None, target, value } => target == stored_to && is_surely_a_primitive(module, value, EXPRESSIONS_FOLLOWED),
+        ExprKind::Assign { op: Some(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor), target, .. } => target == stored_to,
+        _ => false,
+    };
+    stores_a_primitive.then_some(member)
+}
+
 fn is_only_tested_or_called(module: &Module<'_>, value: ExprId, may_be_held: bool, followed: u32) -> bool {
     let (hir, bound) = (&module.hir, &module.bound);
     let value = with_assertions(module, value);
@@ -440,7 +486,7 @@ fn is_only_tested_or_called(module: &Module<'_>, value: ExprId, may_be_held: boo
             let Some(holder) = bound.pat_symbol[declared.pat.idx()].some() else { return false };
             let symbol = &bound.symbols[holder.idx()];
             let is_exported_by_name = hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == symbol.name));
-            let is_seen_whole = declared.kind == VarKind::Const
+            let is_seen_whole = !matches!(declared.kind, VarKind::Using | VarKind::AwaitUsing)
                 && !declared.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
                 && matches!(symbol.decls[..], [Decl::Var(pat)] if pat == declared.pat)
                 && !symbol.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED)
@@ -471,7 +517,7 @@ fn is_asked_for_its_own_members(module: &Module<'_>, atoms: &Interner<'_>, menti
     }
 }
 
-fn constants_that_hold_an_object_literal(module: &Module<'_>) -> FxHashMap<SymbolId, ExprId> {
+fn variables_that_hold_an_object_literal(module: &Module<'_>) -> FxHashMap<SymbolId, ExprId> {
     let (hir, bound) = (&module.hir, &module.bound);
     let is_plain = |literal: ExprId| {
         matches!(hir[literal].kind, ExprKind::Object(members) if members.iter().all(|member| {
@@ -480,7 +526,7 @@ fn constants_that_hold_an_object_literal(module: &Module<'_>) -> FxHashMap<Symbo
     };
     let is_exported_by_name = |holder: SymbolId| hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == bound.symbols[holder.idx()].name));
     let mut holders = FxHashMap::default();
-    for declared in hir.var_decls.iter().filter(|declared| declared.kind == VarKind::Const && declared.init.is_some() && !declared.flags.intersects(Flags::EXPORT | Flags::AMBIENT)) {
+    for declared in hir.var_decls.iter().filter(|declared| !matches!(declared.kind, VarKind::Using | VarKind::AwaitUsing) && declared.init.is_some() && !declared.flags.intersects(Flags::EXPORT | Flags::AMBIENT)) {
         let Some(holder) = bound.pat_symbol[declared.pat.idx()].some() else { continue };
         let symbol = &bound.symbols[holder.idx()];
         let is_declared_once = matches!(symbol.decls[..], [Decl::Var(pat)] if pat == declared.pat && matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)));
@@ -488,20 +534,22 @@ fn constants_that_hold_an_object_literal(module: &Module<'_>) -> FxHashMap<Symbo
             holders.insert(holder, without_assertions(module, declared.init));
         }
     }
+    for (index, declared) in hir.enums.iter().enumerate().filter(|it| !it.1.flags.intersects(Flags::EXPORT | Flags::AMBIENT)) {
+        let holder = bound.enum_symbol[index];
+        let symbol = &bound.symbols[holder.idx()];
+        let has_only_primitives = declared.members.iter().map(|member| &hir[member]).all(|member| member.computed_name.is_none() && (member.init.is_none() || is_surely_a_primitive(module, member.init, EXPRESSIONS_FOLLOWED)));
+        if matches!(symbol.decls[..], [Decl::Enum(_)]) && !symbol.flags.intersects(SymFlags::MERGED) && has_only_primitives && !is_exported_by_name(holder) {
+            holders.insert(holder, ExprId::NONE);
+        }
+    }
     holders
 }
 
-#[derive(Default)]
-struct ReadsOfUnsharedLiterals {
-    all: FxHashSet<u32>,
-    whose_result_is_only_tested_or_called: FxHashSet<u32>,
-}
-
-fn reads_by_key_of_object_literals_that_nothing_else_holds(module: &Module<'_>, atoms: &Interner<'_>) -> ReadsOfUnsharedLiterals {
+fn reads_by_key_of_unshared_object_literals_that_hand_nothing_on(module: &Module<'_>, atoms: &Interner<'_>) -> FxHashSet<u32> {
     let (hir, bound) = (&module.hir, &module.bound);
-    let mut holders = constants_that_hold_an_object_literal(module);
+    let mut holders = variables_that_hold_an_object_literal(module);
     if holders.is_empty() {
-        return ReadsOfUnsharedLiterals::default();
+        return FxHashSet::default();
     }
     let mentions = || {
         let identifiers = hir.exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Ident(_))).map(|it| ExprId::from(it.0 as u32));
@@ -511,6 +559,7 @@ fn reads_by_key_of_object_literals_that_nothing_else_holds(module: &Module<'_>, 
         if let Some(holder) = bound.expr_symbol[mention.idx()].some()
             && let Some(&literal) = holders.get(&holder)
             && member_read_from(module, mention, literal).is_none()
+            && member_stored_a_primitive(module, mention).is_none()
             && !is_asked_for_a_key(module, mention)
             && !is_asked_for_its_own_members(module, atoms, mention)
         {
@@ -518,18 +567,23 @@ fn reads_by_key_of_object_literals_that_nothing_else_holds(module: &Module<'_>, 
         }
     }
     let of_holders = mentions().filter_map(|mention| Some((mention, *holders.get(&bound.expr_symbol[mention.idx()].some()?)?)));
-    let mut reads = ReadsOfUnsharedLiterals::default();
+    let mut reads = FxHashSet::default();
     for (mention, literal) in of_holders {
+        let holds_another_read = |key: ExprId| hir.exprs.iter().any(|other| matches!(other.kind, ExprKind::Index { index, .. } if !matches!(hir[index].kind, ExprKind::Number(_) | ExprKind::String(_))) && (hir[key].pos..hir[key].end).contains(&other.pos));
+        if let Some(member) = member_stored_a_primitive(module, mention) {
+            if bound.access_kind(hir, member) == AccessKind::ReadWrite && matches!(hir[member].kind, ExprKind::Index { index, .. } if !holds_another_read(index)) {
+                reads.insert(crate::positions::access_pos(hir, member));
+            }
+            continue;
+        }
         let Some(member) = member_read_from(module, mention, literal).filter(|&member| matches!(hir[member].kind, ExprKind::Index { .. })) else { continue };
         let is_called_in_place = call_of(module, member).is_some();
-        let holds_another_read = |key: ExprId| hir.exprs.iter().any(|other| matches!(other.kind, ExprKind::Index { index, .. } if !matches!(hir[index].kind, ExprKind::Number(_) | ExprKind::String(_))) && (hir[key].pos..hir[key].end).contains(&other.pos));
         if is_called_in_place && matches!(hir[member].kind, ExprKind::Index { index, .. } if holds_another_read(index)) {
             continue;
         }
         let at = if is_called_in_place { crate::positions::last_pos(hir, member) } else { hir[mention].pos };
-        reads.all.insert(at);
         if is_called_in_place || is_only_tested_or_called(module, member, true, EXPRESSIONS_FOLLOWED) {
-            reads.whose_result_is_only_tested_or_called.insert(at);
+            reads.insert(at);
         }
     }
     reads
@@ -545,8 +599,9 @@ pub(super) struct Reads {
 
 pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files: &Files<'_>, files_of_prelude: &FxHashSet<FileId>, in_parallel: InParallel<'_>) -> Reads {
     let is_own = layouts_of_own_objects(program);
+    let keeps_its_prototype: Vec<bool> = is_own.iter().zip(&program.layouts).map(|(&is_own, layout)| is_own && layout.kind != LayoutKind::Record).collect();
     let create_require = program.strs.find(b"createRequire");
-    let reads_of_unshared_literals: Vec<OnceLock<ReadsOfUnsharedLiterals>> = modules.iter().map(|_| OnceLock::new()).collect();
+    let reads_of_unshared_literals: Vec<OnceLock<FxHashSet<u32>>> = modules.iter().map(|_| OnceLock::new()).collect();
     let reads_by_key = AtomicBool::new(false);
     let mut tasks: Vec<(&[Func], Vec<(FileId, u32)>, Vec<(FileId, u32)>, Vec<(FileId, u32)>, Vec<(FileId, Vec<u8>)>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Vec::new(), Vec::new(), Vec::new(), Vec::new())).collect();
     for_each_mut(&mut tasks, in_parallel, &|(funcs, found, finding_constructor, finding_loaders, loading)| {
@@ -555,10 +610,10 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
             let is_of_runtime = func.has(func_flags::IS_BUILTIN) || func.has(func_flags::IS_IN_BUILTIN_MODULE);
             let of_unshared_literals = |op: &Op| {
                 let is_of_program = !is_of_runtime && !files_of_prelude.contains(&file);
-                (is_of_program && matches!(op, Op::ElemGet { .. })).then(|| reads_of_unshared_literals[func.module.idx()].get_or_init(|| reads_by_key_of_object_literals_that_nothing_else_holds(files.module(file), &files.atoms)))
+                (is_of_program && matches!(op, Op::ElemGet { .. })).then(|| reads_of_unshared_literals[func.module.idx()].get_or_init(|| reads_by_key_of_unshared_object_literals_that_hand_nothing_on(files.module(file), &files.atoms)))
             };
             if is_of_runtime || files_of_prelude.contains(&file) || finding_constructor.last().is_none_or(|last| last.0 != file) {
-                let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op) && !of_unshared_literals(op).is_some_and(|reads| reads.whose_result_is_only_tested_or_called.contains(&value.pos))));
+                let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op) && !of_unshared_literals(op).is_some_and(|reads| reads.contains(&value.pos))));
                 finding_constructor.extend(finds.map(|(_, value)| (file, value.pos)));
             }
             if !is_of_runtime && !files_of_prelude.contains(&file) && finding_loaders.last().is_none_or(|last| last.0 != file) {
@@ -580,15 +635,20 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
                     loading.extend(asked_of_what_is_made.map(|name| (file, name.to_vec())));
                 }
             }
+            if !is_of_runtime && !files_of_prelude.contains(&file) && found.last().is_none_or(|last| last.0 != file) {
+                let takes_out = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_take_out_descriptors_from_a_holder_without_a_name(program, func, V::new(*index), op)));
+                found.extend(takes_out.map(|(_, value)| (file, value.pos)));
+            }
             let mut is_counted_here = false;
-            for value in &func.values {
+            for (index, value) in func.values.iter().enumerate() {
                 if let Def::Op(op) = &value.def
                     && let Some((obj, key)) = read_by_key(func, op)
                     && may_be_a_name(program, func, key, &mut Vec::new())
                 {
                     reads_by_key.store(true, Ordering::Relaxed);
-                    let is_let_off = is_own_object(program.tys.get(func.ty(obj)), &is_own) || if is_of_runtime { is_counted_here } else { found.last().is_some_and(|last| last.0 == file) };
-                    if !is_let_off && !of_unshared_literals(op).is_some_and(|reads| reads.all.contains(&value.pos)) {
+                    let is_counted = if is_of_runtime { is_counted_here } else { found.last().is_some_and(|last| last.0 == file) };
+                    let is_look_at_own_object = || is_own_object(program.tys.get(func.ty(obj)), &keeps_its_prototype) && is_only_looked_at(&program.strs, func, V::new(index), STEPS_OF_A_LOOK);
+                    if !is_counted && !is_look_at_own_object() && !of_unshared_literals(op).is_some_and(|reads| reads.contains(&value.pos)) {
                         found.push((file, value.pos));
                         is_counted_here = true;
                     }

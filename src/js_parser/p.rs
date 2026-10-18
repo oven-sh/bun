@@ -647,7 +647,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_ref_count: i32,
 
     pub(crate) validating_callee_with_type_arguments: i32,
-    pub(crate) names_imported_from_bun: Vec<&'a [u8]>,
+    pub(crate) bun_module_names: Vec<&'a [u8]>,
+    pub(crate) bun_validate_names: Vec<&'a [u8]>,
     pub(crate) json_parse_schemas: Option<std::sync::Arc<[bun_ast::audited::AuditedValidation]>>,
     pub(crate) validated_calls: Vec<(i32, u8, &'a [u8])>,
 
@@ -4275,9 +4276,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED && path.text == b"bun" {
             let default_name = stmt.default_name.map(|name| name.ref_);
             let namespace = stmt.star_name_loc.to_nullable().map(|_| stmt.namespace_ref);
-            for local in default_name.into_iter().chain(namespace).chain(stmt.items.iter().map(|item| item.name.ref_)) {
+            for local in default_name.into_iter().chain(namespace) {
                 let name = self.load_name_from_ref(local);
-                self.names_imported_from_bun.push(name);
+                self.bun_module_names.push(name);
+            }
+            for item in stmt.items.iter().filter(|item| item.alias.slice() == b"validate") {
+                let name = self.load_name_from_ref(item.name.ref_);
+                self.bun_validate_names.push(name);
             }
         }
 
@@ -9946,7 +9951,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
             validating_callee_with_type_arguments: -1,
-            names_imported_from_bun: Vec::new(),
+            bun_module_names: Vec::new(),
+            bun_validate_names: Vec::new(),
             json_parse_schemas: None,
             validated_calls: Vec::new(),
             relocated_top_level_vars: BumpVec::new_in(arena),

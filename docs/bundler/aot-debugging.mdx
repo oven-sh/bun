@@ -236,13 +236,14 @@ In an executable, as in any bundle, the modules of your program are resolved whe
 
 `--aot` is fast where the compiler can use your types. Where it cannot, it does not stop. It compiles that part like plain JavaScript, which behaves the same and runs slower. A class can lose its layout because of one line, and nothing in the program's behavior tells you.
 
-The last line of a build, and of `bun check --aot`, says how much of the program is affected:
+The last lines of a build, and of `bun check --aot`, say how much of the program is affected:
 
 ```txt
-aot: 66.7% of reads typed, 1 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-explain lists them)
+aot: 75.0% typed (6 of 8 property accesses)
+aot: --explain shows what is not typed and how to fix it
 ```
 
-The percentage counts the property reads that go through your own classes, interfaces and object types. A read is typed if the compiler knows the layout of the object that it reads from. Reads of what Bun and JavaScript provide, such as `console.log`, are not counted.
+[Get more of your program typed](/bundler/aot-explain) says what the percentage counts, and how to work through `bun compile --explain` until it reads 100%. Start there. The rules below keep a part of your program typed once it is.
 
 ### Rules
 
@@ -412,66 +413,6 @@ baseline = "aot-baseline.json"
 ```json
 {"rule":"open-layout","severity":"deny","code":100022,"file":"app.ts","line":1,"column":11,"message":"'Point' can hold objects that typed code did not create, so every property access through it checks the object first.","because":[{"code":100040,"file":"app.ts","line":6,"column":10,"message":"A value of type 'any' or 'unknown' is assigned to it here."}]}
 ```
-
-### What costs the most
-
-A large program has thousands of findings, and most of them go back to a few lines. `--aot-explain` leads every finding of every rule back to the place that causes it, counts what each place costs, and prints the most expensive places first. It needs no `--aot-warn`, and it fails no build:
-
-```bash terminal icon="terminal"
-bun check --aot ./config.ts --aot-explain
-bun compile ./config.ts --outfile app --aot-explain
-```
-
-```ts config.ts icon="/icons/typescript.svg"
-interface Server {
-  port: number;
-  host: string;
-}
-interface Config {
-  server: Server;
-  names: string[];
-}
-export const config = JSON.parse(process.argv[2]) as Config;
-
-export function address(config: Config): string {
-  return config.server.host + ":" + config.server.port;
-}
-```
-
-```txt
-aot: 1 place where the compiler gives something up, 1 with a cost that can be counted. The most expensive first:
-
-  1. config.ts:9:23 [external-type]
-     | export const config = JSON.parse(process.argv[2]) as Config;
-     A value from outside the type system is used as 'Config' here.
-     cost: 4 reads by name, 1 check of a type in 1 function
-     types: 'Server', 'Config'
-     for example at config.ts:12:17, config.ts:12:44, config.ts:12:10
-     config.ts:1:11: 'Server' is part of 'Config'.
-     fix: check the value where it enters the program and build a new object from it in typed code, instead of asserting its type
-
- In all, by rule:
-     external-type: 1 place: 4 reads by name, 1 check of a type
-```
-
-- The first line is the cause and the rule it belongs to. That rule, with `--aot-deny`, a pattern or a baseline, keeps it from coming back.
-- `cost` counts places in the compiled code, not how often they run: reads, stores and calls that look a property up by name, type checks, checks that may copy an object into another layout, functions that check their parameters when they are entered, field accesses that test the object first, and calls of built-ins such as `JSON.stringify` that are not specialized for the type of their argument.
-- `types` are the declared types that the cause takes away from the compiler.
-- `for example at` names up to three of the places that pay.
-- The lines with a position lead from the cause to the types.
-- `fix` says what to change at the cause.
-
-Costs do not add up. If data from outside reaches the same types at several places, or several places can freeze any object, they are one row. It lists the other places (`otherCauses` in the JSON), and the cost stays until all of them are fixed: fixing all but one buys nothing. Fixing one cause can also uncover another behind it, so run the report again after each fix.
-
-The order is an estimate. A place in a loop counts eight times, in a nested loop sixty-four times. Code that only runs while the program starts counts for a sixty-fourth.
-
-`--aot-explain=costs-json` prints every row on stdout, one object per line, for a script or a coding agent:
-
-```json
-{"rank":1,"rule":"external-type","file":"config.ts","line":9,"column":23,"inDependency":false,"source":"export const config = JSON.parse(process.argv[2]) as Config;","message":"A value from outside the type system is used as 'Config' here.","because":[{"file":"config.ts","line":1,"column":11,"message":"'Server' is part of 'Config'."}],"types":["Server","Config"],"examples":[{"file":"config.ts","line":12,"column":17},{"file":"config.ts","line":12,"column":44},{"file":"config.ts","line":12,"column":10}],"otherCauses":[],"cost":{"score":45,"readsByName":4,"storesByName":0,"callsByName":0,"checks":1,"checksThatMayCopy":0,"checksOfParameters":0,"guardedAccesses":0,"unspecializedCalls":0,"functions":1,"functionsAfterStart":1},"fix":"check the value where it enters the program and build a new object from it in typed code, instead of asserting its type"}
-```
-
-To work through the report, take the first row whose `inDependency` is `false`, read `source`, `because` and `otherCauses`, apply `fix`, and run the report again. Then `--aot-deny` with the row's rule, or a baseline, keeps it from coming back.
 
 ## `Function.prototype.toString()`
 

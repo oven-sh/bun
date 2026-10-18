@@ -3497,6 +3497,7 @@ pub mod bv2_impl {
                 texts: &mut texts,
                 assets: &mut assets,
                 has_late_strings,
+                has_native_addon: loaders.contains(&Loader::Napi),
                 rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
                 ignore_dce_annotations: self.transpiler.options.ignore_dce_annotations,
                 jsx_side_effects: self.transpiler.options.jsx.side_effects,
@@ -7684,7 +7685,7 @@ pub mod bv2_impl {
             }
             output_files.extend(typed.declaration_files.into_iter().map(|(path, text)| options::OutputFile::declaration(&path, inside_outdir(&path), text, false)));
             if !relative_outdir.is_empty() {
-                let directory = bun_sys::Dir::cwd().make_open_path(&relative_outdir, Default::default())?;
+                let directory = self.open_output_directory(&relative_outdir)?;
                 for file in output_files.iter_mut().filter(|file| !matches!(file.value, options::OutputFileValue::Saved(_) | options::OutputFileValue::Noop)) {
                     file.write_to_disk(directory.fd)?;
                     file.value = options::OutputFileValue::Saved(Default::default());
@@ -7694,6 +7695,17 @@ pub mod bv2_impl {
                 true => Err(crate::Error::BuildFailed),
                 false => Ok(()),
             }
+        }
+
+        fn open_output_directory(&mut self, path: &[u8]) -> Result<bun_sys::Dir, Error> {
+            bun_sys::Dir::cwd().make_open_path(path, Default::default()).map_err(|error| {
+                self.transpiler.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("Failed to create output directory {} {}", bstr::BStr::new(error.name()), bun_core::fmt::quote(path)),
+                );
+                error.into()
+            })
         }
 
         fn add_declaration_files(&mut self, output_files: &mut Vec<options::OutputFile>) -> Result<(), Error> {
@@ -7716,7 +7728,7 @@ pub mod bv2_impl {
                     output_files.push(file);
                     continue;
                 }
-                let directory = bun_sys::Dir::cwd().make_open_path(&outdir, Default::default())?;
+                let directory = self.open_output_directory(&outdir)?;
                 file.write_to_disk(directory.fd)?;
                 let options::OutputFileValue::Buffer { bytes } = file.value else { unreachable!() };
                 output_files.push(options::OutputFile::declaration(&source, file.dest_path, bytes, true));
@@ -8592,6 +8604,20 @@ pub mod bv2_impl {
                             rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
                         },
                     ) {
+                        let removed = (self.transpiler.options.modules_removed_by_trim.iter())
+                            .find(|(module, _)| module == replacement.path.as_bytes())
+                            .map(|(_, name)| name.clone());
+                        if let Some(name) = removed {
+                            self.transpiler.log_mut().add_range_warning_fmt(
+                                Some(source),
+                                import_record.range,
+                                format_args!(
+                                    "compile.trim removes \"{}\": this import of \"{}\" will throw",
+                                    bstr::BStr::new(&name),
+                                    bstr::BStr::new(replacement.path.as_bytes()),
+                                ),
+                            );
+                        }
                         // When bundling node builtins, remove the "node:" prefix.
                         // This supports special use cases where the bundle is put
                         // into a non-node module resolver that doesn't support

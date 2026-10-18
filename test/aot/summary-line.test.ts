@@ -114,7 +114,27 @@ class Job {
 console.log(describe(new Job()));
 `,
   },
-  "a class without a layout": {
+  "objects of types that are imported from bun": {
+    "main.ts": `import type { BunRequest } from "bun";
+export function session(request: BunRequest): string | null {
+  return request.cookies.get("sid") ?? request.headers.get("x-session") ?? request.params.id ?? null;
+}
+console.log(session, process.env.PORT);
+`,
+  },
+  "a caught error that is read as a type of Bun's": {
+    "main.ts": `import type { Schema } from "bun";
+interface User {
+  id: number;
+}
+try {
+  console.log(Bun.validate<User>({ id: "7" }).id);
+} catch (error) {
+  console.log((error as Schema.Error).issues.length);
+}
+`,
+  },
+  "a class that extends a class of the runtime": {
     "main.ts": `class HttpError extends Error {
   status = 500;
 }
@@ -128,32 +148,37 @@ async function check(files: Record<string, string>, ...flags: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const lines = (stdout + stderr).split("\n");
-  return { summary: lines.find(line => line.includes("of reads typed")), lines, exitCode };
+  return { summary: lines.filter(line => /^aot: ([\d.]+% typed|--aot-explain shows)/.test(line)), lines, exitCode };
 }
 
-const rest = "0 classes without a layout, 0 packages and 0 files untyped";
+const hint = "aot: --aot-explain shows what is not typed and how to fix it";
 
-describe.concurrent("the share of typed reads counts reads through the program's own types", () => {
+describe.concurrent("the share of typed property accesses counts what the program's own types cover", () => {
   test.each([
-    ["a server that only reads its own type and what Bun provides", `aot: 100.0% of reads typed, 0 of 1 type open, ${rest}`],
-    ["a class and a loop", `aot: 100.0% of reads typed, 0 of 1 type open, ${rest}`],
-    ["an any that reaches a type", `aot: 66.7% of reads typed, 1 of 2 types open, ${rest} (--aot-explain lists them)`],
-    ["the same with the values checked and built anew", `aot: 100.0% of reads typed, 0 of 2 types open, ${rest}`],
-    ["data from outside cast to a type", `aot: 60.0% of reads typed, 0 of 1 type open, ${rest} (--aot-explain lists them)`],
-    ["properties of an any", `aot: 0.0% of reads typed, 0 of 0 types open, ${rest} (--aot-explain lists them)`],
-    ["a JavaScript file of the program", `aot: 0.0% of reads typed, 0 of 1 type open, 0 classes without a layout, 0 packages and 1 file untyped (--aot-explain lists them)`],
-    ["a class without a layout", `aot: 0.0% of reads typed, 0 of 1 type open, 1 class without a layout, 0 packages and 0 files untyped (--aot-explain lists them)`],
+    ["a server that only reads its own type and what Bun provides", ["aot: 100% typed"]],
+    ["a class and a loop", ["aot: 100% typed"]],
+    ["an any that reaches a type", ["aot: 75.0% typed (6 of 8 property accesses)", hint]],
+    ["the same with the values checked and built anew", ["aot: 100% typed"]],
+    ["data from outside cast to a type", ["aot: 75.0% typed (6 of 8 property accesses)", hint]],
+    ["properties of an any", ["aot: 0.0% typed (0 of 2 property accesses)", hint]],
+    ["a JavaScript file of the program", ["aot: 50.0% typed (2 of 4 property accesses)", hint]],
+    ["objects of types that are imported from bun", ["aot: 100% typed"]],
+    ["a caught error that is read as a type of Bun's", ["aot: 100% typed"]],
+    ["a class that extends a class of the runtime", ["aot: 100% typed"]],
   ])("%s", async (name, summary) => {
     expect(await check(programs[name])).toMatchObject({ summary, exitCode: 0 });
   }, 60_000);
 
-  test.each(["a class and a loop"])("%s: --aot-explain finds nothing either", async name => {
-    const { lines } = await check(programs[name], "--aot-explain");
-    expect(lines).toContain("aot: there is no place where the compiler gives something up");
+  test.each(["a class and a loop", "a class that extends a class of the runtime"])("%s: --aot-explain has no entry either", async name => {
+    const { lines, summary } = await check(programs[name], "--aot-explain");
+    expect(lines.filter(line => /^ +\d+\. /.test(line))).toBeEmpty();
+    expect(lines).toContain("aot: every property access is typed: there is nothing to explain");
+    expect(summary).toEqual(["aot: 100% typed"]);
   }, 60_000);
 
-  test.each(["an any that reaches a type", "data from outside cast to a type", "properties of an any", "a JavaScript file of the program", "a class without a layout"])("%s: --aot-explain names a place in the program", async name => {
-    const { lines } = await check(programs[name], "--aot-explain");
-    expect(lines.filter(line => /^ +\d+\. (main\.ts|stock\.ts|helper\.js):\d+:\d+ \[/.test(line))).not.toBeEmpty();
+  test.each(["an any that reaches a type", "data from outside cast to a type", "properties of an any", "a JavaScript file of the program"])("%s: --aot-explain names a place in the program, and the hint is gone", async name => {
+    const { lines, summary } = await check(programs[name], "--aot-explain");
+    expect(lines.filter(line => /^ +\d+\. [a-z-]+ (main\.ts|stock\.ts|helper\.js)(:\d+:\d+)?: /.test(line))).not.toBeEmpty();
+    expect(summary).not.toContain(hint);
   }, 60_000);
 });

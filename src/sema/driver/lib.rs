@@ -600,6 +600,7 @@ pub struct PlanOptions {
     /// packages are not installed.
     pub only_the_globals: bool,
     pub writes_declaration_files: bool,
+    pub without_sources_of_the_project: bool,
     pub declares_bun_intrinsics: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
@@ -641,6 +642,7 @@ impl Default for PlanOptions {
             early_scan_only: false,
             only_the_globals: false,
             writes_declaration_files: false,
+            without_sources_of_the_project: false,
             declares_bun_intrinsics: false,
             memory: 0,
         }
@@ -3261,7 +3263,7 @@ fn check_project_of(
             project.files.extend(of_packages);
         }
     }
-    if disk.loads_what_these_need.is_some() {
+    if disk.loads_what_these_need.is_some() || request.plan_options.without_sources_of_the_project {
         project.files.retain(|file| is_declaration_file_name(file));
     }
     let named = of.named.map(|(extent, named)| {
@@ -5422,7 +5424,8 @@ fn check_named_files(
                     }
                     let starts = compute_ecma_line_starts(text);
                     let (line, character) = line_and_character(text, &starts, first.map_or(0, |first| first.start), &Counted::default());
-                    let place = [displayed_path(modules[i].file_name()).as_ref(), format!(":{}:{}", line + 1, character + 1).as_bytes()].concat();
+                    let shipped_as = typed_packages::typed_path_beside(modules[i].file_name()).filter(|_| typed_version.is_none());
+                    let place = [displayed_path(shipped_as.as_deref().unwrap_or_else(|| modules[i].file_name())).as_ref(), format!(":{}:{}", line + 1, character + 1).as_bytes()].concat();
                     let first = first.map(|first| {
                         let reported = Diagnostic { code: first.code, category: first.category, text: first.text.clone(), ..global(0, &[""; 0]) };
                         located(modules[i].file_name(), text, &starts, first.start, first.end, reported)
@@ -5452,16 +5455,20 @@ fn check_named_files(
             }
         }
         compiled_untyped.extend(fallen.into_iter().filter_map(|(directory, name, count, place, first, typed_version)| {
-            let count = count.to_string().into_bytes();
+            let counted = format!("{count} type error{}", if count == 1 { "" } else { "s" }).into_bytes();
             let reported = match (typed_version, is_package_dir(program.files, directory)) {
-                (Some(typed_version), _) => global(100021, &[name.to_vec(), typed_version, count, place]),
-                (None, true) => global(100009, &[name.to_vec(), count, place]),
-                (None, false) => global(100010, &[displayed_path(name).into_owned(), count, place]),
+                (Some(typed_version), _) => global(100021, &[name.to_vec(), typed_version, count.to_string().into_bytes(), place]),
+                (None, true) => global(100009, &[name.to_vec(), counted, place]),
+                (None, false) => global(100010, &[displayed_path(name).into_owned(), counted, place]),
             };
             let file = first.as_ref().and_then(|first| program.files.by_path.get(&first.path));
             if let (Some(file), Some(first)) = (file, &first) {
                 program.compiled_untyped.lock().push(CompilerDiagnostic { file, start: first.start, end: first.end, code: reported.code, args: reported.args.iter().map(|arg| arg.to_vec()).collect(), related: Vec::new() });
             }
+            let first = first.map(|first| match typed_packages::typed_path_beside(&first.path).filter(|_| reported.code != 100021) {
+                Some(shipped_as) => Diagnostic { path: shipped_as, ..first },
+                None => first,
+            });
             with_rule_severity(program, file, Diagnostic { related: first.into_iter().collect(), ..reported }).filter(|reported| is_beyond_baseline(program, reported))
         }));
     }

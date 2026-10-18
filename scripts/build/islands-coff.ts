@@ -473,7 +473,7 @@ function plainly(full: string, withReturnType: boolean): string {
   return text;
 }
 
-function spelledAsElsewhere(objdump: string, work: string, names: string[]): string[] {
+export function spelledAsElsewhere(objdump: string, work: string, names: string[]): string[] {
   const mangled = names.filter(name => name.startsWith("?"));
   if (mangled.length === 0) return names;
   const full = inFull(objdump, work, mangled);
@@ -490,7 +490,8 @@ function spelledAsElsewhere(objdump: string, work: string, names: string[]): str
       else if (text[at] === "(" && depth === 0 && !text.startsWith("(anonymous", at)) parameters = at;
     }
     if (parameters > 0 && text[parameters - 1] === ">") text = withReturnType[index]!;
-    spelled.set(name, text.replaceAll("`anonymous namespace'", "(anonymous namespace)").replaceAll("(void)", "()"));
+    text = text.replaceAll("`anonymous namespace'", "(anonymous namespace)").replaceAll("(void)", "()");
+    spelled.set(name, text.replace(/\b(?:class|struct|union|enum) /g, "").replace(/ (?=[*&])/g, ""));
   });
   return names.map(name => spelled.get(name) ?? name);
 }

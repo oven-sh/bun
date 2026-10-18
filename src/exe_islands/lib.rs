@@ -177,11 +177,19 @@ struct Place {
     kind: PlaceKind,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Answers {
+    Nothing = 0,
+    Throws = 1,
+    Undefined = 2,
+}
+
 struct Door {
     addresses: Range<u64>,
     feature: usize,
     shared_with: Vec<usize>,
     when_shut: WhenShut,
+    answers: Answers,
     places: Vec<Place>,
 }
 
@@ -211,6 +219,7 @@ struct PublicName<'a> {
     name: &'a [u8],
     features: Vec<usize>,
     tolerates: Vec<usize>,
+    modules: Vec<&'a [u8]>,
 }
 
 struct Library<'a> {
@@ -334,7 +343,7 @@ impl<'a> Table<'a> {
                 let mut start = 0;
                 for _ in 0..reader.count()? {
                     start = bytes::plus(start, reader.number()?)?;
-                    doors.push(Door { addresses: start..bytes::plus(start, smallest)?, feature, shared_with: Vec::new(), when_shut, places: Vec::new() });
+                    doors.push(Door { addresses: start..bytes::plus(start, smallest)?, feature, shared_with: Vec::new(), when_shut, answers: Answers::Nothing, places: Vec::new() });
                 }
             }
         }
@@ -395,11 +404,21 @@ impl<'a> Table<'a> {
             let name = reader.text()?;
             let members = reader.list(|reader| reader.index_in(&features))?;
             ensure(!members.is_empty())?;
-            public_names.push(PublicName { name, features: members, tolerates: reader.list(|reader| reader.index_in(&features))? });
+            let tolerates = reader.list(|reader| reader.index_in(&features))?;
+            public_names.push(PublicName { name, features: members, tolerates, modules: reader.list(Reader::text)? });
         }
         let mut libraries = Vec::new();
         for _ in 0..if reader.rest.is_empty() { 0 } else { reader.count()? } {
             libraries.push(Library { name: reader.text()?, features: reader.list(|reader| reader.index_in(&features))? });
+        }
+        for answers in [Answers::Throws, Answers::Undefined] {
+            let mut number = 0;
+            for _ in 0..if reader.rest.is_empty() { 0 } else { reader.count()? } {
+                number = bytes::plus(number, reader.number()?)?;
+                let door = usize::try_from(number).ok().and_then(|number| doors.get_mut(number)).ok_or(Error::InvalidExecutable)?;
+                ensure(door.when_shut == WhenShut::Exit && door.answers == Answers::Nothing)?;
+                door.answers = answers;
+            }
         }
         if reader.rest.iter().any(|&byte| byte != 0) {
             return Err(Error::InvalidExecutable);
@@ -431,10 +450,14 @@ fn elf_is_code(file: &[u8], addresses: &Range<u64>) -> Result<bool> {
 }
 
 fn shut_door(door: &Door, number: usize, is_removed_by_name: bool, stub: u64, container: Container, is_arm64: bool) -> Result<Vec<u8>> {
-    if door.feature >= 1 << 11 || number >= 1 << 20 {
+    if door.feature >= 1 << 11 || number >= 1 << 18 {
         return Err(Error::InvalidExecutable);
     }
-    let door_and_feature = (door.feature | usize::from(is_removed_by_name) << 11 | number << 12) as u32;
+    let answers = if container != Container::Pe { door.answers } else { Answers::Nothing };
+    if answers == Answers::Undefined && is_removed_by_name {
+        return Ok(if is_arm64 { [0xd280_0140u32.to_le_bytes(), 0xd65f_03c0u32.to_le_bytes()].concat() } else { vec![0xb8, 0x0a, 0, 0, 0, 0xc3] });
+    }
+    let door_and_feature = (door.feature | usize::from(is_removed_by_name) << 11 | number << 12 | (answers as usize) << 30) as u32;
     let mut code = Vec::new();
     if is_arm64 {
         let distance = (stub as i64 - (door.addresses.start as i64 + 8)) / 4;
@@ -584,32 +607,52 @@ fn shut_thin_doors(
     is_excluded: &[bool],
     is_removed_by_name: &[bool],
     dead: &[Range<u64>],
-) -> Result<Option<Range<u64>>> {
+) -> Result<Vec<Range<u64>>> {
     let thin = || table.doors.iter().enumerate().filter(|(_, door)| door.is_shut(is_excluded) && !door.places.is_empty());
     let count_of = |when_shut: WhenShut| thin().filter(|(_, door)| door.when_shut == when_shut).count() as u64;
     let exit_stubs = count_of(WhenShut::Exit) * stub_size(WhenShut::Exit, is_arm64);
     let length = exit_stubs + count_of(WhenShut::Return).min(1) * stub_size(WhenShut::Return, is_arm64);
     if length == 0 {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let mut strip = None;
+    let mut one_for_all = None;
+    let mut code = Vec::new();
     for addresses in dead {
         let start = addresses.start.checked_next_multiple_of(4).ok_or(Error::InvalidExecutable)?;
         let candidate = start..bytes::plus(start, length)?;
         if candidate.end <= addresses.end && container.is_code(file, &candidate)? {
-            strip = Some(candidate);
+            one_for_all = Some(candidate);
             break;
         }
+        if start < addresses.end && container.is_code(file, &(start..addresses.end))? {
+            code.push(start..addresses.end);
+        }
     }
-    let strip = strip.ok_or(Error::InvalidExecutable)?;
-    let mut next_exit_stub = strip.start;
+    let mut rooms = one_for_all.map_or(code, |room| vec![room]).into_iter();
+    let mut room = rooms.next().ok_or(Error::InvalidExecutable)?;
+    let mut strips: Vec<Range<u64>> = Vec::new();
+    let mut lay = |size: u64| -> Result<u64> {
+        while room.end - room.start < size {
+            room = rooms.next().ok_or(Error::InvalidExecutable)?;
+        }
+        let start = room.start;
+        room.start += size;
+        match strips.last_mut() {
+            Some(last) if last.end == start => last.end = room.start,
+            _ => strips.push(start..room.start),
+        }
+        Ok(start)
+    };
+    let mut starts_of_exit_stubs = Vec::new();
+    for _ in 0..count_of(WhenShut::Exit) {
+        starts_of_exit_stubs.push(lay(stub_size(WhenShut::Exit, is_arm64))?);
+    }
+    let return_stub = if count_of(WhenShut::Return) > 0 { lay(stub_size(WhenShut::Return, is_arm64))? } else { 0 };
+    let mut starts_of_exit_stubs = starts_of_exit_stubs.into_iter();
     for (number, door) in thin() {
         let size = stub_size(door.when_shut, is_arm64);
-        let start = if door.when_shut == WhenShut::Exit { next_exit_stub } else { strip.start + exit_stubs };
-        if door.when_shut == WhenShut::Exit {
-            next_exit_stub += size;
-        }
-        let stub = Door { addresses: start..start + size, feature: door.feature, shared_with: Vec::new(), when_shut: door.when_shut, places: Vec::new() };
+        let start = if door.when_shut == WhenShut::Exit { starts_of_exit_stubs.next().ok_or(Error::InvalidExecutable)? } else { return_stub };
+        let stub = Door { addresses: start..start + size, feature: door.feature, shared_with: Vec::new(), when_shut: door.when_shut, answers: door.answers, places: Vec::new() };
         let code = shut_door(&stub, number, is_removed_by_name[door.feature], table.stub, container, is_arm64)?;
         let offset = container.offset_of(file, start)?;
         slice_mut(file, offset, code.len())?.copy_from_slice(&code);
@@ -625,7 +668,7 @@ fn shut_thin_doors(
             }
         }
     }
-    Ok(Some(strip))
+    Ok(strips)
 }
 
 pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
@@ -633,7 +676,7 @@ pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
     Ok(Table::parse(&file[range])?.features)
 }
 
-const KINDS_OF_FACTS: [&[u8]; 20] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"exec-argv", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option", b"Intl", b"syntax", b"regexp"];
+const KINDS_OF_FACTS: [&[u8]; 21] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"exec-argv", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option", b"Intl", b"syntax", b"regexp", b"text-to-code"];
 const SYNTAX_THAT_IS_A_FACT: [&[u8]; 2] = [b"regexp-literal", b"bigint-literal"];
 
 pub fn features_without_conditions(file: &[u8]) -> Result<Vec<Vec<u8>>> {
@@ -844,7 +887,7 @@ fn shut_either_way(file: &mut [u8], container: Container, is_arm64: bool, table:
             chunk.copy_from_slice(&trap[..chunk.len()]);
         }
     }
-    let strip = shut_thin_doors(file, container, is_arm64, table, is_excluded, is_removed_by_name, &dead)?;
+    let strips = shut_thin_doors(file, container, is_arm64, table, is_excluded, is_removed_by_name, &dead)?;
     for (number, door) in table.doors.iter().enumerate().filter(|(_, door)| door.is_shut(is_excluded) && door.places.is_empty()) {
         if dead.iter().any(|addresses| addresses.contains(&door.addresses.start)) {
             continue;
@@ -857,7 +900,7 @@ fn shut_either_way(file: &mut [u8], container: Container, is_arm64: bool, table:
             chunk.copy_from_slice(&trap[..chunk.len()]);
         }
     }
-    if let Some(strip) = strip {
+    for strip in strips {
         for addresses in dead.iter_mut().filter(|addresses| addresses.contains(&strip.start)) {
             addresses.start = strip.end;
         }
@@ -883,9 +926,31 @@ pub fn without_either_way(mut file: Vec<u8>, excluded: &[&[u8]], removed_by_name
         }
         Ok(marks)
     };
-    let dead = shut_either_way(&mut file, container, is_arm64, &table, &marks_of(excluded)?, &marks_of(removed_by_name)?)?;
-    file[range].fill(0);
+    let is_removed_by_name = marks_of(removed_by_name)?;
+    let dead = shut_either_way(&mut file, container, is_arm64, &table, &marks_of(excluded)?, &is_removed_by_name)?;
+    let note = modules_removed_with(&table, &is_removed_by_name);
+    let room = &mut file[range];
+    room.fill(0);
+    slice_mut(room, 0, note.len())?.copy_from_slice(&note);
     container.without_pages(&file, &dead)
+}
+
+pub fn modules_of(file: &[u8], names: &[&[u8]]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let range = Container::of(file)?.table_range(file)?;
+    let table = Table::parse(&file[range])?;
+    let named = table.public_names.iter().filter(|public| names.contains(&public.name));
+    Ok(named.flat_map(|public| public.modules.iter().map(|module| (module.to_vec(), public.name.to_vec()))).collect())
+}
+
+const REMOVED_MODULES_HEADER: &[u8] = b"bun-trimmed 1\n";
+
+fn modules_removed_with(table: &Table, is_removed_by_name: &[bool]) -> Vec<u8> {
+    let is_removed = |public: &&PublicName| public.features.iter().all(|&feature| is_removed_by_name[feature]);
+    let removed: Vec<u8> = (table.public_names.iter().filter(is_removed))
+        .flat_map(|public| public.modules.iter().map(|module| [module, &b"\0"[..], public.name, b"\0"].concat()))
+        .flatten()
+        .collect();
+    if removed.is_empty() { Vec::new() } else { [REMOVED_MODULES_HEADER, &removed].concat() }
 }
 
 #[cfg(test)]
@@ -1284,7 +1349,7 @@ mod tests {
 
     fn door(address: u64, feature: usize, when_shut: WhenShut, places: &[(u64, PlaceKind)]) -> Door {
         let places = places.iter().map(|&(address, kind)| Place { address, kind }).collect();
-        Door { addresses: address..address + 12, feature, shared_with: Vec::new(), when_shut, places }
+        Door { addresses: address..address + 12, feature, shared_with: Vec::new(), when_shut, answers: Answers::Nothing, places }
     }
 
     fn island(addresses: Range<u64>, needed_by: &[usize]) -> Island {
@@ -1357,7 +1422,7 @@ mod tests {
     #[test]
     fn what_is_named_goes_or_stays_whatever_the_program_uses() {
         let when = |feature, kind: &'static [u8], name: &'static [u8]| Condition { feature, kind, name };
-        let public = |name: &'static [u8], features: &[usize], tolerates: &[usize]| PublicName { name, features: features.to_vec(), tolerates: tolerates.to_vec() };
+        let public = |name: &'static [u8], features: &[usize], tolerates: &[usize]| PublicName { name, features: features.to_vec(), tolerates: tolerates.to_vec(), modules: Vec::new() };
         let table = Table {
             conditions: vec![when(0, b"feature", b"b"), when(1, b"feature", b"c"), when(2, b"Bun", b"serve"), when(2, b"world", b"open")],
             public_names: vec![public(b"A", &[0], &[]), public(b"B", &[1], &[]), public(b"C", &[2], &[]), public(b"AB", &[0, 1], &[]), public(b"loose-A", &[0], &[1])],
@@ -1416,16 +1481,18 @@ mod tests {
 
     #[test]
     fn reads_the_public_names_behind_everything_else() {
-        let bytes = [&SMALL.concat(), &b"\x00\x00\x02\x03cli\x01\x00\x00\x06engine\x02\x01\x02\x01\x00"[..]].concat();
+        let bytes = [&SMALL.concat(), &b"\x00\x00\x02\x03cli\x01\x00\x00\x00\x06engine\x02\x01\x02\x01\x00\x02\x07bun:jit\x09node:text"[..]].concat();
         let table = Table::parse(&bytes).unwrap();
-        let read: Vec<_> = table.public_names.iter().map(|public| (public.name, public.features.clone(), public.tolerates.clone())).collect();
-        assert_eq!(read, [(&b"cli"[..], vec![0], vec![]), (&b"engine"[..], vec![1, 2], vec![0])]);
+        let read: Vec<_> = table.public_names.iter().map(|public| (public.name, public.features.clone(), public.tolerates.clone(), public.modules.clone())).collect();
+        assert_eq!(read, [(&b"cli"[..], vec![0], vec![], vec![]), (&b"engine"[..], vec![1, 2], vec![0], vec![&b"bun:jit"[..], b"node:text"])]);
+        assert_eq!(modules_removed_with(&table, &[true, true, false]), b"");
+        assert_eq!(modules_removed_with(&table, &[false, true, true]), b"bun-trimmed 1\nbun:jit\0engine\0node:text\0engine\0");
         assert!(Table::parse(&SMALL.concat()).unwrap().public_names.is_empty());
         for length in SMALL.concat().len() + 3..bytes.len() {
             assert_eq!(error_of(&bytes[..length]), Some(Error::InvalidExecutable), "{length}");
         }
-        assert_eq!(error_of(&[&SMALL.concat(), &b"\x00\x00\x01\x03cli\x00\x00"[..]].concat()), Some(Error::InvalidExecutable));
-        assert_eq!(error_of(&[&SMALL.concat(), &b"\x00\x00\x01\x03cli\x01\x03\x00"[..]].concat()), Some(Error::InvalidExecutable));
+        assert_eq!(error_of(&[&SMALL.concat(), &b"\x00\x00\x01\x03cli\x00\x00\x00"[..]].concat()), Some(Error::InvalidExecutable));
+        assert_eq!(error_of(&[&SMALL.concat(), &b"\x00\x00\x01\x03cli\x01\x03\x00\x00"[..]].concat()), Some(Error::InvalidExecutable));
     }
 
     #[test]
@@ -1475,6 +1542,36 @@ mod tests {
     }
 
     #[test]
+    fn stubs_that_no_single_stretch_of_dead_code_holds_go_into_several() {
+        let islands = vec![island(0x200800..0x200900, &[0]), island(0x202100..0x20210c, &[0]), island(0x202300..0x20230f, &[0]), island(0x202340..0x202344, &[0])];
+        let table = Table { islands, ..table() };
+        let mut file = linked();
+        let dead = shut(&mut file, Container::Elf, false, &table, &[true, false, false]).unwrap();
+        assert_eq!(dead, [0x200800..0x200900, 0x20210a..0x20210c, 0x20230d..0x20230f, 0x202340..0x202344]);
+        let mut expected = linked();
+        fill(&mut expected, 0x200800..0x200900, 0xcc);
+        fill(&mut expected, 0x202100..0x20210c, 0xcc);
+        fill(&mut expected, 0x202300..0x20230f, 0xcc);
+        fill(&mut expected, 0x202340..0x202344, 0xcc);
+        put(&mut expected, 0x202100, &exit_stub(0x202100, 1, 0));
+        put(&mut expected, 0x202300, &exit_stub(0x202300, 2, 0));
+        put(&mut expected, 0x20230a, &[0x31, 0xc0, 0xc3]);
+        put_call(&mut expected, 0x201111, 0x202100);
+        put_call(&mut expected, 0x201101, 0x202300);
+        put_call(&mut expected, 0x202401, 0x202300);
+        put_call(&mut expected, 0x202901, 0x202300);
+        put(&mut expected, 0x403008, &0x202300u64.to_le_bytes());
+        put_call(&mut expected, 0x201121, 0x20230a);
+        put(&mut expected, 0x403010, &0x20230au64.to_le_bytes());
+        put(&mut expected, 0x201200, &exit_stub(0x201200, 0, 0));
+        fill(&mut expected, 0x20120a..0x20120c, 0xcc);
+        assert!(file == expected);
+
+        let too_little = Table { islands: vec![island(0x202100..0x20210c, &[0]), island(0x202300..0x20230c, &[0])], ..self::table() };
+        assert_eq!(shut(&mut linked(), Container::Elf, false, &too_little, &[true, false, false]), Err(Error::InvalidExecutable));
+    }
+
+    #[test]
     fn a_shut_door_says_whether_its_feature_was_removed_by_name() {
         let shut_with = |is_removed_by_name: &[bool]| {
             let mut file = linked();
@@ -1487,6 +1584,29 @@ mod tests {
         put(&mut expected, 0x20200a, &exit_stub(0x20200a, 2, 1 << 11));
         put(&mut expected, 0x201200, &exit_stub(0x201200, 0, 1 << 11));
         assert!(shut_with(&[true, false, false]) == expected);
+    }
+
+    #[test]
+    fn a_door_that_answers_says_how() {
+        let mut table = table();
+        table.doors[0].answers = Answers::Throws;
+        table.doors[1].answers = Answers::Undefined;
+        let shut_with = |container: Container, is_removed_by_name: &[bool]| {
+            let mut file = linked();
+            shut_either_way(&mut file, container, false, &table, &[true, false, false], is_removed_by_name).map(|_| file)
+        };
+        let mut as_ever = linked();
+        shut(&mut as_ever, Container::Elf, false, &self::table(), &[true, false, false]).unwrap();
+        let mut expected = as_ever.clone();
+        put(&mut expected, 0x201200, &exit_stub(0x201200, 0, 1 << 30));
+        put(&mut expected, 0x202000, &exit_stub(0x202000, 1, 2 << 30));
+        assert!(shut_with(Container::Elf, &[false, false, false]).unwrap() == expected);
+        let mut expected = as_ever;
+        put(&mut expected, 0x201200, &exit_stub(0x201200, 0, 1 << 11 | 1 << 30));
+        fill(&mut expected, 0x202000..0x20200a, 0xcc);
+        put(&mut expected, 0x202000, &[0xb8, 0x0a, 0, 0, 0, 0xc3]);
+        put(&mut expected, 0x20200a, &exit_stub(0x20200a, 2, 1 << 11));
+        assert!(shut_with(Container::Elf, &[true, false, false]).unwrap() == expected);
     }
 
     #[test]

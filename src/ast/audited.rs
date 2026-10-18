@@ -134,8 +134,8 @@ pub fn json_parse_schema_generation() -> u32 {
     SCHEMA_GENERATION.load(std::sync::atomic::Ordering::Acquire)
 }
 
-pub fn json_parse_schemas_of(path: &[u8], text: &[u8]) -> std::sync::Arc<[AuditedValidation]> {
-    SCHEMA_SOURCE.get().map_or_else(|| std::sync::Arc::new([]) as _, |source| source(path, text))
+pub fn json_parse_schemas_of(path: &[u8], text: &[u8]) -> Option<std::sync::Arc<[AuditedValidation]>> {
+    Some(SCHEMA_SOURCE.get()?(path, text))
 }
 
 pub fn validation_among(validations: &[AuditedValidation], start: u32, next: u32) -> Option<&AuditedValidation> {

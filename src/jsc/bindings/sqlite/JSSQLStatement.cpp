@@ -2629,6 +2629,11 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
     return object;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsCreateSQLStatementConstructor, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    return JSValue::encode(createJSSQLStatementConstructor(defaultGlobalObject(lexicalGlobalObject)));
+}
+
 } // namespace WebCore
 
 int VersionSqlite3::close(bool force)

@@ -363,7 +363,6 @@ pub(crate) trait BlobExt {
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
-        check_s3: bool,
     ) -> Blob
     where
         Self: Sized;
@@ -782,6 +781,7 @@ impl BlobExt for Blob {
 
         let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
+            Err(crate::Error::Js(error)) => return Err(error),
             Err(e) if e.name() == "OutOfMemory" => {
                 return Err(global_this.throw_out_of_memory());
             }
@@ -3374,41 +3374,11 @@ impl BlobExt for Blob {
     }
 
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and
-    /// return a Blob viewing it. Runtime `check_s3` matches the call shape used
-    /// by `server_body.rs` / `fetch.rs` (collapsed from a const generic since
-    /// it only guards a string prefix check).
+    /// return a Blob viewing it.
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
-        check_s3: bool,
     ) -> Blob {
-        // ─── S3 (`s3://…`) branch ──────────────────────────────────────────
-        if check_s3 {
-            if let PathOrFileDescriptor::Path(p) = &*path_or_fd {
-                if p.slice().starts_with(b"s3://") {
-                    // SAFETY: bun_vm() is live for the duration of a host call.
-                    let vm = global_this.bun_vm().as_mut();
-                    // `bun_dotenv::Loader` (T2) returns its local POD mirror by
-                    // reference; lift it into the refcounted
-                    // `bun_s3_signing::S3Credentials` here at the T6 call site
-                    // (dotenv cannot name the s3_signing type — upward dep).
-                    let env_creds = vm.transpiler.env_mut().get_s3_credentials();
-                    let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
-                    let copy = core::mem::replace(
-                        path_or_fd,
-                        PathOrFileDescriptor::Path(PathLike::default()),
-                    );
-                    let PathOrFileDescriptor::Path(path) = copy else {
-                        unreachable!()
-                    };
-                    return Blob::init_with_store(
-                        bun_core::handle_oom(Store::init_s3(path, None, credentials)),
-                        global_this,
-                    );
-                }
-            }
-        }
-
         let path: PathOrFileDescriptor = match path_or_fd {
             PathOrFileDescriptor::Path(_) => {
                 #[cfg(windows)]
@@ -3877,7 +3847,6 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
                         global_this,
-                        true,
                     ));
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
@@ -3890,11 +3859,10 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                         return Err(crate::Error::InvalidValue);
                     }
                     let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
-                    break 'file Blob::new(Blob::find_or_create_file_from_path(
+                    break 'file Blob::new(find_or_create_file_or_s3_file_from_path(
                         &mut dest,
                         global_this,
-                        true,
-                    ));
+                    )?);
                 }
             }
         }
@@ -4777,7 +4745,7 @@ pub(crate) fn write_file_internal(
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
-            let new_blob = Blob::find_or_create_file_from_path(path, cx.global(), true);
+            let new_blob = find_or_create_file_or_s3_file_from_path(path, cx.global())?;
             if new_blob.store.get().is_none() {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
                     "Writing to an empty blob is not implemented yet"
@@ -5441,12 +5409,27 @@ pub(crate) fn construct_bun_file(
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
-            // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
-            return S3File::construct_internal_js(global_object, p.clone(), options);
+            let construct_s3_file = core::hint::black_box(
+                Blob__constructS3File
+                    as extern "C" fn(
+                        &JSGlobalObject,
+                        &CallFrame,
+                        &PathLike<'static>,
+                        JSValue,
+                    ) -> JSValue,
+            );
+            return bun_jsc::from_js_host_call(global_object, || {
+                construct_s3_file(
+                    global_object,
+                    callframe,
+                    p,
+                    options.unwrap_or(JSValue::ZERO),
+                )
+            });
         }
     }
 
-    let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+    let blob = Blob::find_or_create_file_from_path(&mut path, global_object);
 
     if let Some(opts) = options {
         if opts.is_object() {
@@ -5482,8 +5465,86 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
-// `find_or_create_file_from_path`: canonical impl lives later in this file
-// (runtime `check_s3: bool` form). Const-generic duplicate removed here.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) extern "C" fn Blob__constructS3File(
+    global_object: &JSGlobalObject,
+    _callframe: &CallFrame,
+    path: &PathLike<'static>,
+    options: JSValue,
+) -> JSValue {
+    bun_jsc::to_js_host_call(global_object, || {
+        // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
+        S3File::construct_internal_js(
+            global_object,
+            path.clone(),
+            (!options.is_empty()).then_some(options),
+        )
+    })
+}
+
+struct S3FileFromPath<'a> {
+    path_or_fd: &'a mut PathOrFileDescriptor<'static>,
+    blob: Option<Blob>,
+}
+
+#[bun_jsc::host_fn(export = "Blob__findOrCreateS3File")]
+fn find_or_create_s3_file(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: only `find_or_create_file_or_s3_file_from_path` calls this, with the
+    // address of a request that outlives the call.
+    let request = unsafe { &mut *callframe.argument(0).as_promise_ptr::<S3FileFromPath<'_>>() };
+    // SAFETY: bun_vm() is live for the duration of a host call.
+    let vm = global_this.bun_vm().as_mut();
+    // `bun_dotenv::Loader` (T2) returns its local POD mirror by
+    // reference; lift it into the refcounted
+    // `bun_s3_signing::S3Credentials` here at the T6 call site
+    // (dotenv cannot name the s3_signing type — upward dep).
+    let env_creds = vm.transpiler.env_mut().get_s3_credentials();
+    let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
+    let copy = core::mem::replace(
+        request.path_or_fd,
+        PathOrFileDescriptor::Path(PathLike::default()),
+    );
+    let PathOrFileDescriptor::Path(path) = copy else {
+        unreachable!()
+    };
+    request.blob = Some(Blob::init_with_store(
+        bun_core::handle_oom(Store::init_s3(path, None, credentials)),
+        global_this,
+    ));
+    Ok(JSValue::UNDEFINED)
+}
+
+pub(crate) fn find_or_create_file_or_s3_file_from_path(
+    path_or_fd: &mut PathOrFileDescriptor<'static>,
+    global_this: &JSGlobalObject,
+) -> JsResult<Blob> {
+    if let PathOrFileDescriptor::Path(p) = &*path_or_fd {
+        if p.slice().starts_with(b"s3://") {
+            let mut request = S3FileFromPath {
+                path_or_fd,
+                blob: None,
+            };
+            bun_jsc::JSFunction::create(
+                global_this,
+                "",
+                __jsc_host_find_or_create_s3_file,
+                1,
+                Default::default(),
+            )
+            .call(
+                global_this,
+                JSValue::UNDEFINED,
+                &[JSValue::from_ptr_address((&raw mut request) as usize)],
+            )?;
+            return request.blob.ok_or(jsc::JsError::Terminated);
+        }
+    }
+    Ok(Blob::find_or_create_file_from_path(path_or_fd, global_this))
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // getStream / toStreamWithOffset / lifetimeWrap / accessor host fns

@@ -602,6 +602,7 @@ impl Slice<'_> {
                 func.blocks = Vec::new();
                 func.values = Vec::new();
                 func.spans = Vec::new();
+                func.accesses_by_name = Vec::new();
             }
         }
         *self = Slice::Lent(&[]);

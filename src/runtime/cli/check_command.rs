@@ -65,7 +65,7 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!(
         "--aot              Also report what <b>bun build --compile --aot<r> would reject in these entry points"
     ),
-    clap::param!("--aot-explain <word>?...  With <b>--aot<r>: list the places where the compiler cannot use your types, the most expensive first. <b>costs-json<r> prints them as JSON. <b>throws<r> lists every type check that can fail when the program runs"),
+    clap::param!("--aot-explain <word>?...  With <b>--aot<r>: list what keeps the compiler from using your types, the most expensive cause first, with a fix for each. <b>json<r> prints one object per line. <b>throws<r> lists every type check that can fail when the program runs"),
     clap::param!("--disallow-code-generation-from-strings <word>?  With <b>--aot<r>: as for an executable built with that flag"),
     clap::param!("--cwd <path>       Set the working directory"),
     // `script_or_command` reads it.
@@ -706,8 +706,9 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             );
         }
     }
-    if let Some(line) = take_typedness_line().filter(|_| report.is_ok()) {
-        summary.extend_from_slice(line.as_bytes());
+    let explained = explaining(&options.aot_explain);
+    if let Some(lines) = take_typedness_lines("--aot-explain", explained.causes || explained.causes_json).filter(|_| report.is_ok()) {
+        summary.extend_from_slice(lines.as_bytes());
     }
     let _ = Output::error_writer().write_all(&summary);
     Output::flush();
@@ -1244,6 +1245,7 @@ struct CompleteRequest {
     constants: bun_aot::Constants,
     function_source_printing: std::sync::Arc<bun_threading::thread_pool::DeferredStart>,
     has_late_strings: bool,
+    has_native_addon: bool,
     explain_to_log: bool,
     explains_plugins: bool,
     explains_rules_as_json: bool,
@@ -1382,6 +1384,7 @@ fn analyze_sources<'c, 'i, 'l>(
             texts,
             assets,
             has_late_strings,
+            has_native_addon,
             defines,
             features,
             rewrite_jest_for_tests: _,
@@ -1522,7 +1525,7 @@ fn analyze_sources<'c, 'i, 'l>(
         }
         let explain = explaining(explain);
         let deferred_source_count = deferred.code.len();
-        let complete_request = complete_request_cell.get_or_init(|| CompleteRequest { constants, function_source_printing, has_late_strings, explain_to_log, explains_plugins: explain.plugins, explains_rules_as_json: explain.rules_json, explains_runtime_use: explain.runtime_use, rule_flags: rules.to_vec(), deferred_source_count });
+        let complete_request = complete_request_cell.get_or_init(|| CompleteRequest { constants, function_source_printing, has_late_strings, has_native_addon, explain_to_log, explains_plugins: explain.plugins, explains_rules_as_json: explain.rules_json, explains_runtime_use: explain.runtime_use, rule_flags: rules.to_vec(), deferred_source_count });
         let _ = translation_cell.set(bun_aot::Translation::new(&complete_request.constants).explaining(explain).enforcing(crate::cli::aot::rule_settings(rules).unwrap_or_default()));
         *received_log.lock() = Some(Handed(log));
         deferred
@@ -1691,7 +1694,9 @@ fn analyze_sources<'c, 'i, 'l>(
     if complete_request.get().is_some_and(|complete_request| complete_request.explains_rules_as_json) {
         explained.lock().extend(format::rule_findings_as_json(&report, &from_native(cwd)));
     }
+    let has_native_addon = complete_request.get().is_some_and(|complete_request| complete_request.has_native_addon);
     let runtime_use = report.builtin_modules.as_ref().map(|found| found.runtime_use.text());
+    let runtime_use = runtime_use.map(|facts| if has_native_addon { bun_ast::type_tags::open_world(&facts, b"a native addon") } else { facts });
     if let Some(runtime_use) = runtime_use.as_ref().filter(|_| complete_request.get().is_some_and(|complete_request| complete_request.explains_runtime_use)) {
         explained.lock().extend(runtime_use_lines(runtime_use));
     }
@@ -1719,35 +1724,16 @@ fn analyze_sources<'c, 'i, 'l>(
 
 static TYPEDNESS_OF_LAST_BUILD: bun_threading::Guarded<Option<bun_aot::Typedness>> = bun_threading::Guarded::new(None);
 
-pub(crate) fn take_typedness_line() -> Option<String> {
-    TYPEDNESS_OF_LAST_BUILD.lock().take().map(|typedness| typedness_line(&typedness))
+pub(crate) fn take_typedness_lines(explain_flag: &str, is_explained: bool) -> Option<String> {
+    TYPEDNESS_OF_LAST_BUILD.lock().take().map(|typedness| typedness_lines(&typedness, explain_flag, is_explained))
 }
 
-fn typedness_line(typedness: &bun_aot::Typedness) -> String {
-    let with_commas = |n: usize| {
-        let digits = n.to_string();
-        let mut out = String::new();
-        for (i, digit) in digits.chars().enumerate() {
-            if i > 0 && (digits.len() - i).is_multiple_of(3) {
-                out.push(',');
-            }
-            out.push(digit);
-        }
-        out
-    };
-    let counted = |n: usize, one: &str, many: &str| format!("{} {}", with_commas(n), if n == 1 { one } else { many });
-    let bun_aot::Typedness { own_reads, own_typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files, .. } = *typedness;
-    let is_fully_typed = own_typed_reads == own_reads && open_layouts + classes_without_layout + untyped_packages + untyped_files == 0;
-    format!(
-        "aot: {:.1}% of reads typed, {} of {} open, {} without a layout, {} and {} untyped{}\n",
-        if own_reads == 0 { 100.0 } else { 100.0 * own_typed_reads as f64 / own_reads as f64 },
-        with_commas(open_layouts),
-        counted(layouts, "type", "types"),
-        counted(classes_without_layout, "class", "classes"),
-        counted(untyped_packages, "package", "packages"),
-        counted(untyped_files, "file", "files"),
-        if is_fully_typed { "" } else { " (--aot-explain lists them)" },
-    )
+fn typedness_lines(typedness: &bun_aot::Typedness, explain_flag: &str, is_explained: bool) -> String {
+    let mut lines = format!("aot: {}\n", typedness.summary());
+    if !is_explained && typedness.is_worth_explaining() {
+        lines.push_str(&format!("aot: {explain_flag} shows what is not typed and how to fix it\n"));
+    }
+    lines
 }
 
 fn explaining(words: &[Box<[u8]>]) -> bun_aot::Explain {
@@ -1833,14 +1819,15 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
         bun_sema_driver::governing_config_of(&request(cwd, Some(tsconfig), &entries, &[], 0, None), tsconfig, source)
     });
     let tsconfig = governing.as_deref().or(tsconfig);
-    let check = |typed: &mut Vec<(Vec<u8>, Vec<u8>)>, declarations: &[(Vec<u8>, Vec<u8>)]| {
-        let paths: Vec<Vec<u8>> = typed.iter().map(|file| file.0.clone()).collect();
+    let newest_lib = [([outdir.strip_suffix(b"/").unwrap_or(outdir), b"/newest-lib.d.ts"].concat(), b"/// <reference lib=\"esnext\" />\n".to_vec())];
+    let check = |typed: &mut Vec<(Vec<u8>, Vec<u8>)>, declarations: &[(Vec<u8>, Vec<u8>)], libs: &[(Vec<u8>, Vec<u8>)]| {
+        let paths: Vec<Vec<u8>> = typed.iter().chain(libs).map(|file| file.0.clone()).collect();
         let entries = Paths::EntryPoints(Entries { paths: &paths, script_kinds: &[], script_kinds_by_extension: &by_extension, conditions });
-        let plan_options = bun_sema_driver::PlanOptions { writes_declaration_files: true, ..Default::default() };
+        let plan_options = bun_sema_driver::PlanOptions { writes_declaration_files: true, without_sources_of_the_project: !keeps_modules_apart, ..Default::default() };
         let request = Request { plan_options, ..request(cwd, tsconfig, &entries, &[], 0, None) };
         let mut rounds = 0;
         loop {
-            let provided = Provided { already_read: already_read(cwd, &mut typed.iter().chain(declarations).map(|file| (&file.0[..], &file.1[..]))), ..Default::default() };
+            let provided = Provided { already_read: already_read(cwd, &mut typed.iter().chain(declarations).chain(libs).map(|file| (&file.0[..], &file.1[..]))), ..Default::default() };
             let report = bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |report| report);
             rounds += 1;
             if rounds == 3 || !annotate_implicit_any(typed, &report.diagnostics) {
@@ -1872,7 +1859,7 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
     let declaration_files: DeclarationFiles = (rolls_up_declarations.then(|| typed_outputs(outdir, &outputs, modules.map(Vec::as_slice), &emitted_modules, true, false).ok()).flatten())
         .filter(|typed| typed.iter().all(|(_, typed)| typed.untyped_exports.is_empty() && typed.dropped_casts == 0))
         .map(|typed| typed.into_iter().map(|(path, typed)| (path, typed.text)).collect())
-        .map(|mut typed: Vec<(Vec<u8>, Vec<u8>)>| check(&mut typed, &[]))
+        .map(|mut typed: Vec<(Vec<u8>, Vec<u8>)>| check(&mut typed, &[], &[]))
         .filter(|report| first_error(report).is_none() && report.incomplete.is_empty())
         .map_or_else(Vec::new, |report| {
             (report.declaration_files.iter())
@@ -1891,12 +1878,14 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
             return TypedOutputs { sound_files: Vec::new(), declaration_files };
         }
     };
-    let report = check(&mut found.typed, &found.declarations_while_checked);
+    let report = check(&mut found.typed, &found.declarations_while_checked, &newest_lib);
     if let Some(first) = first_error(&report) {
         let path = bundler_path(&first.path);
         let shown = BStr::new(path.strip_prefix(bundler_outdir).map_or(&path[..], |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)));
         let text = BStr::new(bun_core::strings::split(&first.text[..], b"\n").next().unwrap_or_default());
-        log.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{SKIPPED_SOUND_FILES}: with its types put back it has type errors, the first at {shown}:{}:{}: TS{}: {text}", first.line, first.column, first.code));
+        let is_only_under_the_newest_lib = first_error(&check(&mut found.typed, &found.declarations_while_checked, &[])).is_none();
+        let under = if is_only_under_the_newest_lib { " under \"lib\": [\"esnext\"], which a project that installs the package may have" } else { "" };
+        log.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{SKIPPED_SOUND_FILES}: with its types put back it has type errors{under}, the first at {shown}:{}:{}: TS{}: {text}", first.line, first.column, first.code));
         return TypedOutputs { sound_files: Vec::new(), declaration_files };
     }
     if !report.incomplete.is_empty() {
@@ -1929,6 +1918,7 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
         texts: _,
         assets: _,
         has_late_strings: _,
+        has_native_addon: _,
         defines: _,
         features: _,
         rewrite_jest_for_tests: _,
@@ -2029,6 +2019,9 @@ fn add_to_log(report: &Report, log: &mut bun_ast::Log) {
         match kind {
             bun_ast::Kind::Err => log.errors += 1,
             _ => log.warnings += 1,
+        }
+        if let (100009, Some(package)) = (reported.code, reported.args.first()) {
+            log.msgs.retain(|said| said.kind != bun_ast::Kind::Note || !bun_sema_driver::typed_packages::says_that_the_typed_version_is_used(&said.data.text, package));
         }
         log.add_msg(bun_ast::Msg {
             kind,

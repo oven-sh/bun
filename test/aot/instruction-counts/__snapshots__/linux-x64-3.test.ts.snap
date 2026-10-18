@@ -167,3 +167,8 @@ typed, module level: 2223.36 instructions (the runtime 2166.14, stub RegExpTestW
 untyped, function: 2278.66 instructions (the runtime 2167.14, kernel 46.40, stub RegExpTestBoxedWithFastPath 33, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 14, stub RegExpTestOrCallValue 12, stub ReadInheritedOutOfLineByName 6, module 0.12), 539 bytes
 untyped, module level: 2275.54 instructions (the runtime 2167.14, module 44.40, stub RegExpTestBoxedWithFastPath 33, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub RegExpTestOrCallValue 12, stub ReadInheritedOutOfLineByName 6), 3627 bytes"
 `;
+
+exports[`parses one object of each of the eight arms of a tagged union, the tag first, with JSON.parse<T>() 1`] = `
+"typed, function: 265.38 instructions (kernel 167.38, the runtime 61, stub AllocateTypedObject 17, elsewhere 11.50, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2, module 1.50), 29572 bytes
+typed, module level: 262.88 instructions (module 166.38, the runtime 61, stub AllocateTypedObject 17, elsewhere 11.50, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2), 30863 bytes"
+`;

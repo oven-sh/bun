@@ -187,14 +187,14 @@ describe.concurrent("bunfig.toml", () => {
 
 describe.concurrent("untyped-file", () => {
   const found = (severity: string, dir = "") => [
-    expect.stringMatching(new RegExp(`^${severity} untyped-file TS100009 'typed' has 1 type errors, the first at .*node_modules[\\\\/]typed[\\\\/]index\\.ts:1:51: it is compiled untyped\\.$`)),
+    expect.stringMatching(new RegExp(`^${severity} untyped-file TS100009 'typed' has 1 type error, the first at .*node_modules[\\\\/]typed[\\\\/]index\\.ts:1:51: it is compiled untyped\\.$`)),
     `  ${dir}node_modules/typed/index.ts:1:51 Type 'number' is not assignable to type 'string'.`,
   ];
 
   test("warns by default, in bun check --aot as in a build", async () => {
     expect(await check(packageWithTypeError)).toMatchObject({ findings: found("warn"), exitCode: 0 });
     const { stderr, exitCode, wroteExecutable } = await build(packageWithTypeError);
-    expect(stderr).toContain("warn: TS100009: 'typed' has 1 type errors");
+    expect(stderr).toContain("warn: TS100009: 'typed' has 1 type error,");
     expect(stderr).toContain("it is compiled untyped. [untyped-file]");
     expect({ exitCode, wroteExecutable }).toEqual({ exitCode: 0, wroteExecutable: true });
   }, 120_000);
@@ -635,16 +635,16 @@ describe.concurrent("the baseline", () => {
 });
 
 describe.concurrent("the summary", () => {
-  test("a build ends with one line that says how much of the program is typed", async () => {
+  test("a build ends with a line that says how much of the program is typed", async () => {
     const { stdout, exitCode } = await build(openPoint);
-    expect(stdout).toMatch(/^aot: 33\.3% of reads typed, 2 of 3 types open, 0 classes without a layout, 0 packages and 0 files untyped \(--aot-explain lists them\)$/m);
+    expect(stdout).toMatch(/^aot: 33\.3% typed \(1 of 3 property accesses\)\naot: --aot-explain shows what is not typed and how to fix it$/m);
     expect(exitCode).toBe(0);
   }, 120_000);
 
   test("so does bun check --aot", async () => {
     const files = { "main.ts": `interface Size {\n  width: number;\n}\nconst size: Size = { width: 3 };\nexport const width = size.width;\n` };
     const { stderr, exitCode } = await check(files);
-    expect(stderr).toMatch(/^aot: 100\.0% of reads typed, 0 of 1 type open, 0 classes without a layout, 0 packages and 0 files untyped$/m);
+    expect(stderr).toMatch(/^aot: 100% typed$/m);
     expect(exitCode).toBe(0);
   }, 60_000);
 });

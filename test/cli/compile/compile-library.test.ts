@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "../../aot/run-programs";
@@ -83,6 +83,9 @@ describe.concurrent("bun compile --library", () => {
     expect(built.exitCode).toBe(0);
     const dist = join(String(dir), "dist");
     expect(filesIn(dist)).toEqual(["LICENSE", "README.md", "index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+    const table = built.stdout.split("\n").filter(line => / \(.+\)$/.test(line));
+    expect(table.map(line => line.trim().split(" ")[0]).sort()).toEqual(filesIn(dist));
+    expect([...new Set(table.map(line => line.search(/\d/)))]).toHaveLength(1);
     expect(json(join(dist, "package.json"))).toEqual({
       name: "@acme/shapes",
       version: "1.2.3",
@@ -140,6 +143,79 @@ describe.concurrent("bun compile --library", () => {
     const written = json(join(String(dir), "dist/package.json"));
     expect(written.exports).toEqual({ ".": conditions("index"), "./extra": conditions("extra"), "./tools": conditions("tools/index"), "./package.json": "./package.json" });
     expect({ main: written.main, module: written.module, types: written.types }).toEqual({ main: "./index.js", module: "./index.js", types: "./index.d.ts" });
+  });
+
+  const where = {
+    "src/where/browser.ts": `export const where: string = "browser";\n`,
+    "src/where/server.ts": `export const where: string = "server";\n`,
+  };
+
+  test("without an entry point, the TypeScript files that exports points at are built, under their names and conditions", async () => {
+    using dir = tempDir("library-exports-of-sources", {
+      ...sources,
+      ...where,
+      "package.json": JSON.stringify({
+        name: "shapes",
+        version: "1.0.0",
+        exports: {
+          ".": { bun: "./src/index.ts", types: "./dist/index.d.ts", import: "./dist/index.js", require: "./dist/index.cjs" },
+          "./more": "./src/extra.ts",
+          "./where": { browser: "./src/where/browser.ts", worker: { import: "./lib/worker.mjs", require: "./lib/worker.cjs" }, default: "./src/where/server.ts" },
+          "./package.json": "./package.json",
+        },
+      }),
+      "app/app.mjs": `import { where } from "shapes/where";\nimport { double } from "shapes/more";\nconsole.log(where, double(2));\n`,
+    });
+    const built = await bun(String(dir), "compile", "--library");
+    expect(built.stderr.split("\n").filter(line => line !== "")).toEqual([
+      `warn: "require" of "." in "exports" of package.json is left out of dist/package.json: this build does not write ./dist/index.cjs`,
+      `warn: 2 conditions of "./where" in "exports" of package.json are left out of dist/package.json, the first "worker" > "import": this build does not write ./lib/worker.mjs`,
+    ]);
+    expect(built.exitCode).toBe(0);
+    const written = json(join(String(dir), "dist/package.json"));
+    expect(written.exports).toEqual({
+      ".": conditions("index"),
+      "./more": conditions("extra"),
+      "./where": { browser: conditions("where/browser"), default: conditions("where/server") },
+      "./package.json": "./package.json",
+    });
+    expect({ main: written.main, module: written.module, types: written.types }).toEqual({ main: "./index.js", module: "./index.js", types: "./index.d.ts" });
+    cpSync(join(String(dir), "dist"), join(String(dir), "app/node_modules/shapes"), { recursive: true });
+    expect(await bun(join(String(dir), "app"), "app.mjs")).toEqual({ stdout: "server 8\n", stderr: "", exitCode: 0 });
+    expect(await bun(join(String(dir), "app"), "--conditions=browser", "app.mjs")).toEqual({ stdout: "browser 8\n", stderr: "", exitCode: 0 });
+  });
+
+  test("exports that is one path", async () => {
+    using dir = tempDir("library-exports-is-a-path", { ...sources, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", exports: "./src/extra.ts" }) });
+    const built = await bun(String(dir), "compile", "--library");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({ ".": conditions("extra"), "./package.json": "./package.json" });
+  });
+
+  test("--no-bundle: a package that imports itself by name finds the file that its own conditions choose", async () => {
+    using dir = tempDir("library-imports-itself", {
+      "tsconfig.json": tsconfig,
+      ...where,
+      "src/index.ts": `import { where } from "shapes/where";\nexport const place: string = "on the " + where;\n`,
+      "package.json": JSON.stringify({
+        name: "shapes",
+        version: "1.0.0",
+        exports: { ".": "./src/index.ts", "./where": { browser: "./src/where/browser.ts", default: "./src/where/server.ts" } },
+      }),
+      "app/app.mjs": `import { place } from "shapes";\nconsole.log(place);\n`,
+    });
+    const built = await bun(String(dir), "compile", "--library", "--no-bundle");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
+      ".": conditions("index"),
+      "./where": { browser: conditions("where/browser"), default: conditions("where/server") },
+      "./package.json": "./package.json",
+    });
+    cpSync(join(String(dir), "dist"), join(String(dir), "app/node_modules/shapes"), { recursive: true });
+    expect(await bun(join(String(dir), "app"), "app.mjs")).toEqual({ stdout: "on the server\n", stderr: "", exitCode: 0 });
+    expect(await bun(join(String(dir), "app"), "--conditions=browser", "app.mjs")).toEqual({ stdout: "on the browser\n", stderr: "", exitCode: 0 });
   });
 
   test("--no-bundle: every file is an entry point", async () => {
@@ -276,6 +352,41 @@ describe.concurrent("bun compile --library", () => {
     expect(built.stderr).toContain("TS2322");
     expect(built.exitCode).toBe(1);
     expect(existsSync(join(String(dir), "dist"))).toBe(false);
+  });
+
+  test("what the sources declare globally is not met twice when the typed JavaScript is judged", async () => {
+    using dir = tempDir("library-declares-globals", {
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),
+      "package.json": JSON.stringify({ name: "router", version: "1.0.0" }),
+      "src/global.ts": `import type { AnyRouter } from "./router";\ndeclare global {\n  interface Routers {\n    current?: AnyRouter;\n  }\n  var routers: Routers;\n}\nexport {};\n`,
+      "src/router.ts": `export class Router {\n  #started: boolean = false;\n  start(): void {\n    this.#started = true;\n    routers.current = this;\n  }\n}\nexport type AnyRouter = Router;\n`,
+      "src/index.ts": `export * from "./global";\nexport { Router } from "./router";\nexport type { AnyRouter } from "./router";\n`,
+    });
+    const built = await bun(String(dir), "compile", "--library");
+    expect(built.stderr).toBe("");
+    expect(filesIn(join(String(dir), "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+    expect(built.exitCode).toBe(0);
+  });
+
+  test("the typed JavaScript is judged with the newest lib too, which a project that installs the package may have", async () => {
+    const olderLib = JSON.parse(tsconfig);
+    olderLib.compilerOptions.lib = ["es2022"];
+    const bag = `export class Bag<K, V> extends Map<K, V> {\n  override keys(): KEYS<K> {\n    return super.keys();\n  }\n}\n`;
+    using dir = tempDir("library-older-lib", {
+      "refused/tsconfig.json": JSON.stringify(olderLib),
+      "refused/index.ts": bag.replace("KEYS", "IterableIterator"),
+      "accepted/tsconfig.json": JSON.stringify(olderLib),
+      "accepted/index.ts": bag.replace("KEYS", "MapIterator"),
+    });
+    const refused = await bun(join(String(dir), "refused"), "compile", "--library");
+    expect(refused.stderr).toStartWith('warn: the typed JavaScript that --aot compiles a package from is left out: with its types put back it has type errors under "lib": ["esnext"], which a project that installs the package may have, the first at index.aot.ts:3:12: TS2416: ');
+    expect(filesIn(join(String(dir), "refused", "dist"))).toEqual(["index.d.ts", "index.js", "package.json"]);
+    expect(json(join(String(dir), "refused", "dist", "package.json")).exports["."]).toEqual({ types: "./index.d.ts", default: "./index.js" });
+    expect(refused.exitCode).toBe(0);
+    const accepted = await bun(join(String(dir), "accepted"), "compile", "--library");
+    expect(accepted.stderr).toBe("");
+    expect(filesIn(join(String(dir), "accepted", "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+    expect(accepted.exitCode).toBe(0);
   });
 });
 

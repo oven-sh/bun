@@ -221,9 +221,9 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--aot-explain" type="string">
-  With <code>--aot</code>: list the places where the compiler cannot use your types, the most expensive first.
-  <code>--aot-explain=costs-json</code> prints them as JSON. <code>--aot-explain=throws</code> lists every type check
-  that can fail when the program runs
+  With <code>--aot</code>: list what keeps the compiler from using your types, the most expensive cause first, with a
+  fix for each. <code>--aot-explain=json</code> prints one object per line. <code>--aot-explain=throws</code> lists
+  every type check that can fail when the program runs
 </ParamField>
 
 <ParamField path="--aot-huge-heap" type="boolean">

@@ -231,7 +231,7 @@ fn run(args: &[String]) {
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
             const OWN_FLAGS: [&str; 57] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-baseline", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-update-baseline", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--disallow-code-generation-from-strings", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--follow-every-import", "--github", "--json-parse-schemas", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
-            const EXPLAINED: [&str; 21] = ["mutations", "builtins", "costs", "costs-json", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "rules-json", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
+            const EXPLAINED: [&str; 20] = ["mutations", "builtins", "json", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "rules-json", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
                 // A flag that is no compiler option is one of the tool's own, looked for below, or an error.
@@ -365,7 +365,7 @@ fn run(args: &[String]) {
             // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
             // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
-            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), joins: has("--aot-explain=joins"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), plugins: false, rules_json: has("--aot-explain=rules-json"), costs: has("--aot-explain=costs") || has("--aot-explain"), costs_json: has("--aot-explain=costs-json"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| error_line!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred"), runtime_use: has("--aot-explain=runtime-use") };
+            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), joins: has("--aot-explain=joins"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), plugins: false, rules_json: has("--aot-explain=rules-json"), causes: has("--aot-explain"), causes_json: has("--aot-explain=json"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| error_line!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred"), runtime_use: has("--aot-explain=runtime-use") };
             let mut rules = bun_aot::rules::Settings::default();
             let rule_flags = [("--aot-allow=", bun_aot::rules::Severity::Allow), ("--aot-warn=", bun_aot::rules::Severity::Warn), ("--aot-deny=", bun_aot::rules::Severity::Deny)];
             for (list, severity) in args.iter().filter_map(|a| rule_flags.iter().find_map(|&(flag, severity)| Some((a.strip_prefix(flag)?, severity)))) {
@@ -483,8 +483,8 @@ fn run(args: &[String]) {
                         write_file_to_look_at(path, &text);
                     }
                 }
-                let bun_aot::Typedness { reads, typed_reads, own_reads, own_typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = translated.typedness;
-                error_line!("aot: reads through the program's own types: {own_typed_reads} of {own_reads} typed");
+                let bun_aot::Typedness { reads, typed_reads, accesses, typed_accesses, dependency_accesses, typed_dependency_accesses, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = translated.typedness;
+                error_line!("aot: accesses: {typed_accesses} of {accesses} typed in the program, {typed_dependency_accesses} of {dependency_accesses} in dependencies");
                 error_line!("aot: typedness: {typed_reads} of {reads} reads typed, {open_layouts} of {layouts} types open, {classes_without_layout} classes without a layout, {untyped_packages} packages and {untyped_files} files untyped");
                 for line in &translated.explained {
                     if line.starts_with('{') {
@@ -616,6 +616,7 @@ fn run(args: &[String]) {
                 early_scan_only: defaults.early_scan_only,
                 only_the_globals: defaults.only_the_globals,
                 writes_declaration_files: defaults.writes_declaration_files,
+                without_sources_of_the_project: defaults.without_sources_of_the_project,
                 declares_bun_intrinsics: defaults.declares_bun_intrinsics,
                 memory: defaults.memory,
             };

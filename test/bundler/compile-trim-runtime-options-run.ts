@@ -187,7 +187,9 @@ export function testTheSorting() {
 }
 
 export function testBunOptions() {
-  (!hasIslands || unsupported ? describe.skip : describe.concurrent)("BUN_OPTIONS, in an executable built with --compile-trim-runtime", () => {
+  if (!hasIslands || unsupported) return test.skip("BUN_OPTIONS, in an executable built with --compile-trim-runtime", () => {});
+
+  describe.concurrent("BUN_OPTIONS, in an executable built with --compile-trim-runtime", () => {
     const dir = tempDir("compile-trim-runtime-options", {});
     afterAll(() => dir[Symbol.dispose]());
     const root = realpathSync(String(dir));
@@ -232,7 +234,9 @@ export function testBunOptions() {
 export function testExecArgv(part: number, parts: number) {
   const inThisPart = <T>(forms: T[]) => forms.filter((_, index) => index % parts === part - 1);
 
-  (!hasIslands || unsupported ? describe.skip : describe.concurrent)("--compile-exec-argv with --compile-trim-runtime", () => {
+  if (!hasIslands || unsupported) return test.skip("--compile-exec-argv with --compile-trim-runtime", () => {});
+
+  describe.concurrent("--compile-exec-argv with --compile-trim-runtime", () => {
     const dir = tempDir("compile-trim-runtime-exec-argv", {});
     afterAll(() => dir[Symbol.dispose]());
     const root = realpathSync(String(dir));

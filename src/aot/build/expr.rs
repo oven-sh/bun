@@ -8,12 +8,12 @@ use crate::builder::Var;
 use crate::declared::{Part, prim};
 use crate::fragment::GlobalKey;
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, StrId, TyId, V};
-use crate::ir::{self, Args, BinOp, Op, Operation, Prediction, RelOp, Target, Term, UnOp, CoerceReason, field_flags, func_flags};
+use crate::ir::{self, AccessByName, Args, BinOp, Op, Operation, Prediction, RelOp, Target, Term, UnOp, CoerceReason, field_flags, func_flags};
 use bun_builtin_syntax::{Archive, Literal, Macro};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Decl, Parent, SymFlags};
-use bun_sema::check::{self, Capture, DataOrigin, Receiver};
-use bun_sema::hir::{self, CallId, Chain, ExprId, ExprKind, FileKind, FnId, IdList, PropId, PropKey, PropKind, Span};
+use bun_sema::check::{self, Capture, DataOrigin, ObjectOrigin, Receiver};
+use bun_sema::hir::{self, CallId, Chain, ExprId, ExprKind, FileKind, FnId, IdList, PatId, PropId, PropKey, PropKind, Span};
 use bun_sema::program::{FileId, Sym};
 use bun_sema::types::{EnumValue, PropFlags, TypeData, TypeId};
 
@@ -526,6 +526,37 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn is_tested(&self, fx: &Fx, e: ExprId) -> bool {
         fx.sink.is_some_and(|sink| sink.e == e && sink.want.id.is_none() && sink.why == CoerceReason::Claim)
+    }
+
+    fn is_access_by_name(&self, fx: &Fx, access: V) -> bool {
+        let Some(&(Op::PropGet { obj, .. } | Op::PropSet { obj, .. } | Op::CallMethod { obj, .. })) = fx.b.func.op(access) else { return false };
+        let known = self.ty(fx, obj);
+        (known.is_none() || self.out.tys.get(known).any_object) && !matches!(fx.b.func.op(obj), Some(Op::FreeGet { .. })) && (fx.is_typed || self.c.is_untyped_file(fx.file))
+    }
+
+    fn note_access_by_name(&mut self, fx: &mut Fx, access: AccessByName, receiver_type: TypeId) {
+        let origin = self.c.origin_of_objects(receiver_type);
+        if origin != ObjectOrigin::Runtime {
+            fx.b.func.accesses_by_name.push(AccessByName { origin, ..access });
+        }
+    }
+
+    pub(crate) fn note_member_access(&mut self, fx: &mut Fx, access: V, member: ExprId) {
+        if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = self.hir(fx.file)[member].kind
+            && self.is_access_by_name(fx, access)
+        {
+            let receiver_type = self.c.type_of_expr(fx.file, obj);
+            if !self.c.is_caught_value(fx.file, obj) {
+                self.note_access_by_name(fx, AccessByName { value: access, receiver: obj, pattern: PatId::NONE, origin: ObjectOrigin::Program }, receiver_type);
+            }
+        }
+    }
+
+    pub(crate) fn note_destructured_property(&mut self, fx: &mut Fx, access: V, pattern: PatId) {
+        if self.is_access_by_name(fx, access) {
+            let receiver_type = self.c.type_of_pat(fx.file, pattern);
+            self.note_access_by_name(fx, AccessByName { value: access, receiver: ExprId::NONE, pattern, origin: ObjectOrigin::Program }, receiver_type);
+        }
     }
 
     pub(crate) fn mark_read_unchecked(&mut self, fx: &mut Fx, read: V) {
@@ -1935,6 +1966,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.coerce_to_expr_type(fx, value, e);
         }
         let value = self.emit_throwing(fx, Op::PropGet { obj, name });
+        self.note_member_access(fx, value, e);
         if fx.sink.is_some_and(|sink| sink.e == e && (sink.want.id.is_none() || sink.want.id == self.out.tys.anything)) || fx.is_typed && self.c.type_of_expr(fx.file, e).is_never() {
             self.mark_read_unchecked(fx, value);
         }
@@ -2012,6 +2044,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let names = if self.constant_key_name(fx, key).is_some() { Vec::new() } else { self.key_literal_names(fx, e) };
         if names.is_empty() {
             let value = self.emit_throwing(fx, Op::ElemGet { obj, key });
+            self.note_member_access(fx, value, e);
             return self.coerce_to_expr_type(fx, value, e);
         }
         let join = fx.b.new_block();
@@ -2069,7 +2102,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Some((want, why)) if fx.is_typed => self.coerce_to(fx, value, want, why),
                 _ => value,
             };
-            self.emit_throwing(fx, Op::PropSet { obj, name, value: held });
+            let store = self.emit_throwing(fx, Op::PropSet { obj, name, value: held });
+            self.note_member_access(fx, store, e);
             return;
         }
         let names = self.key_literal_names(fx, e);
@@ -4200,12 +4234,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let primitives = if self.shared.constants.logs_type_errors { PrimitiveArgs::LoggedAtCall } else { PrimitiveArgs::Reject };
                 let args = self.emit_arguments(fx, c.args, primitives).unwrap_or_default();
                 let value = self.emit_throwing(fx, Op::CallMethod { obj, name, args });
+                self.note_member_access(fx, value, c.callee);
                 if fx.is_typed {
                     fx.b.func.values[value.idx()].signature = self.resolved_signature_ty(fx, e);
                 }
                 return self.coerce_to_expr_type(fx, value, e);
             }
             let callee = self.emit_throwing(fx, Op::PropGet { obj, name });
+            self.note_member_access(fx, callee, c.callee);
             let callee = self.predict_expression(fx, callee, c.callee);
             if c.chain == Chain::Start {
                 let is_nullish = self.emit(fx, Op::IsNullish(callee));
@@ -4328,7 +4364,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     Some(key) => self.private_get(fx, obj, key),
                     None => {
                         let name = self.str(name);
-                        self.emit_throwing(fx, Op::PropGet { obj, name })
+                        let callee = self.emit_throwing(fx, Op::PropGet { obj, name });
+                        self.note_member_access(fx, callee, e);
+                        callee
                     }
                 };
                 Some((callee, obj))
@@ -4360,7 +4398,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     (None, Some(key)) => self.private_get(fx, obj, key),
                     (None, None) => {
                         let name = self.str(name);
-                        self.emit_throwing(fx, Op::PropGet { obj, name })
+                        let callee = self.emit_throwing(fx, Op::PropGet { obj, name });
+                        self.note_member_access(fx, callee, c.callee);
+                        callee
                     }
                 };
                 (callee, obj)
@@ -5373,6 +5413,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match *target {
             Reference::Prop { obj, name, e } => {
                 let value = self.emit_throwing(fx, Op::PropGet { obj, name });
+                self.note_member_access(fx, value, e);
                 self.coerce_to_expr_type(fx, value, e)
             }
             Reference::Elem { obj, key, e } => self.get_by_key(fx, e, obj, key),
@@ -5486,7 +5527,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                     _ => value,
                 };
-                self.emit_throwing(fx, Op::PropSet { obj, name, value });
+                let store = self.emit_throwing(fx, Op::PropSet { obj, name, value });
+                self.note_member_access(fx, store, e);
             }
             Reference::Elem { obj, key, e } => self.put_by_key(fx, e, obj, key, value),
             Reference::Private { obj, key, .. } => {

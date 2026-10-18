@@ -1,9 +1,16 @@
-// The data that every door lets in: 64 orders, as types and as JSON text.
+// The data that every door lets in: 64 orders and 64 users, as types and as JSON text.
 interface Inner { x: number; label: string }
 interface Item { sku: string; quantity: number }
 interface Circle { kind: "circle"; radius: number }
 interface Square { kind: "square"; side: number }
 interface Order { id: number; name: string; paid: boolean; price: number; tax: number; inner: Inner; items: Item[]; shape: Circle | Square; note?: string }
+interface User { id: number; name: string }
+function label(user: User): number {
+  return user.id + user.name.length;
+}
+function textOfUser(i: number, undeclared: string): string {
+  return '{"id":' + i + ',"name":"n' + i + '"' + undeclared + "}";
+}
 function textOf(i: number, undeclared: string): string {
   let items = "";
   for (let k = 0; k < 4; k++) items += (k ? "," : "") + '{"sku":"s' + k + '","quantity":' + (i + k) + "}";

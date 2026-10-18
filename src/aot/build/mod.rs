@@ -2402,7 +2402,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn add_header(&mut self, name: StrId, module: ModuleId, pos: u32, kind: FuncKind, source: Source) -> FuncId {
         let id = FuncId::new(self.out.funcs.len());
         let source_start = self.source_start(source);
-        self.out.funcs.push(Func { name, module, pos, source_start, source_end: 0, kind, flags: 0, length: 0, captures: Vec::new(), declared_this_type: TyId::NONE, params: Vec::new(), annotated: Vec::new(), result: TyId::NONE, blocks: Vec::new(), values: Vec::new(), spans: Vec::new() });
+        self.out.funcs.push(Func { name, module, pos, source_start, source_end: 0, kind, flags: 0, length: 0, captures: Vec::new(), declared_this_type: TyId::NONE, params: Vec::new(), annotated: Vec::new(), result: TyId::NONE, blocks: Vec::new(), values: Vec::new(), spans: Vec::new(), accesses_by_name: Vec::new() });
         self.sources.push(source);
         self.bodies.push(None);
         id
@@ -2475,6 +2475,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             blocks: Vec::new(),
             values: Vec::new(),
             spans: Vec::new(),
+            accesses_by_name: Vec::new(),
         }
     }
 

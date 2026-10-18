@@ -36,8 +36,9 @@ If `package.json` has a `"compile"` script, `bun compile` runs that script.
   Keep the JavaScript in the executable instead of compiling it to machine code ahead of time
 </ParamField>
 
-<ParamField path="--aot-explain" type="string">
-  List the places where the compiler cannot use your types, the most expensive first
+<ParamField path="--explain" type="string">
+  List what keeps the compiler from using your types, the most expensive cause first, with a fix for each.{" "}
+  <code>--explain=json</code> prints one object per line
 </ParamField>
 
 <ParamField path="--aot-type-errors" type="string" default="throw">

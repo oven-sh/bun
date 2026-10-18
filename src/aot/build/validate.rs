@@ -130,6 +130,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if let Planned::Object { ty, .. } = node.planned {
                 let described = self.ty_of(ty);
                 self.record_validated_conversion(described);
+                if self.is_record_type(ty)
+                    && let Some(layout) = self.record_layout(ty)
+                {
+                    self.record_allocation(layout);
+                    let fields: Vec<StrId> = self.out.layouts[layout.idx()].fields.iter().map(|field| field.name).filter(|name| name.is_some()).collect();
+                    self.implicit_stores.extend(fields);
+                }
             }
         }
         if which == ValidationCall::Schema {
@@ -523,7 +530,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn claim_type(&mut self, fx: &mut Fx, value: V, to: TyId) -> V {
-        self.emit_throwing(fx, Op::Coerce { value, to, why: CoerceReason::Claim })
+        let claimed = self.emit_throwing(fx, Op::Coerce { value, to, why: CoerceReason::Claim });
+        fx.b.func.values[claimed.idx()].set_is_validated();
+        claimed
     }
 
     fn emit_loop(&mut self, fx: &mut Fx, list: V, mut body: impl FnMut(&mut Self, &mut Fx, V, V)) {

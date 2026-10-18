@@ -535,7 +535,10 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
-        ASSERT(res->success);
+        if (!res->success) [[unlikely]] {
+            throwException(scope, res->result.err, globalObject);
+            RELEASE_AND_RETURN(scope, {});
+        }
 
         JSObject* helpers = compiledRuntimeHelpers(globalObject, specifier->toWTFString(BunString::ZeroCopy));
         RETURN_IF_EXCEPTION(scope, {});
@@ -587,8 +590,11 @@ JSValue resolveAndFetchBuiltinModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
-    if (Bun__resolveAndFetchBuiltinModule(specifier, &res)) {
-        ASSERT(res.success);
+    if (Bun__resolveAndFetchBuiltinModule(globalObject, specifier, &res)) {
+        if (!res.success) [[unlikely]] {
+            throwException(scope, res.result.err, globalObject);
+            RELEASE_AND_RETURN(scope, {});
+        }
 
         auto tag = res.result.value.tag;
         switch (tag) {
@@ -1456,7 +1462,12 @@ static JSValue fetchESMSourceCode(
     }
 
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
-        ASSERT(res->success);
+        if (!res->success) [[unlikely]] {
+            throwException(scope, res->result.err, globalObject);
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, reject(exception));
+        }
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {

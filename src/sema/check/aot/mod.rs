@@ -33,6 +33,7 @@ mod trust;
 mod type_caches;
 mod bun_types;
 mod undeclared_fields;
+mod untyped_origin;
 mod validation;
 
 pub use callees::{Callee, SingleFunction};
@@ -40,6 +41,7 @@ pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCo
 pub use escape::argument_use;
 pub use classes::{AddedMembers, ClassFacts, MethodStore, ReplacedMethods};
 pub use commonjs::{CommonJsExports, ExportsKnownByName, ExportsReference};
+pub use findings::ObjectOrigin;
 pub use first_stores::FirstStore;
 pub use identity::Identity;
 pub use int32_fields::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};
@@ -52,6 +54,7 @@ pub use storage::{EvaluationTime, Primitive, ReferenceRead, Storage};
 pub use symbols::{ConstantSymbol, FieldKey};
 pub use lint_checks::{AotCheck, AotCheckKind};
 pub use trust::{Claim, is_engine_global, is_typed_array_class};
+pub use untyped_origin::{Assertion, Derivation, Explaining, MissingLayout, UntypedOrigin};
 pub use validation::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan, OBJECT_PROTOTYPE_PROPERTIES};
 
 use super::{Checker, Program};
@@ -490,7 +493,7 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    fn file_exprs_by_kind(&self, file: FileId) -> &'p ExprsByKind {
+    pub(super) fn file_exprs_by_kind(&self, file: FileId) -> &'p ExprsByKind {
         let program = self.p;
         program.aot.exprs_by_kind.get_or_init(program.files.modules.len(), file, || ExprsByKind::outside(self.hir(file), program.files.module(file).cut))
     }

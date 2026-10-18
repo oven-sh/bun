@@ -177,6 +177,7 @@ export interface TableDoor {
   address: number;
   feature: string;
   whenShut: "exit" | "return";
+  answers?: "throw" | "undefined";
   places?: Place[];
 }
 
@@ -196,6 +197,7 @@ export interface PublicName {
   name: string;
   features: string[];
   tolerates: string[];
+  modules: string[];
 }
 
 export interface Library {
@@ -319,7 +321,9 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
     lastFirst = places[0]!.address;
     next = index + 1;
   }
-  if (packages.length > 0 || shared.length > 0 || publicNames.length > 0 || libraries.length > 0) {
+  const answering = (["throw", "undefined"] as const).map(answers => table.doors.flatMap((door, index) => (door.answers === answers ? [index] : [])));
+  const answer = answering.some(doors => doors.length > 0);
+  if (packages.length > 0 || shared.length > 0 || publicNames.length > 0 || libraries.length > 0 || answer) {
     list(packages, ({ start, end, runs }) => {
       number(start);
       number(end - start);
@@ -332,7 +336,7 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
       });
     });
   }
-  if (shared.length > 0 || publicNames.length > 0 || libraries.length > 0) {
+  if (shared.length > 0 || publicNames.length > 0 || libraries.length > 0 || answer) {
     let next = 0;
     list(shared, ({ index, features }) => {
       number(index - next);
@@ -340,19 +344,26 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
       next = index + 1;
     });
   }
-  if (publicNames.length > 0 || libraries.length > 0) {
-    list(publicNames, ({ name, features, tolerates }) => {
+  if (publicNames.length > 0 || libraries.length > 0 || answer) {
+    list(publicNames, ({ name, features, tolerates, modules }) => {
       if (features.length === 0) throw new Error(`the public name ${name} has no feature`);
       text(name);
       list(features, feature => indexIn(table.features, feature));
       list(tolerates, feature => indexIn(table.features, feature));
+      list(modules, text);
     });
   }
-  if (libraries.length > 0) {
+  if (libraries.length > 0 || answer) {
     list(libraries, ({ name, features }) => {
       text(name);
       list(features, feature => indexIn(table.features, feature));
     });
+  }
+  if (answer) {
+    for (const doors of answering) {
+      number(doors.length);
+      ascending(doors);
+    }
   }
   if (bytes.length > room) throw new Error(`the table takes ${bytes.length} bytes and there is room for ${room}`);
   return Buffer.from(bytes);
@@ -458,9 +469,18 @@ export function decodeTable(bytes: Uint8Array): Table {
   const publicNames = at === bytes.length ? [] : list(() => {
     const name = text();
     const members = list(() => oneOf(features));
-    return { name, features: members.length > 0 ? members : malformed(), tolerates: list(() => oneOf(features)) };
+    return { name, features: members.length > 0 ? members : malformed(), tolerates: list(() => oneOf(features)), modules: list(text) };
   });
   const libraries = at === bytes.length ? [] : list(() => ({ name: text(), features: list(() => oneOf(features)) }));
+  for (const answers of at === bytes.length ? [] : (["throw", "undefined"] as const)) {
+    let index = 0;
+    list(() => {
+      index = sum(index, number());
+      const door = doors[index] ?? malformed();
+      if (door.whenShut !== "exit" || door.answers !== undefined) malformed();
+      door.answers = answers;
+    });
+  }
   if (bytes.subarray(at).some(byte => byte !== 0)) malformed();
   return {
     stub,

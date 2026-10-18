@@ -111,6 +111,9 @@
       "Handed<T>"
     ]
   },
+  "src/runtime/cli/json_schemas.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/lint_js.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [

@@ -1,0 +1,430 @@
+---
+title: "Get more of your program typed"
+sidebarTitle: "Typed percentage"
+description: "What bun compile's typed percentage counts, how to read bun compile --explain, and how to fix each cause it names"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+[`bun compile`](/bundler/aot) ends with a line that says how much of your program it could compile with your types.
+
+```txt
+aot: 75.0% typed (6 of 8 property accesses)
+aot: --explain shows what is not typed and how to fix it
+```
+
+Typed code reads a property with one load from a fixed offset. Code that is not typed looks the property up by name, or tests the object first. The higher the number, the faster the executable. How much faster depends on the program. In a small issue tracker, going from 19% to 100% cut the instructions to render a page by 37%, to serialize a response by 56%, and to build a comment thread by 76%.
+
+`bun compile --explain` lists what keeps the number down. Each entry is one cause, with the line to change, what to change it to, and how far the number rises.
+
+## What is counted
+
+**A property access is a read (`item.price`), a write (`item.price = 2`) or a method call (`stock.add(item)`) on one of your program's own objects.** An access is typed if the compiler knows the object's layout. That takes two things. The object's type is a class, an interface or an object type. And typed code creates every object of that type, everywhere in the program.
+
+| Not counted                                              | Why                                            |
+| -------------------------------------------------------- | ---------------------------------------------- |
+| `console.log`, `Bun.file`, `req.url`, `process.env.PORT` | Bun provides the object. You can't change it   |
+| `items.length`, `items.push`, `map.get`, `text.slice`    | JavaScript provides it, and Bun compiles it directly |
+| `prices[name]`, a `Record<string, number>`               | A dictionary has no layout in any language     |
+| A class that extends `Error` or another built-in class   | The built-in class decides the layout          |
+| `error.code` on what a `catch` clause caught             | TypeScript gives a caught value no type        |
+
+Everything that's left is something you can fix. So 100% means that `--explain` has nothing to report about your own code, and no fix that it suggests lowers the number.
+
+The total can move by a few when you fix something. Once a value has its type, the compiler may find that `value.length` is the length of an array, which is not counted.
+
+Code in `node_modules` is counted separately, as `dependencies`, because you fix it differently. An access in your own code to an object that a JavaScript package created counts for the package too.
+
+```txt
+aot: 92.4% typed (1,204 of 1,303 property accesses), dependencies 3.1% (210 of 6,774)
+```
+
+Bun prints the second line, the one that names the flag, when the first number is under 95%.
+
+## Read an entry
+
+This program adds up the value of a stock list. One `any` in `main.ts` costs it two typed reads in `stock.ts`.
+
+```ts stock.ts icon="/icons/typescript.svg"
+export interface Item {
+  sku: string;
+  price: number;
+  quantity: number;
+}
+
+export class Stock {
+  items: Item[] = [];
+
+  add(item: Item): void {
+    this.items.push(item);
+  }
+
+  value(): number {
+    let sum = 0;
+    for (const item of this.items) sum += item.price * item.quantity;
+    return sum;
+  }
+}
+```
+
+```ts main.ts icon="/icons/typescript.svg"
+import { Stock } from "./stock";
+
+const stock = new Stock();
+stock.add({ sku: "A-1", price: 2.5, quantity: 4 });
+
+const saved: any = JSON.parse('[{ "sku": "B-2", "price": 10, "quantity": 3 }]');
+for (const item of saved) stock.add(item);
+
+console.log(stock.value());
+```
+
+```bash terminal icon="terminal"
+bun compile ./main.ts --explain
+```
+
+```txt
+aot: 75.0% typed (6 of 8 property accesses)
+aot: 1 cause, the most expensive first. Fix one, then run this again: a fix can uncover another cause behind it.
+
+  1. json-parse main.ts:6:20: fixing it types up to 2 accesses (+25.0 points)
+     6 | const saved: any = JSON.parse('[{ "sku": "B-2", "price": 10, "quantity": 3 }]');
+                            ^~~~~~~~~~
+     JSON.parse() returns 'any'.
+     main.ts:7:37: The value is used as 'Item' here, so the compiler cannot rely on the layout of that type.
+     types that lose their layout: 'Item'
+     not typed because of it: stock.ts:16:43, stock.ts:16:56
+     fix: write JSON.parse<Item[]>(..) and declare the variable 'Item[]': the value is checked once, here, and is typed from then on. Data that does not match throws a TypeError. Add: import type { Item } from "./stock";
+     https://bun.com/docs/bundler/aot-explain#json-parse
+```
+
+The program has eight property accesses: `stock.add` twice, `stock.value`, `this.items` twice, the initializer of `items`, `item.price` and `item.quantity`. The last two are not typed.
+
+- **The first line** has the code of the cause, the place to change, and what the fix is worth: how many accesses become typed, and by how many points the percentage rises. It says "up to" because another cause can stand behind the same accesses. They then move to the entry of that cause.
+- **The source line** has a mark under what to change.
+- **The sentences under it** say which value has no type, then follow it to the types that lose their layout.
+- **`not typed because of it`** lists up to three of the accesses that end up untyped. They're often in another file.
+- **`fix`** says what to write.
+- **The link** goes to the section of this page for that cause.
+
+Bun sorts the entries by estimated cost. An access in a loop counts eight times, and one in a nested loop sixty-four times. An access in code that only runs at startup, which is the top level of a module and the functions that only it calls, counts as a sixty-fourth. So a request handler outweighs a loop over your configuration. The percentage ignores these weights and counts each access once.
+
+```ts main.ts icon="/icons/typescript.svg"
+import { Stock, type Item } from "./stock";
+
+const stock = new Stock();
+stock.add({ sku: "A-1", price: 2.5, quantity: 4 });
+
+const saved: Item[] = JSON.parse<Item[]>('[{ "sku": "B-2", "price": 10, "quantity": 3 }]'); // [!code highlight]
+for (const item of saved) stock.add(item);
+
+console.log(stock.value());
+```
+
+```bash terminal icon="terminal"
+bun compile ./main.ts
+```
+
+```txt
+aot: 100% typed
+```
+
+Fix the first entry, then run the command again. A fix can uncover another cause behind it: if two values without a type reach `Item`, the report names one of them at a time.
+
+`bun check --aot --aot-explain` prints the same report and builds nothing, so it's faster. With `bun check`, the flag is `--aot-explain`. `bun check` doesn't load your dependencies' JavaScript, so only a build counts what's inside them.
+
+## JSON
+
+`--explain=json` prints every entry to stdout, one object per line. Here is the entry from the example above, before the fix, split over several lines so you can read it.
+
+```bash terminal icon="terminal"
+bun check --aot ./main.ts --aot-explain=json
+```
+
+```json
+{
+  "rank": 1,
+  "code": "json-parse",
+  "file": "main.ts",
+  "line": 6,
+  "column": 20,
+  "start": 133,
+  "end": 143,
+  "inDependency": false,
+  "source": "const saved: any = JSON.parse('[{ \"sku\": \"B-2\", \"price\": 10, \"quantity\": 3 }]');",
+  "message": "JSON.parse() returns 'any'.",
+  "because": [
+    {
+      "file": "main.ts",
+      "line": 7,
+      "column": 37,
+      "message": "The value is used as 'Item' here, so the compiler cannot rely on the layout of that type."
+    }
+  ],
+  "accesses": 2,
+  "points": 25.0,
+  "dependencyAccesses": 0,
+  "dependencyPoints": 0.0,
+  "reads": 2,
+  "stores": 0,
+  "calls": 0,
+  "weight": 16.0,
+  "types": [
+    "Item"
+  ],
+  "properties": [],
+  "examples": [
+    {
+      "file": "stock.ts",
+      "line": 16,
+      "column": 43
+    },
+    {
+      "file": "stock.ts",
+      "line": 16,
+      "column": 56
+    }
+  ],
+  "otherCauses": [],
+  "crossings": [],
+  "fix": "write JSON.parse<Item[]>(..) and declare the variable 'Item[]': the value is checked once, here, and is typed from then on. Data that does not match throws a TypeError. Add: import type { Item } from \"./stock\";",
+  "edits": [
+    {
+      "file": "main.ts",
+      "start": 143,
+      "end": 143,
+      "replacement": "<Item[]>"
+    },
+    {
+      "file": "main.ts",
+      "start": 127,
+      "end": 130,
+      "replacement": "Item[]"
+    },
+    {
+      "file": "main.ts",
+      "start": 0,
+      "end": 0,
+      "replacement": "import type { Item } from \"./stock\";\n"
+    }
+  ],
+  "url": "https://bun.com/docs/bundler/aot-explain#json-parse"
+}
+```
+
+The first line holds the numbers, for a script or for CI:
+
+```json
+{ "percent": 75.0, "typed": 6, "accesses": 8, "dependencyPercent": 100.0, "typedInDependencies": 0, "dependencyAccesses": 0, "causes": 1 }
+```
+
+| Field                            | Holds                                                                            |
+| -------------------------------- | -------------------------------------------------------------------------------- |
+| `code`, `url`                    | The cause, and the section of this page about it                                 |
+| `file`, `line`, `column`         | The place to change                                                              |
+| `start`, `end`                   | The same as offsets into the file, in bytes of UTF-8                             |
+| `source`, `message`, `because`   | The source line, the reason, and the steps from the cause to the types it affects |
+| `accesses`, `points`             | What the fix is worth in your own code                                           |
+| `dependencyAccesses`, `dependencyPoints` | What it is worth in `dependencies`                                       |
+| `reads`, `stores`, `calls`       | The accesses by kind                                                             |
+| `rank`, `weight`                 | The place in the report, and the estimated cost that it is sorted by             |
+| `types`, `properties`, `examples` | The types that lose their layout, the properties read by name, up to a hundred of the accesses that end up untyped |
+| `otherCauses`                    | Other places that do the same to the same types. The accesses stay untyped until all of them are fixed |
+| `crossings`                      | For a package: where it gets your objects or calls your functions                |
+| `fix`                            | What to change, as a sentence                                                    |
+| `edits`                          | The change itself where Bun can work it out: replace `start` to `end` of `file` with `replacement`. The edits of one entry come with the highest offset first, so you can apply them in the order given |
+| `inDependency`                   | The entry only counts for `dependencies`                                         |
+
+## With a coding agent
+
+Give your agent the command and the goal:
+
+```txt
+Run `bun compile --explain`. Fix the first entry the way its `fix` line says, without changing what the program does.
+Run the tests, then run the command again. Repeat until it prints 100% typed.
+```
+
+Read what it changes. Some fixes add a check that was not there: `JSON.parse<T>` throws on data that doesn't match, and an annotated callback parameter is checked when the callback is entered. Others make a copy, so the object that the other code gets is no longer the same object.
+
+## Keep it typed
+
+Once a part of your program is typed, a rule can keep it that way. `--aot-deny=open-layout` fails the build when a declared type loses its layout again. See [Fail the build](/bundler/aot-reports#fail-the-build).
+
+## Causes
+
+### any
+
+A variable, parameter, property or return type is declared `any` or `unknown`, or a value is cast to `any`. The compiled code looks up by name every property you read from it, and every property you read from those. If you then pass, assign or return the value as a declared type, that type loses its layout too.
+
+```ts
+function length(point: any): number { // [!code --]
+function length(point: Point): number { // [!code ++]
+  return Math.hypot(point.x, point.y);
+}
+```
+
+An `unknown` that you only test, with `typeof` or `Array.isArray`, costs nothing. Nothing is read from it.
+
+### implicit-any
+
+The same, for a parameter or a variable that has no annotation and nothing to infer one from. With `"strict": true` in `tsconfig.json`, most of these are type errors instead.
+
+```ts
+function length(point) { // [!code --]
+function length(point: Point) { // [!code ++]
+```
+
+### json-parse
+
+`JSON.parse(text)` returns `any`. Give it the type of the data as a type argument. Bun then checks the value against the type while it parses, and throws a `TypeError` if it doesn't match. The compiler can rely on what comes back.
+
+```ts
+const config = JSON.parse(text); // [!code --]
+const config = JSON.parse<Config>(text); // [!code ++]
+```
+
+[Validate data by its type](/bundler/executables#validate-data-by-its-type) says what is checked, what the error holds, and what to know before you rely on it: the check only runs in programs built or run with `--aot`, so test with `bun test --aot`, and `tsc` and editors report `TS2558` on the type argument.
+
+### unchecked-cast
+
+Your code uses a value that typed code didn't create as a declared type: `value as Config`, or an `any` that you pass, assign or return as a `Config`. TypeScript takes your word for it. The compiler can't, so every access through `Config`, anywhere in the program, tests the object first.
+
+```ts
+const config = JSON.parse(text) as Config; // [!code --]
+const config = JSON.parse<Config>(text); // [!code ++]
+```
+
+For a value that is not JSON text, `Bun.validate<Config>(value)` checks it and returns a typed copy.
+
+### untyped-api
+
+The value comes from a Bun, Node.js or web API. Either the API returns `any`, as `await response.json()` does, or it returns the type you give it, as in `sql<User[]>`. Nothing checks that type. The compiler treats it as a prediction: the compiled code tests each object before it reads from it.
+
+```ts
+const user = await response.json(); // [!code --]
+const user = JSON.parse<User>(await response.text()); // [!code ++]
+```
+
+For a value that is not JSON text, `Bun.validate<User>(value)` checks it and returns a typed copy. That pays off if the program reads the objects more than once.
+
+The same goes for JavaScript built-ins that return your objects in a new container or as a copy, such as `Object.entries(record)`, `Object.assign({}, value)` and `structuredClone(value)`. Keep your own objects in an array, a `Map` or a `Set`. The compiler sees through those.
+
+### javascript-file
+
+A `.js` file of your own program is compiled without types. Rename it to `.ts` and annotate its functions.
+
+### untyped-package
+
+A dependency ships JavaScript. Its `.d.ts` file describes its exports, not the code inside, so the package is compiled without types. So is every access in your code to an object that the package created, and the body of every callback that it calls.
+
+- **If the package is yours,** build it with [`bun compile --library`](/bundler/aot-libraries). Its code is then typed, and so is what crosses between it and your code.
+- **For the accesses in your own code,** keep your typed objects away from the package:
+  - Write the types of the parameters of the callbacks that you pass it. See [callback-parameter](#callback-parameter).
+  - Pass it copies or plain values.
+  - Copy what you need from its results into objects of your own types.
+  - Read your own objects outside its callbacks.
+- **For the code inside the package,** install a typed version, `bun add -d @sound/<package>`, if there is one. Or write one: a [typed version of a package](/bundler/executables#typed-versions-of-packages) is the package's own code with types added and nothing else changed. It goes in `.sound/<package>` in the directory that you run the build from.
+
+This is a typed version of a package `each-row` whose only file is `index.js`:
+
+```json title=".sound/each-row/sound.json" icon="file-json"
+{
+  "sound": 1,
+  "name": "each-row",
+  "version": "1.0.0",
+  "when": {},
+  "basis": {},
+  "lay": { "index.js": "<SHA-256 of node_modules/each-row/index.js>", "index.sound.ts": "new" },
+  "needs": []
+}
+```
+
+```js title=".sound/each-row/lay/index.js" icon="/icons/javascript.svg"
+export * from "./index.sound.ts";
+```
+
+```ts title=".sound/each-row/lay/index.sound.ts" icon="/icons/typescript.svg"
+export function eachRow<Row>(rows: Row[], visit: (row: Row) => void): void {
+  for (const row of rows) visit(row);
+}
+```
+
+`lay/index.js` takes the place of the installed `index.js`, and `lay/index.sound.ts` holds its code with types. The build says whether it uses the typed version, and why not if it doesn't.
+
+### type-errors
+
+A TypeScript file of a dependency has type errors, so it is compiled without its types. The build lists them in a warning.
+
+### passed-to-javascript
+
+An object of a declared type is passed to JavaScript code, which can add, remove or redefine its properties. Pass a copy, or only the values that the code needs.
+
+```ts
+log(box); // [!code --]
+log({ ...box }); // [!code ++]
+```
+
+### callback-parameter
+
+If you don't annotate a callback's parameters, TypeScript infers them from the function that you pass the callback to, such as `.then()`. If Bun, JavaScript or a JavaScript package provides that function, the compiler can't see what it calls the callback with, so it doesn't rely on the inferred types. It treats the parameter as a value without a type. In the example below that makes `row` untyped, and with it every `Row` in the program.
+
+Write the type. The value is then checked when the callback is entered, and the type keeps its layout.
+
+```ts
+loadRow().then(row => console.log(row.name)); // [!code --]
+loadRow().then((row: Row) => console.log(row.name)); // [!code ++]
+```
+
+The callbacks of array methods, `Map` and `Set`, such as `rows.map(row => row.name)`, don't need it. The compiler sees through those.
+
+### declaration-only
+
+The type is declared in a `.d.ts` file, so the compiler has to assume that code it can't see creates its objects. Move the declaration into a `.ts` file.
+
+### index-signature
+
+The value can be a dictionary, such as a `Record<string, string>`, as well as an object with a layout. The compiler has to look the property up by name for both.
+
+```ts
+function show(value: Named | Record<string, string>) { // [!code --]
+  return value.name; // [!code --]
+function show(value: Named | Map<string, string>) { // [!code ++]
+  return value instanceof Map ? value.get("name") : value.name; // [!code ++]
+}
+```
+
+Keep the two apart: use a `Map` for the dictionary, or give each kind of value its own function. If one object needs both declared properties and open ones, put the open part in a property of its own: `extra: Record<string, unknown>`.
+
+### type-parameter
+
+A property is read from a value whose type is a type parameter. Use the concrete type, or constrain the parameter to a type that declares the property.
+
+### class-layout
+
+The class has no fixed layout. The entry names the reason:
+
+- The class is declared inside a function or a loop, so there's a new class each time.
+- A member has a computed name.
+- A decorator can replace the class.
+
+```ts
+function makeCounter() {
+  class Counter { count = 0; } // [!code --]
+  return new Counter();
+}
+```
+
+Declare the class once, at the top level of a module.
+
+### object-create
+
+`Object.create(prototype)` makes an object without a layout. Use a class, or an object literal.
+
+```ts
+const options = Object.create(defaults); // [!code --]
+const options = { ...defaults }; // [!code ++]
+```
+
+### no-layout
+
+The compiler has no layout for the type of the object, and none of the causes above explains it. Give the value a type that is an interface or a class, and create its objects in typed code with an object literal or `new`.

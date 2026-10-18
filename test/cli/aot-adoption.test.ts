@@ -339,7 +339,8 @@ console.log(five, later);
     expect(said.slice(3)).toEqual([
       "[aot] type-check summary: 3 checks can fail when the program runs, 0 always fail",
       "[aot] type-check summary: those that can fail: 1 at an `as`, 1 where a value that an `as` let through is used, 1 on an `any`",
-      "aot: 0.0% of reads typed, 0 of 0 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-explain lists them)",
+      "aot: 0.0% typed (0 of 2 property accesses)",
+      "aot: --aot-explain shows what is not typed and how to fix it",
     ]);
     expect(said[0]).toContain("; value from JSON.parse(..) at app.ts:5:24; fix: ");
     expect(exitCode).toBe(0);
@@ -392,7 +393,7 @@ console.log(result.success, result.logs.filter(log => String(log.message).includ
   test("an unknown report name is an error that lists the valid names", async () => {
     const dir = project("aot-build-unknown", { "app.ts": app });
     const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--aot", "--aot-explain=nonsense", "app.ts", "--outfile", "app");
-    expect(stdout + stderr).toContain("it is one of throws, throws-all, throws-json, throws-all-json, rules-json, costs, costs-json, runtime-use");
+    expect(stdout + stderr).toContain("it is one of text, json, throws, throws-all, throws-json, throws-all-json, rules-json, runtime-use");
     expect(exitCode).not.toBe(0);
   }, 120_000);
 

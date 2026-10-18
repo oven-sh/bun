@@ -3889,7 +3889,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json" | "costs" | "costs-json";
+  type AotReport = "text" | "json" | "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json";
 
   interface TrimOptions {
     /**
@@ -3931,7 +3931,8 @@ declare module "bun" {
      * - An object: see {@link TrimOptions}.
      *
      * A program that reaches a part that was removed by name ends with exit code 70 and a message
-     * that says which part it was.
+     * that says which part it was. An import of a built-in module that was removed, such as
+     * `bun:sqlite`, throws an `Error` instead, and the build warns where the program imports it.
      *
      * The build fails if a name is unknown, or if a part that stays needs a part that is removed.
      * `BuildOutput.logs` says what was left out and how many bytes that saved.
@@ -4040,12 +4041,12 @@ declare module "bun" {
     /**
      * With `aot`: reports to add to the `logs` of the build, at level `"verbose"`.
      *
+     * - `"text"`: what keeps the compiler from using the types, one entry per cause with how to fix it, the most expensive first
+     * - `"json"`: the same, one JSON object per line
      * - `"throws"`: every type check that can fail when the program runs, where the value comes from and how to fix it
      * - `"throws-all"`: also the checks that can only fail if typed code produced a value of the wrong type
      * - `"throws-json"`, `"throws-all-json"`: the same, one JSON object per line
      * - `"rules-json"`: what the rules of `[aot]` in bunfig.toml found, one JSON object per line
-     * - `"costs"`: the places where the compiler cannot use the types, with what each costs and how to fix it, the most expensive first
-     * - `"costs-json"`: the same, one JSON object per line
      *
      * Equivalent CLI flag: `--aot-explain`
      */

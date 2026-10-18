@@ -15,7 +15,14 @@ const INDEX_FILES: [&[u8]; 4] = [b"index.ts", b"index.tsx", b"index.mts", b"inde
 
 pub(crate) struct EntryPoint {
     pub(crate) path: Box<[u8]>,
+    pub(crate) more_of_a_library: Vec<Box<[u8]>>,
     pub(crate) executable_name: Box<[u8]>,
+}
+
+impl EntryPoint {
+    fn of_executable(path: Box<[u8]>, executable_name: &[u8]) -> EntryPoint {
+        EntryPoint { path, more_of_a_library: Vec::new(), executable_name: Box::from(executable_name) }
+    }
 }
 
 fn file_in(dir: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
@@ -31,6 +38,14 @@ fn without_scope(package_name: &[u8]) -> &[u8] {
     }
 }
 
+fn targets_of(exports: &Expr, found: &mut Vec<Vec<u8>>) {
+    match &exports.data {
+        ExprData::EObject(conditions) => conditions.properties.slice().iter().filter_map(|condition| condition.value.as_ref()).for_each(|inner| targets_of(inner, found)),
+        ExprData::EArray(fallbacks) => fallbacks.items.slice().iter().for_each(|inner| targets_of(inner, found)),
+        _ => found.extend(exports.as_utf8_string_literal().map(<[u8]>::to_vec)),
+    }
+}
+
 fn find_library_entry_point(cwd: &[u8], outdir: &[u8]) -> Result<EntryPoint, String> {
     const TYPESCRIPT: [&[u8]; 6] = [b"index.ts", b"index.tsx", b"index.mts", b"src/index.ts", b"src/index.tsx", b"src/index.mts"];
     const JAVASCRIPT: [&[u8]; 4] = [b"index.js", b"index.mjs", b"src/index.js", b"src/index.mjs"];
@@ -40,10 +55,22 @@ fn find_library_entry_point(cwd: &[u8], outdir: &[u8]) -> Result<EntryPoint, Str
     let named: Vec<&[u8]> = [&b"module"[..], b"main"].iter().filter_map(|field| package_json.as_ref()?.get(field)?.as_utf8_string_literal().map(|path| &*crate::cli::cli_arena().alloc_slice_copy(path))).collect();
     let is_typescript = |path: &&[u8]| [&b".ts"[..], b".tsx", b".mts"].iter().any(|extension| path.ends_with(extension));
     let outdir = [join_abs_string::<Auto>(cwd, &[outdir]), bun_paths::SEP_STR.as_bytes()].concat();
+    let mut exported = Vec::new();
+    package_json.as_ref().and_then(|package_json| package_json.get(b"exports")).iter().for_each(|exports| targets_of(exports, &mut exported));
+    let is_declaration_file = |path: &[u8]| path.ends_with(b".d.ts") || path.ends_with(b".d.mts");
+    let mut sources: Vec<Box<[u8]>> = Vec::new();
+    for path in exported.iter().filter(|path| is_typescript(&&path[..]) && !is_declaration_file(path)).filter_map(|path| file_in(dir, path)) {
+        if !path.starts_with(&outdir) && !sources.contains(&path) {
+            sources.push(path);
+        }
+    }
+    if !sources.is_empty() {
+        return Ok(EntryPoint { path: sources.remove(0), more_of_a_library: sources, executable_name: Box::default() });
+    }
     let candidates = (named.iter().copied().filter(is_typescript).chain(TYPESCRIPT)).chain(named.iter().copied().filter(|path| !is_typescript(path)).chain(JAVASCRIPT));
     match candidates.filter_map(|path| file_in(dir, path)).find(|path| !path.starts_with(&outdir)) {
-        Some(path) => Ok(EntryPoint { path, executable_name: Box::default() }),
-        None => Err(format!("No entry point. There is no \"module\" or \"main\" in package.json that is a source file, and no index.ts, index.tsx, index.mts or index.js in {} or in its src folder", BStr::new(dir))),
+        Some(path) => Ok(EntryPoint::of_executable(path, b"")),
+        None => Err(format!("No entry point. There is no \"exports\", \"module\" or \"main\" in package.json that is a source file, and no index.ts, index.tsx, index.mts or index.js in {} or in its src folder", BStr::new(dir))),
     }
 }
 
@@ -53,7 +80,7 @@ fn find_entry_point(cwd: &[u8]) -> Result<EntryPoint, String> {
     let project = nearest_package_json(cwd);
     let has_own_package_json = project.as_ref().is_some_and(|found| found.0 == bun_core::strings::without_trailing_slash(cwd));
     if !has_own_package_json && let Some(path) = index_file_in(cwd) {
-        return Ok(EntryPoint { path, executable_name: Box::from(bun_paths::basename(cwd)) });
+        return Ok(EntryPoint::of_executable(path, bun_paths::basename(cwd)));
     }
     let Some((dir, package_json_path, contents)) = project else {
         return Err(format!("No entry point. There is no package.json and no {index_files} in {}", BStr::new(cwd)));
@@ -68,7 +95,7 @@ fn find_entry_point(cwd: &[u8]) -> Result<EntryPoint, String> {
     let text_of = |field: &[u8]| json.get(field).and_then(|value| value.as_string(&bump)).filter(|text| !text.is_empty());
     let package_name = text_of(b"name").map_or_else(|| bun_paths::basename(dir), without_scope);
     let named_by = |field: &str, path: &[u8], executable_name: &[u8]| match file_in(dir, path) {
-        Some(path) => Ok(EntryPoint { path, executable_name: Box::from(executable_name) }),
+        Some(path) => Ok(EntryPoint::of_executable(path, executable_name)),
         None => Err(format!("\"{field}\" in {shown} is \"{}\", which is not a file", BStr::new(path))),
     };
     if let Some(path) = text_of(b"bin") {
@@ -96,7 +123,7 @@ fn find_entry_point(cwd: &[u8]) -> Result<EntryPoint, String> {
         }
     }
     match index_file_in(dir) {
-        Some(path) => Ok(EntryPoint { path, executable_name: Box::from(package_name) }),
+        Some(path) => Ok(EntryPoint::of_executable(path, package_name)),
         None => Err(format!("No entry point. {shown} has no \"bin\", \"module\" or \"main\", and there is no {index_files} beside it")),
     }
 }
@@ -212,6 +239,95 @@ fn exported_files(output_files: &[OutputFile], kind_of_entry_points: OutputKind)
     exported
 }
 
+fn text(value: &[u8]) -> Expr {
+    Expr::init(E::String::init(&*crate::cli::cli_arena().alloc_slice_copy(value)), Loc::EMPTY)
+}
+
+fn relative(path: &[u8]) -> Expr {
+    text(&[&b"./"[..], path].concat())
+}
+
+fn put(object: &mut E::Object, key: &[u8], value: Expr) {
+    let arena = crate::cli::cli_arena();
+    object.put(arena, arena.alloc_slice_copy(key), value).unwrap_or_oom();
+}
+
+struct Written<'a> {
+    exported: &'a [Exported],
+    project_directory: &'a [u8],
+    outdir: &'a [u8],
+}
+
+struct Kept {
+    files: Vec<usize>,
+    conditions: Option<Expr>,
+}
+
+struct LeftOut {
+    conditions: Vec<Vec<u8>>,
+    target: Vec<u8>,
+}
+
+impl Written<'_> {
+    fn at(&self, path: &[u8]) -> Option<usize> {
+        let path = join_abs_string::<Auto>(self.project_directory, &[path]).to_vec();
+        self.exported.iter().position(|file| *file.source == path[..] || join_abs_string::<Auto>(self.outdir, &[&file.javascript[..]]) == &path[..])
+    }
+
+    fn conditions_of(&self, file: usize) -> Expr {
+        let file = &self.exported[file];
+        let mut conditions = E::Object::default();
+        if let Some(declarations) = &file.declarations {
+            put(&mut conditions, b"types", relative(&declarations[..]));
+        }
+        if let Some(typed) = &file.typed {
+            put(&mut conditions, bun_sema_driver::typed_packages::CONDITION, relative(&typed[..]));
+        }
+        put(&mut conditions, b"default", relative(&file.javascript[..]));
+        Expr::init(conditions, Loc::EMPTY)
+    }
+
+    fn written_as(&self, kept: &Kept) -> Expr {
+        kept.conditions.unwrap_or_else(|| self.conditions_of(kept.files[0]))
+    }
+
+    fn keep(&self, authored: &Expr, under: &mut Vec<Vec<u8>>, left_out: &mut Vec<LeftOut>) -> Option<Kept> {
+        if let Some(target) = authored.as_utf8_string_literal() {
+            let file = self.at(target);
+            if file.is_none() {
+                left_out.push(LeftOut { conditions: under.clone(), target: target.to_vec() });
+            }
+            return Some(Kept { files: vec![file?], conditions: None });
+        }
+        match &authored.data {
+            ExprData::EArray(fallbacks) => fallbacks.items.slice().iter().find_map(|fallback| self.keep(fallback, under, left_out)),
+            ExprData::EObject(conditions) => {
+                let mut kept: Vec<(&[u8], Kept)> = Vec::new();
+                for condition in conditions.properties.slice() {
+                    let (Some(name), Some(inner)) = (condition.key.as_ref().and_then(Expr::as_utf8_string_literal), &condition.value) else { continue };
+                    if name == b"types" && inner.as_utf8_string_literal().is_some() {
+                        continue;
+                    }
+                    under.push(name.to_vec());
+                    kept.extend(self.keep(inner, under, left_out).map(|inner| (name, inner)));
+                    under.pop();
+                }
+                let files: Vec<usize> = kept.iter().flat_map(|(_, inner)| inner.files.iter().copied()).collect();
+                let &first = files.first()?;
+                if files.iter().all(|&file| file == first) {
+                    return Some(Kept { files: vec![first], conditions: None });
+                }
+                let mut written = E::Object::default();
+                for (name, inner) in &kept {
+                    put(&mut written, name, self.written_as(inner));
+                }
+                Some(Kept { files, conditions: Some(Expr::init(written, Loc::EMPTY)) })
+            }
+            _ => None,
+        }
+    }
+}
+
 fn valid_package_name(folder: &[u8]) -> Vec<u8> {
     let mut name: Vec<u8> = (folder.iter())
         .map(|byte| match byte.to_ascii_lowercase() {
@@ -239,16 +355,12 @@ fn asset(path: &[u8], bytes: Vec<u8>) -> OutputFile {
 
 #[cold]
 pub(crate) fn add_package_files(ctx: &ContextData, log: &mut bun_ast::Log, output_files: &mut Vec<OutputFile>) {
-    let arena = crate::cli::cli_arena();
     let cwd = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
     let outdir = join_abs_string::<Auto>(cwd, &[&ctx.bundler_options.outdir]).to_vec();
     let project = nearest_package_json(cwd);
     let project_directory = project.as_ref().map_or_else(|| bun_core::strings::without_trailing_slash(cwd), |found| found.0);
     let existing = project.as_ref().and_then(|(_, path, contents)| parse_package_json(path, contents));
 
-    let text = |value: &[u8]| Expr::init(E::String::init(&*arena.alloc_slice_copy(value)), Loc::EMPTY);
-    let relative = |path: &[u8]| text(&[&b"./"[..], path].concat());
-    let put = |object: &mut E::Object, key: &[u8], value: Expr| object.put(arena, arena.alloc_slice_copy(key), value).unwrap_or_oom();
     let copy = |package: &mut E::Object, fields: &[&[u8]]| {
         for &field in fields {
             if let Some(value) = existing.as_ref().and_then(|existing| existing.get(field)) {
@@ -266,9 +378,60 @@ pub(crate) fn add_package_files(ctx: &ContextData, log: &mut bun_ast::Log, outpu
     if !package.has_property(b"version") {
         put(&mut package, b"version", text(b"0.0.0"));
     }
+    let written = Written { exported: &exported[..], project_directory, outdir: &outdir[..] };
+    let written_package_json = [&ctx.bundler_options.outdir[..], b"/package.json"].concat();
+    let written_package_json = BStr::new(&written_package_json);
+    let mut exports = E::Object::default();
+    let mut is_in_exports = vec![false; exported.len()];
+    let mut main = None;
+    let authored = existing.as_ref().and_then(|existing| existing.get(b"exports"));
+    let subpaths = authored.as_ref().and_then(|authored| match &authored.data {
+        ExprData::EObject(subpaths) if subpaths.properties.slice().iter().all(|entry| entry.key.as_ref().and_then(Expr::as_utf8_string_literal).is_some_and(|subpath| subpath.starts_with(b"."))) => Some(subpaths),
+        _ => None,
+    });
+    let authored: Vec<(&[u8], &Expr)> = match (subpaths, &authored) {
+        (Some(subpaths), _) => subpaths.properties.slice().iter().filter_map(|entry| Some((entry.key.as_ref()?.as_utf8_string_literal()?, entry.value.as_ref()?))).collect(),
+        (None, Some(only)) => vec![(&b"."[..], only)],
+        (None, None) => Vec::new(),
+    };
+    let mut wholly_left_out: Vec<&[u8]> = Vec::new();
+    for (subpath, authored) in authored.into_iter().filter(|entry| entry.0 != b"./package.json") {
+        let mut left_out = Vec::new();
+        let Some(kept) = written.keep(authored, &mut Vec::new(), &mut left_out) else {
+            wholly_left_out.push(subpath);
+            continue;
+        };
+        left_out.retain(|left_out| !left_out.conditions.is_empty());
+        if let Some(LeftOut { conditions, target }) = left_out.first() {
+            let (conditions, subpath, target) = (conditions.join(&b"\" > \""[..]), BStr::new(subpath), BStr::new(target));
+            let conditions = BStr::new(&conditions);
+            match left_out.len() {
+                1 => log.add_warning_fmt(None, Loc::EMPTY, format_args!("\"{conditions}\" of \"{subpath}\" in \"exports\" of package.json is left out of {written_package_json}: this build does not write {target}")),
+                count => log.add_warning_fmt(None, Loc::EMPTY, format_args!("{count} conditions of \"{subpath}\" in \"exports\" of package.json are left out of {written_package_json}, the first \"{conditions}\": this build does not write {target}")),
+            }
+        }
+        kept.files.iter().for_each(|&file| is_in_exports[file] = true);
+        if subpath == b"." {
+            main = kept.files.last().copied();
+        }
+        put(&mut exports, subpath, written.written_as(&kept));
+    }
+    for (index, file) in exported.iter().enumerate().filter(|(index, _)| !is_in_exports[*index]) {
+        if !exports.has_property(&file.subpath[..]) {
+            if file.subpath == b"." {
+                main = Some(index);
+            }
+            put(&mut exports, &file.subpath[..], written.conditions_of(index));
+        }
+    }
+    for subpath in wholly_left_out.into_iter().filter(|subpath| !exports.has_property(subpath)) {
+        log.add_warning_fmt(None, Loc::EMPTY, format_args!("\"{}\" in \"exports\" of package.json is left out of {written_package_json}: no entry point of this build is written there", BStr::new(subpath)));
+    }
+    put(&mut exports, b"./package.json", text(b"./package.json"));
+
     let is_commonjs = ctx.bundler_options.output_format == bun_bundler::options::Format::Cjs;
     put(&mut package, b"type", text(if is_commonjs { &b"commonjs"[..] } else { &b"module"[..] }));
-    if let Some(main) = exported.iter().find(|file| file.subpath == b".").or_else(|| exported.first()) {
+    if let Some(main) = main.map(|main| &exported[main]).or_else(|| exported.first()) {
         put(&mut package, b"main", relative(&main.javascript[..]));
         if !is_commonjs {
             put(&mut package, b"module", relative(&main.javascript[..]));
@@ -277,37 +440,12 @@ pub(crate) fn add_package_files(ctx: &ContextData, log: &mut bun_ast::Log, outpu
             put(&mut package, b"types", relative(&declarations[..]));
         }
     }
-    let mut exports = E::Object::default();
-    for file in &exported {
-        let mut conditions = E::Object::default();
-        if let Some(declarations) = &file.declarations {
-            put(&mut conditions, b"types", relative(&declarations[..]));
-        }
-        if let Some(typed) = &file.typed {
-            put(&mut conditions, bun_sema_driver::typed_packages::CONDITION, relative(&typed[..]));
-        }
-        put(&mut conditions, b"default", relative(&file.javascript[..]));
-        put(&mut exports, &file.subpath[..], Expr::init(conditions, Loc::EMPTY));
-    }
-    put(&mut exports, b"./package.json", text(b"./package.json"));
-    let written_package_json = [&ctx.bundler_options.outdir[..], b"/package.json"].concat();
-    let written_package_json = BStr::new(&written_package_json);
-    if let Some(ExprData::EObject(existing_exports)) = existing.as_ref().and_then(|existing| existing.get(b"exports")).map(|exports| exports.data) {
-        let subpaths = existing_exports.properties.slice().iter().filter_map(|entry| entry.key.as_ref()?.as_utf8_string_literal());
-        for subpath in subpaths.filter(|subpath| subpath.starts_with(b".") && !exports.has_property(subpath)) {
-            log.add_warning_fmt(None, Loc::EMPTY, format_args!("\"{}\" in \"exports\" of package.json is left out of {written_package_json}: no entry point of this build is written there", BStr::new(subpath)));
-        }
-    }
     put(&mut package, b"exports", Expr::init(exports, Loc::EMPTY));
 
     let mut warn_about_executable = |name: &[u8], path: &[u8]| {
         log.add_warning_fmt(None, Loc::EMPTY, format_args!("\"{}\" in \"bin\" of package.json is left out of {written_package_json}: {} is not an entry point of this build", BStr::new(name), BStr::new(path)));
     };
-    let emitted_as = |path: &[u8]| {
-        let path = join_abs_string::<Auto>(project_directory, &[path]).to_vec();
-        let found = exported.iter().find(|file| *file.source == path[..] || join_abs_string::<Auto>(&outdir, &[&file.javascript[..]]) == &path[..])?;
-        Some(relative(&found.javascript[..]))
-    };
+    let emitted_as = |path: &[u8]| Some(relative(&exported[written.at(path)?].javascript[..]));
     let existing_bin = existing.as_ref().and_then(|existing| existing.get(b"bin"));
     if let Some(path) = existing_bin.as_ref().and_then(Expr::as_utf8_string_literal) {
         match emitted_as(path) {
@@ -358,7 +496,7 @@ pub(crate) fn add_package_files(ctx: &ContextData, log: &mut bun_ast::Log, outpu
     paths.iter_mut().for_each(|path| bun_paths::resolve_path::platform_to_posix_in_place::<u8>(path));
     paths.sort();
     for path in &paths {
-        files.push(arena, text(&path[..])).unwrap_or_oom();
+        files.push(crate::cli::cli_arena(), text(&path[..])).unwrap_or_oom();
     }
     put(&mut package, b"files", Expr::init(files, Loc::EMPTY));
     if let Some(side_effects) = existing.as_ref().and_then(|existing| existing.get(b"sideEffects")).filter(|value| value.as_bool().is_some()) {

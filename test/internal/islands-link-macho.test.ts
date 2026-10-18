@@ -882,6 +882,30 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       if (machine.canRun) expect([await signAndRun(folder, "shut", shut), await signAndRun(folder, "shut", shut, ["through the door"])]).toEqual([0, 70]);
     });
 
+    test("that throws says so, and whether its feature was removed by name, and leaves its second argument where it was", async () => {
+      using dir = tempDir("islands-macho-door", {
+        ...sources,
+        "door.c": `int behind(int); __attribute__((noinline)) long the_door(long first, long second) { return behind(first) * 3 + behind(second + 1); }`,
+        "main.c": `
+          long the_door(long, long);
+          __attribute__((noinline)) long Bun__trimmedOut(unsigned door, long second) { if (door >> 30 == 0) { ${exits("70")} } return second + (door >> 30) + (door & 2048 ? 10 : 0); }
+          int main(int argc, char **argv) { return argc > 1 ? the_door(5, 41) : 0; }
+        `,
+        "doors": sources.doors.replace("door extra exit", "door extra throw"),
+      });
+      const folder = String(dir);
+      const { table, door, file } = await linked(machine, folder, { objects: ["behind", "door", "main"] });
+      expect(door("the_door")!.answers).toBe("throw");
+      if (!machine.canRun) return;
+      expect(await signAndRun(folder, "by-use", shutDoors(file, table, ["extra"], machine.isArm64), ["through the door"])).toBe(42);
+      expect(await signAndRun(folder, "by-name", shutDoors(file, table, ["extra"], machine.isArm64, ["extra"]), ["through the door"])).toBe(52);
+      const answering = { ...table, doors: table.doors.map(other => ({ ...other, answers: "undefined" as const })) };
+      expect(await signAndRun(folder, "undefined-by-use", shutDoors(file, answering, ["extra"], machine.isArm64), ["through the door"])).toBe(43);
+      expect(await signAndRun(folder, "undefined-by-name", shutDoors(file, answering, ["extra"], machine.isArm64, ["extra"]), ["through the door"])).toBe(10);
+      const silent = { ...table, doors: table.doors.map(({ answers, ...other }) => other) };
+      expect(await signAndRun(folder, "silent", shutDoors(file, silent, ["extra"], machine.isArm64), ["through the door"])).toBe(70);
+    });
+
     test("that runs before main stays open, and what it names stays", async () => {
       using dir = tempDir("islands-macho-door", {
         ...sources,

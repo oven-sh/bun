@@ -426,3 +426,31 @@ typed, module level: 48.79 instructions (module 22.53, stub PutByNameWithDirectC
 untyped, function: 59.87 instructions (kernel 33.46, stub PutByNameWithDirectColumnPreservingTwo 13, stub PutByNameAndFillSiteCachePreservingTwo 7.21, stub ReplaceOutOfLineByName 6, module 0.12, stub Add 0.08), 563 bytes
 untyped, module level: 48.81 instructions (module 22.52, stub PutByNameWithDirectColumnPreservingTwo 13, stub PutByNameAndFillSiteCachePreservingTwo 7.21, stub ReplaceOutOfLineByName 6, stub Add 0.08), 1512 bytes"
 `;
+
+exports[`reads a getter that a helper function defined on a prototype with Object.defineProperty 1`] = `
+"typed, function: 94.19 instructions (kernel 31.19, a function without a name 24, stub GetByNameWithDirectColumn 13, stub ReadAccessorByName 13, stub GetByNameAndFillSiteCache 7.88, stub AddDoubleAsDouble 5, module 0.12), 300 bytes
+typed, module level: 88.33 instructions (module 25.45, a function without a name 24, stub GetByNameWithDirectColumn 13, stub ReadAccessorByName 13, stub GetByNameAndFillSiteCache 7.88, stub AddDoubleAsDouble 5), 1703 bytes
+untyped, function: 111.28 instructions (kernel 35.28, a function without a name 24, stub GetByNameWithDirectColumnPreservingTwo 13, stub GetThroughAccessorByName 13, stub ReadAccessorByNamePreservingTwo 10, stub Add 8, stub GetByNameAndFillSiteCachePreservingTwo 7.88, module 0.12), 393 bytes
+untyped, module level: 100.38 instructions (module 24.50, a function without a name 24, stub GetByNameWithDirectColumnPreservingTwo 13, stub GetThroughAccessorByName 13, stub ReadAccessorByNamePreservingTwo 10, stub Add 8, stub GetByNameAndFillSiteCachePreservingTwo 7.88), 1758 bytes"
+`;
+
+exports[`reads a getter of a class from objects whose type is lost 1`] = `
+"typed, function: 71.35 instructions (kernel 23.23, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadAccessorByName 13, stub BoxNumber 8, get balance 7, stub AddDoubleAsDouble 5, Account 2, module 0.12), 252 bytes
+typed, module level: 66.45 instructions (module 18.45, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadAccessorByName 13, stub BoxNumber 8, get balance 7, stub AddDoubleAsDouble 5, Account 2), 1489 bytes
+untyped, function: 97.40 instructions (kernel 28.28, Account.get balance 22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 14, stub GetThroughAccessorByName 13, stub ReadAccessorByNamePreservingTwo 10, stub Add 8, Account 2, module 0.12), 300 bytes
+untyped, module level: 85.50 instructions (Account.get balance 22, module 17.50, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub GetThroughAccessorByName 13, stub ReadAccessorByNamePreservingTwo 10, stub Add 8, Account 2), 1561 bytes"
+`;
+
+exports[`reads a getter of the same name from objects of four classes at one place 1`] = `
+"typed, function: 72.85 instructions (kernel 23.23, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadAccessorByName 13, get area 9, stub BoxNumber 8, stub AddDoubleAsDouble 5, Circle 0.50, Square 0.50, Strip 0.50, module 0.12), 252 bytes
+typed, module level: 72.70 instructions (module 23.20, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadAccessorByName 13, get area 9, stub BoxNumber 8, stub AddDoubleAsDouble 5, Circle 0.50, Square 0.50, Strip 0.50), 1458 bytes
+untyped, function: 116.38 instructions (kernel 33.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 14, stub GetThroughAccessorByName 13, Circle.get area 10.50, LargeSquare.get area 10.50, stub ReadAccessorByNamePreservingTwo 10, Square.get area 8.75, Strip.get area 8, stub GetLengthByNamePreservingTwo 3.75, stub GetByNamePreservingTwo 3, Circle 0.50, Square 0.50, Strip 0.50, module 0.12), 478 bytes
+untyped, module level: 115.27 instructions (module 33.27, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub GetThroughAccessorByName 13, Circle.get area 10.50, LargeSquare.get area 10.50, stub ReadAccessorByNamePreservingTwo 10, Square.get area 8.75, Strip.get area 8, stub GetLengthByNamePreservingTwo 3.75, stub GetByNamePreservingTwo 3, Circle 0.50, Square 0.50, Strip 0.50), 1831 bytes"
+`;
+
+exports[`reads an own property whose name is a getter's name elsewhere in the program 1`] = `
+"typed, function: 55.35 instructions (kernel 23.23, stub ReadFieldDoubleByName 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub AddDoubleAsDouble 5, module 0.12), 252 bytes
+typed, module level: 50.45 instructions (module 18.45, stub ReadFieldDoubleByName 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub AddDoubleAsDouble 5), 1519 bytes
+untyped, function: 42.45 instructions (kernel 32.33, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, module 0.12), 526 bytes
+untyped, module level: 32.47 instructions (module 22.47, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 1807 bytes"
+`;

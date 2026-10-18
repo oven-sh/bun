@@ -195,6 +195,9 @@ impl RuntimeUse {
         if !self.why_open.is_empty() {
             facts.push(b"world open".to_vec());
         }
+        if may_strings_become_code() {
+            facts.push(b"text-to-code allowed".to_vec());
+        }
         for source in &self.runtime_sources {
             facts.extend_from_slice(&source.facts);
             for escape in &source.escapes {
@@ -260,7 +263,8 @@ const SAFE_FUNCTION_PROPERTIES: [&[u8]; 3] = [b"prototype", b"name", b"length"];
 const SAFE_IMPORT_META_PROPERTIES: [&[u8]; 9] = [b"url", b"dir", b"dirname", b"file", b"filename", b"path", b"main", b"env", b"resolve"];
 const EVENTS_OF_THE_CHANNEL: [&[u8]; 2] = [b"message", b"disconnect"];
 const LISTENS: [&[u8]; 5] = [b"on", b"once", b"addListener", b"prependListener", b"prependOnceListener"];
-const MODULES_WITH_LOADER_ACCESS: [&[u8]; 12] = [b"module", b"node:module", b"vm", b"node:vm", b"repl", b"node:repl", b"worker_threads", b"node:worker_threads", b"inspector", b"node:inspector", b"inspector/promises", b"node:inspector/promises"];
+const MODULES_WITH_LOADER_ACCESS: [&[u8]; 14] = [b"cluster", b"node:cluster", b"module", b"node:module", b"vm", b"node:vm", b"repl", b"node:repl", b"worker_threads", b"node:worker_threads", b"inspector", b"node:inspector", b"inspector/promises", b"node:inspector/promises"];
+const SAFE_CLUSTER_EXPORTS: [&[u8]; 12] = [b"isPrimary", b"isMaster", b"isWorker", b"fork", b"setupPrimary", b"setupMaster", b"settings", b"workers", b"disconnect", b"schedulingPolicy", b"SCHED_NONE", b"SCHED_RR"];
 const SAFE_NODE_MODULE_EXPORTS: [&[u8]; 5] = [b"builtinModules", b"isBuiltin", b"SourceMap", b"findSourceMap", b"syncBuiltinESMExports"];
 const SAFE_WORKER_THREADS_EXPORTS: [&[u8]; 13] = [
     b"isMainThread",
@@ -1380,6 +1384,7 @@ impl<'a, 'm> OptionsOfServers<'a, 'm, '_> {
                 ExprKind::Cond { test, .. } if test == e => true,
                 ExprKind::Binary { op: BinOp::And, left, .. } if left == e => true,
                 ExprKind::Cond { .. } | ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => self.goes_only_to_servers(around, steps_left),
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e => self.only_reads_what_is_not_followed(e, around),
                 _ => false,
             },
             Parent::Prop(prop) => {
@@ -1390,6 +1395,25 @@ impl<'a, 'm> OptionsOfServers<'a, 'm, '_> {
             Parent::Stmt(statement) => self.serves_its_default_export && matches!(hir[statement].kind, StmtKind::ExportDefault(_)),
             _ => false,
         }
+    }
+
+    fn only_reads_what_is_not_followed(&self, mention: ExprId, member: ExprId) -> bool {
+        let (hir, bound) = (&self.module.hir, &self.module.bound);
+        let Some((_, name)) = member_at(self.module, member) else { return false };
+        let written = with_assertions(self.module, member);
+        let is_callee = matches!(bound.expr_parent[written.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == written));
+        if is_callee || is_assignment_target(self.module, written) || is_deleted(self.module, member) || matches!(self.atoms.bytes(name), b"routes" | b"static" | b"__proto__" | b"constructor") {
+            return false;
+        }
+        let Some(holder) = bound.expr_symbol[without_assertions(self.module, mention).idx()].some() else { return false };
+        let Some(init) = initializer_of_variable_stored_once(self.module, holder) else { return false };
+        let ExprKind::Object(props) = hir[without_assertions(self.module, init)].kind else { return false };
+        props.iter().all(|prop| {
+            self.own_name(prop).is_some_and(|own| {
+                let value = without_assertions(self.module, hir[prop].value);
+                own != name || hir[prop].kind == PropKind::Method || is_surely_primitive(self.module, self.atoms, value, MOST_STEPS_TO_A_STORED_VALUE) || matches!(hir[value].kind, ExprKind::Fn(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_))
+            })
+        })
     }
 
     fn holds_what_goes_only_to_servers(&self, holder: SymbolId, steps_left: usize) -> bool {
@@ -1542,6 +1566,24 @@ fn add_options_of_servers<'a, 'm>(named_at: &mut Vec<(u32, ExprId, Name)>, atoms
                 named_at.extend(options_of_servers(options, serve, of_file.iter().map(|it| it.1)).into_iter().map(|(place, name)| (file, place, name)));
             }
             None => named_at.extend(ANY_OPTION_OF_A_SERVER.map(|name| (file, ExprId::NONE, name))),
+        }
+    }
+    let Some(reload) = atoms.lookup(b"reload").filter(|_| !places.is_empty()) else { return };
+    for (file, module) in (0..number_of_files).filter_map(|file| Some((file, module_of(file).filter(|module| module.builtin.is_none())?))) {
+        let (hir, bound) = (&module.hir, &module.bound);
+        let options = OptionsOfServers { module, atoms, module_of, number_of_files, callees: FxHashSet::default(), serves_its_default_export: false, variables_left: std::cell::Cell::new(MOST_VARIABLES_FOLLOWED_IN_A_FILE) };
+        let mut found: Vec<Name> = Vec::new();
+        for (index, _) in hir.exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Dot { name, .. } if name == reload) && bound.expr_parent[it.0] != Parent::None) {
+            let member = ExprId::from(index as u32);
+            match is_called(module, member).map(|call| hir.ids(hir[call].args).next()) {
+                Some(Some(argument)) => options.add_options(argument, MOST_STEPS_TO_A_LITERAL, &mut found),
+                Some(None) => {}
+                None => found.extend(ANY_OPTION_OF_A_SERVER),
+            }
+            named_at.extend(found.drain(..).map(|name| (file, member, name)));
+        }
+        if hir.pat_props.iter().any(|prop| matches!((prop.key, hir[prop.value].kind), (PropKey::Name(key), _) | (PropKey::None, PatKind::Ident(key)) if key == reload)) {
+            named_at.extend(ANY_OPTION_OF_A_SERVER.map(|name| (file, ExprId::NONE, name)));
         }
     }
 }
@@ -1869,13 +1911,15 @@ struct Reflection {
     get_own_property_descriptors: Atom,
     lookup_getter: Atom,
     lookup_setter: Atom,
+    json: Atom,
+    stringify: Atom,
     global_objects: [Atom; GLOBAL_OBJECTS.len()],
 }
 
 impl Reflection {
     fn new(atoms: &Interner<'_>) -> Reflection {
         let known = |name: &[u8]| atoms.lookup(name).unwrap_or(Atom::NONE);
-        Reflection { reflect: known(b"Reflect"), object: known(b"Object"), get: known(b"get"), set: known(b"set"), get_own_property_descriptor: known(b"getOwnPropertyDescriptor"), get_own_property_descriptors: known(b"getOwnPropertyDescriptors"), lookup_getter: known(b"__lookupGetter__"), lookup_setter: known(b"__lookupSetter__"), global_objects: GLOBAL_OBJECTS.map(known) }
+        Reflection { reflect: known(b"Reflect"), object: known(b"Object"), get: known(b"get"), set: known(b"set"), get_own_property_descriptor: known(b"getOwnPropertyDescriptor"), get_own_property_descriptors: known(b"getOwnPropertyDescriptors"), lookup_getter: known(b"__lookupGetter__"), lookup_setter: known(b"__lookupSetter__"), json: known(b"JSON"), stringify: known(b"stringify"), global_objects: GLOBAL_OBJECTS.map(known) }
     }
 
     fn hands_out_descriptors(self, name: Atom) -> bool {
@@ -1883,7 +1927,7 @@ impl Reflection {
     }
 
     fn is_name_of_function(self, name: Atom) -> bool {
-        [self.get, self.get_own_property_descriptor, self.get_own_property_descriptors, self.lookup_getter, self.lookup_setter, self.reflect, self.object].contains(&name)
+        [self.get, self.get_own_property_descriptor, self.get_own_property_descriptors, self.lookup_getter, self.lookup_setter, self.reflect, self.object, self.json, self.stringify].contains(&name)
     }
 }
 
@@ -1985,12 +2029,33 @@ impl Properties<'_, '_, '_> {
                 let is_called = matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) if hir[call].callee == e));
                 let is_read_from_global_object = (name == known.reflect || name == known.object) && known.global_objects.iter().any(|&global_object| global_object.is_some() && self.is_global(obj, global_object));
                 *hands_out_values = hands_out(obj, name) && !is_called || name == known.get_own_property_descriptors && self.is_global(obj, known.object) || is_read_from_global_object;
-                if *hands_out_values || name == known.lookup_getter || name == known.lookup_setter {
+                let is_stringify_taken_out = name == known.stringify && self.is_global(obj, known.json) && !is_called;
+                if *hands_out_values || name == known.lookup_getter || name == known.lookup_setter || is_stringify_taken_out {
                     found.push(Atom::NONE);
                 }
             }
             ExprKind::Binary { op: BinOp::In, left: key, .. } => found.extend(self.constant_key(key)),
             ExprKind::Call(call) => {
+                if let Some((obj, name)) = member_at(hir[call].callee)
+                    && name == known.stringify
+                    && self.is_global(obj, known.json)
+                {
+                    let mut arguments = hir.ids(hir[call].args);
+                    let (value, names): (Option<ExprId>, Option<ExprId>) = (arguments.next(), arguments.next());
+                    let is_spread = |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
+                    match names.map(|names| (names, hir[without_assertions(self.module, names)].kind)) {
+                        _ if value.is_some_and(is_spread) => found.push(Atom::NONE),
+                        None | Some((_, ExprKind::Null | ExprKind::Fn(_))) => {}
+                        Some((names, ExprKind::Ident(known::undefined))) if is_free(self.module, without_assertions(self.module, names)) => {}
+                        Some((names, ExprKind::Ident(_))) if bound.expr_symbol[without_assertions(self.module, names).idx()].some().is_some_and(|holder| is_function_stored_once(self.module, holder)) => {}
+                        Some((_, ExprKind::Array(listed))) => {
+                            for name in hir.ids(listed).filter(|&name: &ExprId| !matches!(hir[name].kind, ExprKind::Number(_))) {
+                                found.push(self.constant_key(name).unwrap_or(Atom::NONE));
+                            }
+                        }
+                        Some(_) => found.push(Atom::NONE),
+                    }
+                }
                 if let Some((obj, name)) = member_at(hir[call].callee)
                     && hands_out(obj, name)
                 {
@@ -2014,7 +2079,7 @@ impl Properties<'_, '_, '_> {
                     }
                 }
             }
-            ExprKind::Ident(written) if (written == known.reflect || written == known.object) && is_free(self.module, e) => {
+            ExprKind::Ident(written) if (written == known.reflect || written == known.object || written == known.json) && is_free(self.module, e) => {
                 let is_only_read = matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if match hir[around].kind {
                     ExprKind::Dot { obj, .. } => obj == e,
                     ExprKind::Index { obj, index, .. } => obj == e && self.constant_key(index).is_some(),
@@ -2025,7 +2090,7 @@ impl Properties<'_, '_, '_> {
                 });
                 if !is_only_read {
                     found.push(Atom::NONE);
-                    *hands_out_values = true;
+                    *hands_out_values = written != known.json;
                 }
             }
             ExprKind::Assign { op: None, target, .. } if matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_)) => {
@@ -2936,6 +3001,7 @@ impl<'a, 's> Scan<'a, 's> {
             };
             let is_safe_name = |spec: bun_sema::hir::ImportSpecId| {
                 let names: &[&[u8]] = match self.atoms.bytes(hir[hir[spec].import].spec) {
+                    b"cluster" | b"node:cluster" => &SAFE_CLUSTER_EXPORTS,
                     b"module" | b"node:module" => &SAFE_NODE_MODULE_EXPORTS,
                     b"worker_threads" | b"node:worker_threads" => &SAFE_WORKER_THREADS_EXPORTS,
                     _ => &[],
@@ -2964,14 +3030,17 @@ impl<'a, 's> Scan<'a, 's> {
                 .collect();
             let reads_only_safe_names = |e: ExprId, specifier: Atom| {
                 let names: &[&[u8]] = match self.atoms.bytes(specifier) {
+                    b"cluster" | b"node:cluster" => &SAFE_CLUSTER_EXPORTS,
                     b"module" | b"node:module" => &SAFE_NODE_MODULE_EXPORTS,
                     b"worker_threads" | b"node:worker_threads" => &SAFE_WORKER_THREADS_EXPORTS,
                     _ => &[],
                 };
                 let may_bind_create_require = matches!(bound.expr_parent[e.idx()], Parent::VarInit(_)) && matches!(self.atoms.bytes(specifier), b"module" | b"node:module");
+                let is_cluster = matches!(self.atoms.bytes(specifier), b"cluster" | b"node:cluster");
+                let only_listens = |name: Atom, method: ExprId| is_cluster && method.is_some() && is_one_of(name, &LISTENS) && keeps_the_receiver_to_itself(module, method, true);
                 let mut reads = Vec::new();
                 let mut stored_under_any_name = Vec::new();
-                is_read_only_by_literal_names(module, self.atoms, e, &|_| false, &mut reads, &mut Vec::new(), &mut stored_under_any_name) && stored_under_any_name.is_empty() && reads.iter().all(|it| is_one_of(it.0, names) || may_bind_create_require && it.1.is_none() && is(it.0, b"createRequire"))
+                is_read_only_by_literal_names(module, self.atoms, e, &|_| false, &mut reads, &mut Vec::new(), &mut stored_under_any_name) && stored_under_any_name.is_empty() && reads.iter().all(|it| is_one_of(it.0, names) || only_listens(it.0, it.1) || may_bind_create_require && it.1.is_none() && is(it.0, b"createRequire"))
             };
             if !required.iter().all(|&(call, specifier)| reads_only_safe_names(call, specifier)) {
                 is_always_safe = false;
@@ -3235,7 +3304,7 @@ pub(crate) fn find(loaded: &[Option<Box<Module<'_>>>], atoms: &Interner<'_>, is_
     add_options_of_servers(&mut scan.named_at, atoms, loaded.len() as u32, &|file| loaded.get(file as usize)?.as_deref());
     let (app, style) = (atoms.lookup(b"app"), atoms.lookup(b"style"));
     let may_bundle_and_run_files = scan.named_at.iter().filter_map(|&(file, place, name)| match name {
-        Name::ServeOption(option) | Name::ServeRouteOption(option) if option.is_none() => Some((file, place, OPTIONS_OF_A_SERVER_THAT_ARE_NOT_SEEN)),
+        Name::ServeOption(option) | Name::ServeRouteOption(option) if option.is_none() && !may_strings_become_code() => Some((file, place, OPTIONS_OF_A_SERVER_THAT_ARE_NOT_SEEN)),
         Name::ServeOption(option) if Some(option) == app => Some((file, place, APP_OF_A_SERVER)),
         Name::ServeRouteOption(option) if Some(option) == style => Some((file, place, STYLE_OF_A_ROUTE)),
         _ => None,
@@ -3438,7 +3507,7 @@ pub(crate) fn add_what_the_loaded_program_shows(found: &mut Found, program: &Pro
     found.runtime_use.add_names_of(&of_this);
     for (path, named_through_this) in &mut found.runtime_use.named_at[files_named_in_before..] {
         let serving: Vec<ExprId> = named_through_this.iter().filter(|named| matches!(named.1, Name::Member(1, name) if name.is_some() && atoms.bytes(name) == b"serve")).map(|named| named.0).collect();
-        found.runtime_use.openings.extend(serving.iter().map(|&this| (path.clone(), this, OPTIONS_OF_A_SERVER_THAT_ARE_NOT_SEEN)));
+        found.runtime_use.openings.extend(serving.iter().filter(|_| !may_strings_become_code()).map(|&this| (path.clone(), this, OPTIONS_OF_A_SERVER_THAT_ARE_NOT_SEEN)));
         found.runtime_use.facts.extend(serving.first().into_iter().flat_map(|_| ANY_OPTION_OF_A_SERVER).map(|name| name.fact(atoms)));
         named_through_this.extend(serving.into_iter().flat_map(|this| ANY_OPTION_OF_A_SERVER.map(|name| (this, name))));
     }
@@ -3672,6 +3741,7 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
     let mut walked = bun_threading::Guarded::new(counted);
     let reflection = Reflection::new(atoms);
     let regexp = atoms.lookup(b"RegExp");
+    let (symbol, registers_symbols) = (atoms.lookup(b"Symbol"), atoms.lookup(b"for"));
     in_parallel(slices.len(), &|slice| {
         let mut of_slice = Counted::default();
         let mut names: Vec<Atom> = Vec::new();
@@ -3724,11 +3794,18 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
                     ExprKind::BigInt(_) => add(&mut of_slice, Name::Syntax("bigint-literal"), parent, expr.pos),
                     _ => {}
                 }
+                let is_read_from_symbol = matches!(expr.kind, ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::Ident(holder) if Some(holder) == symbol) && is_free(module, obj));
+                if is_of_program && !is_read_from_symbol && matches!(expr.kind, ExprKind::Dot { name, .. } if Some(name) == registers_symbols) {
+                    add(&mut of_slice, Name::SymbolNamedByProgram(Atom::NONE), parent, expr.pos);
+                }
                 if matches!(expr.kind, ExprKind::Dot { name, .. } if !reflection.is_name_of_function(name) && of_slice.names.contains(&if is_of_program { Name::PropertyReadByProgram(name) } else { Name::Property(name) })) {
                     continue;
                 }
                 let mut hands_out_values = false;
                 properties.named_by(e, &mut names, &mut hands_out_values);
+                if is_of_program && !is_read_from_symbol && registers_symbols.is_some_and(|name| names.contains(&name)) {
+                    add(&mut of_slice, Name::SymbolNamedByProgram(Atom::NONE), parent, expr.pos);
+                }
                 add_new_texts(&mut of_slice, parent, expr.pos);
                 if !matches!(expr.kind, ExprKind::Dot { .. }) && regexp.is_some_and(|regexp| names.contains(&regexp)) {
                     add(&mut of_slice, Name::Regexp("computed"), parent, expr.pos);
@@ -3755,6 +3832,9 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
                 }
                 if let Some(name) = name.filter(|&name| !is_private(name)) {
                     add_property(&mut of_slice, name, Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
+                    if is_of_program && Some(name) == registers_symbols {
+                        add(&mut of_slice, Name::SymbolNamedByProgram(Atom::NONE), Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
+                    }
                     if name == reflection.lookup_getter || name == reflection.lookup_setter {
                         add_property(&mut of_slice, Atom::NONE, Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
                     }
@@ -3847,15 +3927,11 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
     finding.dedup();
     let is_of_program = |file: &&FileId| files.module(**file).builtin.is_none() && !is_in_prelude(files.module(**file));
     let loads_sqlite = [&b"module bun:sqlite"[..], b"module node:sqlite", b"native node:sqlite"].iter().any(|&fact| facts.contains(fact));
-    let why_the_found_opens = if may_strings_become_code() {
-        Some("constructor, or a name that is computed, read from what may be a function")
-    } else {
-        loads_sqlite.then_some("a name that is computed, read from what may be a database, which loads native code")
-    };
+    let why_the_found_opens = loads_sqlite.then_some("a name that is computed, read from what may be a database, which loads native code");
     for &file in finding.iter().filter(is_of_program).filter(|_| why_the_found_opens.is_some()) {
         add_reason(&mut runtime_use.why_open, why_the_found_opens.unwrap_or_default(), files.module(file).path.text);
     }
-    if !may_strings_become_code() && finding.iter().any(|file| is_of_program(&file)) {
+    if finding.iter().any(|file| is_of_program(&file)) {
         facts.insert(Name::Regexp("computed").fact(atoms));
     }
     for &(file, _) in program.reads_that_may_find_what_makes_or_loads_code.lock().iter() {
@@ -3864,15 +3940,10 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
     for &(file, _) in program.loads_of_modules_that_are_not_compiled.lock().iter().filter(|load| Alias::get(&load.1, bun_ast::Target::Bun, Cfg::default()).is_none()) {
         add_reason(&mut runtime_use.why_open, "a module that the executable does not hold, loaded at run time", files.module(file).path.text);
     }
-    if runtime_use.why_open.is_empty() && may_strings_become_code() {
-        for &file in finding.iter().filter(|file| !is_of_program(file)) {
-            add_reason(&mut runtime_use.why_open, "constructor, or a name that is computed, read from what may be a function", files.module(file).path.text);
-        }
-    }
     let mut reading_any_property = counted.reading_any_property;
     reading_any_property.sort_unstable_by_key(|&file| (files.module(file).builtin.is_some(), file.idx()));
     reading_any_property.dedup();
-    runtime_use.reading_any_property = reading_any_property.chunk_by(|one, next| files.module(*one).builtin.is_some() == files.module(*next).builtin.is_some()).flat_map(|alike| alike.iter().take(PLACES_SHOWN_PER_REASON)).map(|&file| files.module(file).path.text.to_vec()).collect();
+    runtime_use.reading_any_property = reading_any_property.chunk_by(|one, next| files.module(*one).builtin.is_some() == files.module(*next).builtin.is_some()).flat_map(|alike| alike.iter().take(if files.module(alike[0]).builtin.is_some() { alike.len() } else { PLACES_SHOWN_PER_REASON })).map(|&file| files.module(file).path.text.to_vec()).collect();
     if facts.contains(&b"global *"[..]) {
         facts.insert(Name::Regexp("computed").fact(atoms));
     }

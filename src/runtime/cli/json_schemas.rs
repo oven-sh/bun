@@ -23,7 +23,7 @@ const KEEPS_PARSED_FILES_FOR: std::time::Duration = std::time::Duration::from_mi
 fn known(path: &[u8], source_hash: u64) -> Option<Arc<[AuditedValidation]>> {
     let known = KNOWN.lock();
     let (generation, by_path) = known.as_ref()?;
-    by_path.get(path).filter(|it| *generation == bun_ast::audited::json_parse_schema_generation() && it.source_hash == source_hash).map(|it| it.validations.clone())
+    by_path.get(path).filter(|it| *generation == bun_ast::audited::json_parse_schema_generation() && it.source_hash == source_hash).map(|it| Arc::clone(&it.validations))
 }
 
 pub(crate) fn of_file(path: &[u8], text: &[u8]) -> Arc<[AuditedValidation]> {
@@ -42,7 +42,7 @@ pub(crate) fn of_file(path: &[u8], text: &[u8]) -> Arc<[AuditedValidation]> {
         if let Some(job) = unsent {
             let (sender, receiver) = channel();
             let _ = sender.send(job);
-            let thread = std::thread::Builder::new().stack_size(64 << 20).spawn(move || serve(receiver));
+            let thread = std::thread::Builder::new().stack_size(64 << 20).spawn(move || serve(&receiver));
             *jobs = thread.is_ok().then_some(sender);
         }
     }
@@ -50,7 +50,7 @@ pub(crate) fn of_file(path: &[u8], text: &[u8]) -> Arc<[AuditedValidation]> {
     known(path, source_hash).unwrap_or_else(|| Arc::new([]))
 }
 
-fn serve(jobs: Receiver<Job>) {
+fn serve(jobs: &Receiver<Job>) {
     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Schemas"));
     let cwd = super::check_command::working_directory();
     let mut put_off: Option<Job> = None;

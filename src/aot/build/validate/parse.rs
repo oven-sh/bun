@@ -13,6 +13,7 @@ const MEMBERS_PER_MASK: usize = 30;
 const MAX_KEYS_COMPARED_SEQUENTIALLY: usize = 3;
 const MAX_KEY_BYTE_INSPECTED: usize = 32;
 const MAX_MEMBERS_PARSED_IN_PLACE: usize = 240;
+const MAX_DEPTH_OF_UNIONS_LOOKED_INTO: u32 = 8;
 pub(super) const MIN_ARMS_OF_UNION_WITH_OWN_FUNCTION: usize = 4;
 
 fn needs_no_escaping(text: &[u8]) -> bool {
@@ -187,8 +188,40 @@ fn discriminating_prefixes(plan: &ValidationPlan, arms: &[u32]) -> Option<Vec<Ve
 
 struct TaggedArms<'a> {
     name: &'a [u8],
-    tagged: Vec<(&'a [u8], u32)>,
+    tagged: Vec<(&'a Constant, u32)>,
     untagged: Vec<u32>,
+}
+
+fn may_open_with(plan: &ValidationPlan, node: u32, opener: u8, depth: u32) -> bool {
+    match &plan.nodes[node as usize].planned {
+        Planned::Anything | Planned::AnyObject => true,
+        Planned::Object { .. } | Planned::Dictionary { .. } => opener == b'{',
+        Planned::Array { .. } | Planned::Tuple { .. } => opener == b'[',
+        Planned::Union { arms, .. } => depth > MAX_DEPTH_OF_UNIONS_LOOKED_INTO || arms.iter().any(|&arm| may_open_with(plan, arm, opener, depth + 1)),
+        Planned::Nothing | Planned::Primitive(_) | Planned::Value(_) => false,
+    }
+}
+
+fn may_be_nested_value(plan: &ValidationPlan, node: u32) -> bool {
+    may_open_with(plan, node, b'{', 0) || may_open_with(plan, node, b'[', 0)
+}
+
+fn holds_nested_values(plan: &ValidationPlan, node: u32, depth: u32) -> bool {
+    match &plan.nodes[node as usize].planned {
+        Planned::Anything | Planned::AnyObject => true,
+        Planned::Object { members, others, .. } => members.iter().any(|member| may_be_nested_value(plan, member.node)) || matches!(others, OtherKeys::Checked(held) if may_be_nested_value(plan, *held)),
+        Planned::Dictionary { held, .. } | Planned::Array { element: held, .. } => may_be_nested_value(plan, *held),
+        Planned::Tuple { elements, .. } => elements.iter().any(|&element| may_be_nested_value(plan, element)),
+        Planned::Union { arms, .. } => depth > MAX_DEPTH_OF_UNIONS_LOOKED_INTO || arms.iter().any(|&arm| holds_nested_values(plan, arm, depth + 1)),
+        Planned::Nothing | Planned::Primitive(_) | Planned::Value(_) => false,
+    }
+}
+
+fn would_parse_nested_values_twice(plan: &ValidationPlan, arms: &[u32]) -> bool {
+    [b'{', b'['].iter().any(|&opener| {
+        let alike: Vec<u32> = arms.iter().copied().filter(|&arm| may_open_with(plan, arm, opener, 0)).collect();
+        alike.split_last().is_some_and(|(_, tried_before)| tried_before.iter().any(|&arm| holds_nested_values(plan, arm, 0)))
+    })
 }
 
 fn tagged_arms<'a>(plan: &'a ValidationPlan, arms: &[u32]) -> Option<TaggedArms<'a>> {
@@ -196,18 +229,20 @@ fn tagged_arms<'a>(plan: &'a ValidationPlan, arms: &[u32]) -> Option<TaggedArms<
         Planned::Object { members, .. } if is_parsed_in_place(plan, arm) => Some(members),
         _ => None,
     };
-    let tag_of = |arm: u32, name: &[u8]| -> Option<&'a [u8]> {
+    let tag_of = |arm: u32, name: &[u8]| -> Option<&'a Constant> {
         let member = members_of(arm)?.iter().find(|member| member.name == name && !member.is_optional)?;
         match &plan.nodes[member.node as usize] {
             described if !described.rules.is_empty() || described.default.is_some() => None,
             described => match &described.planned {
-                Planned::Value(Constant::Text(text)) if needs_no_escaping(text) => Some(&text[..]),
+                Planned::Value(Constant::Text(text)) if !needs_no_escaping(text) => None,
+                Planned::Value(Constant::Undefined) => None,
+                Planned::Value(constant) => Some(constant),
                 _ => None,
             },
         }
     };
     arms.iter().filter_map(|&arm| members_of(arm)).flatten().find_map(|member| {
-        let tagged: Vec<(&[u8], u32)> = arms.iter().filter_map(|&arm| Some((tag_of(arm, &member.name)?, arm))).collect();
+        let tagged: Vec<(&Constant, u32)> = arms.iter().filter_map(|&arm| Some((tag_of(arm, &member.name)?, arm))).collect();
         let are_distinct = tagged.iter().enumerate().all(|(at, one)| !tagged[..at].iter().any(|other| other.0 == one.0));
         let untagged = arms.iter().copied().filter(|arm| !tagged.iter().any(|one| one.1 == *arm)).collect();
         (tagged.len() >= 2 && are_distinct).then(|| TaggedArms { name: &member.name, tagged, untagged })
@@ -664,10 +699,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             Planned::Value(Constant::Number(wanted)) => {
                 let (number, end) = self.emit_parsed_number(fx, cursor, fails);
-                let wanted = self.number(fx, *wanted);
-                let is_it = self.emit(fx, Op::StrictEq { a: number, b: wanted });
+                let constant = self.number(fx, *wanted);
+                let is_it = self.emit(fx, Op::StrictEq { a: number, b: constant });
                 self.continue_if(fx, is_it, fails);
-                (wanted, end)
+                (if *wanted == 0.0 { number } else { constant }, end)
             }
             Planned::Value(Constant::Text(wanted)) => {
                 let (is_it, is_other) = (fx.b.new_block(), fx.b.new_block());
@@ -756,17 +791,51 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.seal(has_tag);
             fx.b.switch_to(has_tag);
             let tag = fx.b.read(tag_start);
-            let tags: Vec<&[u8]> = by_tag.tagged.iter().map(|one| one.0).collect();
-            let blocks: Vec<BlockId> = tags.iter().map(|_| fx.b.new_block()).collect();
-            let all: Vec<usize> = (0..tags.len()).collect();
-            self.emit_key_dispatch(fx, &tags, tag, &all, &blocks, has_other_tag);
+            let blocks: Vec<BlockId> = by_tag.tagged.iter().map(|_| fx.b.new_block()).collect();
+            let texts: Vec<&[u8]> = by_tag.tagged.iter().map(|one| if let Constant::Text(text) = one.0 { &text[..] } else { &[][..] }).collect();
+            let with_text: Vec<usize> = (0..texts.len()).filter(|&at| matches!(by_tag.tagged[at].0, Constant::Text(_))).collect();
+            let is_no_text = fx.b.new_block();
+            self.emit_key_dispatch(fx, &texts, tag, &with_text, &blocks, is_no_text);
+            fx.b.seal(is_no_text);
+            fx.b.switch_to(is_no_text);
+            for (&(constant, _), &block) in by_tag.tagged.iter().zip(&blocks) {
+                let word: &[u8] = match constant {
+                    Constant::Null => b"null",
+                    Constant::Boolean(true) => b"true",
+                    Constant::Boolean(false) => b"false",
+                    _ => continue,
+                };
+                let next = fx.b.new_block();
+                self.branch_on_text(fx, tag, word, false, block, next);
+                fx.b.seal(next);
+                fx.b.switch_to(next);
+            }
+            if by_tag.tagged.iter().any(|one| matches!(one.0, Constant::Number(_))) {
+                let (found, _) = self.emit_parsed_number(fx, tag, has_other_tag);
+                for (&(constant, _), &block) in by_tag.tagged.iter().zip(&blocks) {
+                    let Constant::Number(wanted) = constant else { continue };
+                    let (wanted, next) = (self.number(fx, *wanted), fx.b.new_block());
+                    let is_it = self.emit(fx, Op::StrictEq { a: found, b: wanted });
+                    fx.b.branch(is_it, block, next);
+                    fx.b.seal(next);
+                    fx.b.switch_to(next);
+                }
+            }
+            fx.b.jump(has_other_tag);
+            let may_be_taken_otherwise = by_tag.untagged.iter().any(|&arm| may_open_with(plan, arm, b'{', 0));
+            let is_final = |arm: u32| may_be_taken_otherwise && holds_nested_values(plan, arm, 0);
+            let gives_up = by_tag.tagged.iter().any(|one| is_final(one.1)).then(|| self.give_up(fx, fails));
             for (&(_, arm), &block) in by_tag.tagged.iter().zip(&blocks) {
                 fx.b.seal(block);
                 fx.b.switch_to(block);
-                let (value, after) = self.emit_parsed(fx, plan, number, arm, within, Found::Opened, otherwise);
+                let refuses = gives_up.filter(|_| is_final(arm)).unwrap_or(otherwise);
+                let (value, after) = self.emit_parsed(fx, plan, number, arm, within, Found::Opened, refuses);
                 fx.b.write(held, value);
                 fx.b.write(end, after);
                 fx.b.jump(done);
+            }
+            if let Some(gives_up) = gives_up {
+                fx.b.seal(gives_up);
             }
             fx.b.seal(has_other_tag);
             fx.b.switch_to(has_other_tag);
@@ -778,6 +847,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if arms.is_empty() {
                 fx.b.jump(fails);
             }
+        }
+        if would_parse_nested_values_twice(plan, &arms) {
+            let (value, after) = self.emit_parsed_by_engine(fx, plan, number, node, cursor, fails);
+            fx.b.write(held, value);
+            fx.b.write(end, after);
+            fx.b.jump(done);
+            arms.clear();
         }
         for (at, &arm) in arms.iter().enumerate() {
             let is_last = at + 1 == arms.len();

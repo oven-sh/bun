@@ -6,10 +6,16 @@ declare module "bun" {
      * The name of a part of Bun that `compile.trim` of `Bun.build()` can leave out of an
      * executable.
      *
-     * The sizes are what a name saves in an executable that has lost `"cli"` as well. Parts share
-     * code, and only runs of at least 128 KB (256 KB on macOS) leave the file, so a list usually
-     * saves more than the sum of its names. What is removed is overwritten in the file even where
-     * the file does not get smaller.
+     * Each size is what the name saves when `"cli"` is removed too; the size of a part of `"cli"`
+     * is what it saves alone. Parts share code, and the file only gets shorter where at least 128
+     * KB in a row (256 KB on macOS) is removed, so a list usually saves more than the sum of its
+     * names. Bun overwrites what it removes, even where the file does not get shorter.
+     *
+     * A program can find out that a part is gone and go on without it: the way into a removed part
+     * is `undefined`, or a function that throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`,
+     * or an import that fails as one of a module that does not exist (`"ERR_MODULE_NOT_FOUND"`).
+     * Each name says which. Past those, code that still reaches a removed part ends the process
+     * with exit code 70 and says which part it was.
      */
     type TrimFeature =
       /**
@@ -17,20 +23,20 @@ declare module "bun" {
        * runner, `bun build`, `bun lint`, `bun fmt`, `bun check`, the type checker and the
        * ahead-of-time compiler. Only `BUN_BE_BUN=1` and `--help` reach it.
        *
-       * Saves about 55.5 MB on Linux x64 and 42.0 MB on macOS arm64.
+       * Saves about 42.4 MB on Linux x64 and 32.4 MB on macOS arm64.
        */
       | "cli"
       /**
        * `bun lint`: the linter, its rules and what they say. A part of `"cli"`.
        *
-       * Saves about 12.2 MB on Linux x64 and 11.9 MB on macOS arm64.
+       * Saves about 12.2 MB on Linux x64 and 12.0 MB on macOS arm64.
        */
       | "lint"
       /**
        * `bun fmt`, the formatter. A part of `"cli"`. It shares most of its code with `"lint"`: the
        * two together save 8 MB more.
        *
-       * Saves about 0.2 MB on Linux x64 and 0.2 MB on macOS arm64.
+       * Saves about 0.2 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "fmt"
       /**
@@ -46,14 +52,14 @@ declare module "bun" {
        * all of its subcommands, `patch`, `outdated`, `publish`, `audit`, `why`, `prune`, `dedupe`,
        * `info` and `bunx`. A part of `"cli"`.
        *
-       * Saves about 1.8 MB on Linux x64 and 1.5 MB on macOS arm64.
+       * Saves about 1.7 MB on Linux x64 and 2.2 MB on macOS arm64.
        */
       | "install"
       /**
        * The ahead-of-time compiler: `bun build --compile --aot`, `bun compile` and `bun run --aot`.
        * A part of `"cli"`. An executable that was itself built with `aot` does not need it.
        *
-       * Saves about 5.3 MB on Linux x64 and 4.4 MB on macOS arm64.
+       * Saves about 9.1 MB on Linux x64 and 8.6 MB on macOS arm64.
        */
       | "aot"
       /**
@@ -65,7 +71,7 @@ declare module "bun" {
       /**
        * `bun create` and `bun init`. A part of `"cli"`.
        *
-       * Saves about 0.1 MB on Linux x64 and 0.1 MB on macOS arm64.
+       * Saves under 0.1 MB by itself.
        */
       | "create"
       /**
@@ -79,15 +85,47 @@ declare module "bun" {
        * exec`, the help texts and shell completions. A part of `"cli"`. The executable still runs
        * its own program.
        *
-       * Saves about 0.6 MB on Linux x64 and 0.5 MB on macOS arm64.
+       * Saves about 7.5 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "run"
+      /**
+       * Everything that starts another program, or this one again: `Bun.spawn()`, `Bun.spawnSync()`
+       * and with them `node:child_process` and `node:cluster`, `Bun.$`, `Bun.cron`, `Bun.WebView`,
+       * `Bun.Terminal`, `Bun.openInEditor()`, `process.execve()`, `--watch` and `--hot`, and the
+       * sending of crash reports. With `"cli"` and `"native-code"` removed too, no code that can
+       * start a program is left in the executable.
+       *
+       * `Bun.$`, `Bun.cron`, `Bun.WebView` and `Bun.Terminal` are `undefined`.
+       *
+       * `Bun.spawn()`, `Bun.spawnSync()`, `Bun.openInEditor()` and `process.execve()` throw an
+       * `Error`.
+       *
+       * Also stops working: installing a missing package during `Bun.build()`; `--watch` and
+       * `--hot`; the commands of the `bun` command line that start programs.
+       *
+       * Saves about 0.4 MB on Linux x64 and 0.3 MB on macOS arm64.
+       */
+      | "spawn"
+      /**
+       * Loading native code: `bun:ffi`, `process.dlopen()` and `.node` addons.
+       *
+       * `Bun.FFI` is `undefined`.
+       *
+       * `process.dlopen()` throws an `Error`.
+       *
+       * An import of `bun:ffi` throws an `Error`.
+       *
+       * Takes TinyCC out of the executable.
+       *
+       * Saves about 0.6 MB on Linux x64 and 0.4 MB on macOS arm64.
+       */
+      | "native-code"
       /**
        * The just-in-time compilers of JavaScript, regular expressions and WebAssembly. Everything
        * still runs, in the interpreters, more slowly. An executable built with `aot` never starts
        * them.
        *
-       * Saves about 12.3 MB on Linux x64 and 12.0 MB on macOS arm64.
+       * Saves about 12.5 MB on Linux x64 and 12.1 MB on macOS arm64.
        */
       | "jit"
       /**
@@ -98,26 +136,34 @@ declare module "bun" {
        *
        * Can be removed only together with `"bundler"`, `"inspector"` and `"node-vm"`.
        *
-       * Saves about 4.9 MB on Linux x64 and 4.4 MB on macOS arm64.
+       * Saves about 4.8 MB on Linux x64 and 4.3 MB on macOS arm64.
        */
       | "interpreter"
       /**
        * `bun build`, `Bun.build()`, HTML imports and the development server of `Bun.serve()`.
        *
+       * `Bun.build()` throws an `Error`.
+       *
        * lol-html leaves the executable once `"html-rewriter"` is removed too.
        *
-       * Saves about 2.3 MB on Linux x64 and 1.8 MB on macOS arm64.
+       * Saves about 2.4 MB on Linux x64 and 1.9 MB on macOS arm64.
        */
       | "bundler"
       /**
        * `bun test`, `bun:test` and `node:test`: the test runner, `expect()`, its matchers, mocks
        * and snapshots.
        *
-       * Saves about 0.8 MB on Linux x64 and 0.6 MB on macOS arm64.
+       * `Bun.jest()` throws an `Error`.
+       *
+       * An import of `bun:test` and `node:test` throws an `Error`.
+       *
+       * Saves about 0.6 MB on Linux x64 and 0.5 MB on macOS arm64.
        */
       | "test"
       /**
        * The debugger: `--inspect`, `BUN_INSPECT` and `node:inspector`.
+       *
+       * An import of `node:inspector` and `node:inspector/promises` throws an `Error`.
        *
        * Saves about 0.5 MB on Linux x64 and 0.6 MB on macOS arm64.
        */
@@ -126,6 +172,8 @@ declare module "bun" {
        * The CPU and heap profilers, heap snapshots and code coverage: `--cpu-prof`, `--heap-prof`,
        * `Bun.generateHeapSnapshot()`, `v8.writeHeapSnapshot()` and the profiling functions of
        * `bun:jsc`.
+       *
+       * `Bun.generateHeapSnapshot()` and `console.takeHeapSnapshot()` throw an `Error`.
        *
        * Can be removed only together with `"inspector"`.
        *
@@ -142,6 +190,10 @@ declare module "bun" {
       /**
        * `Bun.Image` and `.image()` of a `Blob`.
        *
+       * `Bun.Image` is `undefined`.
+       *
+       * `Blob.prototype.image()` throws an `Error`.
+       *
        * Takes libjpeg-turbo, libspng and libwebp out of the executable.
        *
        * Saves about 1.3 MB on Linux x64 and 0.9 MB on macOS arm64.
@@ -150,10 +202,12 @@ declare module "bun" {
       /**
        * `Bun.Archive`, and whatever else reads or writes a tar archive.
        *
+       * `Bun.Archive` is `undefined`.
+       *
        * Also stops working: unpacking a package in `bun install`, and `bun pm pack`; unpacking a
        * template in `bun create`; installing a missing package during `bun build`; installing a
-       * missing package during `bun build --compile --aot`; installing a missing package while the
-       * program runs; installing a missing package during `Bun.build()`.
+       * missing package during `bun build --compile --aot`; installing a missing package during
+       * `Bun.build()`.
        *
        * Takes libarchive out of the executable.
        *
@@ -164,15 +218,19 @@ declare module "bun" {
        * `bun:sqlite`, `node:sqlite` and imports with `type: "sqlite"`. On macOS Bun loads the
        * system's SQLite, so there only the bindings and the loader go.
        *
+       * An import of `bun:sqlite` and `node:sqlite` throws an `Error`.
+       *
        * Also stops working: `Bun.SQL` with a `sqlite:` URL.
        *
        * Takes SQLite out of the executable.
        *
-       * Saves about 1.9 MB on Linux x64 and 0.2 MB on macOS arm64.
+       * Saves about 1.9 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "sqlite"
       /**
        * `Bun.sql` and `Bun.SQL` for PostgreSQL and MySQL.
+       *
+       * `Bun.sql`, `Bun.SQL` and `Bun.postgres` are `undefined`.
        *
        * Saves about 0.3 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
@@ -180,20 +238,15 @@ declare module "bun" {
       /**
        * `Bun.redis`, `Bun.RedisClient` and `--redis-preconnect`.
        *
+       * `Bun.redis` and `Bun.RedisClient` are `undefined`.
+       *
        * Saves about 0.3 MB on Linux x64 and 0.3 MB on macOS arm64.
        */
       | "redis"
       /**
-       * `Bun.s3`, `Bun.S3Client`, and `s3:` URLs in `Bun.file()` and `Bun.write()`.
-       *
-       * Also stops working: `fetch()` of an `s3:` URL; writing a `Bun.Image` to S3; an S3 file sent
-       * by another process.
-       *
-       * Saves about 0.1 MB on Linux x64 and 0.0 MB on macOS arm64.
-       */
-      | "s3"
-      /**
        * `HTMLRewriter`.
+       *
+       * `HTMLRewriter` is `undefined`.
        *
        * lol-html leaves the executable once `"bundler"` is removed too.
        *
@@ -203,14 +256,20 @@ declare module "bun" {
       /**
        * `bun:ffi` and its C compiler.
        *
+       * `Bun.FFI` is `undefined`.
+       *
+       * An import of `bun:ffi` throws an `Error`.
+       *
        * Takes TinyCC out of the executable.
        *
-       * Saves about 0.5 MB on Linux x64 and 0.4 MB on macOS arm64.
+       * Saves about 0.6 MB on Linux x64 and 0.4 MB on macOS arm64.
        */
       | "ffi"
       /**
        * Native addons: `.node` files, `process.dlopen()`, N-API and the V8 and libuv symbols that
        * addons link against.
+       *
+       * `process.dlopen()` throws an `Error`.
        *
        * Can be removed only together with `"ffi"`.
        *
@@ -220,17 +279,25 @@ declare module "bun" {
       /**
        * `WebAssembly`, `node:wasi` and imports of `.wasm` files.
        *
+       * `WebAssembly` is `undefined`.
+       *
+       * An import of `node:wasi` throws an `Error`.
+       *
        * Saves about 1.0 MB on Linux x64 and 1.0 MB on macOS arm64.
        */
       | "webassembly"
       /**
        * `Bun.$`, the shell.
        *
-       * Saves about 0.4 MB on Linux x64 and 0.4 MB on macOS arm64.
+       * `Bun.$` is `undefined`.
+       *
+       * Saves about 0.4 MB on Linux x64 and 0.3 MB on macOS arm64.
        */
       | "shell"
       /**
        * `Bun.WebView`.
+       *
+       * `Bun.WebView` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -238,17 +305,25 @@ declare module "bun" {
       /**
        * `Bun.dns` and `node:dns`. Host names in `fetch()` and sockets are still resolved.
        *
+       * `Bun.dns` is `undefined`.
+       *
+       * An import of `node:dns` and `node:dns/promises` throws an `Error`.
+       *
        * Saves about 0.3 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "dns"
       /**
        * `node:http2`, and HTTP/2 and HTTP/3 in `Bun.serve()`.
        *
+       * An import of `node:http2` throws an `Error`.
+       *
        * Saves about 0.3 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "http2"
       /**
        * HTTP/3 in `Bun.serve()`, and `node:quic`.
+       *
+       * An import of `node:quic` throws an `Error`.
        *
        * Also stops working: `fetch()` over HTTP/3.
        *
@@ -260,11 +335,17 @@ declare module "bun" {
       /**
        * The `WebSocket` client. WebSockets of `Bun.serve()` stay.
        *
+       * `WebSocket` is `undefined`.
+       *
        * Saves about 0.2 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "websocket"
       /**
        * `Bun.udpSocket()` and `node:dgram`.
+       *
+       * `Bun.udpSocket()` throws an `Error`.
+       *
+       * An import of `node:dgram` throws an `Error`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -272,11 +353,17 @@ declare module "bun" {
       /**
        * `Worker` and `node:worker_threads`.
        *
+       * `Worker` is `undefined`.
+       *
+       * An import of `node:worker_threads` throws an `Error`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "worker"
       /**
        * `node:vm`.
+       *
+       * An import of `node:vm` throws an `Error`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -284,14 +371,18 @@ declare module "bun" {
       /**
        * `node:crypto`.
        *
+       * An import of `node:crypto` throws an `Error`.
+       *
        * rust-argon2 leaves the executable once `"password"` is removed too.
        *
-       * Saves about 0.3 MB on Linux x64 and 0.3 MB on macOS arm64.
+       * Saves about 0.3 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "node-crypto"
       /**
        * `crypto.subtle`, `SubtleCrypto` and `CryptoKey`. `crypto.getRandomValues()` and
        * `crypto.randomUUID()` stay.
+       *
+       * `crypto.subtle`, `SubtleCrypto` and `CryptoKey` are `undefined`.
        *
        * Also stops working: a `CryptoKey` sent by another process.
        *
@@ -300,6 +391,8 @@ declare module "bun" {
       | "web-crypto"
       /**
        * `Bun.password`.
+       *
+       * `Bun.password` is `undefined`.
        *
        * rust-argon2 leaves the executable once `"node-crypto"` is removed too.
        *
@@ -315,19 +408,38 @@ declare module "bun" {
       | "brotli"
       /**
        * All of `Intl`, `localeCompare()`, and `toLocaleString()`, `toLocaleDateString()` and
-       * `toLocaleTimeString()`, with the locale data behind them.
+       * `toLocaleTimeString()`, with the locale data behind them. On macOS Bun uses the system's
+       * ICU, so there only the bindings go.
+       *
+       * `Intl.Collator`, `Intl.DateTimeFormat`, `Intl.DisplayNames`, `Intl.DurationFormat`,
+       * `Intl.ListFormat`, `Intl.Locale`, `Intl.NumberFormat`, `Intl.PluralRules`,
+       * `Intl.RelativeTimeFormat` and `Intl.Segmenter` are `undefined`.
+       *
+       * `Intl.getCanonicalLocales()`, `Intl.supportedValuesOf()`,
+       * `String.prototype.localeCompare()`, `Number.prototype.toLocaleString()`,
+       * `BigInt.prototype.toLocaleString()`, `Date.prototype.toLocaleString()`,
+       * `Date.prototype.toLocaleDateString()` and `Date.prototype.toLocaleTimeString()` throw an
+       * `Error`.
        *
        * Saves about 22.7 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "intl"
       /**
-       * `Intl.Segmenter` and its dictionaries.
+       * `Intl.Segmenter` and its dictionaries. On macOS the dictionaries are the system's.
+       *
+       * `Intl.Segmenter` is `undefined`.
        *
        * Saves about 3.4 MB on Linux x64 and 0.0 MB on macOS arm64.
        */
       | "intl-segmenter"
       /**
        * `Temporal` and `Date.prototype.toTemporalInstant()`.
+       *
+       * `Temporal.Duration`, `Temporal.Instant`, `Temporal.Now`, `Temporal.PlainDate`,
+       * `Temporal.PlainDateTime`, `Temporal.PlainMonthDay`, `Temporal.PlainTime`,
+       * `Temporal.PlainYearMonth` and `Temporal.ZonedDateTime` are `undefined`.
+       *
+       * `Date.prototype.toTemporalInstant()` throws an `Error`.
        *
        * Can be removed only together with `"toml"` and `"bundler"`.
        *
@@ -337,11 +449,15 @@ declare module "bun" {
       /**
        * `bun:jsc`.
        *
+       * An import of `bun:jsc` throws an `Error`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "bun-jsc"
       /**
        * `Bun.plugin()`.
+       *
+       * `Bun.plugin` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -349,11 +465,15 @@ declare module "bun" {
       /**
        * `Bun.FileSystemRouter`.
        *
+       * `Bun.FileSystemRouter` is `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "fs-router"
       /**
        * `Bun.Terminal` and the `terminal` option of `Bun.spawn()`.
+       *
+       * `Bun.Terminal` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -361,11 +481,15 @@ declare module "bun" {
       /**
        * `Bun.cron()`.
        *
+       * `Bun.cron` is `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "cron"
       /**
        * `Bun.secrets`.
+       *
+       * `Bun.secrets` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -373,11 +497,15 @@ declare module "bun" {
       /**
        * `Bun.markdown`.
        *
+       * `Bun.markdown` is `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "markdown"
       /**
        * `Bun.YAML`.
+       *
+       * `Bun.YAML` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -385,11 +513,15 @@ declare module "bun" {
       /**
        * `Bun.TOML`.
        *
+       * `Bun.TOML` is `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "toml"
       /**
        * `Bun.JSON5`.
+       *
+       * `Bun.JSON5` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -397,11 +529,15 @@ declare module "bun" {
       /**
        * `Bun.JSONC`.
        *
+       * `Bun.JSONC` is `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "jsonc"
       /**
        * `Bun.JSONL`.
+       *
+       * `Bun.JSONL` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -409,11 +545,15 @@ declare module "bun" {
       /**
        * `Bun.XML`.
        *
+       * `Bun.XML` is `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "xml"
       /**
        * `Bun.Glob`.
+       *
+       * `Bun.Glob` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -421,11 +561,15 @@ declare module "bun" {
       /**
        * `Bun.semver`.
        *
+       * `Bun.semver` is `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "semver"
       /**
        * `Bun.color()`.
+       *
+       * `Bun.color()` throws an `Error`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -433,11 +577,15 @@ declare module "bun" {
       /**
        * `Bun.Cookie`, `Bun.CookieMap` and `request.cookies` in `Bun.serve()`.
        *
+       * `Bun.Cookie` and `Bun.CookieMap` are `undefined`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "cookie"
       /**
        * `Bun.CSRF`.
+       *
+       * `Bun.CSRF` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */
@@ -446,11 +594,18 @@ declare module "bun" {
        * `Bun.hash()`, `Bun.sha()` and the classes `Bun.MD4` to `Bun.SHA512_256`. `Bun.CryptoHasher`
        * stays.
        *
+       * `Bun.hash`, `Bun.MD4`, `Bun.MD5`, `Bun.SHA1`, `Bun.SHA224`, `Bun.SHA256`, `Bun.SHA384`,
+       * `Bun.SHA512` and `Bun.SHA512_256` are `undefined`.
+       *
+       * `Bun.sha()` throws an `Error`.
+       *
        * Saves under 0.1 MB by itself.
        */
       | "hash"
       /**
        * `URLPattern`.
+       *
+       * `URLPattern` is `undefined`.
        *
        * Saves under 0.1 MB by itself.
        */

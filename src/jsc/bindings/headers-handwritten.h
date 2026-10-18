@@ -410,6 +410,7 @@ extern "C" bool Bun__fetchBuiltinModule(
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
+    JSC::JSGlobalObject* global,
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);

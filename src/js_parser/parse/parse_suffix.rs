@@ -411,11 +411,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 (ExprData::EIdentifier(object), b"parse") => p.load_name_from_ref(object.ref_) == b"JSON",
                 (ExprData::EIdentifier(object), b"validate") => {
                     let object = p.load_name_from_ref(object.ref_);
-                    object == b"Bun" || p.names_imported_from_bun.contains(&object)
+                    object == b"Bun" || p.bun_module_names.contains(&object)
                 }
                 _ => false,
             },
-            ExprData::EIdentifier(function) => !p.names_imported_from_bun.is_empty() && p.names_imported_from_bun.contains(&p.load_name_from_ref(function.ref_)),
+            ExprData::EIdentifier(function) => !p.bun_validate_names.is_empty() && p.bun_validate_names.contains(&p.load_name_from_ref(function.ref_)),
             _ => false,
         };
         if may_validate {
@@ -439,10 +439,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(audited) => &audited.validations,
             None => {
                 asked = match &p.json_parse_schemas {
-                    Some(known) => known.clone(),
-                    None => bun_ast::audited::json_parse_schemas_of(p.source.path.text, &p.source.contents),
+                    Some(known) => std::sync::Arc::clone(known),
+                    None => match bun_ast::audited::json_parse_schemas_of(p.source.path.text, &p.source.contents) {
+                        Some(answer) => answer,
+                        None => return p.validated_calls.push((call.close_paren_loc.start, bun_ast::audited::REFUSED, b"")),
+                    },
                 };
-                p.json_parse_schemas = Some(asked.clone());
+                p.json_parse_schemas = Some(std::sync::Arc::clone(&asked));
                 &asked
             }
         };

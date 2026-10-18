@@ -3399,7 +3399,6 @@ pub(super) struct FallibleCheck {
     pub(super) what: String,
     pub(super) origin: Option<(u32, u32, String)>,
     pub(super) fix: &'static str,
-    pub(super) is_of_parameters: bool,
 }
 
 pub(super) fn find_fallible_checks(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) -> Vec<FallibleCheck> {
@@ -3408,7 +3407,7 @@ pub(super) fn find_fallible_checks(program: &Program, logs_type_errors: bool, in
         .map(|site| {
             let expectation = if site.expected.is_empty() { String::new() } else { format!("expected {}, may get {}", site.expected, site.shown()) };
             let separator = if site.detail.is_empty() || expectation.is_empty() { "" } else { ": " };
-            FallibleCheck { module: site.module, pos: site.pos, what: format!("{}{separator}{expectation}", site.detail), fix: site.fix(), is_of_parameters: site.kind == Kind::Parameter, origin: site.origin.filter(|origin| origin.0 != u32::MAX && origin.1 != 0 && (origin.0, origin.1) != (site.module, site.pos)) }
+            FallibleCheck { module: site.module, pos: site.pos, what: format!("{}{separator}{expectation}", site.detail), fix: site.fix(), origin: site.origin.filter(|origin| origin.0 != u32::MAX && origin.1 != 0 && (origin.0, origin.1) != (site.module, site.pos)) }
         })
         .collect()
 }

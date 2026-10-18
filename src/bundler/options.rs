@@ -1220,6 +1220,7 @@ pub struct TypeChecked<'a, 'i> {
     /// is known (`unique_key_for_additional_file`).
     pub assets: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
     pub has_late_strings: bool,
+    pub has_native_addon: bool,
     /// `Define::user_inputs`
     pub defines: &'a [(Box<[u8]>, Box<[u8]>)],
     /// The flags for which `feature()` of `bun:bundle` is true.
@@ -1387,7 +1388,7 @@ pub struct TypedOutputs {
     pub declaration_files: DeclarationFiles,
 }
 
-pub const SKIPPED_SOUND_FILES: &str = "--dts: the typed JavaScript that --aot compiles a package from is left out";
+pub const SKIPPED_SOUND_FILES: &str = "the typed JavaScript that --aot compiles a package from is left out";
 
 pub type WriteSoundFiles = fn(request: &SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
 
@@ -1557,6 +1558,7 @@ pub struct BundleOptions<'a> {
     pub aot_explain_to_log: bool,
     pub aot_rules: Vec<Box<[u8]>>,
     pub aot_logs_type_errors: bool,
+    pub modules_removed_by_trim: Vec<(Vec<u8>, Vec<u8>)>,
     pub preserve_source_paths: bool,
     pub compile_function_source: bool,
     /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
@@ -1802,6 +1804,7 @@ impl<'a> BundleOptions<'a> {
             aot_explain_to_log: self.aot_explain_to_log,
             aot_rules: self.aot_rules.clone(),
             aot_logs_type_errors: self.aot_logs_type_errors,
+            modules_removed_by_trim: self.modules_removed_by_trim.clone(),
             preserve_source_paths: self.preserve_source_paths,
             compile_function_source: self.compile_function_source,
             bytecode_order: self.bytecode_order.clone(),
@@ -2067,6 +2070,7 @@ impl<'a> BundleOptions<'a> {
             aot_explain_to_log: false,
             aot_rules: Vec::new(),
             aot_logs_type_errors: false,
+            modules_removed_by_trim: Vec::new(),
             preserve_source_paths: false,
             compile_function_source: true,
             bytecode_depth: u32::MAX,

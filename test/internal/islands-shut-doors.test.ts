@@ -251,6 +251,16 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
     expect(() => shutDoors(linked(), withIslands([data!]), ["a"], false)).toThrow("refused: no dead code holds a strip of 23 bytes");
   });
 
+  test("stubs that no single stretch of dead code holds go into several", () => {
+    const [data] = table.islands;
+    const stretch = (start: number, end: number) => ({ ...data!, start, end });
+    const out = shutDoors(linked(), { ...table, islands: [data!, stretch(0x202100, 0x20210c), stretch(0x202300, 0x20230f)] }, ["a"], false);
+    expect(out.subarray(at(0x202100), at(0x202100) + 10)).toEqual(exitStub(0x202100, 1, 0));
+    expect(out.subarray(at(0x202300), at(0x202300) + 10)).toEqual(exitStub(0x202300, 2, 0));
+    expect([...out.subarray(at(0x20230a), at(0x20230a) + 3)]).toEqual([0x31, 0xc0, 0xc3]);
+    expect([out.readInt32LE(at(0x201111)), out.readInt32LE(at(0x201101)), out.readInt32LE(at(0x201121))]).toEqual([0x202100 - 0x201115, 0x202300 - 0x201105, 0x20230a - 0x201125]);
+  });
+
   test("a place that cannot be rewritten stops the writer", () => {
     const file = linked();
     file.writeUInt32LE(0x80000000, at(0x201101));

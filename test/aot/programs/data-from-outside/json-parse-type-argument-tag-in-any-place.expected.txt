@@ -34,3 +34,4 @@ every order of four members: 216 parses, 0 differ
 "{\"id\":1,\"by\":\"a\",type:\"opened\"}" | SyntaxError | SyntaxError | SyntaxError
 "{\"id\":1,\"o\":[1,,2],\"type\":\"opened\",\"by\":\"a\"}" | SyntaxError | SyntaxError | SyntaxError
 read once: 10 true
+an arm that holds objects refuses: they are not parsed again arm by arm, the engine reads the text: 5 true

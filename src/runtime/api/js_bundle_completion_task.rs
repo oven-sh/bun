@@ -32,8 +32,8 @@ use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions, bytes_left_out,
-    discard_early_template_copy, set_trim, start_copying_template, target_base_public_path,
-    to_executable, trim_report,
+    discard_early_template_copy, modules_removed_by, set_trim, start_copying_template,
+    target_base_public_path, to_executable, trim_report,
 };
 use bun_sys::Dir;
 #[cfg(not(windows))]
@@ -1082,6 +1082,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.aot_explain = (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
         transpiler.options.aot_explain_to_log = true;
         transpiler.options.aot_logs_type_errors = (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
+        transpiler.options.modules_removed_by_trim = (config.compile.as_ref()).map_or_else(Vec::new, |compile| {
+            let template = &compile.executable_path.list;
+            modules_removed_by(&compile.trim, Some(&template[..]).filter(|path| !path.is_empty()))
+        });
         transpiler.options.compile_function_source =
             (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
         transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);

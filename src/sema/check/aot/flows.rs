@@ -2256,6 +2256,8 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 is_unchanged &= self.parts(widened).iter().all(|of_widened| self.parts(target).contains(of_widened));
                 parts.push(widened);
+            } else if self.branded_primitive(part).is_some() {
+                parts.push(part);
             } else if is_untyped && self.can_be_created_from_any_object(part) {
                 views.push(part);
             } else {
@@ -2277,20 +2279,27 @@ impl<'p, 's> Checker<'p, 's> {
                 parts.extend(self.parts(source).iter().copied().filter(|&part| self.has_primitive_flag(part) && !part.is_undefined() && !part.is_null()));
             }
         }
-        let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
+        let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| !self.has_primitive_flag(part) && self.branded_primitive(part).is_none()).collect();
         if may_be_any_object && objects.into_iter().all(|part| matches!(self.built_in_for_type(part), Some(BuiltIn::Function))) {
             parts.push(TypeId::OBJECT);
         }
         if !is_untyped {
             parts.extend(self.parts(source).iter().copied().filter(|&part| !self.has_primitive_flag(part)));
         }
-        let is_kept_bare = self.parts(target).iter().all(|&part| self.has_primitive_flag(part)) && self.parts(target).iter().any(|&part| self.is_number_like(part) || part == TypeId::BOOLEAN || self.parts(TypeId::BOOLEAN).contains(&part));
+        let primitives_of_target: Vec<Option<TypeId>> = self.parts(target).iter().map(|&part| if self.has_primitive_flag(part) { Some(part) } else { self.branded_primitive(part) }).collect();
+        let is_kept_bare = primitives_of_target.iter().all(|part| part.is_some()) && primitives_of_target.iter().flatten().any(|&part| self.is_number_like(part) || part == TypeId::BOOLEAN || self.parts(TypeId::BOOLEAN).contains(&part));
         for nil in [TypeId::UNDEFINED, TypeId::NULL] {
             if is_kept_bare && (is_untyped || self.parts(source).contains(&nil)) && !parts.contains(&nil) {
                 parts.push(nil);
             }
         }
         if is_unchanged && views.is_empty() && parts.len() == number_of_target { original_target } else { self.union(&parts) }
+    }
+
+    pub fn branded_primitive(&mut self, ty: TypeId) -> Option<TypeId> {
+        let TypeData::Intersection(parts) = self.data(ty) else { return None };
+        let primitive = parts.iter().copied().find(|&part| self.has_primitive_flag(part))?;
+        (!self.is_primitive_wrapper(ty)).then_some(primitive)
     }
 
     pub fn has_multiple_primitive_kinds(&mut self, ty: TypeId) -> bool {
@@ -2341,11 +2350,11 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn cast_keeps_primitives(&mut self, target: TypeId) -> bool {
         let target = self.reduced(target);
         let parts: Vec<TypeId> = self.parts(target).to_vec();
-        if parts.iter().all(|&part| self.has_primitive_flag(part)) {
+        if parts.iter().all(|&part| self.has_primitive_flag(part) || self.branded_primitive(part).is_some()) {
             return false;
         }
         parts.into_iter().any(|part| {
-            if self.has_primitive_flag(part) {
+            if self.has_primitive_flag(part) || self.branded_primitive(part).is_some() {
                 return !part.is_undefined() && !part.is_null();
             }
             if self.is_instantiable(part) {
@@ -2576,7 +2585,7 @@ impl<'p, 's> Checker<'p, 's> {
         let sig = self.resolved_signature(file, e).sig?;
         let (of, func, _) = self.sig_decl(sig)?;
         let declared = self.return_type_of_fn(of, func);
-        (declared != self.sig_return(sig)).then_some(declared)
+        (declared != self.sig_return(sig) && self.validation_call(file, e).is_none()).then_some(declared)
     }
 
     pub fn returned_argument_of(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {

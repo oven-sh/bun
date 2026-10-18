@@ -125,6 +125,8 @@ pub use aot::JsonParseSchema;
 pub use aot::{AotCheck, AotCheckKind};
 pub use aot::{CommonJsExports, ExportsKnownByName, ExportsReference};
 pub use aot::Identity;
+pub use aot::ObjectOrigin;
+pub use aot::{Assertion, Derivation, Explaining, MissingLayout, UntypedOrigin};
 pub use aot::nullish_flow;
 pub use aot::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};
 pub use aot::{SubtypeAnswer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, SubtypeQuery, LayoutUsage, FilePartition, UntypedReason};

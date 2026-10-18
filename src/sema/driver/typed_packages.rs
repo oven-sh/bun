@@ -39,11 +39,18 @@ fn typed_package_under(root: &[u8], defines: Option<&Defines>, directory: &[u8],
         false => files_of(root, defines, &home, directory, &name, 0),
     };
     let (files, said) = match found {
-        Ok((files, version)) => (files, format!("\"{}\" {} is compiled from its typed version in {}", BStr::new(&name), BStr::new(&version), BStr::new(shown))),
+        Ok((files, version)) => (files, format!("\"{}\" {}{IS_USED}{}", BStr::new(&name), BStr::new(&version), BStr::new(shown))),
         Err(why) => (Vec::new(), format!("the typed version of \"{}\" in {} is not used: {why}: the package is compiled untyped", BStr::new(&name), BStr::new(shown))),
     };
     let said: String = said.chars().map(|character| if character.is_control() { '?' } else { character }).collect();
     (files, Some(said.into_boxed_str()))
+}
+
+const IS_USED: &str = " is compiled from its typed version in ";
+
+pub fn says_that_the_typed_version_is_used(note: &[u8], name: &[u8]) -> bool {
+    let after_name = note.strip_prefix(b"\"").and_then(|note| note.strip_prefix(name)).and_then(|note| note.strip_prefix(b"\" "));
+    after_name.is_some_and(|after_name| bun_core::strings::contains(after_name, IS_USED.as_bytes()))
 }
 
 pub fn typed_version_providing(root: &[u8], directory: &[u8], name: &[u8], path: &[u8], text: &[u8]) -> Option<Vec<u8>> {

@@ -4318,11 +4318,27 @@ mod windows_impl {
         // makePath (NtCreateFile rejects them anyway).
         let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
             .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
+        let climbs_above_dir = pinned_end > root_end;
         let mut z = bun_paths::path_buffer_pool::get();
         bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
             z.0[p.len()] = 0;
-            match mkdirat(dir, ZStr::from_buf(&z.0[..], p.len()), mode) {
+            let made = if climbs_above_dir {
+                super::open_dir_at_windows_a(
+                    dir,
+                    p,
+                    super::WindowsOpenDirOptions {
+                        iterable: false,
+                        can_rename_or_delete: true,
+                        op: super::WindowsOpenDirOp::OnlyCreate,
+                        ..Default::default()
+                    },
+                )
+                .map(|made| made.close())
+            } else {
+                mkdirat(dir, ZStr::from_buf(&z.0[..], p.len()), mode)
+            };
+            match made {
                 Ok(()) => Ok(MakePathStep::Created),
                 Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
                 Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),

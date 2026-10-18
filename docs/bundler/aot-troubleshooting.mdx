@@ -212,13 +212,19 @@ Two common messages are worded differently: `Cannot read properties of null (rea
 
 Startup and memory improve for every server in [What to expect](/bundler/aot#what-to-expect). Requests per second go up for some and down for others. Look for these causes, in this order.
 
-**Most of the hot code is untyped JavaScript.** A build with `--aot-explain` says how much of the program each JavaScript package is.
+**Most of the hot code is untyped JavaScript.** The last line of a build has the share for `dependencies`, and `bun compile --explain` has an entry for each JavaScript package.
 
 ```txt
-  1. app.ts:1:1 [untyped-package]
-     'tiny-label' is JavaScript, so it is compiled without types: 1 file, 38.9% of the program's source text.
-     cost: 2 reads by name in 1 function
-     fix: use a version of the package that ships TypeScript sources, or add a typed version of it
+aot: 100% typed, dependencies 0.0% (0 of 2)
+aot: 1 cause, the most expensive first. Fix one, then run this again: a fix can uncover another cause behind it.
+
+  1. untyped-package app.ts:1:1: fixing it types up to 2 accesses in dependencies (+100.0 points)
+     1 | import { label } from "tiny-label";
+         ^~~~~~
+     'tiny-label' is JavaScript, so it is compiled without types: 1 file, 45.3% of the program's source text.
+     not typed because of it: node_modules/tiny-label/index.js:2:10, node_modules/tiny-label/index.js:2:29
+     fix: install a typed version of the package (@sound/tiny-label) or write one in .sound/tiny-label; if the package is yours, build it with `bun compile --library`
+     https://bun.com/docs/bundler/aot-explain#untyped-package
 ```
 
 [Typed versions of packages](/bundler/executables#typed-versions-of-packages) give a package its types back.
@@ -229,7 +235,7 @@ Startup and memory improve for every server in [What to expect](/bundler/aot#wha
 
 **Files are loaded from disk.** Bun interprets what the executable loads by a computed path. Next.js and Angular load your pages that way. See [Frameworks that load your pages by path](/bundler/aot-adoption#frameworks-that-load-your-pages-by-path).
 
-**One line takes the types away from many.** An `any` that reaches a declared type, or a `JSON.parse` that is cast to one, slows down every access through that type. `--aot-explain` prints the most expensive lines first. See [See what the compiler did](/bundler/aot-reports).
+**One line takes the types away from many.** An `any` that reaches a declared type, or a `JSON.parse` that is cast to one, slows down every access through that type. `bun compile --explain` lists such lines, the most expensive first, with a fix for each. See [Get more of your program typed](/bundler/aot-explain).
 
 ### The executable is larger than with `--compile`
 

@@ -202,3 +202,8 @@ typed, module level: 14.11 instructions (module 14.11), 1296 bytes
 untyped, function: 201.74 instructions (kernel 156.62, outlined code 45, module 0.12), 1568 bytes
 untyped, module level: 201.62 instructions (module 141.62, outlined code 60), 2624 bytes"
 `;
+
+exports[`parses one object of each of the eight arms of a tagged union, the tag last, with JSON.parse<T>() 1`] = `
+"typed, function: 979.50 instructions (the runtime 577.50, kernel 299, elsewhere 35.50, stub ToLiteralString 28, stub AllocateTypedObject 17, stub PlainOperationWithInstance 15, stub PlainOperationWithInstance to operationAOTTypedJSONApplyKeyOrder 2, stub PlainOperationWithInstance to operationAOTTypedJSONFindMember 2, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2, module 1.50), 29572 bytes
+typed, module level: 963.50 instructions (the runtime 565, module 297, elsewhere 35.50, stub ToLiteralString 28, stub AllocateTypedObject 17, stub PlainOperationWithInstance 15, stub PlainOperationWithInstance to operationAOTTypedJSONApplyKeyOrder 2, stub PlainOperationWithInstance to operationAOTTypedJSONFindMember 2, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2), 30805 bytes"
+`;

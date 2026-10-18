@@ -254,6 +254,26 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
     RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), WTF::move(buffer))));
 }
 
+SUPPRESS_ASAN NEVER_INLINE void zeroDeadStack()
+{
+    volatile uintptr_t dead[16 * KB / sizeof(uintptr_t)];
+    for (auto& word : dead)
+        word = 0;
+}
+
+static NEVER_INLINE JSC_DECLARE_HOST_FUNCTION(collectOnZeroedStack);
+JSC_DEFINE_HOST_FUNCTION(collectOnZeroedStack, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return Bun::Bindgen::Generated::BunObject::jsGc(globalObject, callFrame);
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionBunGC);
+JSC_DEFINE_HOST_FUNCTION(functionBunGC, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    zeroDeadStack();
+    MUST_TAIL_CALL return collectOnZeroedStack(globalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -656,7 +676,7 @@ static EncodedJSValue validateByPlan(JSGlobalObject* lexicalGlobalObject, CallFr
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!callFrame->argument(planIndex).isString()) {
-        throwTypeError(lexicalGlobalObject, scope, makeString("Bun."_s, name, "<T>() checks a value against a TypeScript type, which Bun knows only with --aot. Run the program with `bun run --aot`, or build it with `bun build --compile --aot`."_s));
+        throwTypeError(lexicalGlobalObject, scope, makeString("Bun."_s, name, "<T>() checks a value against a TypeScript type, which Bun reads where the call is written. Write the type argument at the call, in a TypeScript file, and call the function by this name."_s));
         return {};
     }
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1006,7 +1026,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
-    gc                                             Bun::Bindgen::Generated::BunObject::jsGc                            DontDelete|Function 1
+    gc                                             functionBunGC                                                       DontDelete|Function 1
     generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 2
     gunzipSync                                     Bun::Bindgen::Generated::BunObject::jsGunzipSync                    DontDelete|Function 1
     gzipSync                                       Bun::Bindgen::Generated::BunObject::jsGzipSync                      DontDelete|Function 1

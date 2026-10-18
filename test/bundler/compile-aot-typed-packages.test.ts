@@ -215,7 +215,8 @@ describe("compile/aot/TypedPackages", () => {
     write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typed["index.sound.ts"].replace("const box: Box = { w, h };", `const box: Box = { w, h: h as unknown as string };`) });
     const build = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder);
     const said = build.stdout + build.stderr;
-    expect(said).toContain("TS100009: 'shapes' has 1 type errors, the first at ");
+    expect(said).toMatch(/TS100009: 'shapes' has 1 type error, the first at \S*node_modules[\\/]shapes[\\/]index\.aot\.ts:\d+:\d+: it is compiled untyped\./);
+    expect(said).not.toContain("is compiled from its typed version");
     expect(said).not.toContain("TS100021");
     expect(said).not.toContain("error:");
     expect(build.exitCode).toBe(0);

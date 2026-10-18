@@ -7,7 +7,7 @@ use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIA
 use bun_sema::aot_rules::{Rule, Severity};
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
-use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, ConstantSymbol, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
+use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, ObjectOrigin, ConstantSymbol, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
 use bun_sema::program::{Builtin, CompiledFunctions, EVERY_ROOT, FileId, LoadedBy, ReleasedRoot};
 use bun_sema::resolve::get_relative_path_from_directory;
@@ -23,9 +23,10 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize,
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
+mod accesses;
 mod exports;
 mod by_name;
-mod costs;
+mod explain;
 mod interpreted;
 mod keys;
 mod nullish;
@@ -122,20 +123,20 @@ pub struct Explain {
     pub throws_json: bool,
     pub throws_all: bool,
     pub rules_json: bool,
-    pub costs: bool,
-    pub costs_json: bool,
+    pub causes: bool,
+    pub causes_json: bool,
     pub runtime_use: bool,
 }
 
 impl Explain {
-    pub const REPORTS: [&'static str; 8] = ["throws", "throws-all", "throws-json", "throws-all-json", "rules-json", "costs", "costs-json", "runtime-use"];
-    pub const WORDS: [&'static str; 16] = ["mutations", "costs", "costs-json", "deferred", "fields", "foreign", "given", "integers", "joins", "plugins", "rows", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
+    pub const REPORTS: [&'static str; 8] = ["text", "json", "throws", "throws-all", "throws-json", "throws-all-json", "rules-json", "runtime-use"];
+    pub const WORDS: [&'static str; 16] = ["mutations", "text", "json", "deferred", "fields", "foreign", "given", "integers", "joins", "plugins", "rows", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
 
     pub fn set(&mut self, word: &[u8]) -> bool {
         let asked = match word {
             b"mutations" => &mut self.mutations,
-            b"" | b"costs" => &mut self.costs,
-            b"costs-json" => &mut self.costs_json,
+            b"" | b"text" => &mut self.causes,
+            b"json" => &mut self.causes_json,
             b"deferred" => &mut self.deferred,
             b"fields" => &mut self.fields,
             b"foreign" => &mut self.foreign,
@@ -1559,6 +1560,7 @@ fn stub(func: &Func, maps: &Maps, anything: TyId) -> Func {
         blocks: Vec::new(),
         values: Vec::new(),
         spans: Vec::new(),
+        accesses_by_name: Vec::new(),
     };
     let entry = stub.add_block();
     for capture in stub.captures.clone() {
@@ -1858,6 +1860,7 @@ fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<
         blocks: Vec::new(),
         values: Vec::new(),
         spans: Vec::new(),
+        accesses_by_name: Vec::new(),
     };
     let entry = func.add_block();
     if let Some(which) = first_operation {
@@ -4137,7 +4140,14 @@ fn link_with_helper_threads<'scope>(
     say("the texts of the types");
     let mut explained = Vec::new();
     let mut found = Vec::new();
-    let (mut open_layouts_found, mut chains_by_name, mut checks_of_parameters, mut accesses_without_known_cause) = (Vec::new(), Vec::new(), FxHashSet::default(), Vec::new());
+    let mut open_layouts_found = Vec::new();
+    let mut origin_of_unknown_shape = vec![ObjectOrigin::Program; program.layouts.len()];
+    for &(layout, view) in views.iter().filter(|view| !accesses::Accesses::has_known_shape(&program.layouts[view.0.idx()])) {
+        origin_of_unknown_shape[layout.idx()] = match classes[layout.idx()].filter(|_| program.layouts[layout.idx()].class_flags & class_flags::HAS_FIXED_LAYOUT == 0) {
+            Some(class) => c.origin_of_untyped_base(class),
+            None => c.origin_of_objects(view),
+        };
+    }
     if declares_int32 {
         found.append(&mut c.find_int32_members_seen_through_other_types(&asked, &membership));
     }
@@ -4163,14 +4173,13 @@ fn link_with_helper_threads<'scope>(
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::ByName)) {
         let is_wanted_module: Vec<bool> = modules.iter().map(|&file| scopes.may_apply_in(Rule::ByName, file)).collect();
         let sites = by_name::find_sites(&program, &is_wanted_module, in_parallel);
-        chains_by_name = by_name::find_chains(&program, checked, &modules, &sites, in_parallel);
-        let accesses: Vec<(FileId, hir::ExprId, u32, Vec<u8>)> = chains_by_name.iter().filter(|chain| !chain.begins_with_a_store).map(|chain| (chain.file, chain.receiver, chain.name_pos, chain.name.clone())).collect();
+        let chains = by_name::find_chains(&program, checked, &modules, &sites);
+        let accesses: Vec<(FileId, hir::ExprId, u32, Vec<u8>)> = chains.into_iter().filter(|chain| !chain.begins_with_a_store).map(|chain| (chain.file, chain.receiver, chain.name_pos, chain.name)).collect();
         let (mut reported, unexplained) = checked.checker().find_accesses_by_name(&accesses, &classes_without_layout, scopes);
         if explain.mutations {
             explained.push(format!("by-name: {} sites in the code, {} first in their chain, {} with a reason, {} without", sites.len(), accesses.len(), reported.len(), unexplained.len()));
         }
         found.append(&mut reported);
-        accesses_without_known_cause = unexplained;
     }
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::LostLayout) || scopes.is_enabled(Rule::UntypedBase)) {
         found.append(&mut c.find_lost_layouts(&declared, scopes));
@@ -4282,9 +4291,6 @@ fn link_with_helper_threads<'scope>(
                 if !scopes.is_wanted(Rule::CanThrow, modules[check.module as usize], check.pos) {
                     continue;
                 }
-                if check.is_of_parameters {
-                    checks_of_parameters.insert((modules[check.module as usize], check.pos));
-                }
                 let origin = check.origin.into_iter().map(|(module, pos, what)| at(module, pos, 100018, vec![what.into_bytes()]));
                 let related = origin.chain([at(check.module, check.pos, 100049, vec![check.fix.as_bytes().to_vec()])]).collect();
                 found.push(CompilerDiagnostic { related, ..at(check.module, check.pos, 100028, vec![check.what.into_bytes()]) });
@@ -4349,19 +4355,20 @@ fn link_with_helper_threads<'scope>(
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::UntypedPackage)) {
         found.append(&mut c.find_untyped_packages(&modules, shown_from, scopes));
     }
-    if explain.costs || explain.costs_json {
+    let accesses = accesses::Accesses::new(&program, &is_runtime_layout, &origin_of_unknown_shape, &modules, checked);
+    if explain.causes || explain.causes_json {
         let other_places = checked.checker().find_other_places_where_external_data_enters();
-        let sources = costs::Sources { classes_without_layout: &classes_without_layout, other_places_where_external_data_enters: &other_places, program: &program, checked, modules: &modules, shown_from, found: &found, open_layouts: &open_layouts_found, chains: &chains_by_name, checks_of_parameters: &checks_of_parameters, accesses_without_known_cause: &accesses_without_known_cause };
-        for as_json in [false, true].into_iter().filter(|&as_json| if as_json { explain.costs_json } else { explain.costs }) {
-            explained.append(&mut costs::explain(&sources, as_json, in_parallel));
+        let sources = explain::Sources { other_places_where_external_data_enters: &other_places, program: &program, checked, modules: &modules, shown_from, accesses: &accesses, found: &found, open_layouts: &open_layouts_found, classes: &classes, classes_without_layout: &classes_without_layout };
+        for as_json in [false, true].into_iter().filter(|&as_json| if as_json { explain.causes_json } else { explain.causes }) {
+            explained.append(&mut explain::explain(&sources, as_json, in_parallel));
         }
         if let Some(scopes) = checked.rule_scopes.get() {
             found.retain(|finding| Rule::of_code(finding.code).is_none_or(|rule| scopes.severity(rule, finding.file, finding.start) != Severity::Allow));
         }
     }
     since = Instant::now();
-    let fixable_reads_by_name = by_name::count_fixable_reads(&program, checked, &modules, &classes_without_layout, in_parallel);
-    let typedness = typedness::measure(&program, &is_runtime_layout, fixable_reads_by_name, &modules, checked, in_parallel);
+    let typedness = typedness::measure(&program, &accesses, &is_runtime_layout, &modules, checked, in_parallel);
+    drop(accesses);
     times.add("typedness", &mut since);
     let files_of_prelude: FxHashSet<FileId> = crate::prelude::FILES.iter().filter_map(|file| checked.files.by_path.get(&crate::prelude::path_of(shown_from, file.0))).collect();
     let reads = keys::reads_without_a_name(&program, &modules, checked.files, &files_of_prelude, in_parallel);

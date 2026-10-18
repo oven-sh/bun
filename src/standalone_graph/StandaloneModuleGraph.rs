@@ -2790,6 +2790,23 @@ pub fn bytes_left_out() -> usize {
     BYTES_LEFT_OUT.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+pub fn modules_removed_by(trim: &Trim, template: Option<&[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
+    if trim.remove.is_empty() {
+        return Vec::new();
+    }
+    let path = match template {
+        Some(path) => bun_core::ZBox::from_bytes(path),
+        None => match bun_core::self_exe_path() {
+            Ok(path) => bun_core::ZBox::from_bytes(path.as_bytes()),
+            Err(_) => return Vec::new(),
+        },
+    };
+    let Ok(file) = bun_sys::File::open(path.as_zstr(), bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) else {
+        return Vec::new();
+    };
+    file.read_to_end().ok().and_then(|contents| bun_exe_islands::modules_of(&contents, &as_slices(&trim.remove)).ok()).unwrap_or_default()
+}
+
 pub fn trim_report() -> TrimReport {
     TRIM_REPORT.lock().clone()
 }

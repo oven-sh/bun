@@ -49,6 +49,7 @@ import {
 interface Door {
   feature: string;
   whenShut: "exit" | "return";
+  answers?: "throw" | "undefined";
   pattern: RegExp;
   isOperation?: boolean;
 }
@@ -133,14 +134,17 @@ function readDoors(path: string): Doors {
     else if (words[0] === "unmerged") result.unmerged.push(new RegExp(words.slice(1).join(" ")));
     else if (words[0] === "smallest") result.smallest.set(words[1]!, Number(words[2]));
     else if (words[0] === "library" || words[0] === "windows-library") result.libraries.push({ name: `${words[1]} ${words[2]}`, features: words.slice(3), isOnlyOnWindows: words[0] === "windows-library" });
-    else if (words[0] === "public") result.publicNames.push({ name: words[1]!, features: words.slice(2), tolerates: [] });
+    else if (words[0] === "public") result.publicNames.push({ name: words[1]!, features: words.slice(2), tolerates: [], modules: [] });
+    else if (words[0] === "module") (result.publicNames.find(({ name }) => name === words[1]) ?? fail(`${path}: there is no public name ${words[1]}`)).modules.push(...words.slice(2));
     else if (words[0] === "also") (result.publicNames.find(({ name }) => name === words[1]) ?? fail(`${path}: there is no public name ${words[1]}`)).tolerates.push(words[2]!);
     else if (words[0] === "data") result.data.push({ feature: words[1]!, pattern: new RegExp(words.slice(2).join(" ")) });
     else if (words[0] === "windows-keeps") result.dataKeptOnWindows.push(new RegExp(words.slice(1).join(" ")));
     else if (words[0] === "operations") result.doors.push({ feature: words[1]!, whenShut: "exit", pattern: new RegExp(words.slice(2).join(" ")), isOperation: true });
     else if (words[0] === "door") {
-      if (words[2] !== "exit" && words[2] !== "return") fail(`${path}: a door exits or returns: ${line}`);
-      result.doors.push({ feature: words[1]!, whenShut: words[2], pattern: new RegExp(words.slice(3).join(" ")) });
+      const pattern = new RegExp(words.slice(3).join(" "));
+      if (words[2] === "exit" || words[2] === "return") result.doors.push({ feature: words[1]!, whenShut: words[2], pattern });
+      else if (words[2] === "throw" || words[2] === "undefined") result.doors.push({ feature: words[1]!, whenShut: "exit", answers: words[2], pattern });
+      else fail(`${path}: a door exits, returns, throws or answers undefined: ${line}`);
     }
   }
   const names = new Set(result.features.map(feature => feature.name));
@@ -1546,10 +1550,11 @@ function readMachOGraph(executable: string, mapPath: string, compiledFromBitcode
     }
   }
   const cellsWith = new Map<string, number[]>();
-  const firstCell = literals === undefined ? -1 : nodeAt(literals.address);
-  for (const size of literals === undefined ? [] : [4, 8, 16]) {
-    for (let at = 0; at + size <= literals.size; at += size) {
-      const bytes = Buffer.from(image.text(literals.address + at, size)!, "latin1").toString("hex");
+  const { address: firstLiteral, size: bytesOfLiterals } = literals ?? { address: 0, size: 0 };
+  const firstCell = nodeAt(firstLiteral);
+  for (const size of [4, 8, 16]) {
+    for (let at = 0; at + size <= bytesOfLiterals; at += size) {
+      const bytes = Buffer.from(image.text(firstLiteral + at, size)!, "latin1").toString("hex");
       const cells = cellsWith.get(bytes);
       if (cells === undefined) cellsWith.set(bytes, [firstCell + at / 4]);
       else cells.push(firstCell + at / 4);
@@ -1690,7 +1695,7 @@ interface Analysis {
   conditions: Doors["conditions"];
 }
 
-const bytesToShut = (graph: Graph, door: Door) => (graph.isArm64 ? (door.whenShut === "exit" ? 12 : 8) : door.whenShut === "exit" ? 10 : 3);
+const bytesToShut = (graph: Graph, door: Pick<Door, "whenShut">) => (graph.isArm64 ? (door.whenShut === "exit" ? 12 : 8) : door.whenShut === "exit" ? 10 : 3);
 
 const plainNames = new Map<string, string>();
 
@@ -1826,9 +1831,9 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
   for (const name of demangle(demangler, foldedAway)) {
     for (const door of declared.doors) if (isDoorFor(door, name)) matched.add(door);
   }
-  for (const door of declared.doors) {
-    if (!matched.has(door) && !declared.smallest.has(door.feature)) fail(`no function matches the door ${door.pattern.source}`);
-  }
+  const unmatched = declared.doors.filter(door => !matched.has(door));
+  for (const door of unmatched) if (!declared.smallest.has(door.feature)) fail(`no function matches the door ${door.pattern.source}`);
+  if (unmatched.length > 0) console.log(`${unmatched.length} doors match no function:` + unmatched.slice(0, 40).map(door => `\n  ${door.feature} ${door.pattern.source}`).join(""));
   const sharers = new Map<number, string[]>();
   for (const [node, aliases] of graph.aliases) if (doors.has(node)) sharers.set(node, aliases.map(([, name]) => name.replace(/^_/, "")));
   for (const [node, names] of graph.otherNames) if (doors.has(node)) sharers.set(node, [...(sharers.get(node) ?? []), ...names]);
@@ -1844,7 +1849,9 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
     const others = names.map(name => declared.doors.find(other => isDoorFor(other, name)));
     if (others.every(other => other?.whenShut === door.whenShut)) {
       const members = new Set([door.feature, ...others.map(other => other!.feature)]);
-      if (members.size > 1) doors.set(node, { ...door, feature: declared.features.map(feature => feature.name).filter(name => members.has(name)).join(",") });
+      const { answers, ...silent } = door;
+      const isOneAnswer = answers !== undefined && others.every(other => other!.answers === answers);
+      doors.set(node, { ...silent, ...(isOneAnswer ? { answers } : {}), feature: declared.features.map(feature => feature.name).filter(name => members.has(name)).join(",") });
       continue;
     }
     doors.delete(node);
@@ -1860,6 +1867,11 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
     if (graph.size[node]! >= bytesToShut(graph, door)) continue;
     doors.delete(node);
     tooSmall++;
+  }
+  for (const [node, door] of doors) {
+    const parameters = door.answers === "throw" ? ["(JSC::JSGlobalObject*, JSC::CallFrame*)"] : ["(JSC::VM&, JSC::JSObject*)", ...["long", "long long", "__int64"].map(encoded => `(JSC::JSGlobalObject*, ${encoded}, JSC::PropertyName)`)];
+    const name = plainName.get(node)!;
+    if (door.answers !== undefined && name.includes("(") && !parameters.some(list => name.endsWith(list))) fail(`the door ${name} is to ${door.answers === "throw" ? "throw" : "answer undefined"} and does not take ${parameters.join(" or ")}`);
   }
   const calledDirectly = operationsThatOtherCodeNames(graph, doors, plainName);
   for (const node of calledDirectly) doors.delete(node);
@@ -2000,6 +2012,7 @@ interface Linker {
 
 interface ListedDoor extends TableDoor {
   size: number;
+  node: number;
 }
 
 interface NamedBytes {
@@ -2068,7 +2081,7 @@ function tableOf(declared: Doors, conditions: Doors["conditions"], stub: number,
       features: declared.features.map(feature => feature.name),
       conditions: [...declared.conditions, ...conditions],
       islands: [...islands].sort((a, b) => a.start - b.start),
-      doors,
+      doors: isWindows ? doors.map(({ answers, ...door }) => door) : doors,
       packages,
       publicNames: declared.publicNames,
       libraries: declared.libraries.filter(library => isWindows || !library.isOnlyOnWindows).map(({ name, features }) => ({ name, features })),
@@ -2118,7 +2131,7 @@ function pairsToArgue(graph: Graph, check: Analysis, declared: Doors, spell: (no
 }
 
 function listedDoors(graph: Graph, check: Analysis, declared: Doors, work: string, featuresOfIslandAt: (node: number) => string | undefined): ListedDoor[] {
-  const listed: (ListedDoor & { node: number })[] = [];
+  const listed: ListedDoor[] = [];
   const namedBy = new Map<number, number[]>();
   for (const node of check.core) {
     if (check.doors.has(node)) continue;
@@ -2140,13 +2153,13 @@ function listedDoors(graph: Graph, check: Analysis, declared: Doors, work: strin
       }
       if (places.size === 0) continue;
       const ascending = [...places.values()].sort((a, b) => a.address - b.address);
-      listed.push({ address: graph.address[node]!, size: graph.size[node]!, feature: door.feature, whenShut: door.whenShut, node, places: ascending });
+      listed.push({ address: graph.address[node]!, size: graph.size[node]!, feature: door.feature, whenShut: door.whenShut, ...(door.answers === undefined ? {} : { answers: door.answers }), node, places: ascending });
       continue;
     }
     if (featuresOfIslandAt(node) === door.feature) continue;
     if (door.whenShut === "exit" && graph.successors[node]!.every(next => check.core.has(next))) continue;
     if (graph.size[node]! < bytesToShut(graph, door)) fail(`the door ${check.plainName.get(node)} has ${graph.size[node]} bytes: too few to be shut`);
-    listed.push({ address: graph.address[node]!, size: graph.size[node]!, feature: door.feature, whenShut: door.whenShut, node });
+    listed.push({ address: graph.address[node]!, size: graph.size[node]!, feature: door.feature, whenShut: door.whenShut, ...(door.answers === undefined ? {} : { answers: door.answers }), node });
   }
   const ordered = inTableOrder(declared.features.map(feature => feature.name), listed);
   const review = ordered.map(
@@ -2287,7 +2300,12 @@ function layOut({ work, declared, demangler, planPath, freshPlanPath, link }: Li
     const stub = format.stub(graph, analysis) ?? fail("Bun__trimmedOut is gone");
     const featuresAt = (node: number) => ranges.find(range => range.start <= graph.address[node]! && graph.address[node]! < range.end)?.features;
     const named = declared.data.length === 0 ? undefined : format.namedBytes ? format.namedBytes(laid) : namedBytesOfElf(laid.executable);
-    return tableOf(declared, analysis.conditions, graph.address[stub]!, ranges, listedDoors(graph, analysis, declared, work, featuresAt), dataPackagesOf(named, graph, declared, format.isWindows ? declared.dataKeptOnWindows : []), format.isWindows === true);
+    const doors = listedDoors(graph, analysis, declared, work, featuresAt);
+    const bodies = doors
+      .filter(door => door.places === undefined && featuresAt(door.node) === undefined && format.canBeOverwritten?.(graph.output[door.node]!) === true)
+      .map(door => ({ start: door.address + bytesToShut(graph, door), end: door.address + door.size, features: door.feature }))
+      .filter(body => body.start < body.end);
+    return tableOf(declared, analysis.conditions, graph.address[stub]!, [...ranges, ...bodies], doors, dataPackagesOf(named, graph, declared, format.isWindows ? declared.dataKeptOnWindows : []), format.isWindows === true);
   };
 
   const ahead = format.laidAheadOfTheOthers ?? [];
@@ -2426,7 +2444,9 @@ function elf({ work, output, declared, demangler, command, assemble, link }: Lin
   const inherited = orderAt >= 0 ? readFileSync(command[orderAt]!.slice(orderFlag.length), "utf8") : "";
   const orderFile = join(work, "order.txt");
   const inputDirectories = new Set([work]);
-  link("listing", path => (inputDirectories.add(dirname(path)), undefined), [], [], false);
+  let compilesBitcode = false;
+  link("listing", path => (inputDirectories.add(dirname(path)), (compilesBitcode ||= existsSync(path) && isBitcode(path)), undefined), [], [], false);
+  if (compilesBitcode && declared.unmerged.length > 0) console.log("this link compiles bitcode: its mergeable sections stay merged");
   const nameOf = { first: "first", second: output.slice(output.lastIndexOf("/") + 1) };
   const compiledBy = (link: "first" | "second") =>
     [...inputDirectories].flatMap(directory =>
@@ -2438,7 +2458,7 @@ function elf({ work, output, declared, demangler, command, assemble, link }: Lin
     for (const object of [...compiledBy("first"), ...compiledBy("second")]) rmSync(object);
   };
   tidyUp();
-  const isUnmerged = (path: string) => declared.unmerged.some(pattern => pattern.test(path));
+  const isUnmerged = (path: string) => !compilesBitcode && declared.unmerged.some(pattern => pattern.test(path));
   const unmergedCopies = new Map<string, string>();
   let ordinalOfCut = 0;
   return {
@@ -2462,12 +2482,12 @@ function elf({ work, output, declared, demangler, command, assemble, link }: Lin
       for (const object of unmerged) cutMergeableSectionsApart(object, `${namelessPrefix}piece${ordinalOfCut++}`);
       return unmerged.length > 0;
     },
-    makesItsOwnPlan: declared.unmerged.length > 0,
+    makesItsOwnPlan: !compilesBitcode && declared.unmerged.length > 0,
     support: room => [
       assemble(
         "room.s",
         `.section .note.bun,"aR",@note\n.p2align 3\n.long 4, 3584, 1\n.asciz "Bun"\n.zero 3584\n` +
-          `.section .bun_islands,"aR",@progbits\n.zero ${room}\n` +
+          `.section .bun_islands,"aR",@progbits\n.globl Bun__islands\nBun__islands:\n.zero ${room}\n` +
           `.section .rodata.Bun__trimmedFeatures,"a",@progbits\n.globl Bun__trimmedFeatures\nBun__trimmedFeatures:\n` +
           declared.features.map(feature => `.asciz ${JSON.stringify(feature.description)}\n`).join(""),
       ),

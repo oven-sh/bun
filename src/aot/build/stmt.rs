@@ -1943,6 +1943,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                                 taken.push(self.emit(fx, Op::Str(name)));
                             }
                             let member = self.emit_throwing(fx, Op::PropGet { obj: value, name });
+                            self.note_destructured_property(fx, member, pat);
                             let claim = if is_declared { self.ty_for_pat(fx, prop.value, prop.default.is_some()) } else { TyId::NONE };
                             self.coerce_to(fx, member, Ty::from_id(claim), CoerceReason::Claim)
                         }

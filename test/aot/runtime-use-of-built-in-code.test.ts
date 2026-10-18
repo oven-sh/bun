@@ -72,7 +72,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
   });
 
   const emitter = `const { EventEmitter } = require("node:events");`;
-  const openedByTheTableOfListeners = "open constructor, or a name that is computed, read from what may be a function";
   test.each([
     ["node:events", `${emitter} new EventEmitter().on("constructor", () => {}).emit("constructor");`],
     ["node:fs", `console.log(require("node:fs").readFileSync("x", "utf8").length);`],
@@ -81,17 +80,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["process.stdout", `process.stdout.write("x");`],
   ])("the reads by key of what %s brings do not open the world", async (_, text) => {
     await factsOf(text);
-  });
-
-  test.each([
-    ["an object literal", `${emitter} console.log(EventEmitter.prototype.listeners.call({ _events: function () {} }, "constructor"));`],
-    ["a store", `${emitter} const made = new EventEmitter(); made._events = function () {}; console.log(made.listeners("constructor"));`],
-    ["a class field", `${emitter} class Odd extends EventEmitter { _events = function () {}; } console.log(new Odd().listeners("constructor"));`],
-    ["a key that is not seen", `${emitter} const made = new EventEmitter(); made[process.argv[2]] = function () {}; console.log(made.listeners("constructor"));`],
-    ["another prototype for the module's own table", `${emitter} const made = new EventEmitter(); Object.setPrototypeOf(Object.values(made)[0], function () {}); console.log(made.listeners("constructor"));`],
-    ["a Proxy", `${emitter} declare const Proxy: any; console.log(EventEmitter.prototype.listeners.call(new Proxy({}, {}), "constructor"));`],
-  ])("the world is open where the program can put another table of listeners there: %s", async (_, text) => {
-    await factsOf(text, openedByTheTableOfListeners);
   });
 
   const declared = `declare const URL: any, performance: any, Proxy: any, Bun: any;`;
@@ -110,8 +98,8 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["an object with keys that are symbols of the program's own", `console.log({ [Symbol.for("mine")]: 1, [Symbol.iterator]: 2 });`],
     ["an object filled under keys that are put together", `const made: Record<string, number> = {}; for (let at = 0; at < 3; at++) made["k" + at] = at; console.log(made);`],
     ["an object filled under keys that are not seen", `const holder: any = {}; holder[process.argv[2]] = 1; console.log(holder, { [process.argv[3]]: 1 });`],
-    ["what Bun.inspect and Object.values gave", `console.log(Bun.inspect({ a: 1 }), Object.values({ a: 1 }));`],
-    ["beside Bun.inspect, objects filled under keys that are strings", `function fill(holder: Record<string, number>, key: string) { holder[key] = 1; return { [key]: 2, [\`x\${key}\`]: 3 }; } console.log(Bun.inspect(fill({}, "a")), fill({}, process.argv[2]));`],
+    ["what Object.values gave", `console.log(Object.values({ a: 1 }));`],
+    ["objects filled under keys that are strings", `function fill(holder: Record<string, number>, key: string) { holder[key] = 1; return { [key]: 2, [\`x\${key}\`]: 3 }; } console.log(fill({}, "a"), fill({}, process.argv[2]));`],
   ])("to print %s reads no property that is not named", async (_, text) => {
     const facts = await factsOf(`${declared} ${text}`);
     expect(["prints object", "module internal:util/inspect"].filter(fact => !facts.has(fact))).toEqual([]);
@@ -172,6 +160,8 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["makes a Console of console under another name", `const output = console; new output.Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`],
     ["defines properties by descriptors that are not seen", `console.log(Object.defineProperties({}, JSON.parse(process.argv[2])));`],
     ["defines a property under a key that is not seen", `console.log(Object.defineProperty({}, process.argv[2], { value: 1 }));`],
+    ["calls Bun.inspect", `console.log(Bun.inspect({ a: 1 }));`],
+    ["has a built-in module install its inspector under the symbol that Bun.inspect holds", `const own = function ${inspector}; console.log(require("node:querystring").decode("a=b", null, null, { decodeURIComponent: (text: string) => (text === "a" ? Bun.inspect.custom : own) }));`],
   ])("any property may be read by util.inspect where the program %s", async (_, text) => {
     const facts = await factsOf(`${declared} ${text}`);
     expect(["property *", "escapes property /$bun/js/internal/util/inspect.ts"].filter(fact => !facts.has(fact))).toEqual([]);
@@ -189,12 +179,17 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["takes the table by its position and the setter of prototypes out of a table of its own", `const custom = Symbol.for("nodejs.util.inspect.custom"); const own: any = { a: 1 }; console.log({ [custom](depth: any, options: any, inspect: any) { own[process.argv[2]].call({}, process.argv[3]).call((Object.values(inspect) as any[])[2], function () {}); return options.stylize${called} } });`],
     ["comes by Symbol without its name and puts the text together", `const unnamed: any = Symbol("a").constructor; console.log({ [unnamed.for("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
     ["stores such a symbol's inspector under a variable", `const unnamed: any = Symbol("a").constructor; const custom = unnamed.for("nodejs.util.inspect." + process.argv[2]); const holder: any = {}; holder[custom] = function ${replacing} return options.stylize${called} }; console.log(holder);`],
+    ["asks the constructor of a wrapped symbol", `console.log({ [Object(Symbol.iterator).constructor.for("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
+    ["asks the constructor that the prototype of a symbol holds", `console.log({ [Object.getPrototypeOf(Symbol.iterator).constructor.for("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
+    ["asks what a function of its own found", `const found = (value: any) => value.constructor; console.log({ [found(Symbol.iterator).for("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
+    ["takes the registry's function by Reflect.get", `const unnamed: any = Object(Symbol.iterator).constructor; console.log({ [Reflect.get(unnamed, "for")("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
     ["takes Symbol.for out of the constructor of a well-known symbol", `const { for: make } = Symbol.iterator.constructor as any; console.log({ [make("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
+    ["has an emitter write the key for it: a listener under the name, the table by its position", `const emitter = new (require("node:events"))(); emitter.on("styles", Reflect.getPrototypeOf(function () {})); console.log({ [Symbol.for("nodejs.util.inspect.custom")](depth: any, options: any, inspect: any) { Object.assign(inspect, Object.values(emitter)[0]); return options.stylize${called} } });`],
     ["lists the symbols of a URL", `console.log({ [Object.getOwnPropertySymbols(Object.getPrototypeOf(new URL("http://x/")))[0]]${replacing} return options.stylize${called} } });`],
     ["lists the keys of a URL", `console.log({ [Reflect.ownKeys(Object.getPrototypeOf(new URL("http://x/")))[0]]${replacing} return options.stylize${called} } });`],
     ["answers for the symbol with a Proxy among the ancestors", `console.log(Object.create(new Proxy({}, { get() { return function ${replacing} return options.stylize${called} }; } })));`],
-  ])("the world is open where an inspector of the program's own can make util.inspect call Function: it %s", async (_, text) => {
-    const facts = await factsOf(`${declared} ${text}`, openedByTheTableOfListeners);
+  ])("any property may be read by util.inspect where the program can have an inspector of its own: it %s", async (_, text) => {
+    const facts = await factsOf(`${declared} ${text}`);
     expect(["property *", "escapes property /$bun/js/internal/util/inspect.ts"].filter(fact => !facts.has(fact))).toEqual([]);
   });
 
@@ -211,42 +206,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
     expect((await factsOf(`console.log(new RegExp(process.argv[2]));`)).has("regexp computed")).toBe(true);
   });
 
-  const hostile = `{ toUpperCase() { return "constructor"; } }`;
-  const cache = `{ _sessionCache: { map: function () {} } }`;
-  test.each([
-    ["a function of node:util taken by Object.values", `for (const taken of Object.values(require("node:util")) as any[]) console.log(taken(${hostile}));`],
-    ["a function of node:util taken by Object.entries", `for (const [, taken] of Object.entries(require("node:util")) as any[]) console.log(taken(${hostile}));`],
-    ["a function of node:util taken by a rest", `const { format, ...rest } = require("node:util"); console.log(rest);`],
-    ["a function of node:util taken by a spread", `console.log({ ...require("node:util") });`],
-    ["a function of node:util taken by Object.assign", `console.log(Object.assign({}, require("node:util")));`],
-    ["a function of node:util taken by a replacer", `JSON.stringify(require("node:util"), (key, taken) => console.log(taken));`],
-    ["Object.values handed on beside node:util", `console.log([require("node:util")].map(Object.values));`],
-    ["the session of an agent of node:https by name", `console.log(require("node:https").Agent.prototype._getSession.call(${cache}, "constructor"));`],
-    ["the methods of an agent of node:https by Object.values", `for (const taken of Object.values(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
-    ["the methods of an agent by Object.values that arrives through a merge", `const take = process.argv[2] ? Object.values : Object.keys; for (const taken of take(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
-    ["the methods of an agent by Object.values that is a parameter's default", `((take = Object.values) => { for (const taken of take(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor")); })();`],
-    ["the methods of an agent by Object.entries that a pattern falls back on", `const { take = Object.entries } = {} as any; for (const [, taken] of take(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
-    ["the methods of an agent by Object.values that a function returns", `for (const taken of (() => Object.values)()(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
-    ["the methods of an agent by the values of an Object that has no name", `class Plain { one = 1 } delete (Plain.prototype as any).constructor; const unnamed: any = new Plain().constructor; for (const taken of unnamed.values(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
-    ["the methods of an agent by the entries of whatever a function is handed", `((unnamed: any) => { for (const [, taken] of unnamed.entries(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor")); })(JSON.parse(process.argv[2]));`],
-    ["the cache of an agent of node:https", `const agent = new (require("node:https").Agent)(); agent._sessionCache.map = function () {}; console.log(agent);`],
-    ["the listeners of a stream by name, which a table out of data could answer for", `console.log(process.stdout.listeners("constructor")[0]);`],
-    ["the raw listeners of a stream", `console.log(new (require("node:stream").Readable)().rawListeners(process.argv[2]));`],
-    ["events.getEventListeners of a stream", `console.log(require("node:events").getEventListeners(process.stdin, "constructor"));`],
-    ["the methods of an emitter by Object.values", `for (const taken of Object.values(require("node:events").prototype) as any[]) console.log(taken.call(process.stdout, "constructor"));`],
-    ["the methods of process.stdout by Object.values", `for (const taken of Object.values(Object.getPrototypeOf(process.stdout)) as any[]) console.log(taken({ TERM: "constructor" }));`],
-  ])("the world is open where a built-in table with a prototype can hand out what it inherits: %s", async (_, text) => {
-    await factsOf(text, openedByTheTableOfListeners);
-  });
-
-  test.each([
-    ["util.debuglog, whose table is read under what the argument answers", `console.log(require("node:util").debuglog(${hostile}));`],
-    ["the depth of colors, whose table is read under TERM", `console.log(process.stdout.getColorDepth({ TERM: "constructor" }));`],
-    ["the listener of removeListener, which is handed what removeAllListeners finds", `const stream = new (require("node:stream").Readable)(); stream.on("removeListener", (type: any, listener: any) => console.log(listener)); stream.removeAllListeners("constructor");`],
-  ])("the tables of streams, of debuglog and of terminals have no prototype: the world stays closed with %s", async (_, text) => {
-    await factsOf(text);
-  });
-
   test.each([
     ["its own literal", `const own = { a: 1 }; console.log(require("node:util").format("%s", 1), Object.values(own), Object.entries(own), { ...own });`],
     ["an array", `const list = [1, 2]; console.log(require("node:util").format("%s", 1), Object.values(list), Object.entries(list));`],
@@ -256,13 +215,8 @@ describe.concurrent("the built-in code that is part of every program", () => {
     expect((await factsOf(text)).has("program-member *")).toBe(false);
   });
 
-  const server = `require("node:http").createServer((request: any, response: any) =>`;
-  test.each([
-    ["node/_http_agent.ts", "gives an agent names of its own", `const agent = new (require("node:http").Agent)(); agent.getName = () => process.argv[2]; console.log(agent);`],
-    ["node/_http_incoming.ts", "adds a header line to an object of its choice", `${server} request._addHeaderLine(process.argv[2], "x", response)).listen(0);`],
-    ["internal/util/inspect.ts", "loads node:dgram, whose errors are printed with getters", `console.log(require("node:dgram").createSocket("udp4"));`],
-  ])("any property may be read by %s where the program %s", async (file, _, text) => {
-    expect((await factsOf(text)).has(`escapes property /$bun/js/${file}`)).toBe(true);
+  test("any property may be read by util.inspect where the program loads node:dgram, whose errors are printed with getters", async () => {
+    expect((await factsOf(`console.log(require("node:dgram").createSocket("udp4"));`)).has("escapes property /$bun/js/internal/util/inspect.ts")).toBe(true);
   });
 
   test("node:module's wrapper, a Proxy that stores for its caller, does not open the world", async () => {
@@ -272,9 +226,5 @@ describe.concurrent("the built-in code that is part of every program", () => {
   const openTheWorldThemselves = ["bun:ffi", "bun:jsc", "inspector", "inspector/promises", "module", "repl", "vm", "worker_threads"];
   test.each(builtinModules.filter(name => !openTheWorldThemselves.includes(name)))("to require %s does not open the world", async name => {
     await factsOf(`console.log(typeof require("${name}"));`);
-  });
-
-  test("the world is open where the program gives node:http an agent whose constructor it calls", async () => {
-    await factsOf(`require("node:http").request({ agent: false, _defaultAgent: function () {} });`, openedByTheTableOfListeners);
   });
 });

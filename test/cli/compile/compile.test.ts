@@ -51,6 +51,24 @@ describe.concurrent("bun compile", () => {
     });
   });
 
+  test.skipIf(!!unsupported)("says how much is typed, and --explain says why the rest is not", async () => {
+    using dir = tempDir("compile-explain", { "app.ts": `function first(list: any): number {\n  return list.head;\n}\nconsole.log(first({ head: 1 }));` });
+    const said = ({ stdout, stderr }: { stdout: string; stderr: string }) => (stdout + stderr).split("\n");
+    const built = await bun(String(dir), "compile", "app.ts");
+    expect(said(built).filter(line => line.startsWith("aot: "))).toEqual(["aot: 0.0% typed (0 of 1 property accesses)", "aot: --explain shows what is not typed and how to fix it"]);
+    const explained = await bun(String(dir), "compile", "app.ts", "--explain");
+    expect(said(explained)).toContain("  1. any app.ts:1:22: fixing it types up to 1 access (+100.0 points)");
+    expect(said(explained)).not.toContain("aot: --explain shows what is not typed and how to fix it");
+    expect(said(await bun(String(dir), "compile", "app.ts", "--aot-explain")).filter(line => !/\[\d/.test(line))).toEqual(said(explained).filter(line => !/\[\d/.test(line)));
+    const [entry] = said(await bun(String(dir), "compile", "app.ts", "--explain=json")).filter(line => line.startsWith('{"rank"'));
+    expect(JSON.parse(entry!)).toMatchObject({ code: "any", file: "app.ts", line: 1, column: 22, accesses: 1 });
+    expect(await bun(String(dir), "compile", "app.ts", "--explain=nonsense")).toEqual({
+      stdout: "",
+      stderr: 'error: --explain does not take "nonsense": it is one of text, json, throws, throws-all, throws-json, throws-all-json, rules-json, runtime-use\n',
+      exitCode: 1,
+    });
+  }, 120_000);
+
   test.skipIf(!!unsupported)("writes what bun build --compile --aot writes", async () => {
     using dir = tempDir("compile-same-as-build", { "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());` });
     async function build(...args: string[]) {
@@ -91,7 +109,7 @@ describe.concurrent("bun compile", () => {
     using dir = tempDir("compile-help", {});
     const { stdout, stderr, exitCode } = await bun(String(dir), "compile", "--help");
     expect(stdout).toStartWith("Usage: bun compile [flags] [<entrypoint>]\n");
-    for (const flag of ["--outfile", "--target", "--define", "--no-aot", "--trim", "--no-script", "--aot-explain"]) expect(stdout).toContain(flag);
+    for (const flag of ["--outfile", "--target", "--define", "--no-aot", "--trim", "--no-script", "--explain"]) expect(stdout).toContain(flag);
     expect(stdout).not.toContain("note: package.json");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect((await bun(String(dir), "--help")).stdout).toMatch(/^  compile +\.\/cli\.ts +Compile /m);

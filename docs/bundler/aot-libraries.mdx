@@ -46,9 +46,9 @@ bun compile --library
 Bun type checks the package, then writes a `dist` folder that's ready to publish. A type error fails the build.
 
 ```txt
-  index.js     135 bytes  (entry point)
+  index.js      135 bytes  (entry point)
   index.aot.ts  232 bytes  (typed source)
-  index.d.ts   152 bytes  (declaration)
+  index.d.ts    152 bytes  (declaration)
   package.json  407 bytes  (asset)
 ```
 
@@ -90,7 +90,31 @@ The files are named after the entry point. Bun also copies your `README` and `LI
 
 Bun keeps the fields that describe the package, such as `name`, `version`, `license` and `dependencies`. It leaves out `scripts`, `devDependencies`, `private` and `workspaces`. It writes its own `type`, `main`, `module`, `types`, `exports` and `files`.
 
-Bun drops what your own `package.json` lists under `exports` and `files`, such as extra subpaths and CSS or JSON assets. It doesn't copy those files either. It keeps a `bin` entry only if its file is one of the entry points. The build warns about each `exports` and `bin` entry that it drops.
+Bun keeps an entry of your own `exports` if this build writes its file. The entry can point at the source (`./src/index.ts`) or at the file that the build writes (`./dist/index.js`). It keeps its name and its conditions, and Bun rewrites the paths.
+
+```json
+{
+  "exports": {
+    ".": "./src/index.ts",
+    "./where": { "browser": "./src/where/browser.ts", "default": "./src/where/server.ts" }
+  }
+}
+```
+
+In `dist/package.json`, `"./where"` still has its two conditions. Each now holds the three files of its own entry point.
+
+```json
+{
+  "./where": {
+    "browser": { "types": "./where/browser.d.ts", "bun-aot": "./where/browser.aot.ts", "default": "./where/browser.js" },
+    "default": { "types": "./where/server.d.ts", "bun-aot": "./where/server.aot.ts", "default": "./where/server.js" }
+  }
+}
+```
+
+If all the conditions of an entry lead to one file, Bun writes that file's three lines and nothing else.
+
+Bun drops the rest of what your own `package.json` lists under `exports` and `files`, such as CSS or JSON assets. It doesn't copy those files either. It keeps a `bin` entry only if its file is one of the entry points. The build warns about each `exports` and `bin` entry that it drops, whole or in part.
 
 ```txt
 warn: "./style.css" in "exports" of package.json is left out of dist/package.json: no entry point of this build is written there
@@ -134,7 +158,7 @@ warn: the typed version of "greeter" in node_modules/greeter is not used: index.
 bun test --aot
 ```
 
-[`Bun.validate`](/bundler/aot-types#check-data-with-bunvalidate) needs `--aot`. In a package, it works for users who build with `bun compile`, and throws for everyone else.
+Bun type checks the typed file once more before it writes it, with `"lib": ["esnext"]` added to the `lib` in your `tsconfig.json`. Most projects that use Bun have that `lib`, and your typed file is checked with theirs, not yours. If your code only passes with an older `lib`, Bun prints a warning with the first error and writes no typed file. The rest of the package is written as usual.
 
 ## Publish it
 
@@ -154,7 +178,7 @@ Your users don't have to set anything up.
 
 ## Entry points, dependencies and flags
 
-- Without an entry point, Bun builds the file that `"module"` or `"main"` in `package.json` points to, if it's a TypeScript file. Otherwise it looks for `index.ts`, then `src/index.ts`.
+- Without an entry point, Bun builds every TypeScript file that `"exports"` in `package.json` points at. If there is none, it builds the file that `"module"` or `"main"` points to, if it's a TypeScript file. Otherwise it looks for `index.ts`, then `src/index.ts`.
 - With several entry points, each gets its own files and its own entry in `exports`: `./src/index.ts ./src/version.ts` gives `"."` and `"./version"`.
 - Bun leaves `dependencies`, `peerDependencies` and `optionalDependencies` as imports. It bundles the `devDependencies` that your code imports.
 - `--outdir` sets the output folder. The default is `dist`.
@@ -237,7 +261,7 @@ bun compile --library && bun compile --library --format=cjs --outdir dist/cjs
 ```
 
 ```txt
-warn: --dts: the typed JavaScript that --aot compiles a package from is left out: it does not support --format other than esm yet
+warn: the typed JavaScript that --aot compiles a package from is left out: it does not support --format other than esm yet
 ```
 
 Then add a `"require"` condition to `dist/package.json`, and add `"cjs"` to its `"files"`.

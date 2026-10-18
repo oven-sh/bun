@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 const programs = join(import.meta.dir, "..", "programs", "data-from-outside");
 
-test.each(["bun-validate-returns-a-copy", "json-parse-type-argument-by-declared-types", "validation-compiled-and-interpreted-agree"])(
+test.each(["bun-validate-returns-a-copy", "bun-validate-takes-what-is-not-json", "json-parse-type-argument-by-declared-types", "validation-compiled-and-interpreted-agree"])(
   "bun run --aot %s.ts",
   async name => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot", join(programs, name + ".ts")], cwd: programs, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -18,8 +18,16 @@ test.each(["bun-validate-returns-a-copy", "json-parse-type-argument-by-declared-
   isASAN || isDebug ? 450_000 : 120_000,
 );
 
-test("without --aot Bun.validate<T>() says what it needs", async () => {
-  using dir = tempDir("validation-without-aot", { "program.ts": `try { Bun.validate<number>(1); } catch (error: any) { console.log(error.constructor.name, error.message); }` });
+test("without --aot Bun.validate<T>() validates too", async () => {
+  using dir = tempDir("validation-without-aot", { "program.ts": `console.log(Bun.validate<number>(1)); try { Bun.validate<number>("1"); } catch (error: any) { console.log(error.constructor.name, error.message); }` });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "./program.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("1\nTypeError Invalid input: expected number, received string\n");
+  expect(exitCode).toBe(0);
+});
+
+test("without --aot a call that is not written as Bun.validate<T>() says what it needs", async () => {
+  using dir = tempDir("validation-without-aot-unseen", { "program.ts": `const { validate } = Bun; try { validate<number>(1); } catch (error: any) { console.log(error.constructor.name, error.message); }` });
   await using proc = Bun.spawn({ cmd: [bunExe(), "run", "./program.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toStartWith("TypeError Bun.validate<T>() checks a value against a TypeScript type");

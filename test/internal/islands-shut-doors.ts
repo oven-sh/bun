@@ -109,7 +109,7 @@ function segmentsOfMachO(file: Buffer) {
     }));
 }
 
-export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm64: boolean): Buffer {
+export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm64: boolean, removedByName: string[] = []): Buffer {
   const out = Buffer.from(file);
   for (const feature of excluded) if (!table.features.includes(feature)) refuse(`there is no feature ${feature}`);
   const segments = out.readUInt32LE(0) === 0xfeedfacf ? segmentsOfMachO(out) : segmentsOfElf(out);
@@ -130,7 +130,10 @@ export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm6
 
   const stubSize = (door: TableDoor) => (isArm64 ? (door.whenShut === "exit" ? 12 : 8) : door.whenShut === "exit" ? 10 : 3);
   const layStub = (at: number, number: number, door: TableDoor) => {
-    const doorAndFeature = table.features.indexOf(door.feature.split(",", 1)[0]!) + number * 4096;
+    const isRemovedByName = removedByName.includes(door.feature.split(",", 1)[0]!);
+    if (isRemovedByName && door.answers === "undefined") return void Buffer.from(isArm64 ? [0x40, 0x01, 0x80, 0xd2, 0xc0, 0x03, 0x5f, 0xd6] : [0xb8, 0x0a, 0, 0, 0, 0xc3]).copy(out, offsetOf(at));
+    const answers = door.answers === "throw" ? 2 ** 30 : door.answers === "undefined" ? 2 ** 31 : 0;
+    const doorAndFeature = table.features.indexOf(door.feature.split(",", 1)[0]!) + (isRemovedByName ? 2048 : 0) + number * 4096 + answers;
     const code = Buffer.alloc(stubSize(door));
     if (isArm64 && door.whenShut === "exit") {
       code.writeUInt32LE((0x52800000 | ((doorAndFeature & 0xffff) << 5)) >>> 0, 0);
@@ -154,14 +157,19 @@ export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm6
   const returnStub = thin.find(({ door }) => door.whenShut === "return");
   const length = exitStubs + (returnStub === undefined ? 0 : stubSize(returnStub.door));
   if (length > 0) {
-    const strip = dead
-      .map(({ start, end }) => ({ start: Math.ceil(start / 4) * 4, end }))
-      .find(({ start, end }) => start + length <= end && segmentOf(start).isCode && start + length - segmentOf(start).address <= segmentOf(start).size);
-    if (strip === undefined) refuse(`no dead code holds a strip of ${length} bytes`);
-    let nextExitStub = strip.start;
+    const aligned = dead.map(({ start, end }) => ({ start: Math.ceil(start / 4) * 4, end }));
+    const isCode = (start: number, end: number) => segmentOf(start).isCode && end - segmentOf(start).address <= segmentOf(start).size;
+    const oneForAll = aligned.find(({ start, end }) => start + length <= end && isCode(start, start + length));
+    const rooms = oneForAll !== undefined ? [oneForAll] : aligned.filter(({ start, end }) => start < end && isCode(start, end));
+    const lay = (size: number) => {
+      while (rooms.length > 0 && rooms[0]!.end - rooms[0]!.start < size) rooms.shift();
+      if (rooms.length === 0) refuse(`no dead code holds a strip of ${length} bytes`);
+      return (rooms[0]!.start += size) - size;
+    };
+    const exitStubsAt = thin.filter(({ door }) => door.whenShut === "exit").map(({ door }) => lay(stubSize(door)));
+    const returnStubAt = returnStub === undefined ? 0 : lay(stubSize(returnStub.door));
     for (const { door, number } of thin) {
-      const at = door.whenShut === "exit" ? nextExitStub : strip.start + exitStubs;
-      if (door.whenShut === "exit") nextExitStub += stubSize(door);
+      const at = door.whenShut === "exit" ? exitStubsAt.shift()! : returnStubAt;
       layStub(at, number, door);
       for (const [place, later] of groupsOfPlaces(door.places!) ?? refuse("an adr has no nop beside it")) {
         if (isDead(place!.address)) continue;

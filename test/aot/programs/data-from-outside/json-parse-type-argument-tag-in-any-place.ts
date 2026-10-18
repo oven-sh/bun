@@ -82,3 +82,5 @@ const before = readAgain();
 let sum = 0;
 for (const text of ['{"id":1,"by":"a","type":"opened"}', '{"id":2,"o":1,"type":"moved","from":1,"to":2}', '{"id":3,"type":"other"}', '{"type":"closed","id":4}']) sum += (JSON.parse<EntryOrOther>(text) as Common).id;
 console.log("read once:", sum, readAgain() === before);
+const taken = JSON.parse<EntryOrOther>('{"type":"noted","id":5,"parts":[{"kind":"rule"},{"kind":"none"}]}') as Common;
+console.log("an arm that holds objects refuses: they are not parsed again arm by arm, the engine reads the text:", taken.id, counted ? readAgain() === before + 1 : true);

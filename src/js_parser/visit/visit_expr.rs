@@ -1874,6 +1874,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
+    fn is_validating_callee(p: &mut Self, callee: Expr) -> bool {
+        let (written, method) = match callee.data {
+            Data::EDot(dot) => (dot.target, Some(dot.name.slice())),
+            _ => (callee, None),
+        };
+        let Data::EIdentifier(identifier) = written.data else { return false };
+        let name = p.load_name_from_ref(identifier.ref_);
+        let Ok(found) = p.find_symbol_with_record_usage::<false>(written.loc, name) else { return false };
+        let kind = if found.r#ref.is_empty() { js_ast::symbol::Kind::Unbound } else { p.symbols[found.r#ref.inner_index() as usize].kind };
+        match (kind, method) {
+            (js_ast::symbol::Kind::Unbound, Some(b"parse")) => name == b"JSON",
+            (js_ast::symbol::Kind::Unbound, Some(b"validate")) => name == b"Bun",
+            (js_ast::symbol::Kind::Import, Some(b"validate")) => p.bun_module_names.contains(&name),
+            (js_ast::symbol::Kind::Import, None) => p.bun_validate_names.contains(&name),
+            _ => false,
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn validated_call(p: &mut Self, e: &mut Expr, in_: ExprIn) -> bool {
@@ -1881,6 +1899,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(at) = p.validated_calls.iter().position(|it| it.0 == call.close_paren_loc.start) else { return false };
         let (_, which, schema) = p.validated_calls.swap_remove(at);
         let loc = e.loc;
+        if which == bun_ast::audited::REFUSED {
+            if Self::is_validating_callee(p, call.target) {
+                p.log().add_error(
+                    Some(p.source),
+                    loc,
+                    b"this executable was built with --compile-trim-runtime, without the type checker, so code loaded at run time cannot validate by type",
+                );
+            }
+            return false;
+        }
         let has_one_argument = call.args.len() == 1 && !matches!(call.args[0].data, Data::ESpread(..));
         let is_json_parse = which == bun_ast::audited::JSON_PARSE;
         let value = if is_json_parse || !has_one_argument {

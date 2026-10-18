@@ -371,7 +371,9 @@ pub(crate) mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
-        bun_ast::audited::set_schema_source(super::json_schemas::of_file);
+        if !super::arguments::is_trimmed_executable() {
+            bun_ast::audited::set_schema_source(super::json_schemas::of_file);
+        }
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first
@@ -1225,7 +1227,8 @@ pub(crate) mod command {
             // standalone executable silently drops `BUN_OPTIONS` flags.
             let original_argv_len = bun::argv().len();
             let bun_options_argc = bun::bun_options_argc();
-            if graph.runtime_options.runs_static_code_only {
+            let is_built_to_refuse_code_from_strings = bun_core::CodeGenerationFromStrings::in_exec_argv(graph.compile_exec_argv) != bun_core::CodeGenerationFromStrings::Allowed;
+            if graph.runtime_options.runs_static_code_only && is_built_to_refuse_code_from_strings {
                 bun_core::disallow_code_generation_in_trimmed_executable();
             }
             if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
@@ -2065,7 +2068,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <b><green>bun compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-cli<r>
 
   <d>Show where the compiler cannot use your types<r>
-  <b><green>bun compile<r> <cyan>--aot-explain<r>
+  <b><green>bun compile<r> <cyan>--explain<r>
 
   <d>Build for another platform<r>
   <b><green>bun compile<r> <cyan>--no-aot --target=bun-linux-x64<r> <blue>./cli.ts<r>

@@ -465,7 +465,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot                            Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode"
         ),
         parse_param!(
-            "--aot-explain <STR>?...          With --aot: list the places where the compiler cannot use your types, the most expensive first. --aot-explain=costs-json prints them as JSON. --aot-explain=throws lists every type check that can fail when the program runs"
+            "--aot-explain <STR>?...          With --aot: list what keeps the compiler from using your types, the most expensive cause first, with a fix for each. --aot-explain=json prints one object per line. --aot-explain=throws lists every type check that can fail when the program runs"
         ),
         parse_param!(
             "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
@@ -648,6 +648,9 @@ pub(crate) const COMPILE_ONLY_PARAMS: &[ParamType] = &[
         "--library                        Build a package to publish instead of an executable: JavaScript, .d.ts files and a package.json, in --outdir (default: \"dist\")"
     ),
     parse_param!(
+        "--explain <STR>?...              List what keeps the compiler from using your types, the most expensive cause first, with a fix for each. --explain=json prints one object per line. Same as --aot-explain"
+    ),
+    parse_param!(
         "--no-aot                         Keep the JavaScript in the executable instead of compiling it to machine code ahead of time"
     ),
     parse_param!(
@@ -660,7 +663,7 @@ pub(crate) const COMPILE_ONLY_PARAMS: &[ParamType] = &[
 ];
 const COMPILE_PARAMS: &[ParamType] = concat_params!(COMPILE_ONLY_PARAMS, BUILD_PARAMS);
 
-const BUILD_PARAMS_IN_COMPILE_HELP: [&[u8]; 18] = [
+const BUILD_PARAMS_IN_COMPILE_HELP: [&[u8]; 17] = [
     b"outfile",
     b"outdir",
     b"target",
@@ -673,7 +676,6 @@ const BUILD_PARAMS_IN_COMPILE_HELP: [&[u8]; 18] = [
     b"tsconfig-override",
     b"compile-exec-argv",
     b"disallow-code-generation-from-strings",
-    b"aot-explain",
     b"aot-type-errors",
     b"aot-deny",
     b"aot-warn",
@@ -1909,7 +1911,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.args.absolute_working_dir.as_deref().unwrap_or_default(),
             ctx.bundler_options.library.then_some(&ctx.bundler_options.outdir[..]),
         );
-        opts.entry_points = vec![found.path];
+        opts.entry_points = std::iter::once(found.path).chain(found.more_of_a_library).collect();
         if ctx.bundler_options.outfile.is_empty() && !ctx.bundler_options.library {
             ctx.bundler_options.outfile = found.executable_name;
         }
@@ -2360,8 +2362,13 @@ fn parse_build_command_options(
     }
     ctx.bundler_options.aot = is_aot_default || args.flag(b"--aot");
     ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
+    ctx.bundler_options.is_compile_command = is_compile_command;
+    if is_compile_command {
+        ctx.bundler_options.aot_explain.extend(slice_to_owned(args.options(b"--explain")));
+    }
     if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
-        Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
+        let flag = if is_compile_command { "--explain" } else { "--aot-explain" };
+        Output::err_generic("{} does not take \"{}\": it is one of {}", (flag, BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
         Global::exit(1);
     }
     let rule_flags = crate::cli::aot::rule_flags(bun_core::argv().into_iter().skip(1));

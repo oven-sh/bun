@@ -21,7 +21,9 @@ use core::ptr::{self, NonNull};
 
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
+use bun_jsc::{
+    CallFrame, ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong,
+};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -188,8 +190,22 @@ enum CodecError {
     Brotli(&'static str),
 }
 
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) extern "C" fn CompressionStreamCoder__createBrotliEncoder(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+    encoder: &mut *mut brotli::BrotliEncoder,
+) -> JSValue {
+    // SAFETY: FFI — the default-allocator instance (all nulls).
+    *encoder = unsafe { brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut()) };
+    JSValue::UNDEFINED
+}
+
 impl CompressionStreamCoder {
     fn new(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
         format: Format,
         decompress: bool,
         high_water_mark: usize,
@@ -238,11 +254,22 @@ impl CompressionStreamCoder {
                 }
             }
             (Format::Brotli, false) => {
-                // SAFETY: FFI — the default-allocator instance (all nulls).
-                let p = NonNull::new(unsafe {
-                    brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
-                })
-                .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
+                let create_encoder = core::hint::black_box(
+                    CompressionStreamCoder__createBrotliEncoder
+                        as extern "C" fn(
+                            &JSGlobalObject,
+                            &CallFrame,
+                            &mut *mut brotli::BrotliEncoder,
+                        ) -> JSValue,
+                );
+                let mut encoder = ptr::null_mut();
+                let created = bun_jsc::from_js_host_call(global, || {
+                    create_encoder(global, callframe, &mut encoder)
+                });
+                let p = created
+                    .ok()
+                    .and(NonNull::new(encoder))
+                    .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
                 if let Some(quality) = level {
                     // SAFETY: `p` was just created and is exclusively owned here.
                     let ok = brotli::BrotliEncoderSetParameter(
@@ -785,6 +812,8 @@ impl AsyncInput {
 /// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__create(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
     format: u8,
     decompress: bool,
     high_water_mark: usize,
@@ -795,7 +824,14 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
         return ptr::null_mut();
     };
     let level = (has_level && !decompress).then_some(level);
-    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level) {
+    match CompressionStreamCoder::new(
+        global,
+        callframe,
+        format,
+        decompress,
+        high_water_mark.max(1),
+        level,
+    ) {
         Ok(b) => Box::into_raw(b),
         Err(_) => ptr::null_mut(),
     }

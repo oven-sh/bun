@@ -73,8 +73,8 @@ const LAST_TYPESCRIPT_MESSAGE: u32 = 100000;
 
 /// The messages that TypeScript does not have, sorted by code.
 static OWN_MESSAGES: &[(u32, Category, &str)] = &[
-    (100009, Category::Warning, "'{0}' has {1} type errors, the first at {2}: it is compiled untyped."),
-    (100010, Category::Warning, "'{0}' has {1} type errors, the first at {2}: it is compiled untyped, which costs speed, not correctness."),
+    (100009, Category::Warning, "'{0}' has {1}, the first at {2}: it is compiled untyped."),
+    (100010, Category::Warning, "'{0}' has {1}, the first at {2}: it is compiled untyped, which costs speed, not correctness."),
     (100011, Category::Warning, "'{0}' is compiled untyped, which costs speed, not correctness: too many types cross between it and untyped code through '{1}' at {2} to analyze."),
     (100012, Category::Error, "This non-null assertion always fails under --aot: the value is always {0}."),
     (100013, Category::Error, "This always throws a TypeError under --aot: {2} expects '{1}' and always gets {0}."),
@@ -152,6 +152,19 @@ static OWN_MESSAGES: &[(u32, Category, &str)] = &[
     (100089, Category::Warning, "The compiler has no layout for '{0}', so the properties of its objects are looked up by name."),
     (100090, Category::Warning, "The compiler cannot prove that what '{0}' holds is of its type '{1}', so its properties are looked up by name."),
     (100091, Category::Message, "The object is made by Object.create here and has no layout: {0}."),
+    (100092, Category::Message, "'{0}' is declared '{1}'."),
+    (100093, Category::Message, "'{0}' has no type annotation, so it is 'any'."),
+    (100094, Category::Message, "JSON.parse() returns 'any'."),
+    (100095, Category::Message, "'{0}' returns '{1}'."),
+    (100096, Category::Message, "'{0}' is declared to return '{1}'."),
+    (100097, Category::Message, "'{0}' is cast to '{1}'."),
+    (100099, Category::Message, "'{0}' is imported from '{1}', which has no types."),
+    (100100, Category::Message, "'{0}' is declared '{1}' in a declaration file."),
+    (100101, Category::Message, "The value is used as '{0}' here, so the compiler cannot rely on the layout of that type."),
+    (100102, Category::Message, "'{0}' is declared in a declaration file, so the compiler has to assume that code it cannot see creates its objects."),
+    (100103, Category::Message, "'{0}' has no type annotation. Its type, '{1}', comes from the function that this callback is passed to, and the compiler cannot see every caller."),
+    (100104, Category::Message, "'{0}' is declared to return '{1}', but code that the compiler cannot see creates the value, so its type is only a prediction."),
+    (100105, Category::Message, "The object is made by Object.create here, with a prototype of its own, so every access through its type tests the object first."),
 ];
 
 const _: () = {

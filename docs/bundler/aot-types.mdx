@@ -28,16 +28,21 @@ for (let id = 0; id < 1000; id++) accounts.push(new Account(id, id % 100));
 console.log(total(accounts));
 ```
 
+`bun check --aot` checks a program the way `bun compile` does and builds nothing. With `--aot-explain` it lists every property access that the compiler can't compile with your types. This program has none.
+
 ```bash terminal icon="terminal"
 bun check --aot ./account.ts --aot-explain
 ```
 
 ```txt
-aot: there is no place where the compiler gives something up
+aot: every property access is typed: there is nothing to explain
+aot: 100% typed
 ```
 
+The types buy three things here.
+
 - **A fixed layout.** Every `Account` has the same two fields at the same offsets. `account.balance` is a load from a known offset, with no lookup and no cache to check.
-- **Unboxed numbers.** `balance` is stored as a raw 64-bit number, not as a boxed value.
+- **Unboxed numbers.** `balance` is stored as a raw 64-bit number. Untyped code stores a value that also says what kind of value it is, and has to test and unpack it before it can add.
 - **Direct calls.** The compiler knows which function `total(accounts)` calls, so it can call that function directly or inline it.
 
 Here is the same program as JavaScript.
@@ -66,15 +71,17 @@ bun check --aot ./account.js --aot-explain
 ```
 
 ```txt
-aot: 1 place where the compiler gives something up, 1 with a cost that can be counted. The most expensive first:
+aot: 0.0% typed (0 of 3 property accesses)
+aot: 1 cause, the most expensive first. Fix one, then run this again: a fix can uncover another cause behind it.
 
-  1. account.js:1:1 [untyped-package]
+  1. javascript-file account.js: fixing it types up to 3 accesses (+100.0 points)
      'account.js' is JavaScript, so it is compiled without types.
-     cost: 3 reads by name, 2 stores by name, 3 calls by name in 3 functions (2 run only while the program starts)
-     fix: turn the file into TypeScript
+     not typed because of it: account.js:3:5, account.js:4:5, account.js:10:42
+     fix: rename the file to .ts and annotate its functions
+     https://bun.com/docs/bundler/aot-explain#javascript-file
 ```
 
-Both programs compile, and both print `49500`. In the second one, the compiled code looks up `balance` by name on every iteration of the loop.
+Both programs compile, and both print `49500`. In the second one, the compiled code looks up `balance` by name on every iteration of the loop. [Get more of your program typed](/bundler/aot-explain) explains the report.
 
 ## Where untyped values meet typed code
 
@@ -347,7 +354,9 @@ TypeError: id: Invalid input: expected number, received string
 ]
 ```
 
-If the value matches, `Bun.validate` returns a copy of it, nested objects included. It never changes the value you passed in. The copy keeps properties that `User` doesn't declare, such as `role`. To reject them, validate against `User & Schema.Strict`.
+If the value matches, `Bun.validate` returns a copy of it, nested objects included. It never changes the value you passed in. The compiler trusts the copy: `User` keeps its layout, so reading `user.id` is still a load from a known offset.
+
+The copy keeps properties that `User` doesn't declare, such as `role`. To reject them, validate against `User & Schema.Strict`.
 
 If the value doesn't match, `Bun.validate` throws a `TypeError`. Its `issues` property lists every mismatch, not only the first. `Schema` only exists in types, so there's no class to test with `instanceof`. Test for the property.
 
@@ -383,7 +392,7 @@ error: /path/to/job.ts:5: --aot does not support a type that cannot be validated
 
 Declare what the data holds. JSON has no dates, so a date arrives as a `string`.
 
-`Bun.validate` needs `--aot`. Plain `bun run` removes your types before the program starts, so `Bun.validate` has nothing to check against and throws a `TypeError` that says so. That error has no `issues`. The same goes for `bun test`, `bun build` and `bun compile --no-aot`. While you develop, use `bun run --aot` and `bun test --aot`. `bun --aot --watch` and `bun --aot --hot` work too.
+`Bun.validate` doesn't need `--aot`. It checks the same way under `bun run`, `bun test` and `bun compile --no-aot`. `bun build` puts the check into the file that it writes, for Bun, for Node.js and for the browser, which adds about 18 KB. If another tool removes the types from your source first, the call has no type argument left. It then throws a `TypeError` that has no `issues`.
 
 [Validate data by its type](/bundler/executables#validate-data-by-its-type) lists the types that `Bun.validate` can check. It also lists the `Schema` types for rules that TypeScript can't express, such as a whole number or a minimum length.
 
@@ -441,7 +450,7 @@ When the compiler can't use a type, it doesn't stop. It compiles that part like 
 
 | Pattern                                                             | What it costs                                                          | Rule              |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------- |
-| `JSON.parse(text) as Config`                                        | Properties of `Config` and of every type inside it are looked up by name                | `external-type`   |
+| `JSON.parse(text) as Config`                                        | `Config` and every type inside it lose their layout                                     | `external-type`   |
 | An `any` that is returned or passed as a declared type              | Every access through that type tests the object first                  | `open-layout`     |
 | `class HttpError extends Error`, or a base class from JavaScript    | The class has no fixed layout                                          | `untyped-base`    |
 | A member whose name is computed: `[hook]() {}`                      | Declared fields of the class are looked up by name                     | `lost-layout`     |
@@ -482,6 +491,8 @@ function fromPlugin(value: any): Point {
   return { x: Number(value.x), y: Number(value.y) }; // [!code ++]
 }
 ```
+
+`return Bun.validate<Point>(value)` works too. It throws if `value` isn't a `Point`, where `Number()` turns a wrong value into `NaN`.
 
 ### Say what you freeze
 

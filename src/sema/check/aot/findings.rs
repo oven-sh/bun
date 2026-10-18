@@ -6,7 +6,7 @@ use crate::check::spans::token_end;
 use crate::check::{Checker, CompilerDiagnostic};
 use crate::atom::Atom;
 use crate::bind::{Decl, SymFlags, SymbolId};
-use crate::hir::{ClassId, ExprId, ExprKind, FileKind, ImportEqualsTarget, StmtKind};
+use crate::hir::{ClassId, ExprId, ExprKind, FileKind, ImportEqualsTarget, PatId, StmtKind};
 use crate::program::FileId;
 use crate::resolve::get_relative_path_from_directory;
 use crate::types::{Origin, TypeData, TypeId};
@@ -15,6 +15,14 @@ use bun_core::strings;
 
 const MAX_REASONS_SHOWN: usize = 6;
 const MAX_STEPS_FOLLOWED: usize = 64;
+const RUNTIME_PACKAGES: [&[u8]; 4] = [b"bun-types", b"@types/bun", b"@types/node", b"undici-types"];
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum ObjectOrigin {
+    Runtime,
+    Package,
+    Program,
+}
 
 #[derive(Default)]
 struct UntypedPackage {
@@ -156,7 +164,7 @@ impl<'p, 's> Checker<'p, 's> {
         found.into_iter().map(|(reported, at, name)| (reported, self.finding_at(at, 100063, vec![name]))).collect()
     }
 
-    fn steps_to_external_source(&self, marks: &FxHashMap<Identity, ExternalMark>, identity: Identity, declared: Place) -> Vec<CompilerDiagnostic> {
+    pub(super) fn steps_to_external_source(&self, marks: &FxHashMap<Identity, ExternalMark>, identity: Identity, declared: Place) -> Vec<CompilerDiagnostic> {
         let mut steps = Vec::new();
         let mut next = Some(identity);
         while let Some(mark) = next.take().and_then(|identity| marks.get(&identity)).filter(|_| steps.len() < MAX_STEPS_FOLLOWED) {
@@ -262,52 +270,90 @@ impl<'p, 's> Checker<'p, 's> {
         (!reasons.is_empty() || !is_created_elsewhere).then_some(reasons)
     }
 
-    pub fn find_fixable_untyped_receivers(&mut self, receivers: &[(FileId, ExprId)], classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> Vec<bool> {
-        let mut known: FxHashMap<(FileId, SymbolId), bool> = FxHashMap::default();
-        let mut answers = Vec::with_capacity(receivers.len());
-        for &(file, receiver) in receivers {
-            let symbol = match self.hir(file)[receiver].kind {
-                ExprKind::Ident(_) => self.bound(file).expr_symbol[receiver.idx()],
-                _ => SymbolId::NONE,
-            };
-            let answer = match known.get(&(file, symbol)).filter(|_| symbol.is_some()) {
-                Some(&answer) => answer,
-                None => self.is_fixable_untyped_receiver(file, receiver, classes_without_layout),
-            };
-            if symbol.is_some() {
-                known.insert((file, symbol), answer);
-            }
-            answers.push(answer);
+    fn file_declaring(&self, ty: TypeId) -> Option<FileId> {
+        if let Some(declared) = self.type_declaration_site(ty) {
+            return Some(declared.file);
         }
-        answers
+        match *self.data(ty) {
+            TypeData::Anon { origin: Origin::Mapped(file, _), .. } => Some(file),
+            TypeData::Anon { origin: Origin::ClassStatic(sym) | Origin::Function(sym) | Origin::EnumObject(sym) | Origin::Module(sym), .. } => Some(sym.file),
+            TypeData::Anon { origin: Origin::Namespace { module, .. }, .. } => Some(module.file),
+            _ => None,
+        }
     }
 
-    fn is_fixable_untyped_receiver(&mut self, file: FileId, receiver: ExprId, classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> bool {
-        self.prepare_enclosing(file, receiver);
-        let ty = self.type_of_expr(file, receiver);
+    pub fn origin_of_declarations_in(&self, file: FileId) -> ObjectOrigin {
+        let module = self.files().module(file);
+        if module.is_lib || module.builtin.is_some() {
+            return ObjectOrigin::Runtime;
+        }
+        let nearest_package = module.package_json_directory;
+        if module.hir.kind == FileKind::Declaration && nearest_package.is_some() && RUNTIME_PACKAGES.contains(&package_name(self.atoms().bytes(nearest_package))) {
+            return ObjectOrigin::Runtime;
+        }
+        if module.is_dependency && module.package_directory.is_some() { ObjectOrigin::Package } else { ObjectOrigin::Program }
+    }
+
+    pub fn class_declaration_site(&self, class: (FileId, ClassId)) -> Place {
+        self.class_site(class)
+    }
+
+    pub fn file_declaring_objects_of(&mut self, file: FileId, holder: ExprId, pattern: PatId) -> Option<FileId> {
+        let ty = if holder.is_some() {
+            self.prepare_enclosing(file, holder);
+            self.type_of_expr(file, holder)
+        } else {
+            self.type_of_pat(file, pattern)
+        };
         let ty = self.reduced(ty);
-        let mut parts = Vec::new();
-        for part in self.parts(ty).to_vec() {
-            match self.data(part) {
-                TypeData::Intersection(constituents) => parts.extend(constituents.iter().copied()),
-                _ => parts.push(part),
+        for &part in self.parts(ty) {
+            let constituents = match self.data(part) {
+                TypeData::Intersection(constituents) => &constituents[..],
+                _ => std::slice::from_ref(&part),
+            };
+            let declaring = constituents.iter().filter(|&&part| self.may_hold_objects(part)).filter_map(|&part| self.file_declaring(part));
+            if let Some(found) = declaring.into_iter().find(|&declared_in| self.origin_of_declarations_in(declared_in) == ObjectOrigin::Package) {
+                return Some(found);
             }
         }
-        parts.into_iter().any(|part| {
-            if self.is_uninformative(part) {
-                return true;
-            }
-            if !self.may_hold_objects(part) || self.type_declaration_site(part).is_some_and(|declared| self.hir(declared.file).kind == FileKind::Declaration || self.is_untyped_file(declared.file)) {
-                return false;
-            }
-            self.is_tainted(part)
-                || self.class_for_type(part, false).is_some_and(|class| classes_without_layout.contains(&class))
-                || matches!(self.data(part), TypeData::TypeParam(..))
-                || self.members(part).is_some_and(|members| !members.shape().index.is_empty())
-        })
+        None
     }
 
-    fn declaration_behind_receiver(&mut self, file: FileId, receiver: ExprId) -> Option<CompilerDiagnostic> {
+    pub fn origin_of_objects(&mut self, ty: TypeId) -> ObjectOrigin {
+        if let Some((alias, _)) = self.alias_of_type(ty)
+            && self.hir(alias.file).kind == FileKind::Declaration
+        {
+            return self.origin_of_declarations_in(alias.file);
+        }
+        let ty = self.reduced(ty);
+        let mut origin = None;
+        for &part in self.parts(ty) {
+            let constituents = match self.data(part) {
+                TypeData::Intersection(constituents) => &constituents[..],
+                _ => std::slice::from_ref(&part),
+            };
+            for &part in constituents {
+                if self.is_uninformative(part) {
+                    return ObjectOrigin::Program;
+                }
+                if !self.may_hold_objects(part) {
+                    continue;
+                }
+                let Some(declared_in) = self.file_declaring(part) else { return ObjectOrigin::Program };
+                let is_declared_without_code = self.hir(declared_in).kind == FileKind::Declaration || self.is_untyped_file(declared_in);
+                let is_dictionary = !is_declared_without_code && self.members(part).is_some_and(|members| !members.shape().index.is_empty() && members.shape().props.is_empty());
+                let of_part = match is_declared_without_code {
+                    true => self.origin_of_declarations_in(declared_in),
+                    false if is_dictionary => ObjectOrigin::Runtime,
+                    false => self.class_for_type(part, false).map_or(ObjectOrigin::Program, |class| self.origin_of_untyped_base(class)),
+                };
+                origin = origin.max(Some(of_part));
+            }
+        }
+        origin.unwrap_or(ObjectOrigin::Runtime)
+    }
+
+    pub(super) fn declaration_behind_receiver(&mut self, file: FileId, receiver: ExprId) -> Option<CompilerDiagnostic> {
         let ty = self.type_of_expr(file, receiver);
         let ty = self.reduced(ty);
         let mut found = None;
@@ -340,11 +386,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.finding_at(Place { file: declared_in, pos: self.hir(declared_in)[pat].pos }, 100090, vec![name, type_name]))
     }
 
-    pub fn explain_untyped_values(&mut self, values: &[(FileId, ExprId)], classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> Vec<Vec<CompilerDiagnostic>> {
-        let marks = self.external_marks().0;
-        values.iter().map(|&(file, value)| self.untyped_receiver_reasons(file, value, &marks, classes_without_layout).unwrap_or_default()).collect()
-    }
-
     pub fn find_accesses_by_name(&mut self, accesses: &[(FileId, ExprId, u32, Vec<u8>)], classes_without_layout: &FxHashSet<(FileId, ClassId)>, scopes: &Scopes) -> (Vec<CompilerDiagnostic>, Vec<(Place, Option<CompilerDiagnostic>)>) {
         let marks = self.external_marks().0;
         let (mut found, mut unexplained) = (Vec::new(), Vec::new());
@@ -367,7 +408,7 @@ impl<'p, 's> Checker<'p, 's> {
         (found, unexplained)
     }
 
-    fn import_site(&self, file: FileId, specifier: Atom) -> Place {
+    pub(super) fn import_site(&self, file: FileId, specifier: Atom) -> Place {
         let hir = self.hir(file);
         let statement = hir.ids(hir.body).find(|&stmt| match hir[stmt].kind {
             StmtKind::Import(import) => hir[import].spec == specifier,

@@ -468,6 +468,9 @@ impl FuncBuilder {
                 self.func.blocks[b].term = Some(Term::Unreachable);
             }
         }
+        self.func.accesses_by_name.sort_unstable_by_key(|access| access.value);
+        self.func.accesses_by_name.dedup_by_key(|access| access.value);
+        self.func.accesses_by_name.shrink_to_fit();
         settle(&mut self.func.values, &SPARE_VALUES);
         settle(&mut self.func.blocks, &SPARE_BLOCKS);
         if self.defs.0.capacity() <= MAX_SPARE_DEFS {

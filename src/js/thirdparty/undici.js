@@ -383,13 +383,15 @@ function onPong(event) {
   if (pongChannel.hasSubscribers) pongChannel.publish({ payload: toBuffer(event.data), websocket: event.target });
 }
 
-class WebSocket extends BunWebSocket {
-  constructor(url, protocols) {
-    super(url, protocols);
-    this.addEventListener("ping", onPing);
-    this.addEventListener("pong", onPong);
-  }
-}
+const WebSocket =
+  BunWebSocket &&
+  class WebSocket extends BunWebSocket {
+    constructor(url, protocols) {
+      super(url, protocols);
+      this.addEventListener("ping", onPing);
+      this.addEventListener("pong", onPong);
+    }
+  };
 
 function ping(ws, body) {
   if (Buffer.isBuffer(body)) {

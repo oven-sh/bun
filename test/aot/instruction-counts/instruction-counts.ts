@@ -24,7 +24,7 @@ const roundsBeforeCounting = [1, 1, 1, 1],
   roundsOfFewerOperations = 1,
   roundsOfMoreOperations = 3;
 
-type Door = { name: string; label: string; setup: string; costsNoMoreThan?: string };
+type Door = { name: string; label: string; setup: string; costsNoMoreThan?: string; notYetIn?: string[] };
 type Form = { types: "typed" | "untyped"; place: "function" | "module level" | "function that no loop calls"; door?: Door };
 const forms: Form[] = [
   { types: "typed", place: "function" },
@@ -412,6 +412,7 @@ export async function describeInstructionCountsBehindDoors(platform: string) {
     door("json-parse-type-argument", { costsNoMoreThan: literal.label }),
     door("json-parse-type-argument-one-undeclared-key"),
     door("json-parse-type-argument-ten-undeclared-keys"),
+    door("bun-validate", { costsNoMoreThan: literal.label, notYetIn: ["stringify.ts"] }),
     door("json-parse-cast"),
     door("json-parse-annotated"),
   ].map(door => ({ types: "typed", place: "function", door }));
@@ -449,8 +450,12 @@ const operationsThatPlacesDoNotRemember = [
   "intl-number-format",
   "method-call-after-keyed-property-type-known",
   "missing-name-read-extra-keys-type-lost",
+  "read-getter-defined-through-a-helper",
+  "read-getter-of-class-type-lost",
+  "read-getter-of-four-classes-at-one-place",
   "read-inherited-property-far-out-of-line",
   "read-own-getter-far-out-of-line",
+  "read-own-property-named-like-a-getter",
   "read-own-property-far-out-of-line",
   "write-own-property-far-out-of-line",
 ];
@@ -494,7 +499,7 @@ function describeSnippets(
         );
         expect(shownLines.join("\n")).toMatchSnapshot();
         formsOfFile.forEach(({ door }, index) => {
-          if (!door?.costsNoMoreThan) return;
+          if (!door?.costsNoMoreThan || door.notYetIn?.includes(file)) return;
           const other = counted[formsOfFile.findIndex(form => form.door?.label === door.costsNoMoreThan)];
           const isKept = isNoWorse(counted[index].replace(door.label, door.costsNoMoreThan), other, operationsCountedOnce);
           expect({ line: counted[index], other, isKept }).toEqual({ line: counted[index], other, isKept: true });

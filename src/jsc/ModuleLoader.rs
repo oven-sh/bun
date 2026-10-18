@@ -138,6 +138,46 @@ unsafe extern "Rust" {
     ) -> Option<ResolvedSource>;
 }
 
+fn name_that_removed(module: &[u8]) -> Option<&'static [u8]> {
+    unsafe extern "C" {
+        static Bun__islands: core::ffi::c_char;
+    }
+    const HEADER: &core::ffi::CStr = c"bun-trimmed 1\n";
+    // SAFETY: a NUL ends what the executable's writer leaves there, and an empty text ends the list.
+    let mut texts = unsafe {
+        let start = &raw const Bun__islands;
+        let first = core::ffi::CStr::from_ptr(start).to_bytes();
+        let mut next = start.add(first.strip_prefix(HEADER.to_bytes()).map(|_| HEADER.to_bytes().len())?);
+        core::iter::from_fn(move || {
+            let text = core::ffi::CStr::from_ptr(next).to_bytes();
+            next = next.add(text.len() + 1);
+            Some(text).filter(|text| !text.is_empty())
+        })
+    };
+    while let (Some(removed), Some(name)) = (texts.next(), texts.next()) {
+        if removed == module {
+            return Some(name);
+        }
+    }
+    None
+}
+
+pub fn removed_by_trimming(global: &JSGlobalObject, module: &[u8]) -> Option<ErrorableResolvedSource> {
+    let name = name_that_removed(module)?;
+    Some(ErrorableResolvedSource::err(
+        global
+            .err(
+                jsc::ErrCode::ERR_MODULE_NOT_FOUND,
+                format_args!(
+                    "Cannot find module '{}': compile.trim removed \"{}\" from this executable",
+                    bstr::BStr::new(module),
+                    bstr::BStr::new(name),
+                ),
+            )
+            .to_js(),
+    ))
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: &VirtualMachine,
@@ -146,6 +186,10 @@ extern "C" fn Bun__fetchBuiltinModule(
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
+    if let Some(removed) = removed_by_trimming(global_object, specifier.to_utf8().slice()) {
+        *ret = removed;
+        return true;
+    }
     match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
         Some(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);

@@ -13,7 +13,6 @@ const textsOf: Record<string, string[]> = {
   SQLite: ["malformed database schema", "unable to open database file", "SQLite format 3"],
   TinyCC: ["cannot use local functions", "invalid operand types for binary operation"],
   "lol-html": ["The selector is empty", "Unexpected token in selector"],
-  lsquic: ["lsquic_engine"],
 };
 const isLinked = (library: string) => !(isMacOS && library === "SQLite");
 

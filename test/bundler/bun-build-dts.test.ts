@@ -75,7 +75,7 @@ async function build(cwd: string, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-const leftOut = (why: string) => `warn: --dts: the typed JavaScript that --aot compiles a package from is left out: ${why}\n`;
+const leftOut = (why: string) => `warn: the typed JavaScript that --aot compiles a package from is left out: ${why}\n`;
 
 function written(folder: string) {
   const files = (readdirSync(folder, { recursive: true }) as string[]).filter(name => name.endsWith(".d.ts")).sort();

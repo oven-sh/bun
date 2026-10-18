@@ -20,7 +20,7 @@ const isInteger = Number.isInteger;
 let internalFieldTuple;
 
 function initializeSQL() {
-  ({ 0: SQL, 1: internalFieldTuple } = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor"));
+  ({ 0: SQL, 1: internalFieldTuple } = $newCppFunction("JSSQLStatement.cpp", "jsCreateSQLStatementConstructor", 0)());
 }
 
 function createChangesObject() {

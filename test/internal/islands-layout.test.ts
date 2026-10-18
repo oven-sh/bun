@@ -127,6 +127,26 @@ describe("the stretches of an executable that can go", () => {
   });
 });
 
+test("the table says which doors throw and which answer undefined", () => {
+  const table: Table = {
+    stub: 0x1000,
+    smallestDoor: { exit: 12, return: 8 },
+    features: ["a", "b"],
+    conditions: [],
+    islands: [{ start: 0x4000, end: 0x8000, features: "a" }],
+    doors: [
+      { address: 0x2000, feature: "a", whenShut: "exit", answers: "throw" },
+      { address: 0x2100, feature: "a", whenShut: "exit" },
+      { address: 0x2200, feature: "a", whenShut: "return" },
+      { address: 0x2300, feature: "b", whenShut: "exit", answers: "undefined" },
+      { address: 0x2400, feature: "b", whenShut: "exit", answers: "throw" },
+    ],
+  };
+  expect(decodeTable(encodeTable(table))).toEqual(table);
+  const silent = { ...table, doors: table.doors.map(({ answers, ...door }) => door) };
+  expect(encodeTable(table).length - encodeTable(silent).length).toBe(4 + 5);
+});
+
 describe("the stretches that can only be overwritten", () => {
   test("what only features need and no stretch holds is listed, however small, wherever it has bytes", () => {
     const layout = laidOut([
@@ -493,15 +513,15 @@ describe("the table of islands", () => {
 
   describe("public names", () => {
     const publicNames = [
-      { name: "cli", features: ["tools"], tolerates: [] },
-      { name: "engine", features: ["jit", "text"], tolerates: ["tools"] },
+      { name: "cli", features: ["tools"], tolerates: [], modules: [] },
+      { name: "engine", features: ["jit", "text"], tolerates: ["tools"], modules: ["bun:jit", "node:text"] },
     ];
     const plain = encodeTable(small);
 
     test("are written behind everything else", () => {
       const written = encodeTable({ ...small, publicNames });
       expect(written.subarray(0, plain.length)).toEqual(plain);
-      expect(written.subarray(plain.length).toString("hex")).toBe("00" + "00" + "02" + "03636c69" + "0100" + "00" + "06656e67696e65" + "020102" + "0100");
+      expect(written.subarray(plain.length).toString("hex")).toBe("00" + "00" + "02" + "03636c69" + "0100" + "00" + "00" + "06656e67696e65" + "020102" + "0100" + "02" + "0762756e3a6a6974" + "096e6f64653a74657874");
       expect(decodeTable(written)).toEqual({ ...small, publicNames });
       expect(decodeTable(inItsRoom(written))).toEqual({ ...small, publicNames });
     });
@@ -530,9 +550,9 @@ describe("the table of islands", () => {
     });
 
     test("what cannot be said or read is refused", () => {
-      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: ["other"], tolerates: [] }] })).toThrow("the table does not list other");
-      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: ["tools"], tolerates: ["other"] }] })).toThrow("the table does not list other");
-      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: [], tolerates: [] }] })).toThrow("the public name cli has no feature");
+      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: ["other"], tolerates: [], modules: [] }] })).toThrow("the table does not list other");
+      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: ["tools"], tolerates: ["other"], modules: [] }] })).toThrow("the table does not list other");
+      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: [], tolerates: [], modules: [] }] })).toThrow("the public name cli has no feature");
       const written = encodeTable({ ...small, publicNames });
       for (let length = plain.length + 3; length < written.length; length++) expect(() => decodeTable(written.subarray(0, length))).toThrow("the table is malformed");
     });

@@ -7,3 +7,8 @@ function door(i: number): Order {
   if (i & 1) order.note = "note";
   return order;
 }
+function doorForUser(i: number): User {
+  const user = { id: i, name: "n" + i };
+  label(user);
+  return user;
+}

@@ -152,7 +152,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     CodecOptions options = parseCodecOptions(lexicalGlobalObject, callFrame->argument(1), std::nullopt);
     RETURN_IF_EXCEPTION(scope, {});
 
-    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), true, options.highWaterMark, false, 0);
+    void* coder = CompressionStreamCoder__create(lexicalGlobalObject, callFrame, static_cast<uint8_t>(*format), true, options.highWaterMark, false, 0);
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize decompressor"_s);
         return {};

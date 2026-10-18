@@ -523,7 +523,7 @@ export function clamp(value: number, limit = LIMIT): number {
     expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
   });
 
-  const leftOut = "warn: --dts: the typed JavaScript that --aot compiles a package from is left out: ";
+  const leftOut = "warn: the typed JavaScript that --aot compiles a package from is left out: ";
   test.each([
     ["--minify", "--minify"],
     ["--splitting", "--splitting"],

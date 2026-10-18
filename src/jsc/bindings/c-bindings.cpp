@@ -1,5 +1,8 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <cstdio>
 
 #if !OS(WINDOWS)
@@ -1215,13 +1218,30 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 #endif // OS(DARWIN) signpost code
 
 extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
+extern "C" __attribute__((weak)) const char Bun__islands[] = "";
 
-extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
+static JSC::EncodedJSValue throwThatItWasRemoved(JSC::JSGlobalObject* globalObject, const WTF::String& description, bool wasRemovedByName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* error = JSC::createError(globalObject, wasRemovedByName ? WTF::makeString("compile.trim removed "_s, description, " from this executable"_s) : WTF::makeString("this executable was built with --compile-trim-runtime, without "_s, description));
+    error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
+    JSC::throwException(globalObject, scope, error);
+    return {};
+}
+
+extern "C" JSC::EncodedJSValue Bun__trimmedOut(uint32_t door, void* secondArgumentOfTheDoor)
 {
     const char* description = Bun__trimmedFeatures;
     for (uint32_t feature = door & 2047; feature--;)
         description += strlen(description) + 1;
     const bool wasRemovedByName = door & 2048;
+#if !OS(WINDOWS)
+    if (door >> 30 == 1)
+        return throwThatItWasRemoved(static_cast<JSC::CallFrame*>(secondArgumentOfTheDoor)->jsCallee()->globalObject(), WTF::String::fromUTF8(description), wasRemovedByName);
+#else
+    UNUSED_PARAM(secondArgumentOfTheDoor);
+#endif
     const auto print = [](const char* text) {
 #if OS(WINDOWS)
         (void)_write(2, text, static_cast<unsigned>(strlen(text)));
@@ -1231,6 +1251,12 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
             (void)!write(STDERR_FILENO, text, strlen(text));
 #endif
     };
+    if (door >> 30 == 2) {
+        print("warning: this executable was built with --compile-trim-runtime, without ");
+        print(description);
+        print(", and something has just asked for it: it finds undefined.\n");
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
     const char* actsAsBun = getenv("BUN_BE_BUN");
     if (wasRemovedByName) {
         print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but compile.trim removed " : "error: compile.trim removed ");
@@ -1247,7 +1273,7 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
     char digits[9];
     size_t first = sizeof(digits) - 1;
     digits[first] = 0;
-    for (uint32_t number = door >> 12; number || !digits[first]; number /= 10)
+    for (uint32_t number = door >> 12 & 0x3ffff; number || !digits[first]; number /= 10)
         digits[--first] = static_cast<char>('0' + number % 10);
     print(", and something has just asked for it.");
     if (getenv("BUN_OPTIONS"))

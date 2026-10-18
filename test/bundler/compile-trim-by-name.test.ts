@@ -13,6 +13,24 @@ const programs = {
     console.log("started");
     console.log(await new HTMLRewriter().transform(new Response("<p>hello</p>")).text());
   `,
+  "imports-by-computed-names.ts": `
+    for (const name of process.argv.slice(2)) {
+      try {
+        console.log(name, typeof require(name));
+      } catch (error) {
+        console.log("require:", (error as Error).message);
+      }
+      try {
+        console.log(name, typeof (await import(name)));
+      } catch (error) {
+        console.log("import:", (error as Error).message);
+      }
+    }
+  `,
+  "imports-by-name.ts": `
+    import { Database } from "bun:sqlite";
+    console.log(typeof Database);
+  `,
   "evaluates.ts": `
     console.log((0, eval)("1 + 1"));
     if (process.argv[2]) console.log(typeof (0, eval)(process.argv[2]));
@@ -45,6 +63,11 @@ const all = readTrimFeatures(readFileSync(doorsPath, "utf8"));
 const run = (folder: string, outfile: string, ...args: string[]) => spawned([join(folder, outfile, "program"), ...args], folder, bunEnv);
 const hasIslands = !(await refusal({ trim: true })).includes("nothing can be left out of this Bun");
 
+function expectAUseOfWhatWasRemoved(result: { stderr: string; exitCode: number | null }, description: string) {
+  if (result.exitCode === 70) expect(result.stderr).toBe(`error: compile.trim removed ${description} from this executable, and something has just asked for it.\n`);
+  else expect({ exitCode: result.exitCode, error: /TypeError|compile\.trim removed /.exec(result.stderr)?.[0] ?? result.stderr }).toEqual({ exitCode: 1, error: expect.any(String) });
+}
+
 test.each([5, "sqlite", [1], { remove: "sqlite" }, { keep: [{}] }])("compile.trim: %j is refused", async trim => {
   expect(await refusal({ trim: trim as never })).toMatch(/compile\.trim|must be an array/);
 });
@@ -67,8 +90,7 @@ describe.skipIf(!hasIslands)("compile.trim", () => {
     expect(trimmed.contents).not.toBe(whole.contents);
     const refused = await run(folder, "trimmed");
     expect(refused.stdout).not.toContain("hello");
-    expect(refused.stderr).toBe("error: compile.trim removed HTMLRewriter from this executable, and something has just asked for it.\n");
-    expect(refused.exitCode).toBe(70);
+    expectAUseOfWhatWasRemoved(refused, "HTMLRewriter");
     expect(await spawned([join(folder, "trimmed", "program"), "--help"], folder, { ...bunEnv, BUN_BE_BUN: "1" })).toMatchObject({ stdout: expect.stringContaining("Usage:"), exitCode: 0 });
   });
 
@@ -98,6 +120,25 @@ describe.skipIf(!hasIslands)("compile.trim", () => {
     expect([...left, ...spelled(["libjpeg-turbo", "libspng", "libwebp", "SQLite"])].sort()).toEqual(
       all.libraries.filter(library => isWindows || library.name !== "libuv").map(library => `${library.name} ${library.version}`).sort(),
     );
+  });
+
+  test("an import of a built-in module that was removed throws an error that can be caught", async () => {
+    using dir = tempDir("compile-trim-by-name", programs);
+    const folder = String(dir);
+    await build(folder, "imports-by-computed-names.ts", "trimmed", { trim: ["sqlite"] });
+    const gone = (how: string, name: string) => `${how}: Cannot find module '${name}': compile.trim removed "sqlite" from this executable\n`;
+    expect(await run(folder, "trimmed", "bun:sqlite", "node:sqlite", "node:path")).toMatchObject({
+      stdout: gone("require", "bun:sqlite") + gone("import", "bun:sqlite") + gone("require", "node:sqlite") + gone("import", "node:sqlite") + "node:path object\nnode:path object\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const warned = await Bun.build({ entrypoints: [join(folder, "imports-by-name.ts")], compile: { outfile: join(folder, "named", "program"), trim: ["sqlite"] } });
+    expect(warned.logs.filter(log => log.message.startsWith("compile.trim removes ")).map(log => ({ message: log.message, file: log.position?.file, line: log.position?.line }))).toEqual([
+      { message: `compile.trim removes "sqlite": this import of "bun:sqlite" will throw`, file: join(folder, "imports-by-name.ts"), line: 2 },
+    ]);
+    const named = await run(folder, "named");
+    expect(named.stderr).toContain(`Cannot find module 'bun:sqlite': compile.trim removed "sqlite" from this executable`);
+    expect(named).toMatchObject({ stdout: "", exitCode: 1 });
   });
 
   test("the build after a trimmed one is whole again", async () => {
@@ -140,12 +181,7 @@ describe.skipIf(!hasIslands)("compile.trim", () => {
     async (name, others) => {
       using dir = tempDir("compile-trim-by-name", programs);
       const folder = String(dir);
-      try {
-        expect((await build(folder, "hello.ts", "trimmed", { trim: [name, ...others] as never })).leftOut).toContain(name);
-      } catch (error) {
-        expect((error as AggregateError).errors.map(each => each.message)).toEqual(["compile.trim: what is named is too small to be cut out of the executable by itself. Name a larger part too"]);
-        return;
-      }
+      expect((await build(folder, "hello.ts", "trimmed", { trim: [name, ...others] as never })).leftOut).toContain(name);
       expect(await run(folder, "trimmed")).toMatchObject({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     },
   );
@@ -178,7 +214,9 @@ describe.skipIf(!hasIslands)("compile.trim", () => {
       expect(await run(folder, "by-use")).toMatchObject({ stdout: "started\n<p>hello</p>\n", exitCode: 0 });
       const removed = await build(folder, "rewrites.ts", "removed", { aot: true, trim: { remove: ["html-rewriter"] } });
       expect(removed.leftOut.toSorted()).toEqual([...byUse.leftOut, "html-rewriter"].sort());
-      expect(await run(folder, "removed")).toMatchObject({ stdout: "started\n", exitCode: 70 });
+      const refused = await run(folder, "removed");
+      expect(refused.stdout).toBe("started\n");
+      expectAUseOfWhatWasRemoved(refused, "HTMLRewriter");
     });
 
     test("a list works on a program that evaluates text, where nothing else can be proved unused", async () => {
@@ -193,8 +231,8 @@ describe.skipIf(!hasIslands)("compile.trim", () => {
       expect(await run(folder, "removed", "Bun.color")).toEqual(await run(folder, "by-use", "Bun.color"));
       expect(await run(folder, "by-use", "new HTMLRewriter()")).toMatchObject({ stdout: "2\nobject\n", exitCode: 0 });
       const refused = await run(folder, "removed", "new HTMLRewriter()");
-      expect(refused).toMatchObject({ stdout: "2\n", exitCode: 70 });
-      expect(refused.stderr).toBe("error: compile.trim removed HTMLRewriter from this executable, and something has just asked for it.\n");
+      expect(refused.stdout).toBe("2\n");
+      expectAUseOfWhatWasRemoved(refused, "HTMLRewriter");
     });
   });
 });

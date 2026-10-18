@@ -393,6 +393,7 @@ const kSettingsAckGraceTimer = Symbol("settingsAckGraceTimer");
 // node: a socket can be bound to at most one Http2Session (ERR_HTTP2_SOCKET_BOUND).
 const kBoundSession = Symbol("boundSession");
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
+const kErrorMonitor = Symbol.for("events.errorMonitor");
 let util; // lazy node:util (only needed for the custom inspect output)
 let addAbortListener; // lazy internal/abort_listener
 let priorityDeprecationWarned = false;
@@ -2397,7 +2398,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // backpressures instead of the session buffering the whole body.
     this.on("pause", streamOnPause);
     this.on("resume", streamOnResume);
-    this.on(EventEmitter.errorMonitor, streamOnErrored);
+    this.on(kErrorMonitor, streamOnErrored);
   }
 
   get scheme() {

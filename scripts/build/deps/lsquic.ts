@@ -137,6 +137,25 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // lsquic_engine_packet_in() puts a connection on the Tickable Queue also
+    // while the running pass ticks it, or after that. The pass then ticked it
+    // a second time and linked it on its ticked list twice: an endless loop,
+    // or a failed assert in a debug build. A Bun.serve handler that runs the
+    // event loop (Bun.build() with an async plugin setup) gets a packet read
+    // in the middle of a pass. Such a connection now waits on the queue for
+    // the next pass.
+    "patches/lsquic/tick-once-per-pass.patch",
+    // A request to make a connection tickable was skipped whenever the engine
+    // was processing (ENPUB_PROC), whichever connection it was for. What a
+    // callback of one connection did to a stream of another one (a response,
+    // a stream FIN, a body resume, a close) then waited for that connection's
+    // next alarm or packet, and was lost if the idle timeout came first. The
+    // request is now skipped only for a connection that the engine has in
+    // hand, see lsquic_engine_has_conn_in_hand(). Applies on top of
+    // tick-once-per-pass. On an lsquic bump, check that ci_tick() still has
+    // one call site and that every insert into conns_tickable still follows
+    // a test of LSCONN_TICKABLE.
+    "patches/lsquic/tickable-per-connection.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

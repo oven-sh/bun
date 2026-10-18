@@ -941,6 +941,77 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   }
 });
 
+// The client follows a redirect inside lsquic's callback for the connection
+// that delivered it. lsquic skipped every request to make a connection tickable
+// in that time, so the request that the client queued on the pooled connection
+// of the other origin waited for an unrelated alarm or packet of that
+// connection, up to its idle timeout.
+test("a redirect onto the idle pooled connection of another origin is sent at once", async () => {
+  const get = (url: string) => fetch(url, h3).then(r => r.text());
+
+  // A node:quic server, because its session counts the packets of the
+  // connection that the client pools.
+  let pooled: { stats: { pktSent: bigint; pktRecv: bigint } } | undefined;
+  const target = await listen(
+    async (session: any) => {
+      pooled = session;
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 30 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "200" });
+        this.writer.writeSync(new TextEncoder().encode("target"));
+        this.writer.endSync();
+      },
+    },
+  );
+  const redirectServed = Promise.withResolvers<void>();
+  using origin = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    routes: {
+      "/redirect": () => {
+        redirectServed.resolve();
+        return Response.redirect(`https://127.0.0.1:${target.address!.port}/`, 302);
+      },
+      "/marker": () => new Response("marker"),
+    },
+  });
+  const marker = `https://127.0.0.1:${origin.port}/marker`;
+  try {
+    expect(await get(`https://127.0.0.1:${target.address!.port}/`)).toBe("target");
+    // A packet on the pooled connection also gets it ticked, and that tick
+    // sends the redirected request. So the connection has to be silent first:
+    // no packet in either direction during 20 requests to `origin`. With the
+    // fix the wait decides nothing, so it ends after 60 requests.
+    for (let quiet = 0, last = -1n, requests = 0; quiet < 20 && requests < 60; requests++) {
+      const packets = pooled!.stats.pktSent + pooled!.stats.pktRecv;
+      quiet = packets === last ? quiet + 1 : 0;
+      last = packets;
+      expect(await get(marker)).toBe("marker");
+    }
+
+    const events: string[] = [];
+    const redirected = get(`https://127.0.0.1:${origin.port}/redirect`).then(body => events.push(body));
+    // The redirected request is one packet to `target` and one back. Five
+    // requests to `origin` in a row, started once the redirect is served,
+    // take five times that.
+    await redirectServed.promise;
+    for (let i = 0; i < 5; i++) await get(marker);
+    events.push("five requests later");
+    await redirected;
+    expect(events).toEqual(["target", "five requests later"]);
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await target.destroy();
+  }
+});
+
 // Same retry, but the reconnect fails inside `connect()` itself. A QUIC
 // connect to a resolved hostname probes each address with a throwaway UDP
 // `connect(2)` (quic.c, us_quic_connect_result) and gives up when no entry is

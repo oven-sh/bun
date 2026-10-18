@@ -1,0 +1,108 @@
+--- a/src/liblsquic/lsquic_conn.h
++++ b/src/liblsquic/lsquic_conn.h
+@@ -53,7 +53,7 @@
+     LSCONN_SEND_BLOCKED   = (1 <<15),   /* Send connection blocked frame */
+     LSCONN_PROMOTED       = (1 <<16),   /* Promoted.  Only set if LSCONN_MINI is set */
+     LSCONN_NEVER_TICKABLE = (1 <<17),   /* Do not put onto the Tickable Queue */
+-    LSCONN_UNUSED_18      = (1 <<18),
++    LSCONN_TICKING        = (1 <<18),   /* bun: inside ci_tick() */
+     LSCONN_ATTQ           = (1 <<19),
+     LSCONN_SKIP_ON_PROC   = (1 <<20),
+     LSCONN_UNUSED_21      = (1 <<21),
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -1716,8 +1716,13 @@
+ lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
+                                     lsquic_conn_t *conn)
+ {
+-    if (0 == (enpub->enp_flags & ENPUB_PROC) &&
+-        0 == (conn->cn_flags & (LSCONN_TICKABLE|LSCONN_NEVER_TICKABLE)))
++    /* bun: upstream skipped every request made while ENPUB_PROC is set.  The
++     * bit is engine-wide, so a callback of one connection could not queue
++     * another one.  A connection that the running pass does not tick then
++     * kept what the callback gave it until its next alarm or packet.
++     */
++    if (0 == (conn->cn_flags & (LSCONN_TICKABLE|LSCONN_NEVER_TICKABLE)) &&
++        !lsquic_engine_has_conn_in_hand(enpub, conn))
+     {
+         lsquic_engine_t *engine = (lsquic_engine_t *) enpub;
+         lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+@@ -3143,7 +3148,9 @@
+     {
+         conn = lsquic_hashelem_getdata(el);
+         if (!(conn->cn_flags & LSCONN_TICKABLE)
+-            && conn->cn_if->ci_is_tickable(conn))
++            && conn->cn_if->ci_is_tickable(conn)
++            /* bun: as at the end of process_connections() */
++            && !(conn->cn_flags & LSCONN_TICKABLE))
+         {
+             lsquic_mh_insert(&engine->conns_tickable, conn,
+                                                     conn->cn_last_ticked);
+@@ -3277,7 +3284,9 @@
+          */
+         if (conn->cn_flags & (LSCONN_TICKED|LSCONN_CLOSING))
+             continue;
++        conn->cn_flags |= LSCONN_TICKING;
+         tick_st = conn->cn_if->ci_tick(conn, now);
++        conn->cn_flags &= ~LSCONN_TICKING;
+ #if LSQUIC_CONN_STATS
+         if (conn == engine->busy.current)
+             maybe_log_conn_stats(engine, conn, now);
+@@ -3347,7 +3356,13 @@
+         TAILQ_REMOVE(&ticked_conns, conn, cn_next_ticked);
+         engine_decref_conn(engine, conn, LSCONN_TICKED);
+         if (!(conn->cn_flags & LSCONN_TICKABLE)
+-            && conn->cn_if->ci_is_tickable(conn))
++            && conn->cn_if->ci_is_tickable(conn)
++            /* bun: ci_is_tickable() parses what the streams have not read
++             * yet.  That can ask for a tick (a window update, a QPACK
++             * decoder write, an HTTP/3 error), and the request is no longer
++             * skipped here: the connection can be on the queue by now.
++             */
++            && !(conn->cn_flags & LSCONN_TICKABLE))
+         {
+             /* Floyd heapification is not faster, don't bother. */
+             lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+--- a/src/liblsquic/lsquic_engine_public.h
++++ b/src/liblsquic/lsquic_engine_public.h
+@@ -100,6 +100,21 @@
+ lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *,
+                                                         lsquic_conn_t *);
+ 
++/* bun: true if a request to make `conn' tickable can be skipped, because the
++ * engine, which is processing, looks at the connection again without one.
++ * It is inside ci_tick() (LSCONN_TICKING).  Or the running pass ticked it and
++ * asks ci_is_tickable() at its end (LSCONN_TICKED).  Or the engine closed it
++ * (LSCONN_CLOSING).  Or it is not hashed: the engine is creating it, and
++ * queues it, or is destroying it.  The three flags are set only while the
++ * engine is processing, so outside of that no request is skipped, as before.
++ * A macro, because struct lsquic_conn is incomplete in most files that
++ * include this header.
++ */
++#define lsquic_engine_has_conn_in_hand(enpub, conn) (                         \
++    ((conn)->cn_flags & (LSCONN_TICKING|LSCONN_TICKED|LSCONN_CLOSING))        \
++    || (((enpub)->enp_flags & ENPUB_PROC)                                     \
++                                && !((conn)->cn_flags & LSCONN_HASHED)))
++
+ /* Put connection onto Advisory Tick Time  Queue if it is not already on it.
+  */
+ void
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -259,10 +259,15 @@
+ #endif
+ 
+ 
++/* bun: true if a tick request for the stream's connection can be skipped.
++ * Upstream tested the engine-wide ENPUB_PROC alone, which is also set inside
++ * a callback of any other connection.
++ */
+ static int
+ stream_inside_callback (const lsquic_stream_t *stream)
+ {
+-    return stream->conn_pub->enpub->enp_flags & ENPUB_PROC;
++    return lsquic_engine_has_conn_in_hand(stream->conn_pub->enpub,
++                                            stream->conn_pub->lconn);
+ }
+ 
+ 

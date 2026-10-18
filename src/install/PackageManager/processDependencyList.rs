@@ -569,14 +569,11 @@ impl PackageManager {
         })
     }
 
-    /// Whether the `Lockfile::only_peers` packages are all that is left to resolve, and are worth
-    /// resolving.
+    /// Whether the `Lockfile::only_peers` packages are all that is left to resolve.
     pub(crate) fn is_ready_for_only_peers(&self) -> bool {
         self.lockfile.only_peers.count() > 0
             && (self.lockfile.scratch.dependency_list_queue.head()).is_none()
             && self.remote_rows_waiting().next().is_none()
-            // An error ends the install, so they are not worth their requests.
-            && !self.log_mut().has_errors()
     }
 
     /// Does `row` wait for a git, GitHub or tarball package that may still arrive?

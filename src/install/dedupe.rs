@@ -24,9 +24,10 @@ struct Pass<'a> {
     /// Versions no edge may move onto; see `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
     /// `collapse_appended`: edges onto loaded packages (ids below) stay, and so do root/workspace
-    /// rows, but for a peer that resolves to a `Lockfile::only_peers` package.
+    /// rows.
     frozen_below: Option<PackageID>,
-    /// `collapse_appended_peers`: the rows of every package stay like root/workspace rows.
+    /// `collapse_appended_peers`: all stay but the peers that resolve to a `Lockfile::only_peers`
+    /// package.
     moves_only_peers: bool,
     /// Per group: each edge with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
@@ -258,9 +259,12 @@ impl<'a> Pass<'a> {
                 let row = e * n;
 
                 let frozen = self.frozen_below.is_some_and(|below| {
-                    ((self.is_direct(owner) || self.moves_only_peers)
-                        && !(dep.behavior.is_peer() && lockfile.is_only_for_peers(target)))
-                        || target < below
+                    target < below
+                        || if self.moves_only_peers {
+                            !(dep.behavior.is_peer() && lockfile.is_only_for_peers(target))
+                        } else {
+                            self.is_direct(owner)
+                        }
                 });
                 let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
                 {
@@ -443,27 +447,35 @@ impl<'a> Pass<'a> {
             return;
         };
         let lockfile = self.lockfile;
-        if lockfile.only_peers.bit_length() == 0 {
-            return;
-        }
         // The hoister binds a peer to the copy that the root depends on, so what the peer is
         // resolved to may not stay, nor the peers below that.
         let deps = lockfile.buffers.dependencies.as_slice();
         let root = lockfile.packages.items_dependencies()[0];
-        let mut of_root: Vec<(PackageNameHash, PackageID)> = (root.begin() as usize
+        let mut of_root: Vec<(PackageNameHash, usize, PackageID)> = (root.begin() as usize
             ..root.end() as usize)
-            .filter(|&row| !deps[row].behavior.is_peer() && cur[row] != invalid_package_id)
-            .map(|row| (deps[row].name_hash, cur[row]))
+            .filter_map(|row| {
+                let name_hash = deps[row].name_hash;
+                let copy = match cur[row] {
+                    // A peer that the registry has no version for gets a copy that is installed.
+                    id if id == invalid_package_id => (lockfile.packages_named(name_hash).iter())
+                        .copied()
+                        .find(|&id| live.is_set(id as usize) && !lockfile.is_only_for_peers(id))?,
+                    id => id,
+                };
+                Some((name_hash, row, copy))
+            })
             .collect();
         index_sort::sort_vec_by(&mut of_root, |a, b| a.cmp(b));
+        // The first of the root's dependencies of a name gets the folder.
+        of_root.dedup_by_key(|&mut (name, ..)| name);
         let mut hoisted: Option<Vec<PackageID>> = None;
         for (row, dep) in deps.iter().enumerate() {
             if dep.behavior.is_peer()
                 && cur[row] != invalid_package_id
-                && let Ok(i) = of_root.binary_search_by_key(&dep.name_hash, |&(name, _)| name)
-                && cur[row] != of_root[i].1
+                && let Ok(i) = of_root.binary_search_by_key(&dep.name_hash, |&(name, ..)| name)
+                && cur[row] != of_root[i].2
             {
-                hoisted.get_or_insert_with(|| cur.to_vec())[row] = of_root[i].1;
+                hoisted.get_or_insert_with(|| cur.to_vec())[row] = of_root[i].2;
             }
         }
         let still_live =

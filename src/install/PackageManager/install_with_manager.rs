@@ -628,7 +628,7 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, &mut progress, &mut NamedUpdates::default())?;
     }
 
-    if resolve_peers_of_failed_providers(manager) && manager.pending_task_count() > 0 {
+    if resolve_unbound_peers(manager) && manager.pending_task_count() > 0 {
         resolve_pending_tasks(manager, &root, &mut progress, &mut NamedUpdates::default())?;
     }
 
@@ -637,12 +637,7 @@ pub fn install_with_manager(
     direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
-    let collapse_peers = match manager.subcommand {
-        // `dedupe_before_install` has done it.
-        Subcommand::Dedupe => |_: &mut PackageManager| {},
-        _ => crate::dedupe::collapse_appended_peers,
-    };
-    settle_only_peers(manager, &root, &mut progress, collapse_peers)?;
+    settle_only_peers(manager, &root, &mut progress)?;
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
@@ -1761,12 +1756,17 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     any
 }
 
-/// Runs when all else is resolved: a peer has left itself to an optional tarball or repository
-/// (`Lockfile::peer_provider`) that failed after the peer's turn. It is resolved like any other.
+/// Runs when the queue is empty, for the peers whose turn came too early:
+/// - One has left itself to an optional tarball or repository (`Lockfile::peer_provider`) that
+///   has failed since. It is resolved like any other.
+/// - The registry had no answer for one. What has been resolved since may let it share an installed
+///   version.
 #[cold]
 #[inline(never)]
-fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
-    if manager.remote_packages.tasks.is_empty() || manager.log_mut().has_errors() {
+fn resolve_unbound_peers(manager: &mut PackageManager) -> bool {
+    if (manager.remote_packages.tasks.is_empty() && manager.manifest_failures.is_empty())
+        || manager.log_mut().has_errors()
+    {
         return false;
     }
     let lockfile: &Lockfile = &manager.lockfile;
@@ -1787,6 +1787,23 @@ fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
                     .is_some_and(is_unresolved)
         }));
     }
+    for task_id in manager.manifest_failures.keys() {
+        let waiters = manager
+            .task_queue
+            .get(task_id)
+            .map_or(&[][..], Vec::as_slice);
+        rows.extend(waiters.iter().filter_map(|waiter| match *waiter {
+            crate::TaskCallbackContext::Dependency(row)
+            | crate::TaskCallbackContext::RootDependency(row)
+                if dependencies[row as usize].behavior.is_peer() && is_unresolved(row) =>
+            {
+                Some(row)
+            }
+            _ => None,
+        }));
+    }
+    rows.sort_unstable();
+    rows.dedup();
     for &row in &rows {
         enqueue_row(manager, row);
     }
@@ -1796,16 +1813,15 @@ fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
     !rows.is_empty()
 }
 
-/// Decides with `collapse_peers` which `Lockfile::only_peers` packages stay, and resolves what those
-/// depend on. That can add more of them.
+/// Decides which `Lockfile::only_peers` packages stay, and resolves what those depend on. That can
+/// add more of them.
 fn settle_only_peers(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     progress: &mut ResolveProgress,
-    collapse_peers: fn(&mut PackageManager),
 ) -> crate::Result<()> {
     loop {
-        collapse_peers(manager);
+        crate::dedupe::collapse_appended_peers(manager);
         let kept = manager.lockfile.unmark_reachable_only_peers()?;
         if kept.is_empty() {
             return Ok(());
@@ -1815,7 +1831,7 @@ fn settle_only_peers(
         if manager.pending_task_count() > 0 {
             resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
         }
-        if resolve_peers_of_failed_providers(manager) && manager.pending_task_count() > 0 {
+        if resolve_unbound_peers(manager) && manager.pending_task_count() > 0 {
             resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
         }
     }
@@ -2272,6 +2288,8 @@ fn resolve_pending_tasks(
         return wait_until_ready_for_only_peers(manager);
     }
     wait_for_pending_tasks(manager)?;
+    // A peer among the children moves from the version that it would share.
+    settle_only_peers(manager, root, progress)?;
     let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
     named.moved.extend(child_moves);
     wait_for_pending_tasks(manager)
@@ -2556,8 +2574,7 @@ fn reresolve_rows_outside_overrides(
         resolve_pending_tasks(manager, root, &mut progress, &mut NamedUpdates::default())?;
     }
     redirect_moved_edges(&mut manager.lockfile, &moved, false);
-    let collapse_peers = crate::dedupe::collapse_appended_peers;
-    settle_only_peers(manager, root, &mut progress, collapse_peers)?;
+    settle_only_peers(manager, root, &mut progress)?;
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
     if manager.log_mut().has_errors() {

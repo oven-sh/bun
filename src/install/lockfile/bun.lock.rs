@@ -3034,7 +3034,7 @@ pub(crate) fn parse_into_binary_lockfile(
 }
 
 /// Resolve a peer dependency edge the way a fresh install does
-/// (`dedupe::collapse_appended`): scan the package ids recorded for the dependency's
+/// (`enqueue::settle_peer`): scan the package ids recorded for the dependency's
 /// name — `package_index` lists are kept ordered by descending
 /// `Resolution::order` — and take the first whose resolution satisfies
 /// the range. `None` if none does, and for optional and bundled peers: the path walk binds those.

@@ -60,9 +60,10 @@ fn bind_existing(
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     let is_kept = !is_peer && this.lockfile.unmark_only_peers(package_id)?;
     success_fn(this, dependency_id, package_id);
-    let task = match is_kept {
-        true => kept_tarball_task(this, dependency_id, package_id)?,
-        false => None,
+    let task = if is_kept {
+        kept_tarball_task(this, dependency_id, package_id)?
+    } else {
+        None
     };
     Ok(Some(ResolvedPackageResult {
         // read after `success_fn`, which can change the packages array
@@ -247,14 +248,12 @@ pub(crate) fn advance(this: &mut PackageManager) {
         }
 
         // The queue is empty, so it is the turn of the next git, GitHub or tarball package.
-        if this.remote_packages.tasks.is_empty()
-            || !this.append_next_remote_package(RemoteTurn::InOrder)
-        {
-            // While the queue waits for that package, the look-ahead goes on from the others, and
-            // from the `Lockfile::only_peers` packages, whose turn comes after what is in flight.
-            if this.pending_task_count() > 0 {
-                request_ahead(this);
-            }
+        if this.remote_packages.tasks.is_empty() {
+            return;
+        }
+        if !this.append_next_remote_package(RemoteTurn::InOrder) {
+            // While the queue waits for that package, the look-ahead goes on from the others.
+            request_ahead(this);
             return;
         }
     }
@@ -1260,10 +1259,10 @@ fn request_remote_package_ahead(
             asked.version.tarball().uri,
             dependency::tarball::Uri::Local(_)
         );
-    let owner = this.lockfile.get_parent_pkg_of_dependency(id);
     if resolution != invalid_package_id
         || this.options.runtime_auto_install
-        || owner.is_some_and(|owner| this.lockfile.is_only_for_peers(owner))
+        || (this.lockfile.get_parent_pkg_of_dependency(id))
+            .is_some_and(|owner| this.lockfile.is_only_for_peers(owner))
         // Whether another package may name a tarball in the project is decided, and reported, once.
         || (is_local_tarball && !this.lockfile.is_dependency_of_local_package(id))
     {
@@ -3016,6 +3015,7 @@ pub(crate) struct ResolvedPackageResult {
 fn warn_deprecated(
     this: &mut PackageManager,
     dependency_id: DependencyID,
+    package_id: PackageID,
     manifest: &Npm::PackageManifest,
     found: Npm::FindResult,
 ) {
@@ -3023,6 +3023,7 @@ fn warn_deprecated(
     {
         return;
     }
+    let mark = this.log_mut().msgs.len();
     this.log_mut().add_warning_fmt(
         None,
         bun_ast::Loc::EMPTY,
@@ -3033,6 +3034,10 @@ fn warn_deprecated(
             bun_fmt::escape_control_chars(found.package.deprecated.slice(&manifest.string_buf)),
         ),
     );
+    if this.lockfile.is_only_for_peers(package_id) && this.held_messages.is_some() {
+        let msgs = this.take_log_since(mark);
+        (this.held_messages.get_or_insert_default()).push((HeldAbout::Package(package_id), msgs));
+    }
 }
 
 /// Fills `PackageManager::patched_versions` if the project has patches. Returns whether it has.
@@ -3265,7 +3270,7 @@ fn get_or_put_resolved_package_with_find_result(
                 this.lockfile.mark_only_bundled(package.meta.id);
             }
         } else if !find_result.package.deprecated.is_empty() && !this.options.runtime_auto_install {
-            warn_deprecated(this, dependency_id, manifest, find_result);
+            warn_deprecated(this, dependency_id, package_id, manifest, find_result);
         }
 
         // non-null if the package is in "patchedDependencies"
@@ -4025,8 +4030,8 @@ fn can_share_out_of_range_peer(
         for id in list.begin()..list.end() {
             let dep = &deps[id as usize];
             // `"alias": "npm:name@range"` depends on the name as well.
-            let is_alias = names.get(resolutions[id as usize] as usize) == Some(&name_hash);
-            if (dep.name_hash == name_hash || is_alias) && id != row {
+            let resolves_to_name = names.get(resolutions[id as usize] as usize) == Some(&name_hash);
+            if (dep.name_hash == name_hash || resolves_to_name) && id != row {
                 if !dep.behavior.is_peer() {
                     dependents.push(owner as PackageID);
                 } else if accepts_candidate(id, dep) {
@@ -4209,18 +4214,25 @@ impl PackageManager {
             (lockfile.get_parent_pkg_of_dependency(row))
                 .is_none_or(|owner| tree.is_set(owner as usize))
         };
+        let dependencies = lockfile.buffers.dependencies.as_slice();
         let is_served_peer = |row: DependencyID| {
-            let dep = &lockfile.buffers.dependencies[row as usize];
-            dep.behavior.is_peer()
-                && (lockfile.packages_named(dep.name_hash).iter())
-                    .any(|&id| tree.is_set(id as usize))
+            let peer = &dependencies[row as usize];
+            let named = lockfile.packages_named(peer.name_hash);
+            peer.behavior.is_peer()
+                && (lockfile.buffers.resolutions.iter().enumerate()).any(|(other, id)| {
+                    named.contains(id)
+                        && !dependencies[other].behavior.is_peer()
+                        && is_in_tree(other as DependencyID)
+                })
         };
         let log = self.log_mut();
         for (about, msgs) in held {
             let is_needed = match about {
-                // A peer that the registry has no version for takes what there is.
+                // A peer that the registry has no version for takes what a dependency installed.
                 HeldAbout::Row(row) if is_served_peer(row) => continue,
                 HeldAbout::Row(row) => is_in_tree(row),
+                HeldAbout::Package(id) if !tree.is_set(id as usize) => continue,
+                HeldAbout::Package(_) => true,
                 // A dependency of the project needed the manifest later on and logged the error.
                 HeldAbout::Task(id)
                     if (self.manifest_failures.get(&id)).is_some_and(|failure| {
@@ -4231,8 +4243,9 @@ impl PackageManager {
                 }
                 HeldAbout::Task(id) => match self.task_queue.get(&id) {
                     Some(waiters) if !waiters.is_empty() => {
-                        let (mut is_needed, mut is_needed_by_peer, mut only_peers) =
+                        let (mut is_needed, mut is_needed_by_peer, mut all_are_peers) =
                             (false, false, true);
+                        let mut is_served = false;
                         for waiter in waiters {
                             let (TaskCallbackContext::Dependency(row)
                             | TaskCallbackContext::RootDependency(row)) = *waiter
@@ -4243,16 +4256,25 @@ impl PackageManager {
                             if !is_in_tree(row) {
                                 continue;
                             }
+                            if lockfile.buffers.resolutions[row as usize] != invalid_package_id {
+                                is_served = true;
+                                continue;
+                            }
                             let behavior = lockfile.buffers.dependencies[row as usize].behavior;
                             if behavior.is_peer() {
                                 is_needed_by_peer |= behavior.is_required();
                             } else {
-                                only_peers = false;
+                                all_are_peers = false;
                                 is_needed |= behavior.is_required();
                             }
                         }
                         // A peer stays unbound if another dependency has to do without the package.
-                        is_needed || (only_peers && is_needed_by_peer)
+                        let is_needed = is_needed || (all_are_peers && is_needed_by_peer);
+                        // The peers share an installed version.
+                        if is_served && all_are_peers && !is_needed {
+                            continue;
+                        }
+                        is_needed
                     }
                     _ => true,
                 },

@@ -296,9 +296,8 @@ pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 
-/// What a message in `PackageManager::held_messages` is about. Only "the registry has no such
-/// package" and "no such version" are held. A request that failed is reported right away, unless a
-/// peer made it.
+/// What a message in `PackageManager::held_messages` is about. A request that failed for another
+/// reason than "the registry has no such package" is reported right away, unless a peer made it.
 #[derive(Clone, Copy)]
 pub(crate) enum HeldAbout {
     /// The manifest has no version that this dependency accepts.
@@ -306,6 +305,8 @@ pub(crate) enum HeldAbout {
     /// The request for a manifest got none. The dependencies that needed it are in this task's
     /// entry of `task_queue`.
     Task(Task::Id),
+    /// This `Lockfile::only_peers` package is deprecated, which is only said if it stays.
+    Package(PackageID),
 }
 
 // How dependencies are resolved
@@ -332,8 +333,8 @@ pub(crate) enum HeldAbout {
 //   (`enqueue::settle_peer`), and is resolved like a regular dependency if that is nothing.
 //   Whether the peers of a name share a version is decided once the queue is empty
 //   (`dedupe::Pass::find_spare`). Until then no range shares a package that is only there for a
-//   peer, nothing downloads it and what it depends on is not queued (`Lockfile::only_peers`), so
-//   what that decision sees does not depend on which peer came first.
+//   peer, nothing downloads it and what it depends on only requests ahead
+//   (`Lockfile::only_peers`), so what that decision sees does not depend on which peer came first.
 
 /// A manifest request that ended without a manifest. The message is logged by the first dependency
 /// that needs the manifest when it is resolved, not when the answer arrives: `LookAhead` requests
@@ -604,9 +605,8 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
-    // `Some` while `bun install` resolves. A "no such package" or "no such version" message about a
-    // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
-    // it.
+    // `Some` while `bun install` resolves. A message about a dependency or a package that dedupe
+    // may still drop is kept here until `log_held` decides whether to log it.
     pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
     pub(crate) manifest_failures:
         HashMap<Task::Id, ManifestFailure, bun_collections::IdentityContext<Task::Id>>,

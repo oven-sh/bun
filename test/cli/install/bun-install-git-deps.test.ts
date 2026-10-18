@@ -2409,6 +2409,7 @@ describe.concurrent("names a peer dependency that waited for what failed under t
     });
   });
 
+  // The git that fails is a shell script.
   test.skipIf(isWindows)("the checkout", async () => {
     using dir = tempDir("git-dep-failed-checkout", {
       "bin/git": `#!/bin/sh

@@ -2322,7 +2322,7 @@ it("a fresh install settles hoisting around a peer that only becomes bindable on
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(fresh);
 });
 
-it.concurrent.each([
+it.each([
   [
     "leaf@2.0.0 hoisted (target placed from consumer)",
     {
@@ -4432,8 +4432,7 @@ it.each<OrderedShape>([
     z: { "z": `z@${one === "a" ? "1.0.5" : "1.1.0"}`, "b/z": `z@${one === "a" ? "1.1.0" : "1.0.5"}`, "o/z": "z@1.0.0" },
   })),
   {
-    // m is itself installed as a peer, so whether its range is known when z is picked depends on which manifest
-    // arrives first. It does not count.
+    // m is itself installed for a peer, so bun gets to its peers after z is picked. Its range does not count.
     shape: "a peers m@1.0.0 and z@>=1.0.0, b peers z@>=1.0.5, m peers z@~1.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { m: "1.0.0", z: ">=1.0.0" } } },
@@ -4533,7 +4532,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.1.0" },
   },
   {
-    // c and d are only there for z@2.0.0, so their peers must not be what keeps it. 1.1.0 suits both a and b.
+    // c and d are only there for z@2.0.0, so their peers are not what keeps it. 1.1.0 suits both a and b.
     shape: "a peers z@^1.0.0, b peers z@>=1.0.0, z@2.0.0 -> c and d, c and d peer z@^2.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
@@ -4918,6 +4917,50 @@ it.concurrent("a version that is resolved for a peer and then dropped is not dow
   expect(err).not.toContain("gone");
 });
 
+// The project's peer gets the z@3.0.0 of o, and a loads the project's copy. So z@1.0.0 goes again.
+it.concurrent.each(["2.0.0", "latest"])(
+  "a version that is resolved for a peer is dropped if the project has a peer on %s of the name",
+  async range => {
+    using registry = await serveRegistry({
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      o: { "1.0.0": { dependencies: { z: "3.0.0" } } },
+      z: { "1.0.0": { dependencies: { gone: "1.0.0" } }, "3.0.0": {} },
+    });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0", o: "1.0.0" }, peerDependencies: { z: range } },
+    });
+    await installWithOwnCache(String(dir));
+    expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({ "z": "z@3.0.0" });
+    expect(registry.requests).not.toContain("/z-1.0.0.tgz");
+  },
+);
+
+it.concurrent.each([
+  ["is not warned about if it goes again", { a: "1.0.0", o: "1.0.0" }, "z@1.0.0"],
+  ["is warned about if it stays", { o: "1.0.0" }, "z@1.9.0"],
+])("a deprecated version that is resolved for a peer of the project %s", async (_, dependencies, z) => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+    o: { "1.0.0": { dependencies: { z: "1.0.0" } } },
+    z: { "1.0.0": {}, "1.9.0": { deprecated: "old" } },
+  });
+  using dir = projectOn(registry, {
+    "package.json": { name: "foo", dependencies, peerDependencies: { z: "^1.5.0" } },
+  });
+  const { err } = await installWithOwnCache(String(dir));
+  expect(err.includes("warn: deprecated z@1.9.0: old")).toBe(z === "z@1.9.0");
+  expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")["z"]).toBe(z);
+});
+
+it.concurrent("a peer that no version suits is warned about if only another peer installs the package", async () => {
+  using registry = await serveRegistry({ a: { "1.0.0": { peerDependencies: { z: "2.0.0" } } }, z: { "2.0.0": {} } });
+  using dir = projectOn(registry, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0" }, peerDependencies: { z: "~1.1.0" } },
+  });
+  const { err } = await installWithOwnCache(String(dir));
+  expect(err).toContain('warn: No version matching "~1.1.0" found for peer dependency "z" (but package exists)');
+});
+
 // a loads w's z, whatever the registry says about z.
 it.concurrent.each(["the registry no longer has the package", "--offline has no manifest of the package"])(
   "a peer shares the version of bun.lock that the workspace above it depends on if %s",
@@ -5044,7 +5087,7 @@ it.concurrent(
     using dir = projectOn(registry, workspaceWithOlderZ);
     const cwd = String(dir);
     await installWithOwnCache(cwd);
-    expect(await removeCachedManifest(cwd, "/y-1.0.0.tgz")).toBe(1);
+    expect(registry.requests).not.toContain("/y");
     await rm(join(cwd, "bun.lock"));
 
     await installWithOwnCache(cwd, "--offline");
@@ -5351,6 +5394,97 @@ it.concurrent.each(["update", "update a"])(
     expect(err).not.toContain("error:");
     const lock = await file(join(cwd, "bun.lock")).text();
     expect({ ...instancesOf(lock, "a"), ...instancesOf(lock, "z") }).toEqual({ "a": "a@1.1.0", "z": "z@2.0.0" });
+    expect(code).toBe(0);
+  },
+);
+
+// c@1.0.0 suits y, so b@1.1.0 would share it. The update moves what b depends on, and y goes along.
+it.concurrent("`bun update <name> --latest` moves the peer of the new version that shares an older one", async () => {
+  const manifests: Manifests = {
+    a: { "1.0.0": { peerDependencies: { b: "^1.0.0" } } },
+    b: { "1.0.0": { peerDependencies: { c: "^1.0.0" } }, "1.1.0": { peerDependencies: { c: "^1.1.0" } } },
+    c: { "1.0.0": {}, "1.1.0": {} },
+    y: { "1.0.0": { peerDependencies: { c: "^1.0.0" } } },
+  };
+  using registry = await serveRegistry(manifests);
+  const published = { b: manifests.b, c: manifests.c };
+  manifests.b = { "1.0.0": published.b["1.0.0"] };
+  manifests.c = { "1.0.0": {} };
+  using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0", y: "1.0.0" } } });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  Object.assign(manifests, published);
+  await rm(join(cwd, ".bun-cache"), { recursive: true });
+  const { err, code } = await runWithOwnCache(cwd, "update", "b", "--latest");
+  expect(err).not.toContain("error:");
+  const lock = await file(join(cwd, "bun.lock")).text();
+  expect({ ...instancesOf(lock, "b"), ...instancesOf(lock, "c") }).toEqual({ "b": "b@1.1.0", "c": "c@1.1.0" });
+  expect(code).toBe(0);
+});
+
+// z@1.0.0 suits the peer of q. bun gets to q after the turn of a's peer.
+it.concurrent(
+  "a peer shares the version of bun.lock that suits a peer further down if the registry refuses the manifest",
+  async () => {
+    const forbidden: string[] = [];
+    using registry = await serveRegistry(
+      {
+        a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+        o: { "1.0.0": { dependencies: { z: "1.0.0" } } },
+        q: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+        y: { "1.0.0": { dependencies: { q: "1.0.0" } } },
+        z: zVersions,
+      },
+      forbidden,
+    );
+    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { o: "1.0.0" } } });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd);
+
+    forbidden.push("z");
+    await rm(join(cwd, ".bun-cache"), { recursive: true });
+    await write(
+      join(cwd, "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", o: "1.0.0", y: "1.0.0" } }),
+    );
+    const { err } = await installWithOwnCache(cwd);
+    expect(err).not.toContain(`GET ${registry.origin}/z`);
+    expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@1.0.0" });
+  },
+);
+
+// pe depends on pb, which depends on pa once the update has moved it. That is after the turn of pa's peer.
+it.concurrent(
+  "a peer shares the version of bun.lock that a package above it depends on if the registry refuses `bun update --latest`",
+  async () => {
+    const manifests: Manifests = {
+      pa: { "1.1.0": {}, "2.0.0": { peerDependencies: { pe: "~2.0.0" } } },
+      pb: {
+        "2.3.0": { dependencies: { pa: ">=1.1.0" }, peerDependencies: { pc: "*" } },
+        "3.0.0": { dependencies: { pa: "^2.0.0" } },
+      },
+      pc: { "3.0.0": { optionalDependencies: { pe: "1.0.5" } } },
+      pd: { "1.0.0": { peerDependencies: { pb: "2.3.0" } }, "2.0.0": {} },
+      pe: { "1.0.5": { dependencies: { pb: "*" } } },
+    };
+    const forbidden: string[] = [];
+    using registry = await serveRegistry(manifests, forbidden);
+    const published = { pa: manifests.pa, pb: manifests.pb, pd: manifests.pd };
+    manifests.pa = { "1.1.0": {} };
+    manifests.pb = { "2.3.0": published.pb["2.3.0"] };
+    manifests.pd = { "1.0.0": published.pd["1.0.0"] };
+    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { pa: "*", pd: "*" } } });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd);
+
+    Object.assign(manifests, published);
+    forbidden.push("pe");
+    await rm(join(cwd, ".bun-cache"), { recursive: true });
+    const { err, code } = await runWithOwnCache(cwd, "update", "--latest");
+    expect(err).not.toContain("error:");
+    const lock = await file(join(cwd, "bun.lock")).text();
+    expect({ ...instancesOf(lock, "pa"), ...instancesOf(lock, "pe") }).toEqual({ "pa": "pa@2.0.0", "pe": "pe@1.0.5" });
     expect(code).toBe(0);
   },
 );

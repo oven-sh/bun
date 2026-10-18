@@ -756,16 +756,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.sym_of(symbol) == Some(self.c.files().unknown_symbol)
     }
 
-    pub fn symbol_to_string(&mut self, symbol: SymbolRef) -> Vec<u8> {
-        match self.entry(symbol) {
-            Some((Key::Symbol(sym) | Key::Instantiated(sym, _), None)) => {
-                self.c.symbol_to_string(sym)
-            }
-            Some((_, Some((prop, _)))) => self.c.prop_to_string(prop),
-            _ => self.symbol_info(symbol).name.to_vec(),
-        }
-    }
-
     // ───────────────────────────── members of types ─────────────────────────────
 
     pub fn properties_of_type(&mut self, ty: TypeId) -> &'c [SymbolRef] {

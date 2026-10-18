@@ -2842,8 +2842,6 @@ describe.concurrent("the global bin directory and $PATH", () => {
       BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global"),
       ...extraEnv,
     };
-    // Windows spells the inherited variable `Path`.
-    delete spawnEnv.Path;
     spawnEnv.PATH = path(bin) + (isWindows ? ";" : ":") + process.env.PATH;
 
     await using proc = spawn({

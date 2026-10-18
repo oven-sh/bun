@@ -8268,24 +8268,41 @@ describe("css tests", () => {
         );
       });
 
-      // Without the copies, a rule with the same selector that follows merges into the rule. That
-      // merge has faults of its own, which the `@supports` rules in between used to hide. Each row
-      // states the right order and passes when the named fix lands.
-      describe("a following rule with the same selector", () => {
-        // `all` moves in front of the declarations written before it (#42042).
-        test.failing("all:unset stays behind the color", () => {
-          expect(minified(".x{color:var(--c,lab(50% 20 30));color:red}.x{all:unset;color:var(--z)}")).toEndWith(
-            "all:unset;color:var(--z)}",
-          );
-        });
-        // An unparsed value moves in front of the typed one it follows (#42101).
-        test.failing("width:var(--w) stays behind width:100%", () => {
-          expect(minified(".x{color:var(--c,lab(50% 20 30));color:red;width:100%}.x{width:var(--w)}")).toEndWith(
-            "width:var(--w)}",
-          );
-        });
-        test.failing("color:red stays in front of color:foo(1)", () => {
-          expect(minified(".x{color:var(--c,lab(50% 20 30));color:red}.x{top:0;color:foo(1)}")).toContain("color:red");
+      // The `@supports` rules kept the following rule from a merge into the rule. A merge of two rules
+      // with one selector moves `all` and unparsed values in front of the declarations they follow.
+      describe("the following rule stays a rule of its own", () => {
+        test.each([
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:red}.x{all:unset;color:var(--z)}",
+            ".x{color:red}.x{all:unset;color:var(--z)}",
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:red;width:100%}.x{width:var(--w)}",
+            ".x{color:red;width:100%}.x{width:var(--w)}",
+          ],
+          [".x{color:var(--c,lab(50% 20 30));color:red}.x{top:0;color:foo(1)}", ".x{color:red}.x{color:foo(1);top:0}"],
+          // The rule merged into the previous rule.
+          [
+            ".x{margin:0}.x{color:var(--c,lab(50% 20 30));color:red}.x{all:unset}",
+            ".x{color:red;margin:0}.x{all:unset}",
+          ],
+          // Two following rules merge with each other, and the result does not move up.
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:red}.x{all:unset}.x{color:var(--z)}",
+            ".x{color:red}.x{all:unset;color:var(--z)}",
+          ],
+          // Two `@media` rules with one query merge, and their rules are minified again.
+          [
+            "@media print{.x{color:var(--c,lab(50% 20 30));color:red}}@media print{.x{all:unset;color:var(--z)}}",
+            "@media print{.x{color:red}.x{all:unset;color:var(--z)}}",
+          ],
+          // A merge of two rules with equal declarations takes the selector away from the copies of the second rule.
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:red;color:env(--e)}.y{color:var(--c,lab(50% 20 30));color:env(--e)}",
+            `.x{color:env(--e)}.y{color:env(--e)}${copies(c => `color:var(--c,${c})`, ".y")}`,
+          ],
+        ])("%s", (source, expected) => {
+          expect(minified(source)).toBe(expected);
         });
       });
     });

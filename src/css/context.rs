@@ -42,6 +42,8 @@ pub struct PropertyHandlerContext<'a> {
     copied: Vec<Copied>,
     /// The count of declarations of the rule in hand that staged a copy in `supports`.
     staged: u32,
+    /// Whether a later declaration dropped a copy from `supports` in the rule in hand.
+    pub(crate) retracted: bool,
     pub(crate) ltr: Vec<css::Property>,
     pub(crate) rtl: Vec<css::Property>,
     pub(crate) dark: Vec<css::Property>,
@@ -62,6 +64,7 @@ impl<'a> PropertyHandlerContext<'a> {
             supports: Vec::new(),
             copied: Vec::new(),
             staged: 0,
+            retracted: false,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -78,6 +81,7 @@ impl<'a> PropertyHandlerContext<'a> {
             supports: Vec::new(),
             copied: Vec::new(),
             staged: 0,
+            retracted: false,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -282,6 +286,7 @@ impl<'a> PropertyHandlerContext<'a> {
         self.supports.clear();
         self.copied.clear();
         self.staged = 0;
+        self.retracted = false;
         self.ltr.clear();
         self.rtl.clear();
         self.dark.clear();
@@ -419,5 +424,6 @@ impl<'a> PropertyHandlerContext<'a> {
                 .extract_if(from.., |copy| copy.property_id() == property_id)
                 .for_each(drop);
         }
+        self.retracted = true;
     }
 }

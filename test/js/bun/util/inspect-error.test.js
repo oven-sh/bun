@@ -536,7 +536,11 @@ describe("lines of the name and the message that look like stack frames are not 
     ["in the message, with the name changed since", "m" + fake, { afterRead: e => (e.name = "Renamed") }],
     ["in the name", "m", { beforeRead: e => (e.name = "N" + fake) }],
     ["in both", "m" + fake, { beforeRead: e => (e.name = "m" + fake) }],
-    ["none, the message is now a part of a frame", "m", { afterRead: e => (e.message = "inspect-error.test.js") }],
+    [
+      "none, the message is now the end of the first frame",
+      "m",
+      { afterRead: e => (e.message = e.stack.split("\n")[1].slice("    at make (".length)) },
+    ],
     [
       "none, the message now ends in the line break before the first frame",
       "m",

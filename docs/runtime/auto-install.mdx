@@ -15,7 +15,12 @@ foo();
 
 The first time you run this script, Bun auto-installs `"foo"` and caches it. Later runs use the cached version.
 
-Auto-install is off when a [security scanner](/runtime/bunfig#install-security-scanner) is configured in the global `.bunfig.toml`, or in a `bunfig.toml` from the working directory or the importing file up to the [project root](#project-root). It is also off when one of those files, a `.npmrc`, or a `package.json` that Bun reads to find the project root cannot be read or parsed. `-i` and `--install` do not turn it back on. The import fails and tells you to run `bun install`.
+Auto-install is off in each of these cases. `-i` and `--install` do not turn it back on. The import fails and tells you to run `bun install`.
+
+- A [security scanner](/runtime/bunfig#install-security-scanner) is configured in the global `.bunfig.toml`, or in a `bunfig.toml` from the working directory or the importing file up to the [project root](#project-root).
+- One of those files, or a `.npmrc`, cannot be read or parsed.
+- A `package.json` that Bun reads to find the project root cannot be read or parsed.
+- A `package.json` above the project cannot say whether the project is one of its workspaces. [Run a command in a workspace](/pm/workspaces#run-a-command-in-a-workspace) lists those files. Auto-install reads no directory for this: it matches the project against the `"workspaces"` patterns.
 
 ---
 

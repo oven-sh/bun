@@ -139,24 +139,26 @@ pub(crate) fn parse_manifest_bin(
     Ok(())
 }
 
+/// The lockfiles of other package managers, in the order in which a migration tries them. npm
+/// itself reads npm-shrinkwrap.json over package-lock.json; the two share a format.
+pub(crate) const OTHER_LOCKFILES: [(&str, &ZStr); 4] = [
+    ("npm-shrinkwrap.json", zstr!("npm-shrinkwrap.json")),
+    ("package-lock.json", zstr!("package-lock.json")),
+    ("yarn.lock", zstr!("yarn.lock")),
+    ("pnpm-lock.yaml", zstr!("pnpm-lock.yaml")),
+];
+
 pub fn detect_and_load_other_lockfile<'a>(
     this: &'a mut Lockfile,
     dir: Fd,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
 ) -> LoadResult<'a> {
-    // check for npm-shrinkwrap.json, package-lock.json, yarn.lock, etc...
-    // if it exists, do an in-memory migration
+    // if one of them exists, do an in-memory migration
     let timer = std::time::Instant::now();
 
-    // npm itself reads npm-shrinkwrap.json over package-lock.json; the two share a format.
     let mut found = Vec::new();
-    for (name, name_z) in [
-        ("npm-shrinkwrap.json", zstr!("npm-shrinkwrap.json")),
-        ("package-lock.json", zstr!("package-lock.json")),
-        ("yarn.lock", zstr!("yarn.lock")),
-        ("pnpm-lock.yaml", zstr!("pnpm-lock.yaml")),
-    ] {
+    for (name, name_z) in OTHER_LOCKFILES {
         let Ok(file) = File::openat(dir, name_z, O::RDONLY, 0) else {
             continue;
         };

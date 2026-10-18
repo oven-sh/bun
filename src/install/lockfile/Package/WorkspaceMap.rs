@@ -21,6 +21,13 @@ pub(crate) struct WorkspaceMap {
     map: Map,
     /// Relative dirs of nameless members that declare dependencies, for `warn_skipped`.
     skipped_with_dependencies: Vec<Box<[u8]>>,
+    /// Whether the last `process_names_array` got to every folder that the patterns name. If it
+    /// did not, a folder that is not in `map` can still be a workspace. The glob walk passes over
+    /// a symlink that it cannot open, so what is behind such a link does not count.
+    is_complete: bool,
+    /// Relative dirs of folders that the patterns name and whose package.json the last
+    /// `process_names_array` could not read or parse.
+    unread: Vec<Box<[u8]>>,
 }
 
 type Map = StringArrayHashMap<Entry>;
@@ -46,6 +53,34 @@ impl WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
             skipped_with_dependencies: Vec::new(),
+            is_complete: false,
+            unread: Vec::new(),
+        }
+    }
+
+    pub(crate) fn is_complete(&self) -> bool {
+        self.is_complete
+    }
+
+    /// Whether the last `process_names_array` could not read or parse the package.json of
+    /// `abs_dir`, a folder that the patterns of `source` name.
+    pub(crate) fn could_not_read(&self, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
+        let mut buf = path::path_buffer_pool::get();
+        let dir = relative_workspace_path(&mut buf.0, package_json_dir(source), abs_dir);
+        self.unread.iter().any(|unread| **unread == *dir)
+    }
+
+    #[cold]
+    fn add_unread(&mut self, root_dir: &[u8], dir: &[u8]) {
+        let mut abs_buf = path::path_buffer_pool::get();
+        let mut rel_buf = path::path_buffer_pool::get();
+        if let Some(abs) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+            root_dir,
+            &mut abs_buf.0[..],
+            &[dir],
+        ) {
+            let dir = relative_workspace_path(&mut rel_buf.0, root_dir, abs);
+            self.unread.push(dir.into());
         }
     }
 
@@ -337,6 +372,39 @@ fn add_glob_error(
     crate::Error::InstallFailed
 }
 
+/// For a `"workspaces"` that is neither an array nor an object.
+#[cold]
+pub(crate) fn add_workspaces_type_error(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+) -> crate::Error {
+    let _ = bun_ast::add_error_pretty!(
+        log,
+        source,
+        loc,
+        "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
+    );
+    crate::Error::InvalidPackageJSON
+}
+
+/// For a `"packages"` in `"workspaces"` that is not an array.
+#[cold]
+pub(crate) fn add_workspaces_packages_type_error(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+) -> crate::Error {
+    let _ = log.add_error_fmt(
+        source,
+        loc,
+        format_args!(
+            "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
+        ),
+    );
+    crate::Error::InvalidPackageJSON
+}
+
 fn relative_workspace_path<'b>(
     buf: &'b mut [u8],
     root_dir: &[u8],
@@ -388,6 +456,8 @@ impl WorkspaceMap {
     ) -> crate::Result<u32> {
         let workspace_names = self;
         let item_count = arr.len();
+        workspace_names.is_complete = item_count == 0;
+        workspace_names.unread.clear();
         if item_count == 0 {
             return Ok(0);
         }
@@ -508,6 +578,7 @@ impl WorkspaceMap {
                             ),
                         );
                     }
+                    workspace_names.add_unread(root_dir, input_path);
                     continue;
                 }
             };
@@ -641,6 +712,7 @@ impl WorkspaceMap {
                                     bun_core::fmt::escape_control_chars(entry_base),
                                 ),
                             );
+                            workspace_names.add_unread(root_dir, entry_dir);
                             continue;
                         }
                     };
@@ -660,6 +732,7 @@ impl WorkspaceMap {
             }
         }
 
+        workspace_names.is_complete = true;
         if orig_msgs_len != log.msgs.len() {
             return Err(crate::Error::InstallFailed);
         }
@@ -676,12 +749,17 @@ impl WorkspaceMap {
 
     /// Whether [`Self::process_names_array`] would make `abs_dir` a workspace, given that `abs_dir`
     /// has a named package.json. It never reads the disk, so `**` also matches through a symlink.
-    pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
+    /// An entry that is not a string is an error here too.
+    pub(crate) fn lists(
+        arr: NamesArray<'_>,
+        source: &bun_ast::Source,
+        abs_dir: &[u8],
+    ) -> crate::Result<bool> {
         let root_dir: &[u8] = package_json_dir(source);
         let mut dir_buf = path::path_buffer_pool::get();
         let dir = relative_workspace_path(&mut dir_buf.0, root_dir, abs_dir);
         if dir.is_empty() {
-            return false;
+            return Ok(false);
         }
         let mut abs_buf = path::path_buffer_pool::get();
         let mut rel_buf = path::path_buffer_pool::get();
@@ -690,7 +768,7 @@ impl WorkspaceMap {
         let mut matched = false;
         for i in 0..arr.len() {
             let Some(input_path) = arr.item_str(i, &scratch) else {
-                return false;
+                return Err(crate::Error::InvalidPackageJSON);
             };
             if matches!(input_path, b"" | b"." | b"./" | b".\\") {
                 continue;
@@ -709,10 +787,10 @@ impl WorkspaceMap {
             )
             .is_some_and(|abs| relative_workspace_path(&mut rel_buf.0, root_dir, abs) == dir)
             {
-                return true;
+                return Ok(true);
             }
         }
-        matched && !negated.excludes(dir)
+        Ok(matched && !negated.excludes(dir))
     }
 }
 

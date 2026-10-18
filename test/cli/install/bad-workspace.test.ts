@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
 import { dirname, join } from "path";
 
 let cwd: string;
@@ -427,8 +427,13 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
   );
 });
 
-async function runBun(args: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+async function runBun(
+  args: string[],
+  cwd: string,
+  env: Record<string, string | undefined> = bunEnv,
+  user: { uid?: number; gid?: number } = {},
+) {
+  await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe", ...user });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -565,6 +570,738 @@ describe.concurrent.each([
     expect(stderr).not.toContain('Workspace dependency "pkg1" not found');
     expect(existsSync(join(project.member, "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
+  });
+});
+
+// A package manager command typed in a workspace runs in the root of that workspace. As a project of
+// its own the folder would read its own .npmrc and bunfig.toml, and would get a bun.lock of its
+// own. So when a package.json above the folder may list it as a workspace and cannot say so, the
+// command stops.
+describe("below a package.json that cannot say what its workspaces are", () => {
+  // `bun install` in this folder alone exits 0 and writes a bun.lock.
+  const MEMBER = JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { local: "file:./vendor/local" } });
+  const LOCAL = JSON.stringify({ name: "local", version: "1.0.0" });
+  const STRING = `{ "name": "root", "workspaces": "packages/*" }`;
+  const TYPE_ERROR = `error: "workspaces" expects an array of strings, e.g.`;
+
+  function workspace(root: string = rootPackageJson(["packages/*"]), files: Record<string, string> = {}) {
+    const dir = tempDir("workspace-root-not-asked", {
+      "package.json": root,
+      "packages/pkg1/package.json": MEMBER,
+      "packages/pkg1/vendor/local/package.json": LOCAL,
+      "packages/pkg2/package.json": JSON.stringify({ name: "pkg2", version: "1.0.0" }),
+      ...files,
+    });
+    return {
+      root: String(dir),
+      packageJson: join(String(dir), "package.json"),
+      member: join(String(dir), "packages", "pkg1"),
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+  type Workspace = ReturnType<typeof workspace>;
+  type User = { uid?: number; gid?: number };
+
+  // bun joins package.json to a directory with "/" on every platform.
+  const slashes = (text: string) => text.replaceAll("\\", "/");
+  const cannotTell = (folder: string, root: string) => `note: cannot tell if "${folder}" is a workspace of "${root}"\n`;
+  const binOf = (dir: string) => join(dir, "node_modules", ".bin") + "\n";
+  const lockfileOf = (dir: string) =>
+    existsSync(join(dir, "bun.lock")) ? readFileSync(join(dir, "bun.lock"), "utf8") : null;
+
+  // `bun pm bin` prints where the project is. `bun install` in the folder alone writes its bun.lock.
+  async function expectStopped(project: Workspace, stderr: string, user: User = {}, folder = project.member) {
+    const lockfile = lockfileOf(folder);
+    for (const args of [["pm", "bin"], ["install"]]) {
+      const result = await runBun(args, folder, bunEnv, user);
+      expect({ ...result, stderr: slashes(result.stderr), lockfile: lockfileOf(folder) }).toEqual({
+        stdout: "",
+        stderr: slashes(stderr),
+        exitCode: 1,
+        lockfile,
+      });
+    }
+  }
+
+  async function expectRootFound(project: Workspace, user: User = {}) {
+    expect(await runBun(["pm", "bin"], project.member, bunEnv, user)).toEqual({
+      stdout: binOf(project.root),
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+
+  async function expectOwnProject(folder: string) {
+    expect(await runBun(["pm", "bin"], folder)).toEqual({ stdout: binOf(folder), stderr: "", exitCode: 0 });
+  }
+
+  describe.concurrent("the package.json above it", () => {
+    // `bun install` in the root refuses this file too. A writer that truncates leaves it for a moment.
+    test("is empty beside a lockfile", async () => {
+      using project = workspace();
+      expect((await runInstall(project.root)).exitCode).toBe(0);
+      writeFileSync(project.packageJson, "");
+
+      await expectStopped(
+        project,
+        `error: failed to parse '${project.packageJson}': file is empty\n` + cannotTell(project.member, project.root),
+      );
+    });
+
+    // Every name that `bun install` takes a lockfile from counts.
+    test.each(["bun.lockb", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"])(
+      "is empty beside a %s",
+      async lockfile => {
+        using project = workspace("", { [lockfile]: "" });
+
+        expect(await runBun(["pm", "bin"], project.member)).toEqual({
+          stdout: "",
+          stderr:
+            `error: failed to parse '${project.packageJson}': file is empty\n` +
+            cannotTell(project.member, project.root),
+          exitCode: 1,
+        });
+      },
+    );
+
+    test("is a directory", async () => {
+      using project = workspace();
+      rmSync(project.packageJson);
+      mkdirSync(project.packageJson);
+
+      await expectStopped(
+        project,
+        `EISDIR: cannot read "${project.packageJson}"\n` + cannotTell(project.member, project.root),
+      );
+    });
+
+    test("does not parse", async () => {
+      using project = workspace(`{ "name": "root", oops`);
+
+      await expectStopped(
+        project,
+        `1 | { "name": "root", oops\n` +
+          `                      ^\n` +
+          `error: Expected string but found "oops"\n` +
+          `    at ${project.packageJson}:1:19\n` +
+          cannotTell(project.member, project.root),
+      );
+    });
+
+    test.each([
+      ["a string", `"packages/*"`, TYPE_ERROR],
+      [
+        "an object whose packages is a string",
+        `{ "packages": "packages/*" }`,
+        `error: "workspaces.packages" expects an array of strings, e.g.`,
+      ],
+      [
+        "an array with a number after the pattern",
+        `["packages/*", 1]`,
+        "error: Workspaces expects an array of strings, like:",
+      ],
+      // The listing has pkg2 when it stops at the number, and it has not asked about pkg1.
+      [
+        "an array with a number after the path of another folder",
+        `["packages/pkg2", 1]`,
+        "error: Workspaces expects an array of strings, like:",
+      ],
+    ])("has a workspaces that is %s", async (_, workspaces, error) => {
+      using project = workspace(`{ "name": "root", "workspaces": ${workspaces} }`);
+
+      for (const args of [["pm", "bin"], ["install"]]) {
+        const { stdout, stderr, exitCode } = await runBun(args, project.member);
+        expect({ stdout, errors: errorLines(stderr), exitCode, lockfile: lockfileOf(project.member) }).toEqual({
+          stdout: "",
+          errors: [error],
+          exitCode: 1,
+          lockfile: null,
+        });
+        expect(slashes(stderr)).toContain(slashes(`\n    at ${project.packageJson}:1:`));
+        expect(slashes(stderr)).toEndWith(slashes(cannotTell(project.member, project.root)));
+      }
+    });
+
+    // Each of these would change the folder or ask a registry as a project of its own.
+    test.each(["add no-deps", "remove local", "update", "publish --dry-run", "ci"])(
+      "cannot say, and bun %s changes nothing",
+      async command => {
+        const seen: string[] = [];
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req) {
+            seen.push(`${req.method} ${new URL(req.url).pathname}`);
+            return new Response("{}", { status: 404 });
+          },
+        });
+        using project = workspace(STRING);
+
+        const env = { ...bunEnv, BUN_CONFIG_REGISTRY: registry.url.href };
+        const result = await runBun(command.split(" "), project.member, env);
+
+        expect({
+          errors: errorLines(result.stderr),
+          exitCode: result.exitCode,
+          seen,
+          packageJson: readFileSync(join(project.member, "package.json"), "utf8"),
+          lockfile: lockfileOf(project.member),
+        }).toEqual({ errors: [TYPE_ERROR], exitCode: 1, seen: [], packageJson: MEMBER, lockfile: null });
+        expect(slashes(result.stderr)).toEndWith(slashes(cannotTell(project.member, project.root)));
+      },
+    );
+
+    // The settings of a workspace are at its root. The folder alone has the user's.
+    test("cannot say, and no registry is asked", async () => {
+      const seen: string[] = [];
+      const serve = (name: string) =>
+        Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req) {
+            const path = decodeURIComponent(new URL(req.url).pathname);
+            seen.push(`${name} registry, ${req.headers.get("authorization")}: ${path}`);
+            return new Response("{}", { status: 404 });
+          },
+        });
+      await using ofRoot = serve("the root's");
+      await using ofUser = serve("the user's");
+      using project = workspace(undefined, {
+        ".npmrc": `@corp:registry=${ofRoot.url.href}\n//${ofRoot.url.host}/:_authToken=root-token\n`,
+        "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", dependencies: { "@corp/thing": "1.0.0" } }),
+      });
+      using home = tempDir("workspace-root-not-asked-home", {});
+      const env = {
+        ...bunEnv,
+        // bunEnv spreads process.env, and CI runners export some of these.
+        XDG_CONFIG_HOME: undefined,
+        NPM_CONFIG_USERCONFIG: undefined,
+        npm_config_userconfig: undefined,
+        NPM_CONFIG_REGISTRY: undefined,
+        npm_config_registry: undefined,
+        HOME: String(home),
+        USERPROFILE: String(home),
+        BUN_INSTALL_CACHE_DIR: join(String(home), "cache"),
+        BUN_CONFIG_REGISTRY: ofUser.url.href,
+      };
+
+      await runBun(["install"], project.member, env);
+      expect(seen).toEqual(["the root's registry, Bearer root-token: /@corp/thing"]);
+
+      seen.length = 0;
+      writeFileSync(project.packageJson, STRING);
+      const { exitCode } = await runBun(["install"], project.member, env);
+      expect({ seen, exitCode }).toEqual({ seen: [], exitCode: 1 });
+    });
+
+    // The folder alone would write this file, so it says nothing about the root.
+    test("cannot say, and the folder has a bun.lock of its own", async () => {
+      using project = workspace(STRING, { "packages/pkg1/bun.lock": "{}" });
+
+      for (const args of [["pm", "bin"], ["install"]]) {
+        const { stdout, stderr, exitCode } = await runBun(args, project.member);
+        expect({ stdout, errors: errorLines(stderr), exitCode, lockfile: lockfileOf(project.member) }).toEqual({
+          stdout: "",
+          errors: [TYPE_ERROR],
+          exitCode: 1,
+          lockfile: "{}",
+        });
+      }
+    });
+
+    test("names it by its path before an entry that is not a string: the root is found", async () => {
+      using project = workspace(`{ "name": "root", "workspaces": ["packages/pkg1", 1] }`);
+
+      await expectRootFound(project);
+    });
+
+    // A package.json above the file whose content is not known lists the folder, and that answers.
+    test.each([
+      ["with no lockfile beside it", {}],
+      ["beside a lockfile", { "packages/bun.lock": "" }],
+    ])("is empty %s, between it and a root that lists it: the root is found", async (_, lockfile) => {
+      using project = workspace(undefined, { "packages/package.json": "", ...lockfile });
+
+      await expectRootFound(project);
+    });
+
+    test("is empty beside a lockfile, and the package.json above that one does not list it", async () => {
+      using project = workspace(rootPackageJson(["apps/*"]), { "packages/package.json": "", "packages/bun.lock": "" });
+      const between = join(project.root, "packages");
+
+      await expectStopped(
+        project,
+        `error: failed to parse '${join(between, "package.json")}': file is empty\n` +
+          cannotTell(project.member, between),
+      );
+    });
+
+    // No package.json lists a folder that has no `name`, so the file above is not needed.
+    test("cannot say, and the folder has no name: it is its own project", async () => {
+      using project = workspace(STRING, { "packages/pkg1/package.json": JSON.stringify({ version: "1.0.0" }) });
+
+      await expectOwnProject(project.member);
+    });
+
+    // A file above that does not parse stops every folder below it, and so does a directory by
+    // that name. The note would not be true for a folder that has no `name`.
+    test.each([
+      [
+        "does not parse",
+        `{ "name": "root", oops`,
+        (packageJson: string) =>
+          `1 | { "name": "root", oops\n` +
+          `                      ^\n` +
+          `error: Expected string but found "oops"\n` +
+          `    at ${packageJson}:1:19\n`,
+      ],
+      ["is a directory", null, (packageJson: string) => `EISDIR: cannot read "${packageJson}"\n`],
+    ] as [string, string | null, (packageJson: string) => string][])(
+      "%s, and the folder has no name: the command stops without the note",
+      async (_, root, stderr) => {
+        using project = workspace(root ?? "", {
+          "packages/pkg1/package.json": JSON.stringify({ version: "1.0.0" }),
+        });
+        if (root === null) {
+          rmSync(project.packageJson);
+          mkdirSync(project.packageJson);
+        }
+
+        const result = await runBun(["pm", "bin"], project.member);
+        expect({ ...result, stderr: slashes(result.stderr) }).toEqual({
+          stdout: "",
+          stderr: slashes(stderr(project.packageJson)),
+          exitCode: 1,
+        });
+      },
+    );
+
+    test("cannot say, and the package.json of the folder is empty", async () => {
+      using project = workspace(STRING, { "packages/pkg1/package.json": "" });
+
+      const { stdout, stderr, exitCode } = await runBun(["pm", "bin"], project.member);
+      expect({ stdout, errors: errorLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        errors: [TYPE_ERROR],
+        exitCode: 1,
+      });
+    });
+
+    // The listing got to every folder, and could not read this one. It may be a workspace.
+    test("lists the folder, and the package.json of the folder does not parse", async () => {
+      using project = workspace(undefined, { "packages/pkg1/package.json": `{ "name": "pkg1", oops` });
+
+      const { stdout, stderr, exitCode } = await runBun(["pm", "bin"], project.member);
+      expect({ stdout, errors: errorLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        errors: [
+          `error: Expected string but found "oops"`,
+          `error: ParserError reading package.json for workspace package "packages/pkg1" from "package.json"`,
+        ],
+        exitCode: 1,
+      });
+      expect(slashes(stderr)).toEndWith(slashes(cannotTell(project.member, project.root)));
+    });
+
+    // The two commands register the folder for `bun link <name>` and remove that. They have no project.
+    test("cannot say, and a bare bun link and bun unlink do not ask it", async () => {
+      using project = workspace(STRING);
+      using home = tempDir("workspace-root-not-asked-home", {});
+      const env = { ...bunEnv, BUN_INSTALL: join(String(home), ".bun"), BUN_INSTALL_GLOBAL_DIR: undefined };
+      const link = join(String(home), ".bun", "install", "global", "node_modules", "pkg1");
+
+      const linked = await runBun(["link"], project.member, env);
+      expect({ errors: errorLines(linked.stderr), exitCode: linked.exitCode, link: existsSync(link) }).toEqual({
+        errors: [],
+        exitCode: 0,
+        link: true,
+      });
+      const unlinked = await runBun(["unlink"], project.member, env);
+      expect({ errors: errorLines(unlinked.stderr), exitCode: unlinked.exitCode, link: existsSync(link) }).toEqual({
+        errors: [],
+        exitCode: 0,
+        link: false,
+      });
+    });
+  });
+
+  // The rule is for every folder below such a file: a folder that no pattern names stops too.
+  describe("above a folder that no pattern names", () => {
+    const TOOL = {
+      "tools/x/package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "tools/x/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    };
+    async function installed(ownLockfile: boolean) {
+      const project = workspace(undefined, TOOL);
+      const folder = join(project.root, "tools", "x");
+      expect((await runInstall(project.root)).exitCode).toBe(0);
+      if (ownLockfile) expect((await runInstall(folder)).exitCode).toBe(0);
+      expect(lockfileOf(folder) !== null).toBe(ownLockfile);
+      return { project, folder };
+    }
+    const lockfiles: [string, boolean][] = [
+      ["without a lockfile of its own", false],
+      ["with a bun.lock of its own", true],
+    ];
+
+    describe.concurrent.each(lockfiles)("%s", (_, ownLockfile) => {
+      test("is empty beside a lockfile", async () => {
+        const { project, folder } = await installed(ownLockfile);
+        using _ = project;
+        writeFileSync(project.packageJson, "");
+
+        await expectStopped(
+          project,
+          `error: failed to parse '${project.packageJson}': file is empty\n` + cannotTell(folder, project.root),
+          {},
+          folder,
+        );
+      });
+
+      test("has a workspaces that is a string", async () => {
+        const { project, folder } = await installed(ownLockfile);
+        using _ = project;
+        writeFileSync(project.packageJson, STRING);
+
+        const { stdout, stderr, exitCode } = await runBun(["pm", "bin"], folder);
+        expect({ stdout, errors: errorLines(stderr), exitCode }).toEqual({
+          stdout: "",
+          errors: [TYPE_ERROR],
+          exitCode: 1,
+        });
+        expect(slashes(stderr)).toEndWith(slashes(cannotTell(folder, project.root)));
+      });
+    });
+
+    describe.skipIf(isWindows).each(lockfiles)("%s", (_, ownLockfile) => {
+      test.serial("cannot be opened", async () => {
+        const { project, folder } = await installed(ownLockfile);
+        using _ = project;
+        chmodSync(project.packageJson, 0o000);
+        using user = unprivilegedSpawnOptions(project.root);
+
+        await expectStopped(
+          project,
+          `EACCES: cannot read "${project.packageJson}"\n` + cannotTell(folder, project.root),
+          user,
+          folder,
+        );
+      });
+
+      test.serial("lists a folder that cannot be opened before the others", async () => {
+        const { project, folder } = await installed(ownLockfile);
+        using _ = project;
+        writeFileSync(project.packageJson, rootPackageJson(["locked/*", "packages/*"]));
+        const locked = join(project.root, "locked");
+        mkdirSync(locked, { mode: 0o000 });
+        try {
+          using user = unprivilegedSpawnOptions(project.root);
+          const result = await runBun(["pm", "bin"], folder, bunEnv, user);
+
+          expect({ ...result, stderr: errorLines(result.stderr) }).toEqual({
+            stdout: "",
+            stderr: [`error: Failed to run workspace pattern locked/* due to error EACCES (open "${locked}")`],
+            exitCode: 1,
+          });
+          expect(result.stderr).toEndWith(cannotTell(folder, project.root));
+        } finally {
+          chmodSync(locked, 0o755);
+        }
+      });
+    });
+
+    // A folder with `workspaces` is asked for its own members and is never asked for more.
+    test("that has workspaces of its own stops, and a workspace of that folder does not", async () => {
+      using project = workspace(STRING, {
+        "tools/x/package.json": JSON.stringify({ name: "x", workspaces: ["packages/*"] }),
+        "tools/x/packages/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+      });
+      const folder = join(project.root, "tools", "x");
+
+      const { stdout, stderr, exitCode } = await runBun(["pm", "bin"], folder);
+      expect({ stdout, errors: errorLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        errors: [TYPE_ERROR],
+        exitCode: 1,
+      });
+      expect(await runBun(["pm", "bin"], join(folder, "packages", "y"))).toEqual({
+        stdout: binOf(folder),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // A workspace can be a link to another folder. `$PWD` then leads to the root, and the real path
+  // of the folder does not.
+  describe.concurrent.skipIf(isWindows)("typed in a folder that a link leads to", () => {
+    function linked(aboveRealPath: string, workspaces: string[]) {
+      const dir = tempDir("workspace-root-not-asked-link", {
+        "package.json": rootPackageJson(workspaces),
+        "packages/pkg2/package.json": JSON.stringify({ name: "pkg2", version: "1.0.0" }),
+        "elsewhere/package.json": aboveRealPath,
+        "elsewhere/pkg1/package.json": MEMBER,
+        "elsewhere/pkg1/vendor/local/package.json": LOCAL,
+      });
+      const typed = join(String(dir), "packages", "pkg1");
+      symlinkSync(join("..", "elsewhere", "pkg1"), typed);
+      return {
+        root: String(dir),
+        typed,
+        above: join(String(dir), "elsewhere"),
+        member: join(String(dir), "elsewhere", "pkg1"),
+        run: (...args: string[]) => runBun(args, typed, { ...bunEnv, PWD: typed }),
+        [Symbol.dispose]: () => dir[Symbol.dispose](),
+      };
+    }
+    const cannotSay = `{ "name": "elsewhere", "workspaces": "pkg1" }`;
+
+    test("the root above $PWD lists it: the file above the real path is not needed", async () => {
+      using project = linked(cannotSay, ["packages/*"]);
+
+      expect(await project.run("pm", "bin")).toEqual({ stdout: binOf(project.root), stderr: "", exitCode: 0 });
+      expect((await project.run("install")).exitCode).toBe(0);
+      expect(
+        ["", "elsewhere", "elsewhere/pkg1"].filter(dir => existsSync(join(project.root, dir, "bun.lock"))),
+      ).toEqual([""]);
+    });
+
+    test("nothing above $PWD lists it: the file above the real path is reported", async () => {
+      using project = linked(cannotSay, ["apps/*"]);
+
+      const { stdout, stderr, exitCode } = await project.run("pm", "bin");
+      expect({ stdout, errors: errorLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        errors: [TYPE_ERROR],
+        exitCode: 1,
+      });
+      expect(stderr).toContain(`\n    at ${join(project.above, "package.json")}:1:`);
+      expect(stderr).toEndWith(cannotTell(project.member, project.above));
+    });
+
+    test("the file above $PWD cannot say, and nothing above the real path lists it", async () => {
+      using dir = tempDir("workspace-root-not-asked-link", {
+        "repo/package.json": cannotSay,
+        "repo/packages/pkg2/package.json": JSON.stringify({ name: "pkg2", version: "1.0.0" }),
+        "elsewhere/pkg1/package.json": MEMBER,
+      });
+      const repo = join(String(dir), "repo");
+      const typed = join(repo, "packages", "pkg1");
+      symlinkSync(join(String(dir), "elsewhere", "pkg1"), typed);
+
+      const { stdout, stderr, exitCode } = await runBun(["pm", "bin"], typed, { ...bunEnv, PWD: typed });
+      expect({ stdout, errors: errorLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        errors: [TYPE_ERROR],
+        exitCode: 1,
+      });
+      expect(stderr).toContain(`\n    at ${join(repo, "package.json")}:1:`);
+      // The folder has the name that leads to that file.
+      expect(stderr).toEndWith(cannotTell(typed, repo));
+    });
+
+    test("the file above the real path does not parse: the command stops before $PWD is looked at", async () => {
+      using project = linked(`{ "name": "elsewhere", oops`, ["packages/*"]);
+
+      const { stdout, stderr, exitCode } = await project.run("pm", "bin");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      expect(stderr).toContain(`\n    at ${join(project.above, "package.json")}:1:`);
+    });
+  });
+
+  // Root ignores the mode bits, so bun runs as another user there. That changes the modes of the
+  // directories above the fixture for a moment, so these do not run side by side.
+  describe.skipIf(isWindows)("a file mode keeps bun out", () => {
+    test.serial("the package.json of the root cannot be opened", async () => {
+      using project = workspace();
+      chmodSync(project.packageJson, 0o000);
+      using user = unprivilegedSpawnOptions(project.root);
+
+      await expectStopped(
+        project,
+        `EACCES: cannot read "${project.packageJson}"\n` + cannotTell(project.member, project.root),
+        user,
+      );
+    });
+
+    test.serial.each([
+      [["packages/*"], true],
+      [["apps/*"], false],
+    ] as [string[], boolean][])(
+      "a package.json between it and a root with the workspaces %j cannot be opened",
+      async (workspaces, listed) => {
+        using project = workspace(rootPackageJson(workspaces));
+        const between = join(project.root, "packages");
+        writeFileSync(join(between, "package.json"), "{}");
+        chmodSync(join(between, "package.json"), 0o000);
+        using user = unprivilegedSpawnOptions(project.root);
+
+        if (listed) return await expectRootFound(project, user);
+        await expectStopped(
+          project,
+          `EACCES: cannot read "${join(between, "package.json")}"\n` + cannotTell(project.member, between),
+          user,
+        );
+      },
+    );
+
+    // The listing of the workspaces stops at the first folder that it cannot open. `workspaces`
+    // is read in order, so the order says whether the listing got to `packages/*`.
+    test.serial.each([
+      [["locked/*", "packages/*"], false],
+      [["packages/*", "locked/*"], true],
+    ] as [string[], boolean][])(
+      "the workspaces %j include a folder that cannot be opened",
+      async (workspaces, listed) => {
+        using project = workspace(rootPackageJson(workspaces));
+        const locked = join(project.root, "locked");
+        mkdirSync(locked, { mode: 0o000 });
+        try {
+          using user = unprivilegedSpawnOptions(project.root);
+          if (listed) return await expectRootFound(project, user);
+          const result = await runBun(["pm", "bin"], project.member, bunEnv, user);
+
+          expect({ ...result, stderr: errorLines(result.stderr) }).toEqual({
+            stdout: "",
+            stderr: [`error: Failed to run workspace pattern locked/* due to error EACCES (open "${locked}")`],
+            exitCode: 1,
+          });
+          expect(result.stderr).toEndWith(cannotTell(project.member, project.root));
+        } finally {
+          chmodSync(locked, 0o755);
+        }
+      },
+    );
+
+    // Here the folder that cannot be opened is under the pattern that lists the others. The
+    // listing reads the folders in the order the file system returns them and stops at that one,
+    // so each folder is closed in turn: of the other two, the one that is read before the closed
+    // folder finds the root, and the one that is read after it stops.
+    test.serial("a folder under the pattern that lists it cannot be opened", async () => {
+      const names = ["pkg1", "pkg2", "pkg3"];
+      using project = workspace(
+        undefined,
+        Object.fromEntries(names.map(name => [`packages/${name}/package.json`, JSON.stringify({ name })])),
+      );
+      using user = unprivilegedSpawnOptions(project.root);
+      const results: string[] = [];
+      for (const closed of names) {
+        const closedDir = join(project.root, "packages", closed);
+        chmodSync(closedDir, 0o000);
+        try {
+          for (const name of names.filter(name => name !== closed)) {
+            const member = join(project.root, "packages", name);
+            const result = await runBun(["pm", "bin"], member, bunEnv, user);
+            if (result.exitCode === 0) {
+              expect(result).toEqual({ stdout: binOf(project.root), stderr: "", exitCode: 0 });
+              results.push("root");
+              continue;
+            }
+            expect({ ...result, stderr: errorLines(result.stderr) }).toEqual({
+              stdout: "",
+              stderr: [`error: Failed to run workspace pattern packages/* due to error EACCES (open "${closedDir}")`],
+              exitCode: 1,
+            });
+            expect(result.stderr).toEndWith(cannotTell(member, project.root));
+            results.push("stopped");
+          }
+        } finally {
+          chmodSync(closedDir, 0o755);
+        }
+      }
+      expect(results.sort()).toEqual(["root", "root", "root", "stopped", "stopped", "stopped"]);
+    });
+  });
+
+  // `bunx` finds the root on its own and does not stop. The root lists the member here, so `bunx`
+  // still finds the package of the root from a member below a file whose content is not known.
+  describe.skipIf(isWindows)("bunx in a member below a package.json whose content is not known", () => {
+    function withTool(files: Record<string, string>) {
+      const project = workspace(undefined, {
+        "node_modules/@corp/cli/package.json": JSON.stringify({ name: "@corp/cli", version: "1.0.0", bin: "cli.sh" }),
+        "node_modules/@corp/cli/cli.sh": "#!/bin/sh\necho the cli of the root\n",
+        ...files,
+      });
+      const cli = join(project.root, "node_modules", "@corp", "cli", "cli.sh");
+      chmodSync(cli, 0o755);
+      mkdirSync(join(project.root, "node_modules", ".bin"));
+      symlinkSync(cli, join(project.root, "node_modules", ".bin", "cli"));
+      return project;
+    }
+    const ran = { stdout: "the cli of the root\n", stderr: "", exitCode: 0 };
+
+    test("that is empty beside a lockfile", async () => {
+      using project = withTool({ "packages/package.json": "", "packages/bun.lock": "" });
+
+      expect(await runBun(["x", "--no-install", "@corp/cli"], project.member)).toEqual(ran);
+    });
+
+    test.serial("that cannot be opened", async () => {
+      using project = withTool({ "packages/package.json": "{}" });
+      chmodSync(join(project.root, "packages", "package.json"), 0o000);
+      using user = unprivilegedSpawnOptions(project.root);
+
+      expect(await runBun(["x", "--no-install", "@corp/cli"], project.member, bunEnv, user)).toEqual(ran);
+    });
+  });
+
+  // The mode bits of Windows do not keep a reader out. An entry in the access control list does.
+  test.skipIf(!isWindows)("the access control list keeps bun out of the package.json of the root", async () => {
+    using project = workspace();
+    const everyone = "*S-1-1-0";
+    Bun.spawnSync({ cmd: ["icacls", project.packageJson, "/deny", `${everyone}:(RD)`] });
+    try {
+      for (const args of [["pm", "bin"], ["install"]]) {
+        const { stdout, stderr, exitCode } = await runBun(args, project.member);
+        expect({ stdout, exitCode, lockfile: lockfileOf(project.member) }).toEqual({
+          stdout: "",
+          exitCode: 1,
+          lockfile: null,
+        });
+        expect(slashes(stderr)).toMatch(/^E(PERM|ACCES): cannot read "[^"]+\/package\.json"\n/);
+        expect(slashes(stderr)).toEndWith(slashes(cannotTell(project.member, project.root)));
+      }
+    } finally {
+      Bun.spawnSync({ cmd: ["icacls", project.packageJson, "/remove:d", everyone] });
+    }
+  });
+
+  // What must stay as it is: these folders are projects of their own.
+  describe.concurrent("can say, and the folder is its own project", () => {
+    test("the workspaces above it do not list it", async () => {
+      using project = workspace(rootPackageJson(["apps/*"]));
+
+      await expectOwnProject(project.member);
+    });
+
+    test("the package.json above it has no workspaces", async () => {
+      using project = workspace(JSON.stringify({ name: "root" }));
+
+      await expectOwnProject(project.member);
+    });
+
+    test("the workspaces above it is an object without packages", async () => {
+      using project = workspace(JSON.stringify({ name: "root", workspaces: { catalog: {} } }));
+
+      await expectOwnProject(project.member);
+    });
+
+    // `touch package.json && bun install` works, so that file is `{}` for the folders below it too.
+    test("the package.json above it is empty with no lockfile beside it", async () => {
+      using project = workspace("");
+
+      await expectOwnProject(project.member);
+    });
+
+    // The listing got to every folder that `workspaces` names. Its error is about another folder.
+    test("the workspaces above it do not list it, and one that they list does not parse", async () => {
+      using project = workspace(undefined, {
+        "packages/pkg2/package.json": `{ "name": "pkg2", oops`,
+        "tools/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      });
+
+      await expectOwnProject(join(project.root, "tools", "x"));
+    });
   });
 });
 

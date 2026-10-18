@@ -72,7 +72,7 @@ Each workspace has its own `package.json`. To reference another package in the m
 
 A workspace needs a `"name"`. Bun skips a matched `package.json` that has no `"name"`, such as a test fixture containing only `{ "type": "module" }`. Bun does not link the skipped directory into `node_modules` and does not install its dependencies. If the skipped `package.json` declares dependencies, `bun install` prints a warning that names the directory.
 
-A workspace can be outside the directory of the root `package.json`, for example `"../shared"` or a symlink that leads there. Other packages can depend on it, and `bun.lock` lists it. Like npm, `bun install` does not install its dependencies or run its scripts. Reached by its own path, that directory is a project of its own: `bun install` works there unless it has `workspace:` or `catalog:` dependencies. Reached through the symlink, commands that install (`bun install`, `bun add`, `bun remove`, `bun update`) end with an error and change nothing.
+A workspace can be outside the directory of the root `package.json`, for example `"../shared"` or a symlink that leads there. Other packages can depend on it, and `bun.lock` lists it. Like npm, `bun install` does not install its dependencies or run its scripts. Reached by its own path, that directory is a project of its own: `bun install` works there unless it has `workspace:` or `catalog:` dependencies, or a `package.json` above it [stops the command](#run-a-command-in-a-workspace). Reached through the symlink, commands that install (`bun install`, `bun add`, `bun remove`, `bun update`) end with an error and change nothing.
 
 `bun install` installs dependencies for all workspaces in the monorepo, de-duplicating packages if possible. To install dependencies for specific workspaces only, use the `--filter` flag.
 
@@ -118,6 +118,21 @@ Workspaces have a few major benefits.
 - **Split code into logical parts.** If one package relies on another, add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` installs your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.
 - **Bun can de-duplicate dependencies.** If `a` and `b` share a common dependency, Bun _hoists_ it to the root `node_modules` directory. This saves disk space and minimizes the "dependency hell" of multiple versions of a package installed at once.
 - **Run scripts in multiple packages.** Use the [`--filter` flag](/pm/filter) to run `package.json` scripts in several packages at once, or `--workspaces` to run scripts across all workspaces.
+
+## Run a command in a workspace
+
+A package manager command that you run in a workspace, such as `bun install` or `bun add`, uses the `bun.lock`, `bunfig.toml`, and `.npmrc` of the root. To find the root, Bun reads each `package.json` above the working directory, up to the first one that has `"workspaces"`.
+
+Bun stops the command, and changes nothing, when one of those files cannot say whether it lists the working directory. The error names the file. A note reads `cannot tell if "<working directory>" is a workspace of "<directory of the file>"`. Bun stops for these files:
+
+- A `package.json` that Bun cannot parse, or a directory named `package.json`.
+- A `package.json` whose `"workspaces"` is not an array of strings, or an object whose `"packages"` is not an array of strings. An object without `"packages"` lists nothing.
+- A `package.json` whose `"workspaces"` has a pattern that needs a directory Bun cannot read. The patterns before that one still count: if one of them lists the working directory, Bun has found the root. Bun passes over a symlink that it cannot follow.
+- A `package.json` that Bun cannot open, or that is empty next to a lockfile, when no `package.json` above it lists the working directory.
+
+Bun stops in every directory below such a file, also in a directory that is not a workspace. A directory whose own `package.json` has content and no `"name"` is never a workspace. There, only the first kind of file in the list stops the command.
+
+`bun run --filter`, `bun run --workspaces`, and `bunx` find the root on their own. This rule does not apply to them.
 
 ## Self-contained workspaces
 

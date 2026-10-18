@@ -242,12 +242,16 @@ describe("https.createServer forwards every TLS server option", () => {
 
   test("sends sessionTimeout as the ticket lifetime", async () => {
     await using server = https.createServer({ ...validCert, sessionTimeout: 1234 });
+    const startedAt = Date.now();
     const client = tls.connect({ port: await listen(server), host: "127.0.0.1", rejectUnauthorized: false, maxVersion: "TLSv1.2" }); // prettier-ignore
     await once(client, "secureConnect");
+    // The ticket carries what is left of sessionTimeout: each second boundary since the ClientHello takes one off.
+    const skew = Math.ceil((Date.now() - startedAt) / 1000) + 1;
     const session = client.getSession()!.toString("hex");
     client.destroy();
     // SSL_SESSION ::= ... ticketLifetimeHint [9] INTEGER
-    expect(session).toContain("a904020204d2");
+    const [, lifetime] = session.match(/a9040202(....)/) ?? [];
+    expect(parseInt(lifetime, 16)).toBeWithin(1234 - skew, 1235);
   });
 
   test.each([

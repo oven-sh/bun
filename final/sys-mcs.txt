@@ -1,0 +1,4545 @@
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/js/node/http2/node-http2-max-concurrent-streams.test.ts:
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > limit 0 refuses every stream [47.22ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > requests in one write are refused while the first response waits for a later turn [4.56ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > requests over the limit in one write are refused by a server of the core API [1.59ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > requests over the limit in one write are refused by a server of the compatibility API [2.07ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > requests over the limit in one write are refused by a TLS server [69.80ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > requests over the limit in one write are refused by performServerHandshake() over a Duplex [2.80ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after both sides ended the stream [5.61ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after a response that is only HEADERS [4.46ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after sendTrailers() [4.04ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after res.end() of the compatibility API [3.26ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after the end of a response that waited for the window of the peer [7.40ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after the request ended, in one write with the next request [5.99ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after RST_STREAM(CANCEL) from the peer, in one write with the next request [4.37ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after RST_STREAM(NO_ERROR) from the peer, in one write with the next request [2.24ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after RST_STREAM(INTERNAL_ERROR) from the peer, in one write with the next request [2.02ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after RST_STREAM(REFUSED_STREAM) from the peer, in one write with the next request [0.85ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after the peer reset a stream that waits for trailers, in one write with the next request [1.87ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after the peer reset a request of the compatibility API, in one write with the next request [1.81ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after the server reset the stream with close(CANCEL) [1.80ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after the server reset the stream with close(NO_ERROR) [2.05ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after respond() failed for a weight out of range [1.70ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after respond() failed for a parent out of range [1.30ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after respond() failed for options that are not an object [1.29ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a slot is free again > after respond() failed for a header block over maxSendHeaderBlockLength [0.77ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > session.settings() in the 'session' event sets the limit for the first request [1.61ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > server.updateSettings() before the connection sets the limit for the first request [3.14ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > session.settings() > in a handler lowers the limit for the next request of the same write [1.18ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > session.settings() > in a handler raises the limit for the next request of the same write [1.42ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > session.settings() > keeps the open streams when it lowers the limit below their number [1.42ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a trailer block on the one open stream is not a new stream [5.13ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a pushed stream does not use a slot [2.93ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > a field that a refused block added to the HPACK table is known to the next request [4.61ms]
+(pass) the slots of SETTINGS_MAX_CONCURRENT_STREAMS > the frames that follow a refused request in the same write get no answer [5.22ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1,
+      3,
+      5,
+...
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+      7,
+...
+      ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+    ],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of a server of the core API [39.26ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1,
+      3,
+      5,
+...
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+      7,
+...
+      ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+    ],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of a server of the compatibility API [20.63ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1,
+      3,
+      5,
+...
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+      7,
+...
+      ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+    ],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of a TLS server [6.64ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
++   answered: [],
+-   answered: [
+-     1,
+-     3,
+-     5,
+-     7,
+-     9,
+-     11,
+-     13,
+-     15,
+-     17,
+-     19
+-   ],
+    goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+...
+    ],
++   resets: [],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   resets: [
+-     [
+-       21,
+-       7
+-     ],
+-     [
+-       23,
+-       7
+-     ],
+-     [
+-       25,
+-       7
+-     ],
+-     [
+-       27,
+-       7
+-     ],
+-     [
+-       29,
+-       7
+-     ],
+-     [
+-       31,
+-       7
+-     ],
+-     [
+-       33,
+-       7
+-     ],
+-     [
+-       35,
+-       7
+-     ],
+-     [
+-       37,
+-       7
+-     ],
+-     [
+-       39,
+-       7
+-     ],
+-     [
+-       41,
+-       7
+-     ],
+-     [
+-       43,
+-       7
+-     ],
+-     [
+-       45,
+-       7
+-     ],
+-     [
+-       47,
+-       7
+-     ],
+-     [
+-       49,
+-       7
+-     ],
+-     [
+-       51,
+-       7
+-     ],
+-     [
+-       53,
+-       7
+-     ],
+-     [
+-       55,
+-       7
+-     ],
+-     [
+-       57,
+-       7
+-     ],
+-     [
+-       59,
+-       7
+-     ],
+-     [
+-       61,
+-       7
+-     ],
+-     [
+-       63,
+-       7
+-     ],
+-     [
+-       65,
+-       7
+-     ],
+-     [
+-       67,
+-       7
+-     ],
+-     [
+-       69,
+-       7
+-     ],
+-     [
+-       71,
+-       7
+-     ],
+-     [
+-       73,
+-       7
+-     ],
+-     [
+-       75,
+-       7
+-     ],
+-     [
+-       77,
+-       7
+-     ],
+-     [
+-       79,
+-       7
+-     ],
+-     [
+-       81,
+-       7
+-     ],
+-     [
+-       83,
+-       7
+-     ],
+-     [
+-       85,
+-       7
+-     ],
+-     [
+-       87,
+-       7
+-     ],
+-     [
+-       89,
+-       7
+-     ],
+-     [
+-       91,
+-       7
+-     ],
+-     [
+-       93,
+-       7
+-     ],
+-     [
+-       95,
+-       7
+-     ],
+-     [
+-       97,
+-       7
+-     ],
+-     [
+-       99,
+-       7
+-     ],
+-     [
+-       101,
+-       7
+-     ],
+-     [
+-       103,
+-       7
+-     ],
+-     [
+-       105,
+-       7
+-     ],
+-     [
+-       107,
+-       7
+-     ],
+-     [
+-       109,
+-       7
+-     ],
+-     [
+-       111,
+-       7
+-     ],
+-     [
+-       113,
+-       7
+-     ],
+-     [
+-       115,
+-       7
+-     ],
+-     [
+-       117,
+-       7
+-     ],
+-     [
+-       119,
+-       7
+-     ],
+-     [
+-       121,
+-       7
+-     ],
+-     [
+-       123,
+-       7
+-     ],
+-     [
+-       125,
+-       7
+-     ],
+-     [
+-       127,
+-       7
+-     ],
+-     [
+-       129,
+-       7
+-     ],
+-     [
+-       131,
+-       7
+-     ],
+-     [
+-       133,
+-       7
+-     ],
+-     [
+-       135,
+-       7
+-     ],
+-     [
+-       137,
+-       7
+-     ],
+-     [
+-       139,
+-       7
+-     ],
+-     [
+-       141,
+-       7
+-     ],
+-     [
+-       143,
+-       7
+-     ],
+-     [
+-       145,
+-       7
+-     ],
+-     [
+-       147,
+-       7
+-     ],
+-     [
+-       149,
+-       7
+-     ],
+-     [
+-       151,
+-       7
+-     ],
+-     [
+-       153,
+-       7
+-     ],
+-     [
+-       155,
+-       7
+-     ],
+-     [
+-       157,
+-       7
+-     ],
+-     [
+-       159,
+-       7
+-     ],
+-     [
+-       161,
+-       7
+-     ],
+-     [
+-       163,
+-       7
+-     ],
+-     [
+-       165,
+-       7
+-     ],
+-     [
+-       167,
+-       7
+-     ],
+-     [
+-       169,
+-       7
+-     ],
+-     [
+-       171,
+-       7
+-     ],
+-     [
+-       173,
+-       7
+-     ],
+-     [
+-       175,
+-       7
+-     ],
+-     [
+-       177,
+-       7
+-     ],
+-     [
+-       179,
+-       7
+-     ],
+-     [
+-       181,
+-       7
+-     ],
+-     [
+-       183,
+-       7
+-     ],
+-     [
+-       185,
+-       7
+-     ],
+-     [
+-       187,
+-       7
+-     ],
+-     [
+-       189,
+-       7
+-     ],
+-     [
+-       191,
+-       7
+-     ],
+-     [
+-       193,
+-       7
+-     ],
+-     [
+-       195,
+-       7
+-     ],
+-     [
+-       197,
+-       7
+-     ],
+-     [
+-       199,
+-       7
+-     ],
+-     [
+-       201,
+-       7
+-     ],
+-     [
+-       203,
+-       7
+-     ],
+-     [
+-       205,
+-       7
+-     ],
+-     [
+-       207,
+-       7
+-     ],
+-     [
+-       209,
+-       7
+-     ],
+-     [
+-       211,
+-       7
+-     ],
+-     [
+-       213,
+-       7
+-     ],
+-     [
+-       215,
+-       7
+-     ],
+-     [
+-       217,
+-       7
+-     ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+-   ],
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [],
+  resets: [],
+  goaways: [],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of performServerHandshake() over a Duplex [5.72ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1,
+      3,
+      5,
+...
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+      7,
+...
+      ],
+-     [
+-       25,
+-       7
+-     ],
+-     [
+-       27,
+-       7
+-     ],
+-     [
+-       29,
+-       7
+-     ],
+-     [
+-       31,
+-       7
+-     ],
+-     [
+-       33,
+-       7
+-     ],
+-     [
+-       35,
+-       7
+-     ],
+-     [
+-       37,
+-       7
+-     ],
+-     [
+-       39,
+-       7
+-     ],
+-     [
+-       41,
+-       7
+-     ],
+-     [
+-       43,
+-       7
+-     ],
+-     [
+-       45,
+-       7
+-     ],
+-     [
+-       47,
+-       7
+-     ],
+-     [
+-       49,
+-       7
+-     ],
+-     [
+-       51,
+-       7
+-     ],
+-     [
+-       53,
+-       7
+-     ],
+-     [
+-       55,
+-       7
+-     ],
+-     [
+-       57,
+-       7
+-     ],
+-     [
+-       59,
+-       7
+-     ],
+-     [
+-       61,
+-       7
+-     ],
+-     [
+-       63,
+-       7
+-     ],
+-     [
+-       65,
+-       7
+-     ],
+-     [
+-       67,
+-       7
+-     ],
+-     [
+-       69,
+-       7
+-     ],
+-     [
+-       71,
+-       7
+-     ],
+-     [
+-       73,
+-       7
+-     ],
+-     [
+-       75,
+-       7
+-     ],
+-     [
+-       77,
+-       7
+-     ],
+-     [
+-       79,
+-       7
+-     ],
+-     [
+-       81,
+-       7
+-     ],
+-     [
+-       83,
+-       7
+-     ],
+-     [
+-       85,
+-       7
+-     ],
+-     [
+-       87,
+-       7
+-     ],
+-     [
+-       89,
+-       7
+-     ],
+-     [
+-       91,
+-       7
+-     ],
+-     [
+-       93,
+-       7
+-     ],
+-     [
+-       95,
+-       7
+-     ],
+-     [
+-       97,
+-       7
+-     ],
+-     [
+-       99,
+-       7
+-     ],
+-     [
+-       101,
+-       7
+-     ],
+-     [
+-       103,
+-       7
+-     ],
+-     [
+-       105,
+-       7
+-     ],
+-     [
+-       107,
+-       7
+-     ],
+-     [
+-       109,
+-       7
+-     ],
+-     [
+-       111,
+-       7
+-     ],
+-     [
+-       113,
+-       7
+-     ],
+-     [
+-       115,
+-       7
+-     ],
+-     [
+-       117,
+-       7
+-     ],
+-     [
+-       119,
+-       7
+-     ],
+-     [
+-       121,
+-       7
+-     ],
+-     [
+-       123,
+-       7
+-     ],
+-     [
+-       125,
+-       7
+-     ],
+-     [
+-       127,
+-       7
+-     ],
+-     [
+-       129,
+-       7
+-     ],
+-     [
+-       131,
+-       7
+-     ],
+-     [
+-       133,
+-       7
+-     ],
+-     [
+-       135,
+-       7
+-     ],
+-     [
+-       137,
+-       7
+-     ],
+-     [
+-       139,
+-       7
+-     ],
+-     [
+-       141,
+-       7
+-     ],
+-     [
+-       143,
+-       7
+-     ],
+-     [
+-       145,
+-       7
+-     ],
+-     [
+-       147,
+-       7
+-     ],
+-     [
+-       149,
+-       7
+-     ],
+-     [
+-       151,
+-       7
+-     ],
+-     [
+-       153,
+-       7
+-     ],
+-     [
+-       155,
+-       7
+-     ],
+-     [
+-       157,
+-       7
+-     ],
+-     [
+-       159,
+-       7
+-     ],
+-     [
+-       161,
+-       7
+-     ],
+-     [
+-       163,
+-       7
+-     ],
+-     [
+-       165,
+-       7
+-     ],
+-     [
+-       167,
+-       7
+-     ],
+-     [
+-       169,
+-       7
+-     ],
+-     [
+-       171,
+-       7
+-     ],
+-     [
+-       173,
+-       7
+-     ],
+-     [
+-       175,
+-       7
+-     ],
+-     [
+-       177,
+-       7
+-     ],
+-     [
+-       179,
+-       7
+-     ],
+-     [
+-       181,
+-       7
+-     ],
+-     [
+-       183,
+-       7
+-     ],
+-     [
+-       185,
+-       7
+-     ],
+-     [
+-       187,
+-       7
+-     ],
+-     [
+-       189,
+-       7
+-     ],
+-     [
+-       191,
+-       7
+-     ],
+-     [
+-       193,
+-       7
+-     ],
+-     [
+-       195,
+-       7
+-     ],
+-     [
+-       197,
+-       7
+-     ],
+-     [
+-       199,
+-       7
+-     ],
+-     [
+-       201,
+-       7
+-     ],
+-     [
+-       203,
+-       7
+-     ],
+-     [
+-       205,
+-       7
+-     ],
+-     [
+-       207,
+-       7
+-     ],
+-     [
+-       209,
+-       7
+-     ],
+-     [
+-       211,
+-       7
+-     ],
+-     [
+-       213,
+-       7
+-     ],
+-     [
+-       215,
+-       7
+-     ],
+-     [
+-       217,
+-       7
+-     ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+    ],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of a server of the core API [5.67ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1,
+      3,
+      5,
+...
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+      7,
+...
+      ],
+-     [
+-       25,
+-       7
+-     ],
+-     [
+-       27,
+-       7
+-     ],
+-     [
+-       29,
+-       7
+-     ],
+-     [
+-       31,
+-       7
+-     ],
+-     [
+-       33,
+-       7
+-     ],
+-     [
+-       35,
+-       7
+-     ],
+-     [
+-       37,
+-       7
+-     ],
+-     [
+-       39,
+-       7
+-     ],
+-     [
+-       41,
+-       7
+-     ],
+-     [
+-       43,
+-       7
+-     ],
+-     [
+-       45,
+-       7
+-     ],
+-     [
+-       47,
+-       7
+-     ],
+-     [
+-       49,
+-       7
+-     ],
+-     [
+-       51,
+-       7
+-     ],
+-     [
+-       53,
+-       7
+-     ],
+-     [
+-       55,
+-       7
+-     ],
+-     [
+-       57,
+-       7
+-     ],
+-     [
+-       59,
+-       7
+-     ],
+-     [
+-       61,
+-       7
+-     ],
+-     [
+-       63,
+-       7
+-     ],
+-     [
+-       65,
+-       7
+-     ],
+-     [
+-       67,
+-       7
+-     ],
+-     [
+-       69,
+-       7
+-     ],
+-     [
+-       71,
+-       7
+-     ],
+-     [
+-       73,
+-       7
+-     ],
+-     [
+-       75,
+-       7
+-     ],
+-     [
+-       77,
+-       7
+-     ],
+-     [
+-       79,
+-       7
+-     ],
+-     [
+-       81,
+-       7
+-     ],
+-     [
+-       83,
+-       7
+-     ],
+-     [
+-       85,
+-       7
+-     ],
+-     [
+-       87,
+-       7
+-     ],
+-     [
+-       89,
+-       7
+-     ],
+-     [
+-       91,
+-       7
+-     ],
+-     [
+-       93,
+-       7
+-     ],
+-     [
+-       95,
+-       7
+-     ],
+-     [
+-       97,
+-       7
+-     ],
+-     [
+-       99,
+-       7
+-     ],
+-     [
+-       101,
+-       7
+-     ],
+-     [
+-       103,
+-       7
+-     ],
+-     [
+-       105,
+-       7
+-     ],
+-     [
+-       107,
+-       7
+-     ],
+-     [
+-       109,
+-       7
+-     ],
+-     [
+-       111,
+-       7
+-     ],
+-     [
+-       113,
+-       7
+-     ],
+-     [
+-       115,
+-       7
+-     ],
+-     [
+-       117,
+-       7
+-     ],
+-     [
+-       119,
+-       7
+-     ],
+-     [
+-       121,
+-       7
+-     ],
+-     [
+-       123,
+-       7
+-     ],
+-     [
+-       125,
+-       7
+-     ],
+-     [
+-       127,
+-       7
+-     ],
+-     [
+-       129,
+-       7
+-     ],
+-     [
+-       131,
+-       7
+-     ],
+-     [
+-       133,
+-       7
+-     ],
+-     [
+-       135,
+-       7
+-     ],
+-     [
+-       137,
+-       7
+-     ],
+-     [
+-       139,
+-       7
+-     ],
+-     [
+-       141,
+-       7
+-     ],
+-     [
+-       143,
+-       7
+-     ],
+-     [
+-       145,
+-       7
+-     ],
+-     [
+-       147,
+-       7
+-     ],
+-     [
+-       149,
+-       7
+-     ],
+-     [
+-       151,
+-       7
+-     ],
+-     [
+-       153,
+-       7
+-     ],
+-     [
+-       155,
+-       7
+-     ],
+-     [
+-       157,
+-       7
+-     ],
+-     [
+-       159,
+-       7
+-     ],
+-     [
+-       161,
+-       7
+-     ],
+-     [
+-       163,
+-       7
+-     ],
+-     [
+-       165,
+-       7
+-     ],
+-     [
+-       167,
+-       7
+-     ],
+-     [
+-       169,
+-       7
+-     ],
+-     [
+-       171,
+-       7
+-     ],
+-     [
+-       173,
+-       7
+-     ],
+-     [
+-       175,
+-       7
+-     ],
+-     [
+-       177,
+-       7
+-     ],
+-     [
+-       179,
+-       7
+-     ],
+-     [
+-       181,
+-       7
+-     ],
+-     [
+-       183,
+-       7
+-     ],
+-     [
+-       185,
+-       7
+-     ],
+-     [
+-       187,
+-       7
+-     ],
+-     [
+-       189,
+-       7
+-     ],
+-     [
+-       191,
+-       7
+-     ],
+-     [
+-       193,
+-       7
+-     ],
+-     [
+-       195,
+-       7
+-     ],
+-     [
+-       197,
+-       7
+-     ],
+-     [
+-       199,
+-       7
+-     ],
+-     [
+-       201,
+-       7
+-     ],
+-     [
+-       203,
+-       7
+-     ],
+-     [
+-       205,
+-       7
+-     ],
+-     [
+-       207,
+-       7
+-     ],
+-     [
+-       209,
+-       7
+-     ],
+-     [
+-       211,
+-       7
+-     ],
+-     [
+-       213,
+-       7
+-     ],
+-     [
+-       215,
+-       7
+-     ],
+-     [
+-       217,
+-       7
+-     ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+    ],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of a server of the compatibility API [14.61ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1,
+      3,
+      5,
+...
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+      7,
+...
+      ],
+-     [
+-       25,
+-       7
+-     ],
+-     [
+-       27,
+-       7
+-     ],
+-     [
+-       29,
+-       7
+-     ],
+-     [
+-       31,
+-       7
+-     ],
+-     [
+-       33,
+-       7
+-     ],
+-     [
+-       35,
+-       7
+-     ],
+-     [
+-       37,
+-       7
+-     ],
+-     [
+-       39,
+-       7
+-     ],
+-     [
+-       41,
+-       7
+-     ],
+-     [
+-       43,
+-       7
+-     ],
+-     [
+-       45,
+-       7
+-     ],
+-     [
+-       47,
+-       7
+-     ],
+-     [
+-       49,
+-       7
+-     ],
+-     [
+-       51,
+-       7
+-     ],
+-     [
+-       53,
+-       7
+-     ],
+-     [
+-       55,
+-       7
+-     ],
+-     [
+-       57,
+-       7
+-     ],
+-     [
+-       59,
+-       7
+-     ],
+-     [
+-       61,
+-       7
+-     ],
+-     [
+-       63,
+-       7
+-     ],
+-     [
+-       65,
+-       7
+-     ],
+-     [
+-       67,
+-       7
+-     ],
+-     [
+-       69,
+-       7
+-     ],
+-     [
+-       71,
+-       7
+-     ],
+-     [
+-       73,
+-       7
+-     ],
+-     [
+-       75,
+-       7
+-     ],
+-     [
+-       77,
+-       7
+-     ],
+-     [
+-       79,
+-       7
+-     ],
+-     [
+-       81,
+-       7
+-     ],
+-     [
+-       83,
+-       7
+-     ],
+-     [
+-       85,
+-       7
+-     ],
+-     [
+-       87,
+-       7
+-     ],
+-     [
+-       89,
+-       7
+-     ],
+-     [
+-       91,
+-       7
+-     ],
+-     [
+-       93,
+-       7
+-     ],
+-     [
+-       95,
+-       7
+-     ],
+-     [
+-       97,
+-       7
+-     ],
+-     [
+-       99,
+-       7
+-     ],
+-     [
+-       101,
+-       7
+-     ],
+-     [
+-       103,
+-       7
+-     ],
+-     [
+-       105,
+-       7
+-     ],
+-     [
+-       107,
+-       7
+-     ],
+-     [
+-       109,
+-       7
+-     ],
+-     [
+-       111,
+-       7
+-     ],
+-     [
+-       113,
+-       7
+-     ],
+-     [
+-       115,
+-       7
+-     ],
+-     [
+-       117,
+-       7
+-     ],
+-     [
+-       119,
+-       7
+-     ],
+-     [
+-       121,
+-       7
+-     ],
+-     [
+-       123,
+-       7
+-     ],
+-     [
+-       125,
+-       7
+-     ],
+-     [
+-       127,
+-       7
+-     ],
+-     [
+-       129,
+-       7
+-     ],
+-     [
+-       131,
+-       7
+-     ],
+-     [
+-       133,
+-       7
+-     ],
+-     [
+-       135,
+-       7
+-     ],
+-     [
+-       137,
+-       7
+-     ],
+-     [
+-       139,
+-       7
+-     ],
+-     [
+-       141,
+-       7
+-     ],
+-     [
+-       143,
+-       7
+-     ],
+-     [
+-       145,
+-       7
+-     ],
+-     [
+-       147,
+-       7
+-     ],
+-     [
+-       149,
+-       7
+-     ],
+-     [
+-       151,
+-       7
+-     ],
+-     [
+-       153,
+-       7
+-     ],
+-     [
+-       155,
+-       7
+-     ],
+-     [
+-       157,
+-       7
+-     ],
+-     [
+-       159,
+-       7
+-     ],
+-     [
+-       161,
+-       7
+-     ],
+-     [
+-       163,
+-       7
+-     ],
+-     [
+-       165,
+-       7
+-     ],
+-     [
+-       167,
+-       7
+-     ],
+-     [
+-       169,
+-       7
+-     ],
+-     [
+-       171,
+-       7
+-     ],
+-     [
+-       173,
+-       7
+-     ],
+-     [
+-       175,
+-       7
+-     ],
+-     [
+-       177,
+-       7
+-     ],
+-     [
+-       179,
+-       7
+-     ],
+-     [
+-       181,
+-       7
+-     ],
+-     [
+-       183,
+-       7
+-     ],
+-     [
+-       185,
+-       7
+-     ],
+-     [
+-       187,
+-       7
+-     ],
+-     [
+-       189,
+-       7
+-     ],
+-     [
+-       191,
+-       7
+-     ],
+-     [
+-       193,
+-       7
+-     ],
+-     [
+-       195,
+-       7
+-     ],
+-     [
+-       197,
+-       7
+-     ],
+-     [
+-       199,
+-       7
+-     ],
+-     [
+-       201,
+-       7
+-     ],
+-     [
+-       203,
+-       7
+-     ],
+-     [
+-       205,
+-       7
+-     ],
+-     [
+-       207,
+-       7
+-     ],
+-     [
+-       209,
+-       7
+-     ],
+-     [
+-       211,
+-       7
+-     ],
+-     [
+-       213,
+-       7
+-     ],
+-     [
+-       215,
+-       7
+-     ],
+-     [
+-       217,
+-       7
+-     ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+    ],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of a TLS server [15.82ms]
+823 |     ["maxSessionRejectedStreams: 3", { maxSessionRejectedStreams: 3 }],
+824 |   ])("a first flight of 150 requests at limit 10, with %s", (_, budgets) => {
+825 |     each(entryPoints)("keeps the session of %s", async (_, secure, listen) => {
+826 |       const served: Served = { handlers: [] };
+827 |       const server = listen({ settings: { maxConcurrentStreams: 10 }, ...budgets }, served);
+828 |       assert.deepStrictEqual(await withClient(server, client => inOneWrite(150)(client, served), secure), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
++   answered: [],
+-   answered: [
+-     1,
+-     3,
+-     5,
+-     7,
+-     9,
+-     11,
+-     13,
+-     15,
+-     17,
+-     19
+-   ],
+    goaways: [],
+    handlers: [
+      1,
+      3,
+      5,
+...
+    ],
++   resets: [],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   resets: [
+-     [
+-       21,
+-       7
+-     ],
+-     [
+-       23,
+-       7
+-     ],
+-     [
+-       25,
+-       7
+-     ],
+-     [
+-       27,
+-       7
+-     ],
+-     [
+-       29,
+-       7
+-     ],
+-     [
+-       31,
+-       7
+-     ],
+-     [
+-       33,
+-       7
+-     ],
+-     [
+-       35,
+-       7
+-     ],
+-     [
+-       37,
+-       7
+-     ],
+-     [
+-       39,
+-       7
+-     ],
+-     [
+-       41,
+-       7
+-     ],
+-     [
+-       43,
+-       7
+-     ],
+-     [
+-       45,
+-       7
+-     ],
+-     [
+-       47,
+-       7
+-     ],
+-     [
+-       49,
+-       7
+-     ],
+-     [
+-       51,
+-       7
+-     ],
+-     [
+-       53,
+-       7
+-     ],
+-     [
+-       55,
+-       7
+-     ],
+-     [
+-       57,
+-       7
+-     ],
+-     [
+-       59,
+-       7
+-     ],
+-     [
+-       61,
+-       7
+-     ],
+-     [
+-       63,
+-       7
+-     ],
+-     [
+-       65,
+-       7
+-     ],
+-     [
+-       67,
+-       7
+-     ],
+-     [
+-       69,
+-       7
+-     ],
+-     [
+-       71,
+-       7
+-     ],
+-     [
+-       73,
+-       7
+-     ],
+-     [
+-       75,
+-       7
+-     ],
+-     [
+-       77,
+-       7
+-     ],
+-     [
+-       79,
+-       7
+-     ],
+-     [
+-       81,
+-       7
+-     ],
+-     [
+-       83,
+-       7
+-     ],
+-     [
+-       85,
+-       7
+-     ],
+-     [
+-       87,
+-       7
+-     ],
+-     [
+-       89,
+-       7
+-     ],
+-     [
+-       91,
+-       7
+-     ],
+-     [
+-       93,
+-       7
+-     ],
+-     [
+-       95,
+-       7
+-     ],
+-     [
+-       97,
+-       7
+-     ],
+-     [
+-       99,
+-       7
+-     ],
+-     [
+-       101,
+-       7
+-     ],
+-     [
+-       103,
+-       7
+-     ],
+-     [
+-       105,
+-       7
+-     ],
+-     [
+-       107,
+-       7
+-     ],
+-     [
+-       109,
+-       7
+-     ],
+-     [
+-       111,
+-       7
+-     ],
+-     [
+-       113,
+-       7
+-     ],
+-     [
+-       115,
+-       7
+-     ],
+-     [
+-       117,
+-       7
+-     ],
+-     [
+-       119,
+-       7
+-     ],
+-     [
+-       121,
+-       7
+-     ],
+-     [
+-       123,
+-       7
+-     ],
+-     [
+-       125,
+-       7
+-     ],
+-     [
+-       127,
+-       7
+-     ],
+-     [
+-       129,
+-       7
+-     ],
+-     [
+-       131,
+-       7
+-     ],
+-     [
+-       133,
+-       7
+-     ],
+-     [
+-       135,
+-       7
+-     ],
+-     [
+-       137,
+-       7
+-     ],
+-     [
+-       139,
+-       7
+-     ],
+-     [
+-       141,
+-       7
+-     ],
+-     [
+-       143,
+-       7
+-     ],
+-     [
+-       145,
+-       7
+-     ],
+-     [
+-       147,
+-       7
+-     ],
+-     [
+-       149,
+-       7
+-     ],
+-     [
+-       151,
+-       7
+-     ],
+-     [
+-       153,
+-       7
+-     ],
+-     [
+-       155,
+-       7
+-     ],
+-     [
+-       157,
+-       7
+-     ],
+-     [
+-       159,
+-       7
+-     ],
+-     [
+-       161,
+-       7
+-     ],
+-     [
+-       163,
+-       7
+-     ],
+-     [
+-       165,
+-       7
+-     ],
+-     [
+-       167,
+-       7
+-     ],
+-     [
+-       169,
+-       7
+-     ],
+-     [
+-       171,
+-       7
+-     ],
+-     [
+-       173,
+-       7
+-     ],
+-     [
+-       175,
+-       7
+-     ],
+-     [
+-       177,
+-       7
+-     ],
+-     [
+-       179,
+-       7
+-     ],
+-     [
+-       181,
+-       7
+-     ],
+-     [
+-       183,
+-       7
+-     ],
+-     [
+-       185,
+-       7
+-     ],
+-     [
+-       187,
+-       7
+-     ],
+-     [
+-       189,
+-       7
+-     ],
+-     [
+-       191,
+-       7
+-     ],
+-     [
+-       193,
+-       7
+-     ],
+-     [
+-       195,
+-       7
+-     ],
+-     [
+-       197,
+-       7
+-     ],
+-     [
+-       199,
+-       7
+-     ],
+-     [
+-       201,
+-       7
+-     ],
+-     [
+-       203,
+-       7
+-     ],
+-     [
+-       205,
+-       7
+-     ],
+-     [
+-       207,
+-       7
+-     ],
+-     [
+-       209,
+-       7
+-     ],
+-     [
+-       211,
+-       7
+-     ],
+-     [
+-       213,
+-       7
+-     ],
+-     [
+-       215,
+-       7
+-     ],
+-     [
+-       217,
+-       7
+-     ],
+-     [
+-       219,
+-       7
+-     ],
+-     [
+-       221,
+-       7
+-     ],
+-     [
+-       223,
+-       7
+-     ],
+-     [
+-       225,
+-       7
+-     ],
+-     [
+-       227,
+-       7
+-     ],
+-     [
+-       229,
+-       7
+-     ],
+-     [
+-       231,
+-       7
+-     ],
+-     [
+-       233,
+-       7
+-     ],
+-     [
+-       235,
+-       7
+-     ],
+-     [
+-       237,
+-       7
+-     ],
+-     [
+-       239,
+-       7
+-     ],
+-     [
+-       241,
+-       7
+-     ],
+-     [
+-       243,
+-       7
+-     ],
+-     [
+-       245,
+-       7
+-     ],
+-     [
+-       247,
+-       7
+-     ],
+-     [
+-       249,
+-       7
+-     ],
+-     [
+-       251,
+-       7
+-     ],
+-     [
+-       253,
+-       7
+-     ],
+-     [
+-       255,
+-       7
+-     ],
+-     [
+-       257,
+-       7
+-     ],
+-     [
+-       259,
+-       7
+-     ],
+-     [
+-       261,
+-       7
+-     ],
+-     [
+-       263,
+-       7
+-     ],
+-     [
+-       265,
+-       7
+-     ],
+-     [
+-       267,
+-       7
+-     ],
+-     [
+-       269,
+-       7
+-     ],
+-     [
+-       271,
+-       7
+-     ],
+-     [
+-       273,
+-       7
+-     ],
+-     [
+-       275,
+-       7
+-     ],
+-     [
+-       277,
+-       7
+-     ],
+-     [
+-       279,
+-       7
+-     ],
+-     [
+-       281,
+-       7
+-     ],
+-     [
+-       283,
+-       7
+-     ],
+-     [
+-       285,
+-       7
+-     ],
+-     [
+-       287,
+-       7
+-     ],
+-     [
+-       289,
+-       7
+-     ],
+-     [
+-       291,
+-       7
+-     ],
+-     [
+-       293,
+-       7
+-     ],
+-     [
+-       295,
+-       7
+-     ],
+-     [
+-       297,
+-       7
+-     ],
+-     [
+-       299,
+-       7
+-     ]
+-   ],
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [],
+  resets: [],
+  goaways: [],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:828:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of performServerHandshake() over a Duplex [2.79ms]
+842 |     const options = { ...one, maxSessionInvalidFrames, maxSessionRejectedStreams: 1 };
+843 |     await withLimit(options, hold, async (client, served) => {
+844 |       client.send(get(1));
+845 |       await client.waitFor(answered(1));
+846 |       client.send(...odd(allowed, 3).map(get));
+847 |       assert.deepStrictEqual(await outcome(client, served, 1), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    answered: [
+      1
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1
+    ],
++   resets: [],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   resets: [
+-     [
+-       3,
+-       7
+-     ]
+-   ],
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:847:14
+      at withClient (/workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:251:18)
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:843:11
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > maxSessionInvalidFrames: 0 allows 1 refused streams [1.79ms]
+842 |     const options = { ...one, maxSessionInvalidFrames, maxSessionRejectedStreams: 1 };
+843 |     await withLimit(options, hold, async (client, served) => {
+844 |       client.send(get(1));
+845 |       await client.waitFor(answered(1));
+846 |       client.send(...odd(allowed, 3).map(get));
+847 |       assert.deepStrictEqual(await outcome(client, served, 1), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    answered: [
+      1
+    ],
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: [
+      1
+    ],
++   resets: [],
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   resets: [
+-     [
+-       3,
+-       7
+-     ],
+-     [
+-       5,
+-       7
+-     ],
+-     [
+-       7,
+-       7
+-     ],
+-     [
+-       9,
+-       7
+-     ]
+-   ],
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:847:14
+      at withClient (/workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:251:18)
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:843:11
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > maxSessionInvalidFrames: 3 allows 4 refused streams [1.12ms]
+(pass) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a request behind a stream that the handler ended in the same write is served [1.05ms]
+(pass) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a request behind a stream that the peer reset in the same write is served [1.77ms]
+(pass) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a trailer block on a stream that the server reset does not take a slot [1.53ms]
+919 |       goaways: result.goaways,
+920 |       sessionError: result.sessionError,
+921 |     });
+922 |     await withLimit({ settings: { maxConcurrentStreams: 10 } }, hold, async (client, served) => {
+923 |       client.send(...odd(1011).map(get));
+924 |       assert.deepStrictEqual(count(await outcome(client, served)), {
+                   ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   goaways: [
++     11,
++     11
++   ],
+-   goaways: [],
+    handlers: 10,
++   refused: 99,
++   sessionError: 'ERR_HTTP2_SESSION_ERROR'
+-   refused: 1001,
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: 10,
+  refused: 99,
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_SESSION_ERROR",
+},
+   expected: {
+  handlers: 10,
+  refused: 1001,
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:924:14
+      at withClient (/workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:251:18)
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:922:11
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > the default budget keeps 1001 refused streams and ends the session at the next one [4.00ms]
+969 |           stream.end();
+970 |         });
+971 |       const requests = Array.from({ length: 120 }, request);
+972 |       await allRefused.promise;
+973 |       for (const stream of held.splice(0)) {
+974 |         stream.respond({ ":status": 200 });
+                     ^
+error: The stream has been destroyed
+ code: "ERR_HTTP2_INVALID_STREAM"
+
+      at respond (node:http2:2295:31)
+      at <anonymous> (/workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:974:16)
+      at async <anonymous> (node:test:1445:26)
+      at async executeTestNode (node:test:1448:63)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight through http2.connect() loses only the requests over the limit [18.35ms]
+(pass) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > the limit that a client advertises does not apply to its own requests [2.98ms]
+1034 |       client.send(get(11));
+1035 |       return outcome(client, served);
+1036 |     });
+1037 |     // Node can reset the open streams with INTERNAL_ERROR when it ends the session.
+1038 |     const resets = result.resets.filter(([, code]) => code !== INTERNAL_ERROR);
+1039 |     assert.deepStrictEqual(
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1,
+      3,
+      9
+    ],
++   goaways: [],
+-   goaways: [
+-     2
+-   ],
+    handlers: [
+      1,
+      3,
+      9
+    ],
+...
+    ],
++   sessionError: undefined
+-   sessionError: 'ERR_HTTP2_TOO_MANY_INVALID_FRAMES'
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_TOO_MANY_INVALID_FRAMES",
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1039:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a refused stream and a malformed block use the same allowance [4.26ms]
+1057 |       client.send(get(1));
+1058 |       await client.waitFor(answered(1));
+1059 |       client.send(malformed(3));
+1060 |       return outcome(client, served);
+1061 |     });
+1062 |     assert.deepStrictEqual(result, {
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1
+    ],
+    goaways: [],
+...
+      ],
++     [
++       3,
++       1
++     ]
+    ],
+    sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1062:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a refused stream with a malformed block gets one RST_STREAM [5.38ms]
+1086 |         handlers: served.handlers,
+1087 |         lastProcStreamID,
+1088 |         goaway: [goaway?.payload.readUInt32BE(0), goaway?.payload.readUInt32BE(4)],
+1089 |       };
+1090 |     });
+1091 |     assert.deepStrictEqual(result, { handlers: [1], lastProcStreamID: 1, goaway: [1, NO_ERROR] });
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    goaway: [
++     5,
+-     1,
+      0
+    ],
+    handlers: [
+      1
+    ],
++   lastProcStreamID: 5
+-   lastProcStreamID: 1
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  lastProcStreamID: 5,
+  goaway: [Array ...],
+},
+   expected: {
+  handlers: [Array ...],
+  lastProcStreamID: 1,
+  goaway: [Array ...],
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1091:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a refused stream is not the last stream that the session processed [1.84ms]
+1102 |       await client.ping(2);
+1103 |       const field = Buffer.concat([Buffer.from([0x00]), literal("x-checksum"), literal("1")]);
+1104 |       client.send(frame(HEADERS, END_STREAM | END_HEADERS, 3, field));
+1105 |       return outcome(client, served, 3);
+1106 |     });
+1107 |     assert.deepStrictEqual(result, {
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1
+    ],
++   goaways: [
++     2
++   ],
+-   goaways: [],
+    handlers: [
+      1
+    ],
+    resets: [
+      [
+...
+      ],
++     [
++       3,
++       5
++     ],
++     [
++       3,
++       5
++     ],
++     [
++       3,
++       7
++     ]
+    ],
++   sessionError: 'ERR_HTTP2_TOO_MANY_INVALID_FRAMES'
+-   sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [Array ...],
+  sessionError: "ERR_HTTP2_TOO_MANY_INVALID_FRAMES",
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1107:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > frames on a refused stream in a later write get no answer and no charge [2.26ms]
+1138 |         feed(cut.subarray(0, 11));
+1139 |         feed(cut.subarray(11));
+1140 |       }
+1141 |       return outcome(client, served);
+1142 |     });
+1143 |     assert.deepStrictEqual(result, {
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1
+    ],
+    goaways: [],
+...
+      ],
++     [
++       3,
++       5
++     ],
++     [
++       3,
++       5
++     ]
+    ],
+    sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1143:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a DATA frame on a refused stream that a read cuts in two gets no answer [1.87ms]
+1172 |       // Stream 1 gets no frame from the server, so outcome() would not return.
+1173 |       client.send(get(5));
+1174 |       await client.waitFor(f => f.streamId === 5 && (f.type === HEADERS || f.type === RST_STREAM));
+1175 |       return seen(client, served);
+1176 |     });
+1177 |     assert.deepStrictEqual(result, {
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    answered: [
+      3,
++     5
+    ],
+    goaways: [],
+    handlers: [
+      1,
+      3,
++     5
+    ],
++   resets: [],
+-   resets: [
+-     [
+-       5,
+-       7
+-     ]
+-   ],
+    sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [],
+  goaways: [],
+  sessionError: undefined,
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1177:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a stream whose respond() failed and that the peer resets gives back one slot [2.62ms]
+1172 |       // Stream 1 gets no frame from the server, so outcome() would not return.
+1173 |       client.send(get(5));
+1174 |       await client.waitFor(f => f.streamId === 5 && (f.type === HEADERS || f.type === RST_STREAM));
+1175 |       return seen(client, served);
+1176 |     });
+1177 |     assert.deepStrictEqual(result, {
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    answered: [
+      3,
++     5
+    ],
+    goaways: [],
+    handlers: [
+      1,
+      3,
++     5
+    ],
++   resets: [],
+-   resets: [
+-     [
+-       5,
+-       7
+-     ]
+-   ],
+    sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [],
+  goaways: [],
+  sessionError: undefined,
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1177:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a stream whose respond() failed and that the peer has ended gives back one slot [1.84ms]
+1185 | 
+1186 |   // Bun reads a top-level maxConcurrentStreams as a setting. Here `settings` overrides it with
+1187 |   // no value, so no limit is sent to the peer, and none applies.
+1188 |   test("a limit that was not sent to the peer refuses nothing", async () => {
+1189 |     const options = { maxConcurrentStreams: 2, settings: { maxConcurrentStreams: undefined } } as http2.ServerOptions;
+1190 |     assert.deepStrictEqual(await withLimit(options, hold, inOneWrite(5)), allServed(odd(5)));
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    answered: [
+      1,
+      3,
+-     5,
+-     7,
+-     9
+    ],
+    goaways: [],
+    handlers: [
+      1,
+      3,
+-     5,
+-     7,
+-     9
+    ],
++   resets: [
++     [
++       5,
++       7
++     ],
++     [
++       7,
++       7
++     ],
++     [
++       9,
++       7
++     ]
++   ],
+-   resets: [],
+    sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1190:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a limit that was not sent to the peer refuses nothing [1.36ms]
+1203 |         client.send(upload(3), frame(DATA, 0, 3, Buffer.from("hello")));
+1204 |         await client.ping(1);
+1205 |         client.send(frame(DATA, END_STREAM, 3, Buffer.from("world")));
+1206 |         return outcome(client, served, 2);
+1207 |       });
+1208 |       assert.deepStrictEqual(result, {
+                    ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    answered: [
+      1
+    ],
+    goaways: [],
+...
+      ],
++     [
++       3,
++       5
++     ],
++     [
++       3,
++       5
++     ]
+    ],
+    sessionError: undefined
+  }
+
+ generatedMessage: true,
+     actual: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   expected: {
+  handlers: [Array ...],
+  answered: [Array ...],
+  resets: [Array ...],
+  goaways: [],
+  sessionError: undefined,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1208:14
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > and maxSessionMemory > DATA on a stream that was refused for memory gets no second RST_STREAM [21.44ms]
+1271 |     const [stdout, stderr, [exitCode]] = await Promise.all([
+1272 |       text(child.stdout),
+1273 |       text(child.stderr),
+1274 |       once(child, "close"),
+1275 |     ]);
+1276 |     assert.deepStrictEqual(
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    exitCode: 0,
++   stdout: '{"handlers":[1],"answer":"RST_STREAM"}'
+-   stdout: '{"handlers":[1,3],"answer":"HEADERS"}'
+  }
+
+ generatedMessage: true,
+     actual: {
+  stdout: "{\"handlers\":[1],\"answer\":\"RST_STREAM\"}",
+  exitCode: 0,
+},
+   expected: {
+  stdout: "{\"handlers\":[1,3],\"answer\":\"HEADERS\"}",
+  exitCode: 0,
+},
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts:1276:12
+      at node:test:1445:26
+      at executeTestNode (node:test:1448:63)
+      at processTicksAndRejections (native:7:39)
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > an 'aborted' listener that throws does not keep the slot [48.53ms]
+(pass) Node.js compatibility > all tests pass in Node.js [722.78ms]
+
+22 tests failed:
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of a server of the core API [39.26ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of a server of the compatibility API [20.63ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of a TLS server [6.64ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with the default budgets > keeps the session of performServerHandshake() over a Duplex [5.72ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of a server of the core API [5.67ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of a server of the compatibility API [14.61ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of a TLS server [15.82ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 > keeps the session of performServerHandshake() over a Duplex [2.79ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > maxSessionInvalidFrames: 0 allows 1 refused streams [1.79ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > maxSessionInvalidFrames: 3 allows 4 refused streams [1.12ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > the default budget keeps 1001 refused streams and ends the session at the next one [4.00ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a first flight through http2.connect() loses only the requests over the limit [18.35ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a refused stream and a malformed block use the same allowance [4.26ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a refused stream with a malformed block gets one RST_STREAM [5.38ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a refused stream is not the last stream that the session processed [1.84ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > frames on a refused stream in a later write get no answer and no charge [2.26ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a DATA frame on a refused stream that a read cuts in two gets no answer [1.87ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a stream whose respond() failed and that the peer resets gives back one slot [2.62ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a stream whose respond() failed and that the peer has ended gives back one slot [1.84ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > a limit that was not sent to the peer refuses nothing [1.36ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > and maxSessionMemory > DATA on a stream that was refused for memory gets no second RST_STREAM [21.44ms]
+(fail) a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS > an 'aborted' listener that throws does not keep the slot [48.53ms]
+
+ 38 pass
+ 22 fail
+Ran 60 tests across 1 file. [1.95s]

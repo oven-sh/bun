@@ -1,0 +1,24 @@
+bun test v1.4.4 (367d939d9)
+
+test/js/node/http2/node-http2-rejected-streams.test.ts:
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > close(REFUSED_STREAM) in every handler > of a request that has ended keeps the session [785.15ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > close(REFUSED_STREAM) in every handler > of a request whose body is still open keeps the session [417.33ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > respond() then close(REFUSED_STREAM) in every handler > of a request that has ended keeps the session [158.88ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > respond() then close(REFUSED_STREAM) in every handler > of a request whose body is still open keeps the session [93.91ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > close(REFUSED_STREAM) from a later turn in every handler > of a request that has ended keeps the session [168.32ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > close(REFUSED_STREAM) from a later turn in every handler > of a request whose body is still open keeps the session [203.64ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > close(REFUSED_STREAM) twice then destroy() in every handler > of a request that has ended keeps the session [84.78ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > close(REFUSED_STREAM) twice then destroy() in every handler > of a request whose body is still open keeps the session [67.41ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > close(REFUSED_STREAM) of every pushed stream keeps the session [362.35ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > req.stream.close(REFUSED_STREAM) in every request listener keeps the session [205.19ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > RST_STREAM(REFUSED_STREAM) from the peer on every stream keeps the session [154.62ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > maxSessionRejectedStreams: 0 keeps the session after one refused request [87.12ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > maxSessionRejectedStreams: 1 keeps the session after one refused request [63.03ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > maxSessionRejectedStreams: 2 keeps the session after one refused request [55.20ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > a long-lived stream survives refused requests on its connection [749.27ms]
+(pass) maxSessionRejectedStreams and the reset of a delivered stream > a stream refused over maxConcurrentStreams does not use maxSessionRejectedStreams [183.04ms]
+
+ 16 pass
+ 0 fail
+ 21 expect() calls
+Ran 16 tests across 1 file. [6.57s]

@@ -1,0 +1,8 @@
+[package]
+name = "default-oracle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[workspace]

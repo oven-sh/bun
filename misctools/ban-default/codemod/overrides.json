@@ -1,0 +1,22 @@
+{
+  "bun_collections::array_hash_map::ArrayHashMap": {"kind": "suffix", "value": "::new()"},
+  "bun_collections::array_hash_map::StringArrayHashMap": {"kind": "suffix", "value": "::new()"},
+  "bun_collections::array_hash_map::StringHashMap": {"kind": "suffix", "value": "::new()"},
+  "bun_collections::multi_array_list::MultiArrayList": {"kind": "fn", "value": "new"},
+  "bun_core::atomic_cell::AtomicCell": {"kind": "wrap", "value": {"pre": "::new(", "targ": 0, "post": ")"}},
+  "bun_core::atomic_cell::ThreadCell": {"kind": "wrap", "value": {"pre": "::new(", "targ": 0, "post": ")"}},
+  "bun_core::util::Mutex": {"kind": "wrap", "value": {"pre": "::new(", "targ": 0, "post": ")"}},
+  "bun_core::util::RwLock": {"kind": "wrap", "value": {"pre": "::new(", "targ": 0, "post": ")"}},
+  "bun_core::util::RacyCell": {"kind": "wrap", "value": {"pre": "::new(", "targ": 0, "post": ")"}},
+  "bun_core::util::GenericIndex": {"kind": "wrap", "value": {"pre": "::init(", "targ": 0, "post": ")"}},
+  "bun_ptr::js_cell::JsCell": {"kind": "wrap", "value": {"pre": "::new(", "targ": 0, "post": ")"}},
+  "bun_threading::guarded::GuardedBy": {"kind": "wrap", "value": {"pre": "::init(", "targ": 0, "post": ")"}},
+  "bun_sema::table::ById": {"kind": "fn", "value": "new"},
+  "bun_sema::table::ByIdIndirect": {"kind": "fn", "value": "new"},
+  "bun_sema::table::ByKey": {"kind": "fn", "value": "new"},
+  "bun_sema::util::memory::Stable": {"kind": "suffix", "value": "::new()"},
+  "bun_sema::util::memory::Cells": {"kind": "fn", "value": "new"},
+  "bun_sema::util::memory::Newest": {"kind": "fn", "value": "new"},
+  "bun_sema::util::GrowingPlaces": {"kind": "fn", "value": "new"},
+  "bun_sema::util::ShardedMap": {"kind": "fn", "value": "new"}
+}

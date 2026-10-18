@@ -334,7 +334,50 @@ fn root_len<C: PathUnit>(units: &[C]) -> usize {
     }
     #[cfg(windows)]
     {
-        windows_root_len(units, is_native_sep)
+        whole_root_len(units, is_native_sep)
+    }
+}
+
+/// [`windows_root_len`] for a view, whose root names a drive or a share and ends in a separator.
+#[cfg(any(windows, test))]
+#[inline]
+fn whole_root_len<C: PathUnit>(units: &[C], is_sep: impl Fn(C) -> bool + Copy) -> usize {
+    let root = windows_root_len(units, is_sep);
+    if root > 1 && is_sep(units[root - 1]) {
+        root
+    } else {
+        0
+    }
+}
+
+/// The root of a share as the OS writes it when it is the whole path: without its last separator.
+#[cfg(windows)]
+#[inline]
+fn is_open_root<C: PathUnit>(units: &[C]) -> bool {
+    units.len() > 1
+        && windows_root_len(units, is_native_sep) == units.len()
+        && !is_native_sep(units[units.len() - 1])
+}
+
+/// `units` without `dir` in front. The OS writes the letters of one Windows root in either case.
+#[inline]
+fn strip_dir<'a, C: PathUnit>(units: &'a [C], dir: &[C]) -> Option<&'a [C]> {
+    #[cfg(not(windows))]
+    {
+        units.strip_prefix(dir)
+    }
+    #[cfg(windows)]
+    {
+        let (dir_root, dir_below) = dir.split_at(root_len(dir));
+        let (root, below) = units.split_at_checked(dir_root.len())?;
+        let same = |(a, b): (&C, &C)| {
+            a == b
+                || (a.to_ascii().zip(b.to_ascii())).is_some_and(|(a, b)| a.eq_ignore_ascii_case(&b))
+        };
+        if !root.iter().zip(dir_root).all(same) {
+            return None;
+        }
+        below.strip_prefix(dir_below)
     }
 }
 
@@ -346,7 +389,7 @@ fn root_len<C: PathUnit>(units: &[C]) -> usize {
 /// | `C:\` | the letter is one |
 /// | `\\server\share\` | also `\\?\C:\` and `\\.\pipe\`; the last separator may be missing at the end |
 /// | `\\?\UNC\server\share\` | |
-/// | `\` | on the current drive; also what starts like a share and is not one |
+/// | `\` | of whichever drive or share it is resolved against; also what starts like a share and is not one |
 fn windows_root_len<C: PathUnit>(units: &[C], is_sep: impl Fn(C) -> bool) -> usize {
     match units {
         [letter, colon, sep, ..]
@@ -506,7 +549,7 @@ impl<C: PathUnit> AbsPath<C> {
     /// What is left of this path below `dir`. `None` if it is not `dir` or below it.
     #[inline]
     pub fn strip_prefix(&self, dir: &Self) -> Option<&SubPath<C>> {
-        let rest = self.0.strip_prefix(&dir.0)?;
+        let rest = strip_dir(&self.0, &dir.0)?;
         match rest {
             [] => Some(SubPath::wrap_units(rest)),
             [first, below @ ..] if is_native_sep(*first) => Some(SubPath::wrap_units(below)),
@@ -951,6 +994,13 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     {
         match AbsPath::from_os(units) {
             Some(path) => self.set_abs(path),
+            #[cfg(windows)]
+            None if is_open_root(units) && !self.is_scoped() => {
+                self.replace(units);
+                self.write::<V::Unit>(true, &[]);
+                self.fence_at_root();
+                self
+            }
             None => {
                 self.poison(PathError::Relative);
                 self
@@ -1031,6 +1081,11 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
             return Ok(self);
         }
         self.len = len;
+        #[cfg(windows)]
+        if is_open_root(self.written()) {
+            self.write::<V::Unit>(true, &[]);
+        }
+        let len = self.len;
         let root = root_len(self.written());
         if root == 0 {
             self.len = 0;
@@ -1306,7 +1361,8 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     }
 
     /// Resolves `text`, read by the rules of `P`, against the path. `..` removes names down to the
-    /// root. Absolute text replaces the path where the view can hold it, outside a [`Scope`].
+    /// root. Absolute text replaces the path where the view can hold it, outside a [`Scope`]; on
+    /// Windows `\name` replaces what is below the root.
     pub fn join<P: PlatformT>(&mut self, text: &[u8]) -> &mut Self
     where
         V: Known,
@@ -1391,6 +1447,14 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     }
 
     fn write_text_root(&mut self, root: &[u8]) {
+        #[cfg(windows)]
+        if root.len() == 1 {
+            match root_len(self.written()) {
+                0 => self.poison(PathError::Relative),
+                kept => self.truncate(kept),
+            }
+            return;
+        }
         self.len = 0;
         #[cfg(not(windows))]
         {
@@ -1617,7 +1681,7 @@ pub fn top_level_dir() -> &'static AbsPath {
 
 #[cfg(test)]
 mod tests {
-    use super::windows_root_len;
+    use super::{whole_root_len, windows_root_len};
 
     #[test]
     fn windows_roots() {
@@ -1660,6 +1724,16 @@ mod tests {
             assert_eq!(either(&slashes), root.len(), "{slashes}");
             // In a view only `\` separates.
             assert_eq!(native(&slashes), 0, "{slashes}");
+            let whole = if root.len() > 1 && root.ends_with('\\') {
+                root
+            } else {
+                ""
+            };
+            assert_eq!(
+                &text[..whole_root_len(text.as_bytes(), |c| c == b'\\')],
+                whole,
+                "{text}"
+            );
         }
         assert_eq!(either("C:/x"), 3);
         assert_eq!(either("\\/srv/share\\x"), 12);

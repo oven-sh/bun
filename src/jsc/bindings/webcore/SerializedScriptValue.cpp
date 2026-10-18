@@ -416,11 +416,13 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 13. added support for ErrorInstance objects.
  * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
+ * Version 15. an ErrorInstance says whether it has a line, a column or a sourceURL.
  */
-[[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 15;
 // Deserializers must not pool the version 14 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
 [[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 14;
+[[maybe_unused]] static constexpr unsigned FirstVersionWithErrorPosition = 15;
 [[maybe_unused]] static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
 [[maybe_unused]] static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
 [[maybe_unused]] static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
@@ -1257,15 +1259,10 @@ private:
                     RETURN_IF_EXCEPTION(scope, false);
                 }
 
-                // 0 is also what a missing `line` is written as, so an empty sourceURL is what says that the error has no position.
-                if (!hasPosition)
-                    sourceURL = emptyString();
-                else if (sourceURL.isEmpty())
-                    sourceURL = String();
-
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
                 writeNullableString(message);
+                write(hasPosition);
                 write(line);
                 write(column);
                 writeNullableString(sourceURL);
@@ -3725,6 +3722,11 @@ private:
                 fail();
                 return JSValue();
             }
+            bool hasPosition = true;
+            if (m_version >= FirstVersionWithErrorPosition && !read(hasPosition)) {
+                fail();
+                return JSValue();
+            }
             uint32_t line;
             if (!read(line)) {
                 fail();
@@ -3745,14 +3747,12 @@ private:
                 fail();
                 return JSValue();
             }
-            bool hasPosition = line || column || sourceURL.isNull() || !sourceURL.isEmpty();
             auto* obj = ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), WTF::move(stackString));
             // An ErrorInstance made with a stack always gets a `line` and a `column`.
             if (!hasPosition) {
                 VM& vm = m_lexicalGlobalObject->vm();
-                DeletePropertySlot slot;
-                obj->methodTable()->deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->line, slot);
-                obj->methodTable()->deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->column, slot);
+                JSCell::deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->line);
+                JSCell::deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->column);
             }
             addTerminalToObjectPool(obj);
             return obj;

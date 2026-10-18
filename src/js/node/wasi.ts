@@ -710,7 +710,8 @@ class WASI {
     const CHECK_FD = (fd: number, rights: bigint) => {
       const stats = stat(this, fd);
       if (rights !== BigInt(0) && (stats.rights.base & rights) === BigInt(0)) {
-        throw new WASIError(WASI_EPERM);
+        // uvwasi refuses with ENOTCAPABLE, the one value that wasi-libc maps to the errno of the call: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L370-L374
+        throw new WASIError(WASI_ENOTCAPABLE);
       }
       return stats;
     };
@@ -897,11 +898,11 @@ class WASI {
         fsRightsInheriting = BigInt.asUintN(64, fsRightsInheriting);
         const nrb = stats.rights.base | fsRightsBase;
         if (nrb > stats.rights.base) {
-          return WASI_EPERM;
+          return WASI_ENOTCAPABLE;
         }
         const nri = stats.rights.inheriting | fsRightsInheriting;
         if (nri > stats.rights.inheriting) {
-          return WASI_EPERM;
+          return WASI_ENOTCAPABLE;
         }
         stats.rights.base = fsRightsBase;
         stats.rights.inheriting = fsRightsInheriting;

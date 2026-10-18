@@ -789,30 +789,69 @@ impl DirEntry {
     #[cfg(not(windows))]
     fn probe_case_verdict(&self, query: &[u8], candidate: *mut Entry) -> CaseVerdict {
         // SAFETY: as in `pick_case`.
-        let Ok(listed) = self.lstat_in_dir(unsafe { (*candidate).base() }) else {
+        let listed_name = unsafe { (*candidate).base() };
+        let Ok(listed) = self.lstat_in_dir(listed_name) else {
             // The listing is stale; nothing can be learned from it.
             return CaseVerdict::Unknown;
         };
-        match self.lstat_in_dir(query) {
-            Ok(queried) if Self::same_file(&listed, &queried) => CaseVerdict::Folds,
-            // A distinct file under `query`: the listing is stale, and the
-            // filesystem provably tells the two spellings apart.
-            Ok(_) => CaseVerdict::Exact,
+        let queried = match self.lstat_in_dir(query) {
+            Ok(st) => st,
+            Err(bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => return CaseVerdict::Exact,
+            Err(_) => return CaseVerdict::Unknown,
+        };
+        if listed.st_dev == queried.st_dev && listed.st_ino == queried.st_ino {
+            return CaseVerdict::Folds;
+        }
+        // Either `query` is a distinct file the listing does not hold yet, or
+        // the mount folds case but hands every name its own inode (cifs
+        // `noserverino`, FUSE without `use_ino`). A third spelling that the
+        // listing does not hold tells them apart: only a folding mount opens it.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(third) = self.unlisted_spelling(query, listed_name, &mut buf[..]) else {
+            return CaseVerdict::Exact;
+        };
+        match self.lstat_in_dir(third) {
+            Ok(_) => CaseVerdict::Folds,
             Err(bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => CaseVerdict::Exact,
             Err(_) => CaseVerdict::Unknown,
         }
     }
 
-    /// Some folding mounts hand every name its own inode (cifs `noserverino`,
-    /// FUSE without `use_ino`), so the metadata is compared too.
+    /// A spelling of `query` that differs from both `query` and `listed` and
+    /// is not in the listing: every letter flipped, else every letter upper,
+    /// else lower. A name with fewer than two letters has no such spelling.
     #[cfg(not(windows))]
-    fn same_file(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
-        a.st_dev == b.st_dev
-            && (a.st_ino == b.st_ino
-                || (a.st_size == b.st_size
-                    && a.st_mode == b.st_mode
-                    && a.st_mtime == b.st_mtime
-                    && a.st_mtime_nsec == b.st_mtime_nsec))
+    fn unlisted_spelling<'b>(
+        &self,
+        query: &[u8],
+        listed: &[u8],
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        if query.len() > buf.len() {
+            return None;
+        }
+        let out = &mut buf[..query.len()];
+        for transform in [
+            |b: u8| if b.is_ascii_alphabetic() { b ^ 0x20 } else { b },
+            |b: u8| b.to_ascii_uppercase(),
+            |b: u8| b.to_ascii_lowercase(),
+        ] {
+            for (o, &b) in out.iter_mut().zip(query) {
+                *o = transform(b);
+            }
+            if &*out == query || &*out == listed {
+                continue;
+            }
+            let taken = self
+                .data
+                .get(&*out)
+                // SAFETY: as in `pick_case`.
+                .is_some_and(|&e| unsafe { (*e).base() } == &*out);
+            if !taken {
+                return Some(&buf[..query.len()]);
+            }
+        }
+        None
     }
 
     #[cfg(not(windows))]

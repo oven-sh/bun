@@ -1903,6 +1903,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Potentially relocate "var" declarations to the top level. Note that this
                 // must be done inside the scope of the for loop or they won't be relocated.
                 if local.kind == S::Kind::KVar {
+                    let first_relocated = p.relocated_top_level_vars.len();
                     let relocate = p.maybe_relocate_vars_to_top_level(
                         local.decls.slice(),
                         RelocateVarsMode::Normal,
@@ -1912,6 +1913,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else if relocate.ok && p.lifts_top_level_decls() {
                         // `for (var i; ...)`: a "var" left here declares a second `i` inside the wrapper.
                         data.init = None;
+                        p.keep_var_stores_in_wrapper(first_relocated);
                     }
                 }
             }

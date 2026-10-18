@@ -80,6 +80,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        let first_relocated = p.relocated_top_level_vars.len();
         let mut value: Expr = Expr::EMPTY;
         for decl in decls {
             // Derive `*mut P` from the live `&mut Self` so the trampoline's
@@ -92,6 +93,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else if mode == RelocateVarsMode::ForInOrForOf {
                 value = Expr::join_with_comma(value, binding);
             }
+        }
+        if p.current_scope == p.module_scope {
+            p.keep_var_stores_in_wrapper(first_relocated);
         }
 
         if matches!(value.data, js_ast::ExprData::EMissing(_)) {

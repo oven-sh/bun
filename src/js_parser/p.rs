@@ -8048,6 +8048,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !(self.options.bundle && self.has_top_level_function_merged_with_var)
     }
 
+    /// The wrapper now stores into `relocated_top_level_vars[first..]`, and a store that the linker lifts above the wrapper would run first.
+    pub(crate) fn keep_var_stores_in_wrapper(&mut self, first: usize) {
+        if self.is_control_flow_dead {
+            return;
+        }
+        for i in first..self.relocated_top_level_vars.len() {
+            let root = self.follow_symbol_links(self.relocated_top_level_vars[i].ref_);
+            self.symbols[root.inner_index() as usize].set_var_stores_stay_in_wrapper(true);
+        }
+    }
+
+    fn follow_symbol_links(&self, mut r#ref: Ref) -> Ref {
+        loop {
+            let symbol = &self.symbols[r#ref.inner_index() as usize];
+            if !symbol.has_link() {
+                return r#ref;
+            }
+            r#ref = symbol.link.get();
+        }
+    }
+
     // One statement could potentially expand to several statements
     pub(crate) fn stmts_to_single_stmt(
         &mut self,
@@ -9536,10 +9557,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // The linker keeps a pattern inside the wrapper.
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
                                         && (!value.can_be_moved()
-                                            || !matches!(
-                                                decl.binding.data,
-                                                js_ast::b::B::BIdentifier(_)
-                                            ))
+                                            || match decl.binding.data {
+                                                js_ast::b::B::BIdentifier(id) => self.symbols[self
+                                                    .follow_symbol_links(id.r#ref)
+                                                    .inner_index()
+                                                    as usize]
+                                                    .var_stores_stay_in_wrapper(),
+                                                _ => true,
+                                            })
                                     {
                                         return true;
                                     }

@@ -2291,51 +2291,74 @@ describe("bundler", () => {
     },
     run: { stdout: "1a 2b 3c 4d 5" },
   });
-  // A "var" in a body without braces and a top-level "var" of the same name are one variable.
-  itBundled("edgecase/EsmWrapperVarInBracelessBodySharesTheTopLevelVariable", {
-    files: {
-      "/entry.js": `
-        const results = {};
-        for (const [name, lib] of Object.entries({
-          varThenIf: await import("./var-then-if.js"),
-          ifReadsVar: await import("./if-reads-var.js"),
-          ifReadsAndResetsVar: await import("./if-reads-and-resets-var.js"),
-          ifThenExportedPattern: await import("./if-then-exported-pattern.js"),
-        })) {
-          results[name] = lib.get();
-        }
-        console.log(JSON.stringify(results));
-      `,
-      "/var-then-if.js": `
-        var x = 2;
-        if (globalThis) var x = 1;
-        export function get() { return x; }
-      `,
-      "/if-reads-var.js": `
-        var x = 10;
-        if (globalThis) var x = x + 1;
-        export function get() { return x; }
-      `,
-      "/if-reads-and-resets-var.js": `
-        var count = 10;
-        if (globalThis) var count = (globalThis.countWas = count, 0);
-        export function get() { return [globalThis.countWas, count]; }
-      `,
-      "/if-then-exported-pattern.js": `
-        if (globalThis) var x = 1;
-        export var { x, z } = { x: 2, z: 9 }, w = x + 1;
-        export function get() { return [x, z, w]; }
-      `,
-    },
-    run: {
-      stdout: JSON.stringify({
-        varThenIf: 1,
-        ifReadsVar: 11,
-        ifReadsAndResetsVar: [10, 0],
-        ifThenExportedPattern: [2, 9, 3],
-      }),
-    },
-  });
+  // A "var" in a body without braces and a top-level "var" of the same name are one variable, so the
+  // wrapper makes every store of that name, in source order. The linker lifts no store of it above the wrapper.
+  const storeOrderModules: Record<string, [source: string, expected: unknown]> = {
+    "if-then-var": [`if (globalThis) var x = "body"; var x = 2; export function get() { return x; }`, 2],
+    "else-then-var": [`if (!globalThis) {} else var x = "body"; var x = 2; export function get() { return x; }`, 2],
+    "while-then-var": [`var n = 1; while (n--) var x = "body"; var x = 2; export function get() { return x; }`, 2],
+    "do-then-var": [`do var x = "body"; while (0); var x = 2; export function get() { return x; }`, 2],
+    "if-then-function": [
+      `if (globalThis) var x = "body"; var x = function () {}; export function get() { return typeof x; }`,
+      "function",
+    ],
+    "if-then-arrow": [
+      `if (globalThis) var x = "body"; var x = () => {}; export function get() { return typeof x; }`,
+      "function",
+    ],
+    "if-then-class": [
+      `if (globalThis) var x = "body"; var x = class {}; export function get() { return typeof x; }`,
+      "function",
+    ],
+    "if-then-export-var": [
+      `if (globalThis) var x = "body"; export var x = null; export function get() { return x; }`,
+      null,
+    ],
+    "if-then-two-vars": [
+      `if (globalThis) var x = "body"; var x = 2, y = 3; var y = 4; export function get() { return [x, y]; }`,
+      [2, 4],
+    ],
+    "if-then-store-then-var": [`if (globalThis) var x; x = "store"; var x = 2; export function get() { return x; }`, 2],
+    "if-without-value-then-var": [`if (globalThis) var x; var x = 2; export function get() { return x; }`, 2],
+    "for-then-var": [`for (var x; !x; ) x = "body"; var x = 0; export function get() { return x; }`, 0],
+    "read-then-var-then-if": [
+      `globalThis.typeofXBeforeItsVar = typeof x; var x = 2; if (globalThis) var x = "body";
+       export function get() { return [globalThis.typeofXBeforeItsVar, x]; }`,
+      ["undefined", "body"],
+    ],
+    "var-then-if": [`var x = 2; if (globalThis) var x = "body"; export function get() { return x; }`, "body"],
+    "if-reads-var": [`var x = 10; if (globalThis) var x = x + 1; export function get() { return x; }`, 11],
+    "if-reads-and-resets-var": [
+      `var count = 10; if (globalThis) var count = (globalThis.countWas = count, 0);
+       export function get() { return [globalThis.countWas, count]; }`,
+      [10, 0],
+    ],
+    "if-then-exported-pattern": [
+      `if (globalThis) var x = 1; export var { x, z } = { x: 2, z: 9 }, w = x + 1;
+       export function get() { return [x, z, w]; }`,
+      [2, 9, 3],
+    ],
+  };
+  for (const minifySyntax of [false, true]) {
+    itBundled(`edgecase/EsmWrapperVarInBracelessBodyStoreOrder${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.js": `
+          const results = {};
+          ${Object.keys(storeOrderModules)
+            .map(name => `results[${JSON.stringify(name)}] = (await import("./${name}.js")).get();`)
+            .join("\n")}
+          console.log(JSON.stringify(results));
+        `,
+        ...Object.fromEntries(Object.entries(storeOrderModules).map(([name, [source]]) => [`/${name}.js`, source])),
+      },
+      minifySyntax,
+      run: {
+        stdout: JSON.stringify(
+          Object.fromEntries(Object.entries(storeOrderModules).map(([name, [, expected]]) => [name, expected])),
+        ),
+      },
+    });
+  }
   // A branch that never runs still declares its "var": a read gives undefined and does not throw.
   const varsInDeadBracelessBodies = `
     if (false) var a = 1;

@@ -445,6 +445,68 @@ error: Hello World`,
       }
     },
   });
+  // A declaration is read only when its name can have no other value and no other reader.
+  itBundled("bun/RequireWrittenByBunDeclarationsThatAreNotRead", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./read.js";
+        import "./let.js";
+        import "./const-pattern.js";
+        import "./exported-var.js";
+        import "./exported-in-clause.js";
+        import "./two-properties.js";
+        import "./default-value.js";
+        import "./declared-after.js";
+        import "./declared-before.js";
+        import "./declared-in-block.js";
+        import "./no-bun-line.js";
+        import "./other-line.js";
+        import "./defined-name.js";
+        import "./defined-property.js";
+      `,
+      "/read.js": `// @bun\nvar __require = import.meta.require;\nconsole.log(__require("./lib/bundled.cjs").x);`,
+      "/let.js": `// @bun\nlet __require = import.meta.require;\nconsole.log("let", __require("./dep.cjs").x);`,
+      "/const-pattern.js": `const { require } = import.meta;\nconsole.log("const pattern", require("./dep.cjs").x);\nexport {};`,
+      "/exported-var.js": `// @bun\nexport var __require = import.meta.require;\nconsole.log("exported var", __require("./dep.cjs").x);`,
+      "/exported-in-clause.js": `// @bun\nvar __require = import.meta.require;\nconsole.log("exported in a clause", __require("./dep.cjs").x);\nexport { __require };`,
+      "/two-properties.js": `var { require, url } = import.meta;\nconsole.log("two properties", require("./dep.cjs").x, typeof url);\nexport {};`,
+      "/default-value.js": `var { require = null } = import.meta;\nconsole.log("default value", require("./dep.cjs").x);\nexport {};`,
+      "/declared-after.js": `// @bun\nvar load = import.meta.require;\nvar load = import.meta.require;\nconsole.log("declared after", load("./dep.cjs").x);`,
+      "/declared-before.js": `// @bun\nvar load = import.meta.require;\nconsole.log("declared before", load("./dep.cjs").x);\nvar load = import.meta.require;`,
+      "/declared-in-block.js": `// @bun\nvar load = import.meta.require;\n{\n  var load = import.meta.require;\n}\nconsole.log("declared in a block", load("./dep.cjs").x);`,
+      "/no-bun-line.js": `var __require = import.meta.require;\nconsole.log("no bun line", __require("./dep.cjs").x);\nexport {};`,
+      "/other-line.js": `// @bundled by hand\nvar __require = import.meta.require;\nconsole.log("other line", __require("./dep.cjs").x);\nexport {};`,
+      "/defined-name.js": `// @bun\nvar definedName = import.meta.require;\nconsole.log("defined name", definedName("./dep.cjs").x);`,
+      "/defined-property.js": `// @bun\nvar definedRoot = import.meta.require;\nconsole.log("defined property", definedRoot("./dep.cjs").x, typeof definedRoot.resolve);`,
+      "/lib/bundled.cjs": `exports.x = "bundled";`,
+      "/dep.cjs": `exports.x = "left";`,
+    },
+    target: "bun",
+    define: { "definedName": "String", "definedRoot.resolve": "String" },
+    run: {
+      stdout: [
+        "bundled",
+        "let left",
+        "const pattern left",
+        "exported var left",
+        "exported in a clause left",
+        "two properties left string",
+        "default value left",
+        "declared after left",
+        "declared before left",
+        "declared in a block left",
+        "no bun line left",
+        "other line left",
+        "defined name left",
+        "defined property left function",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('"bundled"');
+      expect(out).not.toContain('"left"');
+    },
+  });
   // Hand-written code that asks for Bun at run time builds for node as before, and gets `require` there.
   itBundled("bun/RequireNotWrittenByBunForNode", {
     files: {

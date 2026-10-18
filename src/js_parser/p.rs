@@ -5019,9 +5019,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 })
             })
         };
-        // In a `with` body a name is not looked up for defines or for `require`.
-        if is_defined(b"meta", 2) || is_defined(b"require", 3) || self.module_scope().contains_with
-        {
+        if is_defined(b"meta", 2) || is_defined(b"require", 3) {
             return;
         }
 

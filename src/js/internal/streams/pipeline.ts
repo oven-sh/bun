@@ -25,14 +25,11 @@ const SymbolAsyncIterator = Symbol.asyncIterator;
 const ArrayIsArray = Array.isArray;
 const SymbolDispose = Symbol.dispose;
 const PromisePrototypeThen = $Promise.prototype.$then;
-// Captured at load: a setImmediate that user code replaces later (fake timers) must not hold back a teardown.
-const setImmediate = globalThis.setImmediate;
 
 let PassThrough;
 let Readable;
 let addAbortListener;
 let runInFrame;
-let ReadableStreamValues;
 let HeldReader;
 
 function destroyer(stream, reading, writing) {
@@ -80,8 +77,23 @@ async function* fromReadable(val) {
 
 // Created at the first use: a process that pipes no web stream does not pay for the class.
 function createHeldReader() {
-  // The reader's own methods: a patch of the prototype after this point does not run in a pump.
-  const { read: readerRead, cancel: readerCancel, releaseLock: readerRelease } = $ReadableStreamDefaultReader.prototype;
+  // The native functions. A program can replace the ones on the prototype of the reader and on the global (fake timers).
+  const readerRead = $newCppFunction(
+    "streams/JSReadableStreamDefaultReader.cpp",
+    "jsReadableStreamDefaultReaderPrototypeFunction_read",
+    0,
+  );
+  const readerCancel = $newCppFunction(
+    "streams/JSReadableStreamDefaultReader.cpp",
+    "jsReadableStreamDefaultReaderPrototypeFunction_cancel",
+    1,
+  );
+  const readerRelease = $newCppFunction(
+    "streams/JSReadableStreamDefaultReader.cpp",
+    "jsReadableStreamDefaultReaderPrototypeFunction_releaseLock",
+    0,
+  );
+  const setImmediate = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
   const nop = () => {};
   const iteratorDone = () => ({ done: true, value: undefined });
 
@@ -155,11 +167,11 @@ function createHeldReader() {
 
 function hold(stream, destroys) {
   if (destroys === undefined || !isReadableStream(stream)) return null;
-  ReadableStreamValues ??= $ReadableStream.prototype[SymbolAsyncIterator];
   try {
-    if (stream[SymbolAsyncIterator] !== ReadableStreamValues) return null;
+    // A stream with an iterator of its own (a subclass, a property) is read through that iterator, in the loop.
+    if (stream[SymbolAsyncIterator] !== $ReadableStream.prototype[SymbolAsyncIterator]) return null;
   } catch {
-    // A getter of a subclass threw. The loop reads it again, where the pump reports the error.
+    // A getter threw. The loop reads it again, where the pump reports the error.
     return null;
   }
   HeldReader ??= createHeldReader();

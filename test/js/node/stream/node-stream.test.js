@@ -1990,6 +1990,21 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       }).toEqual({ writes: 1, destroyed: false, closeListeners: 0 });
     });
 
+    // The pump fails, and a pump that fails aborts its sink. Node does this for the Readable.
+    it.each([
+      ["a Readable", nodeSource],
+      ["a ReadableStream", webSource],
+    ])("{ end: false }: a signal into %s aborts a WritableStream destination", async (name, create) => {
+      const source = create();
+      const sink = webSink();
+      const ac = new AbortController();
+      const promise = pipelineP(source.stream, sink.stream, { signal: ac.signal, end: false });
+      await turn();
+      ac.abort();
+      expect(await settled(promise)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(await sink.aborted).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+    });
+
     it("{ end: false }: a source that always has a chunk is not read again after the abort", async () => {
       const ac = new AbortController();
       let pulls = 0;
@@ -2078,16 +2093,20 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       expect(called).toBe(false);
     });
 
-    it("the pump reads, cancels and unlocks with the reader's own methods, not with a patch of the prototype", async () => {
-      // The pump takes the methods when it holds its first web source.
-      await pipelineP(new ReadableStream({ start: controller => controller.close() }), nodeSink().stream);
-      const prototype = ReadableStreamDefaultReader.prototype;
-      const { read, cancel, releaseLock } = prototype;
+    // As the stream's own iterator: WPT streams/readable-streams/patched-global.any.js.
+    it("the pump does not call getReader(), read(), cancel() or releaseLock() of the prototypes, which a program can replace", async () => {
+      const patched = [
+        [ReadableStream.prototype, "getReader"],
+        [ReadableStreamDefaultReader.prototype, "read"],
+        [ReadableStreamDefaultReader.prototype, "cancel"],
+        [ReadableStreamDefaultReader.prototype, "releaseLock"],
+      ];
+      const real = patched.map(([prototype, name]) => prototype[name]);
       const calls = [];
-      for (const [name, method] of Object.entries({ read, cancel, releaseLock })) {
+      for (const [i, [prototype, name]] of patched.entries()) {
         prototype[name] = function (...args) {
           calls.push(name);
-          return method.apply(this, args);
+          return real[i].apply(this, args);
         };
       }
       try {
@@ -2109,9 +2128,52 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
         expect(await idle.cancelled).toBeUndefined();
         expect(idle.stream.locked).toBe(false);
       } finally {
-        Object.assign(prototype, { read, cancel, releaseLock });
+        for (const [i, [prototype, name]] of patched.entries()) prototype[name] = real[i];
       }
       expect(calls).toEqual([]);
+    });
+
+    // In a process of its own: the pump takes nothing from the program, at the first pipeline or later.
+    it("a program that replaced setImmediate and the methods of the reader before node:stream was loaded", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            // As fake timers do.
+            globalThis.setImmediate = () => {};
+            for (const name of ["read", "cancel", "releaseLock"]) {
+              ReadableStreamDefaultReader.prototype[name] = () => {
+                throw new Error("patched " + name + "() called");
+              };
+            }
+            // As a spy that a test restores later.
+            const values = ReadableStream.prototype[Symbol.asyncIterator];
+            ReadableStream.prototype[Symbol.asyncIterator] = function () {
+              return values.call(this);
+            };
+            const { Writable } = require("node:stream");
+            const { pipeline } = require("node:stream/promises");
+            const sink = () => new Writable({ write: (chunk, encoding, callback) => callback() });
+            const events = [];
+            process.on("exit", () => console.log(events.join(", ")));
+            (async () => {
+              await pipeline(new ReadableStream({ start: controller => controller.close() }), sink());
+              events.push("ended");
+              ReadableStream.prototype[Symbol.asyncIterator] = values;
+              const ac = new AbortController();
+              const source = new ReadableStream({ cancel: () => void events.push("cancelled") });
+              const aborted = pipeline(source, sink(), { signal: ac.signal });
+              ac.abort();
+              await aborted.catch(err => events.push(err.name));
+            })();
+          `,
+        ],
+        env: bunEnv,
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("ended, cancelled, AbortError\n");
+      expect(exitCode).toBe(0);
     });
 
     // The 'close' of a destination that finished reports no error, and the teardown left the wait to that report.

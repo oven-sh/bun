@@ -58,4 +58,10 @@ private:
 
 using JSReadableStreamDefaultReaderConstructor = JSStreamConstructor<JSReadableStreamDefaultReader>;
 
+// The prototype's cancel(), read() and releaseLock(). node:stream's pipeline() calls them through $newCppFunction
+// (src/js/internal/streams/pipeline.ts): a program can replace the properties of the prototype, not these.
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_cancel);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_releaseLock);
+
 } // namespace WebCore

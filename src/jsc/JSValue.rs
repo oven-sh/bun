@@ -498,7 +498,7 @@ impl JSValue {
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
-    pub(crate) fn js_double_number(n: f64) -> JSValue {
+    pub fn js_double_number(n: f64) -> JSValue {
         const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
@@ -1364,19 +1364,6 @@ impl JSValue {
         }
         Ok(Some(prop))
     }
-    /// Own property lookup by key value (index or `toPropertyKey`). `None` when
-    /// absent; the C++ side also returns empty when a getter or `toPropertyKey`
-    /// throws, so the exception state is what tells the two apart.
-    pub fn get_own_by_value(
-        self,
-        global: &JSGlobalObject,
-        property_value: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let v = crate::call_check_slow(global, || {
-            JSC__JSValue__getOwnByValue(self, global, property_value)
-        })?;
-        Ok(if v.is_empty() { None } else { Some(v) })
-    }
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
     /// can throw, so this is routed through `from_js_host_call_generic`.
@@ -1580,7 +1567,6 @@ impl JSValue {
                 min,
                 max,
                 field_name: property_name.as_bytes(),
-                always_allow_zero: false,
             },
         )?))
     }
@@ -2065,11 +2051,6 @@ unsafe extern "C" {
         buf: &mut [u8; 64],
     ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
-    safe fn JSC__JSValue__getOwnByValue(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSValue__hasOwnPropertyValue(
         this: JSValue,
         global: &JSGlobalObject,

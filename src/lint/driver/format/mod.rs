@@ -197,6 +197,15 @@ pub(crate) struct Meta<'m> {
     pub(crate) version: &'m [u8],
 }
 
+/// The line and column of `message` for a format that ESLint doesn't have. `is_oxlint`: [`Meta::is_oxlint`], where a report at
+/// line 0 is one without a place.
+fn shown_at(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
+    match is_oxlint {
+        true => (message.line, message.column),
+        false => message.place(),
+    }
+}
+
 /// Wraps `name`, which is a format's name for the rule behind `message`, in a hyperlink to the rule's docs page. `None` if
 /// [`Meta::links`] is off or the rule has no page.
 fn link(name: &[u8], message: &LintMessage, meta: &Meta) -> Option<Vec<u8>> {

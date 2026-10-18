@@ -559,12 +559,6 @@ ${
 
 function renderCachedFieldsHeader(typeName, klass, proto, values) {
   const rows: string[] = [];
-  for (const name in klass) {
-    if (("cache" in klass[name] && klass[name].cache === true) || klass[name]?.internal) {
-      rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
-    }
-  }
-
   for (const name in proto) {
     if (proto[name]?.cache === true || klass[name]?.internal) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
@@ -923,10 +917,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     }
   }
   const DECLARE_VISIT_CHILDREN =
-    values.length ||
-    obj.estimatedSize ||
-    obj.valuesArray ||
-    [...Object.values(klass), ...Object.values(proto)].find(a => a.cache === true)
+    values.length || obj.estimatedSize || obj.valuesArray || Object.values(proto).find(a => a.cache === true)
       ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
 
@@ -1098,9 +1089,8 @@ ${cachedFields.map(({ member, name: n }) => `    { OBJECT_OFFSETOF(${name}, ${me
     : "";
 
   // analyzeHeap reports these as named property edges (see allCachedValues); appendHidden
-  // marks for GC without emitting a duplicate anonymous internal edge. klass caches are
-  // marked but never reported, which is moot: no setter is generated, so they stay empty.
-  const DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
+  // marks for GC without emitting a duplicate anonymous internal edge.
+  const DEFINE_VISIT_CHILDREN_LIST = Object.entries(proto)
     .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `visitor.appendHidden(thisObject->m_${name});`)
     .join("\n");
@@ -1528,7 +1518,7 @@ const rustModuleResolver = (() => {
   // code, so don't descend into it.
   const modRe = /(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:#\[[^\]]*\]\s*)*pub(?:\([^)]*\))?\s+mod\s+(\w+)\s*;/g;
   // Index both `pub struct Name` and `pub type Name = …` — several JS classes
-  // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
+  // (HTTPServer/HTTPSServer/…) are generic instantiations exposed as
   // type aliases; the thunks call `Name::method` either way.
   const structRe = /\bpub(?:\([^)]*\))?\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
   // `pub use a::b::{Name, Name as Alias};` — only the *exported* identifier is

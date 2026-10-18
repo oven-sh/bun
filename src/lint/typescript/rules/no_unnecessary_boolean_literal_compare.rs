@@ -72,7 +72,7 @@ fn is_nullable_boolean(expression_type: Type, is_oxlint: bool) -> bool {
 }
 
 fn boolean_literal(against: Expr) -> Option<bool> {
-    match against.kind() {
+    match against.with_jsdoc_cast().kind() {
         ExprKind::True => Some(true),
         ExprKind::False => Some(false),
         _ => None,

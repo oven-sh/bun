@@ -36,6 +36,11 @@ pub(crate) enum Syntax {
     Plain,
     /// What Prettier makes of MDX, with remark-parse 8: `import` and `export`, any tag starts HTML, which is JSX.
     Mdx,
+    /// CommonMark as specified, optionally with the GFM extensions and math, and without any of Prettier's additions.
+    CommonMark {
+        gfm: bool,
+        math: bool,
+    },
 }
 
 /// What Prettier parses has blanks in the place of the front matter. That only makes a difference if something
@@ -289,6 +294,7 @@ fn span_at(
         return None;
     }
     let is_mdx = syntax == Syntax::Mdx;
+    let is_common_mark = matches!(syntax, Syntax::CommonMark { .. });
     let address = |index: usize| bytes.as_ptr().addr() + index;
     let mut known = memo.get();
     if known.serial != start.serial {
@@ -319,7 +325,7 @@ fn span_at(
             let size = bytes[index..].iter().take_while(|&&it| it == b'$').count();
             let end = if is_mdx {
                 spans::find_math_end(bytes, index)
-            } else if size < 2 {
+            } else if size < 2 && !is_common_mark {
                 None
             } else {
                 spans::find_closing_run(bytes, index + size, b'$', size)
@@ -329,7 +335,7 @@ fn span_at(
         // `[[target]]`
         b'[' => {
             let target_start = index + 2;
-            if bytes.get(index + 1) != Some(&b'[') {
+            if bytes.get(index + 1) != Some(&b'[') || is_common_mark {
                 return None;
             }
             // `![` is the start of an image, whatever follows.
@@ -2105,7 +2111,12 @@ impl RendererImpl for Builder<'_> {
 
 /// Fills `tree` with the syntax of `text`, in which every line break is `\n`, from `first_line` on, which is where a
 /// line starts. Returns the root.
-fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) -> Option<NodeId> {
+pub(crate) fn parse_lines(
+    text: &[u8],
+    tree: &mut Tree,
+    syntax: Syntax,
+    first_line: usize,
+) -> Option<NodeId> {
     tree.clear();
     if text.len() >= (1 << 30) {
         return None;
@@ -2130,6 +2141,11 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
     options.tasklists = false;
     (options.micromark, options.mdx) = (true, is_mdx);
     options.micromark_to_the_letter = !is_as_oxfmt_reads;
+    if let Syntax::CommonMark { gfm, math } = syntax {
+        (options.tables, options.strikethrough, options.footnotes) = (gfm, gfm, gfm);
+        (options.math_blocks, options.no_single_tilde) = (math, false);
+        (options.micromark, options.micromark_to_the_letter) = (false, false);
+    }
     let leaf_memo = Cell::new(LeafMemo::default());
     let leaf = |start: &LeafStart<'_>| match is_mdx {
         true => es_syntax_end(start),
@@ -2140,12 +2156,21 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
     let span = |start: &SpanStart<'_>| span_at(start, syntax, can_start_with_check.get(), &memo);
     let extensions = Extensions {
         leaf_bytes: match syntax {
-            Syntax::Plain => b"",
+            Syntax::Plain | Syntax::CommonMark { .. } => b"",
             Syntax::Mdx => b"ie",
             Syntax::Markdown | Syntax::WithDirectives | Syntax::TwoLines => b"{",
         },
         leaf: &leaf,
-        span_bytes: if is_plain { b"[" } else { SPAN_BYTES },
+        span_bytes: match syntax {
+            Syntax::Plain => b"[",
+            Syntax::CommonMark { gfm, math } => match (gfm, math) {
+                (false, false) => b"",
+                (false, true) => b"$",
+                (true, false) => b"[@:.",
+                (true, true) => b"$[@:.",
+            },
+            _ => SPAN_BYTES,
+        },
         span: &span,
     };
     let mut builder = Builder {

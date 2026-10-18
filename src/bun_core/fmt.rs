@@ -3531,14 +3531,6 @@ pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
     unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
 }
 
-/// Byte length of `n` formatted with the default `{}` Display. Used by
-/// ConsoleObject
-/// width tracking for `%f` substitutions.
-#[inline]
-pub fn count_float(n: f64) -> usize {
-    count(format_args!("{n}"))
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // NullableFallback
 // ───────────────────────────────────────────────────────────────────────────

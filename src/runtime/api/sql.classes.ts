@@ -13,36 +13,35 @@ for (const type of types) {
     define({
       name: `${type}Connection`,
       rustPath: rustPaths[`${type}Connection`],
-      construct: true,
+      noConstructor: true,
       refCounted: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
-      klass: {},
       JSType: "0b11101110",
       proto: {
         close: {
           fn: "doClose",
         },
-        ref: {
-          fn: "doRef",
-        },
-        unref: {
-          fn: "doUnref",
-        },
         flush: {
           fn: "doFlush",
         },
-        queries: {
-          getter: "getQueries",
-          this: true,
+        hold: {
+          fn: "doHold",
         },
-        onclose: {
-          getter: "getOnClose",
-          setter: "setOnClose",
-          this: true,
+        unhold: {
+          fn: "doUnhold",
+        },
+        inTransaction: {
+          getter: "getInTransaction",
         },
         ...(type === "PostgresSQL"
           ? {
+              ref: {
+                fn: "doRef",
+              },
+              sasl: {
+                getter: "getSasl",
+              },
               onnotification: {
                 getter: "getOnNotification",
                 setter: "setOnNotification",
@@ -51,10 +50,14 @@ for (const type of types) {
             }
           : {}),
       },
-      values:
-        type === "PostgresSQL"
-          ? ["onconnect", "onclose", "queries", "onnotification"]
-          : ["onconnect", "onclose", "queries"],
+      values: [
+        "onconnect",
+        "onclose",
+        "onretire",
+        "checkServerIdentity",
+        "columnTransform",
+        ...(type === "PostgresSQL" ? ["onnotification"] : []),
+      ],
     }),
   );
 
@@ -62,11 +65,10 @@ for (const type of types) {
     define({
       name: `${type}Query`,
       rustPath: rustPaths[`${type}Query`],
-      construct: true,
+      noConstructor: true,
       refCounted: true,
       configurable: false,
       JSType: "0b11101110",
-      klass: {},
       proto: {
         run: {
           fn: "doRun",
@@ -74,10 +76,6 @@ for (const type of types) {
         },
         cancel: {
           fn: "doCancel",
-          length: 0,
-        },
-        done: {
-          fn: "doDone",
           length: 0,
         },
         setMode: {
@@ -88,8 +86,37 @@ for (const type of types) {
           fn: "setPendingValueFromJS",
           length: 1,
         },
+        describeResult: {
+          fn: "describeResult",
+          length: 1,
+        },
+        ...(type === "PostgresSQL"
+          ? {
+              setCopy: {
+                fn: "setCopy",
+                length: 2,
+              },
+              copyWrite: {
+                fn: "copyWrite",
+                length: 1,
+              },
+              copyDone: {
+                fn: "copyDone",
+                length: 0,
+              },
+              copyFail: {
+                fn: "copyFail",
+                length: 1,
+              },
+              copyResume: {
+                fn: "copyResume",
+                length: 0,
+              },
+            }
+          : {}),
       },
-      values: ["pendingValue", "target", "columns", "binding"],
+      values:
+        type === "PostgresSQL" ? ["pendingValue", "target", "binding", "copy"] : ["pendingValue", "target", "binding"],
       estimatedSize: true,
     }),
   );

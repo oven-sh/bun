@@ -65,6 +65,9 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
+    /// Set by the hoisted linker only. A copy of `tree::Builder::places`.
+    pub(crate) places: Vec<(u64, PackageID)>,
+
     pub(crate) offline_misses: OfflineMisses,
 }
 
@@ -188,7 +191,7 @@ impl InstallResult {
             bun_core::pretty_errorln!(
                 "<r><red>{}<r>: copying file {}",
                 failure.err.name(),
-                bstr::BStr::new(&failure.file)
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(&failure.file))
             );
         }
         self
@@ -465,11 +468,16 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     open()
 }
 
-/// Whether `dest` has the names and inodes of the folder `src` as it is now.
-fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
+/// Whether `dest` is still a hardlinked copy of `src`: both have the same entry names and inodes.
+/// `rel` is the path of `src` inside the `file:` folder.
+fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, dest: &Dir) -> bool {
     const INO_LEN: usize = core::mem::size_of::<u64>();
-    // Each name followed by its inode number, 0 for a directory.
-    fn list(dir: &Dir) -> Option<Vec<Box<[u8]>>> {
+    // Lists each entry name followed by its inode number, or 0 for a directory. `folder` is `Some`
+    // when `dir` is in the source folder and `None` when it is in the copy.
+    fn list(
+        dir: &Dir,
+        mut folder: Option<(&mut FolderRoot<'_>, &mut Vec<u8>)>,
+    ) -> Option<Vec<Box<[u8]>>> {
         let mut entries: Vec<Box<[u8]>> = Vec::new();
         let mut iter = sys::iterate_dir(dir.fd());
         while let Some(entry) = iter.next().ok()? {
@@ -484,6 +492,30 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
                 EntryKind::Directory if name == b"node_modules" => continue,
                 EntryKind::Directory => 0,
                 EntryKind::Unknown => return None,
+                // For a symlink in the source folder, list what `lay_folder_links` creates for it
+                // in the copy, because that is what the copy is expected to contain.
+                EntryKind::SymLink if name != b"node_modules" => {
+                    let link = match &mut folder {
+                        Some((root, rel)) => {
+                            let root = root.get()?;
+                            let dir_len = rel.len();
+                            rel.extend_from_slice(name);
+                            let link = FolderLink::of(root, rel.as_slice(), dir_len, dir);
+                            rel.truncate(dir_len);
+                            link
+                        }
+                        None => FolderLink::Link(read_link(dir, name)?),
+                    };
+                    match link {
+                        FolderLink::Link(text) => {
+                            let link = [name, &b"/"[..], &text[..], &[0xff; INO_LEN][..]].concat();
+                            entries.push(link.into_boxed_slice());
+                            continue;
+                        }
+                        FolderLink::File(_, target) => target.st_ino,
+                        FolderLink::LeftOut(_) => continue,
+                    }
+                }
                 // The backends skip these.
                 _ => continue,
             };
@@ -493,7 +525,9 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
         Some(entries)
     }
 
-    let (Some(src_entries), Some(dest_entries)) = (list(src), list(dest)) else {
+    let (Some(src_entries), Some(dest_entries)) =
+        (list(src, Some((&mut *root, &mut *rel))), list(dest, None))
+    else {
         return false;
     };
     src_entries == dest_entries
@@ -507,7 +541,14 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
                 src.open_at_with(name, flags),
                 dest.open_at_with(name, flags),
             ) {
-                (Ok(src), Ok(dest)) => is_hardlinked_copy(&src, &dest),
+                (Ok(src), Ok(dest)) => {
+                    let dir_len = rel.len();
+                    rel.extend_from_slice(name);
+                    rel.push(b'/');
+                    let same = is_hardlinked_copy(root, rel, &src, &dest);
+                    rel.truncate(dir_len);
+                    same
+                }
                 _ => false,
             }
         })
@@ -520,7 +561,214 @@ pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
     // Inode numbers only compare on one device. The same directory is a link to the folder.
     dest_stat.st_dev == src_stat.st_dev
         && dest_stat.st_ino != src_stat.st_ino
-        && is_hardlinked_copy(src, dest)
+        && is_hardlinked_copy(&mut FolderRoot(src, None), &mut Vec::new(), src, dest)
+}
+
+/// Real paths to compare a symlink's resolved target against. `top_level_dir` cannot be used for
+/// this because it may contain symlinks itself.
+struct RealPaths {
+    folder: Box<[u8]>,
+    project: Box<[u8]>,
+}
+
+/// The `RealPaths` of a `file:` folder. They are resolved when the first symlink is found, because
+/// most folders have no symlinks.
+struct FolderRoot<'a>(&'a Dir, Option<RealPaths>);
+
+impl FolderRoot<'_> {
+    fn get(&mut self) -> Option<&RealPaths> {
+        if self.1.is_none() {
+            let mut fd_path = path::path_buffer_pool::get();
+            let mut real = path::path_buffer_pool::get();
+            let fd_path = sys::get_fd_path_z(self.0.fd(), &mut fd_path).ok()?;
+            let folder = sys::realpath(fd_path, &mut real).ok()?.into();
+            let project = crate::lockfile_real::LinkedMembers::real_path_of(b".");
+            if project.is_empty() {
+                return None;
+            }
+            self.1 = Some(RealPaths { folder, project });
+        }
+        self.1.as_ref()
+    }
+}
+
+/// Recreates the symlinks of `folder` in `dest`, its installed copy, because the install backends
+/// skip them. Only call this for a folder that the user named. Returns a warning per omitted link.
+pub(crate) fn lay_folder_links(folder: &[u8], dest: &Dir) -> Vec<Box<[u8]>> {
+    let mut left_out: Vec<Box<[u8]>> = Vec::new();
+    if let Ok(src) = Dir::open(folder) {
+        let root = &mut FolderRoot(&src, None);
+        lay_links_below(root, &mut Vec::new(), &src, dest, &mut left_out);
+    }
+    crate::prune::sort_names(&mut left_out);
+    for link in &mut left_out {
+        *link = [&b"skipping link "[..], folder, &b"/"[..], &link[..]]
+            .concat()
+            .into_boxed_slice();
+    }
+    left_out
+}
+
+/// `rel` is the path of `src` inside the folder. It is either empty or ends with a slash.
+fn lay_links_below(
+    root: &mut FolderRoot<'_>,
+    rel: &mut Vec<u8>,
+    src: &Dir,
+    dest: &Dir,
+    left_out: &mut Vec<Box<[u8]>>,
+) {
+    let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+    let dir_len = rel.len();
+    let mut iter = sys::iterate_dir(src.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if name == b"node_modules" {
+            continue;
+        }
+        rel.truncate(dir_len);
+        rel.extend_from_slice(name);
+        match crate::prune::entry_kind(src, name, entry.kind) {
+            EntryKind::Directory => {
+                if let (Ok(src), Ok(dest)) = (
+                    src.open_at_with(name, flags),
+                    dest.open_at_with(name, flags),
+                ) {
+                    rel.push(b'/');
+                    lay_links_below(root, rel, &src, &dest, left_out);
+                }
+            }
+            EntryKind::SymLink => {
+                if let Some(root) = root.get()
+                    && let Err(why) = lay_link(root, rel.as_slice(), dir_len, src, dest)
+                {
+                    let text = [rel.as_slice(), &b": "[..], why.as_bytes()];
+                    left_out.push(text.concat().into_boxed_slice());
+                }
+            }
+            _ => {}
+        }
+    }
+    rel.truncate(dir_len);
+}
+
+/// Returns the part of `real` that follows the directory `root`, or `None` if `real` is not inside
+/// `root`. Both must be real paths.
+fn path_below<'a>(root: &[u8], real: &'a [u8]) -> Option<&'a [u8]> {
+    real.strip_prefix(strings::without_trailing_slash(root))
+        .filter(|rest| rest.first().is_none_or(|&c| c == path::SEP))
+}
+
+fn read_link(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
+    let mut text = path::path_buffer_pool::get();
+    let len = sys::readlinkat(dir, &bun_core::ZBox::from_bytes(name), &mut text[..]).ok()?;
+    (len < text.len()).then(|| Box::from(&text[..len]))
+}
+
+/// What the installed copy of a `file:` folder gets in place of one of the folder's symlinks. A
+/// symlink in the copy never leads out of it, and a file only comes from the folder or the project.
+enum FolderLink {
+    /// A symlink with this target text.
+    Link(Box<[u8]>),
+    /// A hardlink to the file at this real path, or a copy of it.
+    File(bun_core::ZBox, Box<sys::Stat>),
+    LeftOut(&'static str),
+}
+
+impl FolderLink {
+    /// Decides what the symlink at `rel` in the folder becomes in the copy. `src` is the symlink's
+    /// parent directory, and `rel[dir_len..]` is its name there.
+    fn of(paths: &RealPaths, rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
+        use path::resolve_path::{join_abs_string_buf_z_checked, platform};
+        const NOWHERE: FolderLink = FolderLink::LeftOut("target does not exist");
+        let root: &[u8] = &paths.folder;
+
+        let mut link_buf = path::path_buffer_pool::get();
+        let mut real_buf = path::path_buffer_pool::get();
+        let Some(link) =
+            join_abs_string_buf_z_checked::<platform::Auto>(root, &mut link_buf[..], &[rel])
+        else {
+            return NOWHERE;
+        };
+        let Ok(real) = sys::realpath(link, &mut real_buf) else {
+            return NOWHERE;
+        };
+        let real_z = bun_core::ZBox::from_bytes(real);
+        let Ok(target) = sys::stat(&real_z) else {
+            return NOWHERE;
+        };
+        // The install backends skip `node_modules`, so a target inside one is not in the copy.
+        let in_folder = path_below(root, real)
+            .is_some_and(|rest| !strings::split(rest, b"/").any(|part| part == b"node_modules"));
+
+        // A symlink is kept only if both its resolved target and its literal text stay in the
+        // folder. The text alone is not enough, because it can pass through another symlink.
+        if cfg!(not(windows))
+            && in_folder
+            && let Some(text) = read_link(src, &rel[dir_len..])
+            && !path::is_absolute(&text)
+            && !crate::bin::bin_target_escapes_package_dir(&[&rel[..dir_len], &text[..]].concat())
+        {
+            return FolderLink::Link(text);
+        }
+        if sys::kind_from_mode(target.st_mode as sys::Mode) != EntryKind::File {
+            return FolderLink::LeftOut(if cfg!(windows) {
+                "target is a directory"
+            } else {
+                "directory links must be relative and stay inside the folder"
+            });
+        }
+        if !in_folder && path_below(&paths.project, real).is_none() {
+            return FolderLink::LeftOut("target is outside the project");
+        }
+        FolderLink::File(real_z, Box::new(target))
+    }
+}
+
+fn lay_link(
+    root: &RealPaths,
+    rel: &[u8],
+    dir_len: usize,
+    src: &Dir,
+    dest: &Dir,
+) -> Result<(), &'static str> {
+    let name = &bun_core::ZBox::from_bytes(&rel[dir_len..]);
+    let _ = dest.delete_tree(name.as_bytes());
+    match FolderLink::of(root, rel, dir_len, src) {
+        FolderLink::Link(text) => sys::symlinkat(&bun_core::ZBox::from_bytes(&text), dest, name)
+            .map_err(|_| "failed to create link"),
+        FolderLink::File(real, target) => {
+            #[cfg(not(windows))]
+            {
+                if sys::linkat(Fd::cwd(), &real, dest, name).is_ok() {
+                    return Ok(());
+                }
+            }
+            #[cfg(windows)]
+            {
+                use path::resolve_path::{join_abs_string_buf_z_checked, platform};
+                let mut dir_buf = path::path_buffer_pool::get();
+                let mut to_buf = path::path_buffer_pool::get();
+                if let Ok(dir) = dest.get_fd_path(&mut dir_buf)
+                    && let Some(to) = join_abs_string_buf_z_checked::<platform::Auto>(
+                        dir,
+                        &mut to_buf[..],
+                        &[name.as_bytes()],
+                    )
+                    && sys::sys_uv::link(&real, to).is_ok()
+                {
+                    return Ok(());
+                }
+            }
+            sys::File::open(&real, sys::O::RDONLY | sys::O::CLOEXEC, 0)
+                .and_then(|from| {
+                    let to = dest.create_file_z(name, Default::default())?;
+                    let _ = sys::fchmod(to.handle(), target.st_mode as sys::Mode);
+                    sys::copy_file(from.handle(), to.handle())
+                })
+                .map_err(|_| "failed to copy target")
+        }
+        FolderLink::LeftOut(why) => Err(why),
+    }
 }
 
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
@@ -990,7 +1238,9 @@ impl<'a> PackageInstall<'a> {
                 root_node_modules_dir,
             ),
             resolution::Tag::Root => self.verify_directory_exists(root_node_modules_dir),
-            resolution::Tag::Symlink => self.verify_link(root_node_modules_dir),
+            resolution::Tag::Symlink | resolution::Tag::Workspace => {
+                self.verify_link(root_node_modules_dir)
+            }
             resolution::Tag::Folder => {
                 let tree_id = self.node_modules.tree_id;
                 if self.lockfile.is_workspace_tree_id(tree_id)
@@ -1002,7 +1252,7 @@ impl<'a> PackageInstall<'a> {
                     self.verify_directory_exists(root_node_modules_dir)
                 }
             }
-            _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
+            _ => self.verify_package_json_name_and_version(root_node_modules_dir),
         };
 
         verified
@@ -1046,10 +1296,9 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         root_node_modules_dir: &Dir,
         mutable: &mut MutableString,
-        resolution_tag: resolution::Tag,
+        until_eof: bool,
     ) -> Option<bun_ast::Source> {
         let mut total: usize = 0;
-        let mut read: usize;
         mutable.reset();
         mutable.expand_to_capacity();
 
@@ -1065,42 +1314,17 @@ impl<'a> PackageInstall<'a> {
             .ok()?;
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
-        read = package_json_file.read(&mut mutable.list[total..]).ok()?;
-        let mut remain = &mut mutable.list[total.min(read)..];
-        if read > 0 && remain.len() < 1024 {
-            mutable.grow_by(4096).ok()?;
-            mutable.expand_to_capacity();
-        }
-
-        while read > 0 {
-            total += read;
-
-            mutable.expand_to_capacity();
-            // Reshaped for borrowck — recompute remain after grow.
-            remain = &mut mutable.list[total..];
-
-            if remain.len() < 1024 {
+        loop {
+            if mutable.list.len() - total < 1024 {
                 mutable.grow_by(4096).ok()?;
+                mutable.expand_to_capacity();
             }
-            mutable.expand_to_capacity();
-            remain = &mut mutable.list[total..];
-
-            read = package_json_file.read(remain).ok()?;
-        }
-
-        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        let minimum =
-            if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
-                // workspaces aren't required to have a version
-                br#"{"name":""}"#.len() + self.package_name.len()
-            } else {
-                br#"{"name":"","version":""}"#.len()
-                    + self.package_name.len()
-                    + self.package_version.len()
-            };
-
-        if total < minimum {
-            return None;
+            let remain = &mut mutable.list[total..];
+            let read = package_json_file.read(remain).ok()?;
+            total += read;
+            if read == 0 || (!until_eof && read < remain.len()) {
+                break;
+            }
         }
 
         Some(bun_ast::Source::init_path_string(
@@ -1109,11 +1333,20 @@ impl<'a> PackageInstall<'a> {
         ))
     }
 
-    fn verify_package_json_name_and_version(
+    fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {
+        // The first attempt treats a short read as the end of the file, which saves a `read` call.
+        // A few file systems return short reads earlier and truncate the JSON, so retry until EOF.
+        self.verify_installed_package_json(root_node_modules_dir, false)
+            .or_else(|| self.verify_installed_package_json(root_node_modules_dir, true))
+            .unwrap_or(false)
+    }
+
+    /// Returns `None` if the bytes that were read are not a complete JSON document.
+    fn verify_installed_package_json(
         &mut self,
         root_node_modules_dir: &Dir,
-        resolution_tag: resolution::Tag,
-    ) -> bool {
+        until_eof: bool,
+    ) -> Option<bool> {
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
@@ -1123,26 +1356,31 @@ impl<'a> PackageInstall<'a> {
         // The longer the file stays open, the more likely it causes issues for
         // other processes on Windows.
         let Some(source) =
-            self.get_installed_package_json_source(root_node_modules_dir, mutable, resolution_tag)
+            self.get_installed_package_json_source(root_node_modules_dir, mutable, until_eof)
         else {
-            return false;
+            return Some(false);
         };
         let source = &source;
+
+        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
+        let minimum = br#"{"name":"","version":""}"#.len()
+            + self.package_name.len()
+            + self.package_version.len();
+
+        if source.contents().len() < minimum {
+            return None;
+        }
 
         let mut log = bun_ast::Log::init();
 
         initialize_store();
 
         let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
-        if package_json_checker.parse().is_err() {
-            return false;
+        if package_json_checker.parse().is_err() || package_json_checker.has_errors() {
+            return None;
         }
-        if package_json_checker.has_errors() || !package_json_checker.has_found_name {
-            return false;
-        }
-        // workspaces aren't required to have a version
-        if !package_json_checker.has_found_version && resolution_tag != resolution::Tag::Workspace {
-            return false;
+        if !package_json_checker.has_found_name || !package_json_checker.has_found_version {
+            return Some(false);
         }
 
         let found_version = package_json_checker.found_version();
@@ -1170,17 +1408,19 @@ impl<'a> PackageInstall<'a> {
                 }
                 // If we didn't find any of these characters, there's no point in checking the version again.
                 // it will never match.
-                return false;
+                return Some(false);
             };
 
             if found_version[offset..] != *self.package_version {
-                return false;
+                return Some(false);
             }
         }
 
         // lastly, check the name.
-        package_json_checker.found_name()
-            == self.package_name.slice(&self.lockfile.buffers.string_bytes)
+        Some(
+            package_json_checker.found_name()
+                == self.package_name.slice(&self.lockfile.buffers.string_bytes),
+        )
     }
 }
 
@@ -1402,7 +1642,17 @@ impl PackageFiles<'_> {
             buf[i] = 0;
             let fullpath = bun_core::WStr::from_buf(&buf[..], i);
 
-            let _ = mkdir_recursive_os_path(fullpath);
+            if let Err(err) = sys::mkdir_w(fullpath) {
+                // Like `make_open_real_dir`, replace a symlink at the destination, never follow it.
+                if err.get_errno() == sys::E::EEXIST {
+                    let mut narrow = bun_paths::path_buffer_pool::get();
+                    let dest = strings::from_wpath(&mut narrow[..], &buf[..i - 1]);
+                    if let Err(err) = crate::prune::remove_planted_link(destbase, dest) {
+                        return Err(Failure::boxed(err.into(), Step::OpeningDestDir));
+                    }
+                }
+                let _ = mkdir_recursive_os_path(fullpath);
+            }
             let to_copy_buf_off = fullpath.len();
 
             // SAFETY: FFI — the walker's root is the open cache directory; buf2 is a

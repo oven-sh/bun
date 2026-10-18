@@ -512,9 +512,9 @@ describe.concurrent("bun-install", () => {
   });
 
   it.each([
-    ["an empty name", { "": "" }, 'Dependency name cannot be empty (in "dependencies")'],
-    ["an empty name with a dist-tag", { "": "latest" }, 'Dependency name cannot be empty (in "dependencies")'],
-    ["an empty name with a range", { "": "^1" }, 'Dependency name cannot be empty (in "dependencies")'],
+    ["an empty name", { "": "" }, 'empty dependency name (in "dependencies")'],
+    ["an empty name with a dist-tag", { "": "latest" }, 'empty dependency name (in "dependencies")'],
+    ["an empty name with a range", { "": "^1" }, 'empty dependency name (in "dependencies")'],
     ["an npm alias with no name", { "x": "npm:@1.0.0" }, 'invalid package name "@1.0.0" in dependency "npm:@1.0.0"'],
     [
       "an npm alias with no name and a dist-tag",
@@ -588,6 +588,66 @@ describe.concurrent("bun-install", () => {
     },
   );
 
+  // A word that can name a package does, as in npm.
+  it.each(["x", "v8", "1", "1.x", "0.0.x"])("still reads npm:%s as the name of another package", async name => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: `npm:${name}` } }),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([`${ctx.registry_url}${name}`]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.each([
+    "npm:^0.0.3",
+    "npm:~0.0.2",
+    "npm:*",
+    "npm:>=0.0.2 <1",
+    "npm:0.0.2 || 0.0.3",
+    "npm:0.0.3",
+    "npm:v0.0.3",
+    "npm:=0.0.3",
+  ])("reads %s as a range of the dependency's own name", async range => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: range } }),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+        name: "baz",
+        version: "0.0.3",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it.each(["npm:@1.0.0", "npm:", "x@npm:@scope/@1"])("bun add %s is refused without a registry request", async spec => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
@@ -610,8 +670,8 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // The same in somebody else's manifest is not this project's error: the edge is left out, with one
-  // warning that names the package, and the registry is not asked for `/` or `/@1.0.0`.
+  // The same in somebody else's manifest is not this project's error: the edge is left out, --verbose
+  // names the package, and the registry is not asked for `/` or `/@1.0.0`.
   describe.each(["hoisted", "isolated"])("a dependency of a package that names no package, %s linker", linker => {
     async function install(ctx: TestContext, ...args: string[]) {
       await using proc = spawn({
@@ -637,10 +697,10 @@ describe.concurrent("bun-install", () => {
           setContextHandler(ctx, heldRegistry(ctx, urls, { holder: { "1.0.0": { [group]: declared } } }));
           await writeProject(ctx, { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } }, { linker });
 
-          const fresh = await install(ctx);
+          const fresh = await install(ctx, "--verbose");
           expect(fresh.err).not.toContain("error:");
           expect(fresh.warnings).toEqual([
-            `warn: Skipped a dependency of holder@1.0.0 that names no package ("${Object.values(declared)[0]}" in "${group}")`,
+            `warn: skipping unnamed dependency of holder@1.0.0 ("${Object.values(declared)[0]}" in "${group}")`,
           ]);
           expect(urls.sort()).toEqual(["holder", "holder-1.0.0.tgz"]);
           expect(fresh.exitCode).toBe(0);
@@ -678,8 +738,8 @@ describe.concurrent("bun-install", () => {
         const { err, warnings, exitCode } = await install(ctx);
         expect(err).not.toContain("error:");
         expect(warnings.sort()).toEqual([
-          'warn: Skipped a dependency that names no package ("1.0.0" in "dependencies")',
-          'warn: Skipped a dependency that names no package ("npm:@1.0.0" in "dependencies")',
+          'warn: skipping unnamed dependency ("1.0.0" in "dependencies")',
+          'warn: skipping unnamed dependency ("npm:@1.0.0" in "dependencies")',
         ]);
         expect(urls).toEqual([]);
         expect(await exists(join(ctx.package_dir, "node_modules", "packed", "package.json"))).toBeTrue();
@@ -1482,6 +1542,80 @@ describe.concurrent("bun-install", () => {
       expect(stdout).toContain("1 package installed");
       expect(exitCode).toBe(0);
     });
+
+    // The commands that send one request at a time follow the same rule.
+    describe.each([
+      { name: "on the same port keeps the token", samePort: true, authorization: `Bearer ${token}` },
+      { name: "on another port drops the token", samePort: false, authorization: null },
+    ])("an upgrade from http to https $name", ({ samePort, authorization }) => {
+      it.each([
+        [["info", "no-deps"], manifestPath],
+        [["pm", "view", "no-deps"], manifestPath],
+        [["pm", "whoami"], "/-/whoami"],
+        [["pm", "diff", "no-deps"], manifestPath],
+        [["audit"], "/-/npm/v1/security/advisories/bulk"],
+        [["publish"], "/app"],
+      ])("%j", async (cmd, requested) => {
+        const received: { pathname: string; authorization: string | null }[] = [];
+        await using targetServer = Bun.serve({
+          port: 0,
+          ...tls,
+          fetch(req) {
+            const { pathname } = new URL(req.url);
+            received.push({ pathname, authorization: req.headers.get("authorization") });
+            if (pathname === tarballPath) return new Response(file(tgz));
+            if (pathname === "/-/whoami") return Response.json({ username: "me" });
+            if (pathname !== manifestPath) return Response.json({});
+            return Response.json({
+              name: "no-deps",
+              "dist-tags": { latest: "1.0.0" },
+              versions: {
+                "1.0.0": {
+                  name: "no-deps",
+                  version: "1.0.0",
+                  dist: { integrity, tarball: `http://127.0.0.1:${registryPort}${tarballPath}` },
+                },
+              },
+            });
+          },
+        });
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch: req => Response.redirect(`https://127.0.0.1:${targetPort}${new URL(req.url).pathname}`, 308),
+        });
+        using bothSchemes = samePort ? await serveBothSchemes(registry.port!, targetServer.port!) : undefined;
+        const registryPort = bothSchemes?.port ?? registry.port;
+        const targetPort = bothSchemes?.port ?? targetServer.port;
+
+        using dir = tempDir("token-across-redirects", {
+          "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+          "bun.lock": JSON.stringify({
+            lockfileVersion: 1,
+            workspaces: { "": { name: "app", dependencies: { "no-deps": "1.0.0" } } },
+            packages: { "no-deps": ["no-deps@1.0.0", "", {}, integrity] },
+          }),
+          ".npmrc": [
+            `registry=http://127.0.0.1:${registryPort}/`,
+            `//127.0.0.1:${registryPort}/:_authToken=${token}`,
+            ``,
+          ].join("\n"),
+          "cafile": tls.cert,
+        });
+        await using proc = spawn({
+          cmd: [bunExe(), ...cmd, "--cafile", "cafile"],
+          cwd: String(dir),
+          env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+        expect(stderr).not.toContain("error:");
+        expect(received[0]).toEqual({ pathname: requested, authorization });
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 
   // A tarball URL with credentials in it is downloaded the way npm downloads
@@ -2024,7 +2158,7 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(`error: Invalid dependency name "${alias}"`);
+      expect(stderr).toContain(`error: invalid dependency name "${alias}"`);
       expect(stdout).not.toContain("installed");
       expect(exitCode).toBe(1);
     }
@@ -5017,6 +5151,10 @@ describe.concurrent("bun-install", () => {
 
   // Runs `bun install` and returns the `packages` section of the bun.lock it saves.
   async function installAndReadLock(ctx: TestContext, ...args: string[]) {
+    return (await installAndReadLockAndWarnings(ctx, ...args)).packages;
+  }
+
+  async function installAndReadLockAndWarnings(ctx: TestContext, ...args: string[]) {
     await using proc = spawn({
       cmd: [bunExe(), "install", ...args],
       cwd: ctx.package_dir,
@@ -5033,7 +5171,13 @@ describe.concurrent("bun-install", () => {
       string,
       [string, ...unknown[]]
     >;
-    return Object.fromEntries(Object.entries(locked).map(([name, [resolution]]) => [name, resolution]));
+    return {
+      packages: Object.fromEntries(Object.entries(locked).map(([name, [resolution]]) => [name, resolution])),
+      warnings: err
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("warn:"))
+        .sort(),
+    };
   }
 
   it.each<{
@@ -5056,7 +5200,7 @@ describe.concurrent("bun-install", () => {
       name: "of a dependency, when bun reads the alias last",
       files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", kept: "^1.0.0" } } },
       registry: { holder, kept, short },
-      hold: { holder: "kept-1.0.0.tgz" },
+      hold: { holder: "kept" },
       packages: { "holder": "holder@1.0.0", "kept": "kept@1.0.0", "holder/kept": "short@1.0.0" },
       requests: ["holder", "holder-1.0.0.tgz", "kept", "kept-1.0.0.tgz", "short", "short-1.0.0.tgz"],
     },
@@ -5196,6 +5340,43 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // `provider` installs `plugin` and, under the name of its peer, another package.
+  describe("a peer whose name is an npm: alias of the package that depends on it", () => {
+    const provider = { "1.0.0": { dependencies: { kept: "npm:short@1.0.0", plugin: "1.0.0" } } };
+    const plugin = { "1.0.0": { peerDependencies: { kept: "^1.0.0" } } };
+
+    it.each<{ name: string; registry: Record<string, Record<string, object>> }>([
+      { name: "has the name", registry: { kept } },
+      {
+        name: "has the name for a package that cannot be completed",
+        registry: { kept: { "1.0.0": { dependencies: { gone: "1.0.0" } } } },
+      },
+      { name: "does not have the name", registry: {} },
+    ])("takes the alias when the registry $name", async ({ registry }) => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, heldRegistry(ctx, urls, { provider, plugin, short, ...registry }));
+        await writeProject(ctx, { "package.json": { name: "foo", dependencies: { provider: "1.0.0" } } });
+        expect({ packages: await installAndReadLock(ctx), requests: urls.sort() }).toEqual({
+          packages: { "kept": "short@1.0.0", "plugin": "plugin@1.0.0", "provider": "provider@1.0.0" },
+          requests: ["plugin", "plugin-1.0.0.tgz", "provider", "provider-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+        });
+      });
+    });
+
+    it("asks the registry when something else depends on it too", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, heldRegistry(ctx, urls, { provider, plugin, short, kept }));
+        await writeProject(ctx, {
+          "package.json": { name: "foo", dependencies: { provider: "1.0.0", plugin: "1.0.0" } },
+        });
+        await installAndReadLock(ctx);
+        expect(urls).toContain("kept");
+      });
+    });
+  });
+
   it.each<{ range: string; published: string[]; resolved: string | null }>([
     { range: "1.0.0 || ^2.0.0", published: ["1.0.0", "2.5.0"], resolved: "2.5.0" },
     { range: "1.0.0 || ^2.0.0", published: ["2.5.0"], resolved: "2.5.0" },
@@ -5227,6 +5408,357 @@ describe.concurrent("bun-install", () => {
       const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(err).toContain(`error: No version matching "${range}" found for specifier "kept" (but package exists)`);
       expect(exitCode).toBe(1);
+    });
+  });
+
+  // Each `hold` is one order in which the packuments arrive.
+  describe.each<{
+    name: string;
+    files: Record<string, object>;
+    registry: Record<string, Record<string, object>>;
+    holds: Record<string, string>[];
+    packages: Record<string, string>;
+    warnings?: RegExp[];
+  }>([
+    {
+      name: "a range that admits a lower version another package pins",
+      files: { "package.json": { name: "foo", dependencies: { wide: "1.0.0", narrow: "1.0.0" } } },
+      registry: {
+        wide: { "1.0.0": { dependencies: { kept: "1.x" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "~1.0.0" } } },
+        kept: { "1.0.0": {}, "1.1.0": {} },
+      },
+      holds: [{ wide: "kept" }, { narrow: "kept" }],
+      packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
+    },
+    {
+      name: "a range that admits a patched version",
+      files: {
+        "package.json": {
+          name: "foo",
+          dependencies: { wide: "1.0.0", narrow: "1.0.0" },
+          patchedDependencies: { "kept@1.1.0": "kept.patch" },
+        },
+        "kept.patch": {},
+      },
+      registry: {
+        wide: { "1.0.0": { dependencies: { kept: "1.x" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "~1.0.0" } } },
+        kept: { "1.0.0": {}, "1.1.0": {}, "1.2.0": {} },
+      },
+      holds: [{ wide: "kept" }, { narrow: "kept" }],
+      packages: {
+        "kept": "kept@1.0.0",
+        "narrow": "narrow@1.0.0",
+        "wide": "wide@1.0.0",
+        "wide/kept": "kept@1.1.0",
+      },
+    },
+    {
+      name: "an optional range next to a pin, under a peer of the root",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], peerDependencies: { kept: "^1.0.0" } },
+        "moo/package.json": { name: "moo", dependencies: { narrow: "1.0.0" }, devDependencies: { wide: "1.0.0" } },
+      },
+      registry: {
+        wide: { "1.0.0": { optionalDependencies: { kept: "1.x" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
+        kept: { "1.0.0": {}, "1.1.0": {} },
+      },
+      holds: [{ wide: "kept" }, { narrow: "kept" }],
+      packages: {
+        "kept": "kept@1.1.0",
+        "moo": "moo@workspace:moo",
+        "narrow": "narrow@1.0.0",
+        "wide": "wide@1.0.0",
+        "narrow/kept": "kept@1.0.0",
+      },
+    },
+    {
+      // `narrow` is resolved before `wide`, so `wide` shares kept@1.0.0 and never picks kept@2.1.0.
+      name: "a range that admits a version that cannot be completed, after a pin",
+      files: { "package.json": { name: "foo", dependencies: { wide: "1.0.0", narrow: "1.0.0" } } },
+      registry: {
+        wide: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
+        kept: { "1.0.0": {}, "2.1.0": { dependencies: { gone: "^3.0.0", short: "^2.0.0" } } },
+        short,
+      },
+      holds: [{ wide: "kept" }, { narrow: "gone" }],
+      packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
+    },
+    {
+      // `early` is resolved before `narrow`, so it picks kept@2.1.0 first. Nothing needs that version
+      // once `early` shares kept@1.0.0.
+      name: "a version that cannot be completed and that nothing needs in the end",
+      files: { "package.json": { name: "foo", dependencies: { early: "1.0.0", narrow: "1.0.0" } } },
+      registry: {
+        early: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
+        kept: { "1.0.0": {}, "2.1.0": { dependencies: { gone: "^3.0.0", short: "^2.0.0" } } },
+        short,
+      },
+      holds: [{ early: "kept" }, { narrow: "gone" }],
+      packages: { "early": "early@1.0.0", "kept": "kept@1.0.0", "narrow": "narrow@1.0.0" },
+      // What the registry answered is still printed: with another answer `early` might have kept its pick.
+      warnings: [/^warn: GET .*\/gone - 404$/, /^warn: No version matching "\^2\.0\.0" found for specifier "short"/],
+    },
+    {
+      name: "a version that nothing needs in the end and that has an optional dependency the registry does not have",
+      files: { "package.json": { name: "foo", dependencies: { early: "1.0.0", narrow: "1.0.0" } } },
+      registry: {
+        early: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
+        kept: { "1.0.0": {}, "2.1.0": { optionalDependencies: { gone: "^3.0.0" } } },
+      },
+      holds: [{ early: "kept" }, { narrow: "gone" }],
+      packages: { "early": "early@1.0.0", "kept": "kept@1.0.0", "narrow": "narrow@1.0.0" },
+      warnings: [/^warn: GET .*\/gone - 404$/],
+    },
+    {
+      // The alias is for `holder`'s own row.
+      name: "a dependency with the name of another package's npm: alias",
+      files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", wide: "1.0.0" } } },
+      registry: { holder, kept, short, wide: { "1.0.0": { dependencies: { kept: "^1.0.0" } } } },
+      holds: [{ wide: "short" }, { holder: "kept" }],
+      packages: {
+        "holder": "holder@1.0.0",
+        "kept": "short@1.0.0",
+        "wide": "wide@1.0.0",
+        "wide/kept": "kept@1.0.0",
+      },
+    },
+  ])("a fresh install resolves $name the same", ({ files, registry, holds, packages, warnings = [] }) => {
+    it.each(holds)("when the packuments arrive as in %j", async hold => {
+      await withContext(defaultOpts, async ctx => {
+        setContextHandler(ctx, heldRegistry(ctx, [], registry, hold));
+        await writeProject(ctx, files);
+        expect(await installAndReadLockAndWarnings(ctx, "--lockfile-only")).toEqual({
+          packages,
+          warnings: warnings.map(warning => expect.stringMatching(warning)),
+        });
+      });
+    });
+  });
+
+  it("does not download the version a range gives up for one that is already there", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      const registry = {
+        wide: { "1.0.0": { dependencies: { kept: "1.x" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "~1.0.0" } } },
+        kept: { "1.0.0": {}, "1.1.0": {} },
+      };
+      // `narrow` has asked for kept@1.0.0 by the time bun reads `wide`.
+      setContextHandler(ctx, heldRegistry(ctx, urls, registry, { wide: "kept" }));
+      await writeProject(ctx, { "package.json": { name: "foo", dependencies: { wide: "1.0.0", narrow: "1.0.0" } } });
+      expect({
+        packages: await installAndReadLock(ctx),
+        tarballs: urls.filter(url => url.endsWith(".tgz")).sort(),
+      }).toEqual({
+        packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
+        tarballs: ["kept-1.0.0.tgz", "narrow-1.0.0.tgz", "wide-1.0.0.tgz"],
+      });
+    });
+  });
+
+  it("--lockfile-only does not download a patched package whose manifest is in the cache", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, heldRegistry(ctx, urls, { kept }));
+      await writeProject(
+        ctx,
+        {
+          "package.json": {
+            name: "foo",
+            dependencies: { kept: "1.0.0" },
+            patchedDependencies: { "kept@1.0.0": "kept.patch" },
+          },
+          "kept.patch": {},
+        },
+        { cache: { dir: join(ctx.package_dir, ".cache") } },
+      );
+      await installAndReadLock(ctx, "--lockfile-only");
+      await rm(join(ctx.package_dir, "bun.lock"));
+      // This time `kept` is resolved before the patch file has been hashed.
+      expect({ packages: await installAndReadLock(ctx, "--lockfile-only"), requests: urls }).toEqual({
+        packages: { "kept": "kept@1.0.0" },
+        requests: ["kept"],
+      });
+    });
+  });
+
+  it("requests the peers of a package that a peer installed while another peer waits for its manifest", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const registry = {
+        first: { "1.0.0": { peerDependencies: { near: "1.0.0" } } },
+        second: { "1.0.0": { peerDependencies: { slow: "1.0.0" } } },
+        near: { "1.0.0": { peerDependencies: { far: "1.0.0" } } },
+        far: { "1.0.0": {} },
+        slow: { "1.0.0": {} },
+      };
+      setContextHandler(ctx, heldRegistry(ctx, [], registry, { slow: "far" }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { first: "1.0.0", second: "1.0.0" } },
+      });
+      expect(await installAndReadLock(ctx, "--lockfile-only")).toEqual({
+        "far": "far@1.0.0",
+        "first": "first@1.0.0",
+        "near": "near@1.0.0",
+        "second": "second@1.0.0",
+        "slow": "slow@1.0.0",
+      });
+    });
+  });
+
+  it("requests the peers that wait for the next round while a dependency waits for its manifest", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const registry = {
+        first: { "1.0.0": { peerDependencies: { near: "1.0.0" } } },
+        second: { "1.0.0": { peerDependencies: { other: "1.0.0" } } },
+        near: { "1.0.0": { peerDependencies: { far: "1.0.0" } } },
+        other: { "1.0.0": { dependencies: { slow: "1.0.0" } } },
+        far: { "1.0.0": {} },
+        slow: { "1.0.0": {} },
+      };
+      setContextHandler(ctx, heldRegistry(ctx, [], registry, { slow: "far" }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { first: "1.0.0", second: "1.0.0" } },
+      });
+      expect(await installAndReadLock(ctx, "--lockfile-only")).toEqual({
+        "far": "far@1.0.0",
+        "first": "first@1.0.0",
+        "near": "near@1.0.0",
+        "other": "other@1.0.0",
+        "second": "second@1.0.0",
+        "slow": "slow@1.0.0",
+      });
+    });
+  });
+
+  it("requests the manifests of dependencies with an empty version at once", async () => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, heldRegistry(ctx, [], { holder: kept, kept, short }, { holder: "short" }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { holder: "", kept: "", short: "" } },
+      });
+      expect(await installAndReadLock(ctx, "--lockfile-only")).toEqual({
+        "holder": "holder@1.0.0",
+        "kept": "kept@1.0.0",
+        "short": "short@1.0.0",
+      });
+    });
+  });
+
+  it("reports a registry URL that cannot be used once, when two dependencies ask for the same package", async () => {
+    await withContext(defaultOpts, async ctx => {
+      await writeProject(
+        ctx,
+        {
+          "package.json": { name: "foo", workspaces: ["moo"], dependencies: { kept: "1.0.0" } },
+          "moo/package.json": { name: "moo", dependencies: { kept: "1.0.0" } },
+        },
+        { registry: "htp://127.0.0.1:1/" },
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "ignore",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err.split(/\r?\n/).filter(line => line.includes("Registry URL must be"))).toEqual([
+        "error: Registry URL must be http:// or https://",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  // While it lasts, the install fails and saves nothing, so the next one is whole.
+  it.each<{ name: string; failing: RegExp; status?: number; error: RegExp }>([
+    {
+      name: "whose tarball answers 503",
+      failing: /\/short-[^/]+\.tgz$/,
+      status: 503,
+      error: /\/short-1\.0\.0\.tgz - 503$/,
+    },
+    { name: "whose manifest answers 503", failing: /\/short$/, status: 503, error: /\/short - 503$/ },
+    { name: "that the registry does not have", failing: /\/short$/, status: 404, error: /\/short - 404$/ },
+    {
+      name: "that has no matching version",
+      failing: /\/short$/,
+      error: /^error: No version matching "\^1\.0\.0" found/,
+    },
+  ])("an optional dependency stays in the lockfile when it needs a package $name", async row => {
+    await withContext(defaultOpts, async ctx => {
+      const registry: Record<string, Record<string, object>> = {
+        holder: { "1.0.0": { optionalDependencies: { kept: "^1.0.0" } } },
+        kept: { "1.0.0": { dependencies: { short: "^1.0.0" } } },
+        short: { "1.0.0": {} },
+      };
+      const answer = heldRegistry(ctx, [], registry);
+      const behind = heldRegistry(ctx, [], { short: { "0.0.1": {} } });
+      let faulty = true;
+      setContextHandler(ctx, request => {
+        if (!faulty || !row.failing.test(request.url)) return answer(request);
+        return row.status ? new Response(null, { status: row.status }) : behind(request);
+      });
+      await writeProject(ctx, { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } });
+      const lockfile = () =>
+        file(join(ctx.package_dir, "bun.lock"))
+          .text()
+          .catch(() => null);
+      const runWhileFaulty = async (command: string) => {
+        faulty = true;
+        await using proc = spawn({
+          cmd: [bunExe(), command],
+          cwd: ctx.package_dir,
+          stdout: "ignore",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: { ...env, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        faulty = false;
+        return {
+          errors: err.split(/\r?\n/).filter(line => line.startsWith("error:")),
+          lockfile: await lockfile(),
+          exitCode,
+        };
+      };
+
+      expect(await runWhileFaulty("install")).toEqual({
+        errors: expect.arrayContaining([expect.stringMatching(row.error)]),
+        lockfile: null,
+        exitCode: 1,
+      });
+      expect(await installAndReadLock(ctx)).toEqual({
+        "holder": "holder@1.0.0",
+        "kept": "kept@1.0.0",
+        "short": "short@1.0.0",
+      });
+
+      const saved = await lockfile();
+      registry.kept["1.1.0"] = { dependencies: { short: "^2.0.0" } };
+      registry.short["2.0.0"] = {};
+      expect(await runWhileFaulty("update")).toEqual({
+        errors: expect.arrayContaining([expect.stringContaining("short")]),
+        lockfile: saved,
+        exitCode: 1,
+      });
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "holder", "kept", "short"]);
+    });
+  });
+
+  it("an optional dependency that the registry does not have is left out when it is also a peer of a package", async () => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, heldRegistry(ctx, [], { holder: { "1.0.0": { peerDependencies: { gone: "^1.0.0" } } } }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { holder: "1.0.0" }, optionalDependencies: { gone: "^1.0.0" } },
+      });
+      expect(await installAndReadLock(ctx)).toEqual({ "holder": "holder@1.0.0" });
     });
   });
 
@@ -5783,6 +6315,9 @@ describe.concurrent("bun-install", () => {
     afterAll(() => repo[Symbol.dispose]());
 
     for (const dep of deps) {
+      // The lockfile names the host of the shorthand.
+      const locked = dep.replace(/^bitbucket:/, "git@bitbucket.org/");
+
       it(`install ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
@@ -5812,7 +6347,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun install v1."),
             "",
-            `+ public-install-test@git+ssh://${dep}#${repo.sha}`,
+            `+ public-install-test@git+ssh://${locked}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -5848,7 +6383,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
-            `installed publicinstalltest@git+ssh://${dep}#${repo.sha}`,
+            `installed publicinstalltest@git+ssh://${locked}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -5871,6 +6406,9 @@ describe.concurrent("bun-install", () => {
     afterAll(() => repo[Symbol.dispose]());
 
     for (const dep of deps) {
+      // The lockfile names the host of the shorthand.
+      const locked = dep.replace(/^gitlab:/, "git@gitlab.com/");
+
       it(`install ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
@@ -5900,7 +6438,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun install v1."),
             "",
-            `+ public-install-test@git+ssh://${dep}#${repo.sha}`,
+            `+ public-install-test@git+ssh://${locked}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -5936,7 +6474,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
-            `installed public-install-test@git+ssh://${dep}#${repo.sha}`,
+            `installed public-install-test@git+ssh://${locked}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -6887,7 +7425,7 @@ describe.concurrent("bun-install", () => {
     const fileIsEmpty = (path: string) =>
       [
         `error: failed to parse '<dir>/${path}': file is empty`,
-        "note: Restore package.json, or write {} to it to start without dependencies",
+        "note: restore package.json, or write {} to start without dependencies",
       ].join("\n");
 
     for (const [lockfile, withLockfile] of [
@@ -6916,6 +7454,7 @@ describe.concurrent("bun-install", () => {
 
       // An empty file parses as `{}`: "no dependencies", so the command would delete the lockfile.
       for (const command of [["install"], ["update"], ["update", "dep"], ["remove", "dep"]]) {
+        if (!withLockfile && command[0] === "install") continue;
         it(`bun ${command.join(" ")} rejects an empty file and keeps the lockfile ${lockfile}`, async () => {
           expect(await installWithBrokenRootPackageJson(withLockfile, empty, command)).toEqual({
             stderr: fileIsEmpty("package.json"),
@@ -6925,6 +7464,15 @@ describe.concurrent("bun-install", () => {
         });
       }
     }
+
+    // `touch package.json && bun install`
+    it("bun install reads an empty file as {} without a bun.lock", async () => {
+      expect(await installWithBrokenRootPackageJson(false, empty)).toEqual({
+        stderr: "No packages! Deleted empty lockfile",
+        exitCode: 0,
+        lockfileKept: false,
+      });
+    });
 
     it("bun add fills an empty file", async () => {
       expect(await installWithBrokenRootPackageJson(true, empty, ["add", "./dep"])).toMatchObject({
@@ -7505,14 +8053,14 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(cache, `@G@${sha}`))).toEqual([".bun-tag", "package.json"]);
       const mirror = (await readdirSorted(cache)).find(entry => entry.endsWith(".git"))!;
 
-      // `git log` during resolution does not need the tree object, but `git checkout` cannot unpack without it.
+      // `git log` during resolution does not need the tree object, but the checkout cannot list it without it.
       const treeObject = join(cache, mirror, "objects", treeSha.slice(0, 2), treeSha.slice(2));
       const treeBytes = await file(treeObject).bytes();
       await rm(treeObject);
       await rm(join(cache, `@G@${sha}`), { recursive: true });
       await rm(join(ctx.package_dir, "node_modules", "checkout-fails"), { recursive: true });
       const failed = await install();
-      expect(failed.err).toContain('"git checkout" for "checkout-fails" failed');
+      expect(failed.err).toContain('"git ls-tree" for "checkout-fails" failed');
       expect(failed.exitCode).not.toBe(0);
       expect(await readdirSorted(cache)).toEqual([mirror]);
 
@@ -11326,7 +11874,7 @@ describe.concurrent("bun-install", () => {
           requests: [],
           stdout: expect.stringContaining("bun install v1."),
           // Rejected as a name before any URL is built from it.
-          stderr: expect.stringContaining(`error: Invalid dependency name ".."`),
+          stderr: expect.stringContaining(`error: invalid dependency name ".."`),
           exitCode: 1,
         });
       });
@@ -11493,7 +12041,7 @@ describe.concurrent("bun-install", () => {
 
   it("should handle modified git resolutions in bun.lock", async () => {
     await withContext(defaultOpts, async ctx => {
-      using repo = await hostedGitRepository(["https://git@github.com/dylan-conway/install-test-8.git"], {
+      using repo = await hostedGitRepository(["https://github.com/dylan-conway/install-test-8.git"], {
         "package.json": JSON.stringify({
           name: "install-test-eight",
           version: "2.2.2",
@@ -11812,7 +12360,7 @@ it.concurrent("rejects dependency aliases containing '..' path segments", async 
     // directory; nothing may be materialized there.
     expect(await exists(join(ctx.package_dir, "..", escapeName))).toBe(false);
     // The alias is reported as invalid instead of being used as a path.
-    expect(err).toContain("Invalid dependency name");
+    expect(err).toContain("invalid dependency name");
     expect(out).not.toContain("1 package installed");
     expect(await exited).toBe(1);
   });
@@ -11891,7 +12439,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
         installed: out.includes("installed"),
         exitCode,
       }).toEqual({
-        errors: [`error: Invalid dependency name "${key}"`, `error: ${key}@npm:baz@0.0.3 failed to resolve`],
+        errors: [`error: invalid dependency name "${key}"`, `error: ${key}@npm:baz@0.0.3 failed to resolve`],
         unpacked: false,
         otherInstalled: false,
         postinstall: false,
@@ -11934,7 +12482,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
       installed: out.includes("installed"),
       exitCode,
     }).toEqual({
-      errors: [`error: Invalid dependency name "${key}"`],
+      errors: [`error: invalid dependency name "${key}"`],
       nodeModules: false,
       installed: false,
       exitCode: 1,
@@ -12004,7 +12552,7 @@ it.concurrent("refuses a registry package whose own name is an entry of the inst
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(err).toContain('error: Invalid dependency name ".bin"');
+    expect(err).toContain('error: invalid dependency name ".bin"');
     expect(out).not.toContain("installed");
     expect(urls).toEqual([]);
     expect(exitCode).toBe(1);
@@ -12117,7 +12665,7 @@ it.concurrent("does not extract a tarball for a dependency alias containing '..'
     expect(await readdirSorted(join(zone, "a", "b"))).toEqual(["c"]);
     // The unsafe alias is reported as an error before the tarball is even
     // requested, and nothing is installed.
-    expect(err).toContain('Invalid dependency name "x/../../../.."');
+    expect(err).toContain('invalid dependency name "x/../../../.."');
     expect(urls).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
@@ -12198,7 +12746,7 @@ describe.concurrent("dependency names containing terminal control characters", (
         });
         const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-        expect(err).toContain(`error: Invalid dependency name "${expectedName}"`);
+        expect(err).toContain(`error: invalid dependency name "${expectedName}"`);
         assertNameNeverLeaked(out, err, urls);
         expect(urls).toContain(`${ctx.registry_url}bar`);
         expect(await installed(ctx)).toEqual([]);
@@ -12224,7 +12772,7 @@ describe.concurrent("dependency names containing terminal control characters", (
       });
       const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-      expect(err).not.toContain("Invalid dependency name");
+      expect(err).not.toContain("invalid dependency name");
       expect(out).toContain("installed bar@");
       expect(await installed(ctx)).toEqual(["bar"]);
       expect(exitCode).toBe(0);
@@ -12249,7 +12797,7 @@ describe.concurrent("dependency names containing terminal control characters", (
       });
       const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-      expect(err).toContain(`warn: Invalid dependency name "${escapedName}"`);
+      expect(err).toContain(`warn: invalid dependency name "${escapedName}"`);
       assertNameNeverLeaked(out, err, urls);
       expect(await installed(ctx)).toEqual(["bar"]);
       expect(out).toContain("1 package installed");
@@ -12279,7 +12827,7 @@ describe.concurrent("dependency names containing terminal control characters", (
         });
         const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-        expect(err).toContain(`error: Invalid dependency name "${longName}"`);
+        expect(err).toContain(`error: invalid dependency name "${longName}"`);
         expect(urls.filter(url => url.includes(longName))).toEqual([]);
         expect(await installed(ctx)).toEqual([]);
         expect(exitCode).toBe(1);
@@ -12315,7 +12863,7 @@ describe.concurrent("dependency names containing terminal control characters", (
         });
         const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-        expect(err).toContain(`error: Invalid dependency name "${escapedName}"`);
+        expect(err).toContain(`error: invalid dependency name "${escapedName}"`);
         expect(err).toContain(`error: ${summary} failed to resolve`);
         assertNameNeverLeaked(out, err, urls);
         expect(await installed(ctx)).toEqual([]);
@@ -12346,7 +12894,7 @@ describe.concurrent("dependency names containing terminal control characters", (
       // `bun install` gets a chance to touch it.
       const commands: [string[], string][] = [
         [["pm", "ls", "--all"], "failed to parse lockfile: InvalidLockfile"],
-        [["install"], "Invalid package name"],
+        [["install"], "invalid package name"],
       ];
       for (const [args, expectedError] of commands) {
         const { stdout, stderr, exited } = spawn({
@@ -12421,7 +12969,7 @@ it.concurrent(
       expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
       expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
       // The dependency is reported as unresolvable instead of silently linking local files.
-      expect(err).toContain("Could not find package.json");
+      expect(err).toContain("package.json not found");
       expect(out).not.toContain("2 packages installed");
       expect(exitCode).toBe(1);
     });
@@ -12531,7 +13079,7 @@ describe.concurrent('a registry package\'s file: dependency that hides ".." behi
       });
       const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(err).toContain("Could not find package.json");
+      expect(err).toContain("package.json not found");
       expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
       expect(exitCode).toBe(1);
     });
@@ -12932,7 +13480,7 @@ it.concurrent(
       });
       const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-      expect(err).not.toContain("Could not find package.json");
+      expect(err).not.toContain("package.json not found");
       expect(err).not.toContain("failed to resolve");
       expect(err).not.toContain("unsafe folder path");
       expect(err).not.toContain("refusing to install");
@@ -12963,8 +13511,8 @@ describe.concurrent("a dependency whose own package.json has an invalid name", (
   // The name inside a tarball, folder or git dependency's package.json is written
   // to bun.lock as `name@resolution`, and the bun.lock parser rejects names that
   // are not safe install folder names. Saving such a name used to succeed and
-  // leave behind a lockfile that every later `bun install` ignored, so the
-  // install has to fail before the lockfile is saved.
+  // leave behind a lockfile that every later `bun install` ignored. The dependent
+  // names the folder in node_modules, so bun.lock gets the name that a package without one gets.
   async function install(root: string, ...args: string[]) {
     await using proc = spawn({
       cmd: [bunExe(), "install", ...args],
@@ -12977,108 +13525,92 @@ describe.concurrent("a dependency whose own package.json has an invalid name", (
     return { out, err, exitCode };
   }
 
-  async function expectRejected(root: string, quotedName: string) {
-    const { out, err, exitCode } = await install(root);
-    expect(err).toContain(`error: Invalid package name ${quotedName}`);
-    expect(out).not.toContain("1 package installed");
-    expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
-    expect(await exists(join(root, "project", "node_modules", "dep"))).toBe(false);
-    expect(exitCode).toBe(1);
-    return err;
+  async function expectInstalledAs(root: string, linker: string, nameAndResolution: string) {
+    const first = await install(root, "--linker", linker);
+    expect(first.err).not.toContain("error:");
+    expect(first.out).toContain("1 package installed");
+    expect(first.exitCode).toBe(0);
+    const lockfile = await file(join(root, "project", "bun.lock")).text();
+    expect(lockfile).toContain(`"dep": ["${nameAndResolution}`);
+
+    await rm(join(root, "project", "node_modules"), { recursive: true });
+    const second = await install(root, "--linker", linker, "--frozen-lockfile");
+    expect(second.err).not.toContain("Ignoring lockfile");
+    expect(second.err).not.toContain("error:");
+    expect(await exists(join(root, "project", "node_modules", "dep", "package.json"))).toBe(true);
+    expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
+    expect(second.exitCode).toBe(0);
   }
 
-  it("fails to install a local tarball", async () => {
-    using dir = tempDir("invalid-name-tarball", {
-      "project/package.json": JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: { dep: "file:../dep.tgz" },
-      }),
-    });
-    await Bun.Archive.write(
-      join(String(dir), "dep.tgz"),
-      { "package/package.json": JSON.stringify({ name: "a:b", version: "1.0.0" }) },
-      { compress: "gzip" },
-    );
+  describe.each(["hoisted", "isolated"])("%s", linker => {
+    // The bun.lock parser splits `name@resolution` at the first "@" after an optional scope, so a
+    // name with any other "@" in it cannot be stored either, even though it is a safe folder name.
+    const names = ["Project: X", "a:b", "a\\b", "a\0b", "lib/..", "a@b", "@scope/a@b"];
 
-    await expectRejected(String(dir), '"a:b"');
-  });
+    it.each(names)("installs a local tarball named %j", async name => {
+      using dir = tempDir("invalid-name-tarball", {
+        "project/package.json": JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { dep: "file:../packed.tgz" },
+        }),
+      });
+      await Bun.Archive.write(
+        join(String(dir), "packed.tgz"),
+        { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) },
+        { compress: "gzip" },
+      );
 
-  it("fails to install a file: folder and points at the offending package.json", async () => {
-    using dir = tempDir("invalid-name-folder", {
-      "project/package.json": JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: { dep: "file:../lib" },
-      }),
-      "lib/package.json": JSON.stringify({ name: "lib/..", version: "1.0.0" }),
+      await expectInstalledAs(String(dir), linker, "packed@../packed.tgz");
     });
 
-    const err = await expectRejected(String(dir), '"lib/.."');
-    expect(err).toMatch(/ at .*lib[\\/]package\.json:1:9\s/);
+    it.each(names)("installs a file: folder named %j", async name => {
+      using dir = tempDir("invalid-name-folder", {
+        "project/package.json": JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { dep: "file:../lib" },
+        }),
+        "lib/package.json": JSON.stringify({ name, version: "1.0.0" }),
+      });
+
+      await expectInstalledAs(String(dir), linker, "lib@file:../lib");
+    });
+
+    it("installs a git dependency", async () => {
+      using dir = tempDir("invalid-name-git", {
+        "work/package.json": JSON.stringify({ name: "Project: X", version: "1.0.0" }),
+      });
+      await createDumbHttpGitRepo(String(dir), {});
+      using server = serveDirectory(String(dir));
+      await write(
+        join(String(dir), "project", "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { dep: `git+http://localhost:${server.port}/repo.git` },
+        }),
+      );
+
+      await expectInstalledAs(String(dir), linker, `repo.git@git+http://localhost:${server.port}/repo.git#`);
+    });
   });
 
-  it("escapes the rejected name in the error message", async () => {
+  // Other packages depend on a member by this name.
+  it("escapes the rejected name of a workspace member in the error message", async () => {
     using dir = tempDir("invalid-name-escaped", {
       "project/package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
-        dependencies: { dep: "file:../lib" },
+        workspaces: ["packages/*"],
       }),
-      "lib/package.json": JSON.stringify({ name: "a\0b", version: "1.0.0" }),
+      "project/packages/member/package.json": JSON.stringify({ name: "a\0b", version: "1.0.0" }),
     });
 
-    await expectRejected(String(dir), '"a\\u0000b"');
-  });
-
-  it("fails to install a git dependency", async () => {
-    using dir = tempDir("invalid-name-git", {
-      "work/package.json": JSON.stringify({ name: "a\\b", version: "1.0.0" }),
-    });
-    await createDumbHttpGitRepo(String(dir), {});
-    using server = serveDirectory(String(dir));
-    await write(
-      join(String(dir), "project", "package.json"),
-      JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: { dep: `git+http://localhost:${server.port}/repo.git` },
-      }),
-    );
-
-    await expectRejected(String(dir), '"a\\b"');
-  });
-
-  // The bun.lock parser splits `name@resolution` at the first "@" after an optional scope, so a
-  // name with any other "@" in it cannot be stored either, even though it is a safe folder name.
-  it("fails to install a file: folder whose name contains an @", async () => {
-    using dir = tempDir("invalid-name-at-folder", {
-      "project/package.json": JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: { dep: "file:../lib" },
-      }),
-      "lib/package.json": JSON.stringify({ name: "a@b", version: "1.0.0" }),
-    });
-
-    await expectRejected(String(dir), '"a@b"');
-  });
-
-  it("fails to install a local tarball whose scoped name contains a second @", async () => {
-    using dir = tempDir("invalid-name-at-tarball", {
-      "project/package.json": JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: { dep: "file:../dep.tgz" },
-      }),
-    });
-    await Bun.Archive.write(
-      join(String(dir), "dep.tgz"),
-      { "package/package.json": JSON.stringify({ name: "@scope/a@b", version: "1.0.0" }) },
-      { compress: "gzip" },
-    );
-
-    await expectRejected(String(dir), '"@scope/a@b"');
+    const { err, exitCode } = await install(String(dir));
+    expect(err).toContain('error: invalid package name "a\\u0000b"');
+    expect(await exists(join(String(dir), "project", "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
   });
 
   it("fails to install a workspace whose member's name contains an @", async () => {
@@ -13092,7 +13624,7 @@ describe.concurrent("a dependency whose own package.json has an invalid name", (
     });
 
     const { err, exitCode } = await install(String(dir));
-    expect(err).toContain('error: Invalid package name "a@b"');
+    expect(err).toContain('error: invalid package name "a@b"');
     expect(err).toMatch(/ at .*member[\\/]package\.json:1:9\s/);
     expect(await exists(join(String(dir), "project", "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
@@ -13231,7 +13763,7 @@ describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path 
 
     const { folder, err, exitCode } = await installFolderDependency(String(dir), PATH_BUFFER_BYTES - 1);
 
-    expect(err).toContain(`error: Could not find package.json for "file:${folder}"`);
+    expect(err).toContain(`error: package.json not found for "file:${folder}"`);
     expect(exitCode).toBe(1);
   });
 
@@ -13321,8 +13853,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
   // declaring package, which depends on where it came from.
   function refusal(name: string, spec: string, declarer: string) {
     return [
-      `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`,
-      `note: add "${name}": "${spec}" to the root package.json to install that tarball for ${declarer.slice(0, declarer.indexOf("@"))} as well`,
+      `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarballs are only allowed in this project's package.json files`,
+      `note: add "${name}": "${spec}" to the root package.json to install it for ${declarer.slice(0, declarer.indexOf("@"))} too`,
     ];
   }
 
@@ -13685,7 +14217,7 @@ for (const field of ["resolutions", "overrides"]) {
 
       expect(err).not.toContain("unsafe folder path");
       expect(err).not.toContain("refusing to install");
-      expect(err).not.toContain("Could not find package.json");
+      expect(err).not.toContain("package.json not found");
       expect(err).not.toContain("failed to resolve");
       expect(exitCode).toBe(0);
       expect(out).toContain("shared");
@@ -13775,7 +14307,7 @@ for (const field of ["resolutions", "overrides"]) {
 
     expect(err).not.toContain("unsafe folder path");
     expect(err).not.toContain("refusing to install");
-    expect(err).not.toContain("Could not find package.json");
+    expect(err).not.toContain("package.json not found");
     expect(err).not.toContain("failed to resolve");
     expect(exitCode).toBe(0);
     expect(out).toContain("shared");
@@ -13834,7 +14366,7 @@ for (const field of ["resolutions", "overrides"]) {
 
       expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
       expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
-      expect(err).toContain("Could not find package.json");
+      expect(err).toContain("package.json not found");
       expect(out).not.toContain("2 packages installed");
       expect(exitCode).toBe(1);
     });
@@ -13891,7 +14423,7 @@ for (const field of ["resolutions", "overrides"]) {
         });
         const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-        expect(err).not.toContain("Could not find package.json");
+        expect(err).not.toContain("package.json not found");
         expect(err).not.toContain("failed to resolve");
         expect(err).not.toContain("unsafe folder path");
         expect(err).not.toContain("refusing to install");
@@ -13973,7 +14505,7 @@ registry = "${ctx.registry_url}"
 
         // stderr also carries the progress lines of the registry fetch of `baz`.
         expect(err.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
-          'error: Could not find package.json for "file:../shared" dependency "shared"',
+          'error: package.json not found for "file:../shared" dependency "shared"',
           "error: shared@1.0.0 failed to resolve",
         ]);
         expect(out).not.toContain("packages installed");
@@ -14272,7 +14804,7 @@ it.concurrent("fails when a file: override for a registry package's dependency n
     });
 
     // Resolved like a root file: dependency: the missing folder fails the resolve, before anything is installed.
-    expect(err).toContain('Could not find package.json for "file:./vendor/is-odd" dependency "is-odd"');
+    expect(err).toContain('package.json not found for "file:./vendor/is-odd" dependency "is-odd"');
     expect(out).not.toContain("packages installed");
     expect(await exists(join(ctx.package_dir, "node_modules", "is-even", "node_modules", "is-odd"))).toBe(false);
     expect(await exists(join(ctx.package_dir, "bun.lock"))).toBe(false);
@@ -15148,7 +15680,7 @@ it.concurrent("keeps a registry package's own file: folder apart from the root's
     // two rows, so two packages
     const lock = await file(join(ctx.package_dir, "bun.lock")).text();
     expect(lock.split("\n").filter(line => line.includes(`["x@file:x"`))).toEqual([
-      `    "x": ["x@file:x", {}],`,
+      `    "x": ["x@file:x", { "hasInstallScript": true }],`,
       `    "foo/x": ["x@file:x", {}],`,
     ]);
   } finally {
@@ -15404,7 +15936,7 @@ it.concurrent(doesNotExtractOutsideTempDir, async () => {
   expect(await exists(join(root, "package.json"))).toBe(false);
   expect(await exists(join(root, "index.js"))).toBe(false);
   // The unsafe alias is rejected as an install folder name and nothing is installed.
-  expect(err).toContain('Invalid dependency name "../../../../../.."');
+  expect(err).toContain('invalid dependency name "../../../../../.."');
   expect(out).not.toContain("1 package installed");
   expect(exitCode).not.toBe(0);
 
@@ -15479,7 +16011,7 @@ it.concurrent(doesNotCreateCacheEntryOutside, async () => {
   // planted next to it.
   expect(await readdirSorted(cacheHolder)).toEqual(["cache"]);
   // The unsafe alias is rejected as an install folder name.
-  expect(err).toContain('Invalid dependency name ".."');
+  expect(err).toContain('invalid dependency name ".."');
   expect(exitCode).not.toBe(0);
 
   // A normal single-segment alias still gets its cache index entry, inside the
@@ -15760,6 +16292,55 @@ it.concurrent.each([
     expect(tarballRequests).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+it.concurrent.each([
+  ["inside", "127.0.0\0.1"],
+  ["after", "127.0.0.1\0.example.invalid"],
+])("does not connect for a manifest tarball URL with a NUL %s the host", async (_where, host) => {
+  await withContext(defaultOpts, async ctx => {
+    let connections = 0;
+    using listener = listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          connections++;
+        },
+        data() {},
+      },
+    });
+    setContextHandler(ctx, async () =>
+      Response.json({
+        name: "baz",
+        versions: {
+          "0.0.2": {
+            name: "baz",
+            version: "0.0.2",
+            dist: { tarball: `http://${host}:${listener.port}/baz-0.0.2.tgz` },
+          },
+        },
+        "dist-tags": { latest: "0.0.2" },
+      }),
+    );
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.2" } }),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("InvalidURL downloading tarball");
+    expect(connections).toBe(0);
+    expect(exitCode).toBe(1);
   });
 });
 
@@ -16181,7 +16762,7 @@ describe.concurrent("a long flag the command does not have", () => {
   it("is an error although another command has it", async () => {
     using dir = project();
     expect(await bunIn(String(dir), ["install", "--latest"])).toEqual(rejected("install", "--latest"));
-    expect(await bunIn(String(dir), ["add", "--save-dev", "./dep"])).toEqual(rejected("add", "--save-dev"));
+    expect(await bunIn(String(dir), ["add", "--recursive", "./dep"])).toEqual(rejected("add", "--recursive"));
   });
 
   it("is skipped when it comes from BUN_OPTIONS", async () => {
@@ -16218,6 +16799,8 @@ describe.concurrent("the flags of the runtime that take no value", () => {
   ];
   // What some of these commands have themselves, with another meaning.
   const taken = ["--help", "--silent", "--prefer-offline", "--no-env-file", "--check", "--interactive"];
+  // These flags and --use-system-ca are mutually exclusive.
+  const exclusive = ["--use-openssl-ca", "--use-bundled-ca"];
   async function runtimeFlags() {
     const { stdout, exitCode } = await bunIn(import.meta.dir, ["--help"]);
     expect(exitCode).toBe(0);
@@ -16225,7 +16808,7 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     expect(listed).toContain("--bun");
     expect(listed).toContain("--smol");
     expect(listed).not.toContain("--cwd");
-    return [...listed, ...hidden].filter(flag => !taken.includes(flag));
+    return [...listed, ...hidden].filter(flag => !taken.includes(flag) && !exclusive.includes(flag));
   }
   const project = (dependencies?: Record<string, string>) =>
     tempDir("install-runtime-flags", {
@@ -16271,6 +16854,238 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     using dir = project();
     const { stderr, exitCode } = await bunIn(String(dir), ["add", "--bun=./dep"]);
     expect(stderr).toBe("error: The argument '--bun' does not take a value.\n");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// A line that was `npm ci --no-audit --no-fund` keeps working, and `--save-dev` does what it says.
+describe.concurrent("the flags of npm, yarn and pnpm", () => {
+  const groups = {
+    dependencies: { dep: "./dep" },
+    devDependencies: { dev: "./dev" },
+    optionalDependencies: { opt: "./opt" },
+  };
+  async function outcome(cmd: string[], packageJson: object = groups, locked = false) {
+    using dir = tempDir("install-foreign-flags", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", ...packageJson }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "dev/package.json": JSON.stringify({ name: "dev", version: "1.0.0" }),
+      "opt/package.json": JSON.stringify({ name: "opt", version: "1.0.0" }),
+    });
+    if (locked) expect((await bunIn(String(dir), ["install", "--lockfile-only"])).exitCode).toBe(0);
+    const { stdout, ...rest } = await bunIn(String(dir), cmd);
+    const modules = join(String(dir), "node_modules");
+    return {
+      stdout: stdout.replace(/\[[\d.]+m?s\]/g, "[time]"),
+      ...rest,
+      packageJson: await file(join(String(dir), "package.json")).json(),
+      files: (await readdirSorted(String(dir))).filter(name => !name.startsWith(".")),
+      installed: (await exists(modules)) ? (await readdirSorted(modules)).filter(name => !name.startsWith(".")) : [],
+    };
+  }
+
+  it.each([
+    ["--save-dev", "--dev", "devDependencies"],
+    ["--save-optional", "--optional", "optionalDependencies"],
+    ["--save-peer", "--peer", "peerDependencies"],
+  ])("%s is %s", async (theirs, ours, group) => {
+    for (const command of ["add", "install"]) {
+      const result = await outcome([command, theirs, "./dep"], {});
+      expect(result.packageJson).toEqual({ name: "foo", version: "0.0.1", [group]: { dep: "./dep" } });
+      expect(result).toEqual(await outcome([command, ours, "./dep"], {}));
+    }
+  });
+
+  it("--save-exact is --exact", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: request =>
+        request.url.endsWith(".tgz")
+          ? new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")))
+          : Response.json({
+              name: "bar",
+              "dist-tags": { latest: "0.0.2" },
+              versions: { "0.0.2": { name: "bar", version: "0.0.2", dist: { tarball: `${server.url}bar-0.0.2.tgz` } } },
+            }),
+    });
+    const { packageJson, exitCode } = await outcome(["add", "--save-exact", `--registry=${server.url}`, "bar"], {});
+    expect(packageJson).toEqual({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } });
+    expect(exitCode).toBe(0);
+  });
+
+  // The value is taken in both forms: left behind, it would be the name of a package to add.
+  it.each([
+    [["--no-optional"], ["--omit=optional"], ["dep", "dev"]],
+    [["--ignore-optional"], ["--omit=optional"], ["dep", "dev"]],
+    [["--only=production"], ["--omit=dev"], ["dep", "opt"]],
+    [["--only", "production"], ["--omit=dev"], ["dep", "opt"]],
+    [["--only=prod"], ["--omit=dev"], ["dep", "opt"]],
+    [["--production=true"], ["--production"], ["dep", "opt"]],
+    [["--package-lock-only"], ["--lockfile-only"], []],
+    [["--immutable"], ["--frozen-lockfile"], ["dep", "dev", "opt"]],
+    [["--shamefully-hoist"], ["--linker=hoisted"], ["dep", "dev", "opt"]],
+    [["--progress=false"], ["--no-progress"], ["dep", "dev", "opt"]],
+    [["--progress", "false"], ["--no-progress"], ["dep", "dev", "opt"]],
+    [["--loglevel=silent"], ["--silent"], ["dep", "dev", "opt"]],
+    [["--loglevel", "silent"], ["--silent"], ["dep", "dev", "opt"]],
+    [["--loglevel=error"], ["--quiet"], ["dep", "dev", "opt"]],
+    [["--loglevel", "warn"], ["--quiet"], ["dep", "dev", "opt"]],
+  ])("bun install %j is %j", async (theirs, ours, installed) => {
+    const result = await outcome(["install", ...theirs], groups, true);
+    expect(result.stderr).not.toContain("error:");
+    expect(result.installed).toEqual(installed);
+    expect(result.exitCode).toBe(0);
+    expect(result).toEqual(await outcome(["install", ...ours], groups, true));
+  });
+
+  it.each([[["--loglevel=verbose"]], [["--loglevel", "silly"]]])("bun install %j is --verbose", async theirs => {
+    const { stderr, packageJson, exitCode } = await outcome(["install", ...theirs]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Clean lockfile: ");
+    expect(packageJson).toEqual({ name: "foo", version: "0.0.1", ...groups });
+    expect(exitCode).toBe(0);
+  });
+
+  const satisfied = [
+    ["--no-audit"],
+    ["--audit=false"],
+    ["--audit", "false"],
+    ["--no-fund"],
+    ["--fund=false"],
+    ["--no-update-notifier"],
+    ["--update-notifier=false"],
+    ["--legacy-peer-deps"],
+    ["--ignore-engines"],
+    ["--unsafe-perm"],
+    ["--non-interactive"],
+    ["--prefer-frozen-lockfile"],
+    ["--loglevel=notice"],
+    ["--loglevel", "http"],
+    ["--loglevel=info"],
+  ].flat();
+
+  it.each([
+    ["install", groups, []],
+    ["ci", groups, []],
+    ["add", {}, ["./dep"]],
+    ["remove", groups, ["dep"]],
+    ["update", groups, []],
+  ] as [string, object, string[]][])(
+    "what bun %s does anyway is not an error to ask for",
+    async (command, pkg, args) => {
+      const plain = await outcome([command, ...args], pkg, true);
+      expect(plain.stderr).not.toContain("error:");
+      expect(plain.exitCode).toBe(0);
+
+      expect(await outcome([command, ...satisfied, ...args], pkg, true)).toEqual(plain);
+      expect(await outcome([command, ...args, ...satisfied], pkg, true)).toEqual(plain);
+    },
+  );
+
+  it.each([
+    [["install", "--no-package-lock"], "install", "--no-package-lock", "--no-save"],
+    [["add", "--no-lockfile", "./dep"], "add", "--no-lockfile", "--no-save"],
+    [["install", "--pure-lockfile"], "install", "--pure-lockfile", "--no-save"],
+    [["ci", "--cache", "dep"], "install", "--cache", "--cache-dir"],
+    [["ci", "--cache=dep"], "install", "--cache", "--cache-dir"],
+    [["install", "--cache-folder", "dep"], "install", "--cache-folder", "--cache-dir"],
+    [["install", "--workspace=dep"], "install", "--workspace", "--filter"],
+    [["install", "--install-strategy=nested"], "install", "--install-strategy", "--linker"],
+    [["install", "--node-linker=hoisted"], "install", "--node-linker", "--linker"],
+  ])("bun %j is an error that names the closest flag", async (cmd, command, theirs, ours) => {
+    expect(await outcome(cmd, {})).toEqual({
+      stdout: "",
+      stderr: `error: bun ${command} has no ${theirs} flag.\nnote: Did you mean ${ours}?\n`,
+      exitCode: 1,
+      packageJson: { name: "foo", version: "0.0.1" },
+      files: ["dep", "dev", "opt", "package.json"],
+      installed: [],
+    });
+  });
+
+  // They say where a new dependency is saved.
+  it.each([
+    ["remove", ["dev"], ["--save-dev", "--save-exact", "--save-optional", "--save-peer"]],
+    ["update", [], ["--save-dev", "--save-optional", "--save-peer"]],
+  ] as [string, string[], string[]][])("bun %s, which saves none, takes %j with %j", async (command, args, flags) => {
+    const plain = await outcome([command, ...args], groups, true);
+    expect(plain.stderr).not.toContain("error:");
+    expect(plain.exitCode).toBe(0);
+
+    for (const flag of flags) expect(await outcome([command, flag, ...args], groups, true)).toEqual(plain);
+  });
+
+  // `bun update --dev` and `--production` choose what is updated. npm's flags of those names do not.
+  it.each([
+    [[], { a: "^1.1.0", b: "^1.1.0", exitCode: 0 }],
+    [["--dev"], { a: "^1.0.0", b: "^1.1.0", exitCode: 0 }],
+    [["--save-dev"], { a: "^1.1.0", b: "^1.1.0", exitCode: 0 }],
+    [["--production"], { a: "^1.1.0", b: "^1.0.0", exitCode: 0 }],
+    [["--production=true"], { a: "^1.0.0", b: "^1.0.0", exitCode: 1 }],
+    [["--save-exact"], { a: "1.1.0", b: "1.1.0", exitCode: 0 }],
+  ] as [string[], object][])("bun update %j gives %j", async (flags, expected) => {
+    using dir = tempDir("update-foreign-flags", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { a: "^1.0.0" }, devDependencies: { b: "^1.0.0" } }),
+    });
+    const versions = ["1.0.0"];
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname.slice(1);
+        if (path.endsWith(".tgz")) return new Response(file(join(String(dir), path)));
+        return Response.json({
+          name: path,
+          "dist-tags": { latest: versions.at(-1) },
+          versions: Object.fromEntries(
+            versions.map(version => [
+              version,
+              { name: path, version, dist: { tarball: `${server.url}${path}-${version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+    for (const name of ["a", "b"]) {
+      for (const version of ["1.0.0", "1.1.0"]) {
+        await Bun.Archive.write(
+          join(String(dir), `${name}-${version}.tgz`),
+          { "package/package.json": JSON.stringify({ name, version }) },
+          { compress: "gzip" },
+        );
+      }
+    }
+    const registry = `--registry=${server.url}`;
+    expect((await bunIn(String(dir), ["install", registry])).exitCode).toBe(0);
+    versions.push("1.1.0");
+
+    const { stderr, exitCode } = await bunIn(String(dir), ["update", "--no-cache", registry, ...flags]);
+    if (exitCode) expect(stderr).toBe("error: The argument '--production' does not take a value.\n");
+    const { dependencies, devDependencies } = await file(join(String(dir), "package.json")).json();
+    expect({ ...dependencies, ...devDependencies, exitCode }).toEqual(expected);
+  });
+
+  it.each([
+    [["install", "--loglevel=loud"], "install", "--loglevel"],
+    [["install", "--loglevel", "dep"], "install", "--loglevel"],
+    [["install", "--audit"], "install", "--audit"],
+    [["install", "--no-bin-links"], "install", "--no-bin-links"],
+    [["pm", "ls", "--no-audit"], "pm", "--no-audit"],
+    [["link", "--no-fund"], "link", "--no-fund"],
+    // These ask for a default, but .npmrc, bunfig.toml or another flag can say the opposite.
+    ...["install", "add", "remove", "update"].flatMap(command => [
+      [[command, "--include=dev"], command, "--include"],
+      [[command, "--include", "dev"], command, "--include"],
+      [[command, "--include=optional"], command, "--include"],
+      [[command, "--include=peer"], command, "--include"],
+      [[command, "--no-frozen-lockfile"], command, "--no-frozen-lockfile"],
+    ]),
+    [["ci", "--no-frozen-lockfile"], "install", "--no-frozen-lockfile"],
+  ] as [string[], string, string][])("bun %j is still an error", async (cmd, command, flag) => {
+    const { stderr, packageJson, exitCode } = await outcome(cmd);
+    expect(stderr).toBe(
+      `error: bun ${command} has no ${flag} flag.\nnote: Run 'bun ${command} --help' for more information\n`,
+    );
+    expect(packageJson).toEqual({ name: "foo", version: "0.0.1", ...groups });
     expect(exitCode).toBe(1);
   });
 });
@@ -16384,12 +17199,10 @@ describe.concurrent("deprecated versions", () => {
     expect(await resolve(String(dir), registry)).toEqual([]);
   });
 
-  it("the dependencies of dependencies get one line in total", async () => {
+  it("the dependencies of dependencies are only reported with --verbose", async () => {
     using registry = serveManifests(packages);
     using dir = project({ dependencies: { parent: "1.0.0" } });
-    expect(await resolve(String(dir), registry)).toEqual([
-      "warn: 2 deprecated versions among the dependencies of dependencies (--verbose lists them)",
-    ]);
+    expect(await resolve(String(dir), registry)).toEqual([]);
 
     await rm(join(String(dir), "bun.lock"));
     expect((await resolve(String(dir), registry, "install", "--verbose")).sort()).toEqual([
@@ -16407,10 +17220,7 @@ describe.concurrent("deprecated versions", () => {
         "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { old: "1.1.0" } }),
       },
     );
-    expect((await resolve(String(dir), registry)).sort()).toEqual([
-      "warn: 1 deprecated version among the dependencies of dependencies (--verbose lists them)",
-      "warn: deprecated old@1.1.0: use new",
-    ]);
+    expect(await resolve(String(dir), registry)).toEqual(["warn: deprecated old@1.1.0: use new"]);
   });
 
   it("bun add and bun update report what they resolve", async () => {
@@ -16766,7 +17576,7 @@ describe.concurrent.each(["hoisted", "isolated"])(
       const cwd = join(String(dir), "project");
       const { stderr, exitCode } = await bunIn(cwd, ["install"]);
       expect(errors(stderr)).toEqual([
-        `error: Could not find package.json for "file:../inner" dependency "inner"`,
+        `error: package.json not found for "file:../inner" dependency "inner"`,
         "error: inner@file:../inner failed to resolve",
       ]);
       expect(outside(cwd)).toEqual([]);

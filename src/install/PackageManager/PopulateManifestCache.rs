@@ -186,15 +186,22 @@ pub fn populate_manifest_cache(
                 // holds only `&mut manifests`.
                 let scope =
                     bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
+                let mut expired = false;
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                 // `manager_ptr` is the SRW root.
-                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name_allow_expired(
                     cache_ctx,
                     scope.get(),
                     pkg_name_slice,
+                    Some(&mut expired),
                     needs_extended_manifest,
                 );
-                if cached.is_none() {
+                // A published version's metadata never changes, so an expired manifest is still
+                // good enough if it lists the resolved version.
+                let has_version = cached.is_some_and(|manifest| {
+                    !expired || manifest.find_by_version(res.npm().version).is_some()
+                });
+                if !has_version {
                     start_manifest_task(
                         // SAFETY: `manager_ptr` is the SRW provenance root;
                         // `start_manifest_task` only touches the network-task

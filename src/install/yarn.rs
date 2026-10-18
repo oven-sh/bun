@@ -7,7 +7,7 @@ use crate::lockfile_real::package::{
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile};
 use crate::migration::{sbuf, string_hash};
-use crate::repository::Repository;
+use crate::repository::{Repository, github_tarball_tag};
 use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use crate::{Error, Features, GetJsonResult};
@@ -19,12 +19,12 @@ use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm;
 use bun_paths::AutoAbsPath;
-use bun_semver::{self as Semver, SlicedString, String as SemverString};
+use bun_semver::{self as Semver, String as SemverString};
 
 #[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
-    /// `dedupe_name()`, `\n`, version -> index in `entries`.
+    /// Maps the key that `consolidate_and_append_entry` builds to an index in `entries`.
     entry_by_name_version: StringHashMap<usize>,
 }
 
@@ -43,6 +43,9 @@ pub struct Entry<'a> {
     pub(crate) commit: Option<&'a [u8]>,
     pub(crate) workspace: bool,
     pub(crate) file: Option<&'a [u8]>,
+    /// The directory that a `link:` spec points to. yarn writes it relative to yarn.lock, even when
+    /// the dependency is declared in a workspace.
+    pub(crate) link: Option<Cow<'a, [u8]>>,
     pub(crate) os: npm::Negatable<npm::OperatingSystem>,
     pub(crate) cpu: npm::Negatable<npm::Architecture>,
     pub(crate) git_repo_name: Option<Box<[u8]>>,
@@ -70,7 +73,8 @@ impl<'a> Entry<'a> {
     /// `alias@npm:<name>@<range>` -> `<name>`; `None` for every other kind of spec.
     pub(crate) fn npm_alias_target(spec: &[u8]) -> Option<&[u8]> {
         let alias_end = strings::index_of(spec, b"@npm:")?;
-        let (name, _) = Self::parse_npm_alias(&spec[alias_end + 1..]);
+        let range = dependency::without_npm_protocol(&spec[alias_end + 1..]);
+        let (name, _) = Self::parse_npm_alias(range.strip_prefix(b"npm:")?);
         (!name.is_empty()).then_some(name)
     }
 
@@ -147,6 +151,24 @@ impl<'a> Entry<'a> {
     /// yarn v1 writes tarball `resolved` fields as `<url>#<sha1 of the tarball>`.
     pub(crate) fn url_without_hash(resolved: &[u8]) -> &[u8] {
         strings::split_once_char(resolved, b'#').map_or(resolved, |(url, _)| url)
+    }
+
+    /// The `integrity` line or, without one, the sha1 after the `#` in a tarball's `resolved`.
+    fn tarball_integrity(&self) -> Integrity {
+        let integrity = self
+            .integrity
+            .map_or_else(Integrity::default, Integrity::parse);
+        // In a git entry, the `#` in `resolved` is followed by a commit, not by the tarball's sha1.
+        if integrity.tag.is_supported() || self.commit.is_some() {
+            return integrity;
+        }
+        let resolved = self.resolved.as_deref().unwrap_or(b"");
+        match strings::split_once_char(resolved, b'#') {
+            Some((_, sha1)) if sha1.len() == 40 => {
+                Integrity::parse_sha_sum(sha1).unwrap_or(integrity)
+            }
+            _ => integrity,
+        }
     }
 
     pub(crate) fn file_path_from_spec(spec: &[u8]) -> &[u8] {
@@ -265,9 +287,19 @@ impl<'a> YarnLock<'a> {
                     ..Default::default()
                 };
 
-                for spec in &current_specs {
-                    if let Some(at_index) = strings::index_of(spec, b"@file:") {
-                        new_entry.file = Some(Entry::file_path_from_spec(&spec[at_index + 1..]));
+                for &spec in &current_specs {
+                    let name = Entry::get_name_from_spec(spec);
+                    let range = spec.get(name.len() + 1..).unwrap_or(b"");
+                    if let Some(path) = range.strip_prefix(b"link:") {
+                        new_entry.link = Some(dependency::link_path_for_lockfile(path));
+                        break;
+                    }
+                    // yarn treats a bare relative path the same as a `file:` path.
+                    if range.starts_with(b"file:")
+                        || range.starts_with(b"./")
+                        || range.starts_with(b"../")
+                    {
+                        new_entry.file = Some(Entry::file_path_from_spec(range));
                         break;
                     }
                 }
@@ -354,7 +386,32 @@ impl<'a> YarnLock<'a> {
         if new_entry.specs.is_empty() {
             return Ok(());
         }
-        let key = [new_entry.dedupe_name(), b"\n", new_entry.version].concat();
+        // Every `link:` entry has version 0.0.0, so the key needs the path to tell them apart.
+        let link = new_entry.link.as_deref().unwrap_or(b"");
+        // A name and a version only identify a package when it comes from a registry.
+        let (file, resolved, commit) = if new_entry.is_registry_entry() {
+            Default::default()
+        } else {
+            (
+                new_entry.file.unwrap_or_default(),
+                new_entry.resolved.as_deref().unwrap_or_default(),
+                new_entry.commit.unwrap_or_default(),
+            )
+        };
+        let key = [
+            new_entry.dedupe_name(),
+            b"\n",
+            new_entry.version,
+            b"\n",
+            link,
+            b"\n",
+            file,
+            b"\n",
+            resolved,
+            b"\n",
+            commit,
+        ]
+        .concat();
         let index = *self
             .entry_by_name_version
             .get_or_put_value(&key, self.entries.len())?;
@@ -444,10 +501,18 @@ fn bind_importer_dependency(
         )
         .or_else(newest);
     }
+    // yarn.lock spells a `file:` or `link:` path relative to yarn.lock. The parsed path matches
+    // that; the literal in a workspace's package.json is relative to the workspace.
+    let (protocol, range) = match dep.version.tag {
+        dependency::Tag::Folder => (b"file:".as_slice(), dep.version.folder()),
+        dependency::Tag::Symlink => (b"link:".as_slice(), dep.version.symlink()),
+        _ => (b"".as_slice(), &dep.version.literal),
+    };
     spec.clear();
     spec.extend_from_slice(dep.name.slice(string_bytes));
     spec.push(b'@');
-    spec.extend_from_slice(dep.version.literal.slice(string_bytes));
+    spec.extend_from_slice(protocol);
+    spec.extend_from_slice(range.slice(string_bytes));
     spec_to_package_id.get(spec.as_slice()).copied()
 }
 
@@ -457,6 +522,7 @@ fn bind_importer_dependencies(
     importer_count: usize,
     spec_to_package_id: &StringHashMap<PackageID>,
     workspace_id_by_path: &StringHashMap<PackageID>,
+    frozen: bool,
 ) -> Vec<Dependency> {
     debug_assert_eq!(
         this.buffers.dependencies.len(),
@@ -482,7 +548,10 @@ fn bind_importer_dependencies(
                 workspace_id_by_path,
                 &mut spec,
             );
-            let Some(resolution) = bound else {
+            // yarn.lock never lists the project's own peer dependencies, so a frozen install leaves
+            // this one unresolved.
+            let unbound = (frozen && dep.behavior.is_peer()).then_some(install::INVALID_PACKAGE_ID);
+            let Some(resolution) = bound.or(unbound) else {
                 // `bun install` resolves it, like a dependency added after yarn.lock was written.
                 unlocked.push(dep);
                 continue;
@@ -545,9 +614,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
     let importer_count = this.packages.len();
 
-    // An entry whose resolution cannot be built stays invalid: an unresolved edge.
+    // An entry whose resolution cannot be built keeps `INVALID_PACKAGE_ID`. Its specs are then
+    // treated as if yarn.lock had no entry for them.
     let mut yarn_entry_to_package_id = vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
-    let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
 
     for (entry, package_id) in yarn_lock.entries.iter().zip(&mut yarn_entry_to_package_id) {
         let is_direct_url_dep = entry.has_direct_url_spec();
@@ -580,6 +650,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                         sbuf!(this).append(file)?,
                     ));
                 }
+            } else if let Some(link) = entry.link.as_deref() {
+                break 'blk Resolution::init(ResolutionValue::Symlink(sbuf!(this).append(link)?));
             } else if let Some(commit) = entry.commit {
                 let Some(resolved) = entry.resolved.as_deref() else {
                     break 'blk Resolution::default();
@@ -600,27 +672,34 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     commit
                 };
                 let package_name = entry.git_repo_name.as_deref().unwrap_or(repo_str);
-                let repository = Repository {
+                let mut repository = Repository {
                     owner: sbuf!(this).append(owner_str)?,
                     repo: sbuf!(this).append(repo_str)?,
                     committish: sbuf!(this).append(committish)?,
                     resolved: SemverString::default(),
                     package_name: sbuf!(this).append(package_name)?,
                 };
+                // `resolved` names the cache folder, and is the commit that a git checkout uses.
                 let value = if is_github {
+                    if let Some(tag) = github_tarball_tag(owner_str, repo_str, commit) {
+                        repository.resolved = sbuf!(this).append(&tag)?;
+                    }
                     ResolutionValue::Github
                 } else {
+                    repository.resolved = repository.committish;
                     ResolutionValue::Git
                 };
                 break 'blk Resolution::init(value(repository));
             } else {
+                // yarn locks a spec like `owner/repo` to the host's tarball URL for the commit.
+                let is_registry_entry = entry.is_registry_entry();
                 match resolved_url {
-                    Some(resolved) if is_direct_url_dep => {
+                    Some(resolved) if is_direct_url_dep || !is_registry_entry => {
                         break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                             sbuf!(this).append(resolved)?,
                         ));
                     }
-                    None if !entry.is_registry_entry() => break 'blk Resolution::default(),
+                    None if !is_registry_entry => break 'blk Resolution::default(),
                     _ => {}
                 }
 
@@ -661,17 +740,21 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
 
         if resolution.tag == crate::resolution::Tag::Uninitialized {
-            if !silent {
+            if verbose {
                 let reason: Cow<str> = if entry.version.is_empty() {
                     "missing \"version\" field".into()
                 } else if !Semver::Version::parse_utf8(entry.version).valid {
-                    format!("invalid version \"{}\"", bstr::BStr::new(entry.version)).into()
+                    format!(
+                        "invalid version \"{}\"",
+                        bun_core::fmt::escape_control_chars(entry.version)
+                    )
+                    .into()
                 } else {
                     "missing \"resolved\" field".into()
                 };
                 let specs = bstr::join(", ", &entry.specs);
                 bun_core::warn!(
-                    "skipped \"{}\" from yarn.lock: {}",
+                    "skipping \"{}\" from yarn.lock: {}",
                     bun_core::fmt::for_terminal(bstr::BStr::new(&specs)),
                     reason
                 );
@@ -682,7 +765,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let appended_id = PackageID::try_from(this.packages.len()).expect("int cast");
         *package_id = appended_id;
 
-        this.packages.append(LockfilePackage {
+        let mut package = LockfilePackage {
             name: pkg_name,
             name_hash,
             resolution,
@@ -695,21 +778,46 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 os: entry.os.combine(),
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
-                integrity: entry
-                    .integrity
-                    .map_or_else(Integrity::default, Integrity::parse),
+                integrity: entry.tarball_integrity(),
                 ..Default::default()
             },
             bin: Bin::init(),
             scripts: Default::default(),
-        })?;
+        };
+        // yarn.lock does not record bins. For a `file:` folder or a `link:`, they are read from the
+        // package.json on disk.
+        if matches!(
+            resolution.tag,
+            crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
+        ) && let Some(folder) = entry.file.or(entry.link.as_deref())
+            && let Some(path) = lockfile::join_top_level_dir(&[folder, b"package.json"])
+            && let GetJsonResult::Entry(json) = manager.workspace_package_json_cache.get_with_path(
+                log,
+                path.slice(),
+                Default::default(),
+            )
+        {
+            let manifest = json.root;
+            crate::migration::parse_manifest_bin(this, &mut package, &manifest)?;
+        }
+        this.packages.append(package)?;
         this.get_or_put_id(appended_id, name_hash)?;
     }
 
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
+    for (entry, &package_id) in yarn_lock.entries.iter().zip(&yarn_entry_to_package_id) {
+        if package_id == install::INVALID_PACKAGE_ID {
+            continue;
+        }
         for spec in entry.specs.iter() {
-            spec_to_package_id.put(spec, yarn_entry_to_package_id[yarn_idx])?;
+            spec_to_package_id.put(spec, package_id)?;
+        }
+        // yarn.lock spells the path as package.json does, with or without `./`.
+        // `bind_importer_dependency` looks it up in normalized form, so that form is added too.
+        if let Some(file) = entry.file {
+            spec_to_package_id.put(&[entry.name, b"@file:", file].concat(), package_id)?;
+        } else if let Some(link) = entry.link.as_deref() {
+            spec_to_package_id.put(&[entry.name, b"@link:", link].concat(), package_id)?;
         }
     }
 
@@ -718,6 +826,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         importer_count,
         &spec_to_package_id,
         &workspace_id_by_path,
+        manager.options.enable.frozen_lockfile(),
     );
 
     let mut key: Vec<u8> = Vec::new();
@@ -739,12 +848,12 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = sbuf!(this).append_with_hash(dep_name, name_hash)?;
                 let dep_version_string = sbuf!(this).append(dep_version_literal)?;
-                let version_bytes = dep_version_string.slice(this.buffers.string_bytes.as_slice());
-                let sliced_string = SlicedString::init(version_bytes, version_bytes);
+                let string_bytes = this.buffers.string_bytes.as_slice();
+                let sliced_string = dep_version_string.sliced(string_bytes);
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
                     Some(name_hash),
-                    version_bytes,
+                    sliced_string.slice,
                     &sliced_string,
                     Some(&mut *log),
                     None,
@@ -752,18 +861,32 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 .unwrap_or_default();
                 parsed_version.literal = dep_version_string;
 
+                key.clear();
+                key.extend_from_slice(dep_name);
+                key.push(b'@');
+                key.extend_from_slice(dep_version_literal);
+                let locked = spec_to_package_id.get(key.as_slice()).copied();
+                // When a workspace's version satisfies the range, yarn links the workspace and
+                // writes no yarn.lock entry for it.
+                let resolution = locked.or_else(|| {
+                    let npm = parsed_version.try_npm().filter(|_| !behavior.is_peer())?;
+                    let path = lockfile::linked_workspace_path(
+                        manager.options.link_workspace_packages,
+                        &this.workspace_paths,
+                        &this.workspace_versions,
+                        string_hash(npm.name.slice(string_bytes)),
+                        &npm.version,
+                        string_bytes,
+                    )?;
+                    workspace_id_by_path.get(path.slice(string_bytes)).copied()
+                });
+
                 this.buffers.dependencies.push(Dependency {
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
                     behavior,
                 });
-
-                key.clear();
-                key.extend_from_slice(dep_name);
-                key.push(b'@');
-                key.extend_from_slice(dep_version_literal);
-                let resolution = spec_to_package_id.get(key.as_slice()).copied();
                 this.buffers
                     .resolutions
                     .push(resolution.unwrap_or(install::INVALID_PACKAGE_ID));
@@ -788,6 +911,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, true,  // update_os_cpu
         false, // fill_integrity
+        None,
     )?;
 
     Ok(LoadResult::Ok(lockfile::LoadResultOk {

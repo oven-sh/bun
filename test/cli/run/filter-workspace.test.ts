@@ -321,6 +321,52 @@ describe("bun", () => {
     });
   });
 
+  test.each([
+    ["prescript", ["dep0 prescript: Exited with code 7", "dep0 script: Skipped", "dep0 postscript: Skipped"]],
+    ["script", ["dep0 prescript: Exited with code 0", "dep0 script: Exited with code 7", "dep0 postscript: Skipped"]],
+  ])("a failing %s script skips the rest of its chain, and other packages still run", (failing, lines) => {
+    const scripts = { prescript: "echo ran-pre", script: "echo ran-main", postscript: "echo ran-post" };
+    using dir = tempDir("testworkspace", {
+      dep0: { "package.json": JSON.stringify({ name: "dep0", scripts: { ...scripts, [failing]: "exit 7" } }) },
+      dep1: {
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: { dep0: "*" },
+          scripts: { script: "echo ran-dependent" },
+        }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out.filter(line => line.startsWith("dep0 ") && !line.includes("ran-"))).toEqual(lines);
+    expect(out).toContain("dep1 script: ran-dependent");
+    expect(exitCode).toBe(7);
+  });
+
+  test("a failing script doesn't skip scripts in a different package with the same name", () => {
+    using dir = tempDir("testworkspace", {
+      a: { "package.json": JSON.stringify({ name: "same", scripts: { script: "exit 7" } }) },
+      b: { "package.json": JSON.stringify({ name: "same", scripts: { script: "echo ran-b" } }) },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out).toContain("same script: ran-b");
+    expect(out).not.toContain("same script: Skipped");
+    expect(exitCode).toBe(7);
+  });
+
   test("respect dependency order", () => {
     using dir = tempDir("testworkspace", {
       dep0: {
@@ -1528,4 +1574,28 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.stdout).not.toContain("Bun is");
     expect(r.exitCode).toBe(1);
   });
+});
+
+test.concurrent.each([
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+])("%s in the name of a package or a script is printed spelled out", async (_, raw, spelled) => {
+  using dir = tempDir("filter-names", {
+    "package.json": JSON.stringify({ name: "filter-names", workspaces: ["packages/*"] }),
+    "packages/a/package.json": JSON.stringify({ name: `a${raw}b`, scripts: { [`c${raw}d`]: "echo hi" } }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--filter", "*", `c${raw}d`],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(`a${spelled}b c${spelled}d: hi\na${spelled}b c${spelled}d: Exited with code 0\n`);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

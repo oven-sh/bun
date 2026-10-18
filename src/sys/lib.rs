@@ -74,7 +74,10 @@ impl core::fmt::Display for SystemError {
             write!(
                 f,
                 "{}: {}: {} ({}())",
-                self.code, self.path, self.message, self.syscall,
+                self.code,
+                bun_core::fmt::EscapeControlChars(&self.path),
+                self.message,
+                self.syscall,
             )
         } else {
             // "<code>: <message> (<syscall>())"
@@ -4000,7 +4003,31 @@ mod windows_impl {
         sys_uv::symlink_uv(target, link, 0)
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
-        sys_uv::readlink(path, buf).map(|s| s.len())
+        let err = match sys_uv::readlink(path, buf) {
+            Ok(target) => return Ok(target.len()),
+            Err(err) => err,
+        };
+        // libuv passes the path to Windows unchanged, and a path of 260 characters or more only
+        // works with the `\\?\` prefix, so retry with it.
+        let bytes = path.as_bytes();
+        if err.get_errno() != E::ENOENT
+            || bytes.len() < 248
+            || bytes.len() + 5 > bun_paths::MAX_PATH_BYTES
+            || !bun_paths::is_drive_letter(bytes[0])
+            || bytes[1] != b':'
+            || !bun_paths::is_sep_any(bytes[2])
+        {
+            return Err(err);
+        }
+        let mut long = bun_paths::path_buffer_pool::get();
+        long[..4].copy_from_slice(&w::LONG_PATH_PREFIX_U8);
+        let normalized = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
+            bytes,
+            &mut long[4..],
+        );
+        let len = 4 + normalized.len();
+        long[len] = 0;
+        sys_uv::readlink(ZStr::from_buf(&long[..], len), buf).map(|target| target.len())
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
@@ -7658,7 +7685,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     #[cfg(target_os = "macos")]
     {
         out.0.fill(0);
-        fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
+        if let Err(mut err) = fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize) {
+            // `F_GETPATH` reports a path longer than `MAXPATHLEN` as `ENOSPC`.
+            if err.get_errno() == E::ENOSPC {
+                err.errno = E::ENAMETOOLONG as _;
+            }
+            return Err(err);
+        }
         // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
         let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
         return Ok(&mut out.0[..len]);

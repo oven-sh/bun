@@ -244,6 +244,23 @@ test.concurrent.each([
     error: `"bake.config.ts": plugins[0] has no "name".`,
   },
   {
+    name: "two plugins in bake.config.ts with a renderer",
+    files: {
+      "r.ts": `export function render() { return new Response("x"); }`,
+      "bake.config.ts": `export default { plugins: [{ name: "a", renderer: { server: "./r.ts" } }, { name: "b", renderer: { server: "./r.ts" } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the plugins "a" and "b" both have a renderer.`,
+  },
+  {
+    name: "a renderer module that cannot be found",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", renderer: { server: "./nope.ts" } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the renderer of "a" names "./nope.ts", which cannot be found.`,
+  },
+  {
     name: "a bake.config.ts default export that is not an object",
     waits: true,
     files: { "app/pages/index.html": page, "bake.config.ts": `export default 1;` },
@@ -961,3 +978,118 @@ test.concurrent.skipIf(isWindows)(
     expect(await get(url, "/missing")).toBe("200 v3");
   },
 );
+
+/** Links the React of the test suite into a project in `dir`. A junction needs no privilege on Windows. */
+function linkReact(dir: string) {
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(dir, "node_modules"), "junction");
+}
+
+test.concurrent(
+  "bun bake renders .tsx pages, with layouts and params, next to .html pages and app/server.ts",
+  async () => {
+    using dir = tempDir("bake-command-tsx", {
+      "app/pages/index.tsx": `export default function Home() { return <h1>Home</h1>; }`,
+      "app/pages/blog/[slug].tsx": `export default function Post({ params }) { return <h1>{"Post " + params.slug}</h1>; }`,
+      "app/pages/_layout.tsx": `export default function Layout({ children }) { return <main className="layout">{children}</main>; }`,
+      "app/pages/about.html": `<!doctype html><html><body><h1>About</h1></body></html>`,
+      "app/server.ts": `
+      export default {
+        routes: { "/api/hello": () => Response.json({ hi: 1 }) },
+        fetch: () => new Response("fallback", { status: 404 }),
+      };
+    `,
+    });
+    linkReact(String(dir));
+
+    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+    const url = await getServerUrl(proc);
+
+    const home = await (await fetch(new URL("/", url))).text();
+    expect(home).toContain(`<main class="layout"><h1>Home</h1></main>`);
+    const post = await (await fetch(new URL("/blog/hello", url))).text();
+    expect(post).toContain(`<h1>Post hello</h1>`);
+    expect(post).toContain(`<script id="__bun_bake_params" type="application/json">{"slug":"hello"}</script>`);
+    expect(await (await fetch(new URL("/about", url))).text()).toContain("<h1>About</h1>");
+    expect(await get(url, "/api/hello")).toBe(`200 {"hi":1}`);
+    expect(await get(url, "/missing")).toBe("404 fallback");
+  },
+);
+
+test.concurrent.each([
+  {
+    name: "React is not installed",
+    packages: {},
+    error: "app/pages/ has .tsx pages, which need React. Install it: bun add react react-dom",
+  },
+  {
+    name: "React is too old",
+    packages: { react: "17.0.2", "react-dom": "17.0.2" },
+    error: `"bun bake" renders .tsx pages with React 18 or 19, but this project has react 17.0.2. Upgrade React.`,
+  },
+  {
+    name: "react and react-dom differ",
+    packages: { react: "19.0.0", "react-dom": "18.3.1" },
+    error:
+      "react 19.0.0 and react-dom 18.3.1 must be the same version. Install matching versions: bun add react@19.0.0 react-dom@19.0.0",
+  },
+])("bun bake exits when $name", async ({ packages, error }) => {
+  const files: Record<string, string> = {
+    "app/pages/index.tsx": `export default function Home() { return <h1>Home</h1>; }`,
+    // With a package.json and node_modules, Bun does not install missing packages on the fly.
+    "package.json": `{}`,
+    "node_modules/.keep": "",
+  };
+  for (const [name, version] of Object.entries(packages)) {
+    files[`node_modules/${name}/package.json`] = JSON.stringify({ name, version });
+  }
+  using dir = tempDir("bake-command-react-version", files);
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.trim()).toBe(`error: ${error}`);
+  expect(stdout).not.toContain("url: ");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun bake renders .tsx pages with the renderer of a bake.config.ts plugin", async () => {
+  using dir = tempDir("bake-command-renderer", {
+    // No React: the plugin renders the pages.
+    "app/pages/index.tsx": `export default () => "home";`,
+    "app/pages/[id].tsx": `export default params => "page " + params.id;`,
+    "render/server.ts": `
+      export function render(request, meta) {
+        const body = meta.pageModule.default(meta.params ?? {}) + " " + JSON.stringify(meta.modules);
+        return new Response(body, { headers: { "content-type": "text/plain" } });
+      }
+    `,
+    "bake.config.ts": `export default { plugins: [{ name: "strings", renderer: { server: "./render/server.ts" } }] };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  // A renderer with no client module has no browser bundle.
+  expect(await get(url, "/")).toBe("200 home []");
+  expect(await get(url, "/7")).toBe("200 page 7 []");
+});
+
+test.concurrent("bun bake reports two pages with the same URL pattern, and keeps serving", async () => {
+  using dir = tempDir("bake-command-aliased", {
+    "app/pages/[a].tsx": `export default () => "a";`,
+    "app/pages/[b].tsx": `export default () => "b";`,
+    "render/server.ts": `export function render(request, meta) { return new Response(meta.pageModule.default()); }`,
+    "bake.config.ts": `export default { plugins: [{ name: "strings", renderer: { server: "./render/server.ts" } }] };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  // The router reports the collision when it scans, at the first request.
+  expect((await get(url, "/x")).startsWith("200 ")).toBe(true);
+  await output.waitFor(/Multiple pages matching the same route pattern is ambiguous/);
+
+  expect(output.text).toContain("app/pages/[a].tsx");
+  expect(output.text).toContain("app/pages/[b].tsx");
+  expect(proc.exitCode).toBeNull();
+});

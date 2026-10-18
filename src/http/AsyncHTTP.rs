@@ -77,7 +77,8 @@ pub fn skip_ids_for_testing(count: u64) -> Option<u64> {
     // Relaxed: nothing else is published through the counter.
     crate::ASYNC_HTTP_ID_MONOTONIC
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
-            id.checked_add(count).filter(|next| *next <= MAX_SKIPPABLE_ID)
+            id.checked_add(count)
+                .filter(|next| *next <= MAX_SKIPPABLE_ID)
         })
         .ok()
         .map(|id| id + count)

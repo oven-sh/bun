@@ -1206,6 +1206,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(new_stmt) = relocated.stmt {
                     stmts.push(new_stmt);
                 }
+                if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
+                    Self::register_react_refresh_decls(p, stmts, data.decls.slice())?;
+                }
 
                 return Ok(());
             }
@@ -1216,39 +1219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.push(*stmt);
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
-            for decl in data.decls.slice() {
-                'try_register: {
-                    let Some(val) = decl.value else {
-                        break 'try_register;
-                    };
-                    match val.data {
-                        // Assigning a component to a local.
-                        js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
-
-                        // A wrapped component.
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                if id.ref_ != p.react_refresh.latest_signature_ref {
-                                    break 'try_register;
-                                }
-                            }
-                            _ => break 'try_register,
-                        },
-                        _ => break 'try_register,
-                    }
-                    let id = match decl.binding.data {
-                        js_ast::binding::Data::BIdentifier(b) => b.r#ref,
-                        _ => break 'try_register,
-                    };
-                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
-                    p.handle_react_refresh_register(
-                        stmts,
-                        original_name,
-                        id,
-                        ReactRefreshExportKind::Named,
-                    )?;
-                }
-            }
+            Self::register_react_refresh_decls(p, stmts, data.decls.slice())?;
         }
 
         if data.is_export && p.options.features.server_components.wraps_exports() {
@@ -1268,6 +1239,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        Ok(())
+    }
+
+    fn register_react_refresh_decls(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        decls: &[G::Decl],
+    ) -> Result<(), Error> {
+        for decl in decls {
+            'try_register: {
+                let Some(val) = decl.value else {
+                    break 'try_register;
+                };
+                match val.data {
+                    // Assigning a component to a local.
+                    js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
+
+                    // A wrapped component.
+                    js_ast::ExprData::ECall(call) => match call.target.data {
+                        js_ast::ExprData::EIdentifier(id) => {
+                            if id.ref_ != p.react_refresh.latest_signature_ref {
+                                break 'try_register;
+                            }
+                        }
+                        _ => break 'try_register,
+                    },
+                    _ => break 'try_register,
+                }
+                let id = match decl.binding.data {
+                    js_ast::binding::Data::BIdentifier(b) => b.r#ref,
+                    _ => break 'try_register,
+                };
+                let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
+                p.handle_react_refresh_register(
+                    stmts,
+                    original_name,
+                    id,
+                    ReactRefreshExportKind::Named,
+                )?;
+            }
+        }
         Ok(())
     }
 

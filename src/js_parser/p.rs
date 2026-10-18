@@ -8048,11 +8048,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !(self.options.bundle && self.has_top_level_function_merged_with_var)
     }
 
-    /// The wrapper now stores into `relocated_top_level_vars[first..]`, and a store that the linker lifts above the wrapper would run first.
+    /// The wrapper now reads and stores `relocated_top_level_vars[first..]`, so a store that the linker lifts above it would run first.
     pub(crate) fn keep_var_stores_in_wrapper(&mut self, first: usize) {
-        if self.is_control_flow_dead {
-            return;
-        }
         for i in first..self.relocated_top_level_vars.len() {
             let root = self.follow_symbol_links(self.relocated_top_level_vars[i].ref_);
             self.symbols[root.inner_index() as usize].set_var_stores_stay_in_wrapper(true);

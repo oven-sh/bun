@@ -164,6 +164,12 @@ describe("Bun.Transpiler replMode", () => {
       expect(results.at(-1)).toEqual([1, 2, 3, 4, "undefined", 6]);
     });
 
+    test("var in a body without braces persists beside a function and a var of one name", async () => {
+      const { results } = await runReplSession(["function f() {} var f; if (true) var g = 5;", "typeof g"]);
+
+      expect(results[1]).toBe("number");
+    });
+
     test("enum in a body without braces persists", async () => {
       const { results } = await runReplSession(["if (true) enum Color { Red = 1 }", "Color.Red"]);
 

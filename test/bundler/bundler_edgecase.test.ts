@@ -2258,7 +2258,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `
         const lib = await import("./lib.js");
-        console.log(lib.getI(), lib.getCount());
+        console.log(lib.getI(), lib.getCount(), lib.inAFunction());
       `,
       "/lib.js": `
         for (var i; !i;) i = 7;
@@ -2266,9 +2266,10 @@ describe("bundler", () => {
         for (var j, k; count < 3; count++) j = k;
         export function getI() { return i; }
         export function getCount() { return count + typeof j; }
+        export function inAFunction() { for (var n; !n;) n = 3; return n; }
       `,
     },
-    run: { stdout: "7 3undefined" },
+    run: { stdout: "7 3undefined 3" },
   });
   itBundled("edgecase/EsmWrapperEnumInBracelessBody", {
     files: {
@@ -2326,7 +2327,18 @@ describe("bundler", () => {
        export function get() { return [globalThis.typeofXBeforeItsVar, x]; }`,
       ["undefined", "body"],
     ],
+    "dead-if-then-store-then-var": [`if (false) var x; x = "store"; var x = 2; export function get() { return x; }`, 2],
+    "dead-for-then-store-then-var": [
+      `if (false) for (var x; ; ) break; x = "store"; var x = 2; export function get() { return x; }`,
+      2,
+    ],
+    "read-then-dead-if-then-var": [
+      `globalThis.typeofXBeforeItsDeadVar = typeof x; if (false) var x = 1; var x = 2;
+       export function get() { return [globalThis.typeofXBeforeItsDeadVar, x]; }`,
+      ["undefined", 2],
+    ],
     "var-then-if": [`var x = 2; if (globalThis) var x = "body"; export function get() { return x; }`, "body"],
+    "var-then-if-without-value": [`var x = 2; if (globalThis) var x; export function get() { return x; }`, 2],
     "if-reads-var": [`var x = 10; if (globalThis) var x = x + 1; export function get() { return x; }`, 11],
     "if-reads-and-resets-var": [
       `var count = 10; if (globalThis) var count = (globalThis.countWas = count, 0);
@@ -2454,6 +2466,19 @@ describe("bundler", () => {
       const output = api.readFile("/out.js");
       expect(output).toContain("var inIf = 1");
       expect(output).toContain("for (var inFor;");
+    },
+  });
+  itBundled("edgecase/VarInBracelessBodyIsRegisteredForFastRefresh", {
+    files: {
+      "/entry.jsx": `
+        if (globalThis) var InIf = () => null;
+        export { InIf };
+      `,
+    },
+    external: ["react-refresh/runtime"],
+    reactFastRefresh: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('$RefreshReg$(InIf, "entry.jsx:InIf")');
     },
   });
   itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass", {

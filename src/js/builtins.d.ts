@@ -2,6 +2,7 @@
 /// <reference types="../../build/types/ErrorCode.d.ts" />
 /// <reference types="../../build/types/ZigGeneratedClasses.d.ts" />
 /// <reference types="../../build/types/WebCoreJSBuiltins.d.ts" />
+/// <reference types="../../build/types/Bindgen.d.ts" />
 
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
@@ -451,6 +452,7 @@ declare function $ERR_MISSING_ARGS(...args: [string, ...string[]]): TypeError;
 declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeError;
+declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(version: string, secureProtocol: string): TypeError;
 declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;
 declare function $ERR_INVALID_ADDRESS_FAMILY(addressType, host, port): RangeError;
 declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value): RangeError;
@@ -490,6 +492,7 @@ declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 
+declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_INSPECTOR_ALREADY_ACTIVATED(message?: string): Error;
 declare function $ERR_INSPECTOR_NOT_ACTIVE(): Error;
@@ -527,6 +530,7 @@ declare function $ERR_TLS_RENEGOTIATION_UNSUPPORTED(): Error;
 declare function $ERR_TLS_INVALID_STATE(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
+declare function $ERR_TLS_REQUIRED_SERVER_NAME(): Error;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
 declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;

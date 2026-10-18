@@ -317,7 +317,7 @@ impl<'p, 's> Checker<'p, 's> {
         mapper: MapperId,
         alias: (Sym, &[TypeId]),
     ) -> TypeId {
-        if !self.types().get_for_instantiation(ty).1 {
+        if self.types().instantiation_class(ty) == InstantiationClass::Unchanged {
             return ty;
         }
         if self.hands_out_symbol_ids() {

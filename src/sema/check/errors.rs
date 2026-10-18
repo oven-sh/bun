@@ -13,6 +13,7 @@ use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
+use crate::util::SharedSort;
 use bun_core::strings;
 
 /// The diagnostics `check_file` passes to `Program::finish_file`, finalized. Diagnostics reported
@@ -39,6 +40,28 @@ pub struct Checked {
 }
 
 impl Checked {
+    /// Whether `finish_file` has nothing to report for the file unless another task reports something in it.
+    pub fn is_empty(&self) -> bool {
+        let Checked {
+            syntactic,
+            semantic,
+            declaration,
+            include,
+            expected_errors,
+            // Only drops what other tasks report.
+            never_checked: _,
+            unused_private_members,
+            declaration_file,
+        } = self;
+        syntactic.is_empty()
+            && semantic.as_ref().is_none_or(Vec::is_empty)
+            && declaration.is_empty()
+            && include.is_empty()
+            && expected_errors.is_empty()
+            && unused_private_members.is_empty()
+            && declaration_file.is_none()
+    }
+
     /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
     /// separately. `None` if there are none.
     pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {
@@ -93,7 +116,7 @@ impl Program<'_> {
             // `getDiagnosticsWithPrecedingDirectives`
             let used = out.iter().map(|d| d.directive);
             let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
-            used.sort_unstable();
+            used.shared_sort_unstable();
             // `FilterNoEmitSemanticDiagnostics` comes after the directives.
             let no_emit = self.files.options.no_emit;
             out.retain(|d| d.directive == NO_DIRECTIVE && !(no_emit && d.skipped_on_no_emit));
@@ -180,8 +203,13 @@ impl Checker<'_, '_> {
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
         self.refused_expressions.clear();
+        self.side_effect_free.get_mut().clear();
+        self.context_sensitive_functions.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
+        // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
+        // reference in the files after one whose module body got 2563.
+        self.flow_analysis_disabled.clear();
         self.outermost_comparison = None;
         self.checked_type_references.0 = None;
         self.instantiation_limit_hits = 0;
@@ -210,10 +238,16 @@ impl Checker<'_, '_> {
         self.get_additional_js_syntactic_diagnostics(file);
         // `getBindAndCheckDiagnostics` reports nothing for a JSON file.
         let is_json = hir.kind == FileKind::Json;
-        if self.expected != Requested::All || is_json || !self.reports_semantic_errors(file) {
+        let is_checked = match self.expected {
+            Requested::All => true,
+            // There the types depend on what was checked before, and the rules do not ask in the order of the file.
+            Requested::Types => self.bound(file).has_types_that_depend_on_order(),
+            Requested::Syntactic | Requested::Declaration => false,
+        };
+        if !is_checked || is_json || !self.reports_semantic_errors(file) {
             let syntactic = std::mem::take(&mut self.reported);
             let mut declaration = Vec::new();
-            if self.expected != Requested::Syntactic {
+            if matches!(self.expected, Requested::Declaration | Requested::All) {
                 self.emit_resolver_links = Default::default();
                 declaration = self.get_declaration_diagnostics(file);
             }
@@ -1279,7 +1313,7 @@ impl Checker<'_, '_> {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
             unresolved.retain(|u| Some(u.0) == self.task.file);
-            unresolved.sort_unstable_by_key(|u| (u.0, u.1));
+            unresolved.shared_sort_unstable_by_key(|u| (u.0, u.1));
             unresolved.dedup_by_key(|u| (u.0, u.1));
             for (file, e, name) in unresolved {
                 self.report_unresolved_identifier(file, e, name);

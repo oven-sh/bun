@@ -2146,7 +2146,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // TypeScript orders them by id, in the order `getSpreadType` created them: `mapType`
             // iterates over the left operand, and for each of its members over the right.
-            (TypeData::Synth(x), TypeData::Synth(y)) => match (x.spread_of, y.spread_of) {
+            (TypeData::Synth(x), TypeData::Synth(y)) => match (x.created_from, y.created_from) {
                 (Some((l, r)), Some((m, s))) => (x.spread_rank.cmp(&y.spread_rank))
                     .then_with(|| types(l, m))
                     .then_with(|| types(r, s)),
@@ -2207,8 +2207,8 @@ impl<'p, 's> Checker<'p, 's> {
         let check_of_literal = |t: TypeId| match *self.data(t) {
             TypeData::Anon {
                 origin:
-                    Origin::ObjectLiteral(_, _, _, created_by, ..)
-                    | Origin::WidenedLiteral(_, _, _, created_by, ..),
+                    Origin::ObjectLiteral(_, _, _, _, created_by, ..)
+                    | Origin::WidenedLiteral(_, _, _, _, created_by, ..),
                 ..
             } => match created_by {
                 // The call for a member contains those for the members after it.

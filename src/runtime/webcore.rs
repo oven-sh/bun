@@ -7,8 +7,6 @@ use core::ptr::NonNull;
 
 #[path = "webcore/ArrayBufferSink.rs"]
 pub(crate) mod array_buffer_sink;
-#[path = "webcore/BakeResponse.rs"]
-pub(crate) mod bake_response;
 #[path = "webcore/ByteBlobLoader.rs"]
 pub(crate) mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
@@ -210,7 +208,7 @@ pub(crate) use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
 pub(crate) mod body;
-pub(crate) use body::{Body, Value as BodyValue};
+pub(crate) use body::Body;
 
 #[path = "webcore/Response.rs"]
 pub(crate) mod response;

@@ -23,6 +23,7 @@ use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
 use crate::types::{Link, Marks, OwnRecords, OwnStore};
+use crate::util::SharedSort;
 use crate::util::{InParallel, for_each_mut};
 use std::cell::{RefCell, UnsafeCell};
 
@@ -65,6 +66,8 @@ pub struct Task<'s> {
     pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// See `Finished::listings`.
+    pub(super) listings: Vec<(Sym, bool)>,
     /// See `Finished::assignments_walked`. It is added to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// The types, signatures, mappers and component lists that the task has created.
@@ -89,6 +92,7 @@ impl<'s> Task<'s> {
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
+            listings: Vec::new(),
             assignments_walked: RefCell::default(),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
@@ -159,6 +163,7 @@ impl<'s> Task<'s> {
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
         self.order_dependent_variances.clear();
+        self.listings.clear();
         self.assignments_walked.get_mut().clear();
         self.own = OwnStore::new_in(self.arena);
         self.buffer.get_mut().clear();
@@ -226,6 +231,7 @@ impl<'s> Task<'s> {
         let own = self.own.finish(marks);
         let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
         let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
+        let listings = std::mem::take(&mut self.listings);
         let assignments_walked = self.assignments_walked.take();
         self.drop_everything();
         Finished {
@@ -235,6 +241,7 @@ impl<'s> Task<'s> {
             closed_a_cycle,
             foreign_evaluations,
             order_dependent_variances,
+            listings,
             assignments_walked,
             own,
             link: Link::default(),
@@ -254,6 +261,12 @@ pub struct Finished<'s> {
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// The lists of properties that the task assigned to intersections, by the type alias that
+    /// names the intersection: whether the members of a mapped type among its constituents were
+    /// in place, so that the list lacks them (`Program::listed_properties`), or it has them all.
+    /// Which of the two a checker keeps depends on which statement gets there first. See
+    /// `Program::validate`.
+    pub(super) listings: Vec<(Sym, bool)>,
     /// The functions and source files that `markNodeAssignments` has walked in the task
     /// (`Program::assignments_marked`), and whether the task was visiting the file. See
     /// `Program::validate`.
@@ -269,11 +282,59 @@ pub struct Finished<'s> {
 }
 
 impl Finished<'_> {
+    /// Everything another task could notice about this task if its tables were never published, provided that is only
+    /// variances. `None`: the task also reported a diagnostic, or left something else that `Program::validate` compares.
+    ///
+    /// The tables are caches. Nothing is published after the last step of a plan, which is where most files are checked, so
+    /// no result may depend on them.
+    pub fn only_variances(&self) -> Option<impl Iterator<Item = (Sym, &[u8])>> {
+        // No `..`: whoever adds a field has to decide here whether another task can notice it.
+        let Finished {
+            step: _,
+            index: _,
+            diagnostics,
+            // Nothing reads `Program::closed_a_cycle`.
+            closed_a_cycle: _,
+            // A statistic.
+            foreign_evaluations: _,
+            order_dependent_variances,
+            listings,
+            assignments_walked,
+            // The tables, and the records their entries refer to.
+            own: _,
+            link: _,
+            tables: _,
+            buffered: _,
+        } = self;
+        (diagnostics.is_empty() && listings.is_empty() && assignments_walked.is_empty()).then(
+            || {
+                order_dependent_variances
+                    .iter()
+                    .map(|it| (it.sym, it.variances))
+            },
+        )
+    }
+
     /// Whether `Program::validate` can find the task invalid.
     pub fn can_be_invalid(&self) -> bool {
         let mut measured = self.order_dependent_variances.iter();
         measured.any(|it| it.compared | it.failed | it.inferred != 0)
             || self.assignments_walked.iter().any(|it| it.2)
+            || !self.listings.is_empty()
+    }
+}
+
+impl<'s> Program<'s> {
+    /// Call before the first task. Behaves as if an earlier task had left these variances in `Finished::only_variances`.
+    pub fn assume_variances(&self, sym: Sym, variances: &[u8]) {
+        let variances = self.session.arena().alloc_slice_copy(variances);
+        self.serial_variances.lock().entry(sym).or_insert(variances);
+    }
+
+    /// Whether some task so far wrote to one of the two sets that tasks write to directly, not through their `Finished`.
+    pub fn has_notes_outside_finished(&self) -> bool {
+        !self.properties_referenced_before.lock().is_empty()
+            || !self.emit_helper_errors_of_earlier_files.lock().is_empty()
     }
 }
 
@@ -330,7 +391,7 @@ pub struct Published {
 /// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and for the small ones that say something
 /// about a declared type parameter or flag a type. An entry of one of these is evaluated inside an evaluation that `relations` or a
 /// table keyed by a node or a symbol records, so a task that finds those entries does not ask for these.
-const TABLES_OF_RECORDS: [&str; 28] = [
+const TABLES_OF_RECORDS: [&str; 30] = [
     "shapes",
     "members",
     "sig_params",
@@ -348,6 +409,8 @@ const TABLES_OF_RECORDS: [&str; 28] = [
     "intersected_props",
     "union_properties",
     "union_objects",
+    "intersection_objects",
+    "listed_properties",
     "keys_of_properties",
     "conditionals",
     "resolved_return_types",
@@ -469,7 +532,7 @@ fn publish_tables<'s>(
     {
         // The largest first, so that no thread begins it when the others are nearly done.
         let mut by_size: Vec<&mut (usize, Entries<'s>)> = followed.iter_mut().collect();
-        by_size.sort_by_key(|it| std::cmp::Reverse(it.1.len));
+        by_size.shared_sort_by_key(|it| std::cmp::Reverse(it.1.len));
         let links: Vec<&Link> = finished.iter().map(|it| &it.link).collect();
         for_each_mut(&mut by_size, in_parallel, &|(task, entries)| {
             tables[entries.slot as usize].follow(entries, links[*task]);
@@ -527,7 +590,7 @@ fn publish_tables<'s>(
         }
     }
     chains.retain(|chain| chain.len != 0);
-    chains.sort_by_key(|chain| std::cmp::Reverse(chain.len));
+    chains.shared_sort_by_key(|chain| std::cmp::Reverse(chain.len));
     let tasks = finished.len();
     for_each_mut(&mut chains, in_parallel, &|chain| {
         // By task: the published handles of the entries of the previous stage, indexed by their

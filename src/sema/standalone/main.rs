@@ -84,8 +84,8 @@ fn run(args: &[String]) {
             files.sort();
             let session = bun_sema::session::Session::new();
             let atoms = Interner::new_in(&session);
-            // --repeat=n [--threads=n]: all files are read first, then parsed and lowered n times,
-            // to measure parsing and lowering alone.
+            // --repeat=n [--threads=n]: all files are read first, then parsed n times, to measure
+            // parsing alone.
             if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
                 let threads = flag("--threads=").and_then(|n| n.parse().ok());
                 let read = |file: &String| read_file(file).unwrap_or_default();
@@ -281,6 +281,12 @@ fn run(args: &[String]) {
                 warm_up_max_bytes: number("--warm-up-max-bytes=", defaults.warm_up_max_bytes),
                 chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
                 min_tasks: number("--min-tasks=", defaults.min_tasks),
+                tasks_on_one_thread: has("--tasks-on-one-thread"),
+                one_thread_task_cost: number(
+                    "--one-thread-task-cost=",
+                    defaults.one_thread_task_cost,
+                ),
+                one_thread_max_cost: number("--one-thread-max-cost=", defaults.one_thread_max_cost),
                 type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
                 split_files: number("--split-files=", defaults.split_files as usize) as u32,
                 split_tolerates: number("--split-tolerates=", 0) as u8,
@@ -288,11 +294,24 @@ fn run(args: &[String]) {
                 checkers: number("--checkers=", defaults.checkers),
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
+                after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
+                checks_only_named: defaults.checks_only_named,
+                reads_sources_of_references: defaults.reads_sources_of_references,
+                current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
+                project_is_for_the_rest: defaults.project_is_for_the_rest,
+                reports_nothing_about_files: defaults.reports_nothing_about_files,
+                only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
+                refuses_broken_configurations: defaults.refuses_broken_configurations,
+                prefers_the_library_of_the_project: defaults.prefers_the_library_of_the_project,
+                shares_every_file: defaults.shares_every_file,
+                only_the_globals: defaults.only_the_globals,
+                memory: defaults.memory,
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,
                 cwd: cwd.as_bytes(),
                 project: command_line.project.as_deref(),
+                listed_projects: None,
                 build: command_line.build,
                 errors: &command_line.errors,
                 paths: &command_line.paths,

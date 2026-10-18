@@ -66,12 +66,15 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         kind,
         has_module_syntax,
         is_js,
+        is_flow: _,
         check_directive,
         is_module_by_decree,
         has_errors,
         ran_out_of_stack: _,
         decorators,
         legacy_decorators,
+        may_bind_a_parameter_twice: _,
+        rare_syntax: _,
         diagnostics,
         syntax_errors,
         error_pos: _,
@@ -83,7 +86,10 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         body,
         references,
         comment_directives,
+        comments: _,
+        mentioned: _,
         with_bodies,
+        detached_semicolons: _,
         body_starts: _,
         after_skipped,
         stray_decorators,
@@ -95,6 +101,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         exports_from_expressions: _,
         has_parse_diagnostics,
         parens,
+        non_null_ends,
         jsx_expressions,
         jsx_pragmas,
         jsdoc_comments,
@@ -141,8 +148,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         bases: _,
         lazy: _,
         keyword_identifier_positions: _,
-        fn_nodes: _,
-        class_nodes: _,
     } = file;
     let mut d = Dump {
         file,
@@ -337,6 +342,12 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     put!(d, 0, "", "parens[{}]:", around.len());
     for (pos, kind, open, end) in around {
         put!(d, 1, "", "{kind} pos={pos} open={open} end={end}");
+    }
+
+    put!(d, 0, "", "non_null_ends[{}]:", non_null_ends.len());
+    for &(expr, end) in non_null_ends {
+        let pos = file.exprs.get(expr.idx()).map_or(u32::MAX, |expr| expr.pos);
+        put!(d, 1, "", "pos={pos} end={end}");
     }
 
     put!(d, 0, "", "jsx_expressions[{}]:", jsx_expressions.len());

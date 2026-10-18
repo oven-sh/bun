@@ -17,6 +17,7 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "AsyncContextFrame.h"
 #include "BunStreamConsumers.h"
 
 // These three are used by name below (`JSC::JSUint8Array*` is a typedef and cannot be
@@ -161,6 +162,8 @@ JSC::JSPromise* invokeCallbackReturningPromise(JSC::JSGlobalObject*, JSC::JSObje
 // inline), and a vanilla JSPromise returned unwrapped. userJS: yes — WebStreamsMisc.cpp
 JSC::JSPromise* invokeCallbackReturningPromiseFast(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
+// promiseResolvedWith for internal reactions: nullptr for a non-object, a vanilla JSPromise unwrapped.
+JSC::JSPromise* promiseResolvedWithFast(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // "a promise rejected with r" (rejection never does a `then` lookup)
 JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 
@@ -367,17 +370,9 @@ void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadab
 // a promise of one.
 // Restores the stream's construction-time async-context snapshot around a user
 // source callback (pull/cancel and the direct pull). Defined in WebStreamsMisc.cpp.
-class StreamAsyncContextScope {
-    WTF_MAKE_NONCOPYABLE(StreamAsyncContextScope);
-
+class StreamAsyncContextScope : public AsyncContextScope {
 public:
     StreamAsyncContextScope(JSC::JSGlobalObject*, JSReadableStream*);
-    ~StreamAsyncContextScope();
-
-private:
-    JSC::VM& m_vm;
-    JSC::InternalFieldTuple* m_asyncContextData { nullptr };
-    JSC::JSValue m_previous;
 };
 
 enum class ConsumerFillStep : uint8_t { Done,

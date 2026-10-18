@@ -6,6 +6,7 @@
 
 pub mod format;
 pub mod host;
+pub mod outline;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
@@ -15,37 +16,39 @@ use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::atom::RecentAtoms;
+use bun_sema::atom::{Atom, RecentAtoms};
+use bun_sema::bind::{SymFlags, SymbolId};
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
-use bun_sema::check::{
-    FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts, decode_rune,
-};
+use bun_sema::check::{FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, declaration_emit_output_file_path,
-    own_emit_output_file_path,
+    COMPARE_PATHS_CASE_SENSITIVE, Claim, FileId, Files, GlobalName, Run, SharedVerdict, Sym,
+    declaration_emit_output_file_path, has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, Options, Phase, ancestors, contains_path, displayed_path,
-    get_relative_path_from_directory, inside, is_declaration_file_name, is_javascript,
-    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
-    to_path_in, typescript_path,
+    Host, ModuleDetection, Options, Phase, ProjectFile, ProjectFiles, ancestors, contains_path,
+    displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
+    is_javascript, is_javascript_file, is_relative, is_same_path, join,
+    output_declaration_file_name, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
-use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
@@ -56,7 +59,7 @@ use std::time::{Duration, Instant};
 /// allocated it, and the allocator defers such a free.
 #[derive(Default)]
 pub struct ThreadCaches {
-    idle: Guarded<Vec<(ThreadId, RecentAtoms, bun_js_parser::sema::ThreadCaches)>>,
+    idle: Guarded<Vec<(ThreadId, RecentAtoms, bun_sema_parser::ThreadCaches)>>,
 }
 
 impl ThreadCaches {
@@ -68,7 +71,7 @@ impl ThreadCaches {
                 let set = (
                     std::thread::current().id(),
                     RecentAtoms::take(),
-                    bun_js_parser::sema::ThreadCaches::take(),
+                    bun_sema_parser::ThreadCaches::take(),
                 );
                 self.0.idle.lock().push(set);
             }
@@ -88,7 +91,7 @@ impl ThreadCaches {
     /// Frees the buffers of the parser, which have the capacity of the largest file that a thread
     /// has parsed. Outside a parallel region.
     pub(crate) fn drop_those_of_the_parser(&self) {
-        drop(bun_js_parser::sema::ThreadCaches::take());
+        drop(bun_sema_parser::ThreadCaches::take());
         for set in self.idle.lock().iter_mut() {
             set.2 = Default::default();
         }
@@ -125,24 +128,282 @@ pub fn for_each_parallel_in_runs(
     if count == 0 {
         return;
     }
-    let next = AtomicUsize::new(0);
-    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
-    bun_threading::WorkPool::get().each(
+    let region = Region {
+        caches,
+        threads: threads.clamp(1, count.div_ceil(run)),
+        next: AtomicUsize::new(0),
+        count,
+        run,
+        work,
+    };
+    // A thread of the pool has its turn.
+    if keeps_regions() {
+        return region.work_off();
+    }
+    let mut runners = vec![(); region.threads];
+    pool_of_regions().each((), |(), (), _| region.work_off(), &mut runners);
+}
+
+/// The same, on the calling thread and on at most `helpers` threads of the pool. The calling thread begins at once, and in the
+/// end waits until each of the others has looked for work.
+pub(crate) fn for_each_with_helpers(
+    caches: &ThreadCaches,
+    helpers: usize,
+    count: usize,
+    run: usize,
+    work: &(dyn Fn(usize) + Sync),
+) {
+    let helpers = match helpers.min(count.div_ceil(run).saturating_sub(1)) {
+        0 => 0,
+        _ if keeps_regions() => 0,
+        helpers => helpers,
+    };
+    let region = Region {
+        caches,
+        threads: 1 + helpers,
+        next: AtomicUsize::new(0),
+        count,
+        run,
+        work,
+    };
+    pool_of_regions().each_while(
         (),
-        |(), (), _| {
-            let _lent = caches.lend();
-            loop {
-                let from = next.fetch_add(run, Ordering::Relaxed);
-                if from >= count {
-                    break;
-                }
-                for i in from..(from + run).min(count) {
-                    work(i);
-                }
-            }
-        },
-        &mut runners,
+        |(), (), _| region.work_off(),
+        &mut vec![(); helpers],
+        || region.work_off(),
     );
+}
+
+/// The same, on the calling thread, which runs a program, and on the other threads of that program's share. Spare threads join
+/// whenever there are some, until the work runs out.
+pub(crate) fn for_each_with_a_share(
+    caches: &ThreadCaches,
+    shares: &Shares,
+    count: usize,
+    run: usize,
+    work: &(dyn Fn(usize) + Sync),
+) {
+    let region = Region {
+        caches,
+        threads: 1,
+        next: AtomicUsize::new(0),
+        count,
+        run,
+        work,
+    };
+    if keeps_regions() {
+        return region.work_off();
+    }
+    let helpers = shares.helpers_of_this_thread();
+    pool_of_regions().each_while(
+        (),
+        |(), (), _| region.work_off(),
+        &mut vec![(); helpers.min(count.div_ceil(run).saturating_sub(1))],
+        || {
+            let _lent = caches.lend();
+            region.work_off_with_spare_threads(shares);
+        },
+    );
+}
+
+/// How a request's threads are divided among its programs while several of them run at the same time. Each program runs on a
+/// thread of its own, which loads and checks it, and has a fixed number of other threads to help with that.
+pub(crate) struct Shares {
+    state: Guarded<SharesState>,
+    has_changed: bun_threading::Condvar,
+    /// Threads with nothing to do, which any program may borrow. Whoever takes one back doesn't wait for the borrower, so this
+    /// can be negative.
+    spare: AtomicIsize,
+}
+
+struct SharesState {
+    /// The threads that no program has. Once every program has got its share, they are spare.
+    free: usize,
+    /// How many programs have got their share. They get it in turn, so that small ones don't keep a large one waiting.
+    served: usize,
+    programs: usize,
+    /// The thread that runs a program, and how many others that program has.
+    helpers: Vec<(ThreadId, usize)>,
+}
+
+impl Shares {
+    fn new(threads: usize, programs: usize) -> Shares {
+        Shares {
+            state: Guarded::new(SharesState {
+                free: threads,
+                served: 0,
+                programs,
+                helpers: Vec::new(),
+            }),
+            has_changed: bun_threading::Condvar::new(),
+            spare: AtomicIsize::new(0),
+        }
+    }
+
+    /// For program number `turn`. Waits until those before it have their shares and `threads` are free.
+    fn take(&self, turn: usize, threads: usize) {
+        let mut state = self.state.lock();
+        while state.served != turn || state.free < threads {
+            self.has_changed.wait_guarded(&mut state);
+        }
+        state.free -= threads;
+        state.served += 1;
+        if state.served == state.programs {
+            self.lend(std::mem::take(&mut state.free));
+        }
+        drop(state);
+        self.has_changed.notify_all();
+    }
+
+    fn give_back(&self, threads: usize) {
+        let mut state = self.state.lock();
+        if state.served == state.programs {
+            return self.lend(threads);
+        }
+        state.free += threads;
+        drop(state);
+        self.has_changed.notify_all();
+    }
+
+    fn lend(&self, threads: usize) {
+        self.spare.fetch_add(threads as isize, Ordering::Relaxed);
+    }
+
+    fn take_back(&self, threads: usize) {
+        self.spare.fetch_sub(threads as isize, Ordering::Relaxed);
+    }
+
+    /// Returns how many it got, at most `wanted`. The borrower lends each one again when it's done with it.
+    fn borrow(&self, wanted: usize) -> usize {
+        if wanted == 0 || self.spare.load(Ordering::Relaxed) <= 0 {
+            return 0;
+        }
+        let mut borrowed = 0;
+        let _ = (self.spare).try_update(Ordering::Relaxed, Ordering::Relaxed, |spare| {
+            borrowed = spare.clamp(0, wanted as isize);
+            Some(spare - borrowed)
+        });
+        borrowed as usize
+    }
+
+    fn helpers_of_this_thread(&self) -> usize {
+        let thread = std::thread::current().id();
+        let state = self.state.lock();
+        let found = state.helpers.iter().find(|it| it.0 == thread);
+        found.map_or(0, |it| it.1)
+    }
+}
+
+/// Until it is dropped, the calling thread runs a program that has `helpers` other threads.
+struct RunsHere<'a>(&'a Shares);
+
+impl<'a> RunsHere<'a> {
+    fn new(shares: &'a Shares, helpers: usize) -> RunsHere<'a> {
+        let thread = std::thread::current().id();
+        shares.state.lock().helpers.push((thread, helpers));
+        RunsHere(shares)
+    }
+}
+
+impl Drop for RunsHere<'_> {
+    fn drop(&mut self) {
+        let thread = std::thread::current().id();
+        self.0.state.lock().helpers.retain(|it| it.0 != thread);
+    }
+}
+
+static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
+
+/// The parser nests as deep as on a thread of Bun's pool. The binder, the checker, hundreds of rules and the printers then walk
+/// the tree by recursion, with frames of their own size, so their threads have eight times that stack. What is not touched
+/// costs no memory.
+pub const STACK_OF_A_WORKER: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+
+static KEEP_REGIONS: Guarded<Vec<ThreadId>> = Guarded::new(Vec::new());
+
+/// From now on, parallel regions that start on the calling thread run on that thread alone, like they do on a pool thread. Call
+/// this on a thread outside the pool that pool threads wait for. If it waited for them too, they'd deadlock.
+pub fn keep_regions_on_this_thread() {
+    KEEP_REGIONS.lock().push(std::thread::current().id());
+}
+
+/// A thread of a pool that waited for the others could wait for ever: they may all be waiting like it.
+fn keeps_regions() -> bool {
+    !bun_threading::thread_pool::Thread::current().is_null()
+        || KEEP_REGIONS.lock().contains(&std::thread::current().id())
+}
+
+/// From now on parallel regions run on a pool of their own. For work that waits on its thread for what Bun's pool does:
+/// `bun lint` waits for rules in JavaScript, and such a rule can wait for a `Worker`, whose files are read and whose modules
+/// are loaded on that pool. `name`: what its threads are called, before their number.
+pub fn use_a_pool_of_their_own(name: &'static str) {
+    OWN_POOL.get_or_init(|| {
+        bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
+            max_threads: u32::from(bun_core::get_thread_count()),
+            stack_size: STACK_OF_A_WORKER,
+            ..Default::default()
+        })
+        .named(name)
+    });
+}
+
+/// The pool that parallel regions run on.
+fn pool_of_regions() -> &'static bun_threading::ThreadPool {
+    OWN_POOL
+        .get()
+        .unwrap_or_else(|| bun_threading::WorkPool::get())
+}
+
+/// What the threads of [`for_each_parallel_in_runs`] share.
+struct Region<'a> {
+    caches: &'a ThreadCaches,
+    threads: usize,
+    next: AtomicUsize,
+    count: usize,
+    run: usize,
+    work: &'a (dyn Fn(usize) + Sync),
+}
+
+impl Region<'_> {
+    /// `work_off`, for a thread that has its caches. Before each run it looks for spare threads to help it.
+    fn work_off_with_spare_threads(&self, shares: &Shares) {
+        loop {
+            let claimed = self.next.load(Ordering::Relaxed);
+            let runs_left = self.count.saturating_sub(claimed).div_ceil(self.run);
+            let helpers = shares.borrow(runs_left.saturating_sub(1));
+            if helpers > 0 {
+                return pool_of_regions().each_while(
+                    (),
+                    |(), (), _| {
+                        self.work_off();
+                        shares.lend(1);
+                    },
+                    &mut vec![(); helpers],
+                    || self.work_off_with_spare_threads(shares),
+                );
+            }
+            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
+            if from >= self.count {
+                break;
+            }
+            for i in from..(from + self.run).min(self.count) {
+                (self.work)(i);
+            }
+        }
+    }
+
+    fn work_off(&self) {
+        let _lent = self.caches.lend();
+        loop {
+            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
+            if from >= self.count {
+                break;
+            }
+            for i in from..(from + self.run).min(self.count) {
+                (self.work)(i);
+            }
+        }
+    }
 }
 
 /// The work of one thread between two barriers, with one `Checker` and one buffer: `check_file` for
@@ -182,15 +443,75 @@ pub struct PlanOptions {
     pub split_tolerates: u8,
     /// Whether a range publishes the tables keyed by a type, a signature or a mapper too.
     pub split_publishes_everything: bool,
+    /// Whether one thread gets the plan of several. For measuring the tasks one at a time.
+    pub tasks_on_one_thread: bool,
+    /// The cost estimate at which a task of `Plan::of_one_thread` is complete.
+    pub one_thread_task_cost: usize,
+    /// The cost estimate of a program above which one thread gets the plan of several. The tasks of
+    /// `Plan::of_one_thread` publish nothing, so each begins with nothing: VS Code, of three times
+    /// this cost, takes 8% to 25% longer in 13 to 4 of them, and 6% longer and 1.8 times the memory
+    /// in one.
+    pub one_thread_max_cost: usize,
     /// `--checkers`. Nonzero: `checkerPool` is used, and none of the above applies.
     pub checkers: usize,
     /// One checker (`checkers`) hands out symbol ids as `tsc --singleThreaded` does. Not for
     /// TypeScript's own baselines: its test runner compiles every test in one process, and
     /// `nextSymbolId` belongs to the process.
     pub reproduces_symbol_ids: bool,
-    /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
-    /// occupies memory.
+    /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most, if each reads the sources of
+    /// what it references. Otherwise four times as many. Each occupies memory.
     pub projects_at_once: usize,
+    /// `Request::after_file` is only called for the files that are checked, not at the end for the
+    /// declaration files and the JSON files that are not. Then nothing reads what the last step
+    /// publishes, so it publishes nothing. The declaration files of the project itself, which are
+    /// not in the default library or in `node_modules`, count as checked even with `skipLibCheck`,
+    /// which still means that nothing is reported for them.
+    pub after_file_is_for_checked_files: bool,
+    /// Of a program, only the files in `Request::paths` are checked, not what they import. The
+    /// types of what they import are computed where they are asked for, as in an editor.
+    pub checks_only_named: bool,
+    /// `useSourceOfProjectReferenceRedirect`, as in an editor: an import that leads into a
+    /// referenced project reads its source, also where it names a declaration file that the project
+    /// would emit. No referenced project is checked for the sake of another, and nothing is emitted.
+    pub reads_sources_of_references: bool,
+    /// `GetCurrentDirectory` of a program is the directory of its configuration file, as that of a
+    /// `ConfiguredProject` of tsserver is. Without one it is `Request::cwd`, as always otherwise.
+    pub current_directory_is_of_the_project: bool,
+    /// Nobody reads what is reported about the files that are checked. So no `Diagnostic` is made of it: each has a copy
+    /// of the lines around it, which in a bundle on one line is a copy of the file. And the files are not checked:
+    /// `Request::after_file` asks for the types that it needs. See `Requested::Types`.
+    pub reports_nothing_about_files: bool,
+    /// A file of `Request::paths` is checked only in a project that includes it: that of the nearest configuration
+    /// file or one that it references, or else the same for the configuration files further up
+    /// (`findOrCreateDefaultConfiguredProjectWorker`). A file that none includes is not checked.
+    pub only_in_a_project_that_includes: bool,
+    /// With `only_in_a_project_that_includes`: `Request::project` isn't the project of every file. It's the project of the files
+    /// that no project includes, which are checked after all. It is never refused, and shares no parsed file with the others.
+    /// Only if the request has more programs than threads. Otherwise those files stay unchecked: a request of their own, after
+    /// this one, has all the threads for them, and the memory of this one is free by then.
+    pub project_is_for_the_rest: bool,
+    /// `CreateProgram` of tsgolint: there is no program for a configuration file that has an error, in itself or in what
+    /// the program says about its options and its files (`GetProgramDiagnostics`). No file is checked in it: see
+    /// `Report::refused`.
+    pub refuses_broken_configurations: bool,
+    /// The `lib.*.d.ts` of a program are those of the `typescript` that is installed for it: of the first
+    /// `node_modules/typescript` from the directory of the configuration file upwards, if that has the files that `lib` and
+    /// `target` name. Else they are `Request::libs`. What the project's own compiler reads about `Element` is what is read here.
+    /// And its configuration file means what it means to that compiler: `resolve::INSTALLED_MAJOR`.
+    pub prefers_the_library_of_the_project: bool,
+    /// What the programs of a request have in common, parsed once and kept to the end (`program::Run`). Off, `bun check`: the
+    /// declaration files. On, `bun lint`: every file, sources too: a run with types over a monorepo loads the same sources
+    /// for a hundred programs.
+    pub shares_every_file: bool,
+    /// Nothing is checked: `Report::globals` is what is asked for. Of the root files of a project only those are loaded that can
+    /// declare a global, judged by name and text (`may_declare_a_global`), with the libraries and the `types` as always; of
+    /// what they import only what declaration files import. A file of `Request::paths` without a configuration file above
+    /// it is in no program, and nothing is said about a program for which `Files::global_names` says nothing, or whose
+    /// packages are not installed.
+    pub only_the_globals: bool,
+    /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
+    /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
+    pub memory: usize,
 }
 
 impl Default for PlanOptions {
@@ -205,15 +526,31 @@ impl Default for PlanOptions {
             split_files: 64,
             split_tolerates: 0,
             split_publishes_everything: false,
+            tasks_on_one_thread: false,
+            one_thread_task_cost: 256 << 10,
+            one_thread_max_cost: 1 << 20,
             checkers: 0,
             reproduces_symbol_ids: true,
             projects_at_once: 4,
+            after_file_is_for_checked_files: false,
+            checks_only_named: false,
+            reads_sources_of_references: false,
+            current_directory_is_of_the_project: false,
+            reports_nothing_about_files: false,
+            only_in_a_project_that_includes: false,
+            project_is_for_the_rest: false,
+            refuses_broken_configurations: false,
+            prefers_the_library_of_the_project: false,
+            shares_every_file: false,
+            only_the_globals: false,
+            memory: 0,
         }
     }
 }
 
 /// Which task is in which step, and in which order the tasks of a step are published. A function of
-/// the program alone: not of the thread count, not of time. During a step the published state is
+/// the program and of whether there is more than one thread (`Plan::of_one_thread`): not of how many
+/// there are, not of time. During a step the published state is
 /// read-only and a task writes to its own buffer, so the result of a task is a function of the
 /// program and of the published state at the start of its step. By induction over the steps, so is
 /// the output.
@@ -221,6 +558,10 @@ struct Plan {
     steps: Vec<Vec<Task>>,
     /// By task of the step before the last. Empty: no file is split.
     ahead: Vec<Ahead>,
+    /// The number of its first step. Not 0 if another plan runs before this one.
+    first_step: usize,
+    /// Its tasks come from `of_one_thread`.
+    is_of_one_thread: bool,
 }
 
 impl Plan {
@@ -242,15 +583,37 @@ impl Plan {
         Plan {
             steps: vec![tasks],
             ahead: Vec::new(),
+            first_step: 0,
+            is_of_one_thread: false,
         }
     }
 
-    /// `count`: the number of files to check. `size_of(i)`: the source size of file `i` in bytes.
+    /// The tasks of one thread for `files`, which are in program order like those of
+    /// `tsc --singleThreaded`: as few as `one_thread_task_cost` allows. Most programs are one task.
+    ///
+    /// Every task computes its own copy of what it shares with the other tasks of its step. That
+    /// occupies threads that have nothing else to do, and one thread has: with the plan of several
+    /// threads it is a fifth to a half of all the work. But a task keeps what it has computed until
+    /// it ends, so its size is what the memory grows by.
+    fn of_one_thread(
+        files: Vec<usize>,
+        size_of: &dyn Fn(usize) -> usize,
+        options: &PlanOptions,
+    ) -> Vec<Task> {
+        let options = PlanOptions {
+            min_tasks: 0,
+            chunk_bytes: options.one_thread_task_cost,
+            ..*options
+        };
+        Plan::cut(files, size_of, &options)
+    }
+
+    /// `files`: the files to check. `size_of(i)`: the source size of file `i` in bytes.
     ///
     /// No order among the tasks is needed: what they observe of each other is published, or each
     /// computes its own copy.
     fn new(
-        count: usize,
+        files: std::ops::Range<usize>,
         bytes_of: &dyn Fn(usize) -> usize,
         size_of: &dyn Fn(usize) -> usize,
         ranges_of: &dyn Fn(usize, usize) -> Vec<(u32, u32)>,
@@ -263,7 +626,7 @@ impl Plan {
         // light files. The files are a sample of the whole program, because its first files are not
         // representative of the rest.
         let is_heavy = |file: usize| bytes_of(file) > options.warm_up_max_bytes;
-        let light: Vec<usize> = (0..count).filter(|&file| !is_heavy(file)).collect();
+        let light: Vec<usize> = files.clone().filter(|&file| !is_heavy(file)).collect();
         let expected = options.warm_up_files.min(light.len());
         let warm_up = (0..expected).map(|i| light[i * light.len() / expected]);
         let warm_up: Vec<usize> = warm_up.collect();
@@ -275,7 +638,7 @@ impl Plan {
         // One step with all other files. The heaviest file of a program takes about as long as a
         // thread's share of the whole check, so there is one step in which heavy files run, and
         // they are started first.
-        let rest = (0..count).filter(|file| warm_up.binary_search(file).is_err());
+        let rest = files.filter(|file| warm_up.binary_search(file).is_err());
         let chunks = Plan::cut(rest.collect(), size_of, options);
         // `split_files`. `ranges_of(file, parts)`: see there.
         let cost: usize = chunks.iter().flatten().map(|&file| size_of(file)).sum();
@@ -305,7 +668,12 @@ impl Plan {
         } else {
             steps.push(split);
         }
-        Plan { steps, ahead }
+        Plan {
+            steps,
+            ahead,
+            first_step: 0,
+            is_of_one_thread: false,
+        }
     }
 
     /// `ahead`, if `number` is the step whose tasks it describes.
@@ -513,11 +881,15 @@ impl CommandLineParser<'_> {
 
     /// `parseResponseFile`
     fn parse_response_file(&mut self, file_name: &[u8]) {
+        const MAX_NESTED: usize = 64;
         let file_name = join(self.cwd, file_name);
-        // `tryReadFile`. The original reads a file that names itself until its stack ends.
-        let text = match self.response_files.contains(&file_name) {
+        // `tryReadFile`. The original reads a file that names itself, or a long chain of files,
+        // until its stack ends.
+        let is_refused =
+            self.response_files.len() >= MAX_NESTED || self.response_files.contains(&file_name);
+        let text = match is_refused {
             true => None,
-            false => host::read_at(&file_name),
+            false => host::read_at(&file_name, false),
         };
         let Some(text) = text else {
             let cannot_read = global(5083, &[displayed_path(&file_name)]);
@@ -623,8 +995,46 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
             };
             (name.clone(), value)
         })
-        .chain((!is_build && !request.build).then(|| (b"noEmit".to_vec(), Json::Bool(true))))
+        // Who refuses a broken configuration asks what `tsc -p` says about it, output paths too (5011, 5055).
+        .chain(
+            (!is_build && !request.build && !request.plan_options.refuses_broken_configurations)
+                .then(|| (b"noEmit".to_vec(), Json::Bool(true))),
+        )
         .collect()
+}
+
+/// The `node_modules/typescript` that is nearest to the configuration file at `config`.
+fn installed_typescript(host: &dyn Host, config: &[u8]) -> Option<Vec<u8>> {
+    ancestors(dirname::<Posix>(config))
+        .map(|directory| inside(directory, b"node_modules/typescript"))
+        .find(|package| host.is_dir(package))
+}
+
+/// `resolve::INSTALLED_MAJOR` for the configuration file at `config`: `PlanOptions::prefers_the_library_of_the_project`.
+fn defaults_of_the_installed_typescript(
+    host: &dyn Host,
+    request: &Request,
+    config: &[u8],
+) -> Option<(Vec<u8>, Json)> {
+    if !request.plan_options.prefers_the_library_of_the_project {
+        return None;
+    }
+    installed_major(host, config)
+}
+
+/// `resolve::INSTALLED_MAJOR`
+fn installed_major(host: &dyn Host, config: &[u8]) -> Option<(Vec<u8>, Json)> {
+    major_of_typescript_at(host, &installed_typescript(host, config)?)
+}
+
+fn major_of_typescript_at(host: &dyn Host, package: &[u8]) -> Option<(Vec<u8>, Json)> {
+    let text = host.read(&inside(package, b"package.json"))?;
+    let fields = host.parse_package_json(Session::new().arena(), &text)?;
+    let version = fields.get(b"version")?.as_str()?;
+    let major = &version[..strings::index_of_char_usize(version, b'.')?];
+    let major: u32 = std::str::from_utf8(major).ok()?.parse().ok()?;
+    let name = bun_sema::resolve::INSTALLED_MAJOR.to_vec();
+    Some((name, Json::Number(f64::from(major))))
 }
 
 /// The version of TypeScript that the type checker is a port of.
@@ -639,12 +1049,22 @@ pub enum Libs<'a> {
     Directory(&'a [u8]),
 }
 
+/// `Request::listed_projects`
+pub trait ListedProjects: Sync {
+    /// The configuration files for the file at `path`: absolute, in the checker's format.
+    fn of(&self, path: &[u8], is_case_sensitive: bool) -> &[Vec<u8>];
+}
+
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as a native path.
     pub cwd: &'a [u8],
     /// `--project`: a configuration file, or a directory with a `tsconfig.json` in it.
     pub project: Option<&'a [u8]>,
+    /// `parserOptions.project` of typescript-eslint, without `project`: a file of `paths` is checked in the first of these
+    /// projects that has it among its root files (`getWatchProgramsForProjects`). The projects that one references are not
+    /// asked. A file that none of them has is checked as if there were no list.
+    pub listed_projects: Option<&'a dyn ListedProjects>,
     /// `-b`: `tscBuildCompilation`, also for a project without `references`. Without `project`, the
     /// one of `paths` is the project, or else the working directory.
     pub build: bool,
@@ -782,13 +1202,75 @@ pub struct TaskOutput {
     pub listed_files: usize,
 }
 
+/// A file that is not fully checked.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Incomplete {
+    pub path: Vec<u8>,
+    /// `hir::File::ran_out_of_stack`: the stack was too small for the tree. Otherwise it was too
+    /// small for a query of the checker, which was abandoned.
+    pub is_nested_too_deeply: bool,
+}
+
+impl Incomplete {
+    /// What is said about the file, which is shown as `path`.
+    pub fn message(&self, path: &[u8]) -> Vec<u8> {
+        let (before, after): (&[u8], &[u8]) = match self.is_nested_too_deeply {
+            true => (
+                b"the code in ",
+                b" is nested too deeply: errors in this file may be missing.",
+            ),
+            false => (
+                b"ran out of stack in ",
+                b". This is a bug in Bun: errors in this file may be missing.",
+            ),
+        };
+        [before, path, after].concat()
+    }
+}
+
+/// A program that was not made: `PlanOptions::refuses_broken_configurations`.
+pub struct Refused {
+    pub config_path: Vec<u8>,
+    /// The errors of reading the configuration file, or else those of the program about its options and its files.
+    pub diagnostics: Vec<Diagnostic>,
+    /// The files of `Request::paths` that were to be checked in it, each a `tspath.Path`.
+    pub files: Vec<Vec<u8>>,
+}
+
+/// A program of which only some files were asked for, and whose configuration file has neither `include` nor `files`, nor has
+/// one that it extends. So it includes every file below it.
+pub struct WithoutInclude {
+    pub config_path: Vec<u8>,
+    /// How many files it includes.
+    pub included: usize,
+    /// How many files of `Request::paths` were checked in it.
+    pub asked_for: usize,
+    /// The first of them, a `tspath.Path`.
+    pub example: Vec<u8>,
+    pub load_time: Duration,
+}
+
+/// `PlanOptions::only_the_globals`
+pub struct GlobalsOf {
+    /// The files of `Request::paths` that are in the program, each a `tspath.Path`. Sorted.
+    pub files: Vec<Vec<u8>>,
+    pub names: Vec<GlobalName>,
+    /// `checkJs`
+    pub checks_javascript: bool,
+}
+
 #[derive(Default)]
 pub struct Report {
     /// Sorted as TypeScript sorts them: diagnostics without a file first, then by path and
     /// position.
     pub diagnostics: Vec<Diagnostic>,
-    /// Files in which a query was abandoned because the stack ran out: errors may be missing.
-    pub incomplete: Vec<Vec<u8>>,
+    /// Files of which errors may be missing.
+    pub incomplete: Vec<Incomplete>,
+    /// `Host::take_unreadable`: the source files that could not be read. Each was checked as an empty file.
+    pub unreadable: Vec<Vec<u8>>,
+    pub refused: Vec<Refused>,
+    pub without_include: Vec<WithoutInclude>,
+    pub globals: Vec<GlobalsOf>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
     /// By `package.json`.
@@ -808,6 +1290,9 @@ pub struct Report {
     /// `diagnostics` and of `listed_files`, and what a task has printed is printed together.
     pub tasks: Vec<TaskOutput>,
     pub files_loaded: usize,
+    /// Of several projects: how many parses they have in common. A file that two of them load counts twice in
+    /// `files_loaded`, and once here if they read it alike.
+    pub files_parsed_for_all: usize,
     pub files_checked: usize,
     /// Those that were to be checked in a program with an error in its syntax, its options or its
     /// global types. As in `tsc`, nothing else is reported for such a program.
@@ -847,12 +1332,17 @@ impl Report {
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
+        self.unreadable.extend(other.unreadable);
+        self.refused.extend(other.refused);
+        self.without_include.extend(other.without_include);
+        self.globals.extend(other.globals);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
         self.tasks.extend(other.tasks);
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
+        self.files_parsed_for_all += other.files_parsed_for_all;
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
         self.steps.extend(other.steps);
@@ -878,6 +1368,9 @@ impl Report {
 /// many of them are shown.
 const LINES_BEFORE: u32 = 3;
 const LINES_AFTER: u32 = 2;
+/// A line with more bytes is not hand-written. No layout shows it, and only one character more of it is stored
+/// (`Diagnostic::source`): a bundle on one line can have thousands of errors.
+pub const MAX_SHOWN_LINE: usize = 1000;
 
 /// The options used when there is no configuration file: those `bun init` writes, without the
 /// purely stylistic rules.
@@ -971,8 +1464,29 @@ fn located(
     end: u32,
     reported: Diagnostic,
 ) -> Diagnostic {
-    let (line, character) = line_and_character(text, starts, start);
-    let (end_line, end_character) = line_and_character(text, starts, end.max(start));
+    located_after(
+        &Counted::default(),
+        path,
+        text,
+        starts,
+        start,
+        end,
+        reported,
+    )
+}
+
+/// `counted`: see `line_and_character`.
+fn located_after(
+    counted: &Counted,
+    path: &[u8],
+    text: &[u8],
+    starts: &[u32],
+    start: u32,
+    end: u32,
+    reported: Diagnostic,
+) -> Diagnostic {
+    let (line, character) = line_and_character(text, starts, start, counted);
+    let (end_line, end_character) = line_and_character(text, starts, end.max(start), counted);
     let source_line = line.saturating_sub(LINES_BEFORE);
     let last_line = (end_line + LINES_AFTER).min(starts.len() as u32 - 1);
     Diagnostic {
@@ -993,26 +1507,31 @@ fn located(
 }
 
 /// `GetECMALineAndUTF16CharacterOfPosition`: the 0-based line that contains `offset`, and the number
-/// of UTF-16 code units before it on that line.
-fn line_and_character(text: &[u8], starts: &[u32], offset: u32) -> (u32, u32) {
+/// of UTF-16 code units before it on that line. What follows one of `counted` on its line is counted from there, not
+/// from the start of the line.
+fn line_and_character(text: &[u8], starts: &[u32], offset: u32, counted: &Counted) -> (u32, u32) {
     let offset = offset.min(text.len() as u32);
     let line = starts.partition_point(|&s| s <= offset) - 1;
-    let before = &text[starts[line] as usize..offset as usize];
-    (line as u32, utf16_len(before) as u32)
+    let mut places = counted.places.get();
+    let nearest = (0..places.len())
+        .filter(|&i| (starts[line]..=offset).contains(&places[i].0))
+        .max_by_key(|&i| places[i].0);
+    let (from, units) = nearest.map_or((starts[line], 0), |i| places[i]);
+    let character = units + strings::utf8_lossy_len_utf16(&text[from as usize..offset as usize]);
+    let written = nearest.unwrap_or_else(|| counted.older.get());
+    places[written] = (offset, character);
+    counted.places.set(places);
+    counted.older.set(1 - written);
+    (line as u32, character)
 }
 
-/// `core.UTF16Len`: a byte that is not part of a well-formed sequence is a U+FFFD of its own.
-fn utf16_len(text: &[u8]) -> usize {
-    let Some(ascii) = strings::first_non_ascii(text) else {
-        return text.len();
-    };
-    let (mut units, mut rest) = (ascii as usize, &text[ascii as usize..]);
-    while !rest.is_empty() {
-        let (rune, size) = decode_rune(rest);
-        units += if rune < 0x10000 { 1 } else { 2 };
-        rest = &rest[size..];
-    }
-    units
+/// Two offsets in a text that `line_and_character` was asked for, each with the number it found. Two, because errors
+/// that start at one place and end further and further on, as those of a chain of operators do, are asked for in turn.
+#[derive(Default)]
+struct Counted {
+    places: std::cell::Cell<[(u32, u32); 2]>,
+    /// Which of them was written before the other.
+    older: std::cell::Cell<usize>,
 }
 
 fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
@@ -1020,9 +1539,10 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
     let to = starts
         .get(line as usize + 1)
         .map_or(text.len(), |&s| s as usize);
-    text[from..to]
-        .trim_end_with(|c| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
-        .to_vec()
+    let line = text[from..to].trim_end_with(|c| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}'));
+    let is_inside_a_character = |&at: &usize| line.get(at).is_some_and(|it| it & 0xC0 == 0x80);
+    let end = (MAX_SHOWN_LINE + 1..).find(|at| !is_inside_a_character(at));
+    line[..line.len().min(end.unwrap_or(line.len()))].to_vec()
 }
 
 /// Runs the check that `request` describes. Each program is freed with its `Session` as soon as it
@@ -1038,16 +1558,22 @@ pub fn check_provided_then<R>(
     provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
+    // Unless `bun lint` or `bun fmt` has one.
+    use_a_pool_of_their_own("Bun Check");
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
     let cwd = host::from_native(request.cwd);
-    let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
+    let of_every_file = !request.plan_options.project_is_for_the_rest;
+    let named = (request.project.filter(|_| of_every_file))
+        .or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
-    let mut disk = host::Disk::with_already_read(threads, provided.already_read, &project);
+    let mut disk =
+        host::Disk::with_already_read(threads, provided.already_read, &project).started_in(&cwd);
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
+    disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -1067,7 +1593,7 @@ pub fn check_provided_then<R>(
     drop(lent);
     disk.caches.idle.lock().clear();
     // The process continues, so the free pages are returned to the system.
-    release_free_pages_of(bun_threading::WorkPool::get());
+    release_free_pages_of(pool_of_regions());
     if let Some(io_pool) = disk.io_pool() {
         release_free_pages_of(io_pool);
     }
@@ -1222,7 +1748,9 @@ impl Projects {
         // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
         // `tsc -b` has no such option.
         config::load_overriding(disk, &Session::new(), config, &|_| {
-            overriding_options(request, false)
+            let mut options = overriding_options(request, false);
+            options.extend(defaults_of_the_installed_typescript(disk, request, config));
+            options
         })
     }
 
@@ -1234,42 +1762,52 @@ impl Projects {
         request: &Request,
         config: &[u8],
         file: &[u8],
-        seen: &mut Vec<Vec<u8>>,
+        follows_references: bool,
     ) -> Option<Vec<u8>> {
         let is_case_sensitive = disk.is_case_sensitive();
-        let is_seen = |it: &Vec<u8>| is_same_path(it, config, is_case_sensitive);
-        if seen.iter().any(is_seen) || !disk.is_file(config) {
-            return None;
-        }
-        seen.push(config.to_vec());
-        let is_new = !self.files.contains_key(config);
-        let counts_javascript = self.counts_javascript;
-        let project = self.load(disk, request, config)?;
-        let references: Vec<Vec<u8>> = (project.references.iter())
-            .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
-            .collect();
-        if is_new {
-            let files = match counts_javascript {
-                false => project.files.clone(),
-                true => {
-                    let with_javascript = |has_references: bool| {
-                        let mut options = overriding_options(request, has_references);
-                        options.push((b"allowJs".to_vec(), Json::Bool(true)));
-                        options
-                    };
-                    config::load_overriding(disk, &Session::new(), config, &with_javascript)
-                        .map(|it| it.files)
-                        .unwrap_or_default()
-                }
+        let mut seen: Vec<Vec<u8>> = Vec::new();
+        // Those to look at, the next one last. A loop: a chain of references can be of any length.
+        let mut pending = vec![config.to_vec()];
+        while let Some(config) = pending.pop() {
+            let is_seen = |it: &Vec<u8>| is_same_path(it, &config, is_case_sensitive);
+            if seen.iter().any(is_seen) || !disk.is_file(&config) {
+                continue;
+            }
+            seen.push(config.clone());
+            let is_new = !self.files.contains_key(&config);
+            let counts_javascript = self.counts_javascript;
+            let Some(project) = self.load(disk, request, &config) else {
+                continue;
             };
-            let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
-            let paths = paths.map(Cow::into_owned).collect();
-            (self.files).insert(config.to_vec(), paths);
+            let references = project.references.iter().rev();
+            pending.extend(
+                references
+                    .filter(|_| follows_references)
+                    .map(|it| config::resolve_config_file_name_of_project_reference(&it.path)),
+            );
+            if is_new {
+                let files = match counts_javascript {
+                    false => project.files.clone(),
+                    true => {
+                        let with_javascript = |has_references: bool| {
+                            let mut options = overriding_options(request, has_references);
+                            options.push((b"allowJs".to_vec(), Json::Bool(true)));
+                            options
+                        };
+                        config::load_overriding(disk, &Session::new(), &config, &with_javascript)
+                            .map(|it| it.files)
+                            .unwrap_or_default()
+                    }
+                };
+                let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
+                let paths = paths.map(Cow::into_owned).collect();
+                (self.files).insert(config.clone(), paths);
+            }
+            if self.files[&config].contains(&*to_path(file, is_case_sensitive)) {
+                return Some(config);
+            }
         }
-        if self.files[config].contains(&*to_path(file, is_case_sensitive)) {
-            return Some(config.to_vec());
-        }
-        (references.iter()).find_map(|it| self.find_project_with(disk, request, it, file, seen))
+        None
     }
 
     /// Adds the configuration file and the files of `config` and of the projects that it references,
@@ -1282,20 +1820,23 @@ impl Projects {
         seen: &mut Vec<Vec<u8>>,
         files: &mut Vec<Vec<u8>>,
     ) {
-        let is_seen = |it: &Vec<u8>| is_same_path(it, config, disk.is_case_sensitive());
-        if seen.iter().any(is_seen) || !disk.is_file(config) {
-            return;
-        }
-        seen.push(config.to_vec());
-        let Some(project) = self.load(disk, request, config) else {
-            return;
-        };
-        files.extend(project.files.iter().cloned());
-        let references: Vec<Vec<u8>> = (project.references.iter())
-            .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
-            .collect();
-        for it in &references {
-            self.files_of_graph(disk, request, it, seen, files);
+        // Those to add, the next one last.
+        let mut pending = vec![config.to_vec()];
+        while let Some(config) = pending.pop() {
+            let is_seen = |it: &Vec<u8>| is_same_path(it, &config, disk.is_case_sensitive());
+            if seen.iter().any(is_seen) || !disk.is_file(&config) {
+                continue;
+            }
+            seen.push(config.clone());
+            let Some(project) = self.load(disk, request, &config) else {
+                continue;
+            };
+            files.extend(project.files.iter().cloned());
+            let references = project.references.iter().rev();
+            pending.extend(
+                references
+                    .map(|it| config::resolve_config_file_name_of_project_reference(&it.path)),
+            );
         }
     }
 
@@ -1311,12 +1852,31 @@ impl Projects {
         nearest: Option<Vec<u8>>,
         path: &[u8],
     ) -> Result<Option<Vec<u8>>, Option<Vec<u8>>> {
+        let has_to_include = request.plan_options.only_in_a_project_that_includes;
         let Some(nearest) = nearest else {
-            return Ok(None);
+            return if has_to_include { Err(None) } else { Ok(None) };
         };
-        if let Some(owner) = self.find_project_with(disk, request, &nearest, path, &mut Vec::new())
-        {
+        if let Some(owner) = self.find_project_with(disk, request, &nearest, path, true) {
             return Ok(Some(owner));
+        }
+        // `getAncestorConfigFileName`
+        let mut below = nearest.clone();
+        loop {
+            // `--project` is the only one that is asked.
+            let is_the_only_one =
+                request.project.is_some() && !request.plan_options.project_is_for_the_rest;
+            if !has_to_include || is_the_only_one {
+                break;
+            }
+            // Up to the root. What is above `/C:` is `/`, which is no directory of Windows.
+            let parent = ancestors(dirname::<Posix>(&below)).nth(1);
+            let Some(above) = parent.and_then(|it| config::find_config(disk, it)) else {
+                break;
+            };
+            if let Some(owner) = self.find_project_with(disk, request, &above, path, true) {
+                return Ok(Some(owner));
+            }
+            below = above;
         }
         let project = self.load(disk, request, &nearest);
         let is_solution =
@@ -1367,7 +1927,7 @@ fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
             }
         }
     }
-    found.sort_unstable();
+    found.shared_sort_unstable();
     found
 }
 
@@ -1488,11 +2048,26 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         }
         None => None,
     };
+    let (explicit, for_the_rest) = match request.plan_options.project_is_for_the_rest {
+        true => (None, explicit),
+        false => (explicit, None),
+    };
     // `--project`, or else the configuration file nearest to a directory, or else nearest to the
     // working directory.
+    // By directory: a run of the linter names every file of a repository.
+    let nearest_to: std::cell::RefCell<FxHashMap<Vec<u8>, Option<Vec<u8>>>> = Default::default();
     let config_in = |dir: &[u8]| {
-        let nearest = || config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
-        explicit.clone().or_else(nearest)
+        if explicit.is_some() {
+            return explicit.clone();
+        }
+        if let Some(known) = nearest_to.borrow().get(dir) {
+            return known.clone();
+        }
+        let nearest = config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
+        nearest_to
+            .borrow_mut()
+            .insert(dir.to_vec(), nearest.clone());
+        nearest
     };
     // The project that `tsc` compiles in a directory. Where it finds none, the nearest there is.
     let project_in = |dir: &[u8]| {
@@ -1511,8 +2086,11 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                     config: Some(&config),
                     named: None,
                     elsewhere: None,
+                    run: None,
+                    place: None,
                 };
-                return check_project_of(disk, request, &mut projects, of, report, started);
+                let projects = Guarded::new(projects);
+                return check_project_of(disk, request, &projects, of, report, started);
             }
             None => {
                 // `tsc` prints its help. Which of them is meant is not for a guess: they are
@@ -1534,8 +2112,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
 
     // Each file is checked in its own project, once.
     let mut by_project: Vec<(Option<Vec<u8>>, Extent, Vec<Vec<u8>>)> = Vec::new();
+    // From the end: most files are in the same project as the one before.
     let mut add = |owner: Option<Vec<u8>>, extent: Extent, file: Vec<u8>| match by_project
         .iter_mut()
+        .rev()
         .find(|it| {
             it.1 == extent
                 && match (&it.0, &owner) {
@@ -1548,10 +2128,23 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     };
     for path in &paths {
         if !disk.is_dir(path) {
+            let listed = (request.listed_projects.filter(|_| explicit.is_none()))
+                .map_or(&[][..], |it| it.of(path, is_case_sensitive));
+            let first = (listed.iter())
+                .find_map(|it| projects.find_project_with(disk, request, it, path, false));
+            if first.is_some() {
+                add(first, Extent::Project, path.clone());
+                continue;
+            }
             let nearest = config_in(dirname::<Posix>(path));
-            let owner = projects.owner_of(disk, request, nearest, path);
-            let owner = owner.unwrap_or_else(|nearest| nearest);
-            add(owner, Extent::Project, path.clone());
+            match projects.owner_of(disk, request, nearest, path) {
+                Err(_) if request.plan_options.only_in_a_project_that_includes => {
+                    if for_the_rest.is_some() {
+                        add(for_the_rest.clone(), Extent::Project, path.clone());
+                    }
+                }
+                Ok(owner) | Err(owner) => add(owner, Extent::Project, path.clone()),
+            }
             continue;
         }
         // The directory stands for the part of the project that is in it: of the project that is
@@ -1564,7 +2157,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             files.retain(is_in_directory);
             if !files.is_empty() {
                 files.extend(configs.into_iter().filter(is_in_directory));
-                files.sort_by_cached_key(|it| to_path(it, is_case_sensitive).into_owned());
+                files.shared_sort_by_cached_key(|it| to_path(it, is_case_sensitive).into_owned());
                 files.dedup_by(|a, b| is_same(a, b));
                 (files.into_iter()).for_each(|file| add(Some(config.clone()), Extent::Graph, file));
                 continue;
@@ -1618,7 +2211,15 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             files.retain(|it| !in_directories.contains(&*to_path(it, is_case_sensitive)));
         }
     }
-    by_project.retain(|it| !it.2.is_empty());
+    let is_at_once = request.plan_options.memory != 0 && disk.threads() > 1;
+    if !(is_at_once && by_project.len() > disk.threads()) {
+        by_project.retain(|it| for_the_rest.is_none() || it.0 != for_the_rest);
+    }
+    let only_the_globals = request.plan_options.only_the_globals;
+    by_project.retain(|it| !it.2.is_empty() && !(only_the_globals && it.0.is_none()));
+    if by_project.is_empty() && only_the_globals {
+        return report;
+    }
     if by_project.is_empty() {
         report.diagnostics.push(Diagnostic {
             text: [
@@ -1641,20 +2242,95 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let all: FxHashSet<&[u8]> = (paths_by_project.iter().flatten())
         .map(Vec::as_slice)
         .collect();
-    for ((config, extent, files), paths) in by_project.iter().zip(&paths_by_project) {
-        let own: FxHashSet<&[u8]> = paths.iter().map(Vec::as_slice).collect();
-        let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
-        let of = OfProject {
-            config: config.as_deref(),
-            named: Some((*extent, files.as_slice())),
-            elsewhere: (!is_one).then_some(&elsewhere),
+    // Declared before the session of any program, so it is dropped after them.
+    let of_run = Session::new();
+    let at_once = match request.plan_options.memory {
+        0 => 1,
+        _ => disk.threads().min(by_project.len()),
+    };
+    // Those with the most files first, so that no thread begins a large one when the others are nearly done.
+    let mut in_order: Vec<usize> = (0..by_project.len()).collect();
+    if at_once > 1 {
+        in_order.shared_sort_by_key(|&it| Reverse(by_project[it].2.len()));
+    }
+    let run = (!is_one).then(|| {
+        let run = Run::new(&of_run, disk.provided_paths().cloned().collect());
+        match request.plan_options.shares_every_file {
+            true => run,
+            false => run.of_declaration_files(),
+        }
+    });
+    let projects = Guarded::new(projects);
+    let in_common = || run.as_ref().map_or(0, Run::bytes);
+    let shares = (at_once > 1).then(|| Arc::new(Shares::new(disk.threads(), by_project.len())));
+    (*disk.shares.lock()).clone_from(&shares);
+    let room = Room {
+        bytes: (request.plan_options.memory / 4).max(1 << 30),
+        in_common: &in_common,
+        threads: disk.threads(),
+        shares: shares.as_deref(),
+        taken: Guarded::new(Taken::default()),
+        has_changed: bun_threading::Condvar::new(),
+    };
+    let next = AtomicUsize::new(0);
+    let reports: Vec<Guarded<Option<Report>>> =
+        by_project.iter().map(|_| Guarded::new(None)).collect();
+    // Each when there are threads and room for it.
+    let check_the_next_ones = || {
+        loop {
+            let turn = next.fetch_add(1, Ordering::Relaxed);
+            let Some(&index) = in_order.get(turn) else {
+                break;
+            };
+            let (config, extent, files) = &by_project[index];
+            let own: FxHashSet<&[u8]> = (paths_by_project[index].iter())
+                .map(Vec::as_slice)
+                .collect();
+            let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
+            let place = room.enter(turn, files.len(), all.len());
+            let of = OfProject {
+                config: config.as_deref(),
+                named: Some((*extent, files.as_slice())),
+                elsewhere: (!is_one).then_some(&elsewhere),
+                run: (run.as_ref()).filter(|_| for_the_rest.is_none() || *config != for_the_rest),
+                place: (at_once > 1).then_some(&place),
+            };
+            let (so_far, began) = (Report::default(), Instant::now());
+            let checked = check_project_of(disk, request, &projects, of, so_far, began);
+            *reports[index].lock() = Some(checked);
+        }
+    };
+    // A thread that loads and checks a program needs the stack of a worker. The calling thread has the stack it was given, so it
+    // only waits then.
+    std::thread::scope(|scope| {
+        let (threads, mut started) = (if at_once > 1 { at_once } else { 0 }, 0);
+        for _ in 0..threads {
+            // Without the thread, the others check its share.
+            let thread = std::thread::Builder::new()
+                .stack_size(STACK_OF_A_WORKER as usize)
+                .spawn_scoped(scope, || {
+                    // As a thread of the pool does when it starts: the parsers check the stack.
+                    bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
+                    check_the_next_ones();
+                });
+            started += usize::from(thread.is_ok());
+        }
+        if started == 0 {
+            check_the_next_ones();
+        }
+    });
+    *disk.shares.lock() = None;
+    for mut checked in reports {
+        let Some(checked) = checked.get_mut().take() else {
+            continue;
         };
-        let (so_far, began) = (Report::default(), Instant::now());
-        let checked = check_project_of(disk, request, &mut projects, of, so_far, began);
         report.projects_checked += checked.projects_checked.max(usize::from(!is_one));
         report.merge(checked);
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
+    if request.plan_options.shares_every_file {
+        report.files_parsed_for_all += run.as_ref().map_or(0, Run::parses);
+    }
     if !is_one {
         sort_as_one_project(&mut report);
     }
@@ -1674,30 +2350,212 @@ enum Extent {
 
 /// What `check_project_of` checks.
 #[derive(Clone, Copy)]
-struct OfProject<'a> {
+struct OfProject<'a, 'u> {
     /// `None`: there is no configuration file.
     config: Option<&'a [u8]>,
     /// `None`: all of its files.
     named: Option<(Extent, &'a [Vec<u8>])>,
     /// The files that are checked in another project, by `tspath.Path`. This one may import them.
     elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
+    /// Of the request, if it has more than one project.
+    run: Option<&'a Run<'u>>,
+    /// Among the programs that run at the same time.
+    place: Option<&'a Place<'a>>,
+}
+
+/// How many programs of a request run at the same time: as many as there are threads and memory for. What a program takes isn't
+/// known before its files are found. Until then it counts for what those that have ended took on average. From then on it
+/// counts for what it has, plus what a check has added on average. One that turns out larger than there is room for goes on
+/// when others have ended.
+struct Room<'a> {
+    /// What the process may take.
+    bytes: usize,
+    /// The bytes of what the programs have in common, which grows.
+    in_common: &'a (dyn Fn() -> usize + Sync),
+    threads: usize,
+    /// `None`: one program runs after the other, with all threads.
+    shares: Option<&'a Shares>,
+    taken: Guarded<Taken>,
+    has_changed: bun_threading::Condvar,
+}
+
+#[derive(Default)]
+struct Taken {
+    bytes: usize,
+    programs: usize,
+    /// Those whose files are found, and that go on.
+    going_on: usize,
+    /// Those that wait for room.
+    waiting: usize,
+    /// The most that one has taken so far.
+    largest: usize,
+    ended: usize,
+    /// What those that have ended took, all together.
+    of_the_ended: usize,
+    /// The part of it that they took after their files were found.
+    added: usize,
+}
+
+/// Of a program in a `Room`, until it is dropped.
+struct Place<'a> {
+    room: &'a Room<'a>,
+    bytes: AtomicUsize,
+    /// What it had when its files were found.
+    found: AtomicUsize,
+    goes_on: std::sync::atomic::AtomicBool,
+    /// Its share of the threads.
+    threads: usize,
+    /// It has no more of the files than one thread has of the work, so one thread checks it.
+    is_for_one_thread: bool,
+}
+
+impl Room<'_> {
+    /// There is always room for a program of this size on each thread, unless `bytes` says otherwise.
+    const SMALL: usize = 64 << 20;
+
+    /// Whether the programs may count for `bytes` together. Then the request takes no more than half as much again as with one
+    /// program after the other, which is what they have in common and the largest, and the process no more than `self.bytes`.
+    /// Part of what the programs count for is resident already, so this errs on the safe side.
+    fn has(&self, taken: &Taken, bytes: usize) -> bool {
+        let in_common = (self.in_common)();
+        let resident = bun_sys::self_process_memory_usage().unwrap_or(in_common);
+        let one_after_the_other = in_common + taken.largest;
+        bytes <= (taken.largest + one_after_the_other / 2).max(self.threads * Room::SMALL)
+            && resident + bytes <= self.bytes
+    }
+
+    /// For a program that has `threads`. They have nothing to do meanwhile.
+    fn wait(
+        &self,
+        taken: &mut bun_threading::guarded::GuardedLock<'_, Taken, bun_threading::Mutex>,
+        threads: usize,
+    ) {
+        if let Some(shares) = self.shares {
+            shares.lend(threads);
+        }
+        taken.waiting += 1;
+        self.has_changed.wait_guarded(taken);
+        taken.waiting -= 1;
+        if let Some(shares) = self.shares {
+            shares.take_back(threads);
+        }
+    }
+
+    /// For program number `turn`, which has `files` of `all` files. Waits until it has its threads, and until there is room for
+    /// one more or nothing else runs.
+    fn enter(&self, turn: usize, files: usize, all: usize) -> Place<'_> {
+        let threads = (files * self.threads / all.max(1)).clamp(1, self.threads);
+        if let Some(shares) = self.shares {
+            shares.take(turn, threads);
+        }
+        let mut taken = self.taken.lock();
+        loop {
+            let bytes = (taken.of_the_ended / taken.ended.max(1)).max(Room::SMALL);
+            if taken.programs == 0 || self.has(&taken, taken.bytes + bytes) {
+                taken.programs += 1;
+                taken.bytes += bytes;
+                return Place {
+                    room: self,
+                    bytes: AtomicUsize::new(bytes),
+                    found: AtomicUsize::new(0),
+                    goes_on: std::sync::atomic::AtomicBool::new(false),
+                    threads,
+                    is_for_one_thread: files * self.threads <= all,
+                };
+            }
+            self.wait(&mut taken, threads);
+        }
+    }
+}
+
+impl Place<'_> {
+    fn counts_for(&self, taken: &mut Taken, bytes: usize) {
+        taken.bytes = taken
+            .bytes
+            .saturating_sub(self.bytes.swap(bytes, Ordering::Relaxed))
+            + bytes;
+    }
+
+    /// The files of the program are found, and it has `bytes`. Waits until there is room for what it is expected to take, or no
+    /// other goes on.
+    fn has_found_its_files(&self, bytes: usize) {
+        let mut taken = self.room.taken.lock();
+        self.found.store(bytes, Ordering::Relaxed);
+        taken.largest = taken.largest.max(bytes);
+        let expected = bytes + taken.added / taken.ended.max(1);
+        self.counts_for(&mut taken, expected);
+        self.room.has_changed.notify_all();
+        while taken.going_on > 0 && !self.room.has(&taken, taken.bytes) {
+            self.room.wait(&mut taken, self.threads);
+        }
+        taken.going_on += 1;
+        self.goes_on.store(true, Ordering::Relaxed);
+    }
+
+    /// It has taken `bytes` in the end.
+    fn has_taken(&self, bytes: usize) {
+        let mut taken = self.room.taken.lock();
+        let found = self.found.load(Ordering::Relaxed);
+        taken.largest = taken.largest.max(bytes);
+        taken.ended += 1;
+        taken.of_the_ended += bytes;
+        taken.added += bytes.saturating_sub(found);
+        self.counts_for(&mut taken, bytes);
+    }
+}
+
+impl Drop for Place<'_> {
+    fn drop(&mut self) {
+        let mut taken = self.room.taken.lock();
+        taken.bytes = taken.bytes.saturating_sub(*self.bytes.get_mut());
+        taken.programs -= 1;
+        if *self.goes_on.get_mut() {
+            taken.going_on -= 1;
+        }
+        let is_one_waiting = taken.waiting > 0;
+        drop(taken);
+        // What the allocator keeps of this program to use it again is resident too.
+        if is_one_waiting {
+            bun_core::Global::mimalloc_cleanup(true);
+        }
+        self.room.has_changed.notify_all();
+        if let Some(shares) = self.room.shares {
+            shares.give_back(self.threads);
+        }
+    }
 }
 
 fn check_project_of(
     disk: &host::Disk,
     request: &Request,
-    projects: &mut Projects,
-    of: OfProject<'_>,
+    projects: &Guarded<Projects>,
+    of: OfProject<'_, '_>,
     mut report: Report,
     started: Instant,
 ) -> Report {
     let mut project = match of.config {
-        Some(config) => match projects.take(disk, request, config) {
+        Some(config) => match projects.lock().take(disk, request, config) {
             Ok(project) => project,
             // `tscCompilation`: "these are unrecoverable errors--exit to report them as
             // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
+            Err(errors) if request.plan_options.refuses_broken_configurations => {
+                let is_case_sensitive = disk.is_case_sensitive();
+                let files = of.named.map(|it| it.1).unwrap_or_default().iter();
+                let mut last = None;
+                report.refused.push(Refused {
+                    config_path: config.to_vec(),
+                    diagnostics: (errors.iter())
+                        .map(|it| of_config_error(disk, config, it, &mut last))
+                        .collect(),
+                    files: files
+                        .map(|it| to_path(it, is_case_sensitive).into_owned())
+                        .collect(),
+                });
+                return report;
+            }
             Err(errors) => {
-                let errors = errors.iter().map(|it| of_config_error(disk, config, it));
+                let mut last = None;
+                let errors = (errors.iter()).map(|it| of_config_error(disk, config, it, &mut last));
                 match request.build {
                     true => report
                         .diagnostics
@@ -1716,7 +2574,7 @@ fn check_project_of(
     };
     let is_case_sensitive = disk.is_case_sensitive();
     let named = of.named.map(|(extent, named)| {
-        if extent == Extent::Project {
+        if extent == Extent::Project && !request.plan_options.only_the_globals {
             // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
             // affect every other file, so a file must produce the same errors with and without path arguments.
             let files = project.files.iter();
@@ -1739,7 +2597,7 @@ fn check_project_of(
         // From here on they are only looked for.
         let named = named.iter().map(|it| to_path(it, is_case_sensitive));
         let mut named: Vec<Vec<u8>> = named.map(Cow::into_owned).collect();
-        named.sort_unstable();
+        named.shared_sort_unstable();
         (extent, named)
     });
     let named = (named.as_ref()).map(|(extent, files)| (*extent, files.as_slice()));
@@ -1751,15 +2609,7 @@ fn check_project_of(
         project.options.allow_js = true;
     }
     if request.build || !project.references.is_empty() {
-        check_with_references(disk, project, request, report, started, named, of.elsewhere)
-    } else {
-        // All of its files: the project, with what no file imports.
-        let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
-            let is_named = |it: &Vec<u8>| is_among(named, &to_path(it, is_case_sensitive));
-            *extent == Extent::Graph && project.files.iter().all(is_named)
-        };
-        let named = named.filter(|it| !is_whole(it)).map(|it| it.1);
-        check_named_files(
+        check_with_references(
             disk,
             project,
             request,
@@ -1767,7 +2617,28 @@ fn check_project_of(
             started,
             named,
             of.elsewhere,
+            of.run,
+            of.place,
+        )
+    } else {
+        // All of its files: the project, with what no file imports.
+        let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
+            let is_named = |it: &Vec<u8>| is_among(named, &to_path(it, is_case_sensitive));
+            *extent == Extent::Graph && project.files.iter().all(is_named)
+        };
+        let named = named.filter(|it| !is_whole(it)).map(|it| it.1);
+        let is_elsewhere = (of.elsewhere).map(|elsewhere| |path: &[u8]| elsewhere.contains(path));
+        check_named_files(
+            disk,
+            project,
+            request,
+            report,
+            started,
+            named,
+            (is_elsewhere.as_ref()).map(|it| it as &dyn Fn(&[u8]) -> bool),
             None,
+            of.run,
+            of.place,
         )
     }
 }
@@ -1786,8 +2657,7 @@ struct ReferencedProject {
 /// `Orchestrator`, limited to `GenerateGraph`.
 struct Graph<'h> {
     host: &'h dyn Host,
-    /// For `config::load_overriding`.
-    session: &'h Session,
+    request: &'h Request<'h>,
     overrides: Vec<(Vec<u8>, Json)>,
     /// `tasks`, until `setup_build_task` takes them: `config` and `resolved`, by the `tspath.Path`
     /// of the configuration file.
@@ -1817,6 +2687,43 @@ impl Graph<'_> {
             };
             references.map(name).collect()
         };
+        let load = |config: &[u8]| -> Option<config::Project> {
+            let over = |_: bool| {
+                let mut options = self.overrides.clone();
+                let defaults =
+                    defaults_of_the_installed_typescript(self.host, self.request, config);
+                options.extend(defaults);
+                options
+            };
+            if !self.host.is_file(config) {
+                return None;
+            }
+            // What is parsed is freed at once: there can be tens of thousands.
+            config::load_overriding(self.host, &Session::new(), config, &over).ok()
+        };
+        // On all threads, by name: what the root references, then what that references, and so on.
+        let mut ahead: FxHashMap<Vec<u8>, Option<config::Project>> = FxHashMap::default();
+        let mut names = referenced(&root);
+        loop {
+            names.shared_sort_unstable();
+            names.dedup();
+            names.retain(|name| !ahead.contains_key(name));
+            let loaded: Vec<Guarded<Option<config::Project>>> =
+                names.iter().map(|_| Guarded::new(None)).collect();
+            match &names[..] {
+                [] => break,
+                [name] => *loaded[0].lock() = load(name),
+                names => (self.host).parallel(names.len(), &|at| {
+                    *loaded[at].lock() = load(&names[at]);
+                }),
+            }
+            let loaded = loaded.into_iter().map(|mut it| it.get_mut().take());
+            let before = std::mem::take(&mut names);
+            for (name, project) in before.into_iter().zip(loaded) {
+                names.extend(project.iter().flat_map(&referenced));
+                ahead.insert(name, project);
+            }
+        }
         let mut queued = referenced(&root);
         let config = root.config_path.clone();
         self.tasks.insert(key(&config), (config, Some(root)));
@@ -1825,11 +2732,7 @@ impl Graph<'_> {
             if self.tasks.contains_key(&path) {
                 continue;
             }
-            let over = |_: bool| self.overrides.clone();
-            let resolved = match self.host.is_file(&config) {
-                true => config::load_overriding(self.host, self.session, &config, &over).ok(),
-                false => None,
-            };
+            let resolved = ahead.remove(&config).flatten();
             if let Some(project) = &resolved {
                 queued.extend(referenced(project));
             }
@@ -1837,8 +2740,13 @@ impl Graph<'_> {
         }
     }
 
-    /// `setupBuildTask`: the index of the task in `projects`. `None`: nothing has to wait for it.
-    fn setup_build_task(&mut self, config_name: &[u8], in_circular_context: bool) -> Option<usize> {
+    /// The start of `setupBuildTask`. `Err`: the task is not new: its index in `projects`, or
+    /// `None` if nothing has to wait for it.
+    fn open_build_task(
+        &mut self,
+        config_name: &[u8],
+        in_circular_context: bool,
+    ) -> Result<OpenTask, Option<usize>> {
         let path = to_path(config_name, self.host.is_case_sensitive()).into_owned();
         if let Some(&index) = self.index_of.get(&path) {
             // `analyzing`
@@ -1846,32 +2754,79 @@ impl Graph<'_> {
                 let stack = self.circularity_stack.join(&b'\n');
                 self.errors.push(global(6202, &[stack]));
             }
-            return index;
+            return Err(index);
         }
         // Not there: it is `completed`, and its configuration file was not found.
-        let (config, resolved) = self.tasks.remove(&path)?;
+        let Some((config, resolved)) = self.tasks.remove(&path) else {
+            return Err(None);
+        };
         let Some(project) = resolved else {
             let before = self.projects.len();
             let not_found = global(6053, &[displayed_path(&config)]);
             self.not_found.push((before, not_found));
-            return None;
+            return Err(None);
         };
         self.index_of.insert(path.clone(), None);
         let shown = displayed_path(config_name).into_owned();
         self.circularity_stack.push(shown);
-        let mut up_stream = Vec::new();
-        for reference in &project.references {
-            let sub_reference =
-                config::resolve_config_file_name_of_project_reference(&reference.path);
-            let in_circular_context = in_circular_context || reference.circular;
-            up_stream.extend(self.setup_build_task(&sub_reference, in_circular_context));
-        }
-        self.circularity_stack.pop();
-        let index = self.projects.len();
-        self.index_of.insert(path, Some(index));
-        self.projects.push(ReferencedProject { project, up_stream });
-        Some(index)
+        Ok(OpenTask {
+            path,
+            project,
+            references_done: 0,
+            up_stream: Vec::new(),
+            in_circular_context,
+        })
     }
+
+    /// `setupBuildTask` for the project at `config_name` and all that it references. A loop: a chain
+    /// of references can be of any length.
+    fn setup_build_tasks(&mut self, config_name: &[u8]) {
+        // The tasks whose references are being set up, each referenced by the one before it.
+        let in_circular_context = false;
+        let root = self.open_build_task(config_name, in_circular_context);
+        let mut open: Vec<OpenTask> = root.into_iter().collect();
+        while let Some(mut task) = open.pop() {
+            let index = match task.project.references.get(task.references_done) {
+                Some(reference) => {
+                    let name =
+                        config::resolve_config_file_name_of_project_reference(&reference.path);
+                    let in_circular_context = task.in_circular_context || reference.circular;
+                    task.references_done += 1;
+                    open.push(task);
+                    match self.open_build_task(&name, in_circular_context) {
+                        Ok(referenced) => {
+                            open.push(referenced);
+                            continue;
+                        }
+                        Err(index) => index,
+                    }
+                }
+                None => {
+                    self.circularity_stack.pop();
+                    let index = self.projects.len();
+                    self.index_of.insert(task.path, Some(index));
+                    self.projects.push(ReferencedProject {
+                        project: task.project,
+                        up_stream: task.up_stream,
+                    });
+                    Some(index)
+                }
+            };
+            if let Some(waiting) = open.last_mut() {
+                waiting.up_stream.extend(index);
+            }
+        }
+    }
+}
+
+/// A task of [`Graph`] between the start and the end of `setupBuildTask`.
+struct OpenTask {
+    path: Vec<u8>,
+    project: config::Project,
+    /// How many of the references of `project` have been set up.
+    references_done: usize,
+    up_stream: Vec<usize>,
+    in_circular_context: bool,
 }
 
 /// The files that the projects of a `tsc -b` run are going to emit, and the directories that
@@ -1897,40 +2852,92 @@ impl Expected {
     }
 }
 
+/// What the projects of a `tsc -b` run have emitted so far, and which of them are built. Nothing is written to disk.
+struct Emitted {
+    /// By `tspath.Path`, like `directories`: the file system finds a file however its name is spelled, if it ignores case.
+    /// The projects that have emitted the file, each with the text. A JavaScript file is empty: nothing prints its text.
+    files: ShardedMap<Vec<u8>, Guarded<Vec<(usize, Arc<Vec<u8>>)>>>,
+    /// The directories that contain the files, and all their ancestors: of which projects.
+    directories: ShardedMap<Vec<u8>, Guarded<Vec<usize>>>,
+    has_files: AtomicBool,
+    /// By project: how many were built before it. `usize::MAX`: it is not built.
+    built_after: Vec<AtomicUsize>,
+}
+
+impl Emitted {
+    fn new(projects: usize) -> Emitted {
+        Emitted {
+            files: ShardedMap::default(),
+            directories: ShardedMap::default(),
+            has_files: AtomicBool::new(false),
+            built_after: (0..projects)
+                .map(|_| AtomicUsize::new(usize::MAX))
+                .collect(),
+        }
+    }
+
+    /// Once for a project, before it counts as built.
+    fn add(&self, project: usize, files: Vec<(Vec<u8>, Arc<Vec<u8>>)>) {
+        if !files.is_empty() {
+            self.has_files.store(true, Ordering::Relaxed);
+        }
+        let mut directories: FxHashSet<Vec<u8>> = FxHashSet::default();
+        for (path, text) in files {
+            let mut directory = dirname::<Posix>(&path);
+            while directory.len() > 1 && directories.insert(directory.to_vec()) {
+                directory = dirname::<Posix>(directory);
+            }
+            let of_all = self.files.insert_ref(path, Guarded::default());
+            of_all.lock().push((project, text));
+        }
+        for directory in directories {
+            let of_all = self.directories.insert_ref(directory, Guarded::default());
+            of_all.lock().push(project);
+        }
+    }
+}
+
 /// The file system as a `tsc -b` run leaves it for one project: it also contains what the projects
 /// before it in the build order have emitted, whether it references them or not.
-/// Nothing is written to disk.
 struct WithOutputs<'h> {
     disk: &'h dyn Host,
-    /// By `tspath.Path`, like `directories`: the file system finds a file however its name is
-    /// spelled, if it ignores case. A JavaScript file is empty: nothing prints its text.
-    files: FxHashMap<Vec<u8>, Arc<Vec<u8>>>,
-    /// The directories that contain the files, and all their ancestors.
-    directories: FxHashSet<Vec<u8>>,
+    emitted: &'h Emitted,
     expected: &'h Expected,
-    /// By project: it comes before this one and is not built yet, so `files` lacks what it emits.
-    is_pending: Vec<bool>,
-    /// Those of them whose output this project has asked for. What it was answered is wrong.
+    /// Of this project, in the build order.
+    index: usize,
+    /// How many projects were built when this one began. What the others emit meanwhile is not there for it.
+    built_before: usize,
+    /// `Host::origin` of what the first project emits.
+    first_origin: usize,
+    /// The projects before it that it does not see, and whose output it has asked for. What it was answered is wrong.
     awaited: Guarded<Vec<usize>>,
     /// `Host::take_unreadable`, for this project: others are read through `disk` at the same time.
     unreadable: Guarded<Vec<Vec<u8>>>,
+    /// How many projects are being built now. The thread that builds this one loads and checks it, so it has the stack of a
+    /// worker, and `helpers` help it. `None`: it only waits, and the pool does the work.
+    built_now: Option<&'h AtomicUsize>,
 }
 
 impl WithOutputs<'_> {
-    fn add(&mut self, path: Vec<u8>, text: Arc<Vec<u8>>) {
-        let mut directory = dirname::<Posix>(&path);
-        while directory.len() > 1 && self.directories.insert(directory.to_vec()) {
-            directory = dirname::<Posix>(directory);
-        }
-        self.files.insert(path, text);
+    /// The threads are divided equally among the projects that are being built. With a project for every thread, each is
+    /// the work of one thread, which waits for no other. Rounded up: the threads of one project do wait for each other.
+    fn helpers(&self, built_now: &AtomicUsize) -> usize {
+        let projects = built_now.load(Ordering::Relaxed).max(1);
+        self.disk.threads().max(1).div_ceil(projects) - 1
+    }
+
+    /// What `project` has emitted is there.
+    fn sees(&self, project: usize) -> bool {
+        let built_after = &self.emitted.built_after[project];
+        project < self.index && built_after.load(Ordering::Relaxed) < self.built_before
     }
 
     /// `path` with symlinks resolved in the longest prefix that exists on disk: a workspace package
     /// is reached through a symlink in a `node_modules`, and its emitted files are keyed by its
     /// real path.
     fn through_links(&self, path: &[u8]) -> Option<Vec<u8>> {
-        if self.files.is_empty() && !self.is_pending.contains(&true)
-            || !strings::contains(path, b"/node_modules/")
+        if !strings::contains(path, b"/node_modules/")
+            || self.expected.files.is_empty() && !self.emitted.has_files.load(Ordering::Relaxed)
         {
             return None;
         }
@@ -1942,28 +2949,33 @@ impl WithOutputs<'_> {
 
     /// `projects` emit what was asked for.
     fn wait_for(&self, projects: Option<&Vec<usize>>) {
-        let pending = projects.into_iter().flatten();
-        let mut pending = pending.filter(|&&it| self.is_pending[it]).peekable();
+        let before = projects.into_iter().flatten();
+        let before = before.take_while(|&&it| it < self.index);
+        let mut pending = before.filter(|&&it| !self.sees(it)).peekable();
         if pending.peek().is_some() {
             self.awaited.lock().extend(pending);
         }
     }
 
-    fn file(&self, name: &[u8]) -> Option<&Vec<u8>> {
+    /// With the project that has emitted it: of several, the last in the build order has written last.
+    fn file(&self, name: &[u8]) -> Option<(usize, Arc<Vec<u8>>)> {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
         self.wait_for(self.expected.files.get(&*path));
-        self.files.get(&*path).map(|text| &**text)
+        let of_all = self.emitted.files.get_ref(&*path)?.lock();
+        let seen = of_all.iter().filter(|it| self.sees(it.0));
+        seen.max_by_key(|it| it.0).cloned()
     }
 
     fn has_directory(&self, name: &[u8]) -> bool {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
         self.wait_for(self.expected.directories.get(&*path));
-        self.directories.contains(&*path)
+        let of_all = self.emitted.directories.get_ref(&*path);
+        of_all.is_some_and(|of_all| of_all.lock().iter().any(|&it| self.sees(it)))
     }
 
-    fn written(&self, path: &[u8]) -> Option<&Vec<u8>> {
+    fn written(&self, path: &[u8]) -> Option<(usize, Arc<Vec<u8>>)> {
         let written = self.file(path);
         written.or_else(|| self.file(&self.through_links(path)?))
     }
@@ -1978,18 +2990,21 @@ impl Host for WithOutputs<'_> {
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         match self.written(path) {
-            Some(written) => Some(Cow::Owned(written.clone())),
+            Some((_, written)) => Some(Cow::Owned((*written).clone())),
             None => self.disk.read(path),
         }
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         match self.written(path) {
-            Some(written) => Cow::Owned(written.clone()),
+            Some((_, written)) => Cow::Owned((*written).clone()),
             None => self.disk.read(path).unwrap_or_else(|| {
                 self.unreadable.lock().push(path.to_vec());
                 Cow::default()
             }),
         }
+    }
+    fn origin(&self, path: &[u8]) -> usize {
+        (self.written(path)).map_or(0, |(project, _)| self.first_origin + project)
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
@@ -2032,7 +3047,7 @@ impl Host for WithOutputs<'_> {
         path: &[u8],
         text: &[u8],
         atoms: &bun_sema::atom::Interner<'s>,
-        options: &bun_sema::resolve::Options,
+        options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }
@@ -2040,16 +3055,47 @@ impl Host for WithOutputs<'_> {
         self.disk.parse_package_json(arena, text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        self.disk.parallel(count, work);
+        match self.built_now {
+            Some(built_now) => (self.disk).with_helpers(self.helpers(built_now), count, work),
+            None => self.disk.parallel(count, work),
+        }
+    }
+    fn is_of_one_thread(&self) -> bool {
+        (self.built_now).is_some_and(|built_now| self.helpers(built_now) == 0)
+    }
+    fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        self.disk.with_helpers(helpers, count, work);
+    }
+    fn parallel_while_others_wait(
+        &self,
+        blocked: usize,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+    ) {
+        match self.built_now {
+            // Each project has a thread of its own and as many helpers as this one.
+            Some(built_now) => {
+                let helpers = (self.helpers(built_now) + 1) * (blocked + 1) - 1;
+                self.disk.with_helpers(helpers, count, work);
+            }
+            None => self.disk.parallel(count, work),
+        }
     }
     fn loaded(&self) {
-        self.disk.loaded();
+        // The threads go on to parse the files of the next project.
+        if (self.built_now).is_none_or(|it| it.load(Ordering::Relaxed) < 2) {
+            self.disk.loaded();
+        }
     }
     fn threads(&self) -> usize {
         self.disk.threads()
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.disk.io_pool()
+        // The threads that only read serve one load at a time.
+        match self.built_now.map(|it| it.load(Ordering::Relaxed)) {
+            Some(2..) => None,
+            _ => self.disk.io_pool(),
+        }
     }
 }
 
@@ -2061,14 +3107,18 @@ impl Host for WithOutputs<'_> {
 /// `named`: see `check_named_files` and `Extent`.
 /// `elsewhere`: see `OfProject`.
 fn check_with_references(
-    host: &dyn Host,
+    host: &host::Disk,
     root: config::Project,
     request: &Request,
     mut report: Report,
     started: Instant,
     named: Option<(Extent, &[Vec<u8>])>,
     elsewhere: Option<&FxHashSet<&[u8]>>,
+    run: Option<&Run<'_>>,
+    place: Option<&Place<'_>>,
 ) -> Report {
+    // Declared before the session of any program, so it is dropped after them.
+    let of_build = Session::new();
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
     let follows_references = !request.build && root.files.is_empty();
@@ -2077,7 +3127,7 @@ fn check_with_references(
     let configuration = Session::new();
     let mut graph = Graph {
         host,
-        session: &configuration,
+        request,
         // The command line is for the projects that are reported: that of a plain `tsc`, for the
         // one that it is given.
         overrides: match reports_references {
@@ -2092,7 +3142,7 @@ fn check_with_references(
         not_found: Vec::new(),
     };
     graph.create_build_tasks(root);
-    graph.setup_build_task(&root_config_path, false);
+    graph.setup_build_tasks(&root_config_path);
     let Graph {
         projects,
         index_of,
@@ -2114,9 +3164,10 @@ fn check_with_references(
         (index_of.get(&*to_path(&root_config_path, is_case_sensitive))).and_then(|it| *it);
     let about_references: Vec<Vec<ConfigError>> = (projects.iter())
         .map(|p| {
-            (verify_project_references(&p.project, &resolved).iter())
-                .map(|(config_path, problem)| {
-                    ConfigError::of_problem(host, &configuration, config_path, problem)
+            (verify_project_references(&p.project, &resolved).chunk_by(|a, b| a.0 == b.0))
+                .flat_map(|in_one_file| {
+                    let problems = in_one_file.iter().map(|it| &it.1);
+                    ConfigError::of_problems(host, &configuration, in_one_file[0].0, problems)
                 })
                 .collect()
         })
@@ -2145,7 +3196,17 @@ fn check_with_references(
             Some((output_dir.clone(), root_dir.to_vec()))
         })
         .collect();
-    let up_stream: Vec<Vec<usize>> = projects.iter().map(|p| p.up_stream.clone()).collect();
+    let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
+    // Then there is one program, that of `root`, and it reads what is on the disk. Otherwise what one program emits
+    // another reads, and several run at the same time.
+    let is_one_program = reads_sources && !reports_references;
+    // Nothing waits for what is not emitted.
+    let up_stream: Vec<Vec<usize>> = (projects.iter())
+        .map(|p| match reads_sources {
+            true => Vec::new(),
+            false => p.up_stream.clone(),
+        })
+        .collect();
     // `ResolvedProjectReferencePaths`: what the program of a project is made from. One that closes a
     // cycle is among them.
     let references: Vec<Vec<usize>> = (projects.iter())
@@ -2159,7 +3220,10 @@ fn check_with_references(
         .collect();
     let options_of_projects: Vec<Options> =
         projects.iter().map(|p| p.project.options.clone()).collect();
-    let is_read_later = |index: usize| references.iter().any(|of| of.contains(&index));
+    let mut is_read_later = vec![false; projects.len()];
+    for &index in references.iter().flatten() {
+        is_read_later[index] = true;
+    }
     let count = projects.len();
     // See `Extent::Graph`.
     let has_named: Vec<bool> = (projects.iter())
@@ -2171,20 +3235,42 @@ fn check_with_references(
             _ => true,
         })
         .collect();
-    let mut is_left_out: Vec<bool> = has_named.iter().map(|has| !has).collect();
-    let mut pending: Vec<usize> = (0..count).filter(|&index| has_named[index]).collect();
+    let mut is_left_out: Vec<bool> = (has_named.iter().enumerate())
+        // What is only read is read from its sources, by the program that reads it.
+        .map(|(index, has)| {
+            !has || reads_sources && !reports_references && Some(index) != root_index
+        })
+        .collect();
+    let mut pending: Vec<usize> = (0..count)
+        .filter(|&index| has_named[index] && !reads_sources)
+        .collect();
     while let Some(index) = pending.pop() {
         let referenced = references[index].iter();
         pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
     }
+    // As `build` below.
+    let is_solution =
+        |index: usize| roots[index].is_empty() && projects[index].project.has_references;
+    let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
+    // The programs read the same declaration files: the libraries, what is in `node_modules`, and what one emits for the
+    // others. Each is parsed once, and freed in the end.
+    let of_this_build = (run.is_none() && !reads_sources && loaded().count() > 1).then(|| {
+        Run::new(&of_build, host.provided_paths().cloned().collect()).of_declaration_files()
+    });
+    let of_request = run.filter(|_| !reads_sources);
+    let first_origin = match &of_this_build {
+        Some(run) => run.origins(count),
+        None => of_request.map_or(1, |run| run.origins(count)),
+    };
     let is_read_by_a_program = |index: usize| {
         (0..count)
             .any(|by| !is_left_out[by] && !roots[by].is_empty() && references[by].contains(&index))
     };
     // Under `noEmit` nothing is emitted, and a `.d.ts` next to a `.js` source would be resolved
     // in its place.
-    let writes_declaration_files =
-        |index: usize| is_read_later(index) && !options_of_projects[index].no_emit;
+    let writes_declaration_files = |index: usize| {
+        is_read_later[index] && !options_of_projects[index].no_emit && !reads_sources
+    };
     let output_of = |index: usize| {
         let output = outputs[index].as_ref();
         output.map(|it| (it.0.as_slice(), it.1.as_slice(), is_case_sensitive))
@@ -2211,7 +3297,7 @@ fn check_with_references(
         false => to_path(&name, false).into_owned(),
     };
     let mut expected = Expected::default();
-    for (index, sources) in roots.iter().enumerate() {
+    for (index, sources) in roots.iter().enumerate().filter(|_| !reads_sources) {
         for source in sources {
             if writes_declaration_files(index)
                 && output_declaration_file_name(source, None).is_some()
@@ -2223,23 +3309,62 @@ fn check_with_references(
             }
         }
     }
+    // `ParseInputOutputNames`, `getOutputDeclarationAndSourceFileNames`, for what a program references, directly or not.
+    let mut is_reached = vec![false; count];
+    let mut pending: Vec<usize> = loaded()
+        .flat_map(|index| &references[index])
+        .copied()
+        .collect();
+    while let Some(index) = pending.pop() {
+        if !std::mem::replace(&mut is_reached[index], true) {
+            pending.extend(&references[index]);
+        }
+    }
+    let mut project_files = ProjectFiles::default();
+    for index in (0..count).filter(|&index| is_reached[index]) {
+        for (source, path) in roots[index].iter().zip(&root_paths[index]) {
+            let output_dts = match reads_sources {
+                true => None,
+                false => output_declaration_file_name(source, output_of(index)),
+            };
+            if let Some(output_dts) = &output_dts {
+                let output_path = to_path(output_dts, is_case_sensitive).into_owned();
+                let sources = project_files.outputs.entry(output_path).or_default();
+                sources.push(path.clone());
+            }
+            let of_all = project_files.sources.entry(path.clone()).or_default();
+            of_all.push(ProjectFile {
+                project: index as u32,
+                source: source.clone(),
+                output_dts: output_dts.unwrap_or_default(),
+            });
+        }
+    }
+    let project_files = Arc::new(project_files);
     let inputs: Vec<(config::Project, Vec<ConfigError>)> = (projects.into_iter())
         .zip(about_references)
         .map(|(referenced, about)| (referenced.project, about))
         .collect();
-    // What each project has emitted, once it is built: see `WithOutputs::files`.
-    type Emitted = Vec<(Vec<u8>, Arc<Vec<u8>>)>;
-    let emitted: Vec<Guarded<Emitted>> = (0..count).map(|_| Guarded::new(Vec::new())).collect();
-    // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those
-    // that it references.
-    let build = |index: usize, is_built: &[bool]| -> Result<Option<Report>, Vec<usize>> {
+    let emitted = Emitted::new(count);
+    // Each program occupies memory, for every declaration file that it reaches, however few files the project lists. One
+    // that reads the sources of what it references has all of those files too.
+    let at_once = match reads_sources {
+        true => request.plan_options.projects_at_once,
+        false => request.plan_options.projects_at_once * 4,
+    };
+    let at_once = at_once.clamp(1, host.threads().max(1)).min(count.max(1));
+    let built_now = (!reads_sources).then(|| AtomicUsize::new(0));
+    // `built_before`: how many are built now. `Err`: the projects that have to be built first, besides
+    // those that it references.
+    let build = |index: usize, built_before: usize| -> Result<Option<Report>, Vec<usize>> {
         let (mut project, mut about_references) = inputs[index].clone();
         if project.files.is_empty() && project.has_references {
             // `upToDateStatusTypeSolution`: there is no program. `buildProject` reports each of
             // `GetConfigFileParsingDiagnostics` as it comes.
             let errors = project.errors.iter().filter(|e| !e.is_about_options);
+            let mut last = None;
             let diagnostics: Vec<Diagnostic> = errors
-                .map(|error| of_config_error(host, &project.config_path, error))
+                .map(|error| of_config_error(host, &project.config_path, error, &mut last))
                 .collect();
             return Ok((!diagnostics.is_empty()).then(|| Report {
                 diagnostics,
@@ -2252,70 +3377,48 @@ fn check_with_references(
         project.errors.append(&mut about_references);
         // `initMapperWorker`: the references in order, each project before its own references. A
         // cycle leads back to the project itself, whose files are not those of a reference.
-        let mut is_referenced = vec![false; roots.len()];
+        let mut is_referenced: FxHashSet<usize> = FxHashSet::default();
         let mut referenced: Vec<usize> = Vec::new();
         let mut pending: Vec<usize> = references[index].iter().rev().copied().collect();
         while let Some(i) = pending.pop() {
-            if !std::mem::replace(&mut is_referenced[i], true) {
+            if is_referenced.insert(i) {
                 if i != index {
                     referenced.push(i);
                 }
                 pending.extend(references[i].iter().rev());
             }
         }
-        let mut host = WithOutputs {
+        let host = WithOutputs {
             disk: host,
-            files: FxHashMap::default(),
-            directories: FxHashSet::default(),
+            emitted: &emitted,
             expected: &expected,
-            is_pending: (0..count).map(|i| i < index && !is_built[i]).collect(),
+            index,
+            built_before,
+            first_origin,
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
+            built_now: built_now.as_ref(),
         };
-        for i in (0..index).filter(|&i| is_built[i]) {
-            for (path, text) in emitted[i].lock().iter() {
-                host.add(path.clone(), Arc::clone(text));
-            }
-        }
         project.options.referenced_options = referenced
             .iter()
             .map(|&i| options_of_projects[i].clone())
             .collect();
-        // `ParseInputOutputNames`, `getOutputDeclarationAndSourceFileNames`
-        let mut sources: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, u32)> = (referenced.iter().enumerate())
-            .flat_map(|(at, &i)| {
-                let output = output_of(i);
-                roots[i].iter().map(move |source| {
-                    let output_dts = output_declaration_file_name(source, output);
-                    let path = to_path(source, is_case_sensitive).into_owned();
-                    (
-                        path,
-                        source.clone(),
-                        output_dts.unwrap_or_default(),
-                        at as u32,
-                    )
-                })
-            })
-            .collect();
-        // `maps.Copy`: of the projects that have a file, the last one has the entry.
-        sources.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.3.cmp(&a.3)));
-        sources.dedup_by(|a, b| a.0 == b.0);
-        let mut output_dts: Vec<(Vec<u8>, u32)> = (sources.iter().enumerate())
-            .filter(|(_, it)| !it.2.is_empty())
-            .map(|(index, it)| (to_path(&it.2, is_case_sensitive).into_owned(), index as u32))
-            .collect();
-        let walked = |it: &(Vec<u8>, u32)| sources[it.1 as usize].3;
-        output_dts.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(walked(b).cmp(&walked(a))));
-        output_dts.dedup_by(|a, b| a.0 == b.0);
-        project.options.referenced_sources = sources;
-        project.options.referenced_output_dts = output_dts;
+        if !referenced.is_empty() {
+            project.options.project_files = Some(Arc::clone(&project_files));
+            let numbered = (0..).zip(&referenced).map(|(at, &i)| (i as u32, at));
+            project.options.referenced_projects = numbered.collect();
+        }
+        if reads_sources {
+            let outputs = referenced.iter().filter_map(|&i| outputs[i].clone());
+            project.options.referenced_outputs = outputs.collect();
+        }
         let own: FxHashSet<&[u8]> = root_paths[index].iter().map(Vec::as_slice).collect();
-        let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
-            .filter(|&i| is_referenced[i])
-            .flat_map(|i| root_paths[i].iter().map(Vec::as_slice))
-            .chain(elsewhere.into_iter().flatten().copied())
-            .filter(|path| !own.contains(path))
-            .collect();
+        let is_owned_elsewhere = |path: &[u8]| {
+            let mut of_all = project_files.sources.get(path).into_iter().flatten();
+            !own.contains(path)
+                && (of_all.any(|it| is_referenced.contains(&(it.project as usize)))
+                    || elsewhere.is_some_and(|elsewhere| elsewhere.contains(path)))
+        };
         let is_root = is_same_path(&project.config_path, &root_config_path, is_case_sensitive);
         project.options.is_build = reports_references || !is_root;
         project.options.build_info_file_name = project.get_build_info_file_name();
@@ -2330,31 +3433,40 @@ fn check_with_references(
             }
             _ => None,
         };
-        let mut checked = check_named_files(
-            &host,
-            project,
-            request,
-            Report::default(),
-            Instant::now(),
-            named,
-            Some(&owned_elsewhere),
-            Some(&|| !host.awaited.lock().is_empty()),
-        );
+        let check = |run: Option<&Run<'_>>, place: Option<&Place<'_>>| {
+            check_named_files(
+                &host,
+                project,
+                request,
+                Report::default(),
+                Instant::now(),
+                named,
+                Some(&is_owned_elsewhere),
+                Some(&|| !host.awaited.lock().is_empty()),
+                run,
+                place,
+            )
+        };
+        let mut checked = match &of_this_build {
+            _ if is_one_program => check(run, place),
+            Some(run) => check(Some(run), None),
+            None => check(of_request, None),
+        };
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
-            awaited.sort_unstable();
+            awaited.shared_sort_unstable();
             awaited.dedup();
             return Err(awaited);
         }
         // `HandleNoEmitOnError`
-        if !(no_emit_on_error && !checked.diagnostics.is_empty()) {
-            let mut emitted = emitted[index].lock();
+        if !(no_emit_on_error && !checked.diagnostics.is_empty()) && !reads_sources {
+            let mut files = Vec::new();
             for (source, written) in std::mem::take(&mut checked.declaration_files) {
                 let path = declaration_file_path(index, &source);
                 if let Some(declaration_file_emitted) = request.declaration_file_emitted {
                     declaration_file_emitted(&path, &written);
                 }
-                emitted.push((path_of(path), Arc::new(written)));
+                files.push((path_of(path), Arc::new(written)));
             }
             let no_text = Arc::new(Vec::new());
             for source in &roots[index] {
@@ -2363,76 +3475,119 @@ fn check_with_references(
                         true => Arc::new(host.disk.read(source).unwrap_or_default().into_owned()),
                         false => Arc::clone(&no_text),
                     };
-                    emitted.push((path_of(output), text));
+                    files.push((path_of(output), text));
                 }
             }
+            emitted.add(index, files);
         }
         Ok(Some(checked))
     };
-    // `buildOrClean`: a project is built as soon as those that it references are. The threads here
-    // only coordinate: the work of every project is done by the pool, whose threads turn to
-    // another project where one has no task for them.
+    // `buildOrClean`: a project is built as soon as those that it references are.
     struct Builds {
-        is_started: Vec<bool>,
-        is_built: Vec<bool>,
-        /// By project: what `build` has returned.
-        awaited: Vec<Vec<usize>>,
+        /// What can be built now.
+        ready: BTreeSet<usize>,
+        /// By project: how many of those that it waits for are not built. Besides those that it references, they are what
+        /// `build` has returned.
+        waits_for: Vec<usize>,
+        /// By project: those that wait for it.
+        waiting: Vec<Vec<usize>>,
+        /// How many are built.
+        built: usize,
+        /// How many are being built.
+        running: usize,
+        /// How many are neither built nor being built.
+        left: usize,
+    }
+    let mut waiting = vec![Vec::new(); count];
+    for (index, first) in up_stream.iter().enumerate() {
+        for &it in first {
+            waiting[it].push(index);
+        }
     }
     let builds = Guarded::new(Builds {
-        is_started: vec![false; count],
-        is_built: vec![false; count],
-        awaited: vec![Vec::new(); count],
+        ready: (0..count).filter(|&it| up_stream[it].is_empty()).collect(),
+        waits_for: up_stream.iter().map(Vec::len).collect(),
+        waiting,
+        built: 0,
+        running: 0,
+        left: count,
     });
+    // Those that a thread is about to begin count too.
+    let count_those_built_now = |state: &Builds| {
+        if let Some(built_now) = &built_now {
+            let projects = (state.running + state.ready.len()).min(at_once);
+            built_now.store(projects, Ordering::Relaxed);
+        }
+    };
+    count_those_built_now(&builds.lock());
     let one_is_built = bun_threading::Condvar::new();
     let reports: Vec<Guarded<Option<Report>>> = (0..count).map(|_| Guarded::new(None)).collect();
     let build_what_is_ready = || {
+        let mut state = builds.lock();
         loop {
-            let mut state = builds.lock();
-            let index = loop {
-                let is_ready = |&i: &usize| {
-                    let mut first = up_stream[i].iter().chain(&state.awaited[i]);
-                    !state.is_started[i] && first.all(|&it| state.is_built[it])
-                };
-                if let Some(index) = (0..count).find(is_ready) {
-                    break index;
-                }
-                if state.is_started.iter().all(|&it| it) {
+            // The first in build order.
+            let Some(index) = state.ready.pop_first() else {
+                if state.left == 0 {
                     return;
                 }
                 one_is_built.wait_guarded(&mut state);
+                continue;
             };
-            state.is_started[index] = true;
-            let is_built = state.is_built.clone();
+            state.left -= 1;
+            state.running += 1;
+            let built_before = state.built;
             drop(state);
-            match build(index, &is_built) {
+            let built = build(index, built_before);
+            state = builds.lock();
+            let now = &mut *state;
+            now.running -= 1;
+            match built {
                 Ok(report) => {
                     *reports[index].lock() = report;
-                    builds.lock().is_built[index] = true;
+                    emitted.built_after[index].store(now.built, Ordering::Relaxed);
+                    now.built += 1;
+                    for it in std::mem::take(&mut now.waiting[index]) {
+                        now.waits_for[it] -= 1;
+                        if now.waits_for[it] == 0 {
+                            now.ready.insert(it);
+                        }
+                    }
                 }
                 Err(awaited) => {
-                    let mut state = builds.lock();
-                    state.awaited[index].extend(awaited);
-                    state.is_started[index] = false;
+                    now.left += 1;
+                    let is_built =
+                        |it: usize| emitted.built_after[it].load(Ordering::Relaxed) != usize::MAX;
+                    for it in awaited.into_iter().filter(|&it| !is_built(it)) {
+                        now.waiting[it].push(index);
+                        now.waits_for[index] += 1;
+                    }
+                    if now.waits_for[index] == 0 {
+                        now.ready.insert(index);
+                    }
                 }
             }
+            count_those_built_now(&state);
             one_is_built.notify_all();
         }
     };
-    let at_once = (request.plan_options.projects_at_once)
-        .min(host.threads())
-        .min(count);
+    // A thread that loads and checks what it builds needs the stack of a worker: the calling thread has the stack it was
+    // given, and only waits then.
     std::thread::scope(|scope| {
-        for _ in 1..at_once {
+        let mut started = 0;
+        for _ in usize::from(built_now.is_none())..at_once {
             // Without the thread, the others build its share.
-            let _ = std::thread::Builder::new()
-                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            let builder = std::thread::Builder::new()
+                .stack_size(STACK_OF_A_WORKER as usize)
                 .spawn_scoped(scope, || {
                     // As a thread of the pool does when it starts: the parsers check the stack.
                     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
                     build_what_is_ready();
                 });
+            started += usize::from(builder.is_ok());
         }
-        build_what_is_ready();
+        if built_now.is_none() || started == 0 {
+            build_what_is_ready();
+        }
     });
     // `BuildTask.report`: project by project, in build order. What two projects say about a file
     // that both include is there twice.
@@ -2531,13 +3686,13 @@ fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
 
 /// `SortAndDeduplicateDiagnostics`
 fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.sort_by(compare_diagnostics);
+    diagnostics.shared_sort_by(compare_diagnostics);
     // `compactAndMergeRelatedInfos`
     diagnostics.dedup_by(|next, first| {
         let is_same = equal_diagnostics_no_related_info(first, next);
         if is_same {
             first.related.append(&mut next.related);
-            first.related.sort_by(compare_diagnostics);
+            first.related.shared_sort_by(compare_diagnostics);
             first
                 .related
                 .dedup_by(|next, first| equal_diagnostics(first, next));
@@ -2546,8 +3701,17 @@ fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
     });
 }
 
+/// The path, the text and the line starts of the file that the last error given to `of_config_error`
+/// is in: each of thousands of `paths` can have one.
+type LastConfigFile = Option<(Vec<u8>, Cow<'static, [u8]>, Vec<u32>)>;
+
 /// `error`, of the project whose configuration file is at `config_path`.
-fn of_config_error(host: &dyn Host, config_path: &[u8], error: &ConfigError) -> Diagnostic {
+fn of_config_error(
+    host: &dyn Host,
+    config_path: &[u8],
+    error: &ConfigError,
+    last: &mut LastConfigFile,
+) -> Diagnostic {
     let mut reported = global(error.code, &error.args);
     reported.message_chain = message_chain_of(&error.chain);
     for chain in &reported.message_chain {
@@ -2557,16 +3721,23 @@ fn of_config_error(host: &dyn Host, config_path: &[u8], error: &ConfigError) -> 
         return reported;
     }
     let path = error.at.as_ref().map_or(config_path, |at| &at.0[..]);
-    let Some(text) = host.read(path) else {
+    if last.as_ref().is_none_or(|last| last.0 != path) {
+        let Some(text) = host.read(path) else {
+            return reported;
+        };
+        let starts = compute_ecma_line_starts(&text);
+        *last = Some((path.to_vec(), text, starts));
+    }
+    let Some((_, text, starts)) = last else {
         return reported;
     };
-    let starts = compute_ecma_line_starts(&text);
-    let related = error.related.iter().map(|(from, to, code, args)| {
-        located(path, &text, &starts, *from, *to, global(*code, args))
-    });
+    let related = error
+        .related
+        .iter()
+        .map(|(from, to, code, args)| located(path, text, starts, *from, *to, global(*code, args)));
     reported.related = related.collect();
     match error.at {
-        Some((_, from, to)) => located(path, &text, &starts, from, to, reported),
+        Some((_, from, to)) => located(path, text, starts, from, to, reported),
         None => reported,
     }
 }
@@ -2580,12 +3751,87 @@ pub fn check_project(
     report: Report,
     started: Instant,
 ) -> Report {
-    check_named_files(host, project, request, report, started, None, None, None)
+    check_named_files(
+        host, project, request, report, started, None, None, None, None, None,
+    )
+}
+
+/// Whether what the project at `config` depends on is not installed: its `package.json` names packages, and none of
+/// them is in a `node_modules`. Then the types of Node, of the test runner and so on are not there to be asked.
+fn lacks_its_packages(host: &dyn Host, config: &[u8]) -> bool {
+    let above = || ancestors(dirname::<Posix>(config));
+    let mut manifests = above().map(|it| inside(it, b"package.json"));
+    let manifest = manifests.find(|it| host.is_file(it));
+    let text = manifest.and_then(|it| host.read(&it));
+    let fields = text.and_then(|it| host.parse_package_json(Session::new().arena(), &it));
+    let packages_in = |field: &[u8]| fields.as_ref()?.get(field)?.as_object();
+    let fields = [
+        &b"dependencies"[..],
+        b"devDependencies",
+        b"peerDependencies",
+    ];
+    let mut names = (fields.into_iter().filter_map(packages_in).flatten()).map(|it| &it.0);
+    let all = above().map(|it| inside(it, b"node_modules"));
+    let all: Vec<Vec<u8>> = all.filter(|it| host.is_dir(it)).collect();
+    let is_installed = |name: &Vec<u8>| all.iter().any(|it| host.is_dir(&inside(it, name)));
+    let Some(first) = names.next() else {
+        return false;
+    };
+    !is_installed(first) && !names.any(is_installed)
+}
+
+/// Whether the root file at `path` can add to the globals of its program: it is a declaration file; or a script, which
+/// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global` or a `/// <reference`. By
+/// its text: one that is kept for nothing costs its parse. A script that has such a word in a comment is not seen, nor
+/// a comment between `declare` and `global`. `imports`: called with each name of a package that it imports for its
+/// effects, which can be to declare globals.
+fn may_declare_a_global(
+    host: &dyn Host,
+    path: &[u8],
+    every_file_is_a_module: bool,
+    imports: &dyn Fn(&[u8]),
+) -> bool {
+    if is_declaration_file_name(path) {
+        return true;
+    }
+    if path.ends_with(b".json") {
+        return false;
+    }
+    let Some(text) = host.read(path) else {
+        return false;
+    };
+    let has = |word: &[u8]| strings::contains(&text, word);
+    // `/// <reference lib="webworker" />`
+    if has(b"<reference ") {
+        return true;
+    }
+    let mut from = 0;
+    while let Some(found) = strings::index_of(&text[from..], b"global") {
+        let before = text[..from + found].trim_ascii_end();
+        if before.len() < from + found && before.ends_with(b"declare") {
+            return true;
+        }
+        from += found + b"global".len();
+    }
+    let (mut from, mut has_import) = (0, false);
+    while let Some(found) = strings::index_of(&text[from..], b"import") {
+        (from, has_import) = (from + found + b"import".len(), true);
+        if let [quote @ (b'"' | b'\''), name @ ..] = text[from..].trim_ascii_start()
+            && let Some(end) = strings::index_of_char_usize(name, *quote)
+            && !is_relative(&name[..end])
+        {
+            imports(&name[..end]);
+        }
+    }
+    !every_file_is_a_module
+        && !has_import
+        && !has(b"export")
+        && !(is_javascript(path) && has(b"require"))
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
 /// refer to are checked.
-/// `owned_elsewhere`: files of referenced projects, which are loaded but not checked.
+/// `is_owned_elsewhere`: of a file of a referenced project, which is loaded but not checked.
 /// Both have a `tspath.Path` for each file.
 fn check_named_files(
     host: &dyn Host,
@@ -2594,21 +3840,35 @@ fn check_named_files(
     mut report: Report,
     started: Instant,
     named: Option<&[Vec<u8>]>,
-    owned_elsewhere: Option<&FxHashSet<&[u8]>>,
+    is_owned_elsewhere: Option<&dyn Fn(&[u8]) -> bool>,
     // Asked when the program is loaded: whether it is not to be checked.
     is_outdated: Option<&dyn Fn() -> bool>,
+    run: Option<&Run<'_>>,
+    in_room: Option<&Place<'_>>,
 ) -> Report {
+    let _runs_here = in_room.and_then(|it| Some(RunsHere::new(it.room.shares?, it.threads - 1)));
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
-    project.options.current_directory = host::from_native(request.cwd);
+    project.options.current_directory = match project.config_path.as_slice() {
+        config_path
+            if request.plan_options.current_directory_is_of_the_project
+                && !config_path.is_empty() =>
+        {
+            dirname::<Posix>(config_path).to_vec()
+        }
+        _ => host::from_native(request.cwd),
+    };
     let conditions = request.conditions.iter().map(|it| it.to_vec());
     project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
-    let of_configuration = |error: &ConfigError| of_config_error(host, &config_path, error);
+    let last = RefCell::new(None);
+    let of_configuration =
+        |error: &ConfigError| of_config_error(host, &config_path, error, &mut last.borrow_mut());
     // `GetDiagnosticsOfAnyProgram`: configuration file parsing errors are reported regardless of
     // any other diagnostics.
+    let before_its_own = report.diagnostics.len();
     report.diagnostics.extend(
         project
             .errors
@@ -2617,6 +3877,22 @@ fn check_named_files(
             .map(of_configuration),
     );
     let always_reported = report.diagnostics.len();
+    let is_for_the_rest = request.plan_options.project_is_for_the_rest
+        && request.project.is_some_and(|it| {
+            let it = host::from_argument(&host::from_native(request.cwd), it);
+            is_same_path(&it, &config_path, host.is_case_sensitive())
+        });
+    let refuses = request.plan_options.refuses_broken_configurations && !is_for_the_rest;
+    let refused = |diagnostics: Vec<Diagnostic>| Refused {
+        config_path: config_path.clone(),
+        diagnostics,
+        files: named.unwrap_or_default().to_vec(),
+    };
+    if refuses && always_reported > before_its_own {
+        let diagnostics = report.diagnostics.split_off(before_its_own);
+        report.refused.push(refused(diagnostics));
+        return report;
+    }
     let mut about_options: Vec<Diagnostic> = project
         .errors
         .iter()
@@ -2627,6 +3903,14 @@ fn check_named_files(
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
         Libs::Directory(dir) => host::from_native(dir),
     };
+    if request.plan_options.prefers_the_library_of_the_project && !config_path.is_empty() {
+        let installed = installed_typescript(host, &config_path);
+        // By its real path: the packages of a workspace have links to one.
+        let own = installed.map(|package| inside(&host.realpath(&package), b"lib"));
+        if let Some(own) = own.filter(|own| has_libraries(host, &project.options, own)) {
+            project.options.lib_dir = own;
+        }
+    }
     report.has_bun_types_installed = project
         .options
         .effective_type_roots()
@@ -2646,6 +3930,41 @@ fn check_named_files(
         project.options.skip_default_lib_check,
     );
 
+    if request.plan_options.only_the_globals {
+        if lacks_its_packages(host, &config_path) {
+            return report;
+        }
+        project.options.imports_of_sources_add_no_file = true;
+        let is_module = project.options.module_detection == ModuleDetection::Force;
+        let roots = &project.files;
+        let is_kept: Vec<AtomicBool> = roots.iter().map(|_| AtomicBool::new(false)).collect();
+        // `import "mocha";`: the name and the file.
+        let for_their_effects: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
+        host.parallel(roots.len(), &|at| {
+            let imports = |name: &[u8]| for_their_effects.lock().push((name.to_vec(), at));
+            let may = may_declare_a_global(host, &roots[at], is_module, &imports);
+            is_kept[at].store(may, Ordering::Relaxed);
+        });
+        // One file for each name brings the package in: the first.
+        let mut for_their_effects = std::mem::take(&mut *for_their_effects.lock());
+        for_their_effects.shared_sort_unstable();
+        for_their_effects.dedup_by(|a, b| a.0 == b.0);
+        for (_, at) in for_their_effects {
+            is_kept[at].store(true, Ordering::Relaxed);
+        }
+        // A program without a root file has no libraries and no `types`.
+        if let Some(first) = is_kept.first()
+            && !is_kept.iter().any(|it| it.load(Ordering::Relaxed))
+        {
+            first.store(true, Ordering::Relaxed);
+        }
+        let mut is_kept = is_kept.iter();
+        (project.files).retain(|_| is_kept.next().is_some_and(|it| it.load(Ordering::Relaxed)));
+    }
+    let includes_everything = !config_path.is_empty()
+        && project.written.include.is_none()
+        && project.written.files.is_none();
+    let included = project.files.len();
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
@@ -2653,10 +3972,40 @@ fn check_named_files(
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
     let session = Session::new();
-    let files = Files::load(&session, host, project.options, &project.files);
+    let files_are_found = |until_it_is_loaded: usize| {
+        if let Some(place) = in_room {
+            place.has_found_its_files(session.allocated_bytes() + until_it_is_loaded);
+        }
+    };
+    let files = Files::load(
+        &session,
+        run,
+        host,
+        project.options,
+        &project.files,
+        &files_are_found,
+    );
     host.loaded();
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
+    }
+    if request.plan_options.only_the_globals {
+        let files_of = |names| GlobalsOf {
+            files: named.unwrap_or_default().to_vec(),
+            names,
+            checks_javascript: files.options.check_js == Some(true),
+        };
+        report.globals.extend(files.global_names().map(files_of));
+        return report;
+    }
+    if refuses {
+        let problems = files.program_problems();
+        let problems = ConfigError::of_problems(host, &session, &config_path, problems.iter());
+        about_options.extend(problems.iter().map(of_configuration));
+        if !about_options.is_empty() {
+            report.refused.push(refused(about_options));
+            return report;
+        }
     }
     // In an arena, so that no destructor runs for them: the session frees what they refer to all
     // at once. `Program::release` frees the little that is on the regular heap.
@@ -2665,6 +4014,18 @@ fn check_named_files(
     let program: &Program = root;
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
+    if includes_everything
+        && let Some(named) = named
+        && let Some(example) = named.first()
+    {
+        report.without_include.push(WithoutInclude {
+            config_path: config_path.clone(),
+            included,
+            asked_for: named.len(),
+            example: example.clone(),
+            load_time: report.load_time,
+        });
+    }
     let after = host.times();
     for (i, phase) in report.load_phases.iter_mut().enumerate() {
         *phase = after[i] - before[i];
@@ -2691,14 +4052,9 @@ fn check_named_files(
     }
     let trace = program.files.resolution_trace.iter();
     report.resolution_trace = trace.map(|it| global(it.code, &it.args).text).collect();
-    about_options.extend(
-        program
-            .files
-            .program_problems()
-            .iter()
-            .map(|problem| ConfigError::of_problem(host, &session, &config_path, problem))
-            .map(|error| of_configuration(&error)),
-    );
+    let problems = program.files.program_problems();
+    let problems = ConfigError::of_problems(host, &session, &config_path, problems.iter());
+    about_options.extend(problems.iter().map(of_configuration));
 
     let checking = Instant::now();
     let mut to_check: Vec<FileId> = (0..program.files.modules.len())
@@ -2710,6 +4066,10 @@ fn check_named_files(
                 // `SkipTypeChecking`, and nothing is emitted for a declaration file.
                 FileKind::Declaration => {
                     !skip_lib_check && !(skip_default_lib_check && module.is_lib)
+                        || request.after_file.is_some()
+                            && request.plan_options.after_file_is_for_checked_files
+                            && !module.is_lib
+                            && !module.is_from_external_library
                 }
                 FileKind::Ts | FileKind::Tsx => true,
             }
@@ -2740,7 +4100,11 @@ fn check_named_files(
                 }
                 here
             });
-            for edge in modules[i].edges.iter().copied().chain(scripts) {
+            let edges = match request.plan_options.checks_only_named {
+                true => &[][..],
+                false => modules[i].edges,
+            };
+            for edge in edges.iter().copied().chain(scripts) {
                 if !std::mem::replace(&mut is_reached[edge.idx()], true) {
                     to_follow.push(edge.idx());
                 }
@@ -2752,9 +4116,9 @@ fn check_named_files(
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
     }
-    if let Some(owned_elsewhere) = owned_elsewhere {
+    if let Some(is_owned_elsewhere) = is_owned_elsewhere {
         let path = |f: FileId| program.files.modules[f.idx()].path.text;
-        to_check.retain(|&f| !owned_elsewhere.contains(path(f)));
+        to_check.retain(|&f| !is_owned_elsewhere(path(f)));
     }
     if let Some(only) = request.only {
         to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].file_name(), only));
@@ -2765,7 +4129,7 @@ fn check_named_files(
     }
     // Program order (`program.files`): an imported file precedes its importers. The position of a file in `to_check` is its index.
     let place = |f: FileId| program.files.rank_of_file(f);
-    to_check.sort_by_key(|&f| place(f));
+    to_check.shared_sort_by_key(|&f| place(f));
     let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax, such a file only has what `Emit` reports, which is
@@ -2777,10 +4141,82 @@ fn check_named_files(
         (to_check.into_iter()).partition(|&file| checker.reports_semantic_errors(file));
     drop(checker);
     let is_any_type_checked = !type_checked.is_empty();
-    let (to_check, only_emitted) = match is_any_type_checked {
+    let (mut to_check, only_emitted) = match is_any_type_checked {
         true => (type_checked, only_emitted),
         false => (only_emitted, type_checked),
     };
+    // The libraries are checked once for all the programs of a request that agree on them. "The libraries" are the files of
+    // `Files::global_part` that come before every other file of the program.
+    //
+    // A file outside the global part cannot change a symbol or a type that these files see. It could still decide whether an
+    // error in one of them gets reported, because TypeScript collects the diagnostics of a file right after it has checked
+    // that file, but only a file that comes earlier in program order can do that. So what is reported in them depends on:
+    // - the global part,
+    // - which of them are checked,
+    // - the options (`Options::write_check_key`).
+    // Those three are the key. The rest of a `Request` is the same for all of its programs.
+    //
+    // Most keys belong to one program, so the first program with a key only registers it and goes on as usual. The second one
+    // checks these files for all: before it runs any other task, so that whatever the check leaves behind comes from them.
+    // If it reports nothing, the programs after it skip these files and start from what it left behind. If it reports
+    // anything, every program checks them for itself.
+    let wants_only_errors = request.after_file.is_none()
+        && request.checked.is_none()
+        && !request.retains_everything
+        && !request.plan_options.reports_nothing_about_files
+        && request.plan_options.checkers == 0;
+    let global_part = run
+        .filter(|run| run.is_of_declaration_files() && wants_only_errors && is_any_type_checked)
+        .filter(|_| (to_check.first()).is_some_and(|it| program.files.module(*it).shared_id != 0))
+        .and_then(|run| Some((run, program.files.global_part(run)?)));
+    // Not 0 if this program checks files for all: how many, from the start of `to_check`.
+    let mut shared_count = 0;
+    let mut claim: Option<Claim<'_>> = None;
+    if let Some((run, (files, mut description))) = global_part {
+        let mut is_first = vec![false; program.files.modules.len()];
+        let first = program.files.order.iter().zip(&files);
+        for (file, _) in first.take_while(|(file, of_part)| file == of_part) {
+            is_first[file.idx()] = true;
+        }
+        let count = to_check.iter().take_while(|it| is_first[it.idx()]).count();
+        let number_of = |file: &FileId| program.files.module(*file).shared_id;
+        let checked = to_check[..count].iter().map(number_of);
+        description.extend(
+            [count as u32]
+                .into_iter()
+                .chain(checked)
+                .flat_map(u32::to_le_bytes),
+        );
+        let mut options = Vec::new();
+        program.files.options.write_check_key(&mut options);
+        description.extend(run.number_of(&options).to_le_bytes());
+        // The reverse of `portable` below.
+        let here = |file: u32, id: SymbolId, name: Atom| {
+            let file = *files.iter().find(|it| number_of(it) == file)?;
+            let symbols = &program.files.module(file).bound.symbols;
+            let is_it = symbols.get(id.idx()).is_some_and(|it| it.name == name);
+            is_it.then(|| program.files.canonical(Sym { file, id }))
+        };
+        let carried: Option<Vec<_>> = match (count != 0).then(|| run.claim_or_wait(description)) {
+            Some(SharedVerdict::Unknown(it)) => {
+                (claim, shared_count) = (Some(it), count);
+                None
+            }
+            Some(SharedVerdict::Clean(carried)) => (carried.iter())
+                .map(|it| Some((here(it.0, it.1, it.2)?, &it.3[..])))
+                .collect(),
+            Some(SharedVerdict::Unshared) | None => None,
+        };
+        if let Some(carried) = carried {
+            for (sym, variances) in carried {
+                program.assume_variances(sym, variances);
+            }
+            to_check.drain(..count);
+        }
+    }
+    let (to_check, claim) = (to_check, Guarded::new(claim));
+    // `Finished::only_variances` of the tasks that check those files. `None`: there is more than that.
+    let carried: Guarded<Option<Vec<(Sym, Box<[u8]>)>>> = Guarded::new(Some(Vec::new()));
     if let Some(progress) = request.progress {
         let bytes = to_check
             .iter()
@@ -2794,7 +4230,7 @@ fn check_named_files(
     let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     // `GetDeclarationDiagnostics`
     let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
-    let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
@@ -2806,12 +4242,13 @@ fn check_named_files(
         }
     };
     let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Diagnostic>>| {
-        if errors.is_empty() {
+        if errors.is_empty() || request.plan_options.reports_nothing_about_files {
             return;
         }
         let module = &program.files.modules[file.idx()];
         let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
+        let counted = Counted::default();
         let shown: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
@@ -2831,7 +4268,8 @@ fn check_named_files(
                             return reported;
                         };
                         if of == file {
-                            return located(
+                            return located_after(
+                                &counted,
                                 module.file_name(),
                                 text,
                                 &starts,
@@ -2874,13 +4312,19 @@ fn check_named_files(
                     message_chain: e.message_chain,
                     ..global(0, &[""; 0])
                 };
-                located(module.file_name(), text, &starts, e.start, e.end, reported)
+                let path = module.file_name();
+                located_after(&counted, path, text, &starts, e.start, e.end, reported)
             })
             .collect();
         if let Some(progress) = request.progress {
             progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
         }
         found.lock().extend(shown);
+    };
+    // What `Request::after_file` is called after.
+    let wanted = match request.plan_options.reports_nothing_about_files {
+        true => Requested::Types,
+        false => Requested::All,
     };
     let new_checker = |expected: Requested| {
         let mut checker = program.checker();
@@ -2932,7 +4376,7 @@ fn check_named_files(
             for &file in files {
                 checked.push((file, checker.check_file(file)));
                 if let Some(after_file) = request.after_file
-                    && expected == Requested::All
+                    && expected == wanted
                 {
                     after_file(&mut checker, file);
                 }
@@ -2991,8 +4435,10 @@ fn check_named_files(
         // The diagnostics that were found are reported. Others may be missing, so the report lists
         // the file as incomplete.
         for file in outcome.incomplete {
-            let path = program.files.modules[file.idx()].file_name().to_vec();
-            incomplete.lock().push(path);
+            incomplete.lock().push(Incomplete {
+                path: program.files.modules[file.idx()].file_name().to_vec(),
+                is_nested_too_deeply: program.files.hir(file).ran_out_of_stack,
+            });
         }
         unfinished.lock().extend(outcome.checked);
     };
@@ -3026,14 +4472,13 @@ fn check_named_files(
     // A type node is a type to compute too. A declaration file has no expressions: next.js checks one of 2.9 MB that takes 23% of the
     // instructions of the check.
     let is_identifier = |tag: ExprTag| tag == ExprTag::Ident;
-    let costs: Vec<usize> = (to_check.iter())
-        .map(|&file| {
-            let hir = program.files.hir(file);
-            let tags = hir.exprs.iter().map(|it| it.kind.tag());
-            let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
-            tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
-        })
-        .collect();
+    let cost_of = |file: FileId| {
+        let hir = program.files.hir(file);
+        let tags = hir.exprs.iter().map(|it| it.kind.tag());
+        let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
+        tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
+    };
+    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
     let size_of = |index: usize| costs[index];
     // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
     // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
@@ -3066,20 +4511,55 @@ fn check_named_files(
         }
         ranges
     };
-    let plan = match request.plan_options.checkers {
-        0 => Plan::new(
-            to_check.len(),
-            &bytes_of,
-            &size_of,
-            &ranges_of,
-            &request.plan_options,
-        ),
-        checkers => Plan::of_checkers(
-            to_check.len(),
-            &|index| place(to_check[index]) as usize,
-            program.files.order.len(),
-            checkers,
-        ),
+    // Of all the files, so that those that are only emitted are not divided over an empty published state.
+    let cost =
+        costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
+    let threads = match in_room {
+        Some(place) if place.is_for_one_thread => 1,
+        _ => threads,
+    };
+    // The thread that builds a project of a build checks it alone if the others have projects of their own.
+    let may_be_one_thread = !request.plan_options.tasks_on_one_thread
+        && cost <= request.plan_options.one_thread_max_cost;
+    let is_one_thread = (threads == 1 || host.is_of_one_thread()) && may_be_one_thread;
+    let plan_of =
+        |files: std::ops::Range<usize>, is_one_thread: bool| match request.plan_options.checkers {
+            0 if is_one_thread => Plan {
+                steps: match Plan::of_one_thread(files.collect(), &size_of, &request.plan_options) {
+                    tasks if tasks.is_empty() => Vec::new(),
+                    tasks => vec![tasks],
+                },
+                ahead: Vec::new(),
+                first_step: 0,
+                is_of_one_thread: true,
+            },
+            0 => Plan::new(
+                files,
+                &bytes_of,
+                &size_of,
+                &ranges_of,
+                &request.plan_options,
+            ),
+            checkers => Plan::of_checkers(
+                files.len(),
+                &|index| place(to_check[index]) as usize,
+                program.files.order.len(),
+                checkers,
+            ),
+        };
+    // Other programs wait for the files that are checked for all, and this one may use their threads meanwhile.
+    let shared_plan = match shared_count {
+        0 => Plan {
+            steps: Vec::new(),
+            ahead: Vec::new(),
+            first_step: 0,
+            is_of_one_thread: false,
+        },
+        count => plan_of(0..count, threads == 1 && may_be_one_thread),
+    };
+    let plan = Plan {
+        first_step: shared_plan.steps.len(),
+        ..plan_of(shared_count..to_check.len(), is_one_thread)
     };
     let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
         host.parallel(count, work);
@@ -3088,145 +4568,204 @@ fn check_named_files(
     // For every task since the last barrier: wall time, the number of files, the index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // Returns the invalid tasks.
-    // `ahead`: by task. Empty: every task checks whole files.
-    let run_round = |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested| {
-        // After the last step the published state is read by the loop over the files that are not
-        // checked, which runs with `after_file`, and by a caller that goes on to query the program.
-        // The tasks of split files read the ranges, and nothing else of the step before theirs.
-        let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
-            || request.retains_everything
-            || request.after_file.is_some();
-        let tasks = step.len();
-        let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
-        // The largest first, so that no thread begins it when the others are nearly done.
-        let mut start_order: Vec<usize> = (0..tasks).collect();
-        match request.order {
-            1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
-            order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
-        }
-        let outcomes: Vec<Guarded<Option<Outcome>>> =
-            (0..tasks).map(|_| Guarded::new(None)).collect();
-        let (started, busy) = (Instant::now(), AtomicU64::new(0));
-        host.parallel(tasks, &|i| {
-            let (index, began) = (start_order[i], Instant::now());
-            let cost_before = request.task_clock.map(|clock| clock());
-            let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
-            let outcome = match ahead.get(index).copied().flatten() {
-                Some(range) => check_ahead(files[0], range, expected, [number, index]),
-                None => check_chunk(&files, expected, Some((number, index, is_read_later))),
+    // `is_retry`: the valid tasks publish, so that the tasks retried after them find what they stored.
+    let run_round =
+        |plan: &Plan, number: usize, step: &[Task], expected: Requested, is_retry: bool| {
+            let ahead = match is_retry {
+                true => &[][..],
+                false => plan.ahead_of(number),
             };
-            *outcomes[index].lock() = Some(outcome);
-            let elapsed = began.elapsed();
-            busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-            let cost = match (request.task_clock, cost_before) {
-                (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
-                _ => elapsed,
-            };
-            task_times.lock().push((cost, files.len(), step[index][0]));
-        });
-        let in_tasks = started.elapsed();
-        // The barrier. Everything from here on is in task order.
-        let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
-            .map(|mut outcome| outcome.get_mut().take().unwrap())
-            .collect();
-        let mut finished: Vec<Finished> = (outcomes.iter_mut())
-            .map(|outcome| outcome.finished.take().unwrap())
-            .collect();
-        // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
-        let mut invalid: Vec<Task> = Vec::new();
-        let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
-        if checker_count == 0 {
-            // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
-            let mut is_invalid = program.validate(&finished);
-            // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
-            // evaluates what is missing.
-            let tolerated = request.plan_options.split_tolerates & 7;
-            for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
-                *is_invalid |= outcome.obstacles & !tolerated != 0;
-                for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
-                    *count += usize::from((outcome.obstacles >> bit) & 1);
-                }
+            // After the last step the published state is read by the loop over the files that are not
+            // checked, which runs with `after_file`, and by a caller that goes on to query the program.
+            // The tasks of split files read the ranges, and nothing else of the step before theirs.
+            let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
+                || is_retry
+                || request.retains_everything
+                || request.after_file.is_some()
+                    && !request.plan_options.after_file_is_for_checked_files;
+            let (tasks, at) = (step.len(), plan.first_step + number);
+            let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
+            // The largest first, so that no thread begins it when the others are nearly done.
+            let mut start_order: Vec<usize> = (0..tasks).collect();
+            match request.order {
+                1 if plan.is_of_one_thread => {}
+                1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
+                order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
             }
-            let mut at = is_invalid.iter();
-            finished.retain(|_| !*at.next().unwrap());
-            let mut at = is_invalid.iter().zip(step).enumerate();
-            outcomes.retain(|_| {
-                let (index, (&is_invalid, task)) = at.next().unwrap();
-                if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
-                    ranges_dropped += 1;
-                } else if is_invalid {
-                    if let Some(progress) = request.progress {
-                        let bytes = task.iter().map(|&file| bytes_of(file)).sum();
-                        progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
-                        progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
-                    }
-                    invalid.push(task.clone());
-                }
-                !is_invalid
+            let outcomes: Vec<Guarded<Option<Outcome>>> =
+                (0..tasks).map(|_| Guarded::new(None)).collect();
+            let (started, busy) = (Instant::now(), AtomicU64::new(0));
+            let blocked = claim.lock().as_ref().map_or(0, Claim::blocked);
+            host.parallel_while_others_wait(blocked, tasks, &|i| {
+                let (index, began) = (start_order[i], Instant::now());
+                let cost_before = request.task_clock.map(|clock| clock());
+                let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
+                let outcome = match ahead.get(index).copied().flatten() {
+                    Some(range) => check_ahead(files[0], range, expected, [at, index]),
+                    None => check_chunk(&files, expected, Some((at, index, is_read_later))),
+                };
+                *outcomes[index].lock() = Some(outcome);
+                let elapsed = began.elapsed();
+                busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+                let cost = match (request.task_clock, cost_before) {
+                    (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
+                    _ => elapsed,
+                };
+                task_times.lock().push((cost, files.len(), step[index][0]));
             });
-        }
-        for outcome in &mut outcomes {
-            free_trees(std::mem::take(&mut outcome.trees_to_free));
-        }
-        let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
-        for finished in &finished {
-            for (sum, &more) in foreign_evaluations
-                .iter_mut()
-                .zip(&finished.foreign_evaluations)
-            {
-                *sum += u64::from(more);
+            let in_tasks = started.elapsed();
+            // The barrier. Everything from here on is in task order.
+            let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
+                .map(|mut outcome| outcome.get_mut().take().unwrap())
+                .collect();
+            let mut finished: Vec<Finished> = (outcomes.iter_mut())
+                .map(|outcome| outcome.finished.take().unwrap())
+                .collect();
+            // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
+            let mut invalid: Vec<Task> = Vec::new();
+            let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
+            if checker_count == 0 {
+                // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
+                let mut is_invalid = program.validate(&finished, is_read_later);
+                if std::ptr::eq(plan, &raw const shared_plan) {
+                    let reports_nothing = |it: &Outcome| {
+                        it.incomplete.is_empty() && it.checked.iter().all(|it| it.1.is_empty())
+                    };
+                    let mut carried = carried.lock();
+                    if is_invalid.contains(&true) || !outcomes.iter().all(reports_nothing) {
+                        *carried = None;
+                    }
+                    for finished in &finished {
+                        match (finished.only_variances(), &mut *carried) {
+                            (Some(variances), Some(all)) => all
+                                .extend(variances.map(|(sym, variances)| (sym, variances.into()))),
+                            _ => *carried = None,
+                        }
+                    }
+                }
+                // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
+                // evaluates what is missing.
+                let tolerated = request.plan_options.split_tolerates & 7;
+                for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
+                    *is_invalid |= outcome.obstacles & !tolerated != 0;
+                    for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
+                        *count += usize::from((outcome.obstacles >> bit) & 1);
+                    }
+                }
+                let mut at = is_invalid.iter();
+                finished.retain(|_| !*at.next().unwrap());
+                let mut at = is_invalid.iter().zip(step).enumerate();
+                outcomes.retain(|_| {
+                    let (index, (&is_invalid, task)) = at.next().unwrap();
+                    if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
+                        ranges_dropped += 1;
+                    } else if is_invalid {
+                        if let Some(progress) = request.progress {
+                            let bytes = task.iter().map(|&file| bytes_of(file)).sum();
+                            progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
+                            progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
+                        }
+                        invalid.push(task.clone());
+                    }
+                    !is_invalid
+                });
             }
-        }
-        let linking = Instant::now();
-        let records = program.link(&mut finished, &in_parallel);
-        let (in_link, publishing) = (linking.elapsed(), Instant::now());
-        let entries = program.publish(&mut finished, &in_parallel, request.digests);
-        let in_publish = publishing.elapsed();
-        let not_published = outcomes
-            .iter()
-            .map(|it| it.generic_relation_entries_not_published);
-        let generic_relation_entries_not_published = not_published.sum();
-        outcomes.into_iter().for_each(&accept);
-        let mut slowest = std::mem::take(&mut *task_times.lock());
-        slowest.sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
-        if request.task_clock.is_none() {
-            slowest.truncate(5);
-        }
-        let path_of = |file: usize| {
-            program.files.modules[to_check[file].idx()]
-                .file_name()
-                .to_vec()
+            for outcome in &mut outcomes {
+                free_trees(std::mem::take(&mut outcome.trees_to_free));
+            }
+            let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
+            for finished in &finished {
+                for (sum, &more) in foreign_evaluations
+                    .iter_mut()
+                    .zip(&finished.foreign_evaluations)
+                {
+                    *sum += u64::from(more);
+                }
+            }
+            let linking = Instant::now();
+            let records = program.link(&mut finished, &in_parallel);
+            let (in_link, publishing) = (linking.elapsed(), Instant::now());
+            let entries = program.publish(&mut finished, &in_parallel, request.digests);
+            let in_publish = publishing.elapsed();
+            let not_published = outcomes
+                .iter()
+                .map(|it| it.generic_relation_entries_not_published);
+            let generic_relation_entries_not_published = not_published.sum();
+            outcomes.into_iter().for_each(&accept);
+            let mut slowest = std::mem::take(&mut *task_times.lock());
+            slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
+            if request.task_clock.is_none() {
+                slowest.truncate(5);
+            }
+            let path_of = |file: usize| {
+                program.files.modules[to_check[file].idx()]
+                    .file_name()
+                    .to_vec()
+            };
+            steps.lock().push(StepReport {
+                slowest_tasks: (slowest.into_iter())
+                    .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
+                    .collect(),
+                tasks,
+                ranges: ahead.iter().flatten().count(),
+                ranges_dropped,
+                ranges_by_obstacle,
+                files: step.iter().map(Vec::len).sum(),
+                in_tasks,
+                in_link,
+                in_publish,
+                idle: (in_tasks * threads as u32)
+                    .saturating_sub(Duration::from_nanos(busy.into_inner())),
+                entries,
+                records,
+                generic_relation_entries_not_published,
+                foreign_evaluations,
+            });
+            invalid
         };
-        steps.lock().push(StepReport {
-            slowest_tasks: (slowest.into_iter())
-                .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
-                .collect(),
-            tasks,
-            ranges: ahead.iter().flatten().count(),
-            ranges_dropped,
-            ranges_by_obstacle,
-            files: step.iter().map(Vec::len).sum(),
-            in_tasks,
-            in_link,
-            in_publish,
-            idle: (in_tasks * threads as u32)
-                .saturating_sub(Duration::from_nanos(busy.into_inner())),
-            entries,
-            records,
-            generic_relation_entries_not_published,
-            foreign_evaluations,
-        });
-        invalid
-    };
     // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
     // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
-    let run_step = |number: usize, step: &[Task], expected: Requested| {
-        let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
+    let run_step = |plan: &Plan, number: usize, step: &[Task], expected: Requested| {
+        program.compare_listings();
+        let mut invalid = run_round(plan, number, step, expected, false);
+        let mut retried = 0;
         while !invalid.is_empty() {
             let mut files = invalid.concat();
-            files.sort_unstable();
-            let again = Plan::cut(files, &size_of, &request.plan_options);
-            invalid = run_round(number, &again, &[], expected);
+            files.shared_sort_unstable();
+            // A round of retries that left every file invalid.
+            if retried != 0 && files.len() >= retried {
+                program.stop_comparing_listings();
+            }
+            retried = files.len();
+            let again = match plan.is_of_one_thread {
+                true => Plan::of_one_thread(files, &size_of, &request.plan_options),
+                false => Plan::cut(files, &size_of, &request.plan_options),
+            };
+            invalid = run_round(plan, number, &again, expected, true);
+        }
+    };
+    // After `shared_plan`, before any other task of the program.
+    let publish_verdict = || {
+        let Some(claim) = claim.lock().take() else {
+            return;
+        };
+        // A merged symbol is made for each program. The symbol that the binder made for its first declaration is part of the
+        // shared file, so it has the same id in every program, and leads back to the merged one.
+        let portable = |(sym, variances): (Sym, Box<[u8]>)| {
+            let part = *program.files.parts(sym).first()?;
+            let (shared_id, symbol) = (
+                program.files.module(part.file).shared_id,
+                program.files.symbol(part),
+            );
+            let is_of_the_binder = !symbol.flags.contains(SymFlags::TRANSIENT);
+            (shared_id != 0 && is_of_the_binder && program.files.canonical(part) == sym)
+                .then_some((shared_id, part.id, symbol.name, variances))
+        };
+        let carried = carried.lock().take();
+        let carried = carried.filter(|_| !program.has_notes_outside_finished());
+        match carried.and_then(|it| it.into_iter().map(portable).collect()) {
+            Some(carried) => claim.report_clean(carried),
+            None => claim.report_not_clean(),
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
@@ -3247,17 +4786,33 @@ fn check_named_files(
     // `type_checked`: the files that are, or else the others.
     let check_files = |expected: Requested, type_checked: bool| {
         if type_checked == is_any_type_checked {
+            for (number, step) in shared_plan.steps.iter().enumerate() {
+                run_step(&shared_plan, number, step, expected);
+            }
+            publish_verdict();
             for (number, step) in plan.steps.iter().enumerate() {
-                run_step(number, step, expected);
+                run_step(&plan, number, step, expected);
             }
         }
         if !type_checked {
-            // Not a function of the thread count, like the tasks of the plan.
-            let tasks = request.plan_options.min_tasks.max(1);
-            let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
-            let tasks: Vec<&[FileId]> = tasks.collect();
+            // Like the tasks of the plan.
+            let tasks: Vec<Vec<FileId>> = if is_one_thread {
+                let cost_of = |index: usize| cost_of(only_emitted[index]);
+                Plan::of_one_thread(
+                    (0..only_emitted.len()).collect(),
+                    &cost_of,
+                    &request.plan_options,
+                )
+                .into_iter()
+                .map(|task| task.into_iter().map(|index| only_emitted[index]).collect())
+                .collect()
+            } else {
+                let tasks = request.plan_options.min_tasks.max(1);
+                let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
+                tasks.map(<[FileId]>::to_vec).collect()
+            };
             host.parallel(tasks.len(), &|i| {
-                accept(check_chunk(tasks[i], expected, None));
+                accept(check_chunk(&tasks[i], expected, None));
             });
         }
         finish_files();
@@ -3273,6 +4828,8 @@ fn check_named_files(
             false => options.is_incremental,
         };
     let emit_on_early_exit = || -> Vec<Diagnostic> {
+        // This program will not check the shared files. Another one has to.
+        drop(claim.lock().take());
         if emits_despite_errors {
             check_files(Requested::Declaration, true);
             check_files(Requested::Declaration, false);
@@ -3329,7 +4886,7 @@ fn check_named_files(
         }
         let emits_first = options.emits_first && !options.no_emit_on_error;
         for type_checked in [!emits_first, emits_first] {
-            check_files(Requested::All, type_checked);
+            check_files(wanted, type_checked);
             report.diagnostics.append(&mut found.lock());
             // What a checker reports without a file after this is never asked for.
             if type_checked {
@@ -3346,7 +4903,9 @@ fn check_named_files(
         }
         // `iterateBaseline`: a caller that writes output for every file also does so for the files
         // that are not checked.
-        if let Some(after_file) = request.after_file {
+        if let Some(after_file) = request.after_file
+            && !request.plan_options.after_file_is_for_checked_files
+        {
             let mut is_checked = vec![false; program.files.modules.len()];
             for file in to_check.iter().chain(&only_emitted) {
                 is_checked[file.idx()] = true;
@@ -3371,16 +4930,20 @@ fn check_named_files(
     report.deepest_stack = deepest_stack.into_inner();
     report.steps = std::mem::take(&mut *steps.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
-    report.incomplete.sort();
+    report.incomplete.shared_sort();
     report.incomplete.dedup();
     let unreadable = host.take_unreadable();
     let cannot_read = (unreadable.iter()).map(|path| global(5083, &[displayed_path(path)]));
     report.diagnostics.extend(cannot_read);
+    report.unreadable.extend(unreadable);
     sort_and_deduplicate(&mut report.diagnostics);
     report.check_time = checking.elapsed();
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(checked) = request.checked {
         checked(program);
+    }
+    if let Some(place) = in_room {
+        place.has_taken(session.allocated_bytes());
     }
     root.release();
     report

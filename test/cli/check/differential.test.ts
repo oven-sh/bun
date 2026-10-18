@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { env, inTurns, linesOf, tsc } from "./differential";
+import { endChildren, longLimit, spawn } from "../children";
+import { env, inTurns, linesOf, modulesInRings, tsc } from "./differential";
+
+afterAll(endChildren);
 
 // Small programs generated as cross products, checked by `bun check` and by TypeScript 7, which have to agree. No
 // expectation is stored: TypeScript is the oracle. Each program is one function on one line, so a line names a
@@ -27,9 +30,23 @@ const tsconfig = JSON.stringify({
   },
 });
 
+test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleThreaded` does", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...modulesInRings(isDebug || isASAN ? 24 : 60),
+  });
+  const root = String(dir);
+  const [theirs, ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    linesOf([bunExe(), "check", "--threads=1"], root, root),
+  ]);
+  expect(theirs.length).toBeGreaterThan(100);
+  expect(ours).toEqual(theirs);
+});
+
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
   const byLine = new Map<number, string[]>();
   for (const text of stdout.split("\n")) {
@@ -182,6 +199,52 @@ differential.each(loopShapes)("a variable in a loop that is assigned back: %s", 
   expect(onlyTypeScriptReports).toEqual([]);
   expect(onlyBunReports).toEqual([]);
 });
+
+// A walk that gets 2,000 levels deep fails with TS2563. A statement in a loop can be on the stack one more time for
+// each enclosing loop. A debug build can run out of stack before it hits the limit.
+test.concurrent.skipIf(!tsc || isDebug || isASAN)(
+  "hits the control flow limit at the same size as tsc, inside and after loops",
+  async () => {
+    const declarations = `declare const c: boolean, b: number; declare function must(v: unknown): asserts v;`;
+    const many = (n: number) => Buffer.alloc(9 * n, "must(b); ").toString();
+    // `x` has to be narrower than its declared type. Otherwise no walk continues from the start of a loop to its end.
+    const x = `let x: string | number | undefined = 0;`;
+    // Each shape comes with the smallest number of statements at which TypeScript gives up.
+    const shapes: [number, (n: number) => string][] = [
+      [997, n => `${x} while (b) { if (c) { x = "s"; } ${many(n)}x; }`],
+      [663, n => `${x} while (b) { if (c) { x = "s"; } ${many(n)}while (c) { ${many(n)}x; } }`],
+      [
+        495,
+        n =>
+          `${x} p: while (b) { if (c) { x = "s"; } q: while (c) { while (c) { ${many(n)}x; if (c) continue p; if (b) continue q; } } }`,
+      ],
+      [998, n => `${x} while (b) { if (c) { x = "s"; } ${many(n)}} ${many(n)}x;`],
+      [1996, n => `let x = null! as string | number | undefined; while (b) { if (c) { x = "s"; } ${many(n)}x; }`],
+      [
+        499,
+        n =>
+          `while (b) { function g() { ${x} while (b) { if (c) { x = "s"; } ${many(n)}} ${many(3 * n)}x; } must(b); }`,
+      ],
+    ];
+    // One file per case, because the maximum depth of a walk is computed per file.
+    const sizes = shapes.flatMap(([limit, shape], index) =>
+      [limit - 1, limit].map(n => [`${index}-${n}.ts`, shape(n)]),
+    );
+    using dir = tempDir("bun-check-differential", {
+      "tsconfig.json": tsconfig,
+      ...Object.fromEntries(sizes.map(([name, body]) => [name, `${declarations}\nexport function f() { ${body} }\n`])),
+    });
+    const root = String(dir);
+    const [theirs, ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+      linesOf([bunExe(), "check"], root, root),
+    ]);
+    expect(theirs.map(line => line.replace(/\(.*(TS\d+).*/, " $1")).sort()).toEqual(
+      shapes.map(([limit], index) => `${index}-${limit}.ts TS2563`),
+    );
+    expect(ours.sort()).toEqual(theirs.sort());
+  },
+);
 
 differential(
   "narrowing: the reference, the guard, the control flow around it, and what happens before the use",
@@ -493,7 +556,7 @@ differential("callbacks: the callee, the form of the callback, and the context o
 // suppresses the other errors of its project, so a case that can have one is a project of its own.
 /** What `cmd` prints about each line of `a.ts`. A line that continues a message belongs to the error above it. */
 async function messagesOf(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
   const byLine = new Map<number, string[]>();
   let line = 0;
@@ -1537,6 +1600,345 @@ differential("the errors of the projects of a build", async () => {
   expect(different).toEqual({});
 });
 
+// With four threads there is a project for each, which it loads and checks alone. The last ones, and the large one, have the
+// help of the threads that are left without one. A project reads what the ones it references have emitted, so the order
+// still matters.
+differential("a build of many small projects and a large one", async () => {
+  const files: Record<string, string> = {};
+  const names: string[] = [];
+  const options = { composite: true, emitDeclarationOnly: true, outDir: "out", rootDir: "src", strict: true };
+  for (let layer = 0; layer < 3; layer++) {
+    for (let i = 0; i < 8; i++) {
+      const name = `p${layer}_${i}`;
+      names.push(name);
+      const below = layer === 0 ? [] : [`p${layer - 1}_${i}`, `p${layer - 1}_${(i + 1) % 8}`];
+      files[`${name}/tsconfig.json`] = JSON.stringify({
+        compilerOptions: { ...options, lib: ["es2020"], skipLibCheck: true, types: [] },
+        include: ["src"],
+        references: below.map(it => ({ path: `../${it}` })),
+      });
+      const imports = below.map((it, k) => `import { value as v${k} } from "../../${it}/src/index";\n`).join("");
+      // Every third project has an error of its own, and every project above the first layer one that needs the
+      // declarations of what it references.
+      files[`${name}/src/index.ts`] =
+        imports +
+        `export const value: ${i % 3 === 0 ? "number" : "string"} = "${name}";\n` +
+        below.map((_, k) => `export const fromBelow${k}: boolean = v${k};\n`).join("");
+      files[`${name}/src/other.ts`] = `import { value } from "./index";\nexport const length: number = value.length;\n`;
+    }
+  }
+  names.push("large");
+  files["large/tsconfig.json"] = JSON.stringify({
+    compilerOptions: { ...options, lib: ["es2020"], skipLibCheck: true, types: [] },
+    include: ["src"],
+    references: [{ path: "../p2_0" }],
+  });
+  for (let i = 0; i < 70; i++) {
+    files[`large/src/f${i}.ts`] =
+      (i === 0 ? `import { value } from "../../p2_0/src/index";\nexport const top: boolean = value;\n` : "") +
+      `export const f${i}: ${i % 10 === 0 ? "number" : "string"} = "${i}";\n`;
+  }
+  files["tsconfig.json"] = JSON.stringify({ files: [], references: names.map(it => ({ path: `./${it}` })) });
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  // In this order: `tsc -b` writes files.
+  const ours = await linesOf([bunExe(), "check", "-b"], root, root);
+  const oneThread = await linesOf([bunExe(), "check", "-b", "--threads=1"], root, root);
+  const fourThreads = await linesOf([bunExe(), "check", "-b", "--threads=4"], root, root);
+  const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], root, root);
+  expect(theirs.length).toBeGreaterThan(30);
+  expect({ ours, oneThread, fourThreads }).toEqual({ ours: theirs, oneThread: theirs, fourThreads: theirs });
+});
+
+// Three projects can be built at a time, so with more threads than that each project is the work of several, and how many
+// changes while it is built. `late` references nothing, so it begins with the first ones, and reads what one of them emits.
+differential("a build of many layers of a few projects", async () => {
+  const files: Record<string, string> = {};
+  const names: string[] = [];
+  const options = { composite: true, emitDeclarationOnly: true, outDir: "out", rootDir: "src", strict: true };
+  const compilerOptions = { ...options, lib: ["es2020"], skipLibCheck: true, types: [] };
+  for (let layer = 0; layer < 5; layer++) {
+    for (let i = 0; i < 3; i++) {
+      const name = `p${layer}_${i}`;
+      names.push(name);
+      const below = layer === 0 ? [] : [`p${layer - 1}_${i}`, `p${layer - 1}_${(i + 1) % 3}`];
+      files[`${name}/tsconfig.json`] = JSON.stringify({
+        compilerOptions,
+        include: ["src"],
+        references: below.map(it => ({ path: `../${it}` })),
+      });
+      // The type of a project has those of all the layers below in it.
+      files[`${name}/src/index.ts`] =
+        below.map((it, k) => `import type { Top as Below${k} } from "../../${it}/src/index";\n`).join("") +
+        `import { f0 } from "./f0";\n` +
+        `export interface Top { name: "${name}"; f: typeof f0; ${below.map((_, k) => `below${k}: Below${k}; `).join("")}}\n` +
+        `export declare const top: Top;\n` +
+        `export const wrong: ${"Top" + `["below0"]`.repeat(layer)}["name"] = "${name}";\n`;
+      for (let file = 0; file < 6; file++) {
+        files[`${name}/src/f${file}.ts`] =
+          (file < 5 ? `import { f${file + 1} } from "./f${file + 1}";\n` : "") +
+          `export const f${file}: ${file % 4 === i ? "number" : "string"} = \`${file}\`${file < 5 ? ` + f${file + 1}` : ""};\n`;
+      }
+    }
+  }
+  names.push("late");
+  files["late/tsconfig.json"] = JSON.stringify({ compilerOptions, include: ["src"] });
+  files["late/src/index.ts"] = `import { top } from "../../p0_2/out/index";\nexport const name: "late" = top.name;\n`;
+  files["tsconfig.json"] = JSON.stringify({ files: [], references: names.map(it => ({ path: `./${it}` })) });
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  // In this order: `tsc -b` writes files.
+  const ours: Record<string, string[]> = {};
+  for (const threads of ["1", "2", "4", "7", "16"]) {
+    ours[threads] = await linesOf([bunExe(), "check", "-b", `--threads=${threads}`], root, root);
+  }
+  const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], root, root);
+  expect(theirs.length).toBeGreaterThan(30);
+  expect(ours).toEqual({ 1: theirs, 2: theirs, 4: theirs, 7: theirs, 16: theirs });
+});
+
+// Projects with the same libraries, the same options and no global declarations of their own share one check of the libraries,
+// from the third such project on. A project that adds to the libraries, clashes with them, or has other ones must still get
+// its own errors, and only those.
+differential("each project of a build gets its own errors in the libraries", async () => {
+  const base = { composite: true, emitDeclarationOnly: true, outDir: "out", strict: true, types: [], lib: ["es5"] };
+  const uses =
+    `export const n: string = [1, 2].length;\n` +
+    `export const d: number = new Date().toISOString();\n` +
+    `export const p: PromiseLike<string> = null! as PromiseLike<number>;\n`;
+  const usesMore = uses + `export const q: Promise<string> = Promise.resolve(1);\n`;
+  const usesPage = usesMore + `export const title: number = document.title;\nexport const last: string = [1].at(0);\n`;
+  const smallest = "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String";
+  const outside = { rootDir: ".." };
+  type Project = { options?: object; listed?: string[]; files: Record<string, string> };
+  const projects: Record<string, Project> = {
+    // These two stop before they check the libraries. The projects that wait for a result must not wait for them forever.
+    syntaxError: { files: { "index.ts": `export const x = ;\n` + uses } },
+    wrongOption: { options: { moduleResolution: "classic" }, files: { "index.ts": uses } },
+    plain1: { files: { "index.ts": uses } },
+    augments: {
+      files: {
+        "index.ts":
+          `declare global {\n  interface Array<T> { extra(): T }\n  interface Date { mine: 1 }\n}\n` +
+          `export const a: string = [1].extra();\nexport const w: 2 = new Date().mine;\n`,
+      },
+    },
+    plain2: { files: { "index.ts": uses + `export const a = [1].extra();\nexport const w = new Date().mine;\n` } },
+    newGlobals: {
+      files: {
+        "globals.ts": `declare var mine: Mine;\ninterface Mine { a: 1 }\n`,
+        "index.ts": uses + `export const m: 2 = mine.a;\n`,
+      },
+    },
+    clashVar: { files: { "globals.ts": `declare var JSON: number;\n`, "index.ts": uses } },
+    clashConst: { files: { "globals.ts": `declare const Array: number;\n`, "index.ts": uses } },
+    clashInterface: {
+      files: {
+        "globals.ts": `interface Error { message: number }\ninterface PromiseLike<T> { then: T }\n`,
+        "index.ts": uses,
+      },
+    },
+    clashInModule: {
+      files: { "index.ts": `declare global {\n  var Math: number;\n  interface RegExp { source: number }\n}\n` + uses },
+    },
+    clashTypeParameters: { files: { "globals.d.ts": `interface Array<T, U> { two: U }\n`, "index.ts": uses } },
+    plain3: { files: { "index.ts": uses + `export const m = mine;\n` } },
+    noLib: { options: { noLib: true }, files: { "index.ts": `export const x: string = 1;\n` } },
+    noLibOwn: {
+      options: { noLib: true },
+      files: {
+        "lib.d.ts": smallest
+          .split(" ")
+          .map(it => `interface ${it} {}\n`)
+          .join(""),
+        "index.ts": `export const x: string = 1;\nexport const y = [1].length;\n`,
+      },
+    },
+    more: { options: { lib: ["es5", "es2015.promise"] }, files: { "index.ts": usesMore } },
+    less: { files: { "index.ts": usesMore } },
+    reference1: { files: { "index.ts": `/// <reference lib="es2015.promise" />\n` + usesMore } },
+    reference2: { files: { "index.ts": `/// <reference lib="es2015.promise" />\n` + usesMore } },
+    reference3: { files: { "index.ts": `/// <reference lib="es2015.promise" />\n` + usesMore } },
+    referenceInLibrary: { files: { "globals.d.ts": `/// <reference lib="es2015.promise" />\n`, "index.ts": usesMore } },
+    page1: { options: { lib: undefined, target: "es2022" }, files: { "index.ts": usesPage } },
+    page2: { options: { lib: undefined, target: "es2022" }, files: { "index.ts": usesPage } },
+    page3: { options: { lib: undefined, target: "es2022" }, files: { "index.ts": usesPage } },
+    olderPage: { options: { lib: undefined, target: "es2015" }, files: { "index.ts": usesPage } },
+    otherTarget: { options: { target: "esnext" }, files: { "index.ts": uses } },
+    loose1: { options: { strict: false }, files: { "index.ts": uses + `export const nothing: string = null;\n` } },
+    loose2: { options: { strict: false }, files: { "index.ts": uses + `export const nothing: string = null;\n` } },
+    loose3: { options: { strict: false }, files: { "index.ts": uses + `export const nothing: string = null;\n` } },
+    exact: {
+      options: { exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true },
+      files: { "index.ts": uses + `export const first: number = [1][0];\n` },
+    },
+    sharedGlobal1: {
+      options: outside,
+      listed: ["index.ts", "../shared/globals.d.ts"],
+      files: { "index.ts": uses + `export const s: 2 = shared.a;\n` },
+    },
+    sharedGlobal2: {
+      options: outside,
+      listed: ["../shared/globals.d.ts", "index.ts"],
+      files: { "index.ts": uses + `export const s: 3 = shared.a;\n` },
+    },
+    sharedGlobal3: {
+      options: outside,
+      listed: ["../shared/globals.d.ts", "index.ts"],
+      files: { "index.ts": uses + `export const s: 4 = shared.a;\n` },
+    },
+    sharedGlobal4: {
+      options: outside,
+      listed: ["../shared/globals.d.ts", "index.ts"],
+      files: { "index.ts": uses + `export const s: 5 = shared.a;\n` },
+    },
+    brokenGlobal1: { options: outside, listed: ["../shared/broken.d.ts", "index.ts"], files: { "index.ts": uses } },
+    brokenGlobal2: { options: outside, listed: ["../shared/broken.d.ts", "index.ts"], files: { "index.ts": uses } },
+    brokenGlobal3: { options: outside, listed: ["../shared/broken.d.ts", "index.ts"], files: { "index.ts": uses } },
+    skips: {
+      options: { ...outside, skipLibCheck: true },
+      listed: ["../shared/broken.d.ts", "index.ts"],
+      files: { "index.ts": uses },
+    },
+    skipsDefault: {
+      options: { ...outside, skipDefaultLibCheck: true },
+      listed: ["../shared/broken.d.ts", "index.ts"],
+      files: { "index.ts": uses },
+    },
+    globalName: { files: { "lib.d.ts": `export as namespace JSON;\nexport const v: 1;\n`, "index.ts": uses } },
+    ambient: {
+      files: {
+        "virtual.d.ts": `declare module "virtual" {\n  export const v: Array<Missing>;\n}\n`,
+        "index.ts": `import { v } from "virtual";\nexport const w: 1 = v;\n` + uses,
+      },
+    },
+    plain4: { files: { "index.ts": uses } },
+  };
+  // lib.dom.d.ts takes a debug build too long.
+  if (isDebug || isASAN) for (const name of ["page1", "page2", "page3", "olderPage"]) delete projects[name];
+  // A global file with no errors unless one of these options is on. Each option finds a different error in it.
+  const sensitive = { ...outside, strict: false };
+  const oneByOne: Record<string, object> = {
+    // By the time the options come up, the file is known to have no errors without them.
+    none1: {},
+    none2: {},
+    noImplicitAny: { noImplicitAny: true },
+    strictNullChecks: { strictNullChecks: true },
+    strictFunctionTypes: { strictFunctionTypes: true },
+    exactOptionalPropertyTypes: { strictNullChecks: true, exactOptionalPropertyTypes: true },
+    none3: {},
+  };
+  for (const [name, options] of Object.entries(oneByOne)) {
+    projects[name] = {
+      options: { ...sensitive, ...options },
+      listed: ["../shared/sensitive.d.ts", "index.ts"],
+      files: { "index.ts": uses },
+    };
+  }
+  const files: Record<string, string> = {
+    "shared/globals.d.ts": `declare const shared: Shared;\ninterface Shared { a: 1 }\n`,
+    "shared/broken.d.ts": `declare const broken: Missing;\ninterface Array<T> { length: string }\n`,
+    "shared/sensitive.d.ts":
+      `declare function implicit(x);\n` +
+      `interface Base { a: string; f: (x: string | number) => void; o?: number }\n` +
+      `interface Nullable extends Base { a: string | null }\n` +
+      `interface Narrower extends Base { f: (x: string) => void }\n` +
+      `interface Exact extends Base { o?: number | undefined }\n`,
+    "tsconfig.json": JSON.stringify({ files: [], references: Object.keys(projects).map(it => ({ path: `./${it}` })) }),
+  };
+  for (const [name, { options, listed, files: own }] of Object.entries(projects)) {
+    const which = listed ? { files: listed } : { include: ["*.ts"] };
+    files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions: { ...base, ...options }, ...which });
+    for (const file in own) files[`${name}/${file}`] = own[file];
+  }
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  // bun and tsc keep their libraries in different directories, and the errors of a project are sorted by path. So the errors in
+  // the libraries are compared without their directory and apart from the others, as a sorted list.
+  const report = async (cmd: string[]) => {
+    const [own, inLibraries]: string[][] = [[], []];
+    let last = own;
+    for (const line of await linesOf(cmd, root, root)) {
+      const name = /^[^\s(]*[\\/](lib\.[\w.]+\.d\.ts\(.*)$/.exec(line);
+      // An indented line continues the error above it.
+      if (!line.startsWith(" ")) last = name ? inLibraries : own;
+      last.push(name ? name[1] : line);
+    }
+    return { own, inLibraries: inLibraries.sort() };
+  };
+  // In this order: `tsc -b` writes files.
+  const ours: Record<string, object> = {};
+  for (const threads of ["1", "2", "16"])
+    ours[threads] = await report([bunExe(), "check", "-b", `--threads=${threads}`]);
+  const theirs = await report([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"]);
+  expect(theirs.inLibraries.length).toBeGreaterThan(20);
+  expect(ours).toEqual({ 1: theirs, 2: theirs, 16: theirs });
+});
+
+// TypeScript keeps the variances it measures while one of them is still being measured, so they depend on which type of a cycle
+// is compared first. Here the global file compares them first, in `Used`, and without that there is no error in model.ts.
+// The projects that skip the check of the global file have to get the same variances.
+differential("an error that depends on what the check of a shared global file measured", async () => {
+  const names = ["a", "b", "c", "d", "e"];
+  const compilerOptions = { composite: true, emitDeclarationOnly: true, outDir: "out", rootDir: "..", strict: true };
+  const files: Record<string, string> = {
+    "tsconfig.json": JSON.stringify({ files: [], references: names.map(it => ({ path: `./${it}` })) }),
+    "shared/directives.d.ts": `
+interface Binding<Value = any, Modifiers extends string = string> {
+  value: Value;
+  modifiers: Partial<Record<Modifiers, boolean>>;
+  dir: ObjectDirective<any, Value, Modifiers>;
+}
+type Hook<Host = any, Value = any, Modifiers extends string = string> = (
+  el: Host,
+  binding: Binding<Value, Modifiers>,
+) => void;
+type SSRHook<Value = any, Modifiers extends string = string> = (
+  binding: Binding<Value, Modifiers>,
+) => object | undefined;
+interface ObjectDirective<Host = any, Value = any, Modifiers extends string = string> {
+  __mod?: Modifiers;
+  created?: Hook<Host, Value, Modifiers>;
+  getSSRProps?: SSRHook<Value, Modifiers>;
+}
+type FunctionDirective<Host = any, Value = any, Modifiers extends string = string> = Hook<Host, Value, Modifiers>;
+type Directive<Host = any, Value = any, Modifiers extends string = string> =
+  | ObjectDirective<Host, Value, Modifiers>
+  | FunctionDirective<Host, Value, Modifiers>;
+type Registered<D extends Directive> = D;
+type Used<T> = Registered<Directive<T, number>>;
+`,
+  };
+  for (const name of names) {
+    files[`${name}/tsconfig.json`] = JSON.stringify({
+      compilerOptions: { ...compilerOptions, lib: ["es5"], types: [] },
+      files: ["../shared/directives.d.ts", "model.ts"],
+    });
+    files[`${name}/model.ts`] = `
+declare const select: ObjectDirective<{ s: 1 }, any, "number">;
+declare const checkbox: ObjectDirective<{ c: 1 }>;
+function pick(tag: string) {
+  return tag === "SELECT" ? select : checkbox;
+}
+export const dynamic: ObjectDirective<{ s: 1 } | { c: 1 }> = {};
+dynamic.getSSRProps = binding => {
+  const model = pick("a");
+  return model.getSSRProps ? model.getSSRProps(binding) : undefined;
+};
+`;
+  }
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  // In this order: `tsc -b` writes files.
+  const ours: Record<string, string[]> = {};
+  for (const threads of ["1", "2", "16"]) {
+    ours[threads] = await linesOf([bunExe(), "check", "-b", `--threads=${threads}`], root, root);
+  }
+  const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], root, root);
+  expect(theirs.filter(line => line.includes("error TS2345"))).toHaveLength(names.length);
+  expect(ours).toEqual({ 1: theirs, 2: theirs, 16: theirs });
+});
+
 // A referenced project emits its own sources. Every other file that a project imports is a file of that project.
 differential("what a project with references imports, and whether it may", async () => {
   // What `src/a.ts` imports.
@@ -1967,7 +2369,7 @@ differential("the files that are checked, by layout of the project and by comman
     for (const side of ["theirs", "ours"]) for (const path in it[3]) files[`${index}/${side}/${path}`] = it[3][path];
   using dir = tempDir("bun-check-contract", files);
   const outcomeOf = async (cmd: string[], cwd: string, root: string) => {
-    await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+    await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const lines = stdout.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "").split(/\r?\n/);
     // tsc exits with 2 if it has written files in spite of errors.

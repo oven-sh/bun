@@ -459,7 +459,11 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            Provided::default(),
+            // The only place that says so: this function does not return.
+            Provided {
+                ends_the_process: true,
+                ..Default::default()
+            },
             // The process exits without freeing what was loaded. Under leak detection, everything
             // is freed first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {

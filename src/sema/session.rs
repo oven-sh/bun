@@ -179,6 +179,33 @@ impl Session {
         self.blocks_of_tasks.take(room)
     }
 
+    /// Drops the session of a process that is about to end. Every thread destroys an arena, its own if it has one, and the
+    /// memory goes back to the system at once. Otherwise one thread gives back whatever the process has when it ends,
+    /// which takes 70 ms for each GB.
+    /// `in_parallel` calls its second argument with every index below the first, on any number of threads.
+    pub fn drop_before_the_process_ends(
+        mut self,
+        in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
+    ) {
+        let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
+        let mut next = self.first.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+            arenas.push(node);
+        }
+        // From now on the allocator does not keep what is freed for a while, in case it is needed again.
+        bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+        let (count, arenas) = (arenas.len(), Guarded::new(arenas));
+        in_parallel(count, &|_| {
+            let thread = std::thread::current().id();
+            let mut left = arenas.lock();
+            let own = left.iter().position(|it| it.thread == thread);
+            let one = left.swap_remove(own.unwrap_or(0));
+            drop(left);
+            drop(one);
+        });
+    }
+
     /// The number of threads that have an arena.
     #[cfg(all(test, not(miri)))]
     fn thread_count(&self) -> usize {

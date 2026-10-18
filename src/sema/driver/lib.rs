@@ -1650,6 +1650,7 @@ pub fn check_provided_then<R>(
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
+    disk.ends_the_process = provided.ends_the_process;
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -4063,8 +4064,25 @@ fn check_named_files(
         request.plan_options.shares_at_once && request.plan_options.checkers == 0;
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
+    struct Dropped<'a> {
+        session: Session,
+        /// `None`: the process goes on, or the request has other programs.
+        before_the_process_ends: Option<&'a dyn Host>,
+    }
+    impl Drop for Dropped<'_> {
+        fn drop(&mut self) {
+            if let Some(host) = self.before_the_process_ends {
+                let session = std::mem::take(&mut self.session);
+                session.drop_before_the_process_ends(&|count, work| host.parallel(count, work));
+            }
+        }
+    }
     // Declared before everything that is allocated in it, so it is dropped last.
-    let session = run.map_or_else(Session::new, Run::session_of_program);
+    let session = Dropped {
+        session: run.map_or_else(Session::new, Run::session_of_program),
+        before_the_process_ends: (host.ends_the_process() && run.is_none()).then_some(host),
+    };
+    let session = &session.session;
     let files_are_found = |until_it_is_loaded: usize| {
         if let Some(place) = in_room {
             place.has_found_its_files(session.allocated_bytes() + until_it_is_loaded);

@@ -265,6 +265,8 @@ pub struct Disk {
     in_memory: FxHashMap<Vec<u8>, InMemory>,
     /// `Provided::keeps_byte_order_marks`
     pub(crate) keeps_byte_order_marks: bool,
+    /// `Provided::ends_the_process`
+    pub(crate) ends_the_process: bool,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
     /// What is in `BUNDLED_LIBS`.
@@ -303,6 +305,10 @@ pub struct Provided {
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
+    /// The caller ends the process when it has the report, as `bun check` does. Never in a process that goes on, like one
+    /// that calls `Bun.build`, watches files or runs a program or tests after the check: see
+    /// `Session::drop_before_the_process_ends`.
+    pub ends_the_process: bool,
 }
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
@@ -491,6 +497,7 @@ impl Disk {
                     .collect(),
             },
             keeps_byte_order_marks: false,
+            ends_the_process: false,
             extended_configs: Default::default(),
             paths: Default::default(),
             caches: Default::default(),
@@ -1496,6 +1503,9 @@ impl Host for Disk {
     }
     fn threads(&self) -> usize {
         self.threads
+    }
+    fn ends_the_process(&self) -> bool {
+        self.ends_the_process
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         // The threads that only read serve one load at a time.

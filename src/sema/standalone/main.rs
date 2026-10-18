@@ -409,7 +409,11 @@ fn run(args: &[String]) {
                     bun_sema_standalone::current_memory() >> 20
                 );
             }
-            bun_sema_driver::check_then(&request, |report| {
+            let provided = bun_sema_driver::host::Provided {
+                ends_the_process: true,
+                ..Default::default()
+            };
+            bun_sema_driver::check_provided_then(&request, provided, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {
                     layout: if has("--plain") {

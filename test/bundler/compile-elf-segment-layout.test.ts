@@ -94,41 +94,37 @@ test.skipIf(!(isLinux || isFreeBSD))(
 // src/linker-bun-section.lds puts `.bun` after `.bss` in a PT_LOAD of its own,
 // so the payload the writer appends there leaves `.bss` a NOBITS tail
 // (p_filesz < p_memsz). Appending inside the segment that holds `.bss` stored
-// the runtime's zero-initialized statics (~1.7 MB on x64) in every compiled
+// the runtime's zero-initialized statics (~1.8 MB on x64) in every compiled
 // executable.
-test.skipIf(!(isLinux || isFreeBSD))(
-  "compiled executable does not store the runtime's .bss",
-  async () => {
-    using dir = tempDir("elf-segment-bss", {
-      "index.ts": `console.log("bss");`,
-    });
-    const cwd = String(dir);
-    const out = join(cwd, "app");
+test.skipIf(!(isLinux || isFreeBSD))("compiled executable does not store the runtime's .bss", async () => {
+  using dir = tempDir("elf-segment-bss", {
+    "index.ts": `console.log("bss");`,
+  });
+  const cwd = String(dir);
+  const out = join(cwd, "app");
 
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(cwd, "index.ts"), "--outfile", out],
-      env: bunEnv,
-      cwd,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect(buildErr).not.toContain("error:");
-    expect(buildExit).toBe(0);
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", join(cwd, "index.ts"), "--outfile", out],
+    env: bunEnv,
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).not.toContain("error:");
+  expect(buildExit).toBe(0);
 
-    const writableWithBss = readElf64ProgramHeaders(out).filter(
-      ph => ph.type === 1 /* PT_LOAD */ && ph.flags & 2 /* PF_W */ && ph.filesz < ph.memsz,
-    );
-    expect(writableWithBss.length).toBe(1);
+  const writableWithBss = readElf64ProgramHeaders(out).filter(
+    ph => ph.type === 1 /* PT_LOAD */ && ph.flags & 2 /* PF_W */ && ph.filesz < ph.memsz,
+  );
+  expect(writableWithBss.length).toBe(1);
 
-    await using run = Bun.spawn({ cmd: [out], env: bunEnv, cwd, stderr: "pipe", stdout: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("bss\n");
-    expect(exitCode).toBe(0);
-  },
-  180_000,
-);
+  await using run = Bun.spawn({ cmd: [out], env: bunEnv, cwd, stderr: "pipe", stdout: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("bss\n");
+  expect(exitCode).toBe(0);
+});
 
 // `bun build --compile` injects into a copy of an executable: bun itself, or
 // the one `--compile-executable-path` names. That executable can be a compiled

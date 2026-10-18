@@ -1,0 +1,7 @@
+declared order: {"id":1,"name":"n","paid":true,"price":1.5} true
+an object below: {"id":1,"inner":{"x":2,"label":"l"}} true
+a union below: {"id":1,"shape":{"kind":"circle","radius":2}} true
+an optional member: {"id":1,"note":"n"} true
+without it: {"id":1} true
+another order: {"price":1.5,"paid":true,"name":"n","id":1} true
+toJSON of its own: "told" true

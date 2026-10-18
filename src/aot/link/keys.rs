@@ -1,6 +1,6 @@
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{StrId, V};
-use crate::ir::{Def, Func, LayoutKind, Op, Operation, Program, Strs, Term, class_flags, func_flags};
+use crate::ir::{Def, Func, Op, Operation, Program, Strs, Term, class_flags, func_flags};
 use bun_sema::atom::{Interner, known};
 use bun_sema::bind::{AccessKind, Decl, Parent, PatParent, SymFlags, SymbolId};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, PropKey, PropKind, StmtKind, UnOp, VarKind};
@@ -72,10 +72,6 @@ fn may_be_a_name(program: &Program, func: &Func, key: V, joins_seen: &mut Vec<V>
     }
 }
 
-fn is_own_object(receiver: &Declared, is_own: &[bool]) -> bool {
-    receiver.prims & !prim::NULLISH == 0 && receiver.ints.is_none() && !receiver.any_object && !receiver.any_function && receiver.parts.iter().all(|part| matches!(part, Part::Class(layout) if layout.is_some() && is_own[layout.idx()]))
-}
-
 fn read_by_any_key(op: &Op) -> Option<(V, V)> {
     match op {
         &Op::ElemGet { obj, key } => Some((obj, key)),
@@ -110,6 +106,7 @@ fn is_only_looked_at(strs: &Strs, func: &Func, found: V, steps_followed: u32) ->
     let by_operations = func.values.iter().enumerate().all(|(index, value)| match &value.def {
         Def::Op(op) if is_operand(op) => match op {
             Op::StrictEq { .. } | Op::LooseEq { .. } | Op::TypeOf(_) | Op::Truthy(_) | Op::Not(_) | Op::IsNullish(_) | Op::PropHas { .. } => true,
+            Op::Binary { .. } | Op::Unary { .. } | Op::Relational { .. } | Op::StrConcat(_) | Op::ToStr(_) | Op::Operation { which: Operation::Increment | Operation::Decrement, .. } => true,
             &Op::InstanceOf { value, .. } => value != found,
             &Op::PropGet { name, .. } if is_of_runtime || matches!(strs.get(name), b"name" | b"length" | b"prototype") => true,
             &Op::ElemGet { obj, key } if obj != found || key == found || !matches!(func.op(key), Some(Op::Int(_) | Op::Str(_) | Op::Symbol(_))) => false,
@@ -168,7 +165,7 @@ fn may_take_out_descriptors_from_a_holder_without_a_name(program: &Program, func
     }
 }
 
-const MAKE_OR_LOAD_CODE: [&[u8]; 17] = [
+const MAKE_OR_LOAD_CODE: [&[u8]; 16] = [
     b"FFI",
     b"Function",
     b"ModuleGraph",
@@ -183,7 +180,6 @@ const MAKE_OR_LOAD_CODE: [&[u8]; 17] = [
     b"getProtectedObjects",
     b"loadExtension",
     b"mainModule",
-    b"plugin",
     b"require",
     b"setCustomSQLite",
 ];
@@ -247,112 +243,6 @@ pub(super) fn may_print_an_object(strs: &Strs, tys: &DeclaredTable, func: &Func)
             term.for_each_operand(|operand| is_handed_on |= is_either(operand));
             is_handed_on
         })
-}
-
-pub(super) fn stores_under_a_key_that_is_not_seen(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
-    let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
-    program.funcs.iter().filter(is_of_program).any(|func| {
-        func.values.iter().any(|value| {
-            let key = match &value.def {
-                &Def::Op(Op::ElemSet { key, .. }) => key,
-                Def::Op(Op::Operation { which: Operation::SuperSet, args }) => args[1],
-                _ => return false,
-            };
-            !matches!(func.op(key), Some(Op::Str(_) | Op::Int(_) | Op::Symbol(_))) && may_be_a_name(program, func, key, &mut Vec::new())
-        })
-    })
-}
-
-fn may_be_a_symbol(program: &Program, func: &Func, key: V) -> bool {
-    match func.op(key) {
-        Some(Op::Str(_) | Op::Int(_) | Op::Symbol(_)) => false,
-        Some(&Op::ToKey(value)) => may_be_a_symbol(program, func, value),
-        Some(&Op::PropGet { obj, name }) if WELL_KNOWN_SYMBOLS.contains(&program.strs.get(name)) && matches!(func.op(obj), Some(&Op::FreeGet { name, .. }) if program.strs.get(name) == b"Symbol") => false,
-        _ => {
-            let declared = program.tys.get(func.ty(key));
-            declared.prims & prim::SYMBOL != 0 || declared.has_objects()
-        }
-    }
-}
-
-pub(super) fn reads_the_constructor_of_a_symbol(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
-    let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
-    program.funcs.iter().filter(is_of_program).any(|func| {
-        let holds_a_symbol = |value: V| {
-            value.is_some() && {
-                let declared = program.tys.get(func.ty(value));
-                declared.prims & prim::SYMBOL != 0 && !declared.any_object && !declared.any_function
-            }
-        };
-        func.values.iter().any(|value| match value.def {
-            Def::Op(Op::PropGet { obj, name } | Op::CallMethod { obj, name, .. }) => program.strs.get(name) == b"constructor" && holds_a_symbol(obj),
-            Def::Op(Op::ElemGet { obj, key }) => {
-                holds_a_symbol(obj)
-                    && match func.op(key) {
-                        Some(&Op::Str(name)) => program.strs.get(name) == b"constructor",
-                        Some(Op::Int(_) | Op::Symbol(_)) => false,
-                        _ => may_be_a_name(program, func, key, &mut Vec::new()),
-                    }
-            }
-            _ => false,
-        })
-    })
-}
-
-const HAND_OUT_MEMBERS: [&[u8]; 3] = [b"values", b"entries", b"assign"];
-
-pub(super) fn takes_members_without_naming_them(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
-    let is_own = layouts_of_own_objects(program);
-    let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
-    program.funcs.iter().filter(is_of_program).any(|func| {
-        let is_global = |value: V, written: &[u8]| value.is_some() && matches!(func.op(value), Some(&Op::FreeGet { name, .. }) if program.strs.get(name) == written);
-        let may_be_of_the_runtime = |value: &V| {
-            let declared = program.tys.get(func.ty(*value));
-            declared.any_object || declared.any_function || declared.parts.iter().any(|part| !matches!(part, Part::Array(_)) && !matches!(part, Part::Class(layout) if layout.is_some() && is_own[layout.idx()]))
-        };
-        let may_be_a_function = |value: V| value.is_some() && (program.tys.get(func.ty(value)).any_object || program.tys.get(func.ty(value)).any_function);
-        let hands_out_members = |holder: V, name: StrId| HAND_OUT_MEMBERS.contains(&program.strs.get(name)) && (is_global(holder, b"Object") || may_be_a_function(holder));
-        let is_stringify = |holder: V, name: StrId| is_global(holder, b"JSON") && program.strs.get(name) == b"stringify";
-        let is_taken_by = |holder: V, name: StrId, args: &[V]| {
-            let targets = usize::from(program.strs.get(name) == b"assign");
-            hands_out_members(holder, name) && args.iter().skip(targets).any(may_be_of_the_runtime) || is_stringify(holder, name) && args.len() > 1 && may_be_of_the_runtime(&args[0]) && may_be_of_the_runtime(&args[1])
-        };
-        let member_at = |value: V| match func.op(value) {
-            Some(&Op::PropGet { obj, name }) if hands_out_members(obj, name) || is_stringify(obj, name) => Some((obj, name)),
-            _ => None,
-        };
-        let by_operations = func.values.iter().any(|value| match &value.def {
-            Def::Op(Op::CallMethod { obj, name, args }) => is_taken_by(*obj, *name, args),
-            Def::Op(Op::Call { callee, args, .. }) if member_at(*callee).is_some() => member_at(*callee).is_some_and(|(holder, name)| is_taken_by(holder, name, args)),
-            Def::Op(Op::Operation { which: Operation::CloneObject | Operation::CloneObjectWith | Operation::CopyDataPropertiesExcluding, args }) => args.first().is_some_and(may_be_of_the_runtime),
-            Def::Op(Op::Operation { which: Operation::CopyDataProperties, args }) => args.get(1).is_some_and(may_be_of_the_runtime),
-            Def::Op(op) => {
-                let mut is_handed_on = false;
-                op.for_each_operand(|operand| is_handed_on |= operand.is_some() && member_at(operand).is_some());
-                is_handed_on
-            }
-            Def::Param(..) => false,
-        });
-        by_operations
-            || func.blocks.iter().filter_map(|block| block.term.as_ref()).any(|term| {
-                let mut is_handed_on = false;
-                term.for_each_operand(|operand| is_handed_on |= operand.is_some() && member_at(operand).is_some());
-                is_handed_on
-            })
-    })
-}
-
-pub(super) fn writes_under_a_key_that_may_be_a_symbol(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
-    let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
-    program.funcs.iter().filter(is_of_program).any(|func| {
-        let may_be_called = |value: V| value.is_none() || program.tys.get(func.ty(value)).has_objects();
-        func.values.iter().any(|value| match &value.def {
-            &Def::Op(Op::ElemSet { key, value, .. }) => may_be_a_symbol(program, func, key) && may_be_called(value),
-            Def::Op(Op::Operation { which: Operation::DefineField, args }) => args.len() > 2 && may_be_a_symbol(program, func, args[1]) && may_be_called(args[2]),
-            Def::Op(Op::Operation { which: Operation::SuperSet | Operation::DefineGetter | Operation::DefineSetter | Operation::DefineMethod, args }) => args.len() > 1 && may_be_a_symbol(program, func, args[1]),
-            _ => false,
-        })
-    })
 }
 
 fn with_assertions(module: &Module<'_>, mut e: ExprId) -> ExprId {
@@ -428,7 +318,7 @@ fn member_read_from(module: &Module<'_>, mention: ExprId, literal: ExprId) -> Op
         ExprKind::Unary { op: UnOp::Delete, .. } | ExprKind::Instantiation { .. } => true,
         _ => false,
     });
-    (bound.access_kind(hir, member) == AccessKind::Read && bound.access_kind(hir, read) == AccessKind::Read && !hands_on_the_receiver).then_some(member)
+    (bound.get_assignment_target(hir, member).is_none() && bound.get_assignment_target(hir, read).is_none() && !hands_on_the_receiver).then_some(member)
 }
 
 const EXPRESSIONS_FOLLOWED: u32 = 8;
@@ -545,11 +435,17 @@ fn variables_that_hold_an_object_literal(module: &Module<'_>) -> FxHashMap<Symbo
     holders
 }
 
-fn reads_by_key_of_unshared_object_literals_that_hand_nothing_on(module: &Module<'_>, atoms: &Interner<'_>) -> FxHashSet<u32> {
+#[derive(Default)]
+struct ReadsOfUnsharedLiterals {
+    that_hand_nothing_on: FxHashSet<u32>,
+    that_hand_on_what_they_find: FxHashSet<u32>,
+}
+
+fn reads_by_key_of_unshared_object_literals(module: &Module<'_>, atoms: &Interner<'_>) -> ReadsOfUnsharedLiterals {
     let (hir, bound) = (&module.hir, &module.bound);
     let mut holders = variables_that_hold_an_object_literal(module);
     if holders.is_empty() {
-        return FxHashSet::default();
+        return ReadsOfUnsharedLiterals::default();
     }
     let mentions = || {
         let identifiers = hir.exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Ident(_))).map(|it| ExprId::from(it.0 as u32));
@@ -567,12 +463,12 @@ fn reads_by_key_of_unshared_object_literals_that_hand_nothing_on(module: &Module
         }
     }
     let of_holders = mentions().filter_map(|mention| Some((mention, *holders.get(&bound.expr_symbol[mention.idx()].some()?)?)));
-    let mut reads = FxHashSet::default();
+    let mut reads = ReadsOfUnsharedLiterals::default();
     for (mention, literal) in of_holders {
         let holds_another_read = |key: ExprId| hir.exprs.iter().any(|other| matches!(other.kind, ExprKind::Index { index, .. } if !matches!(hir[index].kind, ExprKind::Number(_) | ExprKind::String(_))) && (hir[key].pos..hir[key].end).contains(&other.pos));
         if let Some(member) = member_stored_a_primitive(module, mention) {
             if bound.access_kind(hir, member) == AccessKind::ReadWrite && matches!(hir[member].kind, ExprKind::Index { index, .. } if !holds_another_read(index)) {
-                reads.insert(crate::positions::access_pos(hir, member));
+                reads.that_hand_nothing_on.insert(crate::positions::access_pos(hir, member));
             }
             continue;
         }
@@ -583,7 +479,9 @@ fn reads_by_key_of_unshared_object_literals_that_hand_nothing_on(module: &Module
         }
         let at = if is_called_in_place { crate::positions::last_pos(hir, member) } else { hir[mention].pos };
         if is_called_in_place || is_only_tested_or_called(module, member, true, EXPRESSIONS_FOLLOWED) {
-            reads.insert(at);
+            reads.that_hand_nothing_on.insert(at);
+        } else {
+            reads.that_hand_on_what_they_find.insert(at);
         }
     }
     reads
@@ -592,6 +490,7 @@ fn reads_by_key_of_unshared_object_literals_that_hand_nothing_on(module: &Module
 pub(super) struct Reads {
     pub(super) of_any_property: Vec<(FileId, u32)>,
     pub(super) by_a_key_that_may_be_a_name: bool,
+    pub(super) that_hand_on_what_a_table_in_sight_finds: bool,
     pub(super) that_may_find_the_constructor_of_functions: Vec<(FileId, u32)>,
     pub(super) that_may_find_what_makes_or_loads_code: Vec<(FileId, u32)>,
     pub(super) of_modules_that_are_not_compiled: Vec<(FileId, Vec<u8>)>,
@@ -599,10 +498,10 @@ pub(super) struct Reads {
 
 pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files: &Files<'_>, files_of_prelude: &FxHashSet<FileId>, in_parallel: InParallel<'_>) -> Reads {
     let is_own = layouts_of_own_objects(program);
-    let keeps_its_prototype: Vec<bool> = is_own.iter().zip(&program.layouts).map(|(&is_own, layout)| is_own && layout.kind != LayoutKind::Record).collect();
     let create_require = program.strs.find(b"createRequire");
-    let reads_of_unshared_literals: Vec<OnceLock<FxHashSet<u32>>> = modules.iter().map(|_| OnceLock::new()).collect();
+    let reads_of_unshared_literals: Vec<OnceLock<ReadsOfUnsharedLiterals>> = modules.iter().map(|_| OnceLock::new()).collect();
     let reads_by_key = AtomicBool::new(false);
+    let hands_on_what_a_table_finds = AtomicBool::new(false);
     let mut tasks: Vec<(&[Func], Vec<(FileId, u32)>, Vec<(FileId, u32)>, Vec<(FileId, u32)>, Vec<(FileId, Vec<u8>)>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Vec::new(), Vec::new(), Vec::new(), Vec::new())).collect();
     for_each_mut(&mut tasks, in_parallel, &|(funcs, found, finding_constructor, finding_loaders, loading)| {
         for func in funcs.iter().filter(|func| func.module.is_some()) {
@@ -610,10 +509,10 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
             let is_of_runtime = func.has(func_flags::IS_BUILTIN) || func.has(func_flags::IS_IN_BUILTIN_MODULE);
             let of_unshared_literals = |op: &Op| {
                 let is_of_program = !is_of_runtime && !files_of_prelude.contains(&file);
-                (is_of_program && matches!(op, Op::ElemGet { .. })).then(|| reads_of_unshared_literals[func.module.idx()].get_or_init(|| reads_by_key_of_unshared_object_literals_that_hand_nothing_on(files.module(file), &files.atoms)))
+                (is_of_program && matches!(op, Op::ElemGet { .. })).then(|| reads_of_unshared_literals[func.module.idx()].get_or_init(|| reads_by_key_of_unshared_object_literals(files.module(file), &files.atoms)))
             };
             if is_of_runtime || files_of_prelude.contains(&file) || finding_constructor.last().is_none_or(|last| last.0 != file) {
-                let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op) && !of_unshared_literals(op).is_some_and(|reads| reads.contains(&value.pos))));
+                let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op) && !of_unshared_literals(op).is_some_and(|reads| reads.that_hand_nothing_on.contains(&value.pos))));
                 finding_constructor.extend(finds.map(|(_, value)| (file, value.pos)));
             }
             if !is_of_runtime && !files_of_prelude.contains(&file) && finding_loaders.last().is_none_or(|last| last.0 != file) {
@@ -642,13 +541,19 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
             let mut is_counted_here = false;
             for (index, value) in func.values.iter().enumerate() {
                 if let Def::Op(op) = &value.def
-                    && let Some((obj, key)) = read_by_key(func, op)
+                    && let Some((_, key)) = read_by_key(func, op)
                     && may_be_a_name(program, func, key, &mut Vec::new())
                 {
                     reads_by_key.store(true, Ordering::Relaxed);
                     let is_counted = if is_of_runtime { is_counted_here } else { found.last().is_some_and(|last| last.0 == file) };
-                    let is_look_at_own_object = || is_own_object(program.tys.get(func.ty(obj)), &keeps_its_prototype) && is_only_looked_at(&program.strs, func, V::new(index), STEPS_OF_A_LOOK);
-                    if !is_counted && !is_look_at_own_object() && !of_unshared_literals(op).is_some_and(|reads| reads.contains(&value.pos)) {
+                    let is_look = || !is_of_runtime && is_only_looked_at(&program.strs, func, V::new(index), STEPS_OF_A_LOOK);
+                    if of_unshared_literals(op).is_some_and(|reads| reads.that_hand_on_what_they_find.contains(&value.pos)) {
+                        if !is_look() {
+                            hands_on_what_a_table_finds.store(true, Ordering::Relaxed);
+                        }
+                        continue;
+                    }
+                    if !is_counted && !is_look() && !of_unshared_literals(op).is_some_and(|reads| reads.that_hand_nothing_on.contains(&value.pos)) {
                         found.push((file, value.pos));
                         is_counted_here = true;
                     }
@@ -656,7 +561,7 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
             }
         }
     });
-    let mut reads = Reads { of_any_property: Vec::new(), by_a_key_that_may_be_a_name: reads_by_key.into_inner(), that_may_find_the_constructor_of_functions: Vec::new(), that_may_find_what_makes_or_loads_code: Vec::new(), of_modules_that_are_not_compiled: Vec::new() };
+    let mut reads = Reads { of_any_property: Vec::new(), by_a_key_that_may_be_a_name: reads_by_key.into_inner(), that_hand_on_what_a_table_in_sight_finds: hands_on_what_a_table_finds.into_inner(), that_may_find_the_constructor_of_functions: Vec::new(), that_may_find_what_makes_or_loads_code: Vec::new(), of_modules_that_are_not_compiled: Vec::new() };
     for (_, of_any_property, finding_constructor, finding_loaders, loading) in tasks {
         reads.of_any_property.extend(of_any_property);
         reads.that_may_find_the_constructor_of_functions.extend(finding_constructor);

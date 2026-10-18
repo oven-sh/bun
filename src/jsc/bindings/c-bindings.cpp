@@ -1230,7 +1230,11 @@ static JSC::EncodedJSValue throwThatItWasRemoved(JSC::JSGlobalObject* globalObje
     return {};
 }
 
-extern "C" JSC::EncodedJSValue Bun__trimmedOut(uint32_t door, void* secondArgumentOfTheDoor)
+#if OS(WINDOWS)
+extern "C" JSC::EncodedJSValue Bun__trimmedOut(uint32_t door)
+#else
+extern "C" JSC::EncodedJSValue Bun__trimmedOut(void* firstArgumentOfTheDoor, void*, uint32_t door)
+#endif
 {
     const char* description = Bun__trimmedFeatures;
     for (uint32_t feature = door & 2047; feature--;)
@@ -1238,9 +1242,7 @@ extern "C" JSC::EncodedJSValue Bun__trimmedOut(uint32_t door, void* secondArgume
     const bool wasRemovedByName = door & 2048;
 #if !OS(WINDOWS)
     if (door >> 30 == 1)
-        return throwThatItWasRemoved(static_cast<JSC::CallFrame*>(secondArgumentOfTheDoor)->jsCallee()->globalObject(), WTF::String::fromUTF8(description), wasRemovedByName);
-#else
-    UNUSED_PARAM(secondArgumentOfTheDoor);
+        return throwThatItWasRemoved(static_cast<JSC::JSGlobalObject*>(firstArgumentOfTheDoor), WTF::String::fromUTF8(description), wasRemovedByName);
 #endif
     const auto print = [](const char* text) {
 #if OS(WINDOWS)
@@ -1291,11 +1293,25 @@ extern "C" __attribute__((noinline)) bool Bun__hasTypeChecker()
     return hasTypeChecker;
 }
 
+extern "C" __attribute__((noinline)) bool Bun__evaluatesText()
+{
+    uint32_t evaluatesText = 22;
+    asm volatile("" : "+r"(evaluatesText));
+    return evaluatesText;
+}
+
 extern "C" __attribute__((noinline)) bool Bun__hasBundler()
 {
     uint32_t hasBundler = 2;
     asm volatile("" : "+r"(hasBundler));
     return hasBundler;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasInternalTestingAPIs()
+{
+    uint32_t hasInternalTestingAPIs = 26;
+    asm volatile("" : "+r"(hasInternalTestingAPIs));
+    return hasInternalTestingAPIs;
 }
 
 extern "C" __attribute__((noinline)) bool Bun__hasWorker()
@@ -1317,6 +1333,20 @@ extern "C" __attribute__((noinline)) bool Bun__hasValkey()
     uint32_t hasValkey = 14;
     asm volatile("" : "+r"(hasValkey));
     return hasValkey;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasInstall()
+{
+    uint32_t hasInstall = 18;
+    asm volatile("" : "+r"(hasInstall));
+    return hasInstall;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasInspector()
+{
+    uint32_t hasInspector = 30;
+    asm volatile("" : "+r"(hasInspector));
+    return hasInspector;
 }
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)

@@ -1,0 +1,23 @@
+every order of four: 24 texts, 0 differ
+every order of three of four: 6 texts, 0 differ
+every order of four, spaced: 24 texts, 0 differ
+every order of four, on lines: 24 texts, 0 differ
+one is missing: 6 texts, 0 differ
+one is wrong: 6 texts, 0 differ
+one comes twice: 24 texts, 0 differ
+the optional one comes twice: 120 texts, 0 differ
+with and without an undeclared key, in turn: 15 texts, 0 differ
+two types of the same members, the one: 4 texts, 0 differ
+two types of the same members, the other: 4 texts, 0 differ
+two types of the same members, in turn: 4 texts, 0 differ
+thirteen members: 26 texts, 0 differ
+fourteen members: 28 texts, 0 differ
+thirteen members and one more key: 28 texts, 0 differ
+none, one or both of two optional members: 7 texts, 0 differ
+objects within objects: 48 texts, 0 differ
+afterwards: a member is deleted and written again: 4 texts, 0 differ
+afterwards: the optional member is written: 4 texts, 0 differ
+afterwards: another key is written: 4 texts, 0 differ
+afterwards: a member is written: 4 texts, 0 differ
+afterwards: frozen: 4 texts, 0 differ
+kept for a while: 4000 objects, 0 differ

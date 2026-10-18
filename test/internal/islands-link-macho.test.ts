@@ -882,14 +882,14 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       if (machine.canRun) expect([await signAndRun(folder, "shut", shut), await signAndRun(folder, "shut", shut, ["through the door"])]).toEqual([0, 70]);
     });
 
-    test("that throws says so, and whether its feature was removed by name, and leaves its second argument where it was", async () => {
+    test("that throws says so, and whether its feature was removed by name, and leaves its first two arguments where they were", async () => {
       using dir = tempDir("islands-macho-door", {
         ...sources,
         "door.c": `int behind(int); __attribute__((noinline)) long the_door(long first, long second) { return behind(first) * 3 + behind(second + 1); }`,
         "main.c": `
           long the_door(long, long);
-          __attribute__((noinline)) long Bun__trimmedOut(unsigned door, long second) { if (door >> 30 == 0) { ${exits("70")} } return second + (door >> 30) + (door & 2048 ? 10 : 0); }
-          int main(int argc, char **argv) { return argc > 1 ? the_door(5, 41) : 0; }
+          __attribute__((noinline)) long Bun__trimmedOut(long first, long second, unsigned door) { if (door >> 30 == 0) { ${exits("70")} } return first + second + (door >> 30) + (door & 2048 ? 10 : 0); }
+          int main(int argc, char **argv) { return argc > 1 ? the_door(5, 36) : 0; }
         `,
         "doors": sources.doors.replace("door extra exit", "door extra throw"),
       });
@@ -948,9 +948,13 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
 
-    test("too small to be shut is no door, and what it names stays", async () => {
+    test.each([
+      ["is a thin door where every place that names it can be rewritten", "_main\n", [true, true, true]],
+      ["is no door where the executable exports it, and what it names stays", "_main\n_small_door\n", [false, false, true]],
+    ])("too small to be shut where it stands %s", async (_, exported, go) => {
       using dir = tempDir("islands-macho-door", {
         ...sources,
+        "exported.txt": exported,
         "more.c": `
           ${mixes("behind_the_small_door", 5)}
           __asm__(${asCStrings(`.text\n.globl _small_door\n.p2align 2\n_small_door:\n${jumpTo("_behind_the_small_door")}_what_follows_the_small_door:\nret\n`)});
@@ -963,8 +967,8 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         "doors": sources.doors + "door extra exit ^small_door$\n",
       });
       const { said, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "main"] });
-      expect(said).toContain("1 functions that match a door are too small to be shut and are no doors");
-      expect(["small_door", "behind_the_small_door", "behind_0"].map(canGo)).toEqual([false, false, true]);
+      expect(said.includes("1 functions that match a door are too small to be shut and are no doors")).toBe(!go[0]);
+      expect(["small_door", "behind_the_small_door", "behind_0"].map(canGo)).toEqual(go);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
   });
@@ -980,7 +984,7 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         int the_door(int);
         int door_of_one(int);
         int door_of_another(int);
-        __attribute__((noinline)) void Bun__trimmedOut(int feature) { ${exits("70 + (feature & 255)")} }
+        __attribute__((noinline)) void Bun__trimmedOut(long first, long second, int feature) { ${exits("70 + (feature & 255)")} }
         int main(int argc, char **argv) {
           if (argc == 2) return door_of_one(argc) & 63;
           if (argc == 3) return door_of_another(argc) & 63;

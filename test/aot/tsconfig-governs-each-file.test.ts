@@ -326,14 +326,14 @@ test("bun check --aot passes the decorators that a build compiles from what the 
   for (const aot of [[], ["--aot"]]) {
     const built = await run(String(dir), "build", "--compile", ...aot, "./main.ts", "--outfile", outfile);
     expect({ codes: codes(built.said), exitCode: built.exitCode }).toEqual({ codes: [], exitCode: 0 });
-    if (aot.length) expect(built.said).toContain("1 file untyped");
+    if (aot.length) expect(built.said).toContain("aot: 0.0% typed (0 of 1 property accesses)");
     await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
     expect(await ran.stdout.text()).toBe("2\n");
   }
   const checked = await run(String(dir), "check", "--aot", "main.ts");
   expect(checked.said).toContain("No type errors");
   expect(checked.said).not.toContain("does not support");
-  expect(checked.said).toContain("1 file untyped");
+  expect(checked.said).toContain("1 file compiled untyped");
   expect(checked.exitCode).toBe(0);
   const refused = await run(String(dir), "build", "--compile", "--aot", "./wrong.ts", "--outfile", outfile);
   expect(codes(refused.said)).toContain("TS2322");

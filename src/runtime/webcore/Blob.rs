@@ -5528,17 +5528,10 @@ pub(crate) fn find_or_create_file_or_s3_file_from_path(
                 path_or_fd,
                 blob: None,
             };
-            bun_jsc::JSFunction::create(
+            bun_jsc::JSFunction::call_with_request(
                 global_this,
-                "",
                 __jsc_host_find_or_create_s3_file,
-                1,
-                Default::default(),
-            )
-            .call(
-                global_this,
-                JSValue::UNDEFINED,
-                &[JSValue::from_ptr_address((&raw mut request) as usize)],
+                &mut request,
             )?;
             return request.blob.ok_or(jsc::JsError::Terminated);
         }

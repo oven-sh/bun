@@ -209,7 +209,7 @@ JSObject* JSDecompressionStream::prototype(VM& vm, JSDOMGlobalObject& globalObje
     return getDOMPrototype<JSDecompressionStream>(vm, globalObject);
 }
 
-JSValue JSDecompressionStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSDecompressionStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSDecompressionStreamConstructor, DOMConstructorID::DecompressionStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

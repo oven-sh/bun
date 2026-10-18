@@ -2550,13 +2550,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn generate_runtime_require(
         &mut self,
+        import_path: &'a [u8],
         imports: &[u8],
         parts: &mut ListManaged<'a, js_ast::Part>,
     ) -> Result<(), crate::Error> {
         let arena = self.arena;
         let import_record_index =
-            self.add_import_record_by_range(ImportKind::Require, bun_ast::Range::NONE, RuntimeImports::NAME);
-        {
+            self.add_import_record_by_range(ImportKind::Require, bun_ast::Range::NONE, import_path);
+        if import_path == RuntimeImports::NAME {
             let import_record = &mut self.import_records.items_mut()[import_record_index as usize];
             import_record.path.namespace = b"runtime";
             import_record.flags.set(bun_ast::ImportRecordFlags::IS_INTERNAL, true);

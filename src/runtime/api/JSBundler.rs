@@ -324,7 +324,7 @@ pub(crate) mod js_bundler {
         }
         if !trim.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
-                "compile.trim must be a boolean, an array of names or an object with auto, remove and keep"
+                "compile.trim must be a boolean, an array of feature names, or an object with auto, remove, keep or log"
             )));
         }
         let names_of = |property: &str| match trim.get_own_array(global_this, property)? {
@@ -335,6 +335,7 @@ pub(crate) mod js_bundler {
             auto: trim.get_boolean_loose(global_this, "auto")?.unwrap_or(true),
             remove: names_of("remove")?,
             keep: names_of("keep")?,
+            log: trim.get_boolean_loose(global_this, "log")?.unwrap_or(false),
         })
     }
 

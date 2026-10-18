@@ -201,6 +201,10 @@ const triggers: Record<string, string[]> = {
   "Bun.sql": ["bun:sql"],
   "Bun.SQL": ["bun:sql"],
   "Bun.postgres": ["bun:sql"],
+  "Bun.validate": ["internal/validation_plans"],
+  "Bun.safeValidate": ["internal/validation_plans"],
+  "Bun.parse": ["internal/validation_plans"],
+  "Bun.schema": ["internal/validation_plans"],
 };
 const patternNames = (code: string, global: string) =>
   [...code.matchAll(new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${global}\\b(?!\\s*[.(\\[?])`, "g"))].flatMap(([, names]) =>
@@ -347,8 +351,10 @@ for (const [key, names] of Object.entries(onBehalfOf)) {
 }
 
 const handsProcessToTheQueueOfTicks = { "process *": [] };
+const handsProcessToAWorkerBehindExportsThatOpenTheWorld = { "process *": [] };
 const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
   "bun:sqlite": keysAreSymbolsIndexesOrOfFixedLists,
+  "internal/cluster/child": handsProcessToAWorkerBehindExportsThatOpenTheWorld,
   "internal/http": handsProcessToTheQueueOfTicks,
   "internal/primordials": { ...keysAreSymbolsIndexesOrOfFixedLists, "symbol *": [] },
   "internal/shared": keysAreSymbolsIndexesOrOfFixedLists,

@@ -247,7 +247,8 @@ pub mod feature_flags;
 pub use code_generation::{
     CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
     code_generation_from_strings, code_generation_from_strings_by_flags, code_generation_from_strings_in_built_executable,
-    disallow_code_generation_from_strings, disallow_code_generation_in_trimmed_executable, is_code_generation_disallowed_by_trimming,
+    disallow_code_generation_from_strings, disallow_code_generation_in_trimmed_executable, disallow_code_generation_without_interpreter,
+    is_code_generation_disallowed_by_trimming, is_interpreter_removed_by_name,
     set_code_generation_from_strings_in_built_executable,
 };
 

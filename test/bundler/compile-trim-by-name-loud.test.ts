@@ -39,6 +39,10 @@ const own: Record<string, string> = {
   ffi: `console.log(typeof require("bun:ffi").dlopen);`,
   "intl-segmenter": `console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("a b")].length);`,
   color: `console.log(Bun.color("red", "hex"));`,
+  ipc: `console.log(typeof process.send, process.connected);`,
+};
+const startedWith: Record<string, { env: Record<string, string>; posix: boolean }> = {
+  ipc: { env: { NODE_CHANNEL_FD: "0" }, posix: true },
 };
 
 const conditions = doors.split("\n").filter(line => line.startsWith("when "));
@@ -46,7 +50,7 @@ const reachedByPrograms = new Set(conditions.map(line => line.split(" ")[1]!));
 const runTheProgramItself = new Set(conditions.filter(line => line.endsWith(" world open")).map(line => line.split(" ")[1]!));
 const cases = all.names
   .filter(each => each.features.some(feature => reachedByPrograms.has(feature)) && !each.features.some(feature => runTheProgramItself.has(feature)))
-  .map(each => ({ ...each, program: own[each.name] ? { source: own[each.name]!, features: each.features } : shared.find(program => program.features.some(feature => each.features.includes(feature))) }));
+  .map(each => ({ ...each, program: own[each.name] ? { source: own[each.name]!, features: each.features, ...startedWith[each.name] } : shared.find(program => program.features.some(feature => each.features.includes(feature))) }));
 
 test("every public name has a program that uses it", () => {
   expect(cases.filter(each => !each.program).map(each => each.name)).toEqual([]);
@@ -72,14 +76,16 @@ describe.skipIf(!(await hasIslands()))("a program that uses what compile.trim re
         await Bun.build({ entrypoints: [join(String(dir), "program.ts")], compile: { outfile: join(String(dir), outfile, "program"), trim } });
         return await spawned([join(String(dir), outfile, "program")], join(String(dir), "cwd"), env);
       };
-      expect(await built("whole", [])).toMatchObject({ exitCode: 0 });
+      const whole = await built("whole", []);
+      expect(whole).toMatchObject({ exitCode: 0 });
       const names = [name, ...removedOnlyWith(all, { name, features, ...rest })] as Bun.Build.TrimFeature[];
       const refused = await built("trimmed", names);
       const removed = /^error: compile\.trim removed (.*) from this executable(, and something has just asked for it\.\n$|$)/m.exec(refused.stderr);
       const isImportThatThrew = names.some(each => refused.stderr.includes(`: compile.trim removed "${each}" from this executable`));
       const isUseOfWhatIsAbsent = removed === null && /^TypeError: /m.test(refused.stderr);
-      expect({ stderr: refused.stderr, isOfThisName: isImportThatThrew || isUseOfWhatIsAbsent || features.some(feature => descriptions.get(feature) === removed?.[1]) }).toEqual({ stderr: refused.stderr, isOfThisName: true });
-      expect(refused.exitCode).toBe(removed?.[2] ? 70 : 1);
+      const isCaughtByTheProgram = refused.exitCode === 0 && refused.stderr === "" && refused.stdout !== whole.stdout;
+      expect({ stderr: refused.stderr, isOfThisName: isImportThatThrew || isUseOfWhatIsAbsent || isCaughtByTheProgram || features.some(feature => descriptions.get(feature) === removed?.[1]) }).toEqual({ stderr: refused.stderr, isOfThisName: true });
+      expect(refused.exitCode).toBe(isCaughtByTheProgram ? 0 : removed?.[2] ? 70 : 1);
     },
     120_000,
   );

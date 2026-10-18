@@ -544,7 +544,9 @@ Bun.serve({
 - With a reviver, `JSON.parse<T>(text, reviver)` checks what the reviver made.
 - The compiler trusts the result: reading `order.items[0].quantity` is as fast as reading an object that your own code made.
 - Objects, optional properties, arrays, tuples, unions, literal types, template literal types such as `` `user-${number}` ``, enums, `null`, `Record<string, T>`, and types that refer to themselves can be checked. A type that holds a function, a symbol, a class such as `Date`, or a type parameter cannot, and `bun build` reports an error that names the property.
-- Without `--aot`, and in other tools such as esbuild, the type argument is erased like any other type, and the call is a plain `JSON.parse(text)` that checks nothing.
+- The call validates wherever Bun compiles it: `bun run`, `bun test`, `bun build` for `bun`, `node` and `browser`, and `bun build --compile`, with or without `--aot`.
+- Other tools erase the type argument like any other type. After `tsc`, esbuild, swc or Vite has compiled the file, the call is a plain `JSON.parse(text)`. It checks nothing, and nothing tells you so. Do not rely on `JSON.parse<T>` in code that another tool compiles.
+- An executable built with [`--compile-trim-runtime`](#leave-out-what-the-program-cannot-reach) has no type checker. The calls that were compiled into it validate. A TypeScript file that it loads at run time and that has such a call fails to load, with an error that `try` and `catch` around the `import()` can catch.
 - `bun check` knows the type argument. `tsc` and editors that run TypeScript's own language service report `TS2558: Expected 0 type arguments` on it, because the standard library declares `JSON.parse` without a type parameter.
 
 The types in `Schema` say what a plain type cannot: `Int`, `Min`, `Max`, `Above`, `Below`, `MultipleOf`, `MinLength`, `MaxLength`, `MinItems`, `MaxItems`, `Pattern`, `Format`, `Message`, `Default`, `Strict` and `DeepStrict`. They exist only in types. To TypeScript, `number & Schema.Min<1>` is a `number`.
@@ -562,6 +564,8 @@ const login = Bun.validate<Login>({ name: form.get("name"), password: form.get("
 ```
 
 It throws the same `TypeError`, and returns a copy: the objects and arrays that `T` describes are copied, with the same keys in the same order, and `value` itself is never changed.
+
+If another tool has erased the type argument, `Bun.validate(value)` throws a `TypeError` that says so. It never returns a value that it has not checked.
 
 `JSON.stringify(value)` needs no type argument. The compiler goes by the type of `value`, and writes an object of a declared type faster than an untyped one.
 
@@ -624,18 +628,9 @@ To list every place where your program would behave differently, without stoppin
 
 `--aot` generates faster code for TypeScript than for JavaScript, because the types tell it how your objects are laid out. Most packages on npm ship JavaScript. A typed version of a package is the package's own code with types added and nothing else changed. When your project has one for the exact files that are installed, `--aot` compiles it in place of the JavaScript. Nothing in `node_modules` is modified, and builds without `--aot` ignore typed versions.
 
-Install the typed version of a package the way you install its `@types` package:
+For a package named `pkg`, the typed version goes in `.sound/pkg/` in the directory you run the build from. Bun looks nowhere else: it never takes a typed version from `node_modules`, unless the package [ships its own](/bundler/aot-libraries).
 
-```bash icon="terminal" terminal
-bun add -d @sound/react-dom
-```
-
-For a package named `pkg`, Bun looks in two places:
-
-1. `.sound/pkg/` in the directory you run the build from. Use it for a package that you have patched.
-2. `node_modules/@sound/pkg` (`@sound/scope__pkg` for `@scope/pkg`), if your own `package.json` lists it in `dependencies` or `devDependencies`. Bun ignores a typed version that only one of your dependencies depends on. Your own `package.json` is the nearest one at or above the directory you run the build from.
-
-Either one has a `sound.json` and a `lay` directory:
+It has a `sound.json` and a `lay` directory:
 
 ```json sound.json icon="file-json"
 {
@@ -663,13 +658,13 @@ Either one has a `sound.json` and a `lay` directory:
 Bun uses a typed version only if everything matches, and says so:
 
 ```txt
-note: "react-reconciler" 0.33.0 is compiled from its typed version in node_modules/@sound/react-reconciler
+note: "react-reconciler" 0.33.0 is compiled from its typed version in .sound/react-reconciler
 ```
 
 Otherwise it compiles the package as installed and prints a warning that names the first mismatch, such as after you upgrade the package:
 
 ```txt
-warn: the typed version of "react-reconciler" in node_modules/@sound/react-reconciler is not used: it is for version 0.33.0, and 0.33.1 is installed (install the typed version for 0.33.1, or remove this one): the package is compiled untyped
+warn: the typed version of "react-reconciler" in .sound/react-reconciler is not used: it is for version 0.33.0, and 0.33.1 is installed (install the typed version for 0.33.1, or remove this one): the package is compiled untyped
 ```
 
 `Bun.build` returns both in `logs`. `bun run --aot` and `bun test --aot` print neither.
@@ -877,7 +872,7 @@ CLI tools built on top of Bun can use this to install packages, bundle dependenc
 
 ## Leave out what the program cannot reach
 
-A standalone executable is a copy of `bun` with your program attached, so it also holds the parts of Bun that only the `bun` command uses. `--compile-trim-runtime` leaves them out. The executable is about 40 MB smaller, and about 50 MB smaller with `--aot`. It starts as fast and uses as much memory as before.
+A standalone executable is a copy of `bun` with your program attached, so it also holds the parts of Bun that only the `bun` command uses. `--compile-trim-runtime` leaves them out. On Linux x64 the executable is about 50 MB smaller, and at least 55 MB smaller with `--aot`. It starts as fast and uses as much memory as before.
 
 <Tabs>
   <Tab title="CLI">
@@ -912,11 +907,12 @@ What no longer works:
 | --- | --- | --- |
 | `BUN_BE_BUN=1 ./myapp install`, `run`, `x`, `-e`, a file name, or no argument | acts as the `bun` CLI | prints that the Bun command line was left out, and exits with code 70 |
 | `BUN_BE_BUN=1 ./myapp --version` or `--revision` | prints it | prints it |
-| one of the [thirteen options](#which-options-still-work) that need a part of Bun that is left out, such as `--help` or `--stack-trace-limit`, in `BUN_OPTIONS` | is obeyed | prints that the option cannot be used, and exits with code 1 |
+| one of the [fifteen options](#which-options-still-work) that need a part of Bun that is left out, such as `--help` or `--stack-trace-limit`, in `BUN_OPTIONS` | is obeyed | prints that the option cannot be used, and exits with code 1 |
 | the same options in `--compile-exec-argv` (`execArgv`) | are built in | `bun build` prints the same error and builds nothing, `Bun.build` throws a `TypeError` |
 | an option in `BUN_OPTIONS` that Bun does not accept, such as `-Z` | prints the error and the help of `bun`, and exits with code 1 | prints the error, and exits with code 1 |
 | a `bunfig.toml` in the directory the executable runs in | is read at startup | is not read, unless you also pass `--compile-autoload-bunfig` (`autoloadBunfig: true`) |
 | `Bun.build({ check: true })` or `({ dts: true })`, called by the executable | type checks | throws a `TypeError` |
+| a TypeScript file that the executable loads at run time and that calls [`JSON.parse<T>(text)` or `Bun.validate<T>(value)`](#validate-data-by-its-type) | validates | fails to load, with an error that `try` and `catch` can catch |
 | `Bun.build({ compile: { aot: true } })`, called by the executable | compiles ahead of time | throws a `TypeError` |
 
 ### Parts your program does not use
@@ -935,13 +931,15 @@ This server never mentions `HTMLRewriter`, so the executable does not contain it
 
 That only works when the compiler can see every name the program will ever use. It cannot when the program:
 
-- calls `eval`, `Function`, or anything in `node:vm`
+- calls `eval` or `Function`, or imports `node:vm`, `node:repl`, `node:inspector` or `bun:jsc`
+- names `Bun.Transpiler` or `Bun.build`
 - calls `import()` or `require()` with a name or path that is computed at run time
+- imports a package that is not there when you build, or that is left `external`
 - starts a `Worker`, or creates a `ShadowRealm`
-- uses `node:module` or `node:repl` to load code, `process.getBuiltinModule` with a name that is computed at run time, `require.main` or `Bun.plugin`
+- calls `createRequire` from `node:module`, or `process.getBuiltinModule` with a name that is computed at run time
 - passes `globalThis`, `process` or `Bun` around as a value, or reads them with a computed key such as `globalThis[name]`
 - does the same with `this` in a function that is not in strict mode, where `this` can be the global object
-- includes a native addon (`.node`), or an import that is left `external`
+- includes a native addon (`.node`)
 
 One such place in code that the program can reach, including in a dependency, and the executable keeps everything that a program can import or call. `globalThis.foo`, `typeof globalThis.foo`, `process.env.FOO` and `process.getBuiltinModule("node:fs")` are fine. `--aot-explain=runtime-use` prints what the compiler found:
 
@@ -958,36 +956,28 @@ aot: runtime use: Bun serve
 
 The first line is `closed`, or `open` with the reason and the file.
 
-The compiler also counts the ways to make code that do not name `Function`. This program is `open`, and prints `function` with and without the flag:
+`eval`, `new Function` and what they need stay in every trimmed executable, unless you [turn them off](#when-a-dependency-calls-new-function). So a way to make code that does not name `Function` needs no care from the compiler. This program is `closed`, and prints `function` with and without the flag:
 
 ```ts
 const AsyncFunction = (async () => {}).constructor;
 console.log(typeof AsyncFunction("return 1"));
 ```
 
-```txt
-aot: runtime use: open constructor, or a name that is computed, read from what may be a function in /path/to/app.ts
-```
+What no longer works in a `closed` executable, on top of the table above:
 
-When there is no such place, the executable runs the code it was built from, and nothing else. As a second line of defense it also runs with [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings). Your program should never meet the `EvalError` of that mode. If it does, and the untrimmed executable does not, that is a bug in Bun.
-
-What no longer works in such an executable, on top of the table above:
-
-| | otherwise | in an executable that runs only its own code |
+| | otherwise | in a `closed` executable |
 | --- | --- | --- |
 | `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print` or `-p` in `BUN_OPTIONS` or `--compile-exec-argv`, or `preload` in a `bunfig.toml` that the executable reads | loads the file first | prints that the option cannot be used with this executable, and exits with code 1 |
 | `BUN_INSPECT` | starts the debugger | prints an error and exits |
 | `BUN_INSPECT_CONNECT_TO`, which editors set for every process in their terminals | connects to the editor | is ignored |
-| `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc` | starts the debugger | throws an `EvalError` |
-| `Bun.serve()` with the experimental `app` option | starts the development server | throws an `EvalError` |
 
 An executable that keeps everything, because the first line above says `open` or because it was built without `--aot`, also obeys the eight options that load code.
 
-`process.execArgv` does not list the flag, because nobody passed it. To debug the program, build it without `--compile-trim-runtime`.
+To debug the program, build it without `--compile-trim-runtime`.
 
 #### When a dependency calls `new Function`
 
-Some libraries build code from strings, or have a code path that could: zod 4, ajv, TypeBox and Elysia call `new Function`. The compiler also has to assume it of `value.constructor` and of `value[key]` where `value` could be a function, because `f.constructor("return 1")` is `new Function` under another name. That is why a plain Hono server, which never calls `new Function`, counts too. One such place keeps all of Bun in the executable.
+Some libraries build code from strings, or have a code path that could: zod 4, ajv, TypeBox and Elysia call `new Function`. The string could name any part of Bun, so one such call keeps everything that a program can import or call in the executable.
 
 If your program does not need it, say so when you build:
 
@@ -995,7 +985,7 @@ If your program does not need it, say so when you build:
 bun compile --trim --disallow-code-generation-from-strings ./server.ts
 ```
 
-[`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings) means what it means in Node.js: `eval()`, `new Function()` and the constructors of async and generator functions throw an `EvalError`. `node:vm` is not affected. The executable behaves that way with or without `--compile-trim-runtime`, and with or without `--aot`. Since those calls can no longer run code the compiler has not seen, they no longer keep anything in the executable. The other entries in the list above still do.
+[`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings) means what it means in Node.js: `eval()`, `new Function()` and the constructors of async and generator functions throw an `EvalError`. `node:vm` is not affected. The executable behaves that way with or without `--compile-trim-runtime`, and with or without `--aot`. Since those calls can no longer run code the compiler has not seen, they no longer keep anything in the executable, and the JavaScript parser and the interpreter are left out too. The other entries in the list above still keep everything. [Make it smaller](/bundler/aot-size#make-it-smaller) has sizes.
 
 Libraries that try `new Function` in a `try` block and fall back to plain code, as zod 4 does, keep working. Others have an option for it, such as `new Elysia({ aot: false })`. A library that needs `new Function` throws, so run your tests against the executable.
 
@@ -1005,19 +995,19 @@ In `BUN_OPTIONS` and in `--compile-exec-argv`:
 
 | | options |
 | --- | --- |
-| refused by every executable built with `--compile-trim-runtime` | `--help`, `-h`, `--aot`, `--aot-audit`, `--sql-preconnect`, `--stack-trace-limit`, `--trace-exit`, `--trace-env`, `--trace-env-js-stack`, `--trace-env-native-stack`, `--trace-events-enabled`, `--trace-event-categories`, `--trace-event-file-pattern` |
-| refused by an executable that runs only its own code | `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p` |
+| refused by every executable built with `--compile-trim-runtime` | `--help`, `-h`, `--aot`, `--aot-audit`, `--sql-preconnect`, `--stack-trace-limit`, `--trace-exit`, `--trace-env`, `--trace-env-js-stack`, `--trace-env-native-stack`, `--trace-events-enabled`, `--trace-event-categories`, `--trace-event-file-pattern`, `-i`, `--install` |
+| refused by a `closed` executable | `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p` |
 | refused by an executable whose program does not use `fetch`, or `Bun.redis` | `--fetch-preconnect`, or `--redis-preconnect` |
 | obeyed as before | every other option: `--smol`, `--expose-gc`, `--title`, `--console-depth`, `--dns-result-order`, `--max-http-header-size`, `--use-system-ca`, `--tls-min-v1.3`, `--unhandled-rejections`, `--no-deprecation`, `--trace-warnings`, `--cpu-prof`, `--heap-prof`, `--user-agent`, `--port`, `--env-file`, `--config` and so on |
 
-The options in the first row need the `bun` command line itself, or JavaScript inside Bun that is never compiled into an executable. They are refused whatever your program does, with or without `--aot`:
+The options in the first row need the `bun` command line itself, the package manager, or JavaScript inside Bun that is never compiled into an executable. They are refused whatever your program does, with or without `--aot`:
 
 ```bash icon="terminal" terminal
 BUN_OPTIONS=--stack-trace-limit=50 ./myapp
 ```
 
 ```txt
-error: --stack-trace-limit cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out
+error: --stack-trace-limit cannot be used with this executable: the part of Bun that it needs was left out when it was built
 ```
 
 The executable exits with code 1 before any of your code runs. `bun build --compile --compile-trim-runtime --compile-exec-argv=--stack-trace-limit=50` prints the same error and builds nothing. In your program, `Error.stackTraceLimit = 50` does the same as the option.

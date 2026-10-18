@@ -33,7 +33,6 @@ const TERM_ENVS = {
   "terminator": COLORS_16m,
   "xterm-kitty": COLORS_16m,
 };
-if (IS_BUN_AOT) Object.setPrototypeOf(TERM_ENVS, null);
 
 const CI_ENVS = {
   APPVEYOR: COLORS_256,

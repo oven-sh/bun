@@ -11,6 +11,7 @@ data-from-outside/conversion-plans-cover-field-kinds    counts calls into the ru
 data-from-outside/fresh-literals-are-copied-into-their-record-type    counts calls into the runtime
 data-from-outside/plain-objects-holding-references-convert-quickly    counts calls into the runtime
 data-from-outside/json-parse-shares-values-that-come-again    counts cells of the heap
+data-from-outside/json-parse-type-argument-keys-in-another-order-stay-in-line    counts calls into the runtime
 data-from-outside/json-parse-type-argument-undeclared-keys-stay-compiled    counts calls into the runtime
 calls-fast-paths/class-objects-not-materialized    counts cells of the heap
 calls-fast-paths/classes-that-extend-builtins    counts cells of the heap

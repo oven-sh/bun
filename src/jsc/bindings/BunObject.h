@@ -4,7 +4,6 @@
 
 namespace Bun {
 
-void zeroDeadStack();
 JSC_DECLARE_HOST_FUNCTION(functionBunSleep);
 JSC_DECLARE_HOST_FUNCTION(functionBunDeepEquals);
 JSC_DECLARE_HOST_FUNCTION(functionBunDeepMatch);

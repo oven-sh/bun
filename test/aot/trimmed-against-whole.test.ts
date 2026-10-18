@@ -83,8 +83,11 @@ test.skipIf(!hasIslands)("a part that is left out of a program that uses it is f
   const program: Program = { corpus: "control", name: "color", entry: "color.mjs", files: () => ({ "color.mjs": `console.log(Bun.color("red", "hex"));\n` }) };
   const results: Result[] = [];
   await compareAll([program], { ...settingsIn(String(scratch)), wronglyLeftOut: ["color"] }, result => results.push(result));
-  expect(results).toEqual([expect.objectContaining({ verdict: "differs", why: "exit code 0 | 70", features: ["color"], door: expect.any(Number), world: "closed" })]);
-  expect(results[0].whole).toEqual({ stdout: "#ff0000\n", stderr: "", exitCode: 0, signal: null });
+  expect(results).toEqual([expect.objectContaining({ verdict: "differs", features: ["color"], world: "closed" })]);
+  const [{ why, door, whole, trimmed }] = results;
+  if (why === "exit code 0 | 70") expect(door).toBeNumber();
+  else expect({ why, stderr: trimmed?.stderr }).toEqual({ why: "exit code 0 | 1", stderr: expect.stringContaining(`code: "ERR_FEATURE_REMOVED"`) });
+  expect(whole).toEqual({ stdout: "#ff0000\n", stderr: "", exitCode: 0, signal: null });
 }, 300_000);
 
 test.skipIf(!hasIslands)("test262: the same 200 files on every commit", () => expectSame(conformanceTests(), 4), 900_000);

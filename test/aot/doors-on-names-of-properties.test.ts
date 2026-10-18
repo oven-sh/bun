@@ -36,6 +36,13 @@ test("none is what turns an object into a primitive or a text: an operator calls
   expect(names.filter(name => ["valueOf", "toString", "toJSON"].includes(name))).toEqual([]);
 });
 
+test("every part that waits for an option of Bun.serve also waits for reload, which may be handed any; but the bundler, which reload never starts", () => {
+  const features = new Set(Array.from(doors.matchAll(/^when (\S+) serve-option \S+$/gm), line => line[1]));
+  expect(features.size).toBeGreaterThan(4);
+  expect([...features].filter(feature => feature !== "bundler" && !doors.includes(`\nwhen ${feature} reload-option *\n`))).toEqual([]);
+  expect(doors).not.toContain("\nwhen bundler reload-option");
+});
+
 test("each is a method, which a read does not run; an accessor also waits for what makes its receiver", () => {
   const holders = builtIns();
   const isMethod = (name: string) => holders.some(holder => typeof Reflect.getOwnPropertyDescriptor(holder, name)?.value === "function");

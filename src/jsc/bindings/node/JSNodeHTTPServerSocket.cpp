@@ -1133,7 +1133,7 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
     return JSValue::encode(JSC::jsNull());
 }
 
-JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+NEVER_INLINE JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return JSNodeHTTPServerSocket::createStructure(vm, globalObject);
 }

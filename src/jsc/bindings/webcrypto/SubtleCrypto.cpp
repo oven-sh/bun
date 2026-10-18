@@ -73,7 +73,7 @@
 namespace WebCore {
 using namespace JSC;
 
-SubtleCrypto::SubtleCrypto(ScriptExecutionContext* context)
+NEVER_INLINE SubtleCrypto::SubtleCrypto(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
     , m_workQueue(WorkQueue::create("com.apple.WebKit.CryptoQueue"_s))
 {

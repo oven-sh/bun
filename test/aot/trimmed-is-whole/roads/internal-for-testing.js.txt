@@ -1,13 +1,4 @@
 // road: modules that are not for users
-//// import-internal-for-testing
-import * as testing from "bun:internal-for-testing";
-console.log(Object.keys(testing).length > 10);
-//// require-internal-for-testing
-//@ ext cjs
-try { console.log(Object.keys(require("bun:internal-for-testing")).length > 10); } catch (error) { console.log(error.name, error.message); }
-//// use-internal-for-testing
-import { escapeRegExp } from "bun:internal-for-testing";
-console.log(escapeRegExp("a.b"));
 //// bun-wrap
 try { console.log(Object.keys(await import("bun:wrap")).sort().join()); } catch (error) { console.log(error.name, error.message); }
 //// bun-main

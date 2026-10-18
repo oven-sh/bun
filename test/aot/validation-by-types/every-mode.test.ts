@@ -92,6 +92,18 @@ test("a bundle without such a call holds nothing of the helper", async () => {
   expect(bundle.length).toBeLessThan(200);
 });
 
+test("the helper is loaded by the file that calls it, not with the other runtime helpers", async () => {
+  using dir = tempDir("json-parse-helper-apart", {
+    "helpers.ts": `// @ts-ignore\nimport * as helpers from "bun:wrap";\nconsole.log("__validate" in helpers, typeof helpers.__toESM);\n`,
+    "module.ts": `interface User { id: number }\n@sealed class Holder {}\nfunction sealed(target: unknown) {}\nconsole.log(JSON.parse<User>('{"id":1}').id, typeof Holder);\n`,
+    "script.cts": `interface User { id: number }\n@sealed class Holder {}\nfunction sealed(target: unknown) {}\nconsole.log(JSON.parse<User>('{"id":2}').id, typeof Holder);\nmodule.exports = {};\n`,
+    "tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": true } }`,
+  });
+  expect(await run([bunExe(), "run", "./helpers.ts"], String(dir))).toBe("false function\n");
+  expect(await run([bunExe(), "run", "./module.ts"], String(dir))).toBe("1 function\n");
+  expect(await run([bunExe(), "run", "./script.cts"], String(dir))).toBe("2 function\n");
+});
+
 test("the error points at the call", async () => {
   using dir = tempDir("json-parse-error-position", {
     "program.ts": `interface User { id: number }

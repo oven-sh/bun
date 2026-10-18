@@ -376,6 +376,10 @@ fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
     }
 }
 
+fn plan_options() -> bun_sema_driver::PlanOptions {
+    bun_sema_driver::PlanOptions { declares_bun_intrinsics: true, bun_intrinsics_add_no_file: true, ..Default::default() }
+}
+
 fn request<'a>(
     cwd: &'a [u8],
     project: Option<&'a [u8]>,
@@ -415,7 +419,7 @@ fn request<'a>(
         order: 1,
         digests: false,
         task_clock: None,
-        plan_options: bun_sema_driver::PlanOptions::default(),
+        plan_options: plan_options(),
         retains_everything: false,
         stops_like_tsc: true,
         uses_typescript_wording: false,
@@ -1746,7 +1750,8 @@ fn explaining(words: &[Box<[u8]>]) -> bun_aot::Explain {
 
 fn runtime_use_lines(runtime_use: &[u8]) -> Vec<String> {
     let lines = bun_core::strings::split(runtime_use, b"\n").filter(|line| !line.is_empty());
-    lines.map(|line| format!("runtime use: {}", BStr::new(line))).collect()
+    let hint = bun_ast::type_tags::what_the_flag_against_code_from_strings_would_do(runtime_use).map(|hint| format!("runtime use: hint: {hint}"));
+    lines.map(|line| format!("runtime use: {}", BStr::new(line))).chain(hint).collect()
 }
 
 fn print_explained(lines: &[String]) {
@@ -1982,7 +1987,7 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
     };
     let report = match shows_progress {
         _ if emitted != Emitted::Nothing => {
-            let plan_options = bun_sema_driver::PlanOptions { writes_declaration_files: true, ..Default::default() };
+            let plan_options = bun_sema_driver::PlanOptions { writes_declaration_files: true, checks_what_only_augments: emitted == Emitted::DeclarationsAndModuleTypes, ..plan_options() };
             let after_file = (emitted == Emitted::DeclarationsAndModuleTypes)
                 .then_some(&note_module_types as &(dyn Fn(&mut bun_sema_driver::Checker<'_, '_>, bun_sema_driver::FileId) + Sync));
             let request = Request { plan_options, after_file, ..request(cwd, tsconfig, &paths, &[], 0, None) };

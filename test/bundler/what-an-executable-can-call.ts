@@ -94,6 +94,7 @@ function readElf(file: Uint8Array): Image {
   for (let at = dynamic[0]; at < dynamic[1]; at += 16) if (!tags.has(u64(at))) tags.set(u64(at), u64(at + 8));
   const symbols = offsetOf(tags.get(6)!)!;
   const strings = offsetOf(tags.get(5)!)!;
+  elf.ownTables.push([tags.get(6)!, tags.get(5)! + tags.get(10)!]);
   const nameOf = (symbol: number) => {
     const start = strings + u32(symbols + symbol * 24);
     return Buffer.from(file.subarray(start, file.indexOf(0, start))).toString("latin1");

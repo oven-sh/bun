@@ -296,6 +296,18 @@ const config = JSON.parse<Config>(text); // [!code ++]
 
 For a value that is not JSON text, `Bun.validate<Config>(value)` checks it and returns a typed copy.
 
+If you want your own checks and your own error messages, take the value as `unknown`, test it, and build the object yourself. Typed code then creates every `Config`, so the type keeps its layout. The reads from the untyped value happen once, at the edge of your program.
+
+```ts
+function readConfig(value: unknown): Config {
+  if (typeof value !== "object" || value === null) throw new Error("config: not an object");
+  const { host, port } = value as Record<string, unknown>;
+  if (typeof host !== "string") throw new Error("config: host must be a string");
+  if (typeof port !== "number") throw new Error("config: port must be a number");
+  return { host, port };
+}
+```
+
 ### untyped-api
 
 The value comes from a Bun, Node.js or web API. Either the API returns `any`, as `await response.json()` does, or it returns the type you give it, as in `sql<User[]>`. Nothing checks that type. The compiler treats it as a prediction: the compiled code tests each object before it reads from it.
@@ -315,15 +327,25 @@ A `.js` file of your own program is compiled without types. Rename it to `.ts` a
 
 ### untyped-package
 
-A dependency ships JavaScript. Its `.d.ts` file describes its exports, not the code inside, so the package is compiled without types. So is every access in your code to an object that the package created, and the body of every callback that it calls.
+A dependency ships JavaScript. Its `.d.ts` file describes its exports, not the code inside, so the package is compiled without types. So is every access in your code to an object that the package created. Those accesses count under `dependencies`.
+
+A route handler that you pass to a framework is typed like the rest of your code. In this Hono handler, `c.req` and `c.json` are accesses to Hono's object. `order.lines` is typed, as long as typed code creates every `Order`.
+
+```ts
+app.get("/orders/:id", c => {
+  const order = store.get(Number(c.req.param("id")));
+  return order ? c.json({ id: order.id, items: order.lines }) : c.json({ error: "not found" }, 404);
+});
+```
+
+What takes the types away is data that comes out of the package as one of your types, such as `await c.req.json<NewOrder>()`. The report has an [untyped-api](#untyped-api) entry for each such call.
 
 - **If the package is yours,** build it with [`bun compile --library`](/bundler/aot-libraries). Its code is then typed, and so is what crosses between it and your code.
 - **For the accesses in your own code,** keep your typed objects away from the package:
   - Write the types of the parameters of the callbacks that you pass it. See [callback-parameter](#callback-parameter).
   - Pass it copies or plain values.
   - Copy what you need from its results into objects of your own types.
-  - Read your own objects outside its callbacks.
-- **For the code inside the package,** install a typed version, `bun add -d @sound/<package>`, if there is one. Or write one: a [typed version of a package](/bundler/executables#typed-versions-of-packages) is the package's own code with types added and nothing else changed. It goes in `.sound/<package>` in the directory that you run the build from.
+- **For the code inside the package,** write a typed version: a [typed version of a package](/bundler/executables#typed-versions-of-packages) is the package's own code with types added and nothing else changed. It goes in `.sound/<package>` in the directory that you run the build from.
 
 This is a typed version of a package `each-row` whose only file is `index.js`:
 
@@ -366,16 +388,16 @@ log({ ...box }); // [!code ++]
 
 ### callback-parameter
 
-If you don't annotate a callback's parameters, TypeScript infers them from the function that you pass the callback to, such as `.then()`. If Bun, JavaScript or a JavaScript package provides that function, the compiler can't see what it calls the callback with, so it doesn't rely on the inferred types. It treats the parameter as a value without a type. In the example below that makes `row` untyped, and with it every `Row` in the program.
-
-Write the type. The value is then checked when the callback is entered, and the type keeps its layout.
+If you don't annotate a callback's parameters, TypeScript infers them from the function that you pass the callback to, such as `.then()`. The compiler can't see what that function calls the callback with. For a plain callback it tests the value when the callback is entered, and the body is typed. It can't do that for an async callback, so there the parameter is a value without a type.
 
 ```ts
-loadRow().then(row => console.log(row.name)); // [!code --]
-loadRow().then((row: Row) => console.log(row.name)); // [!code ++]
+loadRow().then(async row => console.log(row.name)); // [!code --]
+loadRow().then(row => console.log(row.name)); // [!code ++]
 ```
 
-The callbacks of array methods, `Map` and `Set`, such as `rows.map(row => row.name)`, don't need it. The compiler sees through those.
+If the callback has to await something, keep it plain and call an async function of your own from it.
+
+For a callback that you pass to a JavaScript package, the entry says to write the type of the parameter: `(row: Row) => ..`.
 
 ### declaration-only
 

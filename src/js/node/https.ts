@@ -389,7 +389,7 @@ function Agent(options): void {
   if (this.maxCachedSessions === undefined) this.maxCachedSessions = 100;
 
   this._sessionCache = {
-    map: IS_BUN_AOT ? { __proto__: null } : {},
+    map: {},
     list: [],
   };
 }
@@ -545,12 +545,6 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
 };
 
 Agent.prototype._getSession = function _getSession(key) {
-  if (IS_BUN_AOT) {
-    const sessions = this._sessionCache.map;
-    const own = Object.getOwnPropertyDescriptor(sessions, key);
-    if (own === undefined) return undefined;
-    return own.get === undefined ? own.value : own.get.$call(sessions);
-  }
   return this._sessionCache.map[key];
 };
 

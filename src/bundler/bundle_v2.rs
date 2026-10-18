@@ -5416,7 +5416,7 @@ pub mod bv2_impl {
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
         fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
             // Add the runtime
-            let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
+            let rt = ParseTask::get_runtime_source(self.transpiler.options.target, false);
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: rt.source,
                 loader: Loader::Js,
@@ -5429,10 +5429,15 @@ pub mod bv2_impl {
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
+            self.schedule_runtime_parse_task(rt.parse_task);
+            Ok(())
+        }
+
+        fn schedule_runtime_parse_task(&mut self, parse_task: ParseTask) {
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
-            let runtime_parse_task: *mut ParseTask = self.arena().alloc(rt.parse_task);
+            let runtime_parse_task: *mut ParseTask = self.arena().alloc(parse_task);
             // SAFETY: freshly arena-allocated above; no other references exist yet.
             unsafe {
                 // BACKREF — lifetime erased per ParseTask::ctx convention.
@@ -5440,11 +5445,9 @@ pub mod bv2_impl {
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
                 (*runtime_parse_task).ctx = Some(ctx_mut);
-                (*runtime_parse_task).loader = Some(Loader::Ts);
             }
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
-            Ok(())
         }
 
         fn clone_ast(&mut self) -> Result<(), Error> {
@@ -9687,6 +9690,7 @@ pub mod bv2_impl {
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
+                    this.graph.validates_by_type |= result.ast.flags.contains(crate::bundled_ast::Flags::VALIDATES_BY_TYPE);
 
                     // Warning: `input_files` and `ast` arrays may resize in this function call
                     // It is not safe to cache slices from them.
@@ -9866,6 +9870,13 @@ pub mod bv2_impl {
                         result_source_index,
                         core::mem::replace(&mut result.ast, JSAst::empty_in(result_heap)),
                     );
+
+                    this.graph.is_runtime_parsed |= result_source_index == Index::RUNTIME.get() as usize;
+                    if this.graph.validates_by_type && this.graph.is_runtime_parsed && !this.graph.runtime_has_validation_helper {
+                        this.graph.runtime_has_validation_helper = true;
+                        let target = this.transpiler.options.target;
+                        this.schedule_runtime_parse_task(ParseTask::get_runtime_source(target, true).parse_task);
+                    }
 
                     // Barrel optimization: eagerly record import requests and
                     // un-defer barrel records that are now needed.

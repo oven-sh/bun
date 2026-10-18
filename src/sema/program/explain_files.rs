@@ -60,6 +60,9 @@ impl Files<'_> {
         let mut lines: Vec<Vec<u8>> = Vec::new();
         // `name` is that of `file`, or of a `redirectsFile` whose target is `file`.
         let mut explain_file = |name: &[u8], file: FileId| {
+            if self.is_embedded(file) {
+                return;
+            }
             let module: &Module = &self.modules[file.idx()];
             lines.push(to_relative_file_name(name));
             for visit in reasons_of(file, name) {

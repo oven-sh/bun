@@ -104,3 +104,17 @@ const undeclaredCycle: any = { x: 1, y: 2 };
 undeclaredCycle.self = undeclaredCycle;
 const unrolled = Bun.validate<Point>(undeclaredCycle) as Point & { self: unknown };
 console.log("a cycle under an undeclared key", unrolled.self === undeclaredCycle, (unrolled as unknown) !== undeclaredCycle);
+
+type Tagged = { kind: "a"; a: number } | { kind: "b"; b: Point };
+type Untagged = { a: number; b: string } | { a: number; c: string };
+type Filled = { a: number; size: number & Schema.Default<1>; b: string } | { a: number; size: number & Schema.Default<2>; c: string };
+let timesRead = 0;
+attempt("a getter that throws in an object without the tag", () => Bun.validate<Tagged>({ x: 1, get y() { throw new RangeError("mine"); } }));
+attempt("a getter for the tag", () => Bun.validate<Tagged>({ get kind() { timesRead++; return "b"; }, b: { x: 1, y: 2 } }));
+console.log("the tag was read", timesRead);
+timesRead = 0;
+attempt("a getter where the second of two types fits", () => Bun.validate<Untagged>({ get a() { timesRead++; return 1; }, c: "c" }));
+console.log("it was read", timesRead);
+timesRead = 0;
+attempt("the same where both types fill a member in", () => Bun.validate<Filled>({ get a() { timesRead++; return 1; }, c: "c" }));
+console.log("it was read", timesRead);

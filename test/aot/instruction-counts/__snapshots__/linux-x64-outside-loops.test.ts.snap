@@ -91,6 +91,13 @@ untyped, function: 19.75 instructions (kernel 16.75, module 3), 442 bytes
 untyped, function that no loop calls: 38.25 instructions (stub CallValue1 12, stub Add 8, plusOne 7, kernel 6.75, module 3.50, stub CallValueWithoutThis1 1), 156 bytes"
 `;
 
+exports[`calls a method of a class whose field has the name of a method of the console, in a program that holds the console's constructor, outside loops 1`] = `
+"typed, function: 24 instructions (Counter.add 11, kernel 10, module 3), 496 bytes
+typed, function that no loop calls: 24.75 instructions (Counter.add 11, kernel 10.25, module 3.50), 504 bytes
+untyped, function: 79.50 instructions (kernel 57.50, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 14, stub ReadInheritedInlineByName 5, module 3), 2660 bytes
+untyped, function that no loop calls: 120.75 instructions (stub CallMethodByName1 of 1571 26, Counter.add 18, stub Add 16, stub PutByNameWithDirectColumn 14, kernel 11.25, stub CallValue1 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 3.50, chosen 2), 255 bytes"
+`;
+
 exports[`calls a method, outside loops 1`] = `
 "typed, function: 24 instructions (Counter.add 11, kernel 10, module 3), 496 bytes
 typed, function that no loop calls: 24.75 instructions (Counter.add 11, kernel 10.25, module 3.50), 504 bytes

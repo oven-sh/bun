@@ -24,6 +24,7 @@ const files = [...testFiles("")].filter(file => file.startsWith("aot/") || usesT
 
 // These pass where `bun build --compile --aot` and `bun run --aot` are refused.
 const needNoCompiler = [
+  "aot/doors-on-names-of-properties.test.ts",
   "aot/host-object-accessors.test.ts",
   "aot/mockable-function-arguments.test.ts",
   "aot/many-modules-in-place.test.ts",

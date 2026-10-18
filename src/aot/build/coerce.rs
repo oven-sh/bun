@@ -484,10 +484,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let had = self.out.tys.get(have.id);
             !had.has_objects() && had.prims & !prim::NULLISH == 0
         };
-        if !is_nullish && self.c.is_untyped(have.checked) {
+        let is_handed_in_by_typed_code = self.untyped_clone_root.is_some_and(|root| self.c.is_checked_at_entry_by_context_alone(fx.file, root));
+        if !is_nullish && !is_handed_in_by_typed_code && self.c.is_untyped(have.checked) {
             self.record_untyped_inflow(want);
         }
-        if !is_nullish && self.c.is_any_like(have.checked) {
+        if !is_nullish && !is_handed_in_by_typed_code && self.c.is_any_like(have.checked) {
             self.record_any_inflow(want);
         }
         if have.id == self.out.tys.anything && have.checked != TypeId::UNRESOLVED && self.is_engine_declared_type(have.checked) {
@@ -1017,11 +1018,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.c.set_current_site(fx.file, pos);
         if matches!(kind, ExprKind::Ident(_) | ExprKind::This) && fx.narrowed.contains_key(&value) {
             fx.narrowed.remove(&value);
-        }
-        let said = self.ty(fx, value);
-        if fx.is_typed && (said.is_none() || self.out.tys.get(said).any_object) {
-            let instances = self.c.find_predicted_nested_class_types(fx.file, e);
-            self.record_untyped_inflow_to_nested_classes(instances);
         }
         if fx.is_typed
             && let Some(returned) = self.c.returned_argument_of(fx.file, e)

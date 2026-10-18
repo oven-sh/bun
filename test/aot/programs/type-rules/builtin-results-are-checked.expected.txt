@@ -49,13 +49,13 @@ found ["a","b"] threw TypeError: expected string, got Array (bun --aot: https://
 popped ["a","b"] popped 2
 caughtFailure ["a","b"] caught undefined
 caughtText ["a","b"] threw TypeError: expected string, got Array (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-reflected {"length":2} threw TypeError: expected string, got { length } (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-mapped {"length":2} threw TypeError: expected string, got { length } (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-firstValue {"length":2} threw TypeError: expected string, got { length } (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-found {"length":2} threw TypeError: expected string, got { length } (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-popped {"length":2} threw TypeError: expected string[], got { length } (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+reflected {"length":2} threw TypeError: expected string, got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+mapped {"length":2} threw TypeError: expected string, got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+firstValue {"length":2} threw TypeError: expected string, got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+found {"length":2} threw TypeError: expected string, got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+popped {"length":2} threw TypeError: expected string[], got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 caughtFailure {"length":2} caught undefined
-caughtText {"length":2} threw TypeError: expected string, got { length } (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+caughtText {"length":2} threw TypeError: expected string, got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 reflected undefined threw TypeError: Cannot read properties of undefined (reading 'length')
 mapped undefined threw TypeError: Cannot read properties of undefined (reading 'length')
 firstValue undefined threw TypeError: Cannot read properties of undefined (reading 'length')

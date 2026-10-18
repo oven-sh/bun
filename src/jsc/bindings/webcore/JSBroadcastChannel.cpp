@@ -259,7 +259,7 @@ JSObject* JSBroadcastChannel::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSBroadcastChannel>(vm, globalObject);
 }
 
-JSValue JSBroadcastChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSBroadcastChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSBroadcastChannelDOMConstructor, DOMConstructorID::BroadcastChannel>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

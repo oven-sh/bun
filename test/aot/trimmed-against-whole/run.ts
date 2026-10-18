@@ -15,9 +15,10 @@ error, the exit code and the signal. Where they differ, the whole executable run
 does not end, or whose whole executable does not do the same each time is set aside and counted.
 
 A COMPILED PROGRAM THAT STARTS process.execPath STARTS ITSELF, and most tests that do so then do it again, without end. So on Linux
-every executable runs as a transient systemd unit of its own: nothing it starts can leave the unit's cgroup, detached or not, and
-all of it is killed when the first process ends or the time is up; its only network is a loopback of its own. Where systemd-run cannot be used it gets a process tree of its
-own (unshare --pid). Without a cgroup, the tests of Node.js and Bun, bench/, listed files and every program that names child_process,
+the executables run in transient systemd units, as many as there are jobs, each with a process tree of its own (unshare --pid) and one
+program in it at a time: nothing a program starts can leave them, detached or not, and all of it is killed when its first process ends
+or the time is up; the only network there is a loopback of their own. The units last for the whole run: making and ending namespaces
+for every program holds up everything else on the machine that makes one. Where systemd-run cannot be used there is only the process tree. Without a cgroup, the tests of Node.js and Bun, bench/, listed files and every program that names child_process,
 cluster, Worker, execPath, spawn, fork or exec are set aside and counted.
 
   --corpus <name>       test262 | jstests | node | bun-tests | benches | docs | aot-programs | locales | every-name | names; may be given several times

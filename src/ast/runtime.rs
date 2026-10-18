@@ -173,7 +173,7 @@ pub struct Imports {
     pub(crate) __promiseAll: Ref,
     pub(crate) __MEMO_CACHE_SENTINEL: Ref,
     pub(crate) __EARLY_RETURN_SENTINEL: Ref,
-    pub(crate) __validate: Ref,
+    pub __validate: Ref,
 }
 
 impl Imports {
@@ -276,6 +276,9 @@ impl Imports {
     ];
 
     pub const NAME: &'static [u8] = b"bun:wrap";
+
+    pub const VALIDATE: u8 = 27;
+    pub const VALIDATION_NAME: &'static [u8] = b"bun:wrap/validation";
 
     /// Index → field.
     #[inline]

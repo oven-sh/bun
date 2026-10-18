@@ -165,7 +165,7 @@ JSObject* JSMessagePort::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSMessagePort>(vm, globalObject);
 }
 
-JSValue JSMessagePort::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSMessagePort::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSMessagePortDOMConstructor, DOMConstructorID::MessagePort>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

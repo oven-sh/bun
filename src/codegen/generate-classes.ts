@@ -5,7 +5,7 @@ import path from "path";
 import { inspect } from "util";
 import jsclasses from "./../jsc/bindings/js_classes.ts";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions.ts";
-import { writeIfNotChanged } from "./helpers.ts";
+import { isNeverInlined, writeIfNotChanged } from "./helpers.ts";
 
 const require = createRequire(import.meta.url);
 const files = process.argv.slice(2);
@@ -547,7 +547,7 @@ const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullpt
 ${
   !obj.noConstructor
     ? `
-  extern JSC_CALLCONV JSC::EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
+  extern JSC_CALLCONV ${isNeverInlined(`${typeName}__getConstructor`) ? "NEVER_INLINE " : ""}JSC::EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
     return generatedClassConstructor(globalObject, Zig::GlobalObject::GeneratedLazyClass${className(typeName)});
   }`
     : ""
@@ -1821,6 +1821,7 @@ function generateRust(
       `bun_jsc::jsc_host_abi! {\n` +
         `    #[allow(dead_code, unreachable_pub, unused)]\n` +
         `    #[unsafe(no_mangle)]\n` +
+        (isNeverInlined(sym) ? `    #[inline(never)]\n` : "") +
         `    pub unsafe fn ${sym}${sig} {\n` +
         `    ${body}\n` +
         `    }\n` +

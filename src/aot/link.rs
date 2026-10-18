@@ -2267,6 +2267,149 @@ fn leave_open_classes_that_are_only_extended_without_instances(program: &mut Pro
     }
 }
 
+fn leave_open_records_that_typed_code_never_makes_or_never_reads_plain(program: &mut Program, contents: &mut [u8], size: Option<StrId>, is_runtime_layout: &[bool], in_parallel: InParallel<'_>) {
+    let mut is_candidate: Vec<bool> = (program.layouts.iter().enumerate())
+        .map(|(index, layout)| layout.kind == LayoutKind::Record && layout.is_allocated && layout.accepts_unchecked_objects() && !layout.is_relaxed_for_logging && !is_runtime_layout.get(index).copied().unwrap_or(false))
+        .collect();
+    for member in program.layouts.iter().filter(|view| !view.accepts_untyped).flat_map(|view| &view.members) {
+        is_candidate[member.idx()] = false;
+    }
+    for (index, layout) in program.layouts.iter().enumerate() {
+        is_candidate[index] &= layout.fields.iter().all(|field| field.name.is_some() && program.strs.get(field.name).first() != Some(&0xFC));
+    }
+    let (funcs, tys) = (&program.funcs, &program.tys);
+    let views_of = |ty: TyId, found: &mut Vec<LayoutId>| {
+        if ty.is_some() {
+            found.extend(tys.get(ty).parts.iter().filter_map(|part| if let Part::Class(view) = part { Some(*view) } else { None }));
+        }
+    };
+    let mut kept = Vec::new();
+    for func in funcs {
+        views_of(func.declared_this_type, &mut kept);
+    }
+    let mut held_in_fields: Vec<TyId> = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment).flat_map(|layout| layout.fields.iter().map(|field| field.declared)).collect();
+    let mut is_seen: FxHashSet<TyId> = FxHashSet::default();
+    while let Some(ty) = held_in_fields.pop() {
+        if ty.is_some() && is_seen.insert(ty) {
+            for part in &tys.get(ty).parts {
+                match part {
+                    Part::Class(view) => kept.push(*view),
+                    Part::Array(element) => held_in_fields.push(*element),
+                    Part::Global(_, arguments) => held_in_fields.extend(arguments.iter().copied()),
+                }
+            }
+        }
+    }
+    for layout in kept {
+        is_candidate[layout.idx()] = false;
+    }
+    if !is_candidate.contains(&true) {
+        return;
+    }
+    let mut runs: Vec<(usize, Vec<LayoutId>, Vec<LayoutId>)> = (0..funcs.len()).step_by(FUNCTIONS_PER_SLICE).map(|first| (first, Vec::new(), Vec::new())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(first, made, read)| {
+        for func in &funcs[*first..funcs.len().min(*first + FUNCTIONS_PER_SLICE)] {
+            let read_through = |operand: V, read: &mut Vec<LayoutId>| {
+                let value = &func.values[operand.idx()];
+                views_of(value.ty, read);
+                if let Prediction::Ty(predicted) | Prediction::Field(predicted) = value.prediction() {
+                    views_of(predicted, read);
+                }
+            };
+            for value in &func.values {
+                let Def::Op(op) = &value.def else { continue };
+                match op {
+                    Op::New(layout) | Op::NewWith { layout, .. } => made.push(*layout),
+                    Op::Coerce { value: converted, to, why: CoerceReason::Store | CoerceReason::Cast | CoerceReason::Coerce | CoerceReason::Forced | CoerceReason::CoerceFreshGraph | CoerceReason::CastFresh }
+                        if matches!(func.op(nullish::strip_casts(func, *converted)), Some(Op::NewObject | Op::Operation { .. })) =>
+                    {
+                        views_of(*to, made);
+                        views_of(*to, read);
+                    }
+                    Op::FieldSet { obj, .. } | Op::FieldGet { obj, .. } if matches!(func.op(nullish::strip_casts(func, *obj)), Some(Op::New(_) | Op::NewWith { .. })) => {}
+                    Op::Operation { which: Operation::DefineField, args } if args.first().is_some_and(|&filled| matches!(func.op(nullish::strip_casts(func, filled)), Some(Op::NewObject))) => {}
+                    Op::FieldSet { obj, .. }
+                    | Op::FieldGet { obj, .. }
+                    | Op::PropGet { obj, .. }
+                    | Op::PropSet { obj, .. }
+                    | Op::PropHas { obj, .. }
+                    | Op::PropDelete { obj, .. }
+                    | Op::ElemGet { obj, .. }
+                    | Op::ElemSet { obj, .. }
+                    | Op::ElemHas { obj, .. }
+                    | Op::ElemDelete { obj, .. }
+                    | Op::CallMethod { obj, .. }
+                    | Op::IterOpen(obj) => read_through(*obj, read),
+                    Op::IsInstance { value, layout } => {
+                        read_through(*value, read);
+                        read.push(*layout);
+                    }
+                    Op::Operation { .. } | Op::Binary { .. } | Op::Unary { .. } | Op::Relational { .. } | Op::LooseEq { .. } | Op::ToStr(_) | Op::ToKey(_) | Op::StrConcat(_) => op.for_each_operand(|operand| read_through(operand, read)),
+                    _ => {}
+                }
+            }
+        }
+        for found in [made, read] {
+            found.sort_unstable();
+            found.dedup();
+        }
+    });
+    let (mut is_made, mut is_read) = (vec![false; program.layouts.len()], vec![false; program.layouts.len()]);
+    for (_, made, read) in &runs {
+        made.iter().for_each(|layout| is_made[layout.idx()] = true);
+        for view in read {
+            is_read[view.idx()] = true;
+            program.layouts[view.idx()].members.iter().for_each(|member| is_read[member.idx()] = true);
+        }
+    }
+    let is_left_plain: Vec<bool> = (0..program.layouts.len()).map(|index| is_candidate[index] && !(is_made[index] && is_read[index])).collect();
+    if !is_left_plain.contains(&true) {
+        return;
+    }
+    let string = program.tys.intern(Declared::prims(crate::declared::prim::STRING));
+    let anything = program.tys.anything;
+    let Program { funcs, layouts, .. } = program;
+    for (func, contents) in funcs.iter_mut().zip(contents.iter_mut()).filter(|function| *function.1 & has::NEW_OBJECTS != 0) {
+        let is_made_plain: Vec<bool> = func.values.iter().map(|value| matches!(value.def, Def::Op(Op::New(layout) | Op::NewWith { layout, .. }) if is_left_plain[layout.idx()])).collect();
+        if !is_made_plain.contains(&true) {
+            continue;
+        }
+        for (value, _) in func.values.iter_mut().zip(&is_made_plain).filter(|value| *value.1) {
+            value.def = Def::Op(Op::NewObject);
+        }
+        for block in 0..func.blocks.len() {
+            let mut at = 0;
+            while at < func.blocks[block].ops.len() {
+                let v = func.blocks[block].ops[at];
+                match func.values[v.idx()].def {
+                    Def::Op(Op::FieldSet { obj, layout, field, value }) if is_made_plain[nullish::strip_casts(func, obj).idx()] => {
+                        let key = V::new(func.values.len());
+                        func.values.push(ir::Value::new(Def::Op(Op::Str(layouts[layout.idx()].fields[field as usize].name)), func.values[v.idx()].pos, string));
+                        func.blocks[block].ops.insert(at, key);
+                        at += 1;
+                        func.values[v.idx()].def = Def::Op(Op::Operation { which: Operation::DefineField, args: ir::Args::from_slice(&[obj, key, value]) });
+                        func.values[v.idx()].ty = anything;
+                    }
+                    Def::Op(Op::FieldGet { obj, layout, field }) if is_made_plain[nullish::strip_casts(func, obj).idx()] => {
+                        func.values[v.idx()].def = Def::Op(Op::PropGet { obj, name: layouts[layout.idx()].fields[field as usize].name });
+                    }
+                    _ => {}
+                }
+                at += 1;
+            }
+        }
+        *contents = content_flags(func, size);
+    }
+    for layout in layouts.iter_mut() {
+        for listed in [&mut layout.members, &mut layout.structural_subtypes, &mut layout.specializations] {
+            listed.retain(|other| !is_left_plain[other.idx()]);
+        }
+    }
+    for (layout, _) in layouts.iter_mut().zip(&is_left_plain).filter(|layout| *layout.1) {
+        layout.is_allocated = false;
+    }
+}
+
 fn leave_members_to_the_prototype(program: &mut Program, is_runtime_layout: &[bool], in_parallel: InParallel<'_>) {
     let is_given_a_prototype = |layout: &Layout| layout.kind == LayoutKind::Record && layout.class_flags & class_flags::PROTOTYPE_IS_SET_BY_TYPED_CODE != 0;
     if !program.layouts.iter().any(is_given_a_prototype) {
@@ -2396,7 +2539,7 @@ fn explain_external_data(program: &Program, is_runtime_layout: &[bool]) -> Vec<S
         counter.0 += usize::from(is_fact(ty));
         counter.1 += 1;
     };
-    for func in program.funcs.iter().filter(|func| func.flags & func_flags::IS_TYPED != 0 && func.flags & (func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) == 0) {
+    for func in program.funcs.iter().filter(|func| func.flags & func_flags::IS_TYPED != 0 && func.flags & (func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE | func_flags::IS_HIDDEN_IN_STACK_TRACES) == 0) {
         for &parameter in &func.params {
             count(&mut parameters, parameter);
         }
@@ -3998,6 +4141,7 @@ fn link_with_helper_threads<'scope>(
         }
     }
     leave_open_classes_that_are_only_extended_without_instances(&mut program, in_parallel);
+    leave_open_records_that_typed_code_never_makes_or_never_reads_plain(&mut program, &mut contents, size, &is_runtime_layout, in_parallel);
     leave_members_to_the_prototype(&mut program, &is_runtime_layout, in_parallel);
     {
         let layout_of_type: FxHashMap<TypeId, LayoutId> = views.iter().map(|&(layout, ty)| (ty, layout)).collect();
@@ -4374,13 +4518,10 @@ fn link_with_helper_threads<'scope>(
     let reads = keys::reads_without_a_name(&program, &modules, checked.files, &files_of_prelude, in_parallel);
     *checked.reads_of_any_property.lock() = reads.of_any_property;
     checked.reads_by_a_key_that_may_be_a_name.store(reads.by_a_key_that_may_be_a_name, Ordering::Relaxed);
+    checked.hands_on_what_a_table_in_sight_finds.store(reads.that_hand_on_what_a_table_in_sight_finds, Ordering::Relaxed);
     *checked.reads_that_may_find_the_constructor_of_functions.lock() = reads.that_may_find_the_constructor_of_functions;
     *checked.reads_that_may_find_what_makes_or_loads_code.lock() = reads.that_may_find_what_makes_or_loads_code;
     *checked.loads_of_modules_that_are_not_compiled.lock() = reads.of_modules_that_are_not_compiled;
-    checked.stores_under_a_key_that_is_not_seen.store(keys::stores_under_a_key_that_is_not_seen(&program, &modules, &files_of_prelude), Ordering::Relaxed);
-    checked.takes_members_without_naming_them.store(keys::takes_members_without_naming_them(&program, &modules, &files_of_prelude), Ordering::Relaxed);
-    checked.writes_under_a_key_that_may_be_a_symbol.store(keys::writes_under_a_key_that_may_be_a_symbol(&program, &modules, &files_of_prelude), Ordering::Relaxed);
-    checked.reads_the_constructor_of_a_symbol.store(keys::reads_the_constructor_of_a_symbol(&program, &modules, &files_of_prelude), Ordering::Relaxed);
     let failure_check = Some(FailureCheck { setup: setup_of_what_always_fails, modules });
     Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found, typedness, times, failure_check }
 }

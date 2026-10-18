@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`stores integers and fractions in turn into a number field for which the program only shows integers 1`] = `
+"typed, function: 19.36 instructions (kernel 19.24, module 0.12), 451 bytes
+typed, module level: 10.59 instructions (module 10.59), 1826 bytes
+untyped, function: 44.80 instructions (kernel 19.22, stub PutByNameWithDirectColumnPreservingTwo 13, outlined code 6, stub ReplaceOutOfLineByName 6, stub Add 0.29, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.13, module 0.12, stub ReadOutOfLineByName 0.04), 334 bytes
+untyped, module level: 38.61 instructions (module 18.22, stub PutByNameWithDirectColumnPreservingTwo 14, outlined code 6, stub Add 0.29, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.10), 1560 bytes"
+`;
+
 exports[`makes a local array of flags, sets every third and counts those that are set 1`] = `
 "typed, function: 19.16 instructions (kernel 12.73, the runtime 5.36, stub NewTypedArray 0.48, elsewhere 0.46, module 0.13), 442 bytes
 typed, module level: 19.03 instructions (module 12.73, the runtime 5.36, stub NewTypedArray 0.48, elsewhere 0.46), 1510 bytes

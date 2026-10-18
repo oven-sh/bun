@@ -2272,9 +2272,10 @@ impl<'a> Parser<'a> {
                 [0; RuntimeImports::ALL.len()];
             let mut iter = p.runtime_imports.iter();
             let mut i: usize = 0;
+            let imports_validation_apart = !p.options.bundle && p.runtime_imports.contains(b"__validate");
             while let Some(entry) = iter.next() {
                 runtime_imports[i] = u8::try_from(entry.key).expect("int cast");
-                i += 1;
+                i += usize::from(!imports_validation_apart || runtime_imports[i] != RuntimeImports::VALIDATE);
             }
 
             bun_collections::index_sort::sort_slice_unstable_by(
@@ -2286,7 +2287,7 @@ impl<'a> Parser<'a> {
             );
 
             if i > 0 && wrap_mode == WrapMode::BunCommonjs {
-                p.generate_runtime_require(&runtime_imports[0..i], &mut before)
+                p.generate_runtime_require(RuntimeImports::NAME, &runtime_imports[0..i], &mut before)
                     .expect("unreachable");
             } else if i > 0 {
                 // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
@@ -2302,6 +2303,24 @@ impl<'a> Parser<'a> {
                     None,
                     b"import_",
                     true,
+                    js_ast::PartTag::Runtime,
+                )
+                .expect("unreachable");
+            }
+
+            if imports_validation_apart && wrap_mode == WrapMode::BunCommonjs {
+                p.generate_runtime_require(RuntimeImports::VALIDATION_NAME, &[RuntimeImports::VALIDATE], &mut before)
+                    .expect("unreachable");
+            } else if imports_validation_apart {
+                let symbols = p.runtime_imports.clone();
+                p.generate_import_stmt(
+                    RuntimeImports::VALIDATION_NAME,
+                    [RuntimeImports::VALIDATE],
+                    &mut before,
+                    &symbols,
+                    None,
+                    b"import_",
+                    false,
                     js_ast::PartTag::Runtime,
                 )
                 .expect("unreachable");

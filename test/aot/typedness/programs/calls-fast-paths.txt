@@ -95,7 +95,7 @@ one-line-of-output: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 one-null-check-across-inlined-functions: 1 layouts, 0 given, 0 open, places 27 of 35, reads 5 of 7
 one-null-check-for-many-reads: 2 layouts, 0 given, 0 open, places 24 of 38, reads 31 of 38
 prototype-compared: 1 layouts, 0 given, 1 open, places 8 of 16, reads 4 of 9
-rare-checks-before-calls: 3 layouts, 2 given, 0 open, places 49 of 133, reads 5 of 25
+rare-checks-before-calls: 3 layouts, 2 given, 0 open, places 43 of 121, reads 5 of 25
 reader-inlined-only-across-suspension: 1 layouts, 0 given, 0 open, places 15 of 25, reads 11 of 12
 reader-not-inlined-without-suspension: 1 layouts, 0 given, 0 open, places 11 of 21, reads 9 of 10
 recursive-closure-inlined-once: 1 layouts, 0 given, 0 open, places 15 of 23, reads 4 of 6

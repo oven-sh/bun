@@ -2440,7 +2440,7 @@ bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0)
     return arg0->size() == 0;
 }
 
-WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
+NEVER_INLINE WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     return headers;
@@ -6318,7 +6318,7 @@ extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore:
     return abortSignal->getTimeout();
 }
 
-extern "C" void WebCore__AbortSignal__cancelTimer(WebCore::AbortSignal* abortSignal)
+extern "C" NEVER_INLINE void WebCore__AbortSignal__cancelTimer(WebCore::AbortSignal* abortSignal)
 {
     abortSignal->cancelTimer();
 }
@@ -6334,7 +6334,7 @@ extern "C" void WebCore__AbortSignal__unref(WebCore::AbortSignal* abortSignal)
     abortSignal->deref();
 }
 
-extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* abortSignal, void* arg1)
+extern "C" NEVER_INLINE void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* abortSignal, void* arg1)
 {
     abortSignal->cleanNativeBindings(arg1);
 }

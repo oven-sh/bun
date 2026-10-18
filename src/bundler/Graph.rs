@@ -94,6 +94,10 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+
+    pub(crate) is_runtime_parsed: bool,
+    pub(crate) validates_by_type: bool,
+    pub(crate) runtime_has_validation_helper: bool,
 }
 
 #[derive(Default)]
@@ -185,6 +189,9 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
+            is_runtime_parsed: false,
+            validates_by_type: false,
+            runtime_has_validation_helper: false,
         }
     }
 }

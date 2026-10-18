@@ -160,6 +160,7 @@ bitflags::bitflags! {
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
         const ES_MODULE_BY_ITS_OWN_SYNTAX = 1 << 10;
+        const VALIDATES_BY_TYPE = 1 << 11;
         // _padding: u6 fills the rest
     }
 }
@@ -303,6 +304,7 @@ impl<'arena> BundledAst<'arena> {
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
         flags.set(Flags::ES_MODULE_BY_ITS_OWN_SYNTAX, ast.has_esm_syntax);
+        flags.set(Flags::VALIDATES_BY_TYPE, !ast.runtime_imports.__validate.is_empty());
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,

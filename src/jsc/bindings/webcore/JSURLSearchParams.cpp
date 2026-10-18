@@ -359,7 +359,7 @@ JSObject* JSURLSearchParams::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSURLSearchParams>(vm, globalObject);
 }
 
-JSValue JSURLSearchParams::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSURLSearchParams::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSURLSearchParamsDOMConstructor, DOMConstructorID::URLSearchParams>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

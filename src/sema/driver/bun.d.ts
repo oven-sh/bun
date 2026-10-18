@@ -76,7 +76,8 @@ declare module "bun" {
    *
    * The objects and arrays that `T` describes are copied, and `value` itself is never changed. The copy has the same
    * keys in the same order, including properties that `T` does not declare.
-   * Available in programs built or run with `--aot`.
+   * Works wherever Bun compiles the call: `bun run`, `bun test`, `bun build` and `bun build --compile`, with or without `--aot`.
+   * Other tools erase the type argument, and the call then throws a `TypeError` that says so.
    *
    * ```ts
    * import type { Schema } from "bun";

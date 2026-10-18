@@ -275,11 +275,10 @@ export const cases: Case[] = [
 ];
 
 export const refused =
-  /^BUN_OPTIONS=(--preload|-r|--require|--import|--eval|-e|--print|-p)\b|^BUN_OPTIONS=(--help|-h|--aot|--aot-audit|--sql-preconnect)$|^BUN_OPTIONS=--(trace-event|trace-env|trace-exit|stack-trace-limit|fetch-preconnect|redis-preconnect)|--compile-exec-argv=--preload|built to read it: preload/;
+  /^BUN_OPTIONS=(--preload|-r|--require|--import|--eval|-e|--print|-p)\b|^BUN_OPTIONS=(--help|-h|--aot|--aot-audit|--sql-preconnect|-i)$|^BUN_OPTIONS=--(trace-event|trace-env|trace-exit|stack-trace-limit|fetch-preconnect|redis-preconnect|install=)|--compile-exec-argv=--preload|built to read it: preload/;
 
 export const knownToDiffer: [RegExp, string, "in a closed world"?][] = [
   [/^BUN_BE_BUN=1 (a file|-e|and nothing else)$/, "documented: the Bun command line is left out"],
   [/^BUN_OPTIONS=-Z$/, "documented: the help of the Bun command line is left out"],
   [/^BUN_INSPECT( that waits|_NOTIFY nobody)?$/, "the debugger evaluates text", "in a closed world"],
-  [/^BUN_JSC_dumpOptions=3$/, "it lists the option that a closed world sets"],
 ];

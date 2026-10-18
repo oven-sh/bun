@@ -115,13 +115,17 @@ function memberOf(input: any, member: any[]): any {
   return Object.prototype.propertyIsEnumerable.call(input, member[0]) ? input[member[0]] : undefined;
 }
 
+function addOnce(list: number[], at: number): void {
+  if (!list.includes(at)) list.push(at);
+}
+
 function copyOf(nodes: any[], alternatives: number[], input: any): any {
   if (!isObject(input)) return input;
   const isArray = Array.isArray(input);
   const described: any[] = [];
   for (let i = 0; i < alternatives.length; i++) {
     const node = nodes[alternatives[i]];
-    if (node[0] === 9) alternatives = alternatives.concat(node[1]);
+    if (node[0] === 9) for (let j = 0; j < node[1].length; j++) addOnce(alternatives, node[1][j]);
     else if (isArray ? node[0] === 5 || node[0] === 6 : node[0] === 7 || node[0] === 8) described.push(node);
   }
   if (described.length === 0) return input;
@@ -130,8 +134,8 @@ function copyOf(nodes: any[], alternatives: number[], input: any): any {
     for (let i = 0; i < made.length; i++) {
       const below: number[] = [];
       for (let j = 0; j < described.length; j++) {
-        if (described[j][0] === 5) below.push(described[j][1]);
-        else if (i < described[j][1].length) below.push(described[j][1][i]);
+        if (described[j][0] === 5) addOnce(below, described[j][1]);
+        else if (i < described[j][1].length) addOnce(below, described[j][1][i]);
       }
       made[i] = copyOf(nodes, below, made[i]);
     }
@@ -157,7 +161,7 @@ function copyOf(nodes: any[], alternatives: number[], input: any): any {
       for (let k = 0; node[0] === 8 && k < node[1].length; k++) {
         if (node[1][k][0] === key) at = node[1][k][1];
       }
-      if (at >= 0) below.push(at);
+      if (at >= 0) addOnce(below, at);
     }
     const copied = copyOf(nodes, below, held);
     if (copied !== held) define(made, key, copied);
@@ -169,7 +173,27 @@ function holdsDefault(plan: any[]): boolean {
   return (plan[3] ??= plan[1].some((node: any[]) => node[5]));
 }
 
-function build(nodes: any[], at: number, input: any, refused: object, copies: boolean): any {
+export function startRemembering(memory: any[]): void {
+  memory[0] ??= new Map();
+}
+
+export function recall(memory: any[], at: number, input: any): any {
+  const known = isObject(input) ? memory[0].get(input) : undefined;
+  if (known === undefined) return undefined;
+  for (let i = 0; i < known.length; i += 2) {
+    if (known[i] === at) return known[i + 1];
+  }
+  return undefined;
+}
+
+export function remember(memory: any[], at: number, input: any, verdict: any): void {
+  if (!isObject(input)) return;
+  const known = memory[0].get(input);
+  if (known === undefined) memory[0].set(input, [at, verdict]);
+  else known.push(at, verdict);
+}
+
+function build(nodes: any[], at: number, input: any, refused: any[], copies: boolean): any {
   const node = nodes[at];
   if (node[5] && input === undefined) input = node[6];
   let made: any = input;
@@ -184,7 +208,6 @@ function build(nodes: any[], at: number, input: any, refused: object, copies: bo
       break;
     case 3:
       if (input !== node[1]) return refused;
-      made = node[1];
       break;
     case 4:
       if (!isObject(input)) return refused;
@@ -250,10 +273,27 @@ function build(nodes: any[], at: number, input: any, refused: object, copies: bo
       if (input !== undefined) return refused;
       break;
     default: {
-      const arms = node[1];
+      const remembers = node.length > 7 && isObject(input);
+      if (remembers && refused[0] !== undefined) {
+        const known = recall(refused, at, input);
+        if (known !== undefined) return known;
+      }
+      let arms = node[1];
       made = refused;
-      for (let i = 0; i < arms.length && made === refused; i++) made = build(nodes, arms[i], input, refused, copies);
-      if (made === refused) return refused;
+      const tags = isPlainObject(input) ? tagsOf(nodes, node) : [];
+      if (tags.length !== 0) {
+        const which = tags[1].indexOf(input[tags[0]]);
+        if (which >= 0) made = build(nodes, tags[2][which], input, refused, copies);
+        if (which >= 0 && made === refused && remembers) startRemembering(refused);
+        arms = tags[3];
+      }
+      for (let i = 0; i < arms.length && made === refused; i++) {
+        made = build(nodes, arms[i], input, refused, copies);
+        if (made === refused && remembers) startRemembering(refused);
+      }
+      if (made !== refused && !allHold(node, made)) made = refused;
+      if (remembers && refused[0] !== undefined) remember(refused, at, input, made);
+      return made;
     }
   }
   return allHold(node, made) ? made : refused;
@@ -263,7 +303,12 @@ function isMissing(input: any, member: any[], value: any): boolean {
   return value === undefined && (member[2] & 4) !== 0 && !Object.hasOwn(input, member[0]);
 }
 
+const MOST_ISSUES = 100;
+let room = 0;
+
 function add(issues: any[], path: any[], code: string, expected: string, value: any, message: any): void {
+  if (room === 0) return;
+  room--;
   const received = describeReceived(value);
   const written =
     code === "invalid_type" || code === "invalid_value" || code === "invalid_union"
@@ -396,13 +441,10 @@ function reportMembers(nodes: any[], node: any[], from: number, input: any, path
 }
 
 function reportElements(pending: any[], validate: any, nodes: any[], node: any[], from: number, list: any[], key: any, issues: any[]): void {
-  for (let i = from; i < list.length; i++) {
+  for (let i = from; i < list.length && room !== 0; i++) {
     if (validate !== undefined && validate(list[i]) !== undefined) continue;
-    const found: any[] = [];
-    reportBelow(nodes, node[1], list[i], i, pending[0], found);
+    reportBelow(nodes, node[1], list[i], key === undefined ? [i] : [key, i], pending[0], pending[1], issues);
     pending[0] = undefined;
-    if (key === undefined) for (let j = 0; j < found.length; j++) issues.push(found[j]);
-    else reportBelow(nodes, 0, undefined, key, found, issues);
   }
 }
 
@@ -410,7 +452,7 @@ function reportMembersWith(pending: any, compiled: any, nodes: any[], node: any[
   const members = node[0] === 8 ? node[1] : [];
   const others = node[0] === 8 ? node[2] : node[1];
   const kinds: number[] = node[0] === 8 ? node[7] : [];
-  for (let i = from; i < members.length; i++) {
+  for (let i = from; i < members.length && room !== 0; i++) {
     const member = members[i];
     const name = member[0];
     const value = memberOf(input, member);
@@ -433,13 +475,13 @@ function reportMembersWith(pending: any, compiled: any, nodes: any[], node: any[
       reportRules(child, value, withKey(path, name), issues);
       reportElements(pending, validate, nodes, child, 0, value, name, issues);
     } else if (validate(value) === undefined) {
-      reportBelow(nodes, member[1], value, name, pending[0], issues);
+      reportBelow(nodes, member[1], value, [name], pending[0], pending[1], issues);
       pending[0] = undefined;
     }
   }
-  if (others === -1) return;
+  if (others === -1 || room === 0) return;
   const keys = Object.keys(input);
-  for (let i = 0; i < keys.length; i++) {
+  for (let i = 0; i < keys.length && room !== 0; i++) {
     const key = keys[i];
     if (isDeclared(members, key)) continue;
     if (others === -2) add(issues, path, "unrecognized_keys", JSON.stringify(key), input, node[4]);
@@ -448,6 +490,8 @@ function reportMembersWith(pending: any, compiled: any, nodes: any[], node: any[
 }
 
 function report(nodes: any[], at: number, input: any, path: any[], issues: any[]): void {
+  if (room === 0) return;
+  if (path.length > 8) return reportUnder(path, nodes, at, input, issues);
   const node = nodes[at];
   const kind = node[0];
   const detail = node[1];
@@ -481,7 +525,7 @@ function report(nodes: any[], at: number, input: any, path: any[], issues: any[]
       expected = "array";
       if (!Array.isArray(input)) break;
       reportRules(node, input, path, issues);
-      for (let i = 0; i < input.length; i++) report(nodes, detail, input[i], withKey(path, i), issues);
+      for (let i = 0; i < input.length && room !== 0; i++) report(nodes, detail, input[i], withKey(path, i), issues);
       return;
     case 6:
       expected = "tuple";
@@ -492,60 +536,127 @@ function report(nodes: any[], at: number, input: any, path: any[], issues: any[]
     case 8:
       if (!isPlainObject(input)) break;
       return reportMembers(nodes, node, 0, input, path, issues);
-    default: {
-      let ofNearArm: any[] = [];
-      let count = 0;
-      let arms = detail;
-      const tags = isPlainObject(input) ? tagsOf(nodes, node) : [];
-      let ofTaggedArm: any[] | undefined = undefined;
-      if (tags.length !== 0) {
-        const which = tags[1].indexOf(input[tags[0]]);
-        if (which >= 0) {
-          ofTaggedArm = [];
-          report(nodes, tags[2][which], input, path, ofTaggedArm);
-          if (ofTaggedArm.length === 0) return reportRules(node, input, path, issues);
-        }
-        arms = tags[3];
-      }
-      for (let i = 0; i < arms.length; i++) {
-        const arm = arms[i];
-        const found: any[] = [];
-        report(nodes, arm, input, path, found);
-        if (found.length === 0) return reportRules(node, input, path, issues);
-        if (isNearArm(nodes[arm], input)) {
-          ofNearArm = found;
-          count++;
-        }
-      }
-      if (ofTaggedArm !== undefined) {
-        ofNearArm = ofTaggedArm;
-        count = 1;
-      }
-      if (count === 1) {
-        for (let i = 0; i < ofNearArm.length; i++) issues.push(ofNearArm[i]);
-        return;
-      }
-      if (count === 0 && tags.length !== 0) return add(issues, withKey(path, tags[0]), "invalid_value", tags[4], input[tags[0]], node[4]);
-      if (count > 1) code = "invalid_union";
-      expected = expectedOf(nodes, at);
-    }
+    default:
+      return node.length > 7 && isObject(input) ? reportOnce(nodes, at, input, path, issues) : reportUnion(nodes, at, input, path, issues);
   }
   add(issues, path, code, expected, input, node[4]);
 }
 
+function reportUnion(nodes: any[], at: number, input: any, path: any[], issues: any[]): void {
+  const node = nodes[at];
+  const before = room;
+  let ofNearArm: any[] = [];
+  let leftByNearArm = before;
+  let count = 0;
+  let arms = node[1];
+  const tags = isPlainObject(input) ? tagsOf(nodes, node) : [];
+  let ofTaggedArm: any[] | undefined = undefined;
+  let leftByTaggedArm = before;
+  if (tags.length !== 0) {
+    const which = tags[1].indexOf(input[tags[0]]);
+    if (which >= 0) {
+      ofTaggedArm = [];
+      report(nodes, tags[2][which], input, path, ofTaggedArm);
+      leftByTaggedArm = room;
+      room = before;
+      if (ofTaggedArm.length === 0) return reportRules(node, input, path, issues);
+    }
+    arms = tags[3];
+  }
+  for (let i = 0; i < arms.length; i++) {
+    const arm = arms[i];
+    const found: any[] = [];
+    report(nodes, arm, input, path, found);
+    const left = room;
+    room = before;
+    if (found.length === 0) return reportRules(node, input, path, issues);
+    if (isNearArm(nodes[arm], input)) {
+      ofNearArm = found;
+      leftByNearArm = left;
+      count++;
+    }
+  }
+  if (ofTaggedArm !== undefined) {
+    ofNearArm = ofTaggedArm;
+    leftByNearArm = leftByTaggedArm;
+    count = 1;
+  }
+  if (count === 1) {
+    for (let i = 0; i < ofNearArm.length; i++) issues.push(ofNearArm[i]);
+    room = leftByNearArm;
+    return;
+  }
+  if (count === 0 && tags.length !== 0) return add(issues, withKey(path, tags[0]), "invalid_value", tags[4], input[tags[0]], node[4]);
+  add(issues, path, count > 1 ? "invalid_union" : "invalid_type", expectedOf(nodes, at), input, node[4]);
+}
+
+let reported: any[] | undefined;
+
+function reportOnce(nodes: any[], at: number, input: any, path: any[], issues: any[]): void {
+  const memory = (reported ??= [new Map()]);
+  let known = recall(memory, at, input);
+  if (known === undefined) {
+    const before = room;
+    room = MOST_ISSUES;
+    known = [[], 0];
+    reportUnion(nodes, at, input, [], known[0]);
+    known[1] = MOST_ISSUES - room;
+    room = before;
+    remember(memory, at, input, known);
+  }
+  addUnder(path, known[0], known[1], issues);
+}
+
+function reportUnder(path: any[], nodes: any[], at: number, input: any, issues: any[]): void {
+  const before = room;
+  const found: any[] = [];
+  report(nodes, at, input, [], found);
+  if (found.length !== 0) issues.push([path, found, before - room]);
+}
+
+function addUnder(path: any[], found: any[], count: number, issues: any[]): void {
+  const taken = Math.min(count, room);
+  if (taken === 0) return;
+  issues.push([path, found, taken]);
+  room -= taken;
+}
+
+function addWithWholePaths(found: any[], most: number, path: any[], issues: any[]): void {
+  const end = issues.length + most;
+  for (let i = 0; i < found.length && issues.length < end; i++) {
+    const one = found[i];
+    if (!Array.isArray(one)) {
+      issues.push({ ...one, path: [...path, ...one.path] });
+      continue;
+    }
+    const length = path.length;
+    for (let j = 0; j < one[0].length; j++) path.push(one[0][j]);
+    addWithWholePaths(one[1], Math.min(one[2], end - issues.length), path, issues);
+    path.length = length;
+  }
+}
+
 export function issuesOf(plan: any[], value: any): any[] {
+  const found: any[] = [];
+  const outer = reported;
+  const outerRoom = room;
+  reported = undefined;
+  room = MOST_ISSUES;
+  try {
+    report(plan[1], plan[0], value, [], found);
+    if (found.length === 0) add(found, [], "invalid_type", expectedOf(plan[1], plan[0]), value, null);
+  } finally {
+    reported = outer;
+    room = outerRoom;
+  }
   const issues: any[] = [];
-  report(plan[1], plan[0], value, [], issues);
-  if (issues.length === 0) add(issues, [], "invalid_type", expectedOf(plan[1], plan[0]), value, undefined);
+  addWithWholePaths(found, MOST_ISSUES, [], issues);
   return issues;
 }
 
-function reportBelow(nodes: any[], at: number, input: any, key: any, found: any[] | undefined, issues: any[]): void {
-  if (found === undefined) return report(nodes, at, input, [key], issues);
-  for (let i = 0; i < found.length; i++) {
-    found[i].path = [key, ...found[i].path];
-    issues.push(found[i]);
-  }
+function reportBelow(nodes: any[], at: number, input: any, path: any[], found: any[] | undefined, count: number, issues: any[]): void {
+  if (found === undefined) return report(nodes, at, input, path, issues);
+  addUnder(path, found, count, issues);
 }
 
 export function preparePlan(text: string, pending: any[]): any[] {
@@ -557,24 +668,35 @@ export function preparePlan(text: string, pending: any[]): any[] {
 export function recordFailure(plan: any[], at: number, position: number, value: any, compiled: any): void {
   const pending = plan[2];
   const found = pending[0];
+  const count = pending[1];
   pending[0] = undefined;
   const nodes = plan[1];
   const node = nodes[at];
   const issues: any[] = [];
-  if (node[0] === 5) {
-    reportBelow(nodes, node[1], value[position], position, found, issues);
-    reportElements(pending, compiled, nodes, node, position + 1, value, undefined, issues);
-  } else if (!isPlainObject(value)) {
-    report(nodes, at, value, [], issues);
-  } else {
-    const members = node[1];
-    if (position < members.length) {
-      const member = members[position];
-      const given = memberOf(value, member);
-      if (isMissing(value, member, given)) add(issues, [member[0]], "invalid_type", expectedOf(nodes, member[1]), undefined, nodes[member[1]][4]);
-      else reportBelow(nodes, member[1], given, member[0], found, issues);
+  const outer = reported;
+  const outerRoom = room;
+  reported = undefined;
+  room = MOST_ISSUES;
+  try {
+    if (node[0] === 5) {
+      reportBelow(nodes, node[1], value[position], [position], found, count, issues);
+      reportElements(pending, compiled, nodes, node, position + 1, value, undefined, issues);
+    } else if (!isPlainObject(value)) {
+      report(nodes, at, value, [], issues);
+    } else {
+      const members = node[1];
+      if (position < members.length) {
+        const member = members[position];
+        const given = memberOf(value, member);
+        if (isMissing(value, member, given)) add(issues, [member[0]], "invalid_type", expectedOf(nodes, member[1]), undefined, nodes[member[1]][4]);
+        else reportBelow(nodes, member[1], given, [member[0]], found, count, issues);
+      }
+      reportMembersWith(pending, compiled, nodes, node, position + 1, value, [], issues);
     }
-    reportMembersWith(pending, compiled, nodes, node, position + 1, value, [], issues);
+  } finally {
+    pending[1] = MOST_ISSUES - room;
+    reported = outer;
+    room = outerRoom;
   }
   pending[0] = issues;
 }
@@ -583,7 +705,10 @@ export function takeIssues(plan: any[], value: any): any[] {
   const pending = plan[2];
   const found = pending[0];
   pending[0] = undefined;
-  return found === undefined || found.length === 0 ? issuesOf(plan, value) : found;
+  if (found === undefined || found.length === 0) return issuesOf(plan, value);
+  const issues: any[] = [];
+  addWithWholePaths(found, pending[1], [], issues);
+  return issues;
 }
 
 export function failureWithIssues(plan: any[], value: any): any {
@@ -607,22 +732,23 @@ export function __validate(value: any, schema: string, isShared?: boolean): any 
   let plan = (parsedSchemas ??= new Map()).get(schema);
   if (plan === undefined) parsedSchemas.set(schema, (plan = JSON.parse(schema) as any[]));
   if (isShared) value = copyOf(plan[1], [plan[0]], value);
-  const made = build(plan[1], plan[0], value, parsedSchemas, holdsDefault(plan));
-  if (made !== parsedSchemas) return made;
+  const refused: any[] = [];
+  const made = build(plan[1], plan[0], value, refused, holdsDefault(plan));
+  if (made !== refused) return made;
   const error = errorWith(issuesOf(plan, value));
   (Error as any).captureStackTrace?.(error, __validate);
   throw error;
 }
 
 export function validateByPlan(plan: any[], value: any): any {
-  const refused = {};
+  const refused: any[] = [];
   value = copyOf(plan[1], [plan[0]], value);
   const made = build(plan[1], plan[0], value, refused, holdsDefault(plan));
   return made === refused ? throwIssues(issuesOf(plan, value)) : made;
 }
 
 export function safeValidateByPlan(plan: any[], value: any): any {
-  const refused = {};
+  const refused: any[] = [];
   value = copyOf(plan[1], [plan[0]], value);
   const made = build(plan[1], plan[0], value, refused, holdsDefault(plan));
   return made === refused ? failureWithIssues(plan, value) : { success: true, data: made };
@@ -634,7 +760,7 @@ export function planSchema(plan: any[]): any {
       version: 1,
       vendor: "bun",
       validate(value: any): any {
-        const refused = {};
+        const refused: any[] = [];
         value = copyOf(plan[1], [plan[0]], value);
         const made = build(plan[1], plan[0], value, refused, holdsDefault(plan));
         return made === refused ? { issues: issuesOf(plan, value) } : { value: made };

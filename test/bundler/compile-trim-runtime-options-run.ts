@@ -30,7 +30,7 @@ const themselves = (names: string) => Object.fromEntries(names.split(" ").map(na
 export const obeyed: Record<string, string[]> = {
   ...themselves("--silent --version -v --revision --bun -b --no-orphans --workspaces --parallel --sequential --no-exit-on-error"),
   ...themselves("--watch --hot --no-clear-screen --check --smol --aot-huge-heap --debug-aot --aot-crash-if-interpreter-is-used --interactive"),
-  ...themselves("--if-present --no-install -i --prefer-offline --prefer-latest --experimental-http2-fetch --experimental-http3-fetch"),
+  ...themselves("--if-present --no-install --prefer-offline --prefer-latest --experimental-http2-fetch --experimental-http3-fetch"),
   ...themselves("--insecure-http-parser --experimental-stream-iter --expose-gc --no-deprecation --throw-deprecation --no-warnings"),
   ...themselves("--trace-warnings --trace-deprecation --pending-deprecation --zero-fill-buffers --use-system-ca --use-openssl-ca --use-bundled-ca"),
   ...themselves("--tls-min-v1.0 --tls-min-v1.1 --tls-min-v1.2 --tls-min-v1.3 --tls-max-v1.2 --tls-max-v1.3 --no-addons --no-ffi-cc"),
@@ -56,7 +56,6 @@ export const obeyed: Record<string, string[]> = {
   "--heap-prof-name": ["--heap-prof-name=x"],
   "--heap-prof-dir": ["--heap-prof-dir=profiles"],
   "--heap-prof-interval": ["--heap-prof-interval=100", "--heap-prof --heap-prof-dir=profiles --heap-prof-name=f.heapprofile --heap-prof-interval=1024"],
-  "--install": ["--install=auto", "--install=force", "--install=fallback", "--install=nonsense"],
   "--port": ["--port=4000"],
   "--origin": ["--origin=http://localhost"],
   "-u": ["-u=http://localhost"],
@@ -104,7 +103,7 @@ export const leftOut: Record<string, string[]> = {
   "--trace-event-categories": ["--trace-event-categories=node", "--trace-event-categories node"],
   "--trace-event-file-pattern": ["--trace-event-file-pattern=trace.log"],
 };
-const isLeftOut = "cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out";
+const isLeftOut = "cannot be used with this executable: the part of Bun that it needs was left out when it was built";
 
 export const loadCode: Record<string, string[]> = {
   "--preload": ["--preload=./preloaded.ts", "--preload ./preloaded.ts"],
@@ -119,6 +118,10 @@ export const loadCode: Record<string, string[]> = {
 export const obeyedWhereTheProgramUsesThePart: Record<string, { forms: string[]; program: string }> = {
   "--fetch-preconnect": { forms: ["--fetch-preconnect=http://127.0.0.1:9", "--fetch-preconnect http://127.0.0.1:9"], program: "names-fetch.ts" },
   "--redis-preconnect": { forms: ["--redis-preconnect"], program: "names-redis.ts" },
+};
+export const obeyedWhereThePartIsKept: Record<string, { forms: string[]; keep: Bun.Build.TrimFeature }> = {
+  "-i": { forms: ["-i"], keep: "install" },
+  "--install": { forms: ["--install=auto", "--install=force", "--install=fallback", "--install=nonsense"], keep: "install" },
 };
 
 const loadsCode = "cannot be used with this executable: it was built with --compile-trim-runtime and runs only the code that was compiled into it";
@@ -167,6 +170,9 @@ const builtInThisTurn = (folder: string, side: Side, flags: string[] = [], progr
   spawned([bunExe(), "build", "--compile", "--aot", ...flagsOf[side], ...flags, program, "--outfile", "program"], folder, bunEnv, 90_000);
 const built = (...build: Parameters<typeof builtInThisTurn>) => slot(() => builtInThisTurn(...build));
 
+const builtKeeping = (folder: string, keep: Bun.Build.TrimFeature, execArgv: string[] = []) =>
+  slot(() => Bun.build({ entrypoints: [join(folder, "hello.ts")], compile: { outfile: join(folder, "program"), aot: true, trim: { keep: [keep] }, execArgv } }));
+
 const eachLineOnce = (text: string) => [...new Set(text.split("\n"))].join("\n");
 
 async function started(folder: string, name: string, options?: string, args: string[] = []) {
@@ -178,10 +184,11 @@ async function started(folder: string, name: string, options?: string, args: str
 
 const formsOf = (sorted: Record<string, string[]>) => Object.entries(sorted).flatMap(([name, forms]) => forms.map(form => [name, form] as const));
 const formsByUse = Object.entries(obeyedWhereTheProgramUsesThePart).flatMap(([name, { forms, program }]) => forms.map(form => [name, form, program] as const));
+const formsByKeeping = Object.entries(obeyedWhereThePartIsKept).flatMap(([name, { forms, keep }]) => forms.map(form => [name, form, keep] as const));
 
 export function testTheSorting() {
   test("every option that a compiled executable reads is sorted: obeyed as in the whole executable, or refused", () => {
-    const sorted = [obeyed, obeyedWhereTheProgramUsesThePart, leftOut, loadCode].flatMap(Object.keys).sort();
+    const sorted = [obeyed, obeyedWhereTheProgramUsesThePart, obeyedWhereThePartIsKept, leftOut, loadCode].flatMap(Object.keys).sort();
     expect(sorted).toEqual(namesInTheSource);
   });
 }
@@ -224,8 +231,18 @@ export function testBunOptions() {
       expect(await started(sides[1], name, form)).toEqual(await started(sides[0], name, form));
     });
 
+    test.each(formsByKeeping)("%s is refused where the part that it needs is left out: %s", async (name, form) => {
+      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${isLeftOut}\n`, exitCode: 1 });
+    });
+
+    test.each(formsByKeeping)("%s is obeyed where compile.trim keeps that part: %s, %s", async (name, form, keep) => {
+      const folder = laidOut(join(root, String(folders++)), "trimmed");
+      await builtKeeping(folder, keep);
+      expect(await started(folder, name, form)).toEqual(await started(whole, name, form));
+    });
+
     test("behind the name of the executable they all belong to the program", async () => {
-      const args = [...[obeyed, leftOut, loadCode].flatMap(formsOf), ...formsByUse].flatMap(([, form]) => form.split(" "));
+      const args = [...[obeyed, leftOut, loadCode].flatMap(formsOf), ...formsByUse, ...formsByKeeping].flatMap(([, form]) => form.split(" "));
       expect(await started(trimmed, "", undefined, args)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
   });
@@ -277,6 +294,22 @@ export function testExecArgv(part: number, parts: number) {
       using trimmed = both[1];
       expect([whole.build, trimmed.build]).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
       expect(await started(trimmed.folder, name)).toEqual(await started(whole.folder, name));
+    });
+
+    test.each(inThisPart(formsByKeeping))("%s is refused by the build where the part that it needs is left out: %s", async (name, form) => {
+      using trimmed = await builtWith("trimmed", form);
+      expect(trimmed.build.stderr).toEndWith(`error: ${name} ${isLeftOut}\n`);
+      expect(trimmed.build.exitCode).toBe(1);
+      expect(await Bun.file(join(trimmed.folder, isWindows ? "program.exe" : "program")).exists()).toBe(false);
+    });
+
+    test.each(inThisPart(formsByKeeping))("%s is obeyed where compile.trim keeps that part: %s, %s", async (name, form, keep) => {
+      using whole = await builtWith("whole", form);
+      expect(whole.build).toMatchObject({ exitCode: 0 });
+      const folder = laidOut(join(root, String(folders++)), "trimmed");
+      await builtKeeping(folder, keep, [form]);
+      expect(await started(folder, name)).toEqual(await started(whole.folder, name));
+      rmSync(folder, { recursive: true, force: true });
     });
 
     test.each(inThisPart(formsOf(loadCode)))("%s is refused when the executable starts: %s", async (name, form) => {

@@ -495,7 +495,7 @@ impl JSBundleCompletionTask {
         };
 
         let report = trim_report();
-        if matches!(result, CompileResult::Success) && !report.names_left_out.is_empty() {
+        if matches!(result, CompileResult::Success) && compile_options.trim.log && !report.names_left_out.is_empty() {
             let listed = |names: &[Vec<u8>]| bstr::BString::from(names.join(&b", "[..]));
             let mut note = |text: String| {
                 self.log.add_msg(bun_ast::Msg {
@@ -510,8 +510,10 @@ impl JSBundleCompletionTask {
                 listed(&report.names_left_out),
             ));
             if !report.libraries_left_out.is_empty() {
+                let what_went = if compile_options.compile_target.os == OperatingSystem::Windows { "whose code was left out" } else { "left out" };
                 note(format!(
-                    "compile.trim: native libraries left out: {}",
+                    "compile.trim: native libraries {}: {}",
+                    what_went,
                     listed(&report.libraries_left_out),
                 ));
             }

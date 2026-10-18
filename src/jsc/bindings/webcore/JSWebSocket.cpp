@@ -437,7 +437,7 @@ JSObject* JSWebSocket::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSWebSocket>(vm, globalObject);
 }
 
-JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSWebSocketDOMConstructor, DOMConstructorID::WebSocket>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

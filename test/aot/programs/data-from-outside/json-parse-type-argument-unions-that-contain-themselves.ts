@@ -5,6 +5,8 @@ type ByNull = { below: ByNull | null; k: null } | { below: ByNull | null; k: 1 }
 type ByText = { below: ByText | null; k: "one" } | { below: ByText | null; k: "two" };
 type Mixed = { below: Mixed | null; k: "one" } | { below: Mixed | null; k: 2 } | { below: Mixed | null; k: false } | { below: Mixed | null; k: null };
 type InList = { k: 1; list: InList[] } | { k: 2; list: InList[] };
+type TextOrNull = { below: TextOrNull | null; k: "one" } | { below: TextOrNull | null; k: null };
+type Wide = { left: Wide | null; right: Wide | null; k: "one" } | { left: Wide | null; right: Wide | null; k: null };
 function nested(levels: number, tail: string): string {
   return '{"below":'.repeat(levels) + "null" + tail.repeat(levels);
 }
@@ -31,10 +33,21 @@ for (const levels of [1, 2, 3, 20, 40, 60, 63, 64, 65, 66, 200]) {
   say("text tags " + levels, text => JSON.parse<ByText>(text), nested(levels, ',"k":"two"}'));
   say("text tags, no arm has it " + levels, text => JSON.parse<ByText>(text), nested(levels, ',"k":"three"}'));
   say("within lists " + levels, text => JSON.parse<InList>(text), '{"list":[{"list":[],"k":1},'.repeat(levels) + '{"k":2,"list":[]}' + '],"k":2}'.repeat(levels));
-  if (levels > 60) continue;
   say("tags of four kinds " + levels, text => JSON.parse<Mixed>(text), nested(levels, ',"k":null}'));
-  if (levels <= 15) say("tags of four kinds, in turn " + levels, text => JSON.parse<Mixed>(text), nested(4 * levels, ',"k":2}').replaceAll(',"k":2},"k":2},"k":2},"k":2}', ',"k":"one"},"k":2},"k":false},"k":null}'));
+  say("tags of four kinds, in turn " + levels, text => JSON.parse<Mixed>(text), nested(4 * levels, ',"k":2}').replaceAll(',"k":2},"k":2},"k":2},"k":2}', ',"k":"one"},"k":2},"k":false},"k":null}'));
   say("tags of four kinds, no arm has it " + levels, text => JSON.parse<Mixed>(text), nested(levels, ',"k":true}'));
+  for (const tail of [',"k":null}', ',"k":"one"}', ',"k":2}', ',"k":false}']) {
+    say("tags of four kinds, read by the engine and converted " + tail + " " + levels, text => JSON.parse<Mixed>(text), nested(levels, tail).replace("below", "\\u0062elow"));
+    say("tags of four kinds, validated and converted " + tail + " " + levels, text => Bun.validate<Mixed>(JSON.parse(text)), nested(levels, tail));
+  }
+  say("a text or null, read by the engine and converted " + levels, text => JSON.parse<TextOrNull>(text), nested(levels, ',"k":null}').replace("below", "\\u0062elow"));
+}
+function tree(levels: number): string {
+  return levels ? '{"left":' + tree(levels - 1) + ',"right":' + tree(levels - 1) + ',"k":' + (levels & 1 ? "null" : '"one"') + "}" : "null";
+}
+for (const levels of [1, 2, 6, 10]) {
+  say("a tree of two branches " + levels, text => JSON.parse<Wide>(text), tree(levels));
+  say("a tree of two branches, validated and converted " + levels, text => Bun.validate<Wide>(JSON.parse(text)), tree(levels));
 }
 
 type Flat = { value: number; unit: string } | { error: string; code: number } | { value: string };

@@ -96,24 +96,12 @@ describe("compile/aot/TypedPackages", () => {
     expect(bundle).not.toContain("index.sound.ts");
   });
 
-  test("a companion package that the project lists", async () => {
-    const folder = project("aot-typed-companion");
-    typedVersion(join(folder, "node_modules", "@sound", "shapes"));
-    write(folder, { "package.json": JSON.stringify({ name: "app", devDependencies: { "@sound/shapes": "1.2.3" } }) });
-    expect(await built(folder)).toEqual({ said: used("node_modules/@sound/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
-  });
-
-  test("a companion package that the project does not list is ignored", async () => {
-    const folder = project("aot-typed-unlisted");
+  test("a package under node_modules/@sound is never read, whether the project lists it or not", async () => {
+    const folder = project("aot-typed-scope");
     typedVersion(join(folder, "node_modules", "@sound", "shapes"));
     expect(await built(folder)).toEqual({ said: [], stdout: "42 index.js\n", exitCode: 0 });
-  });
-
-  test("the project's own folder wins", async () => {
-    const folder = project("aot-typed-wins");
-    typedVersion(join(folder, ".sound", "shapes"));
-    write(folder, { "package.json": JSON.stringify({ name: "app", dependencies: { "@sound/shapes": "1.2.3" } }), "node_modules/@sound/shapes/sound.json": "{" });
-    expect(await built(folder)).toEqual({ said: used(".sound/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
+    write(folder, { "package.json": JSON.stringify({ name: "app", devDependencies: { "@sound/shapes": "1.2.3" } }) });
+    expect(await built(folder)).toEqual({ said: [], stdout: "42 index.js\n", exitCode: 0 });
   });
 
   const withCondition = (typed: string | null = "./index.aot.ts", folder = ".") =>
@@ -149,10 +137,9 @@ describe("compile/aot/TypedPackages", () => {
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.aot.ts\n", exitCode: 0 });
   });
 
-  test("the project's own folder wins over what the package ships, which wins over a companion", async () => {
+  test("the project's own folder wins over what the package ships", async () => {
     const folder = project("aot-typed-order");
     shipped(folder);
-    write(folder, { "package.json": JSON.stringify({ name: "app", dependencies: { "@sound/shapes": "1.2.3" } }), "node_modules/@sound/shapes/sound.json": "{" });
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.js\n", exitCode: 0 });
     write(join(folder, ".sound", "shapes"), { "sound.json": "{" });
     expect(await built(folder)).toEqual({ said: unused(".sound/shapes", "its sound.json is not JSON"), stdout: "42 index.js\n", exitCode: 0 });

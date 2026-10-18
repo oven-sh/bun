@@ -1,5 +1,26 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`assigns an object of unknown type that holds four objects to this in a method of a class 1`] = `
+"typed, function: 541.35 instructions (the runtime 495, kernel 20.05, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 262 bytes
+typed, module level: 538.88 instructions (the runtime 495, module 17.88, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 2031 bytes
+untyped, function: 627.17 instructions (the runtime 519, kernel 33.88, stub GetByNameChainPreservingTwo 21, stub GetByNameWithDirectColumnWithReceiverInR15 14, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8, stub ReadInheritedInlineByName 5, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 348 bytes
+untyped, module level: 619.88 instructions (the runtime 519, module 27.88, stub GetByNameWithDirectColumnWithReceiverInRBX 24, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub Add 8, stub ReadInheritedInlineByName 5, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1557 bytes"
+`;
+
+exports[`assigns a record of four objects to this in a method of a class 1`] = `
+"typed, function: 528.97 instructions (the runtime 482, kernel 30.68, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 340 bytes
+typed, module level: 521.88 instructions (the runtime 482, module 23.88, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1674 bytes
+untyped, function: 629.82 instructions (the runtime 519, kernel 46.52, stub GetByNameChainPreservingTwo 21, stub GetByNameWithDirectColumnWithReceiverInRBX 14, stub OperationVoidWithInstance 14, stub Add 8, stub ReadInheritedInlineByName 5, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 470 bytes
+untyped, module level: 608.88 instructions (the runtime 519, module 26.88, stub GetByNameWithDirectColumnWithReceiverInRBX 24, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub Add 8, stub ReadInheritedInlineByName 5, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1537 bytes"
+`;
+
+exports[`makes a Set from an array of sixteen strings 1`] = `
+"typed, function: 1315.58 instructions (the runtime 1244.40, kernel 33.50, elsewhere 21.38, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2, module 0.30), 363 bytes
+typed, module level: 1304.65 instructions (the runtime 1244.40, module 22.88, elsewhere 21.38, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2), 1418 bytes
+untyped, function: 1334.60 instructions (the runtime 1244.40, kernel 52.52, elsewhere 21.38, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2, module 0.30), 595 bytes
+untyped, module level: 1319.65 instructions (the runtime 1244.40, module 37.88, elsewhere 21.38, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2), 1524 bytes"
+`;
+
 exports[`passes plain objects, made by a function that the call does not know, to a typed function that reads one field and passes them on to another, which reads three; neither is inlined 1`] = `
 "typed, function: 209.40 instructions (a function without a name 54, kernel 49.20, read 28, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.16, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34, module 0.12), 463 bytes
 typed, module level: 209.23 instructions (a function without a name 54, module 49.15, read 28, stub NewObjectFromDescriptor3 23.08, growToo 16, grow 15.50, stub CallValue3 12, the runtime 7.16, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.34), 1654 bytes

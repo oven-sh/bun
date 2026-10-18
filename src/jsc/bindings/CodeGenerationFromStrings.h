@@ -9,6 +9,7 @@
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
 extern "C" uint8_t Bun__codeGenerationFromStrings();
 extern "C" bool Bun__isCodeGenerationDisallowedByTrimming();
+extern "C" bool Bun__isInterpreterRemovedByName();
 #endif
 
 namespace Bun {
@@ -44,6 +45,8 @@ inline CodeGenerationFromStrings codeGenerationFromStrings()
 inline ASCIILiteral codeGenerationFromStringsDisallowedMessage()
 {
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    if (Bun__isCodeGenerationDisallowedByTrimming() && Bun__isInterpreterRemovedByName())
+        return "Code generation from strings disallowed for this context: compile.trim removed \"interpreter\" from this executable"_s;
     if (Bun__isCodeGenerationDisallowedByTrimming())
         return "Code generation from strings disallowed for this context: this executable was built with --compile-trim-runtime, and nothing in the program was seen to turn a string into code or to load code at run time"_s;
 #endif

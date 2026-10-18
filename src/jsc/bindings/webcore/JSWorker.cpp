@@ -497,7 +497,7 @@ JSObject* JSWorker::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSWorker>(vm, globalObject);
 }
 
-JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSWorkerDOMConstructor, DOMConstructorID::Worker>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -1017,7 +1017,7 @@ extern void* _ZTVN7WebCore6WorkerE[];
 #endif
 #endif
 
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
+NEVER_INLINE JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
 {
 
     if constexpr (std::is_polymorphic_v<Worker>) {
@@ -1039,7 +1039,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<Worker>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
+NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
 }

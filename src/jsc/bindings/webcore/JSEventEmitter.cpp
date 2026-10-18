@@ -235,7 +235,7 @@ JSObject* JSEventEmitter::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSEventEmitter>(vm, globalObject);
 }
 
-JSValue JSEventEmitter::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSEventEmitter::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSEventEmitterDOMConstructor, DOMConstructorID::EventEmitter>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

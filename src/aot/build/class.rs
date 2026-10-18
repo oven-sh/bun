@@ -1914,7 +1914,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let (own_fields, lets_go) = if lists_fields { (self.own_fields_in_order(file, class), self.initializers_where_this_escapes(info.layout, file, class)) } else { Default::default() };
         let mut may_be_seen = lists_fields && info.base.is_some() && self.this_escapes_in_base_classes(info.layout);
         let mut has_undeclared_fields = may_be_seen;
-        let runs_code = |init: ExprId| init.is_some() && !matches!(hir[init].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Fn(_));
+        let mut names_function_declaration = Vec::new();
+        for init in hir[class].members.iter().map(|member| hir[member].init).filter(|init| lists_fields && init.is_some()) {
+            if let ExprKind::Ident(name) = hir[init].kind
+                && let Some(named) = self.ident_symbol(file, init, name)
+                && self.function_declaration_for(named).is_some()
+            {
+                names_function_declaration.push(init);
+            }
+        }
+        let runs_code = |init: ExprId| {
+            init.is_some()
+                && !names_function_declaration.contains(&init)
+                && !matches!(hir[init].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Fn(_))
+        };
         let is_public_field = |member: &MemberId| hir[*member].kind == MemberKind::Property && !hir[*member].flags.contains(Flags::STATIC) && !matches!(hir[*member].key, PropKey::Private(_));
         let names_that_run_code: Vec<Atom> = hir[class].members.iter().filter(is_public_field).filter(|&member| runs_code(hir[member].init)).map(|member| self.instance_field_name(file, member)).collect();
         let begins_run: Vec<bool> = own_fields.iter().map(|own| names_that_run_code.contains(own)).collect();

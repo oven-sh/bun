@@ -60,6 +60,8 @@ describe.concurrent("bun compile", () => {
     expect(said(explained)).toContain("  1. any app.ts:1:22: fixing it types up to 1 access (+100.0 points)");
     expect(said(explained)).not.toContain("aot: --explain shows what is not typed and how to fix it");
     expect(said(await bun(String(dir), "compile", "app.ts", "--aot-explain")).filter(line => !/\[\d/.test(line))).toEqual(said(explained).filter(line => !/\[\d/.test(line)));
+    expect(said(await bun(String(dir), "build", "--compile", "--aot", "app.ts", "--explain")).filter(line => !/\[\d/.test(line))).toEqual(said(explained).filter(line => !/\[\d/.test(line)));
+    expect(await bun(String(dir), "build", "--compile", "app.ts", "--explain")).toEqual({ stdout: "", stderr: "error: --explain requires --aot\n", exitCode: 1 });
     const [entry] = said(await bun(String(dir), "compile", "app.ts", "--explain=json")).filter(line => line.startsWith('{"rank"'));
     expect(JSON.parse(entry!)).toMatchObject({ code: "any", file: "app.ts", line: 1, column: 22, accesses: 1 });
     expect(await bun(String(dir), "compile", "app.ts", "--explain=nonsense")).toEqual({
@@ -81,7 +83,10 @@ describe.concurrent("bun compile", () => {
     expect(compiled).toMatchObject({ stdout: "2,4,6\n", exitCode: 0 });
     expect(compiled).toEqual(await build("build", "--compile", "--aot"));
     expect(await build("compile", "--no-trim")).toEqual(compiled);
-    expect(await build("compile", "--trim")).toEqual(await build("build", "--compile", "--aot", "--compile-trim-runtime"));
+    const trimmed = await build("compile", "--trim");
+    expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--trim"));
+    expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--compile-trim-runtime"));
+    expect(await build("build", "--trim")).toEqual({ stderr: "error: --trim requires --compile\n", exitCode: 1 });
   }, 60_000);
 
   test.each([

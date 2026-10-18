@@ -305,6 +305,7 @@ extern "C" JSC::EncodedJSValue Response__createJSONFromParts(JSC::JSGlobalObject
 extern "C" [[noreturn]] void Bun__outOfMemory();
 
 extern "C" bool Bun__AOTAudit__isEnforcing();
+extern "C" bool Bun__evaluatesText();
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT, bool crashIfInterpreterIsUsed)
 {
@@ -431,6 +432,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // The boundary of "=strict": see JSC::SourceProvenance.
             if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
                 JSC::Options::disallowNonStaticCode() = true;
+            if (!Bun__evaluatesText()) [[unlikely]] {
+                JSC::Options::functionOverrides() = nullptr;
+                JSC::Options::validateBytecode() = false;
+            }
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
@@ -3257,20 +3262,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 /// `globalThis.gc()` is an alias for `Bun.gc(true)`
 /// Note that `vm` is a `VirtualMachine*`
 extern "C" size_t Bun__gc(void* vm, bool sync);
-static NEVER_INLINE JSC_DECLARE_HOST_FUNCTION(collectOnZeroedStack);
-JSC_DEFINE_HOST_FUNCTION(collectOnZeroedStack,
+JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(global);
     Bun__gc(globalObject->bunVM(), true);
     return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionJsGc,
-    (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
-{
-    Bun::zeroDeadStack();
-    MUST_TAIL_CALL return collectOnZeroedStack(global, callFrame);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
@@ -4689,7 +4686,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
 
 extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
 
-extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
+extern "C" NEVER_INLINE void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
 {
     compiler->addBytes(std::span(spanPtr, spanSize));
 }

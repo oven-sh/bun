@@ -218,13 +218,27 @@ interface UDPHandle {
   onmessage?: typeof onMessage;
 }
 
+function lookupWithoutDns(address, family, callback) {
+  const addressType = isIP(address);
+  if (addressType) return process.nextTick(callback, null, address, addressType);
+  try {
+    require("node:dns").lookup(address, family, callback);
+  } catch (error) {
+    process.nextTick(callback, error);
+  }
+}
+
 function newHandle(type, lookup) {
   if (lookup === undefined) {
-    if (dns === undefined) {
-      dns = require("node:dns");
-    }
+    if (Bun.dns === undefined) {
+      lookup = lookupWithoutDns;
+    } else {
+      if (dns === undefined) {
+        dns = require("node:dns");
+      }
 
-    lookup = dns.lookup;
+      lookup = dns.lookup;
+    }
   } else {
     validateFunction(lookup, "lookup");
   }

@@ -601,7 +601,9 @@ pub struct PlanOptions {
     pub only_the_globals: bool,
     pub writes_declaration_files: bool,
     pub without_sources_of_the_project: bool,
+    pub checks_what_only_augments: bool,
     pub declares_bun_intrinsics: bool,
+    pub bun_intrinsics_add_no_file: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
     pub memory: usize,
@@ -643,7 +645,9 @@ impl Default for PlanOptions {
             only_the_globals: false,
             writes_declaration_files: false,
             without_sources_of_the_project: false,
+            checks_what_only_augments: false,
             declares_bun_intrinsics: false,
+            bun_intrinsics_add_no_file: false,
             memory: 0,
         }
     }
@@ -4831,18 +4835,28 @@ fn may_hold_declaration(text: &[u8]) -> bool {
     false
 }
 
-fn adds_to_global_scope_or_module(path: &[u8], text: &[u8]) -> bool {
-    use bun_sema::hir::{Flags, ModuleName, StmtKind};
-    let session = Session::new();
-    let atoms = bun_sema::atom::Interner::new_in(&session);
-    let hir = bun_sema_parser::summarize(session.arena(), path, None, text, &atoms, false, true, true);
-    let runs_no_code = hir.ids(hir.body).all(|statement| match hir[statement].kind {
+fn runs_no_code(hir: &bun_sema::hir::File<'_>) -> bool {
+    use bun_sema::hir::{Flags, StmtKind};
+    hir.ids(hir.body).all(|statement| match hir[statement].kind {
         StmtKind::Empty | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => true,
         StmtKind::Module(module) => hir[module].flags.contains(Flags::AMBIENT),
         StmtKind::Import(import) => hir[import].type_only,
         StmtKind::ExportNamed(export) => hir[export].type_only || hir[export].items.is_empty() && !hir[export].has_module_specifier,
         _ => false,
-    });
+    })
+}
+
+fn augments_the_global_scope_or_a_module(hir: &bun_sema::hir::File<'_>) -> bool {
+    use bun_sema::hir::{Flags, ModuleName, StmtKind};
+    hir.ids(hir.body).any(|statement| matches!(hir[statement].kind, StmtKind::Module(module) if hir[module].flags.contains(Flags::AMBIENT) && !matches!(hir[module].name, ModuleName::Ident(_))))
+}
+
+fn adds_to_global_scope_or_module(path: &[u8], text: &[u8]) -> bool {
+    use bun_sema::hir::{Flags, ModuleName, StmtKind};
+    let session = Session::new();
+    let atoms = bun_sema::atom::Interner::new_in(&session);
+    let hir = bun_sema_parser::summarize(session.arena(), path, None, text, &atoms, false, true, true);
+    let runs_no_code = runs_no_code(&hir);
     hir.ids(hir.body).any(|statement| matches!(hir[statement].kind, StmtKind::Module(module) if hir[module].flags.contains(Flags::AMBIENT) && match hir[module].name {
         ModuleName::Global => true,
         ModuleName::String(name) => runs_no_code && is_relative(atoms.bytes(name)),
@@ -5020,6 +5034,7 @@ fn check_named_files(
         .collect();
     project.options.bun_intrinsics = (request.is_one_program || request.plan_options.declares_bun_intrinsics).then(|| BUN_INTRINSICS.0.to_vec());
     project.options.bun_global = (request.is_one_program || request.plan_options.declares_bun_intrinsics).then(|| BUN_GLOBAL.0.to_vec());
+    project.options.bun_global_adds_no_file = request.plan_options.bun_intrinsics_add_no_file;
     project.options.lib_dir = match request.libs {
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
         Libs::Directory(dir) => host::from_native(dir),
@@ -5232,7 +5247,7 @@ fn check_named_files(
     };
     if !explains_files && (is_true(b"listFiles") || is_true(b"listFilesOnly")) {
         let file_name = |&file: &FileId| program.files.module(file).file_name();
-        let file_names = program.files.order.iter().map(file_name);
+        let file_names = program.files.order.iter().filter(|&&file| !program.files.is_embedded(file)).map(file_name);
         report.listed_files = file_names
             .map(|it| displayed_path(it).into_owned())
             .collect();
@@ -5249,6 +5264,7 @@ fn check_named_files(
             let module = &program.files.modules[i];
             match module.hir.kind {
                 _ if module.is_code_only => false,
+                _ if !request.is_one_program && program.files.is_embedded(FileId(i as u32)) => false,
                 // Only parse errors are reported for JSON files.
                 FileKind::Json => module.hir.has_parse_diagnostics,
                 // `SkipTypeChecking`, and nothing is emitted for a declaration file.
@@ -5268,8 +5284,16 @@ fn check_named_files(
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
         let mut is_reached = vec![false; modules.len()];
+        let only_augments = |i: usize| {
+            request.plan_options.checks_what_only_augments
+                && !modules[i].is_dependency
+                && modules[i].builtin.is_none()
+                && matches!(modules[i].hir.kind, FileKind::Ts | FileKind::Tsx)
+                && runs_no_code(&modules[i].hir)
+                && augments_the_global_scope_or_a_module(&modules[i].hir)
+        };
         let mut to_follow: Vec<usize> = (0..modules.len())
-            .filter(|&i| is_among(named, modules[i].path.text))
+            .filter(|&i| is_among(named, modules[i].path.text) || only_augments(i))
             .collect();
         for &i in &to_follow {
             is_reached[i] = true;
@@ -6673,6 +6697,9 @@ fn check_named_files(
             std::mem::take(&mut is_first)
         });
         report.is_missing_bun_members = is_missing_bun_members && program.files.is_bun_module_declared_only_by_host();
+    }
+    if !request.is_one_program && program.files.is_bun_module_declared_only_by_host() {
+        report.is_missing_bun_members = report.diagnostics.iter().any(|reported| reported.category == Category::Error && is_about_runtime_provided_name(reported) && is_about_bun_member(reported));
     }
     if request.is_one_program {
         let mut is_first_in_package = true;

@@ -65,7 +65,7 @@ numbers-at-limits: 0 layouts, 0 given, 0 open, places 2 of 10, reads 0 of 1
 numbers-passed-as-values: 0 layouts, 0 given, 0 open, places 30 of 40, reads 1 of 13
 numeric-key-kinds: 1 layouts, 0 given, 0 open, places 36 of 51, reads 18 of 38
 one-number-printed: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
-only-called-thunks: 0 layouts, 4 given, 0 open, places 5 of 21, reads 1 of 13
+only-called-thunks: 0 layouts, 4 given, 0 open, places 3 of 13, reads 1 of 13
 operators-inside-loops: 0 layouts, 0 given, 0 open, places 91 of 186, reads 2472 of 32305
 operators-outside-loops: 0 layouts, 0 given, 0 open, places 52 of 113, reads 2472 of 32305
 optional-number-stores: 2 layouts, 0 given, 0 open, places 35 of 46, reads 31 of 43
@@ -94,7 +94,7 @@ sums-truncated-to-32-bits: 0 layouts, 0 given, 0 open, places 77 of 85, reads 0 
 switch-cases-share-targets: 0 layouts, 0 given, 0 open, places 58 of 67, reads 5 of 10
 switch-over-number-parameters: 0 layouts, 0 given, 0 open, places 21 of 29, reads 1 of 8
 switches-and-shifts-on-int32: 1 layouts, 0 given, 0 open, places 31 of 39, reads 16 of 22
-switches-over-unions: 3 layouts, 40 given, 0 open, places 64 of 124, reads 3 of 74
+switches-over-unions: 3 layouts, 40 given, 0 open, places 36 of 74, reads 3 of 74
 throwing-operations-in-try: 17 layouts, 0 given, 22 open, places 99 of 127, reads 10 of 46
 to-int32: 1 layouts, 0 given, 0 open, places 32 of 42, reads 15 of 27
 to-integer-after-call: 0 layouts, 0 given, 0 open, places 17 of 25, reads 1 of 3

@@ -2757,9 +2757,10 @@ pub struct Trim {
     pub auto: bool,
     pub remove: Vec<Box<[u8]>>,
     pub keep: Vec<Box<[u8]>>,
+    pub log: bool,
 }
 
-static TRIM: bun_threading::Guarded<Trim> = bun_threading::Guarded::new(Trim { auto: false, remove: Vec::new(), keep: Vec::new() });
+static TRIM: bun_threading::Guarded<Trim> = bun_threading::Guarded::new(Trim { auto: false, remove: Vec::new(), keep: Vec::new(), log: false });
 static WHY_NOT_TRIMMED: bun_threading::Guarded<Option<Vec<u8>>> = bun_threading::Guarded::new(None);
 static TRIM_REPORT: bun_threading::Guarded<TrimReport> = bun_threading::Guarded::new(TrimReport { names_left_out: Vec::new(), libraries_left_out: Vec::new(), libraries_left_in: Vec::new() });
 
@@ -2820,10 +2821,10 @@ fn name_of_option(option: &[u8]) -> &[u8] {
 }
 
 pub const LEFT_OUT_BY_TRIMMING: &str =
-    "cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out";
+    "cannot be used with this executable: the part of Bun that it needs was left out when it was built";
 
 fn built_in_option_whose_part_is_left_out(template: &ZStr, options: &[u8], has_aot_image: bool, runtime_use: Option<&[u8]>) -> Option<&'static [u8]> {
-    const PARTS_OF_OPTIONS: [(&[u8], &[u8]); 2] = [(b"--fetch-preconnect", b"fetch"), (b"--redis-preconnect", b"valkey")];
+    const PARTS_OF_OPTIONS: [(&[u8], &[u8]); 4] = [(b"--fetch-preconnect", b"fetch"), (b"--redis-preconnect", b"valkey"), (b"--install", b"install"), (b"-i", b"install")];
     let is_built_in = |option: &[u8]| strings::split(options, b"\n").any(|fact| fact.strip_prefix(b"exec-argv ") == Some(option));
     let built_in: Vec<(&[u8], &[u8])> = PARTS_OF_OPTIONS.into_iter().filter(|(option, _)| is_built_in(option)).collect();
     if built_in.is_empty() {
@@ -2907,7 +2908,11 @@ fn remember_why_not_trimmed(refusal: bun_exe_islands::Refusal) {
     use bun_exe_islands::Refusal;
     let why = match refusal {
         Refusal::Unreadable(error) => format!("--compile-trim-runtime: nothing can be left out of this Bun: {error}").into_bytes(),
-        Refusal::NoSuchName { name, names } => [b"compile.trim: there is no \"", &name[..], b"\". The names are ", &quoted(&names)].concat(),
+        Refusal::NoSuchName { unknown, names } => {
+            let (last, others) = unknown.split_last().map_or((&[][..], &[][..]), |(last, others)| (core::slice::from_ref(last), others));
+            let or: &[u8] = if others.is_empty() { b"" } else { b" or " };
+            [b"compile.trim: there is no ", &quoted(others)[..], or, &quoted(last), b". The names are ", &quoted(&names)].concat()
+        }
         Refusal::TooSmallAlone => b"compile.trim: what is named is too small to be cut out of the executable by itself. Name a larger part too".to_vec(),
         Refusal::NeedsCompiledProgram { name } => [b"compile.trim: \"", &name[..], b"\" can be removed only with compile.aot: without it the program itself is run from its text"].concat(),
         Refusal::KeptAndRemoved { name } => [b"compile.trim: \"", &name[..], b"\" is in both remove and keep"].concat(),

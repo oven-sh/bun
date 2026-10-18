@@ -15,8 +15,8 @@ import {
   __MEMO_CACHE_SENTINEL,
   __name,
   __using,
-  __validate,
 } from "../../runtime.bun";
+import { __validate } from "../../js/internal/validation";
 // This import is different based on client vs server side.
 // On the server, remapping is done automatically.
 import { type SourceMapURL, derefMapping } from "#stack-trace";

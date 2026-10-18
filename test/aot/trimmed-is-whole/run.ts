@@ -17,6 +17,7 @@ interface Program {
   exitCode: number;
   todo?: string;
   refused?: string;
+  findsFunctionUnseen: boolean;
 }
 
 const folderOfRoads = join(import.meta.dir, "roads");
@@ -27,7 +28,7 @@ function programsOf(file: string): Program[] {
   const programs: Program[] = [];
   for (let index = 0; index < sections.length; index += 2) {
     const source = prelude + sections[index + 1];
-    const program: Program = { road, spelling: sections[index].trim(), extension: extensionOfRoad, source, args: [], env: {}, stdin: "", buildFlags: [], files: {}, exitCode: 0 };
+    const program: Program = { road, spelling: sections[index].trim(), extension: extensionOfRoad, source, args: [], env: {}, stdin: "", buildFlags: [], files: {}, exitCode: 0, findsFunctionUnseen: false };
     for (const [, directive, value] of source.matchAll(/^\/\/@ *(\S+) ?(.*)$/gm)) {
       if (directive === "args") program.args.push(...value.split(" "));
       else if (directive === "env") program.env[value.slice(0, value.indexOf("="))] = value.slice(value.indexOf("=") + 1);
@@ -38,6 +39,7 @@ function programsOf(file: string): Program[] {
       else if (directive === "exit") program.exitCode = Number(value);
       else if (directive === "todo") program.todo = value;
       else if (directive === "refused") program.refused = value;
+      else if (directive === "finds-Function-unseen") program.findsFunctionUnseen = true;
       else throw new Error(`${file}: ${program.spelling}: unknown directive ${directive}`);
     }
     programs.push(program);
@@ -84,7 +86,7 @@ export function trimmedIsWhole(part: number, parts: number) {
   (probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe.concurrent)("an executable trimmed by its program's own facts behaves as the whole one", () => {
     for (const program of programs) {
       (program.todo ? test.todo : test)(
-        `${program.road}: ${program.spelling}${program.todo ? ` (${program.todo})` : ""}`,
+        `${program.road}: ${program.spelling}${program.todo ? ` (${program.todo})` : ""}${program.findsFunctionUnseen ? " (the compiler does not see the road to Function: what only the text names answers catchably)" : ""}`,
         () =>
           slot(async () => {
             using dir = tempDir("trimmed-is-whole", {
@@ -101,7 +103,11 @@ export function trimmedIsWhole(part: number, parts: number) {
             if (!whole) return;
             expect(whole.exitCode).toBe(program.exitCode);
             if (program.exitCode === 0) expect(whole.stdout).not.toBe("");
-            expect(trimmed).toEqual(whole);
+            if (!program.findsFunctionUnseen) return expect(trimmed).toEqual(whole);
+            const isThrown = /^error: this executable was built with --compile-trim-runtime, without Bun\.color\n code: "ERR_FEATURE_REMOVED"$/m.test(trimmed!.stderr);
+            expect({ signal: trimmed!.signal, exitCode: trimmed!.exitCode, stdout: trimmed!.stdout, isThrown }).toEqual(
+              program.source.includes('"caught"') ? { signal: null, exitCode: 0, stdout: "caught Error\n", isThrown: false } : { signal: null, exitCode: 1, stdout: "", isThrown: true },
+            );
           }),
         600_000,
       );

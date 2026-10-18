@@ -8,6 +8,7 @@ import { shutDoors } from "./islands-shut-doors.ts";
 
 const wrapper = join(import.meta.dir, "../../scripts/build/islands.ts");
 const tools = Object.fromEntries(["clang", "ld.lld", "llvm-cxxfilt", "llvm-nm", "llvm-objcopy"].map(name => [name, Bun.which(name)]));
+const archiver = Bun.which("llvm-ar");
 const canLink = isLinux && Object.values(tools).every(path => path !== null);
 const hasCxxRuntime =
   canLink && Bun.spawnSync({ cmd: [tools.clang!, "-x", "c++", "-fuse-ld=lld", "-lstdc++", "-o", "/dev/null", "-"], stdin: Buffer.from("int main() { try { throw 1; } catch (int) {} }"), env: bunEnv }).exitCode === 0;
@@ -48,13 +49,14 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-async function wrapped(folder: string, plan: string, objects: string[], compileFlags: Record<string, string[]>, linkFlags: string[]) {
+async function wrapped(folder: string, plan: string, objects: string[], compileFlags: Record<string, string[]>, linkFlags: string[], shelved: string[] = []) {
   for (const name of objects) {
     const flags = ["-O1", "-ffunction-sections", "-fdata-sections", "-fno-pic", ...(compileFlags[name] ?? [])];
     const compiled = await run([tools.clang!, ...flags, "-c", `${name}.c`, "-o", `${name}.o`], folder);
     expect(compiled).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   }
-  writeFileSync(join(folder, "in.rsp"), objects.map(name => `${name}.o\n`).join(""));
+  if (shelved.length > 0) expect(await run([archiver!, "rcs", "shelf.a", ...shelved.map(name => `${name}.o`)], folder)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  writeFileSync(join(folder, "in.rsp"), [...objects.filter(name => !shelved.includes(name)).map(name => `${name}.o`), ...(shelved.length > 0 ? ["shelf.a"] : [])].join("\n") + "\n");
   const flags = [`--ld-path=${tools["ld.lld"]}`, "-no-pie", "-Wl,--gc-sections", "-Wl,--icf=all", "-Wl,-Map=program.map", ...linkFlags];
   return await run(
     [bunExe(), wrapper, "doors", tools["llvm-cxxfilt"]!, "work", plan, "program.plan", "--", tools.clang!, "@in.rsp", ...flags, "-o", "program"],
@@ -85,8 +87,9 @@ async function linked(
   objects = ["behind", "door", "table", "main"],
   compileFlags: Record<string, string[]> = {},
   linkFlags: string[] = [],
+  shelved: string[] = [],
 ) {
-  const said = await wrapped(folder, plan, objects, compileFlags, linkFlags);
+  const said = await wrapped(folder, plan, objects, compileFlags, linkFlags, shelved);
   expect({ stderr: said.stderr, exitCode: said.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const names = await run([tools["llvm-nm"]!, "program"], folder);
   const addressOf = new Map(names.stdout.split("\n").map(line => [line.split(" ")[2]!, parseInt(line.split(" ")[0]!, 16)]));
@@ -384,7 +387,10 @@ describe.skipIf(!canLink)("what stays can reach what lies behind the door by", (
     expect(said.exitCode).toBe(1);
   });
 
-  test("a function too small to be shut is no door, and what it names stays", async () => {
+  test.each([
+    ["is a thin door where every place that names it can be rewritten", [], [true, true, true]],
+    ["is no door where the executable exports it, and what it names stays", ["-Wl,--export-dynamic-symbol=small_door"], [false, false, true]],
+  ])("a function too small to be shut where it stands %s", async (_, linkFlags, go) => {
     using dir = tempDir("islands-road", {
       ...sources,
       "more.c": `
@@ -398,9 +404,9 @@ describe.skipIf(!canLink)("what stays can reach what lies behind the door by", (
       `,
       "doors": sources.doors + "door extra exit ^small_door$\n",
     });
-    const { said, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"]);
-    expect(said).toContain("1 functions that match a door are too small to be shut and are no doors");
-    expect(["small_door", "behind_the_small_door", "behind_0"].map(canGo)).toEqual([false, false, true]);
+    const { said, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"], {}, linkFlags);
+    expect(said.includes("1 functions that match a door are too small to be shut and are no doors")).toBe(!go[0]);
+    expect(["small_door", "behind_the_small_door", "behind_0"].map(canGo)).toEqual(go);
     expect(ranTrimmed.exitCode).toBe(0);
   });
 
@@ -497,7 +503,7 @@ describe.skipIf(!canLink)("two equal doors of two features", () => {
       int the_door(int);
       int door_of_one(int);
       int door_of_another(int);
-      __attribute__((noinline)) void Bun__trimmedOut(int feature) { _exit(70 + (feature & 255)); }
+      __attribute__((noinline)) void Bun__trimmedOut(long first, long second, int feature) { _exit(70 + (feature & 255)); }
       int main(int argc, char **argv) {
         if (argc == 2) return door_of_one(argc) & 63;
         if (argc == 3) return door_of_another(argc) & 63;
@@ -684,10 +690,26 @@ describe.skipIf(!canLink)("a link with islands", () => {
     expect(canGo("table_that_stays")).toBe(false);
   });
 
+  test("a constant that the linker merged with an equal one from code that stays cannot go", async () => {
+    using dir = tempDir("islands-link", {
+      ...sources,
+      "door.c": `
+        int behind(int);
+        __asm__(".section .rodata.cst8,\\"aM\\",@progbits,8\\n.globl merged_constant\\n.hidden merged_constant\\nmerged_constant: .quad 0x40934a456d5cfaad\\n.text");
+        extern const double merged_constant;
+        __attribute__((noinline)) int the_door(int x) { return behind(x) * 3 + (int)(x * merged_constant); }
+      `,
+      "main.c": sources["main.c"].replace("table_that_stays[x & 31]", "table_that_stays[(int)(x * 1234.5678) / 1234 & 31]"),
+    });
+    const { canGo, ran, ranTrimmed } = await linked(String(dir), "none");
+    expect(canGo("merged_constant")).toBe(false);
+    expect([ran.exitCode, ranTrimmed.exitCode]).toEqual([0, 0]);
+  });
+
   test.each([
-    ["native code: they go, each by itself, with what names them", [], [0, 0, 1, 1, 1]],
-    ["bitcode: they stay merged", ["-flto=thin"], [1, 1, 1, 1, 1]],
-  ])("the strings and constants of an input that is linked unmerged: %s", async (_, flags, left) => {
+    ["native code", []],
+    ["bitcode", ["-flto=thin"]],
+  ])("the strings and constants of an input that is linked unmerged go, each by itself, with what names them: %s", async (_, flags) => {
     const sixteen = (text: string) => `(sixteen){ ${[...text].map(character => `'${character}'`).join(", ")} }`;
     const withStrings = {
       ...sources,
@@ -731,8 +753,79 @@ describe.skipIf(!canLink)("a link with islands", () => {
     }
     using dir = tempDir("islands-link", { ...withStrings, doors: sources.doors + "unmerged (^|[/.])both\\.o" + "\n" });
     const { ranTrimmed } = await linked(String(dir), "none", objects, { both: flags });
-    expect(timesIn(String(dir))).toEqual(left);
+    expect(timesIn(String(dir))).toEqual([0, 0, 1, 1, 1]);
     expect(ranTrimmed).toEqual({ stdout: "a sentence that both say\n", stderr: "", exitCode: 0 });
+  }, 60_000);
+
+  test.each([
+    ["exit", false],
+    ["throw", true],
+  ])("a door that names only what stays: %s: is it listed: %p", async (word, isListed) => {
+    using dir = tempDir("islands-link", {
+      ...sources,
+      "more.c": `
+        int stays(int);
+        __attribute__((noinline)) long gate(long globalObject, long callFrame) { for (int i = 0; i < 9; i++) globalObject = globalObject * 31 + stays(i) + callFrame; return globalObject; }
+      `,
+      "main.c": sources["main.c"].replace("int the_door(int);", "int the_door(int); long gate(long, long);").replace("the_door(argc) :", "the_door(argc) + gate(argc, 1) :"),
+      doors: sources.doors + `door extra ${word} ^gate$\n`,
+    });
+    const { isDoor, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "table", "main"], {}, ["-Wl,--export-dynamic-symbol=gate"]);
+    expect(isDoor("gate")).toBe(isListed);
+    expect(ranTrimmed.exitCode).toBe(0);
+  });
+
+  test("a door that the link compiles from bitcode is inlined into what stays, unless it is marked", async () => {
+    const inlinable = {
+      ...sources,
+      "door.c": `
+        int behind(int);
+        int the_door(int x) { return behind(x) * 3 + behind(x + 1); }
+      `,
+    };
+    const thin = ["-flto=thin", "-O2"];
+    {
+      using dir = tempDir("islands-link", inlinable);
+      const said = await wrapped(String(dir), "none", ["behind", "door", "table", "main"], { door: thin, main: thin }, []);
+      expect(said.stderr).toContain("^the_door$");
+      expect(said.exitCode).toBe(1);
+    }
+    using dir = tempDir("islands-link", { ...inlinable, doors: sources.doors + "noinline ^the_\\w+$\n" });
+    const { said, isDoor, canGo, ran, ranTrimmed } = await linked(String(dir), "none", undefined, { door: thin, main: thin });
+    expect(said).toContain("1 doors are compiled by this link and are kept whole");
+    expect(isDoor("the_door")).toBe(true);
+    expect(["behind", "behind_0", "behind_1499"].map(canGo)).toEqual([true, true, true]);
+    expect({ whole: ran.exitCode, trimmed: ranTrimmed.exitCode }).toEqual({ whole: 0, trimmed: 0 });
+  }, 60_000);
+
+  test("a mark that reaches no door which the link compiles is said, and stops nothing", async () => {
+    using dir = tempDir("islands-link", { ...sources, doors: sources.doors + "noinline ^stays$\n" });
+    const { said, ranTrimmed } = await linked(String(dir), "none", undefined, { main: ["-flto=thin", "-O2"] });
+    expect(said).toContain("1 lines mark no door that this link compiles:\n  noinline ^stays$");
+    expect(ranTrimmed.exitCode).toBe(0);
+  }, 60_000);
+
+  test.skipIf(!archiver)("what the link compiles out of an archive is linked again with the rest", async () => {
+    using dir = tempDir("islands-link", {
+      ...sources,
+      "shelved.c": `
+        static int calls;
+        __attribute__((noinline)) static int counted(int x) { return x + ++calls; }
+        int shelved(int x) { return counted(x) + counted(x + 1); }
+      `,
+      "main.c": `
+        extern const char table_that_stays[62];
+        int the_door(int);
+        int shelved(int);
+        __attribute__((noinline)) void Bun__trimmedOut(int feature) { __builtin_trap(); }
+        int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : shelved(argc) == 6 && table_that_stays[1] == '1' ? 0 : 1; }
+      `,
+      doors: sources.doors + "unmerged ." + "\n",
+    });
+    const thin = ["-flto=thin", "-O2"];
+    const { ranTrimmed, canGo } = await linked(String(dir), "none", ["behind", "door", "table", "main", "shelved"], { main: thin, shelved: thin }, [], ["shelved"]);
+    expect(canGo("behind")).toBe(true);
+    expect(ranTrimmed).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   }, 60_000);
 
   test("what only a feature needs is overwritten wherever it has bytes, however small it is", async () => {
@@ -773,7 +866,7 @@ describe.skipIf(!canLink)("a link with islands", () => {
     expect(report).toMatch(/^[0-9a-f]+ 26 \S+ \.data \S*variable_behind$/m);
   });
 
-  test("a door that throws or answers undefined is listed so; one that takes other parameters stops the link", async () => {
+  test("a door that throws or answers undefined is listed so; one with the shape of a host function throws unasked; one that takes other parameters stops the link", async () => {
     const host = `
       namespace JSC { struct JSGlobalObject; struct CallFrame; struct VM; struct JSObject; }
       extern "C" int behind(int);
@@ -788,11 +881,17 @@ describe.skipIf(!canLink)("a link with islands", () => {
       const answersOf = (name: string) => table.doors.find(door => door.address === addressOf.get(name))?.answers;
       expect([answersOf("_Z12hostFunctionPN3JSC14JSGlobalObjectEPNS_9CallFrameE"), answersOf("_Z12lazyPropertyRN3JSC2VMEPNS_8JSObjectE")]).toEqual(["throw", "undefined"]);
     }
+    {
+      using dir = tempDir("islands-link", { ...sources, "door.c": host, doors: doors("exit", "exit") });
+      const { table, addressOf } = await linked(String(dir), "none", ["behind", "door", "table", "main"], { door: ["-x", "c++"] });
+      const answersOf = (name: string) => table.doors.find(door => door.address === addressOf.get(name))?.answers;
+      expect([answersOf("_Z12hostFunctionPN3JSC14JSGlobalObjectEPNS_9CallFrameE"), answersOf("_Z12lazyPropertyRN3JSC2VMEPNS_8JSObjectE")]).toEqual(["throw", undefined]);
+    }
     using dir = tempDir("islands-link", { ...sources, "door.c": host, doors: doors("undefined", "undefined") });
     const said = await wrapped(String(dir), "none", ["behind", "door", "table", "main"], { door: ["-x", "c++"] }, []);
     expect(said.exitCode).not.toBe(0);
     expect(said.stdout + said.stderr).toContain("is to answer undefined and does not take (JSC::VM&, JSC::JSObject*)");
-  });
+  }, 60_000);
 
   test("by its own plan it links once and lists the same", async () => {
     using dir = tempDir("islands-link", sources);

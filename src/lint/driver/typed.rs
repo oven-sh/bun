@@ -503,6 +503,8 @@ fn check_and_lint_in(
             refuses_broken_configurations: matches!(project, Project::Including(_)),
             // typescript-eslint checks with the compiler of the project. tsgolint has its own files.
             prefers_the_library_of_the_project: matches!(project, Project::Nearest),
+            declares_bun_intrinsics: true,
+            bun_intrinsics_add_no_file: true,
             ..Default::default()
         },
         retains_everything: false,

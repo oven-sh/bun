@@ -269,7 +269,7 @@ JSObject* JSURLPattern::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSURLPattern>(vm, globalObject);
 }
 
-JSValue JSURLPattern::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSURLPattern::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSURLPatternDOMConstructor, DOMConstructorID::URLPattern>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

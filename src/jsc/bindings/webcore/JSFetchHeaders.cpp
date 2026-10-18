@@ -360,7 +360,7 @@ JSObject* JSFetchHeaders::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSFetchHeaders>(vm, globalObject);
 }
 
-JSValue JSFetchHeaders::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSFetchHeaders::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSFetchHeadersDOMConstructor, DOMConstructorID::FetchHeaders>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

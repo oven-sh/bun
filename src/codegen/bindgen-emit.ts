@@ -28,7 +28,7 @@ import {
   UnitType,
   type ValueKind,
 } from "./bindgen-lib-internal.ts";
-import { cap, low } from "./helpers.ts";
+import { cap, isNeverInlined, low } from "./helpers.ts";
 
 export interface SchemaFile {
   origin: Origin;
@@ -1318,7 +1318,7 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "payloadSize")}: usize = size_of::<${rustPath}>();
-#[unsafe(no_mangle)]
+#[unsafe(no_mangle)]${isNeverInlined(classSymbolName(type, "finalize")) ? "\n#[inline(never)]" : ""}
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
     unsafe { core::ptr::drop_in_place(payload) }

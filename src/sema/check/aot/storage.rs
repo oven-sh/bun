@@ -153,7 +153,6 @@ pub(super) struct Shared {
     receiving_untyped_from_js: std::sync::OnceLock<FxHashSet<Sym>>,
     forwardable_imports: std::sync::OnceLock<FxHashMap<Sym, Vec<(FileId, ExprId)>>>,
     functions_receiving_component_props: OnceLock<FxHashSet<Sym>>,
-    sql_row_types: OnceLock<FxHashSet<Sym>>,
     jsx_factories: OnceLock<FxHashSet<(FileId, FnId)>>,
     calls_by_default_parameter_function: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
     import_calls: OnceLock<FxHashMap<Sym, Vec<(FileId, ExprId)>>>,
@@ -1661,8 +1660,46 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let index = p.idx() - hir[func].params.start as usize;
         let Some(expected) = self.contextual_param_type(file, func, index) else { return false };
-        let TypeData::Ref { target, .. } = *self.data(expected) else { return false };
-        self.is_sql_row_type(target) && self.could_have_untyped_clone(file, func, false) && self.is_host_callback(file, func)
+        self.holds_only_objects_laid_out_by_the_program(expected) && self.is_param_typed_through_type_parameter(file, func, index) && self.could_have_untyped_clone(file, func, false) && self.is_host_callback(file, func)
+    }
+
+    pub fn is_checked_at_entry_by_context_alone(&mut self, file: FileId, func: FnId) -> bool {
+        self.has_untyped_clone(file, func) && self.object_parameter_indices(file, func).into_iter().all(|index| self.hir(file)[self.hir(file)[func].params.at(index)].ty.is_none())
+    }
+
+    fn is_param_typed_through_type_parameter(&mut self, file: FileId, func: FnId, index: usize) -> bool {
+        let Some(expected) = self.contextual_signature(file, func) else { return false };
+        let Some((declared_in, declaration, _)) = self.sig_decl(expected) else { return false };
+        let declared = self.sig_of_fn(declared_in, declaration);
+        let parameters = self.sig_params(declared);
+        self.param_type_at(&parameters, index).is_some_and(|written| self.has_type_variables(written))
+    }
+
+    pub(super) fn holds_only_objects_laid_out_by_the_program(&mut self, ty: TypeId) -> bool {
+        let (mut pending, mut is_found) = (vec![(ty, 0u32)], false);
+        while let Some((ty, depth)) = pending.pop() {
+            let ty = self.reduced(ty);
+            for part in self.parts(ty).to_vec() {
+                if !self.may_hold_objects(part) && !self.is_uninformative(part) {
+                    continue;
+                }
+                if self.is_array_or_tuple(part) && depth < 2 {
+                    pending.extend(self.type_arguments(part).to_vec().into_iter().map(|element| (element, depth + 1)));
+                    continue;
+                }
+                let is_laid_out = !self.is_uninformative(part)
+                    && !self.is_instantiable(part)
+                    && self.built_in_for_type(part).is_none()
+                    && self.declares_properties(part)
+                    && !self.is_declared_externally(part)
+                    && self.members(part).is_some_and(|members| members.shape().index.is_empty());
+                if !is_laid_out {
+                    return false;
+                }
+                is_found = true;
+            }
+        }
+        is_found
     }
 
     pub fn literal_type_expected_of_callback(&mut self, file: FileId, literal: ExprId) -> Option<TypeId> {
@@ -1715,28 +1752,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mapper = self.fixing_mapper(&mut inference, result);
         Some(self.instantiate(result, mapper))
-    }
-
-    fn is_sql_row_type(&mut self, row: Sym) -> bool {
-        let program = self.p;
-        let row = self.files().canonical(row);
-        program.aot.storage.sql_row_types.get_or_init(|| self.find_sql_row_types()).contains(&row)
-    }
-
-    fn find_sql_row_types(&mut self) -> FxHashSet<Sym> {
-        let mut rows = FxHashSet::default();
-        for file in (0..self.files().modules.len() as u32).map(FileId) {
-            if !self.is_compiled(file) || self.is_untyped_file(file) {
-                continue;
-            }
-            for &query in self.file_exprs_by_kind(file).of(ExprTag::TaggedTemplate) {
-                let Some(row) = self.sql_query_row_type(file, query) else { continue };
-                if let TypeData::Ref { target, .. } = *self.data(row) {
-                    rows.insert(self.files().canonical(target));
-                }
-            }
-        }
-        rows
     }
 
     pub(super) fn is_derived_from_prediction(&mut self, file: FileId, e: ExprId, _depth: u32) -> bool {

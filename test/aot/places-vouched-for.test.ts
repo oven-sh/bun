@@ -1,7 +1,8 @@
 // Built-in JavaScript reads properties by keys that the compiler does not see. Where every such place of a file has been read and
 // shown to be harmless, src/codegen/builtins-manifest.ts vouches for the file. The compiler says how many places each voucher stands
-// for. A number that differs here means that a place was added or removed: read the new place as the others were read (can the key
-// be a name the program chose, and can the receiver be anything but the file's own table?), then change the number.
+// for. A number above the one here means that a place was added: read the new place as the others were read (can the key be a name
+// the program chose, and can the receiver be anything but the file's own table?), then change the number. Fewer places are no
+// alarm: which built-in functions a program holds, and how finely the compiler judges a key, changes with other work.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
@@ -54,6 +55,6 @@ test("every place that a voucher stands for has been read", async () => {
     if (file) found[file.toLowerCase()] = Number(count);
   }
   const read = Object.fromEntries(Object.entries(places).map(([file, count]) => [file.toLowerCase(), count]));
-  expect({ exitCode, found }).toEqual({ exitCode: 0, found: Object.fromEntries(Object.keys(found).map(file => [file, read[file]])) });
+  expect({ exitCode, more: Object.entries(found).filter(([file, count]) => !(count <= read[file])) }).toEqual({ exitCode: 0, more: [] });
   expect(Object.keys(read).filter(file => /^(bun|internal|node)\//.test(file) && !(file in found))).toEqual([]);
 });

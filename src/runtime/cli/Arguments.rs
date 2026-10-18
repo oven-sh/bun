@@ -465,8 +465,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot                            Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode"
         ),
         parse_param!(
-            "--aot-explain <STR>?...          With --aot: list what keeps the compiler from using your types, the most expensive cause first, with a fix for each. --aot-explain=json prints one object per line. --aot-explain=throws lists every type check that can fail when the program runs"
+            "--explain <STR>?...              List what keeps the ahead-of-time compiler from using your types, the most expensive cause first, with a fix for each. --explain=json prints one object per line. --explain=throws lists every type check that can fail when the program runs"
         ),
+        parse_param!("--aot-explain <STR>?...          Same as --explain"),
         parse_param!(
             "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
         ),
@@ -502,8 +503,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
-            "--compile-trim-runtime           Leave the parts of Bun that no compiled program can reach out of the executable (requires --compile)"
+            "--trim                           Leave the parts of Bun that the program cannot reach out of the standalone executable"
         ),
+        parse_param!("--compile-trim-runtime           Same as --trim"),
         parse_param!(
             "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
         ),
@@ -648,13 +650,7 @@ pub(crate) const COMPILE_ONLY_PARAMS: &[ParamType] = &[
         "--library                        Build a package to publish instead of an executable: JavaScript, .d.ts files and a package.json, in --outdir (default: \"dist\")"
     ),
     parse_param!(
-        "--explain <STR>?...              List what keeps the compiler from using your types, the most expensive cause first, with a fix for each. --explain=json prints one object per line. Same as --aot-explain"
-    ),
-    parse_param!(
         "--no-aot                         Keep the JavaScript in the executable instead of compiling it to machine code ahead of time"
-    ),
-    parse_param!(
-        "--trim                           Leave the parts of Bun that the program cannot reach out of the executable. Same as --compile-trim-runtime"
     ),
     parse_param!("--no-trim                        Keep all of Bun in the executable (default)"),
     parse_param!(
@@ -663,7 +659,9 @@ pub(crate) const COMPILE_ONLY_PARAMS: &[ParamType] = &[
 ];
 const COMPILE_PARAMS: &[ParamType] = concat_params!(COMPILE_ONLY_PARAMS, BUILD_PARAMS);
 
-const BUILD_PARAMS_IN_COMPILE_HELP: [&[u8]; 17] = [
+const BUILD_PARAMS_IN_COMPILE_HELP: [&[u8]; 19] = [
+    b"explain",
+    b"trim",
     b"outfile",
     b"outdir",
     b"target",
@@ -929,24 +927,36 @@ pub(crate) fn is_trimmed_executable() -> bool {
     !Bun__hasTypeChecker()
 }
 
+pub(crate) fn has_package_manager() -> bool {
+    unsafe extern "C" {
+        safe fn Bun__hasInstall() -> bool;
+    }
+    Bun__hasInstall()
+}
+
 #[cold]
-pub(crate) fn option_left_out_by_trimming(options: &[&[u8]]) -> Option<Vec<u8>> {
+pub(crate) fn option_left_out_by_trimming(options: &[&[u8]], is_trimmed: bool) -> Option<Vec<u8>> {
     unsafe extern "C" {
         safe fn Bun__hasFetch() -> bool;
         safe fn Bun__hasValkey() -> bool;
     }
     const LEFT_OUT: [&[u8]; 4] = [b"help", b"aot", b"aot-audit", b"sql-preconnect"];
-    let is_left_out = |long: &[u8]| match long {
-        b"fetch-preconnect" => !Bun__hasFetch(),
-        b"redis-preconnect" => !Bun__hasValkey(),
-        _ => LEFT_OUT.contains(&long),
+    let is_left_out = |names: &&clap::Names| match (names.long, names.short) {
+        (Some(b"fetch-preconnect"), _) => !Bun__hasFetch(),
+        (Some(b"redis-preconnect"), _) => !Bun__hasValkey(),
+        (Some(b"install"), _) | (None, Some(b'i')) => !has_package_manager(),
+        (Some(long), _) => is_trimmed && LEFT_OUT.contains(&long),
+        (None, _) => false,
     };
-    if let Some(option) = options.iter().find(|option| bun_core::is_bootstrap_flag(option)) {
+    if let Some(option) = options.iter().filter(|_| is_trimmed).find(|option| bun_core::is_bootstrap_flag(option)) {
         return strings::split(option, b"=").next().map(<[u8]>::to_vec);
     }
     let given = clap::names_given(AUTO_PARAMS, options, NODE_SHORT_ALIASES);
-    let names = given.iter().find(|names| names.long.is_some_and(is_left_out))?;
-    let long = [&b"--"[..], names.long?].concat();
+    let names = given.iter().find(is_left_out)?;
+    let Some(long) = names.long else {
+        return names.short.map(|short| vec![b'-', short]);
+    };
+    let long = [&b"--"[..], long].concat();
     let is_written_out = options.contains(&long.as_slice());
     Some(names.short.filter(|_| !is_written_out).map_or(long, |short| vec![b'-', short]))
 }
@@ -956,7 +966,7 @@ pub(crate) fn option_of_exec_argv_left_out_by_trimming(compile_exec_argv: &[u8])
     let mut arguments: Vec<Box<bun_core::ZStr>> = vec![bun_core::ZStr::boxed(b"")];
     bun_core::append_options_env(compile_exec_argv, &mut arguments);
     let options: Vec<&[u8]> = arguments[1..].iter().map(|argument| argument.as_bytes()).map(|option| option.strip_suffix(b"\0").unwrap_or(option)).collect();
-    option_left_out_by_trimming(&options)
+    option_left_out_by_trimming(&options, true)
 }
 
 /// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
@@ -2363,12 +2373,14 @@ fn parse_build_command_options(
     ctx.bundler_options.aot = is_aot_default || args.flag(b"--aot");
     ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
     ctx.bundler_options.is_compile_command = is_compile_command;
-    if is_compile_command {
-        ctx.bundler_options.aot_explain.extend(slice_to_owned(args.options(b"--explain")));
+    ctx.bundler_options.aot_explain.extend(slice_to_owned(args.options(b"--explain")));
+    let explain_flag = if args.options(b"--explain").is_empty() { "--aot-explain" } else { "--explain" };
+    if !ctx.bundler_options.aot && !ctx.bundler_options.aot_explain.is_empty() {
+        Output::err_generic("{} requires --aot", (explain_flag,));
+        Global::exit(1);
     }
     if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
-        let flag = if is_compile_command { "--explain" } else { "--aot-explain" };
-        Output::err_generic("{} does not take \"{}\": it is one of {}", (flag, BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
+        Output::err_generic("{} does not take \"{}\": it is one of {}", (explain_flag, BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
         Global::exit(1);
     }
     let rule_flags = crate::cli::aot::rule_flags(bun_core::argv().into_iter().skip(1));
@@ -2862,16 +2874,15 @@ fn parse_build_command_options(
         }
     }
 
-    let trims_runtime_as_compile_command = is_compile_command
-        && !library
-        && (args.flag(b"--trim") || (cli::compile_command::TRIMS_RUNTIME_BY_DEFAULT && !args.flag(b"--no-trim")));
+    let trims_runtime_as_compile_command =
+        is_compile_command && !library && cli::compile_command::TRIMS_RUNTIME_BY_DEFAULT && !args.flag(b"--no-trim");
     if is_compile_command && args.flag(b"--trim") && args.flag(b"--no-trim") {
         Output::err_generic("Cannot use both --trim and --no-trim", ());
         Global::crash();
     }
-    if trims_runtime_as_compile_command || args.flag(b"--compile-trim-runtime") {
+    if trims_runtime_as_compile_command || args.flag(b"--trim") || args.flag(b"--compile-trim-runtime") {
         if !ctx.bundler_options.compile {
-            Output::err_generic("--compile-trim-runtime requires --compile", ());
+            Output::err_generic("{} requires --compile", (if args.flag(b"--trim") { "--trim" } else { "--compile-trim-runtime" },));
             Global::crash();
         }
         if let Some(option) = option_of_exec_argv_left_out_by_trimming(ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or_default()) {

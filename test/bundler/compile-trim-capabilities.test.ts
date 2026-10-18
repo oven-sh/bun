@@ -20,6 +20,11 @@ const startsAProgram = {
   users: [...commandLine, "testing", "spawn", "shell", "cron", "webview", "open_in_editor", "terminal", "node_cluster", "ffi", "napi"],
 };
 
+const loadsNativeCode = {
+  functions: ["dlopen", "dlmopen"],
+  features: ["ffi", "napi", "sqlite", "sqlite_extensions", "secrets", "terminal", "webview", "image", "dns", "node_fs", "process_about"],
+};
+
 async function build(folder: string, outfile: string, without: string[]) {
   const trim = without.length > 0 ? ["--compile-trim-runtime"] : [];
   const built = await spawned([bunExe(), "build", "--compile", ...trim, "hello.ts", "--outfile", outfile], folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without.join(",") });
@@ -60,5 +65,22 @@ describe.skipIf(isWindows || !startsAProgram.features.every(feature => features.
     expect(placesThatCall(file, startsAProgram.functions)).toEqual([]);
     expect(placesThatMakeSystemCalls(file, startsAProgram.systemCalls)).toEqual([]);
     expect(await spawned([join(folder, "named")], folder, bunEnv)).toMatchObject({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.skipIf(isWindows)("an executable without what loads native code", () => {
+  test("holds no place that calls dlopen", async () => {
+    using dir = tempDir("compile-trim-capabilities", { "hello.ts": `console.log("hello world");` });
+    const folder = String(dir);
+
+    const whole = await build(folder, "whole", []);
+    expect(whole).toMatchObject({ exitCode: 0 });
+    expect(namesOf(placesThatCall(whole.file, loadsNativeCode.functions))).toEqual(["dlopen"]);
+
+    const cut = await build(folder, "cut", [...commandLine, "testing", "bundler", ...loadsNativeCode.features].filter(feature => features.includes(feature)));
+    if (cut.stderr.includes("nothing can be left out of this Bun")) return;
+    expect(cut).toMatchObject({ exitCode: 0 });
+    expect(placesThatCall(cut.file, loadsNativeCode.functions)).toEqual([]);
+    expect(await spawned([join(folder, "cut")], folder, bunEnv)).toMatchObject({ stdout: "hello world\n", stderr: "", exitCode: 0 });
   });
 });

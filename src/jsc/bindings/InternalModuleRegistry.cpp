@@ -151,14 +151,39 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
     return result;
 }
 
+extern "C" bool Bun__throwIfRemovedByTrimming(JSC::JSGlobalObject*, const char* module, size_t length);
+extern "C" bool Bun__loadsModulesAtRunTime();
+extern "C" void Bun__throwThatModuleWasNotCompiledIn(JSC::JSGlobalObject*, const char* module, size_t length);
+
+bool isPublicModuleThatCannotBeMade(JSC::JSGlobalObject* globalObject, uint32_t id)
+{
+    if (id >= bun_internal_modules_header.moduleCount || Bun__loadsModulesAtRunTime()) [[likely]]
+        return false;
+#if ENABLE(AOT)
+    if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id))
+        return false;
+#endif
+    const auto& record = internalModuleRecord(id);
+    return !std::string_view(bun_internal_modules_data + record.nameOffset, record.nameLength).starts_with("internal:");
+}
+
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
+    const char* name = InternalModuleRegistryConstants::namesOfPublicModules;
+    for (uint32_t before = id; before--;)
+        name += strlen(name) + 1;
+    if (Bun__throwIfRemovedByTrimming(globalObject, name, strlen(name))) [[unlikely]]
+        return {};
 #if ENABLE(AOT)
     if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id)) {
         Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
         return JSC::AOT::Typed::evaluateBuiltinModule(globalObject, id);
     }
 #endif
+    if (isPublicModuleThatCannotBeMade(globalObject, id)) [[unlikely]] {
+        Bun__throwThatModuleWasNotCompiledIn(globalObject, name, strlen(name));
+        return {};
+    }
     return generateInternalModuleFromText(globalObject, vm, id);
 }
 

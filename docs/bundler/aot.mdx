@@ -185,19 +185,19 @@ Eight small servers, Bun 1.4.3 against the same application built with `--aot`:
 
 |                  | Requests per second | Peak memory (RSS) | Start to first response | CPU time per request |
 | ---------------- | ------------------: | ----------------: | ----------------------: | -------------------: |
-| `Bun.serve`      |               +5.5% |        42 → 32 MB |              16 → 10 ms |                -3.1% |
-| Hono             |               +2.5% |        48 → 34 MB |              19 → 11 ms |                -0.2% |
-| `node:http`      |               +1.3% |        66 → 45 MB |              35 → 13 ms |                +3.2% |
-| Elysia           |               -2.9% |        48 → 41 MB |              37 → 14 ms |                +4.8% |
-| TanStack Start   |               -3.2% |        61 → 42 MB |              46 → 14 ms |                +5.9% |
-| Express          |               -5.2% |        83 → 54 MB |              71 → 22 ms |               +12.9% |
-| Fastify          |              -12.3% |        82 → 53 MB |              82 → 19 ms |               +19.3% |
-| Effect           |              -16.4% |        75 → 47 MB |             107 → 32 ms |               +21.1% |
+| `Bun.serve`      |               +8.5% |        42 → 32 MB |              16 → 11 ms |                -5.8% |
+| `node:http`      |               +3.6% |        66 → 45 MB |              37 → 14 ms |                +1.3% |
+| Hono             |               +2.4% |        47 → 33 MB |              20 → 11 ms |                -1.6% |
+| TanStack Start   |               -1.2% |        62 → 41 MB |              48 → 15 ms |                +3.2% |
+| Elysia           |               -1.6% |        48 → 40 MB |              39 → 14 ms |                +4.1% |
+| Express          |               -6.3% |        82 → 54 MB |              75 → 22 ms |               +12.1% |
+| Fastify          |              -12.6% |        82 → 53 MB |              85 → 19 ms |               +19.8% |
+| Effect           |              -16.1% |        75 → 46 MB |             111 → 34 ms |               +22.1% |
 
-One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, among them plain text, JSON, path parameters, a validated `POST`, async and streaming. These are two whole runs on two machines. Each application was built with `--aot` five times, with its machine code laid out in a different order each time, and the figure is the mean of the five. Requests per second are ±0.3 to ±0.8 points. The time to the first response is a median.
+One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, among them plain text, JSON, path parameters, a validated `POST`, async and streaming. These are two whole runs on two machines. Each application was built with `--aot` five times, with its machine code laid out in a different order each time, and the figure is the mean of the five. Requests per second are ±0.4 to ±0.8 points. The time to the first response is a median.
 
 - **Startup.** Every server answers its first request sooner. There's no source to parse and no bytecode to generate.
-- **Memory.** Peak memory is 16% to 38% lower. The process holds no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
+- **Memory.** Peak memory is 17% to 39% lower. The process holds no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
 - **Throughput.** Five of the eight are slower today, Express, Fastify and Effect by the most. Most of their code is untyped JavaScript from npm that runs once per request. A JIT learns the types of that code by watching it run. The compiler can't, so each property access is a lookup by name.
 
 Typed code does better. Two programs written in strict TypeScript:
@@ -206,14 +206,21 @@ Typed code does better. Two programs written in strict TypeScript:
 | ---------------------------------------------------------------------- | --------: | -------: |
 | The TypeScript 6 compiler, type checking the `effect` repository: time |   14.20 s |   3.83 s |
 | Its peak memory                                                        |  2,680 MB |   928 MB |
-| An issue tracker on `Bun.serve` and Postgres: requests per second      |     2,987 |    4,420 |
-| Its peak memory                                                        |     99 MB |    63 MB |
 
-The same issue tracker written in Go handles 5,300 requests per second, and in Rust 9,336.
+The second program is an issue tracker on `Bun.serve` and Postgres. Here it stands next to the same application written in Rust and in Go:
+
+|                         |   Rust |     Go | `--aot` | Bun 1.4.3 |
+| ----------------------- | -----: | -----: | ------: | --------: |
+| Requests per second     |  8,883 |  5,135 |   4,517 |     2,796 |
+| Peak memory (RSS)       |  27 MB |  43 MB |   61 MB |    100 MB |
+| Start to first response |  14 ms |  18 ms |   24 ms |     48 ms |
+| CPU time per request    | 109 µs | 190 µs |  219 µs |    355 µs |
+
+Each server ran alone on one core of the same kind of machine as above, one after the other: two runs with two fresh starts each. Requests per second are ±91 to ±170. The connection pool holds 64 connections for Rust and Go, 8 for `--aot` and 4 for Bun 1.4.3.
 
 Two things get worse:
 
-- **The executable is larger.** It holds a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The todo server at the top of this page grows by 0.4 MB. A large application grows by tens of megabytes. [`bun compile --trim`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach: that server is under 20 MB with it.
+- **The executable is larger.** It holds a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The todo server at the top of this page grows by 0.4 MB. A large application grows by tens of megabytes. [`bun compile --trim`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach.
 - **The build takes longer.** Bun type checks the whole program and compiles every function in it.
 
 ## Compare on your application

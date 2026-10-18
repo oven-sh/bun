@@ -223,7 +223,7 @@ aot: 1 cause, the most expensive first. Fix one, then run this again: a fix can 
          ^~~~~~
      'tiny-label' is JavaScript, so it is compiled without types: 1 file, 45.3% of the program's source text.
      not typed because of it: node_modules/tiny-label/index.js:2:10, node_modules/tiny-label/index.js:2:29
-     fix: install a typed version of the package (@sound/tiny-label) or write one in .sound/tiny-label; if the package is yours, build it with `bun compile --library`
+     fix: write a typed version of the package in .sound/tiny-label; if the package is yours, build it with `bun compile --library`
      https://bun.com/docs/bundler/aot-explain#untyped-package
 ```
 
@@ -241,12 +241,12 @@ aot: 1 cause, the most expensive first. Fix one, then run this again: a fix can 
 
 It holds the same copy of Bun, plus the machine code of your program.
 
-- [`--trim`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach.
+- [`--trim`](/bundler/aot-size) leaves out the parts of Bun that your program doesn't use.
 - `--no-compile-function-source` leaves out the text of your functions. `toString()` on a function then returns `[native code]`.
 
 ### A trimmed executable is still large
 
-The compiler has found a place that could name any part of Bun, so it keeps all of them. `--aot-explain=runtime-use` prints the reason and the file in its first lines. See [Why a program keeps everything](/bundler/aot-size#why-a-program-keeps-everything).
+The compiler has found a place that could name any part of Bun, so it keeps all of them. `--aot-explain=runtime-use` prints the reason and the file in its first lines. See [When the compiler can't see every name](/bundler/aot-size#when-the-compiler-cant-see-every-name). [Make it smaller](/bundler/aot-size#make-it-smaller) lists what else you can do.
 
 ## Report a bug
 

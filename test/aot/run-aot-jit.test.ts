@@ -381,7 +381,7 @@ describe("at run time", () => {
       for (const make of given) { try { take(make()); } catch (e) { console.log(JSON.stringify(String(e).split(" (bun")[0].split("got ")[1])); } }`,
     );
     expect(stdout.split("\n")).toEqual(
-      ["{ a }", "number 0", "untyped Object", "native Object", "native TypeError", "function", "native Generator", "class ", "class Point", "Point", "native Map", "Array", "untyped object", "function title", "function max"].map(words => JSON.stringify(words)).concat(""),
+      ["untyped object", "number 0", "untyped Object", "native Object", "native TypeError", "function", "native Generator", "class ", "class Point", "Point", "native Map", "Array", "untyped object", "function title", "function max"].map(words => JSON.stringify(words)).concat(""),
     );
     expect(exitCode).toBe(0);
   });

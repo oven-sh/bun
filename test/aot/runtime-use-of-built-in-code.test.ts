@@ -71,6 +71,14 @@ describe.concurrent("the built-in code that is part of every program", () => {
     expect(["module node:events", ...standardStream].filter(fact => without.has(fact))).toEqual([]);
   });
 
+  test("the worker of node:cluster that holds process is behind exports that open the world: a server lets no root loose", async () => {
+    const facts = await factsOf(`require("node:http").createServer((request: any, response: any) => response.end("x")).listen(0);`);
+    expect(facts.has("module internal:cluster/child")).toBe(true);
+    expect([...facts].filter(fact => fact.startsWith("escapes process ") || fact === "native node:module")).toEqual([]);
+    await factsOf(`console.log(require("node:cluster").worker);`, "open a module that loads modules or evaluates text");
+    await factsOf(`console.log(Object.values(require("node:cluster")));`, "open a module that loads modules or evaluates text");
+  });
+
   const emitter = `const { EventEmitter } = require("node:events");`;
   test.each([
     ["node:events", `${emitter} new EventEmitter().on("constructor", () => {}).emit("constructor");`],
@@ -206,17 +214,13 @@ describe.concurrent("the built-in code that is part of every program", () => {
     expect((await factsOf(`console.log(new RegExp(process.argv[2]));`)).has("regexp computed")).toBe(true);
   });
 
-  test.each([
-    ["its own literal", `const own = { a: 1 }; console.log(require("node:util").format("%s", 1), Object.values(own), Object.entries(own), { ...own });`],
-    ["an array", `const list = [1, 2]; console.log(require("node:util").format("%s", 1), Object.values(list), Object.entries(list));`],
-    ["an instance of its own class", `class Own { a = 1; } console.log(require("node:util").format("%s", 1), Object.values(new Own()));`],
-    ["a map, a list and form data by their own methods", `const given: any = JSON.parse(process.argv[2]); console.log([...given.values()].length, [...given.entries()].length, "" + new Map([[1, 2]]).values().next().value);`],
-  ])("to take the members of %s by position takes nothing of the runtime", async (_, text) => {
-    expect((await factsOf(text)).has("program-member *")).toBe(false);
-  });
-
   test("any property may be read by util.inspect where the program loads node:dgram, whose errors are printed with getters", async () => {
     expect((await factsOf(`console.log(require("node:dgram").createSocket("udp4"));`)).has("escapes property /$bun/js/internal/util/inspect.ts")).toBe(true);
+  });
+
+  test.each(["validate", "safeValidate", "parse", "schema"])("Bun.%s, which native code answers out of a built-in module, brings that module", async name => {
+    const facts = await factsOf(`declare const Bun: any; console.log(Bun.${name}(process.argv[2], process.argv[3]));`);
+    expect(["module internal:validation_plans", "module internal:validation"].filter(fact => !facts.has(fact))).toEqual([]);
   });
 
   test("node:module's wrapper, a Proxy that stores for its caller, does not open the world", async () => {

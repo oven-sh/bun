@@ -1,0 +1,1 @@
+{ "build": ["./start.ts"], "reference": "compiled", "skipInShell": "needs Workers", "runWithASAN": "a thread is ended in the middle of a parse" }

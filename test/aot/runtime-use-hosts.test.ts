@@ -293,7 +293,6 @@ describe.concurrent("a member that makes or loads code is one whatever it is rea
     ["require", `console.log(given.require("node:fs"));`],
     ["dlopen", `given.dlopen(module, "./addon.node");`],
     ["binding that is taken out", `const { binding } = given;\nconsole.log(binding);`],
-    ["plugin", `given.plugin({});`],
     ["Worker", `console.log(new given.Worker("./a.js"));`],
   ])("the world opens with %s of a value that is not known", async (_, text) => {
     const use = await of(given + text);
@@ -304,6 +303,7 @@ describe.concurrent("a member that makes or loads code is one whatever it is rea
     ["of an instance of a class of the program's own", `class Mine { require(name: string) { return name; } }\nconsole.log(new Mine().require("a"));`],
     ["that is only asked for its type", `console.log(typeof given.require, given.eval === undefined);`],
     ["in a function that nothing mentions", `function never() { return given.eval("1"); }\nconsole.log(1);`],
+    ["that loads nothing by itself", `given.plugin({});`],
   ])("the world stays closed with such a name %s", async (_, text) => {
     const use = await of(given + text);
     expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
@@ -551,6 +551,11 @@ describe.concurrent("regular expressions that need the tables of Unicode propert
     ["RegExp taken out of the global object", `const { RegExp: Made } = globalThis;\nconsole.log(String(new Made("a")));`],
     ["arguments that are spread", `console.log(String(new RegExp(...(process.argv as [string]))));`],
     ["any member of the global object", `delete (globalThis as any).mine;`],
+    ["Symbol.matchAll, whose method makes a copy of its receiver from the receiver's text", `console.log((/a/ as any)[Symbol.matchAll].call({ flags: "u", lastIndex: 0, toString: () => process.argv[2] }, "a").next());`],
+    ["Symbol.split, whose method makes a copy of its receiver from the receiver's text", `console.log((/a/ as any)[Symbol.split].call({ flags: "u", toString: () => process.argv[2] }, "a"));`],
+    ["Symbol.split that is taken out", `const { split } = Symbol;\nconsole.log((/a/ as any)[split].call({ flags: "u", toString: () => process.argv[2] }, "a"));`],
+    ["Symbol.split in brackets", `console.log((/a/ as any)[(Symbol as any)["split"]].call({ flags: "u", toString: () => process.argv[2] }, "a"));`],
+    ["a member of Symbol under a key that is not seen", `console.log((/a/ as any)[(Symbol as any)[process.argv[3]]].call({ flags: "u", toString: () => process.argv[2] }, "a"));`],
   ])("%s may hold any pattern", async (_, text) => {
     expect(await regexpIn(text)).toEqual(["regexp computed"]);
   });
@@ -564,6 +569,8 @@ describe.concurrent("regular expressions that need the tables of Unicode propert
     ["a class of the program's own", `export {};\nclass RegExp { constructor(public pattern: string) {} }\nconsole.log(String(new RegExp(process.argv[2]).pattern));`],
     ["a literal in a function that nothing mentions", `function never() { return [/\\p{L}/u, new RegExp(process.argv[2])]; }\nconsole.log("a");`],
     ["a string", `console.log("\\\\p{L}");`],
+    ["split and matchAll of a text", `console.log("a,b".split(","), [..."ab".matchAll(/a/g)].length);`],
+    ["another symbol", `console.log({ [Symbol.iterator]() {} });`],
   ])("%s needs none", async (_, text) => {
     expect(await regexpIn(text)).toEqual([]);
   });
@@ -578,27 +585,46 @@ describe.concurrent("the options of Bun.serve", () => {
     return { world: [use.world, ...new Set(use.whyOpen)].join(" "), options: of("serve-option").sort(), routeOptions: of("serve-route-option").sort() };
   };
   const optionsOf = (text: string) => optionsIn({ "main.ts": text });
+  const notSeen = "open options of Bun.serve that are not seen";
   const worldWith = (routeOptions: string[]) => (routeOptions.includes("style") ? "open a route of Bun.serve with a style" : "closed");
 
-  test.each([
-    ["an object literal", `Bun.serve({ ${fetch} }).reload({ ${fetch}, routes: {} });`, ["fetch", "routes"]],
-    ["an object literal, on a server that a variable holds", `const server = Bun.serve({ port: 0, ${fetch} });\nserver.reload({ ${fetch}, websocket: {} });`, ["fetch", "port", "websocket"]],
-    ["an object literal, in another file", { "main.ts": `import { again } from "./again";\nagain(Bun.serve({ ${fetch} }));`, "again.ts": `export function again(server: any) { server.reload({ tls: {} }); }` }, ["fetch", "tls"]],
-    ["no argument", `Bun.serve({ ${fetch} }).reload();`, ["fetch"]],
-  ])("what a server is handed anew counts like what it was made with: reload with %s", async (_, files, options) => {
-    expect(await optionsIn(typeof files === "string" ? { "main.ts": files } : files)).toEqual({ world: "closed", options, routeOptions: [] });
-  });
+  const reloads = async (files: Record<string, string>) => {
+    const use = await runtimeUse(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, declaredHere + text])));
+    return { ...(await optionsIn(files)), anyOptionAnew: use.facts.has("reload-option *") };
+  };
 
   test.each([
+    ["called by its name", `Bun.serve({ ${fetch} }).reload({ tls: {} });`],
+    ["called on a server that a variable holds", `const server = Bun.serve({ ${fetch} });\nserver.reload({ ${fetch}, websocket: {} });`],
+    ["called in another file", { "main.ts": `import { again } from "./again";\nagain(Bun.serve({ ${fetch} }));`, "again.ts": `export function again(server: any) { server.reload({ tls: {} }); }` }],
+    ["called by its name in brackets", `(Bun.serve({ ${fetch} }) as any)["reload"]({ tls: {} });`],
+    ["called by a name that is put together", `(Bun.serve({ ${fetch} }) as any)["re" + "load"]({ tls: {} });`],
+    ["called by a name that a constant holds", `const name = "reload";\n(Bun.serve({ ${fetch} }) as any)[name]({ tls: {} });`],
+    ["called by a key that is not seen", `(Bun.serve({ ${fetch} }) as any)[process.argv[2]](JSON.parse(process.argv[3]));`],
     ["handed options that are not seen", `Bun.serve({ ${fetch} }).reload(JSON.parse(process.argv[2]));`],
-    ["taken out", `const again = Bun.serve({ ${fetch} }).reload;\nconsole.log(typeof again);`.replace("typeof again", "again")],
+    ["taken out", `const again = Bun.serve({ ${fetch} }).reload;\nconsole.log(again);`],
     ["taken out by a pattern", `const { reload } = Bun.serve({ ${fetch} });\nconsole.log(reload);`],
-  ])("any option may be handed to a server with reload %s", async (_, text) => {
-    expect((await optionsOf(text)).options).toContain("*");
+    ["taken out by Reflect.get", `declare const Reflect: any;\nconsole.log(Reflect.get(Bun.serve({ ${fetch} }), "reload"));`],
+    ["of the server that a handler is handed", `Bun.serve({ fetch(request: any, server: any) { server.reload({ tls: {} }); return new Response("served"); } });`],
+  ])("a server may be handed any option anew: reload %s", async (_, files) => {
+    expect(await reloads(typeof files === "string" ? { "main.ts": files } : files)).toEqual({ world: "closed", options: ["fetch"], routeOptions: [], anyOptionAnew: true });
   });
 
-  test("reload of something else names no option where no server is made", async () => {
-    expect(await optionsOf(`declare const page: any;\npage.reload(JSON.parse(process.argv[2]));`)).toEqual({ world: "closed", options: [], routeOptions: [] });
+  test.each([
+    ["an app", `{ ${fetch}, app: {} }`],
+    ["a route with a style", `{ routes: { "/pages/*": { dir: ".", style: "nextjs-pages" } } }`],
+    ["options that are not seen", `JSON.parse(process.argv[2])`],
+  ])("reload starts no development server: %s opens nothing there, and does where the server is made", async (_, handed) => {
+    expect(await reloads({ "main.ts": `Bun.serve({ ${fetch} }).reload(${handed});` })).toEqual({ world: "closed", options: ["fetch"], routeOptions: [], anyOptionAnew: true });
+    expect((await optionsOf(`Bun.serve(${handed});`)).world).toStartWith("open ");
+  });
+
+  test.each([
+    ["a server that is never handed anything anew", `const server = Bun.serve({ ${fetch} });\nconsole.log(String(server.port));\nserver.stop();`, ["fetch"]],
+    ["reload of something else where no server is made", `declare const page: any;\npage.reload(JSON.parse(process.argv[2]));`, []],
+    ["a key that is not seen where no server is made", `declare const page: any;\npage[process.argv[2]](JSON.parse(process.argv[3]));`, []],
+  ])("%s: no option anew", async (_, text, options) => {
+    expect(await reloads({ "main.ts": text })).toEqual({ world: "closed", options, routeOptions: [], anyOptionAnew: false });
   });
 
   test.each([
@@ -682,7 +708,7 @@ describe.concurrent("the options of Bun.serve", () => {
     ["a variable that holds the global object", `const everything: any = globalThis;\neverything.Bun.serve({ ${fetch} });`],
   ])("may be any for %s", async (_, text) => {
     const { world, options, routeOptions } = await optionsOf(text);
-    expect({ world, any: options.includes("*"), anyOfARoute: routeOptions.includes("*") }).toEqual({ world: "closed", any: true, anyOfARoute: true });
+    expect({ world, any: options.includes("*"), anyOfARoute: routeOptions.includes("*") }).toEqual({ world: notSeen, any: true, anyOfARoute: true });
   });
 
   test.each([
@@ -690,9 +716,11 @@ describe.concurrent("the options of Bun.serve", () => {
     ["a variable of options that is handed on", `const options = { ${fetch} };\nconsole.log(options);\nBun.serve(options);`],
     ["a route that is not seen", `Bun.serve({ routes: { "/a": JSON.parse(process.argv[2]) }, ${fetch} });`],
     ["Bun.serve that is handed on", `console.log(Bun.serve);`],
-  ])("under --disallow-code-generation-from-strings, where what runs files from the disk is left out, the world opens with %s", async (_, text) => {
-    const use = await runtimeUse({ "main.ts": declaredHere + text }, ["check", "--aot", "--no-pretty", "--disallow-code-generation-from-strings"]);
-    expect({ world: use.world, whyOpen: [...new Set(use.whyOpen)] }).toEqual({ world: "open", whyOpen: ["options of Bun.serve that are not seen"] });
+  ])("with and without --disallow-code-generation-from-strings the world opens with %s", async (_, text) => {
+    const files = { "main.ts": declaredHere + text };
+    for (const use of await Promise.all([runtimeUse(files), runtimeUse(files, ["check", "--aot", "--no-pretty", "--disallow-code-generation-from-strings"])])) {
+      expect({ world: use.world, whyOpen: [...new Set(use.whyOpen)] }).toEqual({ world: "open", whyOpen: ["options of Bun.serve that are not seen"] });
+    }
   });
 
   test.each([
@@ -758,7 +786,7 @@ describe.concurrent("the options of Bun.serve", () => {
     ["a prototype", `{ __proto__: JSON.parse(process.argv[2]) }`],
     ["a prototype in a route", `{ "/a": { __proto__: JSON.parse(process.argv[2]) } }`],
   ])("the options of a route may be any for %s", async (_, routes) => {
-    expect(await optionsOf(`Bun.serve({ routes: ${routes}, ${fetch} });`)).toMatchObject({ world: "closed", options: ["fetch", "routes"], routeOptions: expect.arrayContaining(["*"]) });
+    expect(await optionsOf(`Bun.serve({ routes: ${routes}, ${fetch} });`)).toMatchObject({ world: expect.stringContaining(notSeen), options: ["fetch", "routes"], routeOptions: expect.arrayContaining(["*"]) });
   });
 
   test.each([
@@ -769,7 +797,7 @@ describe.concurrent("the options of Bun.serve", () => {
     ["a declared function that is assigned again", `function a() {}\n(a as any) = JSON.parse(process.argv[2]);\nBun.serve({ routes: { "/a": a }, ${fetch} });`],
     ["a parameter", `function start(a: any) { Bun.serve({ routes: { "/a": a }, ${fetch} }); }\nstart(() => new Response("a"));`],
   ])("the options of a route may be any for %s", async (_, text) => {
-    expect(await optionsOf(text)).toMatchObject({ world: "closed", options: ["fetch", "routes"], routeOptions: expect.arrayContaining(["*"]) });
+    expect(await optionsOf(text)).toMatchObject({ world: expect.stringContaining(notSeen), options: ["fetch", "routes"], routeOptions: expect.arrayContaining(["*"]) });
   });
 
   test.each([
@@ -793,7 +821,7 @@ describe.concurrent("the options of Bun.serve", () => {
     ["a member of the namespace", `import * as all from "./a";\nconst a = all.a;`, `export const a = () => new Response("a");`],
   ])("%s out of another file is not seen", async (_, imports, exports) => {
     const found = await optionsIn({ "main.ts": `${imports}\nBun.serve({ routes: { "/a": a } });`, "a.ts": exports });
-    expect(found).toEqual({ world: "closed", options: ["routes"], routeOptions: ["*"] });
+    expect(found).toEqual({ world: notSeen, options: ["routes"], routeOptions: ["*"] });
   });
 
   test("a program that does not name Bun.serve has none", async () => {
@@ -856,7 +884,7 @@ describe.concurrent("Bun and process under another name", () => {
 
   test("a server that is made through Bun.serve of another file may have any option", async () => {
     const use = await runtimeUse(withDeclarations({ "main.ts": `import { listen } from "./other"; listen({ fetch: () => new Response("") });`, "other.ts": `export { serve as listen } from "bun";` }));
-    expect({ world: use.world, serve: use.facts.has("Bun serve"), option: use.facts.has("serve-option *"), route: use.facts.has("serve-route-option *") }).toEqual({ world: "closed", serve: true, option: true, route: true });
+    expect({ world: use.world, serve: use.facts.has("Bun serve"), option: use.facts.has("serve-option *"), route: use.facts.has("serve-route-option *") }).toEqual({ world: "open", serve: true, option: true, route: true });
   });
 
   test("a member that another file exports again by name is named", async () => {

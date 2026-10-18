@@ -68,7 +68,7 @@ bun compile ./language.ts && ./language
 | [Some error messages](#error-messages)                     | `null is not an object`                | `Cannot read properties of null`                                         |
 | [Sloppy-mode code](#sloppy-mode-code)                      | `with`, `f.caller`                     | `with` stops the build, `f.caller` is `null`                             |
 | [Five flags on `process`](#flags-on-process)               | A value that `process` inherits counts | Only own properties of `process` count                                   |
-| [The listeners of a stream](#names-that-every-object-inherits) | `listeners("constructor")` finds `Object` | It finds nothing                                                  |
+| The styles of `util.inspect`                               | A style that the table inherits counts | Only the table's own keys count                                          |
 | Objects per thread                                         | Limited by memory                      | 32 GB, or no limit with `--aot-huge-heap`                                |
 
 ## What is not available
@@ -371,37 +371,6 @@ Bun itself looks at five properties of `process`: `noDeprecation`, `throwDepreca
 | `EventEmitter.prototype.noDeprecation = true`               | Bun ignores it, and still warns  |
 
 Your own code still sees the inherited value: `process.noDeprecation` is an ordinary read.
-
-## Names that every object inherits
-
-A few tables inside Bun's built-in modules are plain objects: the listeners of a stream, the sessions of an `https.Agent`, the styles of `util.inspect`. Without `--aot`, asking such a table for `"constructor"` or `"toString"` finds what it inherits from `Object.prototype`. In an executable built with `--aot`, these tables only answer for their own keys.
-
-```ts inherited.ts icon="/icons/typescript.svg"
-import { PassThrough } from "node:stream";
-
-const stream = new PassThrough();
-console.log(stream.listenerCount("toString"), stream.emit("hasOwnProperty"), stream.listeners("constructor"));
-```
-
-```bash terminal icon="terminal"
-bun inherited.ts
-```
-
-```txt
-1 true [
-  [class Object]
-]
-```
-
-```bash terminal icon="terminal"
-bun compile ./inherited.ts && ./inherited
-```
-
-```txt
-0 false []
-```
-
-Listeners that your program adds are found as before, under any name. A plain `EventEmitter` never differed. `bun run --aot` answers as plain Bun does here.
 
 ## Debugging and profiling
 

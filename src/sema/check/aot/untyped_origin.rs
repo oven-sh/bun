@@ -4,7 +4,7 @@ use super::identity::Identity;
 use crate::atom::Atom;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, SymFlags};
 use crate::check::{Checker, CompilerDiagnostic, ContextFlags};
-use crate::hir::{BinOp, ClassId, ExprId, ExprKind, ExprTag, FileKind, FnBody, FnId, PatId, PatKind, PropKey, StmtKind, TypeNodeId};
+use crate::hir::{BinOp, ClassId, ExprId, ExprKind, ExprTag, FileKind, Flags, FnBody, FnId, PatId, PatKind, PropKey, StmtKind, TypeNodeId};
 use crate::program::FileId;
 use crate::types::{PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
@@ -610,7 +610,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let name = self.written_text(file, hir[outer].pos, hir[outer].end);
                 let ty = self.type_of_pat(file, outer);
                 let ty = self.display_name(ty).into_bytes();
-                let found = self.finding_at(Place { file, pos: hir[outer].pos }, 100103, vec![name, ty]);
+                let is_async = hir[bound.param_fn[p.idx()]].flags.contains(Flags::ASYNC);
+                let found = self.finding_at(Place { file, pos: hir[outer].pos }, if is_async { 100106 } else { 100103 }, vec![name, ty]);
                 Some(MissingLayout::Reasons(vec![CompilerDiagnostic { end: hir[outer].end, ..found }]))
             }
             _ => None,

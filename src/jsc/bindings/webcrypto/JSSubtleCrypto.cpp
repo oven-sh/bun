@@ -229,7 +229,7 @@ JSObject* JSSubtleCrypto::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSSubtleCrypto>(vm, globalObject);
 }
 
-JSValue JSSubtleCrypto::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSSubtleCrypto::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSSubtleCryptoDOMConstructor, DOMConstructorID::SubtleCrypto>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

@@ -302,7 +302,7 @@ NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
 {
 }
 
-NodeVMScriptConstructor* NodeVMScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
+NEVER_INLINE NodeVMScriptConstructor* NodeVMScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
 {
     NodeVMScriptConstructor* ptr = new (NotNull, allocateCell<NodeVMScriptConstructor>(vm)) NodeVMScriptConstructor(vm, structure);
     ptr->finishCreation(vm, prototype);

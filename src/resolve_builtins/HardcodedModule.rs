@@ -19,6 +19,8 @@ pub enum HardcodedModule {
     BunTest,
     #[strum(serialize = "bun:wrap")]
     BunWrap,
+    #[strum(serialize = "bun:wrap/validation")]
+    BunWrapValidation,
     #[strum(serialize = "bun:sqlite")]
     BunSqlite,
     #[strum(serialize = "node:assert")]
@@ -211,6 +213,7 @@ bun_core::comptime_string_map! {
         b"bun:test" => HardcodedModule::BunTest,
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
+        b"bun:wrap/validation" => HardcodedModule::BunWrapValidation,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
         b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
         b"internal/repl" => HardcodedModule::NodeInternalRepl,
@@ -712,6 +715,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:main"),
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
+    entry!("bun:wrap/validation"),
     entry!("bun:internal-for-testing"),
     (
         b"internal/cluster/round_robin_handle",

@@ -231,7 +231,7 @@ impl Code {
             100009..=100011 | 100084 => Code::TypeErrors,
             100046 | 100047 | 100064 | 100065 => Code::PassedToJavaScript,
             100045 | 100102 => Code::DeclarationOnly,
-            100103 => Code::CallbackParameter,
+            100103 | 100106 => Code::CallbackParameter,
             100078 => Code::IndexSignature,
             100079 => Code::TypeParameter,
             100023 | 100024 | 100027 | 100085 | 100050..=100062 => Code::ClassLayout,
@@ -247,7 +247,7 @@ impl Code {
             Code::JsonParse => "pass the type of the data as a type argument, JSON.parse<T>(text): the value is checked once, here, and is typed from then on. Data that does not match throws a TypeError",
             Code::UntypedApi => "for JSON, read the text and write JSON.parse<T>(text); keep objects of your own in an array, a Map or a Set, which the compiler sees through; for any other value, Bun.validate<T>(value) checks it and returns a typed copy",
             Code::UncheckedCast => "create the object in typed code, with an object literal or `new`; or let Bun.validate<T>(value) check it and return a typed copy",
-            Code::UntypedPackage => "install or write a typed version of the package",
+            Code::UntypedPackage => "write a typed version of the package",
             Code::JavaScriptFile => "rename the file to .ts and annotate its functions",
             Code::TypeErrors => "fix the type errors: the build lists them in a warning",
             Code::PassedToJavaScript => "pass a copy, or only the fields that are needed, to the JavaScript code",
@@ -291,7 +291,7 @@ struct Row {
     names: Vec<Vec<u8>>,
     types: Vec<Vec<u8>>,
     wanted: Vec<(Vec<Derivation>, Vec<u8>)>,
-    examples: Vec<(FileId, u32)>,
+    examples: Vec<(bool, FileId, u32)>,
     other_causes: Vec<(FileId, u32)>,
     package: Vec<u8>,
     crossings: Vec<(FileId, u32)>,
@@ -385,7 +385,7 @@ fn quoted(text: &str) -> String {
 }
 
 fn is_where_a_chain_ends(code: u32) -> bool {
-    matches!(code, 100063..=100065 | 100072 | 100075..=100079 | 100085 | 100091 | 100102..=100104)
+    matches!(code, 100063..=100065 | 100072 | 100075..=100079 | 100085 | 100091 | 100102..=100104 | 100106)
 }
 
 impl Cause {
@@ -427,20 +427,20 @@ impl Cause {
                 let imports = if origin.asserted.is_none() { checker.find_types_to_import(origin.root.file, self.at.file, operand) } else { Vec::new() };
                 Followed::To(Box::new(Cause { reported_at: Some(here), imports, ..Cause::of_origin(origin, self.steps.into_iter().chain([use_site]).collect()) }), Some(wanted))
             }
-            None => match checker.find_package_given_what_is_at(explaining, self.at.file, self.at.start) {
-                Some(package) => Followed::ToPackage(package, here),
-                None => match checker.explain_missing_layout_at(explaining, self.at.file, self.at.start, classes_without_layout) {
-                    Some(MissingLayout::Package { declared_in, .. }) => Followed::ToPackage(declared_in, here),
-                    Some(MissingLayout::UntypedValue(origin)) => Followed::To(Box::new(Cause::of_origin(*origin, with_use_site(self))), None),
-                    Some(MissingLayout::Reasons(reasons)) if !reasons.is_empty() => {
-                        let found = Cause::of_finding(&CompilerDiagnostic { related: reasons, ..copy_of(&self.at) });
-                        let found = Cause { steps: with_use_site(self).into_iter().chain(found.steps).collect(), ..found };
-                        match (found.at.file, found.at.start) != here && steps_before < MAX_STEPS_FOLLOWED {
-                            true => found.followed_to_its_origin(checker, explaining, None, classes_without_layout),
-                            false => Followed::To(Box::new(found), None),
-                        }
+            None => match checker.explain_missing_layout_at(explaining, self.at.file, self.at.start, classes_without_layout) {
+                Some(MissingLayout::Package { declared_in, .. }) => Followed::ToPackage(declared_in, here),
+                Some(MissingLayout::UntypedValue(origin)) => Followed::To(Box::new(Cause::of_origin(*origin, with_use_site(self))), None),
+                Some(MissingLayout::Reasons(reasons)) if !reasons.is_empty() => {
+                    let found = Cause::of_finding(&CompilerDiagnostic { related: reasons, ..copy_of(&self.at) });
+                    let found = Cause { steps: with_use_site(self).into_iter().chain(found.steps).collect(), ..found };
+                    match (found.at.file, found.at.start) != here && steps_before < MAX_STEPS_FOLLOWED {
+                        true => found.followed_to_its_origin(checker, explaining, None, classes_without_layout),
+                        false => Followed::To(Box::new(found), None),
                     }
-                    _ => Followed::To(Box::new(self), None),
+                }
+                _ => match checker.find_package_given_what_is_at(explaining, self.at.file, self.at.start) {
+                    Some(package) => Followed::ToPackage(package, here),
+                    None => Followed::To(Box::new(self), None),
                 },
             },
         }
@@ -528,7 +528,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
             ((at.file, at.pos), class)
         })
         .collect();
-    let row_of_code_in = |table: &mut Table, checker: &Checker<'_, '_>, file: FileId| match checker.name_of_package_holding(file).filter(|_| !fallen.iter().any(|record| record.file == file)) {
+    let row_of_code_in = |table: &mut Table, checker: &Checker<'_, '_>, file: FileId| match checker.name_of_package_holding(file).filter(|_| checker.origin_of_declarations_in(file) == ObjectOrigin::Package && !fallen.iter().any(|record| record.file == file)) {
         Some(package) => {
             let package = package.strip_prefix(b"@types/").map_or_else(|| package.clone(), <[u8]>::to_vec);
             let known = package_finding.get(package.as_slice()).map(|&index| copy_of(&found[index]));
@@ -585,7 +585,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
                                         let row = match finding_at.get(&(cause.at.file, cause.at.start)).filter(|_| cause.at.code == 100085) {
                                             Some(&class) => row_of_class(&mut table, &mut checker, &found[class]),
                                             None if cause.at.code == 100083 => row_of_code_in(&mut table, &checker, cause.at.file),
-                                            None if cause.at.code == 100088 && checker.name_of_package_holding(cause.at.file).is_some() => row_of_code_in(&mut table, &checker, cause.at.file),
+                                            None if cause.at.code == 100088 && checker.origin_of_declarations_in(cause.at.file) == ObjectOrigin::Package => row_of_code_in(&mut table, &checker, cause.at.file),
                                             None if cause.at.code == 100088 => table.row_at(Cause { code: Code::NoLayout, ..*cause }),
                                             None => table.row_at(*cause),
                                         };
@@ -642,8 +642,8 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
                 row.names.push(name.to_vec());
             }
         }
-        if row.examples.len() < MAX_EXAMPLES_KEPT && !row.examples.contains(&(file, site.pos)) && (file, site.pos) != (row.cause.at.file, row.cause.at.start) {
-            row.examples.push((file, site.pos));
+        if row.examples.len() < MAX_EXAMPLES_KEPT && !row.examples.contains(&(site.is_in_dependency, file, site.pos)) && (file, site.pos) != (row.cause.at.file, row.cause.at.start) {
+            row.examples.push((site.is_in_dependency, file, site.pos));
         }
     }
     let mut rows = table.rows;
@@ -654,7 +654,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
         row.other_causes = others.filter(|&other| other != (row.cause.at.file, row.cause.at.start) && is_of_the_program(other.0)).collect();
         row.other_causes.sort_unstable_by_key(|&(file, pos)| (checked.files.rank_of_file(file), pos));
         row.other_causes.dedup();
-        row.examples.sort_unstable_by_key(|&(file, pos)| (checked.files.rank_of_file(file), pos));
+        row.examples.sort_unstable_by_key(|&(is_in_dependency, file, pos)| (is_in_dependency, checked.files.rank_of_file(file), pos));
         row.crossings.sort_unstable_by_key(|&(file, pos)| (checked.files.rank_of_file(file), pos));
     }
     drop(fallen);
@@ -752,8 +752,8 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
             (Code::UntypedApi, Some(ty)) => format!("for JSON, read the text and write JSON.parse<{ty}>(text); keep objects of your own in an array, a Map or a Set, which the compiler sees through; for any other value, Bun.validate<{ty}>(value) checks it and returns a typed copy"),
             (Code::UntypedPackage, _) => {
                 let package = bstr::BStr::new(&row.package);
-                let inside = format!("install a typed version of the package (@sound/{package}) or write one in .sound/{package}");
-                let at_the_border = "keep your typed objects away from it: pass it copies or plain values, and read your own objects outside its callbacks";
+                let inside = format!("write a typed version of the package in .sound/{package}");
+                let at_the_border = "keep your typed objects away from it: pass it copies or plain values, and copy what you need from its results into objects of your own types";
                 match (given_back > 0, given_back_in_dependencies > 0) {
                     (true, true) => format!("if the package is yours, build it with `bun compile --library`. If not, {at_the_border}; for the code inside it, {inside}"),
                     (true, false) => format!("if the package is yours, build it with `bun compile --library`. If not, {at_the_border}"),
@@ -761,6 +761,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
                 }
             }
             (Code::UncheckedCast, Some(ty)) => format!("create the '{ty}' in typed code, with an object literal or `new`, in place of the cast; or let Bun.validate<{ty}>(value) check the value and return a typed copy"),
+            (Code::CallbackParameter, _) if cause.at.code == 100106 => "pass a callback that is not async, and call the async part from it".to_owned(),
             (Code::CallbackParameter, _) if cause.at.args.len() == 2 => format!("write the type of the parameter: ({}: {})", bstr::BStr::new(&cause.at.args[0]), bstr::BStr::new(&cause.at.args[1])),
             (Code::Any | Code::ImplicitAny | Code::JsonParse | Code::UntypedApi, None) if !names.is_empty() => {
                 format!("{}; the code reads {} from it", cause.code.fix(), names.iter().take(MAX_NAMES_SHOWN).map(|name| format!("'{name}'")).collect::<Vec<String>>().join(", "))
@@ -786,7 +787,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
             })
             .collect();
         let examples: Vec<(String, usize, usize)> = (row.examples.iter())
-            .map(|&(file, pos)| {
+            .map(|&(_, file, pos)| {
                 let (line, column) = locations.line_and_column(file, pos);
                 (locations.path(file), line, column)
             })

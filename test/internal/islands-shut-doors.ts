@@ -136,14 +136,14 @@ export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm6
     const doorAndFeature = table.features.indexOf(door.feature.split(",", 1)[0]!) + (isRemovedByName ? 2048 : 0) + number * 4096 + answers;
     const code = Buffer.alloc(stubSize(door));
     if (isArm64 && door.whenShut === "exit") {
-      code.writeUInt32LE((0x52800000 | ((doorAndFeature & 0xffff) << 5)) >>> 0, 0);
-      code.writeUInt32LE((0x72a00000 | ((doorAndFeature >>> 16) << 5)) >>> 0, 4);
+      code.writeUInt32LE((0x52800002 | ((doorAndFeature & 0xffff) << 5)) >>> 0, 0);
+      code.writeUInt32LE((0x72a00002 | ((doorAndFeature >>> 16) << 5)) >>> 0, 4);
       code.writeUInt32LE((0x14000000 | asField(Math.trunc((table.stub - (at + 8)) / 4), 26)) >>> 0, 8);
     } else if (isArm64) {
       code.writeUInt32LE(0x52800000, 0);
       code.writeUInt32LE(0xd65f03c0, 4);
     } else if (door.whenShut === "exit") {
-      code[0] = 0xbf;
+      code[0] = 0xba;
       code.writeUInt32LE(doorAndFeature, 1);
       code[5] = 0xe9;
       code.writeInt32LE(table.stub - (at + 10), 6);

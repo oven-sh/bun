@@ -5091,7 +5091,8 @@ impl<'s> Files<'s> {
                         FxBuild,
                         arena,
                     );
-                    for resolution in &loaded.imports {
+                    let adds_no_file = options.bun_global_adds_no_file && Some(*id) == bun_global;
+                    for resolution in loaded.imports.iter().filter(|_| !adds_no_file) {
                         let &Resolution {
                             spec,
                             mode,
@@ -5136,7 +5137,7 @@ impl<'s> Files<'s> {
                     edges.clear();
                     edges.extend(sub_tasks.iter().map(|task| task.file));
                     loaded.module.edges = slice_in(&edges, arena);
-                    if options.trace_resolution {
+                    if options.trace_resolution && !adds_no_file {
                         // A library is given its `SourceFileMetaData` without a lookup.
                         if !is_lib {
                             package_json_info_cache.load_source_file_meta_data(host, path);
@@ -7367,7 +7368,8 @@ impl<'s> Files<'s> {
                         continue;
                     }
                     let exports = module.bound.symbols[augmentation.idx()].exports;
-                    additions.extend(
+                    let declared = if self.bun_global == Some(id) { &mut only_if_undeclared } else { &mut additions };
+                    declared.extend(
                         module
                             .bound
                             .table(exports)
@@ -8019,8 +8021,7 @@ impl<'s> Files<'s> {
         };
         // `reportMergeSymbolError`
         if is_excluded(target_flags) {
-            let is_embedded = |file: FileId| self.bun_intrinsics == Some(file) || self.bun_global == Some(file);
-            if !is_embedded(target.file) && !is_embedded(source.file) {
+            if !self.is_embedded(target.file) && !self.is_embedded(source.file) {
                 self.refuse_merge(target, source);
             }
             // A symbol that cannot merge with the existing symbol of the name contributes nothing
@@ -8929,6 +8930,10 @@ impl<'s> Files<'s> {
         } else {
             ResolutionMode::None
         }
+    }
+
+    pub fn is_embedded(&self, file: FileId) -> bool {
+        self.bun_intrinsics == Some(file) || self.bun_global == Some(file)
     }
 
     pub fn is_bun_module_declared_only_by_host(&self) -> bool {

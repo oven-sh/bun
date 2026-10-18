@@ -907,7 +907,7 @@ static NEVER_INLINE JSObject* create${name}ControllerPrototype(JSC::VM& vm, JSC:
   }
 
   templ += `
-  JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+  NEVER_INLINE JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
   {
       switch (sinkID) {
     `;
@@ -924,7 +924,7 @@ default:
 }`;
 
   templ += `
-JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+NEVER_INLINE JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
 {
     switch (sinkID) {
   `;
@@ -941,7 +941,7 @@ default:
 }`;
 
   templ += `
-Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+NEVER_INLINE Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
 {
     switch (sinkID) {
   `;

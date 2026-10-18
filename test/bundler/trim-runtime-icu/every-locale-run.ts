@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../../aot/run-programs";
@@ -125,6 +125,7 @@ export function testPrograms(part: number) {
           const executables = contents["trimmed"] === contents["by-its-own-facts"] ? ["whole", "trimmed"] : ["whole", "by-its-own-facts", "trimmed"];
           for (const environment of environments) {
             const env = { ...bunEnv, LANG: undefined, LC_ALL: undefined, ...environment };
+            if (isMacOS) expect(await run([bunExe(), entry], folder, env)).toMatchObject({ stderr: "", exitCode: 0 });
             const [whole, ...others] = await Promise.all(executables.map(outfile => run([join(folder, outfile, "program")], folder, env)));
             expect(whole).toMatchObject({ stderr: "", exitCode: 0 });
             expect(whole.stdout).toMatch(/: \d+ calls, \d+ threw, digest [0-9a-f]+\n$/);

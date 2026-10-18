@@ -548,6 +548,7 @@ impl Options {
             attaches_direct_eval_scopes,
             bun_intrinsics,
             bun_global,
+            bun_global_adds_no_file,
             detects_commonjs_by_free_names,
             uses_engine_arithmetic,
             uses_ecmascript_bindings,
@@ -611,7 +612,7 @@ impl Options {
         );
         let _ = write!(
             key,
-            "{uses_nearest_config_paths:?} {removed_base_url:?} {host_modules_without_paths:?} {early_parse_only:?} {attaches_direct_eval_scopes:?} {bun_intrinsics:?} {bun_global:?} {detects_commonjs_by_free_names:?} "
+            "{uses_nearest_config_paths:?} {removed_base_url:?} {host_modules_without_paths:?} {early_parse_only:?} {attaches_direct_eval_scopes:?} {bun_intrinsics:?} {bun_global:?} {bun_global_adds_no_file:?} {detects_commonjs_by_free_names:?} "
         );
         let _ = write!(
             key,
@@ -912,6 +913,7 @@ pub struct Options {
     pub libs: Vec<Vec<u8>>,
     pub bun_intrinsics: Option<Vec<u8>>,
     pub bun_global: Option<Vec<u8>>,
+    pub bun_global_adds_no_file: bool,
     /// `noLib`: no libraries are loaded, and `/// <reference lib>` is ignored.
     pub no_lib: bool,
     /// `libReplacement`: `lib.dom.d.ts` is replaced by the package `@typescript/lib-dom`, if it

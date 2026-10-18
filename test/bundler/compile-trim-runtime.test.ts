@@ -216,6 +216,22 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       const asked = await run([join(folder, "forced")], folder);
       expect(asked.stderr).toStartWith("error: this executable was built with --compile-trim-runtime, without eval, new Function and Function: the parser, the bytecode generator and the interpreter of JavaScriptCore, and something has just asked for it.");
       expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
+      expect(asked.stderr).not.toContain("BUN_OPTIONS");
+      expect((await run([join(folder, "forced")], folder, { ...bunEnv, BUN_OPTIONS: "--smol" })).stderr).toContain("BUN_OPTIONS is set: an option in it may be what asked.");
+    });
+
+    test.each([
+      ["BUN_JSC_functionOverrides", isWindows ? "NUL" : "/dev/null"],
+      ["BUN_JSC_validateBytecode", "true"],
+    ])("without what evaluates text, %s in the environment changes nothing", async (name, value) => {
+      using dir = tempDir("compile-trim-runtime-engine-options", programs);
+      const folder = String(dir);
+      const build = [bunExe(), "build", "--compile", "--aot", "--disallow-code-generation-from-strings", "names-nothing.ts", "--outfile"];
+      expect(await run([...build, "whole"], folder)).toMatchObject({ exitCode: 0 });
+      expect(await run([...build, "trimmed", "--compile-trim-runtime"], folder)).toMatchObject({ exitCode: 0 });
+      const answers = { stdout: `["--disallow-code-generation-from-strings"]\n`, stderr: "", exitCode: 0 };
+      expect(await run([join(folder, "whole")], folder, { ...bunEnv, [name]: value })).toEqual(answers);
+      expect(await run([join(folder, "trimmed")], folder, { ...bunEnv, [name]: value })).toEqual(answers);
     });
 
     test("loads nothing that BUN_OPTIONS names, and starts no debugger", async () => {
@@ -226,13 +242,19 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       expect((await run([whole], folder, preloads)).stdout).toStartWith('preloaded\n["--preload","./preloaded.js"]\n');
       const refused = await run([trimmed], folder, preloads);
       expect(refused).toEqual({ stdout: "", stderr: "error: --preload " + cannotBeUsed + "\n", exitCode: 1 });
+      const isLeftOut = "cannot be used with this executable: the part of Bun that it needs was left out when it was built";
       const inspected = await run([trimmed], folder, { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/trimmed" });
-      expect(inspected.stderr).toContain(
-        "BUN_INSPECT cannot be used with an executable built with --compile-trim-runtime: the inspector evaluates code from strings",
-      );
-      expect(inspected).toMatchObject({ stdout: "", exitCode: 1 });
+      expect(inspected).toEqual({ stdout: "", stderr: `error: BUN_INSPECT ${isLeftOut}\n`, exitCode: 1 });
       const inAnEditor = await run([trimmed], folder, { ...bunEnv, BUN_INSPECT_CONNECT_TO: "unix:///nowhere.sock" });
       expect(inAnEditor).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
+    });
+
+    test("built with --disallow-code-generation-from-strings, it starts no debugger either", async () => {
+      using dir = tempDir("compile-trim-runtime-closed-options", programs);
+      const folder = String(dir);
+      expect(await run([bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", "--disallow-code-generation-from-strings", "hello.ts", "--outfile", "hello"], folder)).toMatchObject({ exitCode: 0 });
+      expect(await run([join(folder, "hello")], folder, { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/trimmed" })).toMatchObject({ stdout: "", exitCode: 1 });
+      expect(await run([join(folder, "hello")], folder, { ...bunEnv, BUN_INSPECT_CONNECT_TO: "unix:///nowhere.sock" })).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
 
     test.each([
@@ -307,8 +329,6 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       expect(asked.stderr).toContain("this executable was built with --compile-trim-runtime, without HTMLRewriter, and something has just asked for it");
       expect(asked.stdout).toBe("");
       expect([70, 1]).toContain(asked.exitCode);
-      expect(asked.stderr).not.toContain("BUN_OPTIONS");
-      expect((await run([join(folder, "taken-away")], folder, { ...bunEnv, BUN_OPTIONS: "--smol" })).stderr).toContain("BUN_OPTIONS is set: an option in it may be what asked.");
 
       expect(await run([...trim, "hello.ts", "--outfile", "hello-by-use"], folder)).toMatchObject({ exitCode: 0 });
       expect(await run([...trim, "hello.ts", "--outfile", "hello-taken-away"], folder, without)).toMatchObject({ exitCode: 0 });

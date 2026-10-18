@@ -122,18 +122,6 @@ export function session(request: BunRequest): string | null {
 console.log(session, process.env.PORT);
 `,
   },
-  "a caught error that is read as a type of Bun's": {
-    "main.ts": `import type { Schema } from "bun";
-interface User {
-  id: number;
-}
-try {
-  console.log(Bun.validate<User>({ id: "7" }).id);
-} catch (error) {
-  console.log((error as Schema.Error).issues.length);
-}
-`,
-  },
   "a class that extends a class of the runtime": {
     "main.ts": `class HttpError extends Error {
   status = 500;
@@ -163,7 +151,6 @@ describe.concurrent("the share of typed property accesses counts what the progra
     ["properties of an any", ["aot: 0.0% typed (0 of 2 property accesses)", hint]],
     ["a JavaScript file of the program", ["aot: 50.0% typed (2 of 4 property accesses)", hint]],
     ["objects of types that are imported from bun", ["aot: 100% typed"]],
-    ["a caught error that is read as a type of Bun's", ["aot: 100% typed"]],
     ["a class that extends a class of the runtime", ["aot: 100% typed"]],
   ])("%s", async (name, summary) => {
     expect(await check(programs[name])).toMatchObject({ summary, exitCode: 0 });

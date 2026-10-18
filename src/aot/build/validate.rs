@@ -1,5 +1,6 @@
 use super::coerce::Ty;
 use super::{FileBuild, Fx, Problem, Source};
+use crate::builder::Var;
 use crate::id::{BlockId, FuncId, GlobalId, StrId, TyId, V};
 use crate::ir::{self, BinOp, Op, Operation, RelOp, Term, CoerceReason};
 use bun_sema::atom::Atom;
@@ -14,7 +15,7 @@ mod parse;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum GeneratedFunction {
-    Validator { plan: u32, node: u32, records_issues: bool, copies_input: bool },
+    Validator { plan: u32, node: u32, records_issues: bool, copies_input: bool, is_given_fresh: bool },
     Parser(u32, u32),
     SchemaValidator(u32),
     Plan(u32),
@@ -27,35 +28,6 @@ enum GeneratedFunction {
 
 const BIGINT_TEXT_PATTERN: &[u8] = b"^-?(?:0|[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)$";
 
-fn discriminated_arms(plan: &ValidationPlan, arms: &[u32]) -> Option<(Vec<u8>, Vec<(Constant, u32)>)> {
-    let mut objects = Vec::new();
-    for &arm in arms {
-        match &plan.nodes[arm as usize].planned {
-            Planned::Object { members, .. } => objects.push((arm, members)),
-            Planned::Primitive(_) | Planned::Value(_) | Planned::Array { .. } | Planned::Tuple { .. } | Planned::Nothing => {}
-            _ => return None,
-        }
-    }
-    if objects.len() < 2 {
-        return None;
-    }
-    let constant_under = |members: &[bun_sema::check::PlannedMember], name: &[u8]| {
-        let member = members.iter().find(|member| member.name == name && !member.is_optional)?;
-        match &plan.nodes[member.node as usize] {
-            described if !described.rules.is_empty() || described.default.is_some() => None,
-            described => match &described.planned {
-                Planned::Value(constant) if *constant != Constant::Undefined => Some(constant.clone()),
-                _ => None,
-            },
-        }
-    };
-    objects[0].1.iter().find_map(|member| {
-        let tagged: Vec<(Constant, u32)> = objects.iter().map(|(arm, members)| Some((constant_under(members, &member.name)?, *arm))).collect::<Option<_>>()?;
-        let are_distinct = tagged.iter().enumerate().all(|(at, one)| !tagged[..at].iter().any(|other| other.0 == one.0));
-        are_distinct.then(|| (member.name.clone(), tagged))
-    })
-}
-
 fn may_hold_objects(plan: &ValidationPlan, node: u32, depth: u32) -> bool {
     match &plan.nodes[node as usize].planned {
         Planned::Array { .. } | Planned::Tuple { .. } | Planned::Dictionary { .. } | Planned::Object { .. } => true,
@@ -65,7 +37,7 @@ fn may_hold_objects(plan: &ValidationPlan, node: u32, depth: u32) -> bool {
 }
 
 fn utf16_length(text: &[u8]) -> i64 {
-    i64::from(bun_core::strings::utf8_decoded_len_utf16(text))
+    i64::from(bun_core::strings::wtf8_len_utf16(text))
 }
 
 #[derive(Clone)]
@@ -80,7 +52,7 @@ pub(crate) struct Validators {
     plan_numbers: FxHashMap<TypeId, u32>,
     parsers_by_destination: FxHashMap<TypeId, Option<ParserByDestination>>,
     functions: FxHashMap<GeneratedFunction, FuncId>,
-    functions_by_type: FxHashMap<(TypeId, bool, bool, bool, bool, bool), GeneratedFunction>,
+    functions_by_type: FxHashMap<(TypeId, bool, bool, bool, bool, bool, bool), GeneratedFunction>,
     sources: Vec<GeneratedFunction>,
     rejection_marker: Option<GlobalId>,
     is_building_recursive_node: bool,
@@ -88,6 +60,7 @@ pub(crate) struct Validators {
     is_speculative: bool,
     copies_input: bool,
     is_root_fresh: bool,
+    memory: Option<V>,
     plans_with_inlined_root: Vec<u32>,
     patterns: FxHashMap<Vec<u8>, GlobalId>,
     templates: Vec<(Vec<Vec<u8>>, Vec<Placeholder>)>,
@@ -167,7 +140,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut value = self.expr(fx, given);
         let parses = matches!(which, ValidationCall::Parse | ValidationCall::JsonParse);
         if parses && parse::is_parsed_by_type(&plan) {
-            return Some(self.emit_parse_by_type(fx, &plan, number, value, Ty { id: created, checked: ty }));
+            return Some(self.emit_parse_by_type(fx, &plan, number, value, which == ValidationCall::Parse, Ty { id: created, checked: ty }));
         }
         if parses {
             value = self.emit_global_method_call(fx, b"JSON", b"parse", &[value]);
@@ -268,7 +241,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return known.clone();
         }
         let parser = self.c.exact_parse_plan(ty).and_then(|plan| {
-            if parse::is_parsed_by_type(&plan) && parse::is_small_enough_for_compiled_parsers(&plan) {
+            if parse::is_parsed_by_type(&plan) && parse::is_small_enough_for_compiled_parsers(&plan) && !parse::has_recursive_union_parsed_twice(&plan) {
                 self.validators.plans.push(Rc::new(plan));
                 return Some(ParserByDestination::Compiled(self.validators.plans.len() as u32 - 1));
             }
@@ -736,9 +709,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let described = &plan.nodes[node as usize];
         let is_at_call_site = std::mem::take(&mut self.validators.is_at_call_site);
         let is_large_union = !plan.is_exact && matches!(&described.planned, Planned::Union { arms, .. } if arms.len() >= parse::MIN_ARMS_OF_UNION_WITH_OWN_FUNCTION);
-        if (described.is_recursive || is_large_union) && !std::mem::take(&mut self.validators.is_building_recursive_node) {
-            let function = self.validator_for(fx, number, node, false);
-            let created = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
+        if (described.is_recursive || is_large_union || described.is_ambiguous) && !std::mem::take(&mut self.validators.is_building_recursive_node) {
+            let created = self.emit_validator_call(fx, number, node, false, input);
             let mark = self.emit_rejection_marker(fx);
             let is_refused = self.emit(fx, Op::StrictEq { a: created, b: mark });
             self.continue_unless(fx, is_refused, fails);
@@ -772,11 +744,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 held
             }
-            Planned::Value(constant) => {
-                let constant = self.emit_planned_constant(fx, constant);
+            Planned::Value(wanted) => {
+                let constant = self.emit_planned_constant(fx, wanted);
                 let is_it = self.emit(fx, Op::StrictEq { a: input, b: constant });
                 self.continue_if(fx, is_it, fails);
-                constant
+                if *wanted == Constant::Number(0.0) { self.claim_type(fx, input, self.known.number) } else { constant }
             }
             Planned::AnyObject => {
                 self.continue_if_object(fx, input, false, fails);
@@ -789,7 +761,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit_rules(fx, &described.rules, input, fails);
                 let stores_elements = self.validators.copies_input && (may_hold_objects(plan, *element, 0) || plan.may_have_default(*element));
                 let (plan, element) = (Rc::clone(plan), *element);
-                let element_fails = if records_issues { fx.b.new_block() } else { fails };
+                let wasted = self.new_block_for_wasted_work(fx, &plan, element);
+                let element_fails = if records_issues { fx.b.new_block() } else { wasted.unwrap_or(fails) };
                 let mut failed_at = V::NONE;
                 self.emit_loop(fx, input, |build, fx, at, item| {
                     failed_at = at;
@@ -798,6 +771,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         build.emit_throwing(fx, Op::ElemSet { obj: input, key: at, value: checked });
                     }
                 });
+                self.emit_start_of_remembering(fx, wasted, fails);
                 if records_issues {
                     let validator = self.recording_validator_below(fx, &plan, number, node);
                     self.emit_failure_landing(fx, element_fails, |build, fx| {
@@ -820,11 +794,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let is_whole = self.emit(fx, Op::StrictEq { a: length, b: wanted });
                 self.continue_if(fx, is_whole, fails);
                 let mut checked = Vec::with_capacity(elements.len());
+                let mut wasted = None;
                 for (at, &element) in elements.iter().enumerate() {
                     let key = self.emit(fx, Op::Int(at as i64));
                     let item = self.emit_throwing(fx, Op::ElemGet { obj: input, key });
-                    checked.push(self.emit_validation(fx, plan, number, element, item, fails));
+                    wasted = wasted.or_else(|| self.new_block_for_wasted_work(fx, plan, element));
+                    checked.push(self.emit_validation(fx, plan, number, element, item, wasted.unwrap_or(fails)));
                 }
+                self.emit_start_of_remembering(fx, wasted, fails);
                 if self.validators.copies_input { self.emit_list(fx, &checked) } else { input }
             }
             Planned::Dictionary { held, .. } => {
@@ -832,20 +809,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let copy = self.validators.copies_input.then(|| self.emit(fx, Op::NewObject));
                 let keys = self.emit_global_method_call(fx, b"Object", b"keys", &[input]);
                 let (plan, held) = (Rc::clone(plan), *held);
+                let wasted = self.new_block_for_wasted_work(fx, &plan, held);
                 self.emit_loop(fx, keys, |build, fx, _, key| {
                     let key = build.claim_type(fx, key, build.known.string);
                     let item = build.emit_throwing(fx, Op::ElemGet { obj: input, key });
-                    let checked = build.emit_validation(fx, &plan, number, held, item, fails);
+                    let checked = build.emit_validation(fx, &plan, number, held, item, wasted.unwrap_or(fails));
                     if let Some(copy) = copy {
                         build.operation(fx, Operation::PutByValDirect, &[copy, key, checked]);
                     }
                 });
+                self.emit_start_of_remembering(fx, wasted, fails);
                 copy.unwrap_or(input)
             }
             Planned::Object { .. } if is_at_call_site => self.emit_object(fx, plan, number, node, input, fails),
             Planned::Object { .. } => {
-                let function = self.validator_for(fx, number, node, records_issues);
-                let created = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
+                let created = self.emit_validator_call(fx, number, node, records_issues, input);
                 let undefined = self.emit(fx, Op::Undefined);
                 let is_refused = self.emit(fx, Op::StrictEq { a: created, b: undefined });
                 self.continue_unless(fx, is_refused, fails);
@@ -855,42 +833,54 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let result = self.new_temporary(fx);
                 let done = fx.b.new_block();
                 let mut arms = arms.clone();
-                if let Some((name, tagged)) = discriminated_arms(plan, &arms) {
+                let by_tag = plan.tagged_arms(&arms);
+                let accepting_objects = |arms: &[u32]| -> Vec<u32> { arms.iter().copied().filter(|&arm| plan.may_accept_object(arm, false, 0)).collect() };
+                let spreads_once = self.validators.copies_input && accepting_objects(&arms).len() >= 2;
+                if by_tag.is_some() || spreads_once {
                     let is_no_object = fx.b.new_block();
                     self.continue_if_object(fx, input, true, is_no_object);
-                    let tag = self.emit_member(fx, input, &name);
-                    for (constant, arm) in &tagged {
-                        let (matches, differs) = (fx.b.new_block(), fx.b.new_block());
-                        let wanted = self.emit_planned_constant(fx, constant);
-                        let is_it = self.emit(fx, Op::StrictEq { a: tag, b: wanted });
-                        self.branch(fx, is_it, matches, differs);
-                        fx.b.seal(matches);
-                        fx.b.seal(differs);
-                        fx.b.switch_to(matches);
-                        let checked = self.emit_validation(fx, plan, number, *arm, input, fails);
-                        fx.b.write(result, checked);
-                        fx.b.jump(done);
-                        fx.b.switch_to(differs);
+                    let given = if spreads_once { self.emit_spread(fx, input) } else { input };
+                    let is_fresh = spreads_once && plan.nodes.iter().all(|node| node.default.is_none());
+                    if let Some(by_tag) = &by_tag {
+                        arms.clone_from(&by_tag.untagged);
                     }
-                    fx.b.jump(fails);
+                    let for_objects = accepting_objects(&arms);
+                    let otherwise = match for_objects[..] {
+                        [] => fails,
+                        _ if spreads_once => fx.b.new_block(),
+                        _ => is_no_object,
+                    };
+                    if let Some(by_tag) = &by_tag {
+                        let tag = self.emit_member(fx, given, by_tag.name);
+                        for (constant, arm) in &by_tag.tagged {
+                            let (matches, differs) = (fx.b.new_block(), fx.b.new_block());
+                            let wanted = self.emit_planned_constant(fx, constant);
+                            let is_it = self.emit(fx, Op::StrictEq { a: tag, b: wanted });
+                            self.branch(fx, is_it, matches, differs);
+                            fx.b.seal(matches);
+                            fx.b.seal(differs);
+                            fx.b.switch_to(matches);
+                            self.validators.is_root_fresh = is_fresh;
+                            let checked = self.emit_validation(fx, plan, number, *arm, given, otherwise);
+                            fx.b.write(result, checked);
+                            fx.b.jump(done);
+                            fx.b.switch_to(differs);
+                        }
+                    }
+                    fx.b.jump(otherwise);
+                    if spreads_once && !for_objects.is_empty() {
+                        fx.b.seal(otherwise);
+                        fx.b.switch_to(otherwise);
+                        self.emit_arms_in_turn(fx, plan, number, &for_objects, given, is_fresh, result, done, fails);
+                        arms.retain(|&arm| !matches!(plan.nodes[arm as usize].planned, Planned::Object { .. } | Planned::Dictionary { .. }));
+                    }
                     fx.b.seal(is_no_object);
                     fx.b.switch_to(is_no_object);
-                    arms.retain(|arm| !tagged.iter().any(|tagged| tagged.1 == *arm));
                     if arms.is_empty() {
                         fx.b.jump(fails);
                     }
                 }
-                for (at, &arm) in arms.iter().enumerate() {
-                    let is_last = at + 1 == arms.len();
-                    let next = if is_last { fails } else { fx.b.new_block() };
-                    let checked = self.emit_validation(fx, plan, number, arm, input, next);
-                    fx.b.write(result, checked);
-                    fx.b.jump(done);
-                    if !is_last {
-                        fx.b.seal(next);
-                        fx.b.switch_to(next);
-                    }
-                }
+                self.emit_arms_in_turn(fx, plan, number, &arms, input, false, result, done, fails);
                 fx.b.seal(done);
                 fx.b.switch_to(done);
                 fx.b.read(result)
@@ -899,6 +889,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.validators.is_speculative = was_speculative;
         self.emit_rules(fx, &described.rules, checked, fails);
         checked
+    }
+
+    fn emit_arms_in_turn(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, arms: &[u32], input: V, is_fresh: bool, result: Var, done: BlockId, fails: BlockId) {
+        for (at, &arm) in arms.iter().enumerate() {
+            let is_last = at + 1 == arms.len();
+            let next = if is_last { fails } else { fx.b.new_block() };
+            self.validators.is_root_fresh = is_fresh && matches!(plan.nodes[arm as usize].planned, Planned::Object { .. });
+            let checked = self.emit_validation(fx, plan, number, arm, input, next);
+            fx.b.write(result, checked);
+            fx.b.jump(done);
+            if !is_last {
+                fx.b.seal(next);
+                fx.b.switch_to(next);
+            }
+        }
+    }
+
+    fn emit_spread(&mut self, fx: &mut Fx, value: V) -> V {
+        let copy = self.emit(fx, Op::NewObject);
+        self.operation(fx, Operation::CopyDataProperties, &[copy, value]);
+        copy
     }
 
     pub(super) fn as_int32_if_rules_say_so(&mut self, fx: &mut Fx, rules: &[Rule], value: V) -> V {
@@ -942,19 +953,81 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.call_validation_helper(fx, b"recordFailure", &[plan, node, position, value, compiled]);
     }
 
+    fn takes_memory(&self, number: u32, node: u32, records_issues: bool) -> bool {
+        !records_issues && self.validators.plans[number as usize].nodes[node as usize].reaches_ambiguous
+    }
+
     fn validator_for(&mut self, fx: &Fx, number: u32, node: u32, records_issues: bool) -> FuncId {
-        self.helper_function(fx, GeneratedFunction::Validator { plan: number, node, records_issues, copies_input: self.validators.copies_input }, 1)
+        let parameters = 1 + u16::from(self.takes_memory(number, node, records_issues));
+        let is_given_fresh = std::mem::take(&mut self.validators.is_root_fresh);
+        self.helper_function(fx, GeneratedFunction::Validator { plan: number, node, records_issues, copies_input: self.validators.copies_input, is_given_fresh }, parameters)
+    }
+
+    fn emit_validator_call(&mut self, fx: &mut Fx, number: u32, node: u32, records_issues: bool, input: V) -> V {
+        let function = self.validator_for(fx, number, node, records_issues);
+        if !self.takes_memory(number, node, records_issues) {
+            return self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
+        }
+        let memory = match self.validators.memory {
+            Some(memory) => memory,
+            None => {
+                let undefined = self.emit(fx, Op::Undefined);
+                self.emit_list(fx, &[undefined])
+            }
+        };
+        self.emit_throwing(fx, Op::CallDirect { func: function, args: [input, memory].into_iter().collect() })
+    }
+
+    fn new_block_for_wasted_work(&mut self, fx: &mut Fx, plan: &ValidationPlan, below: u32) -> Option<BlockId> {
+        (self.validators.memory.is_some() && plan.nodes[below as usize].reaches_ambiguous).then(|| fx.b.new_block())
+    }
+
+    fn emit_start_of_remembering(&mut self, fx: &mut Fx, wasted: Option<BlockId>, fails: BlockId) {
+        let (Some(wasted), Some(memory)) = (wasted, self.validators.memory) else { return };
+        self.emit_failure_landing(fx, wasted, |build, fx| {
+            build.call_validation_helper(fx, b"startRemembering", &[memory]);
+            fx.b.jump(fails);
+        });
+    }
+
+    fn continue_if_remembering(&mut self, fx: &mut Fx, memory: V, otherwise: BlockId) {
+        let first = self.emit(fx, Op::Int(0));
+        let table = self.emit_throwing(fx, Op::ElemGet { obj: memory, key: first });
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_off = self.emit(fx, Op::StrictEq { a: table, b: undefined });
+        self.continue_unless(fx, is_off, otherwise);
+    }
+
+    fn emit_return_of_remembered(&mut self, fx: &mut Fx, memory: V, key: V, input: V) {
+        let unknown = fx.b.new_block();
+        self.continue_if_remembering(fx, memory, unknown);
+        let known = self.call_validation_helper(fx, b"recall", &[memory, key, input]);
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_unknown = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+        self.continue_unless(fx, is_unknown, unknown);
+        self.terminate_with_return(fx, known);
+        fx.b.seal(unknown);
+        fx.b.switch_to(unknown);
+    }
+
+    fn emit_remembering(&mut self, fx: &mut Fx, memory: V, key: V, input: V, verdict: V) {
+        let next = fx.b.new_block();
+        self.continue_if_remembering(fx, memory, next);
+        self.call_validation_helper(fx, b"remember", &[memory, key, input, verdict]);
+        fx.b.jump(next);
+        fx.b.seal(next);
+        fx.b.switch_to(next);
     }
 
     fn first_emitted_for_same_type(&mut self, created: GeneratedFunction) -> GeneratedFunction {
-        let (number, node, is_parser, records_issues, copies_input) = match created {
-            GeneratedFunction::Validator { plan, node, records_issues, copies_input } => (plan, node, false, records_issues, copies_input),
-            GeneratedFunction::Parser(number, node) => (number, node, true, false, false),
+        let (number, node, is_parser, records_issues, copies_input, is_given_fresh) = match created {
+            GeneratedFunction::Validator { plan, node, records_issues, copies_input, is_given_fresh } => (plan, node, false, records_issues, copies_input, is_given_fresh),
+            GeneratedFunction::Parser(number, node) => (number, node, true, false, false, false),
             _ => return created,
         };
         let plan = &self.validators.plans[number as usize];
         match plan.node_identity(node) {
-            Some((ty, is_strict)) => *self.validators.functions_by_type.entry((ty, is_strict, is_parser, records_issues, copies_input, plan.is_exact)).or_insert(created),
+            Some((ty, is_strict)) => *self.validators.functions_by_type.entry((ty, is_strict, is_parser, records_issues, copies_input, is_given_fresh, plan.is_exact)).or_insert(created),
             None => created,
         }
     }
@@ -977,8 +1050,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn emit_validator(&mut self, fx: &mut Fx, at: u32) {
-        let (number, node, records_issues, copies_input) = match self.validators.sources[at as usize] {
-            GeneratedFunction::Validator { plan, node, records_issues, copies_input } => (plan, node, records_issues, copies_input),
+        let (number, node, records_issues, copies_input, is_given_fresh) = match self.validators.sources[at as usize] {
+            GeneratedFunction::Validator { plan, node, records_issues, copies_input, is_given_fresh } => (plan, node, records_issues, copies_input, is_given_fresh),
             GeneratedFunction::Parser(number, node) => return self.emit_parser(fx, number, node),
             GeneratedFunction::SchemaValidator(number) => return self.emit_schema_validator(fx, number),
             GeneratedFunction::Plan(number) => return self.emit_plan(fx, number),
@@ -988,23 +1061,39 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         let plan = Rc::clone(&self.validators.plans[number as usize]);
         let value = self.add_entry_param(fx, Ty::NONE);
+        let memory = self.takes_memory(number, node, records_issues).then(|| self.add_entry_param(fx, Ty::NONE));
+        let memory = memory.map(|memory| self.claim_type(fx, memory, self.known.array));
         let fails = fx.b.new_block();
         let was_speculative = std::mem::replace(&mut self.validators.is_speculative, !records_issues);
         let copied_before = std::mem::replace(&mut self.validators.copies_input, copies_input);
+        let memory_before = std::mem::replace(&mut self.validators.memory, memory);
         if !matches!(plan.nodes[node as usize].planned, Planned::Object { .. }) {
+            let remembered = memory.filter(|_| plan.nodes[node as usize].is_ambiguous).map(|memory| (memory, self.emit(fx, Op::Int(i64::from(at)))));
+            if let Some((memory, key)) = remembered {
+                self.emit_return_of_remembered(fx, memory, key, value);
+            }
             self.validators.is_building_recursive_node = true;
             let checked = self.emit_validation(fx, &plan, number, node, value, fails);
             self.validators.is_speculative = was_speculative;
             self.validators.copies_input = copied_before;
+            self.validators.memory = memory_before;
+            if let Some((memory, key)) = remembered {
+                self.emit_remembering(fx, memory, key, value, checked);
+            }
             self.terminate_with_return(fx, checked);
             fx.b.seal(fails);
             fx.b.switch_to(fails);
             let mark = self.emit_rejection_marker(fx);
+            if let Some((memory, key)) = remembered {
+                self.emit_remembering(fx, memory, key, value, mark);
+            }
             return fx.b.terminate(Term::Return(mark));
         }
+        self.validators.is_root_fresh = is_given_fresh;
         let created = self.emit_object(fx, &plan, number, node, value, fails);
         self.validators.is_speculative = was_speculative;
         self.validators.copies_input = copied_before;
+        self.validators.memory = memory_before;
         self.terminate_with_return(fx, created);
         fx.b.seal(fails);
         fx.b.switch_to(fails);
@@ -1031,16 +1120,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.continue_if_object(fx, value, true, landing);
         land(self, fx, landing, 0);
         let holder = if self.validators.copies_input && !std::mem::take(&mut self.validators.is_root_fresh) {
-            let copy = self.emit(fx, Op::NewObject);
-            self.operation(fx, Operation::CopyDataProperties, &[copy, value]);
+            let copy = self.emit_spread(fx, value);
             fx.b.write(reported, copy);
             copy
         } else {
             value
         };
-        for (at, member) in members.iter().enumerate() {
+        let mut in_turn: Vec<usize> = (0..members.len()).collect();
+        if self.validators.memory.is_some() {
+            in_turn.sort_by_key(|&at| plan.nodes[members[at].node as usize].reaches_ambiguous);
+        }
+        let mut wasted = None;
+        for at in in_turn {
+            let member = &members[at];
             let given = self.emit_own_member(fx, holder, &member.name);
-            let landing = if records_issues { fx.b.new_block() } else { fails };
+            wasted = wasted.or_else(|| self.new_block_for_wasted_work(fx, plan, member.node));
+            let landing = if records_issues { fx.b.new_block() } else { wasted.unwrap_or(fails) };
             let checked = self.emit_validation(fx, plan, number, member.node, given, landing);
             if !member.is_optional && plan.may_accept_undefined(member.node) {
                 let undefined = self.emit(fx, Op::Undefined);
@@ -1080,11 +1175,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.switch_to(next);
             }
         }
-        let landing = if records_issues { fx.b.new_block() } else { fails };
+        if let Planned::Object { others: OtherKeys::Checked(held), .. } = plan.nodes[node as usize].planned {
+            wasted = wasted.or_else(|| self.new_block_for_wasted_work(fx, plan, held));
+        }
+        let landing = if records_issues { fx.b.new_block() } else { wasted.unwrap_or(fails) };
         let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
         self.emit_validation_of_other_keys(fx, plan, number, node, holder, landing);
         self.validators.is_speculative = was_speculative;
         land(self, fx, landing, members.len());
+        self.emit_start_of_remembering(fx, wasted, fails);
         if records_issues {
             let below: Vec<(usize, FuncId)> = members.iter().enumerate().filter_map(|(at, member)| Some((at, self.recording_validator_below(fx, plan, number, member.node)?))).collect();
             self.emit_failure_landing(fx, recorded, |build, fx| {

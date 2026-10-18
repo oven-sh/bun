@@ -65,9 +65,10 @@ pub const CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD: bool =
 #[cfg(not(bun_disallow_code_generation_from_strings))]
 mod level {
     use super::CodeGenerationFromStrings;
-    use core::sync::atomic::{AtomicU8, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
     static LEVEL: AtomicU8 = AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
+    static IS_INTERPRETER_REMOVED_BY_NAME: AtomicBool = AtomicBool::new(false);
     static LEVEL_FROM_FLAGS: AtomicU8 = AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
 
     fn level_of(level: &AtomicU8) -> CodeGenerationFromStrings {
@@ -95,6 +96,15 @@ mod level {
     pub fn disallow_code_generation_in_trimmed_executable() {
         LEVEL.fetch_max(CodeGenerationFromStrings::Strict as u8, Ordering::Relaxed);
     }
+
+    pub fn disallow_code_generation_without_interpreter() {
+        IS_INTERPRETER_REMOVED_BY_NAME.store(true, Ordering::Relaxed);
+        disallow_code_generation_in_trimmed_executable();
+    }
+
+    pub fn is_interpreter_removed_by_name() -> bool {
+        IS_INTERPRETER_REMOVED_BY_NAME.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(bun_disallow_code_generation_from_strings)]
@@ -117,11 +127,19 @@ mod level {
 
     #[inline(always)]
     pub fn disallow_code_generation_in_trimmed_executable() {}
+
+    #[inline(always)]
+    pub fn disallow_code_generation_without_interpreter() {}
+
+    #[inline(always)]
+    pub const fn is_interpreter_removed_by_name() -> bool {
+        false
+    }
 }
 
 pub use level::{
     code_generation_from_strings, code_generation_from_strings_by_flags, disallow_code_generation_from_strings,
-    disallow_code_generation_in_trimmed_executable,
+    disallow_code_generation_in_trimmed_executable, disallow_code_generation_without_interpreter, is_interpreter_removed_by_name,
 };
 
 pub fn is_code_generation_disallowed_by_trimming() -> bool {

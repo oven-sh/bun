@@ -193,6 +193,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
     return JSValue::encode(out);
 }
 
+extern "C" bool Bun__isRemovedByTrimming(const char* specifier, size_t length);
+
+static bool isRemovedByTrimming(const String& specifier)
+{
+    auto utf8 = specifier.utf8();
+    return Bun__isRemovedByTrimming(utf8.legacyCStringPointer(), utf8.length());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -207,7 +215,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
     auto moduleStr = moduleName.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
-    return JSValue::encode(jsBoolean(Bun::isBuiltinModule(moduleStr)));
+    return JSValue::encode(jsBoolean(Bun::isBuiltinModule(moduleStr) && !isRemovedByTrimming(moduleStr)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -663,7 +671,8 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     args.ensureCapacity(countof(builtinModuleNames));
 
     for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
-        args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
+        if (!isRemovedByTrimming(String(builtinModuleNames[i])))
+            args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());

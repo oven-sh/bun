@@ -3,7 +3,6 @@ use bun_sema::json::Json;
 use bun_sema::resolve::TYPED_JAVASCRIPT_EXTENSIONS as TYPED_EXTENSIONS;
 use bun_sys::Fd;
 
-pub const SCOPE: &[u8] = b"@sound";
 const FOLDER: &[u8] = b".sound";
 const MANIFEST: &[u8] = b"sound.json";
 const REPLACEMENTS: &[u8] = b"lay";
@@ -91,14 +90,6 @@ fn read(path: &[u8]) -> Option<Vec<u8>> {
 
 pub(crate) fn read_json(path: &[u8]) -> Option<Json> {
     parse(&read(path)?)
-}
-
-fn companion_package_name(name: &[u8]) -> Vec<u8> {
-    let flat = match name.strip_prefix(b"@") {
-        Some(scoped) => bun_core::strings::split(scoped, b"/").collect::<Vec<_>>().join(&b"__"[..]),
-        None => name.to_vec(),
-    };
-    join(&[SCOPE, &flat])
 }
 
 fn package_javascript_files(package: &Json) -> Vec<Vec<u8>> {
@@ -240,15 +231,7 @@ fn typed_package_home(root: &[u8], directory: &[u8], name: &[u8]) -> Option<(Vec
     if has_manifest(&own) {
         return Some((own, false));
     }
-    if let Some(shipped) = package_typed_home(directory) {
-        return Some((shipped, true));
-    }
-    let companion = companion_package_name(name);
-    let home = ancestors(root).map(|at| join(&[at, NODE_MODULES_DIR, &companion])).find(has_manifest)?;
-    let project = ancestors(root).find_map(|at| read(&join(&[at, PACKAGE_JSON])))?;
-    let project = parse(&project)?;
-    let lists_it = |field: &[u8]| project.get(field).is_some_and(|listed| listed.get(&companion).is_some());
-    (lists_it(b"dependencies") || lists_it(b"devDependencies")).then_some((home, false))
+    package_typed_home(directory).map(|shipped| (shipped, true))
 }
 
 fn is_relative_inner_path(path: &[u8]) -> bool {

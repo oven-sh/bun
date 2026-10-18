@@ -253,11 +253,8 @@ pub struct Program<'s> {
     pub reads_that_may_find_the_constructor_of_functions: Guarded<Vec<(FileId, u32)>>,
     pub reads_that_may_find_what_makes_or_loads_code: Guarded<Vec<(FileId, u32)>>,
     pub loads_of_modules_that_are_not_compiled: Guarded<Vec<(FileId, Vec<u8>)>>,
-    pub stores_under_a_key_that_is_not_seen: AtomicBool,
-    pub writes_under_a_key_that_may_be_a_symbol: AtomicBool,
-    pub reads_the_constructor_of_a_symbol: AtomicBool,
-    pub takes_members_without_naming_them: AtomicBool,
     pub reads_by_a_key_that_may_be_a_name: AtomicBool,
+    pub hands_on_what_a_table_in_sight_finds: AtomicBool,
     pub may_print_an_object: AtomicBool,
     pub releases_roots: AtomicBool,
     /// `autoArrayType`
@@ -546,11 +543,8 @@ impl<'s> Program<'s> {
             reads_that_may_find_the_constructor_of_functions: Default::default(),
             reads_that_may_find_what_makes_or_loads_code: Default::default(),
             loads_of_modules_that_are_not_compiled: Default::default(),
-            stores_under_a_key_that_is_not_seen: Default::default(),
-            writes_under_a_key_that_may_be_a_symbol: Default::default(),
-            reads_the_constructor_of_a_symbol: Default::default(),
-            takes_members_without_naming_them: Default::default(),
             reads_by_a_key_that_may_be_a_name: Default::default(),
+            hands_on_what_a_table_in_sight_finds: Default::default(),
             may_print_an_object: Default::default(),
             releases_roots: AtomicBool::new(false),
             auto_array_type,
@@ -666,11 +660,8 @@ impl<'s> Program<'s> {
         *self.reads_that_may_find_the_constructor_of_functions.get_mut() = Default::default();
         *self.reads_that_may_find_what_makes_or_loads_code.get_mut() = Default::default();
         *self.loads_of_modules_that_are_not_compiled.get_mut() = Default::default();
-        *self.stores_under_a_key_that_is_not_seen.get_mut() = false;
-        *self.writes_under_a_key_that_may_be_a_symbol.get_mut() = false;
-        *self.reads_the_constructor_of_a_symbol.get_mut() = false;
-        *self.takes_members_without_naming_them.get_mut() = false;
         *self.reads_by_a_key_that_may_be_a_name.get_mut() = false;
+        *self.hands_on_what_a_table_in_sight_finds.get_mut() = false;
         *self.may_print_an_object.get_mut() = false;
         self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.

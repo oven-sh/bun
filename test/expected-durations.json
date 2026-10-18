@@ -714,12 +714,6 @@
     "musl": 1525,
     "windows": 2571
   },
-  "aot/explain-costs.test.ts": {
-    "default": 1163,
-    "asan": 2849,
-    "musl": 1208,
-    "windows": 1076
-  },
   "aot/explain-joins.test.ts": {
     "default": 511,
     "asan": 2100,
@@ -2448,12 +2442,6 @@
     "musl": 6938,
     "windows": 6835
   },
-  "aot/validation-by-types/both-spellings-without-installed-types.test.ts": {
-    "default": 725,
-    "asan": 2824,
-    "musl": 729,
-    "windows": 1559
-  },
   "aot/validation-by-types/fuzz.test.ts": {
     "default": 34314,
     "asan": 140974,
@@ -2664,13 +2652,6 @@
     "musl": 8684,
     "windows": 15827
   },
-  "bake/hmr-socket-protocol.test.ts": {
-    "default": 60,
-    "asan": 490,
-    "musl": 50,
-    "windows": 110,
-    "windows-aarch64": 150
-  },
   "bundler/bun-build-dts-sound.test.ts": {
     "default": 4911,
     "asan": 20373,
@@ -2691,20 +2672,6 @@
     "musl": 156378,
     "windows": 212557,
     "windows-aarch64": 191972
-  },
-  "bundler/bundler_compile_prelinked.test.ts": {
-    "default": 23790,
-    "asan": 102930,
-    "musl": 8350,
-    "windows": 52670,
-    "windows-aarch64": 52520
-  },
-  "bundler/bundler_merged_enum.test.ts": {
-    "default": 90,
-    "asan": 1510,
-    "musl": 80,
-    "windows": 130,
-    "windows-aarch64": 170
   },
   "bundler/compile-aot-bun-sound.test.ts": {
     "default": 1070,
@@ -2754,13 +2721,6 @@
     "musl": 5000,
     "windows": 40,
     "windows-aarch64": 50
-  },
-  "bundler/css/forms-pseudo-elements-41120.test.ts": {
-    "default": 20,
-    "asan": 290,
-    "musl": 30,
-    "windows": 30,
-    "windows-aarch64": 40
   },
   "bundler/transpiler/react-compiler-fixtures-run.test.ts": {
     "default": 1300,
@@ -2888,104 +2848,6 @@
     "windows": 27911,
     "windows-aarch64": 46246
   },
-  "cli/check/conformance/1.test.ts": {
-    "default": 31486,
-    "asan": 20003,
-    "musl": 29454,
-    "windows": 26252,
-    "windows-aarch64": 20910
-  },
-  "cli/check/conformance/2.test.ts": {
-    "default": 30293,
-    "asan": 343,
-    "musl": 31543,
-    "windows": 27068,
-    "windows-aarch64": 21429
-  },
-  "cli/check/conformance/3.test.ts": {
-    "default": 30018,
-    "asan": 329,
-    "musl": 27296,
-    "windows": 27169,
-    "windows-aarch64": 20975
-  },
-  "cli/check/conformance/4.test.ts": {
-    "default": 30290,
-    "asan": 332,
-    "musl": 28145,
-    "windows": 27465,
-    "windows-aarch64": 20988
-  },
-  "cli/check/conformance/5.test.ts": {
-    "default": 29465,
-    "asan": 310,
-    "musl": 33627,
-    "windows": 25433,
-    "windows-aarch64": 19586
-  },
-  "cli/check/conformance/6.test.ts": {
-    "default": 25084,
-    "asan": 309,
-    "musl": 28835,
-    "windows": 25607,
-    "windows-aarch64": 22659
-  },
-  "cli/check/conformance/7.test.ts": {
-    "default": 27292,
-    "asan": 330,
-    "musl": 29910,
-    "windows": 27414,
-    "windows-aarch64": 23774
-  },
-  "cli/check/conformance/8.test.ts": {
-    "default": 29137,
-    "asan": 340,
-    "musl": 30562,
-    "windows": 31578,
-    "windows-aarch64": 22110
-  },
-  "cli/check/differential-cases-1.test.ts": {
-    "default": 40550,
-    "asan": 3652,
-    "musl": 43816,
-    "windows": 49585,
-    "windows-aarch64": 52413
-  },
-  "cli/check/differential-cases-2.test.ts": {
-    "default": 33665,
-    "asan": 3532,
-    "musl": 34001,
-    "windows": 39858,
-    "windows-aarch64": 46196
-  },
-  "cli/check/differential-cases-3.test.ts": {
-    "default": 48105,
-    "asan": 2162,
-    "musl": 46272,
-    "windows": 52268,
-    "windows-aarch64": 57811
-  },
-  "cli/check/differential-cases-4.test.ts": {
-    "default": 49285,
-    "asan": 3476,
-    "musl": 49286,
-    "windows": 61916,
-    "windows-aarch64": 56460
-  },
-  "cli/check/differential.test.ts": {
-    "default": 34111,
-    "asan": 12775,
-    "musl": 35493,
-    "windows": 43908,
-    "windows-aarch64": 36918
-  },
-  "cli/check/entry-points.test.ts": {
-    "default": 4767,
-    "asan": 8747,
-    "musl": 4927,
-    "windows": 7204,
-    "windows-aarch64": 8812
-  },
   "cli/check/narrowing-by-property.test.ts": {
     "default": 70,
     "asan": 379,
@@ -3000,27 +2862,6 @@
     "windows": 78,
     "windows-aarch64": 107
   },
-  "cli/format/bunfig.test.ts": {
-    "default": 391,
-    "asan": 5563,
-    "musl": 385,
-    "windows": 943,
-    "windows-aarch64": 1797
-  },
-  "cli/format/conformance.test.ts": {
-    "default": 1563,
-    "asan": 2229,
-    "musl": 1711,
-    "windows": 2056,
-    "windows-aarch64": 2862
-  },
-  "cli/format/format-doctor.test.ts": {
-    "default": 124,
-    "asan": 1688,
-    "musl": 159,
-    "windows": 269,
-    "windows-aarch64": 499
-  },
   "cli/format/format.test.ts": {
     "default": 25191,
     "asan": 88578,
@@ -3028,33 +2869,12 @@
     "windows": 30461,
     "windows-aarch64": 30444
   },
-  "cli/format/glob.test.ts": {
-    "default": 395,
-    "asan": 4911,
-    "musl": 1421,
-    "windows": 1181,
-    "windows-aarch64": 2331
-  },
   "cli/format/oxfmt-cli/oxfmt-cli.test.ts": {
     "default": 419,
     "asan": 5345,
     "musl": 414,
     "windows": 1089,
     "windows-aarch64": 2254
-  },
-  "cli/format/prettier-cli/prettier-cli.test.ts": {
-    "default": 247,
-    "asan": 3383,
-    "musl": 3041,
-    "windows": 873,
-    "windows-aarch64": 2984
-  },
-  "cli/format/sort-imports.test.ts": {
-    "default": 127,
-    "asan": 1381,
-    "musl": 143,
-    "windows": 243,
-    "windows-aarch64": 415
   },
   "cli/format/sort-imports/sort-imports.test.ts": {
     "default": 1488,
@@ -3077,201 +2897,12 @@
     "windows": 2302,
     "windows-aarch64": 2956
   },
-  "cli/format/toml-layout.test.ts": {
-    "default": 65,
-    "asan": 1196,
-    "musl": 68,
-    "windows": 157,
-    "windows-aarch64": 260
-  },
-  "cli/format/toml.test.ts": {
-    "default": 48,
-    "asan": 470,
-    "musl": 54,
-    "windows": 93,
-    "windows-aarch64": 135
-  },
-  "cli/format/words.test.ts": {
-    "default": 79,
-    "asan": 848,
-    "musl": 73,
-    "windows": 139,
-    "windows-aarch64": 576
-  },
   "cli/inspect/compile-aot-inspector.test.ts": {
     "default": 770,
     "asan": 2838,
     "musl": 2076,
     "windows": 2420,
     "windows-aarch64": 1763
-  },
-  "cli/inspect/compile-bytecode-tooling.test.ts": {
-    "default": 1290,
-    "asan": 4090,
-    "musl": 690,
-    "windows": 1610,
-    "windows-aarch64": 1400
-  },
-  "cli/install/bun-install-android-seccomp.test.ts": {
-    "default": 2550,
-    "asan": 2261,
-    "musl": 3957,
-    "windows": 66,
-    "windows-aarch64": 59
-  },
-  "cli/install/bun-install-backends.test.ts": {
-    "default": 176,
-    "asan": 2226,
-    "musl": 158,
-    "windows": 2161,
-    "windows-aarch64": 5724
-  },
-  "cli/install/bun-install-cache-publish.test.ts": {
-    "default": 2569,
-    "asan": 1479,
-    "musl": 166,
-    "windows": 1498,
-    "windows-aarch64": 2361
-  },
-  "cli/install/bun-install-env-file.test.ts": {
-    "default": 241,
-    "asan": 5328,
-    "musl": 247,
-    "windows": 714,
-    "windows-aarch64": 1376
-  },
-  "cli/install/bun-install-link-path.test.ts": {
-    "default": 164,
-    "asan": 3139,
-    "musl": 197,
-    "windows": 521,
-    "windows-aarch64": 987
-  },
-  "cli/install/bun-install-non-ntfs-windows.test.ts": {
-    "default": 26,
-    "asan": 224,
-    "musl": 35,
-    "windows": 8527,
-    "windows-aarch64": 10233
-  },
-  "cli/install/bun-install-offline-misses.test.ts": {
-    "default": 331,
-    "asan": 2648,
-    "musl": 1549,
-    "windows": 1286,
-    "windows-aarch64": 3846
-  },
-  "cli/install/bun-install-package-extensions.test.ts": {
-    "default": 260,
-    "asan": 4363,
-    "musl": 308,
-    "windows": 728,
-    "windows-aarch64": 1366
-  },
-  "cli/install/bun-install-staging.test.ts": {
-    "default": 3805,
-    "asan": 7169,
-    "musl": 573,
-    "windows": 3361,
-    "windows-aarch64": 11962
-  },
-  "cli/install/bun-install-thread-spawn-failure.test.ts": {
-    "default": 2161,
-    "asan": 215,
-    "musl": 34,
-    "windows": 47,
-    "windows-aarch64": 60
-  },
-  "cli/install/bun-install-tmpdir-exdev.test.ts": {
-    "default": 63,
-    "asan": 328,
-    "musl": 35,
-    "windows": 45,
-    "windows-aarch64": 57
-  },
-  "cli/install/bun-install-windows-rename-retry.test.ts": {
-    "default": 29,
-    "asan": 228,
-    "musl": 86,
-    "windows": 3333,
-    "windows-aarch64": 3640
-  },
-  "cli/install/bun-pm-cache-pack.test.ts": {
-    "default": 873,
-    "asan": 8663,
-    "musl": 4647,
-    "windows": 4240,
-    "windows-aarch64": 7871
-  },
-  "cli/install/bun-pm-fetch.test.ts": {
-    "default": 475,
-    "asan": 14980,
-    "musl": 399,
-    "windows": 2515,
-    "windows-aarch64": 4733
-  },
-  "cli/install/bunx-concurrent.test.ts": {
-    "default": 308,
-    "asan": 967,
-    "musl": 393,
-    "windows": 802,
-    "windows-aarch64": 1503
-  },
-  "cli/install/bunx-directories-bin.test.ts": {
-    "default": 78,
-    "asan": 488,
-    "musl": 182,
-    "windows": 68,
-    "windows-aarch64": 72
-  },
-  "cli/install/dt-unknown-readdir.test.ts": {
-    "default": 2292,
-    "asan": 870,
-    "musl": 2069,
-    "windows": 46,
-    "windows-aarch64": 59
-  },
-  "cli/install/escape-control-characters.test.ts": {
-    "default": 131,
-    "asan": 2367,
-    "musl": 486,
-    "windows": 409,
-    "windows-aarch64": 921
-  },
-  "cli/install/frozen-lockfile-member-pins.test.ts": {
-    "default": 213,
-    "asan": 2353,
-    "musl": 235,
-    "windows": 775,
-    "windows-aarch64": 1380
-  },
-  "cli/install/frozen-lockfile-outdated.test.ts": {
-    "default": 606,
-    "asan": 10918,
-    "musl": 855,
-    "windows": 2476,
-    "windows-aarch64": 5244
-  },
-  "cli/install/frozen-lockfile-workspace-names.test.ts": {
-    "default": 1061,
-    "asan": 17411,
-    "musl": 1143,
-    "windows": 2959,
-    "windows-aarch64": 5918
-  },
-  "cli/install/migration/npm-arborist.test.ts": {
-    "default": 730,
-    "asan": 39450,
-    "musl": 660,
-    "windows": 1850,
-    "windows-aarch64": 3400
-  },
-  "cli/install/migration/yarn-berry.test.ts": {
-    "default": 800,
-    "asan": 9840,
-    "musl": 790,
-    "windows": 1740,
-    "windows-aarch64": 4940
   },
   "cli/lint/aot-rules.test.ts": {
     "default": 1403,
@@ -3287,26 +2918,12 @@
     "windows": 2415,
     "windows-aarch64": 3472
   },
-  "cli/lint/bunfig.test.ts": {
-    "default": 4969,
-    "asan": 225230,
-    "musl": 7717,
-    "windows": 8530,
-    "windows-aarch64": 10605
-  },
   "cli/lint/config-files.test.ts": {
     "default": 9513,
     "asan": 192662,
     "musl": 11658,
     "windows": 21083,
     "windows-aarch64": 29934
-  },
-  "cli/lint/conformance.test.ts": {
-    "default": 13457,
-    "asan": 7416,
-    "musl": 13682,
-    "windows": 6594,
-    "windows-aarch64": 6981
   },
   "cli/lint/defaults.test.ts": {
     "default": 722,
@@ -3315,68 +2932,12 @@
     "windows": 1951,
     "windows-aarch64": 3007
   },
-  "cli/lint/doctor.test.ts": {
-    "default": 240,
-    "asan": 6523,
-    "musl": 479,
-    "windows": 489,
-    "windows-aarch64": 695
-  },
-  "cli/lint/explain.test.ts": {
-    "default": 270,
-    "asan": 2400,
-    "musl": 301,
-    "windows": 471,
-    "windows-aarch64": 516
-  },
-  "cli/lint/git.test.ts": {
-    "default": 729,
-    "asan": 5427,
-    "musl": 1484,
-    "windows": 8065,
-    "windows-aarch64": 20861
-  },
-  "cli/lint/glob.test.ts": {
-    "default": 336,
-    "asan": 2789,
-    "musl": 434,
-    "windows": 527,
-    "windows-aarch64": 795
-  },
-  "cli/lint/help.test.ts": {
-    "default": 474,
-    "asan": 4845,
-    "musl": 637,
-    "windows": 838,
-    "windows-aarch64": 1473
-  },
   "cli/lint/hints.test.ts": {
     "default": 280,
     "asan": 3064,
     "musl": 244,
     "windows": 585,
     "windows-aarch64": 747
-  },
-  "cli/lint/import-attributes.test.ts": {
-    "default": 147,
-    "asan": 6094,
-    "musl": 97,
-    "windows": 140,
-    "windows-aarch64": 198
-  },
-  "cli/lint/init.test.ts": {
-    "default": 279,
-    "asan": 4443,
-    "musl": 270,
-    "windows": 608,
-    "windows-aarch64": 1011
-  },
-  "cli/lint/js-parsers.test.ts": {
-    "default": 2912,
-    "asan": 83937,
-    "musl": 3347,
-    "windows": 4755,
-    "windows-aarch64": 6958
   },
   "cli/lint/js-plugins.test.ts": {
     "default": 4325,
@@ -3385,103 +2946,12 @@
     "windows": 6247,
     "windows-aarch64": 7165
   },
-  "cli/lint/json-parse.test.ts": {
-    "default": 381,
-    "asan": 7799,
-    "musl": 451,
-    "windows": 624,
-    "windows-aarch64": 681
-  },
-  "cli/lint/lint.test.ts": {
-    "default": 12529,
-    "asan": 192314,
-    "musl": 16762,
-    "windows": 25258,
-    "windows-aarch64": 42792
-  },
-  "cli/lint/messages.test.ts": {
-    "default": 86,
-    "asan": 6599,
-    "musl": 101,
-    "windows": 177,
-    "windows-aarch64": 268
-  },
-  "cli/lint/native-rules.test.ts": {
-    "default": 1407,
-    "asan": 29080,
-    "musl": 1456,
-    "windows": 2301,
-    "windows-aarch64": 3564
-  },
-  "cli/lint/output.test.ts": {
-    "default": 215,
-    "asan": 1978,
-    "musl": 211,
-    "windows": 316,
-    "windows-aarch64": 436
-  },
-  "cli/lint/oxc-errors.test.ts": {
-    "default": 178,
-    "asan": 7005,
-    "musl": 494,
-    "windows": 536,
-    "windows-aarch64": 1049
-  },
-  "cli/lint/oxc-names.test.ts": {
-    "default": 375,
-    "asan": 2586,
-    "musl": 2581,
-    "windows": 2083,
-    "windows-aarch64": 4132
-  },
-  "cli/lint/prettier-rule.test.ts": {
-    "default": 391,
-    "asan": 21630,
-    "musl": 439,
-    "windows": 710,
-    "windows-aarch64": 968
-  },
   "cli/lint/react-compiler.test.ts": {
     "default": 496,
     "asan": 3684,
     "musl": 485,
     "windows": 548,
     "windows-aarch64": 582
-  },
-  "cli/lint/robustness.test.ts": {
-    "default": 4370,
-    "asan": 3432,
-    "musl": 4433,
-    "windows": 4849,
-    "windows-aarch64": 4241
-  },
-  "cli/lint/rule-docs.test.ts": {
-    "default": 3726,
-    "asan": 15073,
-    "musl": 9811,
-    "windows": 7345,
-    "windows-aarch64": 12225
-  },
-  "cli/lint/rule-throws.test.ts": {
-    "default": 524,
-    "asan": 67614,
-    "musl": 494,
-    "windows": 874,
-    "windows-aarch64": 970
-  },
-  "cli/lint/rules.test.ts": {
-    "default": 643,
-    "asan": 2583,
-    "musl": 5274,
-    "windows": 3159,
-    "windows-aarch64": 6656
-  },
-  "cli/lint/scanner.test.ts": {
-    "default": 150,
-    "asan": 6475,
-    "musl": 95,
-    "windows": 321,
-    "windows-aarch64": 608
   },
   "cli/run/require-main-in-an-expression.test.ts": {
     "default": 30,
@@ -3525,26 +2995,12 @@
     "windows": 9481,
     "windows-aarch64": 12294
   },
-  "internal/build-cli-config-flags.test.ts": {
-    "default": 260,
-    "asan": 1330,
-    "musl": 500,
-    "windows": 300,
-    "windows-aarch64": 410
-  },
   "internal/build-cmake-lists.test.ts": {
     "default": 220,
     "asan": 340,
     "musl": 60,
     "windows": 100,
     "windows-aarch64": 130
-  },
-  "internal/build-link-lazy-objects.test.ts": {
-    "default": 60,
-    "asan": 300,
-    "musl": 100,
-    "windows": 80,
-    "windows-aarch64": 80
   },
   "internal/build-local-webkit.test.ts": {
     "default": 270,
@@ -3553,82 +3009,12 @@
     "windows": 462,
     "windows-aarch64": 1083
   },
-  "internal/build-rust-units.test.ts": {
-    "default": 50,
-    "asan": 560,
-    "musl": 60,
-    "windows": 70,
-    "windows-aarch64": 90
-  },
-  "internal/build-timings.test.ts": {
-    "default": 200,
-    "asan": 1140,
-    "musl": 100,
-    "windows": 110,
-    "windows-aarch64": 260
-  },
-  "internal/build-toolchain-identity.test.ts": {
-    "default": 210,
-    "asan": 1370,
-    "musl": 150,
-    "windows": 50,
-    "windows-aarch64": 50
-  },
   "internal/builtins-target.test.ts": {
     "default": 6280,
     "asan": 24420,
     "musl": 4160,
     "windows": 5780,
     "windows-aarch64": 5680
-  },
-  "internal/ci-slowest-tests.test.ts": {
-    "default": 210,
-    "asan": 220,
-    "musl": 40,
-    "windows": 40,
-    "windows-aarch64": 50
-  },
-  "internal/harness-max-rss.test.ts": {
-    "default": 364,
-    "asan": 1004,
-    "musl": 258,
-    "windows": 316,
-    "windows-aarch64": 214
-  },
-  "internal/install-ps1.test.ts": {
-    "default": 30,
-    "asan": 230,
-    "musl": 60,
-    "windows": 5000,
-    "windows-aarch64": 5490
-  },
-  "internal/prestart-map.test.ts": {
-    "default": 3860,
-    "asan": 510,
-    "musl": 90,
-    "windows": 230,
-    "windows-aarch64": 510
-  },
-  "js/bun/compile/jit-policy.test.ts": {
-    "default": 950,
-    "asan": 1950,
-    "musl": 560,
-    "windows": 2130,
-    "windows-aarch64": 1450
-  },
-  "js/bun/gc/error-stack-finalizer-exception.test.ts": {
-    "default": 70,
-    "asan": 2000,
-    "musl": 80,
-    "windows": 130,
-    "windows-aarch64": 300
-  },
-  "js/bun/http/node-http-pipeline-callbacks.test.ts": {
-    "default": 50,
-    "asan": 190,
-    "musl": 40,
-    "windows": 40,
-    "windows-aarch64": 60
   },
   "js/bun/jsc/sealed-global-object-error-message.test.ts": {
     "default": 70,
@@ -3637,54 +3023,12 @@
     "windows": 100,
     "windows-aarch64": 140
   },
-  "js/bun/jsc/webkit-upgrade-23b0720b40.test.ts": {
-    "default": 50,
-    "asan": 280,
-    "musl": 30,
-    "windows": 50,
-    "windows-aarch64": 60
-  },
-  "js/bun/jsc/webkit-upgrade-7b485a76e9.test.ts": {
-    "default": 220,
-    "asan": 1350,
-    "musl": 320,
-    "windows": 350,
-    "windows-aarch64": 640
-  },
-  "js/bun/jsc/webkit-upgrade-9b02218df6.test.ts": {
-    "default": 20,
-    "asan": 260,
-    "musl": 30,
-    "windows": 50,
-    "windows-aarch64": 60
-  },
-  "js/bun/jsc/webkit-upgrade-ccdcb8a026.test.ts": {
-    "default": 60,
-    "asan": 620,
-    "musl": 70,
-    "windows": 130,
-    "windows-aarch64": 200
-  },
   "js/bun/jsc/webkit-upgrade-dbdca7545d.test.ts": {
     "default": 150,
     "asan": 1050,
     "musl": 60,
     "windows": 1130,
     "windows-aarch64": 200
-  },
-  "js/bun/jsc/webkit-upgrade-df289ce551.test.ts": {
-    "default": 50,
-    "asan": 390,
-    "musl": 50,
-    "windows": 60,
-    "windows-aarch64": 80
-  },
-  "js/bun/module-graph/module-graph-callbacks.test.ts": {
-    "default": 196,
-    "asan": 7673,
-    "musl": 180,
-    "windows": 240,
-    "windows-aarch64": 359
   },
   "js/bun/module-graph/module-graph-compile.test.ts": {
     "default": 4460,
@@ -3700,110 +3044,12 @@
     "windows": 3143,
     "windows-aarch64": 4180
   },
-  "js/bun/module-graph/module-graph-io.test.ts": {
-    "default": 192,
-    "asan": 12270,
-    "musl": 219,
-    "windows": 290,
-    "windows-aarch64": 404
-  },
   "js/bun/module-graph/module-graph-isolation.test.ts": {
     "default": 5756,
     "asan": 21221,
     "musl": 6126,
     "windows": 7585,
     "windows-aarch64": 8665
-  },
-  "js/bun/module-graph/module-graph-matrix.test.ts": {
-    "default": 2092,
-    "asan": 19502,
-    "musl": 2184,
-    "windows": 2962,
-    "windows-aarch64": 4080
-  },
-  "js/bun/module-graph/module-graph-workers.test.ts": {
-    "default": 19776,
-    "asan": 47804,
-    "musl": 23040,
-    "windows": 79605,
-    "windows-aarch64": 63215
-  },
-  "js/bun/module-graph/module-graph.test.ts": {
-    "default": 1857,
-    "asan": 11810,
-    "musl": 2021,
-    "windows": 3362,
-    "windows-aarch64": 5530
-  },
-  "js/bun/net/tls-fatal-error-closes.test.ts": {
-    "default": 230,
-    "asan": 2130,
-    "musl": 210,
-    "windows": 370,
-    "windows-aarch64": 570
-  },
-  "js/bun/net/tls-reject-before-client-cert.test.ts": {
-    "default": 790,
-    "asan": 4020,
-    "musl": 930,
-    "windows": 850,
-    "windows-aarch64": 1230
-  },
-  "js/bun/resolve/dynamic-import-evaluation-error-gc.test.ts": {
-    "default": 520,
-    "asan": 4130,
-    "musl": 600,
-    "windows": 30,
-    "windows-aarch64": 30
-  },
-  "js/bun/s3/s3-networksink-leak.test.ts": {
-    "default": 32,
-    "asan": 686,
-    "musl": 38,
-    "windows": 66,
-    "windows-aarch64": 93
-  },
-  "js/bun/s3/s3-upload-abort.test.ts": {
-    "default": 120,
-    "asan": 567,
-    "musl": 93,
-    "windows": 146,
-    "windows-aarch64": 169
-  },
-  "js/bun/s3/s3-upload-memory.test.ts": {
-    "default": 517,
-    "asan": 925,
-    "musl": 414,
-    "windows": 681,
-    "windows-aarch64": 802
-  },
-  "js/bun/spawn/spawn-pidfd-emfile.test.ts": {
-    "default": 50,
-    "asan": 620,
-    "musl": 60,
-    "windows": 30,
-    "windows-aarch64": 60
-  },
-  "js/bun/spawn/spawn-stdio-syscall-error.test.ts": {
-    "default": 220,
-    "asan": 1740,
-    "musl": 170,
-    "windows": 30,
-    "windows-aarch64": 40
-  },
-  "js/bun/spawn/spawn-sync-loop-init-fail.test.ts": {
-    "default": 40,
-    "asan": 440,
-    "musl": 30,
-    "windows": 20,
-    "windows-aarch64": 30
-  },
-  "js/bun/test/pretty-format-overridden-size.test.ts": {
-    "default": 70,
-    "asan": 260,
-    "musl": 40,
-    "windows": 60,
-    "windows-aarch64": 70
   },
   "js/bun/test/snapshot-tests/property-matchers.test.ts": {
     "default": 50,
@@ -3812,250 +3058,12 @@
     "windows": 50,
     "windows-aarch64": 40
   },
-  "js/bun/transpiler/transpiler-enum-concat-chain-oom.test.ts": {
-    "default": 80,
-    "asan": 340,
-    "musl": 30,
-    "windows": 50,
-    "windows-aarch64": 60
-  },
-  "js/bun/util/error-message-string-length-limit.test.ts": {
-    "default": 20,
-    "asan": 7590,
-    "musl": 2130,
-    "windows": 1880,
-    "windows-aarch64": 1020
-  },
-  "js/bun/util/utf8-conversion-limit.test.ts": {
-    "default": 30,
-    "asan": 3050,
-    "musl": 1970,
-    "windows": 2020,
-    "windows-aarch64": 940
-  },
-  "js/bun/wasm/compile-rss.test.ts": {
-    "default": 551,
-    "asan": 226,
-    "musl": 619,
-    "windows": 589,
-    "windows-aarch64": 707
-  },
-  "js/bun/websocket/websocket-server-fail-close-codes.test.ts": {
-    "default": 370,
-    "asan": 2260,
-    "musl": 430,
-    "windows": 890,
-    "windows-aarch64": 1080
-  },
-  "js/bun/websocket/websocket-server-forced-close.test.ts": {
-    "default": 190,
-    "asan": 900,
-    "musl": 140,
-    "windows": 130,
-    "windows-aarch64": 150
-  },
-  "js/bun/websocket/websocket-server-permessage-deflate.test.ts": {
-    "default": 270,
-    "asan": 2710,
-    "musl": 240,
-    "windows": 330,
-    "windows-aarch64": 370
-  },
-  "js/bun/websocket/websocket-server-upgrade-early-frames.test.ts": {
-    "default": 90,
-    "asan": 480,
-    "musl": 90,
-    "windows": 180,
-    "windows-aarch64": 120
-  },
-  "js/first_party/ws/ws-client-compat-agent.test.ts": {
-    "default": 1140,
-    "asan": 7140,
-    "musl": 1430,
-    "windows": 1230,
-    "windows-aarch64": 1970
-  },
-  "js/first_party/ws/ws-client-compat-close.test.ts": {
-    "default": 870,
-    "asan": 6940,
-    "musl": 950,
-    "windows": 1250,
-    "windows-aarch64": 1460
-  },
-  "js/first_party/ws/ws-client-compat-events.test.ts": {
-    "default": 1380,
-    "asan": 27530,
-    "musl": 1340,
-    "windows": 1450,
-    "windows-aarch64": 1750
-  },
-  "js/first_party/ws/ws-client-compat-handshake.test.ts": {
-    "default": 17480,
-    "asan": 24730,
-    "musl": 17810,
-    "windows": 18580,
-    "windows-aarch64": 18720
-  },
-  "js/first_party/ws/ws-client-compat-receive.test.ts": {
-    "default": 810,
-    "asan": 5620,
-    "musl": 860,
-    "windows": 1070,
-    "windows-aarch64": 1400
-  },
-  "js/first_party/ws/ws-client-compat-request.test.ts": {
-    "default": 570,
-    "asan": 5310,
-    "musl": 760,
-    "windows": 880,
-    "windows-aarch64": 950
-  },
-  "js/first_party/ws/ws-client-compat-response.test.ts": {
-    "default": 8400,
-    "asan": 10990,
-    "musl": 8430,
-    "windows": 8820,
-    "windows-aarch64": 8610
-  },
-  "js/first_party/ws/ws-client-compat-send.test.ts": {
-    "default": 900,
-    "asan": 3470,
-    "musl": 960,
-    "windows": 890,
-    "windows-aarch64": 1090
-  },
-  "js/first_party/ws/ws-compat-shape.test.ts": {
-    "default": 460,
-    "asan": 2830,
-    "musl": 730,
-    "windows": 800,
-    "windows-aarch64": 1160
-  },
-  "js/first_party/ws/ws-server-compat-close.test.ts": {
-    "default": 980,
-    "asan": 9970,
-    "musl": 820,
-    "windows": 1510,
-    "windows-aarch64": 2590
-  },
-  "js/first_party/ws/ws-server-compat-events.test.ts": {
-    "default": 540,
-    "asan": 4530,
-    "musl": 760,
-    "windows": 510,
-    "windows-aarch64": 890
-  },
-  "js/first_party/ws/ws-server-compat-handshake.test.ts": {
-    "default": 580,
-    "asan": 3580,
-    "musl": 960,
-    "windows": 1350,
-    "windows-aarch64": 2460
-  },
-  "js/first_party/ws/ws-server-compat-receive.test.ts": {
-    "default": 910,
-    "asan": 17240,
-    "musl": 1070,
-    "windows": 1230,
-    "windows-aarch64": 2240
-  },
-  "js/first_party/ws/ws-server-compat-send.test.ts": {
-    "default": 1850,
-    "asan": 54230,
-    "musl": 2110,
-    "windows": 1260,
-    "windows-aarch64": 1500
-  },
-  "js/first_party/ws/ws-server-compat-transports.test.ts": {
-    "default": 10110,
-    "asan": 8670,
-    "musl": 1410,
-    "windows": 2480,
-    "windows-aarch64": 3110
-  },
-  "js/first_party/ws/ws-stream-compat.test.ts": {
-    "default": 420,
-    "asan": 10260,
-    "musl": 480,
-    "windows": 660,
-    "windows-aarch64": 710
-  },
-  "js/first_party/ws/ws-stream-transport.test.ts": {
-    "default": 1690,
-    "asan": 11340,
-    "musl": 2310,
-    "windows": 2190,
-    "windows-aarch64": 2140
-  },
-  "js/node/crypto/hkdf-zero-length.test.ts": {
-    "default": 30,
-    "asan": 200,
-    "musl": 40,
-    "windows": 30,
-    "windows-aarch64": 40
-  },
-  "js/node/disallow-code-generation-from-strings.test.ts": {
-    "default": 4210,
-    "asan": 6370,
-    "musl": 1900,
-    "windows": 4300,
-    "windows-aarch64": 3180
-  },
-  "js/node/dns/dns-resolver-class.test.ts": {
-    "default": 70,
-    "asan": 190,
-    "musl": 40,
-    "windows": 40,
-    "windows-aarch64": 40
-  },
-  "js/node/fs/fs-eintr-darwin.test.ts": {
-    "default": 50,
-    "asan": 100,
-    "musl": 20,
-    "windows": 30,
-    "windows-aarch64": 20
-  },
-  "js/node/fs/fs-open-cloexec.test.ts": {
-    "default": 40,
-    "asan": 260,
-    "musl": 160,
-    "windows": 30,
-    "windows-aarch64": 20
-  },
-  "js/node/fs/fs-read-buffer-before-offset.test.ts": {
-    "default": 80,
-    "asan": 170,
-    "musl": 40,
-    "windows": 30,
-    "windows-aarch64": 30
-  },
-  "js/node/http/node-http-agent-free-socket.test.ts": {
-    "default": 240,
-    "asan": 640,
-    "musl": 290,
-    "windows": 350,
-    "windows-aarch64": 470
-  },
-  "js/node/http/node-http-displaced-response.test.ts": {
-    "default": 700,
-    "asan": 16170,
-    "musl": 650,
-    "windows": 1000,
-    "windows-aarch64": 1220
-  },
   "js/node/http/node-http-incoming-socket.test.ts": {
     "default": 100,
     "asan": 380,
     "musl": 120,
     "windows": 90,
     "windows-aarch64": 80
-  },
-  "js/node/http/node-http-maxHeadersCount.test.ts": {
-    "default": 440,
-    "asan": 1220,
-    "musl": 640,
-    "windows": 540,
-    "windows-aarch64": 590
   },
   "js/node/http/node-http-own-keys-in-nodes-order.test.ts": {
     "default": 60,
@@ -4064,54 +3072,12 @@
     "windows": 80,
     "windows-aarch64": 70
   },
-  "js/node/http/node-http-req-complete.test.ts": {
-    "default": 360,
-    "asan": 1080,
-    "musl": 380,
-    "windows": 580,
-    "windows-aarch64": 570
-  },
   "js/node/http/node-http-server-close-drain.test.ts": {
     "default": 1490,
     "asan": 3020,
     "musl": 1540,
     "windows": 520,
     "windows-aarch64": 510
-  },
-  "js/node/http/node-http-upgrade-body.test.ts": {
-    "default": 220,
-    "asan": 28970,
-    "musl": 250,
-    "windows": 260,
-    "windows-aarch64": 300
-  },
-  "js/node/http/node-https-agent-checkserveridentity-reuse.test.ts": {
-    "default": 630,
-    "asan": 2720,
-    "musl": 540,
-    "windows": 1090,
-    "windows-aarch64": 990
-  },
-  "js/node/http/node-https-server.test.ts": {
-    "default": 890,
-    "asan": 10090,
-    "musl": 690,
-    "windows": 910,
-    "windows-aarch64": 1070
-  },
-  "js/node/http2/node-http2-client-close.test.ts": {
-    "default": 580,
-    "asan": 1450,
-    "musl": 120,
-    "windows": 930,
-    "windows-aarch64": 1060
-  },
-  "js/node/http2/node-http2-settings-ack-ordering.test.ts": {
-    "default": 70,
-    "asan": 280,
-    "musl": 50,
-    "windows": 40,
-    "windows-aarch64": 70
   },
   "js/node/path/posix-as-node.test.ts": {
     "default": 2907,
@@ -4141,187 +3107,12 @@
     "windows": 290,
     "windows-aarch64": 310
   },
-  "js/node/test/parallel/test-http-agent-free-socket-data-guard.js": {
-    "default": 3,
-    "asan": 91,
-    "musl": 21,
-    "windows": 39,
-    "windows-aarch64": 51
-  },
-  "js/node/test/parallel/test-http-max-headers-count-overflow.js": {
-    "default": 19,
-    "asan": 99,
-    "musl": 3,
-    "windows": 22,
-    "windows-aarch64": 64
-  },
-  "js/node/test/parallel/test-http-parser-max-header-pairs-cache.js": {
-    "default": 28,
-    "asan": 229,
-    "musl": 25,
-    "windows": 55,
-    "windows-aarch64": 14
-  },
-  "js/node/test/parallel/test-http-raw-headers.js": {
-    "default": 50,
-    "asan": 371,
-    "musl": 91,
-    "windows": 22,
-    "windows-aarch64": 60
-  },
-  "js/node/test/parallel/test-http-response-drain-cork.js": {
-    "default": 49,
-    "asan": 500,
-    "musl": 52,
-    "windows": 43,
-    "windows-aarch64": 61
-  },
-  "js/node/test/parallel/test-http-server-close-idle-connections-pre-request.js": {
-    "default": 500,
-    "asan": 59,
-    "musl": 17,
-    "windows": 58,
-    "windows-aarch64": 12
-  },
-  "js/node/test/parallel/test-https-proxy-request-invalid-tls-options.mjs": {
-    "default": 59,
-    "asan": 500,
-    "musl": 101,
-    "windows": 89,
-    "windows-aarch64": 16
-  },
-  "js/node/tls/node-tls-duplex-end-verify.test.ts": {
-    "default": 670,
-    "asan": 2070,
-    "musl": 990,
-    "windows": 1940,
-    "windows-aarch64": 1810
-  },
-  "js/node/tls/node-tls-raw-end.test.ts": {
-    "default": 40,
-    "asan": 1040,
-    "musl": 40,
-    "windows": 60,
-    "windows-aarch64": 360
-  },
-  "js/node/tls/node-tls-wrapped-socket-close.test.ts": {
-    "default": 1310,
-    "asan": 4940,
-    "musl": 1640,
-    "windows": 1800,
-    "windows-aarch64": 3500
-  },
-  "js/sql/postgres-array-params.test.ts": {
-    "default": 301,
-    "asan": 1130,
-    "musl": 346,
-    "windows": 53,
-    "windows-aarch64": 80
-  },
-  "js/sql/postgres-auth.test.ts": {
-    "default": 723,
-    "asan": 1407,
-    "musl": 443,
-    "windows": 251,
-    "windows-aarch64": 381
-  },
-  "js/sql/postgres-bind-encode-throw.test.ts": {
-    "default": 113,
-    "asan": 776,
-    "musl": 359,
-    "windows": 70,
-    "windows-aarch64": 99
-  },
-  "js/sql/postgres-bind-wire.test.ts": {
-    "default": 150,
-    "asan": 1030,
-    "musl": 180,
-    "windows": 270,
-    "windows-aarch64": 440
-  },
-  "js/sql/postgres-bind.test.ts": {
-    "default": 992,
-    "asan": 1972,
-    "musl": 976,
-    "windows": 67,
-    "windows-aarch64": 61
-  },
-  "js/sql/postgres-bytea-bind.test.ts": {
-    "default": 652,
-    "asan": 685,
-    "musl": 345,
-    "windows": 55,
-    "windows-aarch64": 68
-  },
   "js/sql/postgres-connection.test.ts": {
     "default": 4316,
     "asan": 6194,
     "musl": 4067,
     "windows": 1220,
     "windows-aarch64": 1290
-  },
-  "js/sql/postgres-copy.test.ts": {
-    "default": 1609,
-    "asan": 3136,
-    "musl": 1596,
-    "windows": 101,
-    "windows-aarch64": 120
-  },
-  "js/sql/postgres-decode.test.ts": {
-    "default": 907,
-    "asan": 1982,
-    "musl": 401,
-    "windows": 53,
-    "windows-aarch64": 60
-  },
-  "js/sql/postgres-dispatch.test.ts": {
-    "default": 646,
-    "asan": 913,
-    "musl": 218,
-    "windows": 171,
-    "windows-aarch64": 230
-  },
-  "js/sql/postgres-row-decode-error.test.ts": {
-    "default": 594,
-    "asan": 560,
-    "musl": 452,
-    "windows": 81,
-    "windows-aarch64": 107
-  },
-  "js/sql/sql-begin-commit-rolled-back.test.ts": {
-    "default": 369,
-    "asan": 303,
-    "musl": 489,
-    "windows": 57,
-    "windows-aarch64": 67
-  },
-  "js/sql/sql-errors.test.ts": {
-    "default": 434,
-    "asan": 916,
-    "musl": 737,
-    "windows": 64,
-    "windows-aarch64": 77
-  },
-  "js/sql/sql-handles-servers.test.ts": {
-    "default": 886,
-    "asan": 1961,
-    "musl": 374,
-    "windows": 105,
-    "windows-aarch64": 146
-  },
-  "js/sql/sql-handles.test.ts": {
-    "default": 800,
-    "asan": 4860,
-    "musl": 770,
-    "windows": 1150,
-    "windows-aarch64": 2640
-  },
-  "js/sql/sql-hot-reload.test.ts": {
-    "default": 1949,
-    "asan": 3920,
-    "musl": 1268,
-    "windows": 67,
-    "windows-aarch64": 77
   },
   "js/sql/sql-mysql-connection.test.ts": {
     "default": 1448,
@@ -4330,299 +3121,12 @@
     "windows": 88,
     "windows-aarch64": 119
   },
-  "js/sql/sql-mysql-packet-overrun.test.ts": {
-    "default": 64,
-    "asan": 346,
-    "musl": 73,
-    "windows": 96,
-    "windows-aarch64": 120
-  },
   "js/sql/sql-mysql-queued-query-failure.test.ts": {
     "default": 314,
     "asan": 777,
     "musl": 303,
     "windows": 60,
     "windows-aarch64": 70
-  },
-  "js/sql/sql-mysql-row-decode-error.test.ts": {
-    "default": 66,
-    "asan": 381,
-    "musl": 85,
-    "windows": 87,
-    "windows-aarch64": 114
-  },
-  "js/sql/sql-mysql-values.test.ts": {
-    "default": 583,
-    "asan": 1546,
-    "musl": 366,
-    "windows": 57,
-    "windows-aarch64": 71
-  },
-  "js/sql/sql-options.test.ts": {
-    "default": 300,
-    "asan": 2190,
-    "musl": 190,
-    "windows": 320,
-    "windows-aarch64": 3140
-  },
-  "js/sql/sql-pool.test.ts": {
-    "default": 1251,
-    "asan": 3363,
-    "musl": 1157,
-    "windows": 874,
-    "windows-aarch64": 1064
-  },
-  "js/sql/sql-query-building.test.ts": {
-    "default": 907,
-    "asan": 1690,
-    "musl": 467,
-    "windows": 117,
-    "windows-aarch64": 138
-  },
-  "js/sql/sql-result-columns.test.ts": {
-    "default": 621,
-    "asan": 1011,
-    "musl": 209,
-    "windows": 73,
-    "windows-aarch64": 107
-  },
-  "js/sql/sql-tls-ip-literal-host.test.ts": {
-    "default": 260,
-    "asan": 1640,
-    "musl": 210,
-    "windows": 500,
-    "windows-aarch64": 530
-  },
-  "js/sql/sql-tls-server-identity.test.ts": {
-    "default": 212,
-    "asan": 751,
-    "musl": 249,
-    "windows": 202,
-    "windows-aarch64": 298
-  },
-  "js/sql/sql-transform.test.ts": {
-    "default": 308,
-    "asan": 1612,
-    "musl": 483,
-    "windows": 167,
-    "windows-aarch64": 233
-  },
-  "js/web/broadcastchannel/broadcast-channel-new-target.test.ts": {
-    "default": 20,
-    "asan": 690,
-    "musl": 30,
-    "windows": 40,
-    "windows-aarch64": 80
-  },
-  "js/web/fetch/fetch-chunked-size.test.ts": {
-    "default": 60,
-    "asan": 330,
-    "musl": 80,
-    "windows": 70,
-    "windows-aarch64": 70
-  },
-  "js/web/fetch/fetch-session.test.ts": {
-    "default": 7700,
-    "asan": 9490,
-    "musl": 8220,
-    "windows": 8210,
-    "windows-aarch64": 6380
-  },
-  "js/web/fetch/fetch.tls.ipv6.test.ts": {
-    "default": 20,
-    "asan": 90,
-    "musl": 20,
-    "windows": 70,
-    "windows-aarch64": 80
-  },
-  "js/web/websocket/websocket-new-target.test.ts": {
-    "default": 40,
-    "asan": 260,
-    "musl": 130,
-    "windows": 170,
-    "windows-aarch64": 270
-  },
-  "js/web/websocket/websocket-proxy-connect-reply.test.ts": {
-    "default": 188,
-    "asan": 803,
-    "musl": 139,
-    "windows": 193,
-    "windows-aarch64": 261
-  },
-  "js/web/websocket/websocket.tls.ipv6.test.ts": {
-    "default": 60,
-    "asan": 90,
-    "musl": 30,
-    "windows": 50,
-    "windows-aarch64": 60
-  },
-  "package.json": {
-    "default": 19575,
-    "asan": 25205,
-    "musl": 66575,
-    "windows": 62026,
-    "windows-aarch64": 33946
-  },
-  "packages/registry/test/auth.test.ts": {
-    "default": 83,
-    "asan": 535,
-    "musl": 92,
-    "windows": 139,
-    "windows-aarch64": 148
-  },
-  "packages/registry/test/cli.test.ts": {
-    "default": 1201,
-    "asan": 2710,
-    "musl": 1217,
-    "windows": 1337,
-    "windows-aarch64": 1473
-  },
-  "packages/registry/test/publish.test.ts": {
-    "default": 201,
-    "asan": 1001,
-    "musl": 183,
-    "windows": 285,
-    "windows-aarch64": 401
-  },
-  "packages/registry/test/read.test.ts": {
-    "default": 151,
-    "asan": 1175,
-    "musl": 166,
-    "windows": 215,
-    "windows-aarch64": 321
-  },
-  "packages/s3-server/test/access.test.ts": {
-    "default": 404,
-    "asan": 2324,
-    "musl": 408,
-    "windows": 521,
-    "windows-aarch64": 746
-  },
-  "packages/s3-server/test/auth.test.ts": {
-    "default": 402,
-    "asan": 2590,
-    "musl": 407,
-    "windows": 505,
-    "windows-aarch64": 736
-  },
-  "packages/s3-server/test/bucket.test.ts": {
-    "default": 258,
-    "asan": 1659,
-    "musl": 282,
-    "windows": 326,
-    "windows-aarch64": 506
-  },
-  "packages/s3-server/test/cors.test.ts": {
-    "default": 82,
-    "asan": 721,
-    "musl": 87,
-    "windows": 132,
-    "windows-aarch64": 164
-  },
-  "packages/s3-server/test/list.test.ts": {
-    "default": 427,
-    "asan": 2915,
-    "musl": 463,
-    "windows": 559,
-    "windows-aarch64": 812
-  },
-  "packages/s3-server/test/multipart.test.ts": {
-    "default": 1072,
-    "asan": 4220,
-    "musl": 1126,
-    "windows": 1306,
-    "windows-aarch64": 1360
-  },
-  "packages/s3-server/test/object.test.ts": {
-    "default": 677,
-    "asan": 4138,
-    "musl": 759,
-    "windows": 873,
-    "windows-aarch64": 1269
-  },
-  "packages/s3-server/test/policy.test.ts": {
-    "default": 698,
-    "asan": 7090,
-    "musl": 738,
-    "windows": 1183,
-    "windows-aarch64": 1431
-  },
-  "packages/s3-server/test/post-object.test.ts": {
-    "default": 330,
-    "asan": 2338,
-    "musl": 379,
-    "windows": 470,
-    "windows-aarch64": 638
-  },
-  "packages/s3-server/test/server.test.ts": {
-    "default": 289,
-    "asan": 1297,
-    "musl": 297,
-    "windows": 351,
-    "windows-aarch64": 428
-  },
-  "packages/s3-server/test/versioning.test.ts": {
-    "default": 265,
-    "asan": 1493,
-    "musl": 299,
-    "windows": 340,
-    "windows-aarch64": 534
-  },
-  "regression/issue/17190.test.ts": {
-    "default": 60,
-    "asan": 240,
-    "musl": 50,
-    "windows": 40,
-    "windows-aarch64": 50
-  },
-  "regression/issue/30621.test.ts": {
-    "default": 30,
-    "asan": 370,
-    "musl": 40,
-    "windows": 70,
-    "windows-aarch64": 100
-  },
-  "regression/issue/39838.test.ts": {
-    "default": 130,
-    "asan": 450,
-    "musl": 150,
-    "windows": 300,
-    "windows-aarch64": 160
-  },
-  "regression/issue/40350.test.ts": {
-    "default": 160,
-    "asan": 460,
-    "musl": 80,
-    "windows": 270,
-    "windows-aarch64": 110
-  },
-  "regression/issue/40401.test.ts": {
-    "default": 50,
-    "asan": 220,
-    "musl": 60,
-    "windows": 60,
-    "windows-aarch64": 50
-  },
-  "regression/issue/42989.test.ts": {
-    "default": 12030,
-    "asan": 12250,
-    "musl": 12030,
-    "windows": 12190,
-    "windows-aarch64": 12110
-  },
-  "regression/issue/43831.test.ts": {
-    "default": 20,
-    "asan": 190,
-    "musl": 30,
-    "windows": 100,
-    "windows-aarch64": 180
-  },
-  "regression/issue/44275.test.ts": {
-    "default": 40,
-    "asan": 650,
-    "musl": 40,
-    "windows": 70,
-    "windows-aarch64": 290
   },
   "bake/app-options.test.ts": {
     "default": 40,

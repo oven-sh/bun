@@ -1,5 +1,4 @@
 export * from "./runtime";
-export { __validate } from "./js/internal/validation.ts";
 
 // TODO: these are duplicated from bundle_v2.js, can we ... not do that?
 export var __using = (stack, value, async) => {

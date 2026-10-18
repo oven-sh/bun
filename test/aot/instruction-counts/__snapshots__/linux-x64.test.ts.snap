@@ -1,5 +1,19 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`assigns an object of unknown type to a new object whose three optional fields are absent 1`] = `
+"typed, function: 1165.17 instructions (the runtime 1082, kernel 39.88, stub AllocateTypedObject 17, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 425 bytes
+typed, module level: 1164.88 instructions (the runtime 1082, module 39.88, stub AllocateTypedObject 17, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1632 bytes
+untyped, function: 761.17 instructions (the runtime 602, kernel 54.88, stub GetById 28, stub NewObjectFromDescriptor1 21, stub Add 16, stub OperationVoidWithInstance 14, elsewhere 13, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 463 bytes
+untyped, module level: 731.88 instructions (the runtime 602, module 30.88, stub NewObjectFromDescriptor1 21, stub GetTwoByName 19, stub Add 16, stub OperationVoidWithInstance 14, elsewhere 13, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub ReadOutOfLineByName 4, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1414 bytes"
+`;
+
+exports[`constructs an heir of a class of 45 fields whose prototype may gain members and whose last three fields are optional 1`] = `
+"typed, function: 305.48 instructions (Core 192, the runtime 56.77, kernel 28.38, stub AllocateTypedObject 18.30, stub TypedClosureInR8 8, elsewhere 1.73, module 0.30), 238 bytes
+typed, module level: 302.50 instructions (Core 192, the runtime 56.10, module 26.38, stub AllocateTypedObject 18.30, stub TypedClosureInR8 8, elsewhere 1.73), 1473 bytes
+untyped, function: 375.56 instructions (Core 114, stub NewObjectLiteral0 108.08, the runtime 49.35, kernel 45.42, stub NewTypedClosure1 21, stub PutByNameWithDirectColumn 14, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub TypedClosureInRCX 8, elsewhere 4.86, stub FrontEndNewObjectLiteral 0.55, module 0.30), 792 bytes
+untyped, module level: 363.65 instructions (Core 114, stub NewObjectLiteral0 108.08, module 42.42, the runtime 40.39, stub NewTypedClosure1 21, stub PutByNameWithDirectColumn 14, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub TypedClosureInRCX 8, elsewhere 5.21, stub FrontEndNewObjectLiteral 0.55), 1985 bytes"
+`;
+
 exports[`parses an order of ten items, written in another order than the type declares, with JSON.parse<T>() and adds up its items 1`] = `
 "typed, function: 6981.10 instructions (validate 2978.20, the runtime 2722.25, kernel 412.20, elsewhere 315.90, stub AllocateTypedObject 206.60, stub PlainOperationWithInstance 130, stub NewEmptyArrayWithCapacity 70, stub RegExpTestWithFastPath 65, stub PlainOperationWithInstance to operationAOTTypedJSONStringAt 26, stub PlainOperationWithInstance to operationAOTTypedJSONApplyKeyOrder 24, stub NewEmptyArrayAtSite 12.95, stub TypedStringInRCX 8, stub PushToFullVector 6.80, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2, module 1.20), 4334 bytes
 typed, module level: 6993.90 instructions (validate 2978.20, the runtime 2722.25, module 426.20, elsewhere 315.90, stub AllocateTypedObject 206.60, stub PlainOperationWithInstance 130, stub NewEmptyArrayWithCapacity 70, stub RegExpTestWithFastPath 65, stub PlainOperationWithInstance to operationAOTTypedJSONStringAt 26, stub PlainOperationWithInstance to operationAOTTypedJSONApplyKeyOrder 24, stub NewEmptyArrayAtSite 12.95, stub TypedStringInRCX 8, stub PushToFullVector 6.80, stub PlainOperationWithInstance to operationAOTTypedJSONOpen 2), 6040 bytes"

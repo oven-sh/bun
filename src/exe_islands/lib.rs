@@ -464,10 +464,11 @@ fn shut_door(door: &Door, number: usize, is_removed_by_name: bool, stub: u64, co
         if !(-(1 << 25)..1 << 25).contains(&distance) {
             return Err(Error::InvalidExecutable);
         }
+        let register = if container == Container::Pe { 0 } else { 2 };
         let words: &[u32] = match door.when_shut {
             WhenShut::Exit => &[
-                0x5280_0000 | (door_and_feature & 0xffff) << 5,
-                0x72a0_0000 | (door_and_feature >> 16) << 5,
+                0x5280_0000 | (door_and_feature & 0xffff) << 5 | register,
+                0x72a0_0000 | (door_and_feature >> 16) << 5 | register,
                 0x1400_0000 | (distance as u32 & 0x03ff_ffff),
             ],
             WhenShut::Return => &[0x5280_0000, 0xd65f_03c0],
@@ -480,7 +481,7 @@ fn shut_door(door: &Door, number: usize, is_removed_by_name: bool, stub: u64, co
             WhenShut::Exit => {
                 let distance = stub as i64 - (door.addresses.start as i64 + 10);
                 let distance = i32::try_from(distance).map_err(|_| Error::InvalidExecutable)?;
-                code.push(if container == Container::Pe { 0xb9 } else { 0xbf });
+                code.push(if container == Container::Pe { 0xb9 } else { 0xba });
                 code.extend_from_slice(&door_and_feature.to_le_bytes());
                 code.push(0xe9);
                 code.extend_from_slice(&distance.to_le_bytes());
@@ -676,7 +677,7 @@ pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
     Ok(Table::parse(&file[range])?.features)
 }
 
-const KINDS_OF_FACTS: [&[u8]; 21] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"exec-argv", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option", b"Intl", b"syntax", b"regexp", b"text-to-code"];
+const KINDS_OF_FACTS: [&[u8]; 22] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"exec-argv", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option", b"reload-option", b"Intl", b"syntax", b"regexp", b"text-to-code"];
 const SYNTAX_THAT_IS_A_FACT: [&[u8]; 2] = [b"regexp-literal", b"bigint-literal"];
 
 pub fn features_without_conditions(file: &[u8]) -> Result<Vec<Vec<u8>>> {
@@ -759,7 +760,7 @@ fn keep_what_the_kept_need(table: &Table, is_kept: &mut [bool]) {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Refusal {
     Unreadable(Error),
-    NoSuchName { name: Vec<u8>, names: Vec<Vec<u8>> },
+    NoSuchName { unknown: Vec<Vec<u8>>, names: Vec<Vec<u8>> },
     KeptAndRemoved { name: Vec<u8> },
     TooSmallAlone,
     NeedsCompiledProgram { name: Vec<u8> },
@@ -794,12 +795,18 @@ pub fn features_to_leave_out(file: &[u8], choice: &Choice) -> core::result::Resu
 }
 
 fn chosen_from(table: &Table, choice: &Choice) -> core::result::Result<LeftOut, Refusal> {
-    let named = |name: &&[u8]| {
-        let names = || table.public_names.iter().map(|public| public.name.to_vec()).collect();
-        table.public_names.iter().find(|public| public.name == *name).ok_or_else(|| Refusal::NoSuchName { name: name.to_vec(), names: names() })
-    };
-    let removed = choice.remove.iter().map(named).collect::<core::result::Result<Vec<&PublicName>, Refusal>>()?;
-    let kept = choice.keep.iter().map(named).collect::<core::result::Result<Vec<&PublicName>, Refusal>>()?;
+    let named = |name: &&[u8]| table.public_names.iter().find(|public| public.name == *name);
+    let mut unknown: Vec<Vec<u8>> = Vec::new();
+    for name in choice.remove.iter().chain(choice.keep).filter(|name| named(name).is_none()) {
+        if !unknown.iter().any(|other| other == name) {
+            unknown.push(name.to_vec());
+        }
+    }
+    if !unknown.is_empty() {
+        return Err(Refusal::NoSuchName { unknown, names: table.public_names.iter().map(|public| public.name.to_vec()).collect() });
+    }
+    let removed: Vec<&PublicName> = choice.remove.iter().filter_map(named).collect();
+    let kept: Vec<&PublicName> = choice.keep.iter().filter_map(named).collect();
     let is_kept_by_name = |feature: &usize| kept.iter().any(|public| public.features.contains(feature));
     if let Some(both) = removed.iter().find(|public| public.features.iter().any(is_kept_by_name)) {
         return Err(Refusal::KeptAndRemoved { name: both.name.to_vec() });
@@ -927,8 +934,9 @@ pub fn without_either_way(mut file: Vec<u8>, excluded: &[&[u8]], removed_by_name
         Ok(marks)
     };
     let is_removed_by_name = marks_of(removed_by_name)?;
-    let dead = shut_either_way(&mut file, container, is_arm64, &table, &marks_of(excluded)?, &is_removed_by_name)?;
-    let note = modules_removed_with(&table, &is_removed_by_name);
+    let is_excluded = marks_of(excluded)?;
+    let dead = shut_either_way(&mut file, container, is_arm64, &table, &is_excluded, &is_removed_by_name)?;
+    let note = modules_removed_with(&table, &is_excluded, &is_removed_by_name);
     let room = &mut file[range];
     room.fill(0);
     slice_mut(room, 0, note.len())?.copy_from_slice(&note);
@@ -944,10 +952,15 @@ pub fn modules_of(file: &[u8], names: &[&[u8]]) -> Result<Vec<(Vec<u8>, Vec<u8>)
 
 const REMOVED_MODULES_HEADER: &[u8] = b"bun-trimmed 1\n";
 
-fn modules_removed_with(table: &Table, is_removed_by_name: &[bool]) -> Vec<u8> {
-    let is_removed = |public: &&PublicName| public.features.iter().all(|&feature| is_removed_by_name[feature]);
-    let removed: Vec<u8> = (table.public_names.iter().filter(is_removed))
-        .flat_map(|public| public.modules.iter().map(|module| [module, &b"\0"[..], public.name, b"\0"].concat()))
+const LEFT_OUT_BY_ANALYSIS: &[u8] = b"-";
+
+fn modules_removed_with(table: &Table, is_excluded: &[bool], is_removed_by_name: &[bool]) -> Vec<u8> {
+    let has_all_marked = |public: &PublicName, marks: &[bool]| public.features.iter().all(|&feature| marks[feature]);
+    let removed: Vec<u8> = (table.public_names.iter().filter(|public| has_all_marked(public, is_excluded)))
+        .flat_map(|public| {
+            let by = if has_all_marked(public, is_removed_by_name) { public.name } else { LEFT_OUT_BY_ANALYSIS };
+            public.modules.iter().map(move |module| [module, &b"\0"[..], by, b"\0"].concat())
+        })
         .flatten()
         .collect();
     if removed.is_empty() { Vec::new() } else { [REMOVED_MODULES_HEADER, &removed].concat() }
@@ -1360,7 +1373,7 @@ mod tests {
 
     fn exit_stub(address: u64, number: u32, feature: u32) -> Vec<u8> {
         let distance = TRIMMED_OUT.wrapping_sub(address + 10) as u32;
-        [&[0xbf][..], &(feature | number << 12).to_le_bytes(), &[0xe9], &distance.to_le_bytes()].concat()
+        [&[0xba][..], &(feature | number << 12).to_le_bytes(), &[0xe9], &distance.to_le_bytes()].concat()
     }
 
     fn table() -> Table<'static> {
@@ -1450,9 +1463,10 @@ mod tests {
         assert_eq!(chosen(all, &[b"A"], &[b"C"]), Err(Refusal::StillNeeded { name: b"A".to_vec(), needed_by: names(&[b"B"]) }));
         assert_eq!(chosen(&[], &[b"C"], &[b"C"]), Err(Refusal::KeptAndRemoved { name: b"C".to_vec() }));
         assert_eq!(chosen(&[], &[b"AB", b"C"], &[b"A"]), Err(Refusal::KeptAndRemoved { name: b"AB".to_vec() }));
-        let no_such_name = Err(Refusal::NoSuchName { name: b"a".to_vec(), names: names(&[b"A", b"B", b"C", b"AB", b"loose-A"]) });
-        assert_eq!(chosen(&[], &[b"a"], &[]), no_such_name);
-        assert_eq!(chosen(&[], &[], &[b"a"]), no_such_name);
+        let no_such_name = |unknown: &[&[u8]]| Err(Refusal::NoSuchName { unknown: names(unknown), names: names(&[b"A", b"B", b"C", b"AB", b"loose-A"]) });
+        assert_eq!(chosen(&[], &[b"a"], &[]), no_such_name(&[b"a"]));
+        assert_eq!(chosen(&[], &[], &[b"a"]), no_such_name(&[b"a"]));
+        assert_eq!(chosen(&[], &[b"b", b"C", b"a", b"b"], &[b"d", b"a"]), no_such_name(&[b"b", b"a", b"d"]));
         assert_eq!(chosen(&[b"d"], &[], &[]), Err(Refusal::Unreadable(Error::NoSuchFeature)));
         let interpreted = |remove: &[&[u8]]| chosen_from(&table, &Choice { unused: &[], remove, keep: &[], is_compiled_ahead_of_time: false }).map(|left_out| LeftOut { removed_by_name: Vec::new(), ..left_out });
         assert_eq!(interpreted(&[b"C"]), Err(Refusal::NeedsCompiledProgram { name: b"C".to_vec() }));
@@ -1485,8 +1499,10 @@ mod tests {
         let table = Table::parse(&bytes).unwrap();
         let read: Vec<_> = table.public_names.iter().map(|public| (public.name, public.features.clone(), public.tolerates.clone(), public.modules.clone())).collect();
         assert_eq!(read, [(&b"cli"[..], vec![0], vec![], vec![]), (&b"engine"[..], vec![1, 2], vec![0], vec![&b"bun:jit"[..], b"node:text"])]);
-        assert_eq!(modules_removed_with(&table, &[true, true, false]), b"");
-        assert_eq!(modules_removed_with(&table, &[false, true, true]), b"bun-trimmed 1\nbun:jit\0engine\0node:text\0engine\0");
+        assert_eq!(modules_removed_with(&table, &[true, true, false], &[true, true, false]), b"");
+        assert_eq!(modules_removed_with(&table, &[false, true, true], &[false, true, true]), b"bun-trimmed 1\nbun:jit\0engine\0node:text\0engine\0");
+        assert_eq!(modules_removed_with(&table, &[false, true, true], &[false, true, false]), b"bun-trimmed 1\nbun:jit\0-\0node:text\0-\0");
+        assert_eq!(modules_removed_with(&table, &[true, true, true], &[false, false, false]), b"bun-trimmed 1\nbun:jit\0-\0node:text\0-\0");
         assert!(Table::parse(&SMALL.concat()).unwrap().public_names.is_empty());
         for length in SMALL.concat().len() + 3..bytes.len() {
             assert_eq!(error_of(&bytes[..length]), Some(Error::InvalidExecutable), "{length}");
@@ -1767,7 +1783,7 @@ mod tests {
         let dead = shut(&mut file, Container::Elf, true, &table, &[true]).unwrap();
         assert_eq!((dead.len(), dead[0].clone()), (1, 0x202018..0x202800));
         assert_eq!(file[at(0x202002)..][..2], [0x20, 0x00]);
-        assert_eq!([0x202004, 0x202008, 0x20200c].map(|address| word_at(&file, address)), [0x5280_0000, 0x72a0_0000, 0x17ff_fc01]);
+        assert_eq!([0x202004, 0x202008, 0x20200c].map(|address| word_at(&file, address)), [0x5280_0002, 0x72a0_0002, 0x17ff_fc01]);
         assert_eq!([0x202010, 0x202014].map(|address| word_at(&file, address)), [0x5280_0000, 0xd65f_03c0]);
         assert_eq!(word_at(&file, 0x201100), 0x9400_03c1);
         assert_eq!(word_at(&file, 0x201104), 0xb000_0000);

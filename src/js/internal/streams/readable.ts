@@ -62,16 +62,6 @@ const kHasReadable = 1 << 28;
 const kReadable = 1 << 29;
 
 function preallocatedEvents(): Record<string | symbol, unknown> {
-  if (IS_BUN_AOT) {
-    return {
-      __proto__: null,
-      close: undefined,
-      error: undefined,
-      data: undefined,
-      end: undefined,
-      readable: undefined,
-    };
-  }
   return {
       close: undefined,
       error: undefined,

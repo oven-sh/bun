@@ -243,7 +243,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.returns_unchecked_promise(file, e, callee) {
                     return Some(if is_generic { Claim::GenericCall } else { Claim::Call });
                 }
-                if is_generic && hir[call].type_args.is_empty() && self.enumerates_property_values(file, callee) {
+                if is_generic && hir[call].type_args.is_empty() && self.enumerates_property_values(file, callee) && !hir.ids(hir[call].args).next().is_some_and(|enumerated| self.is_dictionary_of_program_objects(file, enumerated)) {
                     return Some(Claim::GenericCall);
                 }
                 if !self.is_predicted(file, callee) {
@@ -303,6 +303,17 @@ impl<'p, 's> Checker<'p, 's> {
     fn enumerates_property_values(&mut self, file: FileId, callee: ExprId) -> bool {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[callee].kind else { return false };
         matches!(self.atoms().bytes(name), b"values" | b"entries") && self.refers_to_global_object(file, obj, b"Object")
+    }
+
+    fn is_dictionary_of_program_objects(&mut self, file: FileId, e: ExprId) -> bool {
+        if self.is_predicted(file, e) {
+            return false;
+        }
+        let written = self.type_of_expr(file, e);
+        !self.is_uninformative(written)
+            && self.parts(written).to_vec().into_iter().all(|part| {
+                self.is_object_type(part) && !self.is_array_or_tuple(part) && !self.is_declared_externally(part) && self.index_type_of_type(part, TypeId::STRING).is_some_and(|held| self.holds_only_objects_laid_out_by_the_program(held))
+            })
     }
 
     fn is_host_global(&mut self, receiver: TypeId, name: Atom) -> bool {

@@ -592,6 +592,21 @@ unsafe fn configure_debugger(
     };
 
     let Some(debugger) = debugger else { return };
+    unsafe extern "C" {
+        safe fn Bun__hasInspector() -> bool;
+    }
+    let asked_by = match cli_flag {
+        CliDebugger::Enable(enable) if enable.set_breakpoint_on_first_line => "--inspect-brk",
+        CliDebugger::Enable(enable) if enable.wait_for_connection => "--inspect-wait",
+        CliDebugger::Enable(_) => "--inspect",
+        CliDebugger::Unspecified => "BUN_INSPECT",
+    };
+    if !Bun__hasInspector() {
+        if debugger.mode == Mode::Connect {
+            return;
+        }
+        crate::cli::arguments::refuse_option_left_out_by_trimming(asked_by.as_bytes());
+    }
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
     if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
         let is_trimmed = bun_core::is_code_generation_disallowed_by_trimming();
@@ -616,17 +631,7 @@ unsafe fn configure_debugger(
         // operator asked for.
         bun_core::Output::err_generic(
             "{} cannot be used with {}: the inspector evaluates code from strings\n",
-            (
-                match cli_flag {
-                    CliDebugger::Enable(enable) if enable.set_breakpoint_on_first_line => {
-                        "--inspect-brk"
-                    }
-                    CliDebugger::Enable(enable) if enable.wait_for_connection => "--inspect-wait",
-                    CliDebugger::Enable(_) => "--inspect",
-                    CliDebugger::Unspecified => "BUN_INSPECT",
-                },
-                strict,
-            ),
+            (asked_by, strict),
         );
         bun_core::Global::exit(1);
     }
@@ -2157,6 +2162,18 @@ fn transpile_source_code_inner<const ONLY_READS_SOURCE: bool>(
     Ok(resolved_source)
 }
 
+#[bun_jsc::host_fn(export = "Bun__HTMLBundle__ofImport")]
+fn html_bundle_of_import(
+    global_object: &JSGlobalObject,
+    callframe: &bun_jsc::CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: only the `.html` arm of `transpile_source_code_of_any_provenance` calls this, with
+    // the address of a path that outlives the call.
+    let path = unsafe { *callframe.argument(0).as_promise_ptr::<&[u8]>() };
+    let html_bundle = crate::api::HTMLBundle::init(global_object, path);
+    Ok(crate::api::HTMLBundle::to_js(html_bundle, global_object))
+}
+
 /// Whether what is transpiled is static code (`ResolvedSource::is_static`), so that what is made of it is.
 fn is_input_static(jsc_vm: *mut VirtualMachine, args: &TranspileArgs<'_>) -> bool {
     // SAFETY: as for `transpile_source_code_inner` — `jsc_vm` is the live per-thread VM and `extra` is live for the call.
@@ -3376,10 +3393,15 @@ fn transpile_source_code_of_any_provenance<const ONLY_READS_SOURCE: bool>(
         // .html
         // ────────────────────────────────────────────────────────────────────
         L::Html => {
-            let html_bundle = crate::api::HTMLBundle::init(global_object, path.text);
+            let mut path_text = path.text;
+            let html_bundle = bun_jsc::JSFunction::call_with_request(
+                global_object,
+                __jsc_host_html_bundle_of_import,
+                &mut path_text,
+            )?;
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global_object),
+                jsvalue_for_export: html_bundle,
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
@@ -3667,6 +3689,7 @@ fn get_hardcoded_module(
                 ..ResolvedSource::default()
             });
         }
+        HardcodedModule::BunWrapValidation => Some(js_synthetic_module(b"internal:validation")),
         // Every other `HardcodedModule` is served straight out of the
         // InternalModuleRegistry by tag, with no Rust-side source text.
         other => {
@@ -4166,6 +4189,13 @@ pub(crate) extern "C" fn Bun__loadsModulesAtRunTime() -> bool {
     core::hint::black_box(true)
 }
 
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__throwThatModuleWasNotCompiledIn(global: &JSGlobalObject, module: *const u8, length: usize) {
+    // SAFETY: the caller passes the bytes of a module's name, which outlive the call.
+    let module = unsafe { bun_core::ffi::slice(module, length) };
+    let _ = global.throw_value(bun_jsc::module_loader::error_that_module_was_not_compiled_in(global, bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND, bstr::BStr::new(module)));
+}
+
 /// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
 ///
@@ -4197,16 +4227,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         } else {
             bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
         };
-        *ret = ErrorableResolvedSource::err(
-            global
-                .err(
-                    code,
-                    format_args!(
-                        "Cannot find module '{specifier}': it was not compiled into this executable, which was built with --compile-trim-runtime and loads nothing else",
-                    ),
-                )
-                .to_js(),
-        );
+        *ret = ErrorableResolvedSource::err(bun_jsc::module_loader::error_that_module_was_not_compiled_in(global, code, specifier));
         return ptr::null_mut();
     }
     let force_loader_type: Option<Loader> = force_loader_from_api_u8(force_loader);
@@ -4973,7 +4994,7 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
 /// source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
-    global: &JSGlobalObject,
+    _global: &JSGlobalObject,
     specifier: &bun_core::String,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
@@ -4990,9 +5011,8 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let Some(alias) = bun_jsc::module_loader::bun_aliases_get(spec_utf8.slice()) else {
         return false;
     };
-    if let Some(removed) = bun_jsc::module_loader::removed_by_trimming(global, alias.path.as_bytes()) {
-        *ret = removed;
-        return true;
+    if bun_jsc::module_loader::is_left_out(alias.path.as_bytes()) {
+        return false;
     }
     let Some(&hardcoded) = HardcodedModule::MAP.get(alias.path.as_bytes()) else {
         debug_assert!(false);

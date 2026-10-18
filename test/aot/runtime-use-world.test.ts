@@ -199,11 +199,19 @@ describe.concurrent("members of Bun that load or run code the compiler has not s
     ["Bun.ModuleGraph", `console.log(await new Bun.ModuleGraph().import(process.argv[2]));\nexport {};`, "Bun.ModuleGraph"],
     ["Bun.ModuleGraph that is imported", `import { ModuleGraph } from "bun";\nconsole.log(new ModuleGraph());`, "Bun.ModuleGraph"],
     ["Bun.ModuleGraph that is taken out", `const { ModuleGraph } = Bun;\nconsole.log(new ModuleGraph());`, "Bun.ModuleGraph"],
-    ["Bun.build, whose sources may call macros", `console.log(await Bun.build({ entrypoints: [process.argv[2]] }));\nexport {};`, "Bun.build"],
-    ["Bun.Transpiler, whose sources may call macros", `console.log(new Bun.Transpiler().transformSync(process.argv[2]));`, "Bun.Transpiler"],
   ])("%s", async (_, text, why) => {
     const use = await of(text);
     expect({ world: use.world, isSaid: use.whyOpen.includes(why) }).toEqual({ world: "open", isSaid: true });
+  });
+
+  test.each([
+    ["Bun.build", `console.log(await Bun.build({ entrypoints: [process.argv[2]] }));\nexport {};`, "Bun build"],
+    ["build that is imported from bun", `import { build } from "bun";\nconsole.log(await build({ entrypoints: [process.argv[2]] }));`, "Bun build"],
+    ["Bun.build that is handed on", `const build = Bun.build;\nconsole.log(await build({ entrypoints: [process.argv[2]] }));\nexport {};`, "Bun build"],
+    ["Bun.Transpiler", `console.log(new Bun.Transpiler().transformSync(process.argv[2]));`, "Bun Transpiler"],
+  ])("%s turns text into text, which runs only if the program then loads or evaluates it: it is named and opens nothing", async (_, text, fact) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen, isNamed: use.facts.has(fact) }).toEqual({ world: "closed", whyOpen: [], isNamed: true });
   });
 
   test.each([
@@ -282,7 +290,6 @@ describe.concurrent("in an executable built with --disallow-code-generation-from
     ["a Worker", `new Worker("./worker.ts");`],
     ["node:vm", `import vm from "node:vm";\nconsole.log(vm.runInNewContext("1"));`],
     ["process.dlopen", `process.dlopen(module, "./addon.node");`],
-    ["Bun.plugin", `Bun.plugin({ name: "a", setup() {} });`],
     ["require of a value that is not known", given + `console.log(given.require("node:fs"));`],
     ["a computed name of Bun", `console.log(Bun[process.argv[2]]);`],
     ["a computed name read from what may be a database", `import { Database } from "bun:sqlite";\nconsole.log((new Database(":memory:") as any)[process.argv[2]]("a"));`],
@@ -347,7 +354,7 @@ describe.concurrent("an object literal that only one variable holds, read by a k
     ["a text is stored under a name", `${table}(table as any).more = "more";\n${called}`],
     ["a text, a number or nothing is stored under a key", `${table}(table as any)[key] = process.argv.length > 3 ? \`\${key}\` : (process.argv.length > 4 || null);\n${called}`],
     ["a member is counted up", `const table = { home: 1 };\n(table as any)[process.argv[3]]++;\n--(table as any)[process.argv[3]];\n${called}`],
-    ["it is an enum", `enum Color {\n  Red,\n  Green = 1 << 2,\n  Blue = "blue",\n}\nconsole.log(Color[key as keyof typeof Color] === Color.Red, typeof Color[process.argv.length], Color.Green);`],
+    ["it is an enum", `enum Color {\n  Red,\n  Green = 1 << 2,\n  Blue = "blue",\n}\nconsole.log(Color[key as keyof typeof Color] === Color.Red, typeof Color[process.argv.length], Color.Green);\nconst found = (Color as any)[key];\nconsole.log(found ? found() : "none");`],
     ["a member is added to", `const table = { home: 1 };\n(table as any)[process.argv[3]] += process.argv.length;\n(table as any)[process.argv[3]] -= 1;\n${called}`],
     ["what is found is called in place and what it answers is dropped", `${table}(table as any)[key]();`],
     ["what is found is called in place with one argument", `${table}(table as any)[key](process.argv[3]);`],
@@ -407,6 +414,8 @@ describe.concurrent("an object literal that only one variable holds, read by a k
     ["what may be an object is stored if nothing is there", `${table}(table as any)[process.argv[3]] ??= 1;\n${called}`],
     ["a function is stored under a key", `${table}(table as any)[process.argv[3]] = () => "more";\n${called}`],
     ["a number or what may be an object is stored under a key", `${table}(table as any)[process.argv[3]] = process.argv.length > 3 ? 1 : process.argv;\n${called}`],
+    ["a list is stored under a name through the rest of a pattern", `${table}[...(table as any).__proto__] = [];\n${called}`],
+    ["an object is stored under a key through the rest of a pattern", `${table}({ ...(table as any)[process.argv[3]] } = { more: 1 });\n${called}`],
     ["it is stored to through a pattern", `${table}[(table as any)[process.argv[3]]] = [1];\n${called}`],
     ["it is taken apart", `${table}const { home } = table;\nconsole.log(typeof home);\n${called}`],
     ["it is spread", `${table}console.log(typeof { ...table });\n${called}`],
@@ -419,10 +428,10 @@ describe.concurrent("an object literal that only one variable holds, read by a k
     ["it is a variable that is stored to", `let table = { home: () => "home" };\nif (process.argv.length > 5) table = process.argv as any;\n${called}`],
     ["it is a variable that is stored to through a pattern", `let table = { home: () => "home" };\nif (process.argv.length > 5) [table] = [process.argv as any];\n${called}`],
     ["it is a variable that a loop stores to", `let table = { home: () => "home" };\nfor (table of [process.argv as any]);\n${called}`],
-    ["it is an enum that is handed on", `enum Color {\n  Red,\n}\nconsole.log(Color, Color[key as keyof typeof Color] === Color.Red);`],
-    ["it is an enum that is exported", `export enum Color {\n  Red,\n}\nconsole.log(Color[key as keyof typeof Color] === Color.Red);`],
-    ["it is an enum that is declared twice", `enum Color {\n  Red,\n}\nenum Color {\n  Green = 1,\n}\nconsole.log(Color[key as keyof typeof Color] === Color.Red);`],
-    ["it is an enum with a member that may be an object", `enum Color {\n  Red = process.argv as any,\n}\nconsole.log(Color[key as keyof typeof Color] === Color.Red);`],
+    ["it is an enum that is handed on", `enum Color {\n  Red,\n}\nconsole.log(Color);\nconst found = (Color as any)[key];\nconsole.log(found ? found() : "none");`],
+    ["it is an enum that is exported", `export enum Color {\n  Red,\n}\nconst found = (Color as any)[key];\nconsole.log(found ? found() : "none");`],
+    ["it is an enum that is declared twice", `enum Color {\n  Red,\n}\nenum Color {\n  Green = 1,\n}\nconst found = (Color as any)[key];\nconsole.log(found ? found() : "none");`],
+    ["it is an enum with a member that may be an object", `enum Color {\n  Red = process.argv as any,\n}\nconst found = (Color as any)[key];\nconsole.log(found ? found() : "none");`],
     ["it is an enum, and what is found is handed on", `enum Color {\n  Red,\n}\nconsole.log(Color[key as keyof typeof Color]);`],
     ["it is a var that is declared twice", `var table: any = { home: () => "home" };\nvar table: any = process.argv;\n${called}`],
     ["the literal names its prototype", `const table = { __proto__: function () {} };\n${called}`],
@@ -441,11 +450,8 @@ describe.concurrent("an object literal that only one variable holds, read by a k
   const parent = `const parent = Object.getPrototypeOf(() => {});\n`;
   test.each([
     ["is read by a key again", `console.log((table as any)[key][key]);`],
-    ["is asked for its constructor", `console.log((table as any)[key].constructor("return 1"));`],
     ["is asked for a descriptor", `console.log((table as any)[key].getOwnPropertyDescriptor(parent, process.argv[3]).value("return 1"));`],
     ["is kept and asked for all descriptors", `const found = (table as any)[key];\nconsole.log(found.values(found.getOwnPropertyDescriptors(parent))[3].value("return 1"));`],
-    ["is kept and read by Reflect.get", `const found = (table as any)[key];\nconsole.log(Reflect.get(found, "keys")(parent));`],
-    ["is kept and asked for the descriptor of a member", `const found = (table as any)[key];\nconsole.log((Object.getOwnPropertyDescriptor(found, "keys") as any).value(parent));`],
     ["becomes the prototype of a class's prototype", `class Child {\n  x = 1;\n}\nObject.setPrototypeOf(Child.prototype, (table as any)[key]);\nconsole.log((new Child() as any).getOwnPropertyDescriptor(parent, process.argv[3]).value("return 1"));`],
     [
       "is what a class extends, which asks super for a descriptor",
@@ -455,6 +461,18 @@ describe.concurrent("an object literal that only one variable holds, read by a k
       "is the prototype of a literal whose method asks super for all descriptors",
       `const child: any = {\n  __proto__: (table as any)[key],\n  find(from: unknown) {\n    return super.values(super.getOwnPropertyDescriptors(from));\n  },\n};\nconsole.log(child.find(parent)[3].value("return 1"));`,
     ],
+    ["comes out of a literal that is stored to, whose shape the compiler knows", `let known = { one: 1 };\nknown.one = 2;\nconst other: any = known[key as keyof typeof known];\nconsole.log(other);`],
+    ["comes out of an instance of a class of the program's own", `class Point {\n  x = 1;\n}\nconst other: any = new Point()[key as keyof Point];\nconsole.log(other);`],
+    ["comes out of a literal that a function makes", `function make() {\n  return { one: 1 };\n}\nconst other: any = make()[key as "one"];\nconsole.log(other);`],
+    ["comes out of what an interface describes", `interface Known {\n  one: number;\n}\nconst known: Known = { one: 1 };\nconsole.log(typeof known);\nconst other: any = known[key as keyof Known];\nconsole.log(other);`],
+  ])("any property may be read where what is found %s", async (_, text) => {
+    expect(await judged(table + parent + text)).toEqual(any);
+  });
+
+  test.each([
+    ["is asked for its constructor", `console.log((table as any)[key].constructor("return 1"));`],
+    ["is kept and read by Reflect.get", `const found = (table as any)[key];\nconsole.log(Reflect.get(found, "keys")(parent));`],
+    ["is kept and asked for the descriptor of a member", `const found = (table as any)[key];\nconsole.log((Object.getOwnPropertyDescriptor(found, "keys") as any).value(parent));`],
     ["is returned", `function find(name: string) {\n  return (table as any)[name];\n}\nconsole.log(find(key).getOwnPropertyNames(parent));`],
     ["is handed on", `console.log((table as any)[key]);`],
     ["is stored", `const held = { found: (table as any)[key] };\nconsole.log(typeof held);`],
@@ -468,12 +486,11 @@ describe.concurrent("an object literal that only one variable holds, read by a k
     ["is kept and kept again", `const found = (table as any)[key];\nconst again = found;\nconsole.log(again ? again() : "none");`],
     ["or else another value is handed on", `console.log((table as any)[key] ?? "none");`],
     ["is awaited", `console.log(await (table as any)[key]);\nexport {};`],
-    ["comes out of a literal that is stored to, whose shape the compiler knows", `let known = { one: 1 };\nknown.one = 2;\nconst other: any = known[key as keyof typeof known];\nconsole.log(other);`],
-    ["comes out of an instance of a class of the program's own", `class Point {\n  x = 1;\n}\nconst other: any = new Point()[key as keyof Point];\nconsole.log(other);`],
-    ["comes out of a literal that a function makes", `function make() {\n  return { one: 1 };\n}\nconst other: any = make()[key as "one"];\nconsole.log(other);`],
-    ["comes out of what an interface describes", `interface Known {\n  one: number;\n}\nconst known: Known = { one: 1 };\nconsole.log(typeof known);\nconst other: any = known[key as keyof Known];\nconsole.log(other);`],
-  ])("what is found may be a function of Object.prototype that takes out or defines any accessor: any property may be read where it %s", async (_, text) => {
-    expect(await judged(table + parent + text)).toEqual(any);
+  ])("the program reads no other property, and may write any key, where what is found %s", async (_, text) => {
+    const use = await runtimeUse({ "main.ts": declared + key + table + parent + text });
+    const written = ["program-defined-key *"];
+    const readsAnyProperty = use.lines.some(line => line.startsWith("escapes property ") && line.endsWith("main.ts"));
+    expect({ readsAnyProperty, written: written.filter(fact => use.facts.has(fact)) }).toEqual({ readsAnyProperty: false, written });
   });
 });
 
@@ -500,11 +517,18 @@ describe.concurrent("whether anything but the compiled program may run", () => {
 
   test.each([
     ["prints", "main.cjs", `console.log("run");`],
-    ["exports a number", "main.js", `module.exports = 1;`],
-    ["exports a server", "main.cjs", `module.exports = { fetch() { return new Response("ok"); }, port: 0 };`],
+    ["exports an object with nothing to serve", "main.cjs", `module.exports = { value: 1 };`],
   ])("an executable whose entry point is CommonJS and %s has a closed world", async (_, entryPoint, text) => {
     const use = await runtimeUse({ [entryPoint]: text }, build, entryPoint);
     expect({ first: use.lines[0], exitCode: use.exitCode }).toEqual({ first: "closed", exitCode: 0 });
+  });
+
+  test.each([
+    ["a number", "main.js", `module.exports = 1;`],
+    ["a server", "main.cjs", `module.exports = { fetch() { return new Response("ok"); }, port: 0 };`],
+  ])("what a CommonJS entry point exports is not followed: the options of the server are not seen where it exports %s", async (_, entryPoint, text) => {
+    const use = await runtimeUse({ [entryPoint]: text }, build, entryPoint);
+    expect({ world: use.world, whyOpen: use.whyOpen, exitCode: use.exitCode }).toEqual({ world: "open", whyOpen: ["options of Bun.serve that are not seen"], exitCode: 0 });
   });
 
   test.each([
@@ -766,6 +790,11 @@ describe.concurrent("Bun.serve for the default export of the entry point", () =>
     ["a variable that goes nowhere else", { "main.ts": `const config = ${server};\nexport default config;` }, ["fetch", "port"], []],
     ["an object with a spread variable", { "main.ts": `const shared = { port: 0 };\nexport default { ...shared, fetch() { return new Response("served"); } };` }, ["fetch", "port"], []],
     ["an object with routes", { "main.ts": `export default { port: 0, routes: { "/files/*": { dir: "." } } };` }, ["port", "routes"], ["dir"]],
+    ["a function that is declared and called", { "main.ts": `export default function main() { console.log(1); }\nif (import.meta.main) main();` }, [], []],
+    ["a function without a name", { "main.ts": `export default function () { console.log(1); }` }, [], []],
+    ["an arrow function", { "main.ts": `export default async () => { console.log(1); };` }, [], []],
+    ["the name of a function", { "main.ts": `function main() { console.log(typeof main, main.name); }\nexport default main;\nmain();` }, [], []],
+    ["a function on which options are stored by name", { "main.ts": `export default function app() {}\napp.fetch = () => new Response("served");\napp.port = 0;` }, ["fetch", "port"], []],
   ])("its options are listed by name for export default of %s", async (_, files, options, routeOptions) => {
     expect(await optionsIn(files)).toEqual({ world: "closed", options, routeOptions, exitCode: 0 });
   });
@@ -775,6 +804,21 @@ describe.concurrent("Bun.serve for the default export of the entry point", () =>
     ["an object that asks for the development server", { "main.ts": `export default { port: 0, app: {} };` }, ["app", "port"], []],
   ])("the world is open for export default of %s", async (_, files, options, routeOptions) => {
     expect(await optionsIn(files)).toEqual({ world: "open", options, routeOptions, exitCode: 0 });
+  });
+
+  test.each([
+    ["a function that is handed on", `export default function app() {}\nObject.assign(app, { fetch() { return new Response("served"); } });`],
+    ["a function that is constructed, whose instance leads back to it", `export default function App(this: any) { this.constructor.fetch = () => new Response("served"); }\nnew (App as any)();`],
+    ["a function whose prototype is read", `export default function app() {}\nconsole.log(app.prototype);`],
+    ["a function a member of which is called, which may answer the function", `export default function app() {}\nconsole.log(app.valueOf());`],
+    ["a function on which an option is stored through the rest of a pattern", `export default function app() {}\napp.fetch = () => new Response("served");\n({ ...(app as any).tls } = { key: "k" });`],
+    ["a function on which an option is stored through the rest of a list", `export default function app() {}\n[...(app as any).routes] = [];`],
+    ["a function that is stored to under a key", `export default function app() {}\n(app as any)[process.argv[2]] = 1;`],
+    ["a function that another variable holds too", `export default function app() {}\nconst held: any = app;\nheld.fetch = () => new Response("served");`],
+    ["a function that is stored to", `function app() {}\n(app as any) = { fetch() { return new Response("served"); } };\nexport default app;`.replace("(app as any) =", "// @ts-ignore\napp =")],
+    ["a class, whose instances lead back to it", `export default class App {}\nconsole.log(new App());`],
+  ])("any option may be there for export default of %s", async (_, text) => {
+    expect((await optionsIn({ "main.ts": text })).options).toContain("*");
   });
 
   test.each([
@@ -789,7 +833,7 @@ describe.concurrent("Bun.serve for the default export of the entry point", () =>
     ["module.exports", { "main.cjs": `module.exports = ${server};` }],
   ])("its options may be any for %s", async (_, files) => {
     const { world, options, routeOptions, exitCode } = await optionsIn(files);
-    expect({ world, any: options.includes("*"), anyOfARoute: routeOptions.includes("*"), exitCode }).toEqual({ world: "closed", any: true, anyOfARoute: true, exitCode: 0 });
+    expect({ world, any: options.includes("*"), anyOfARoute: routeOptions.includes("*"), exitCode }).toEqual({ world: "open", any: true, anyOfARoute: true, exitCode: 0 });
   });
 });
 
@@ -913,7 +957,7 @@ describe.skipIf(probed.exitCode !== 0)("what the writer of the executable finds"
 
   test.each(["--stack-trace-limit=3", "--trace-exitx", "--sql-preconnect"])("--compile-exec-argv=%s runs built-in JavaScript from its text: nothing is built", async option => {
     expect(built({ "main.ts": hello }, ["main.ts", "--compile-exec-argv=" + option])).rejects.toThrow(
-      option.split("=")[0] + " cannot be used with an executable built with --compile-trim-runtime",
+      option.split("=")[0] + " cannot be used with this executable: the part of Bun that it needs was left out",
     );
   });
 

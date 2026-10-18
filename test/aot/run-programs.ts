@@ -15,6 +15,7 @@
 //                                         only the bundler provides (--define, --feature, files imported as text)
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
 //                                         "skipWithASAN": why a Bun built with AddressSanitizer skips the program
+//                                         "runWithASAN": why a Bun built with AddressSanitizer runs the program even where the quick subset leaves it out
 //                                         "skipInVariants": why variant() leaves the program out
 //   programs/**/tsconfig.json             the compiler options for the programs below it
 //   programs/jsc-shell-functions.ts       noInline(), gc() and similar functions, for the programs that import it
@@ -191,6 +192,7 @@ async function run(path: string, beside: string, folder: string, carrier: string
 const hash = (path: string) => BigInt(Bun.hash(relative(root, path).replaceAll("\\", "/")));
 const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
 const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
+const runsWithASAN = (path: string) => isASAN && existsSync(besideOf(path) + ".json") && !!JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).runWithASAN;
 
 function define(title: string, chosen: string[], buildEnv: Record<string, string>, runEnv: Record<string, string> = {}) {
   const folder = String(tempDir("aot-programs", {}));
@@ -224,7 +226,7 @@ export function programs(topic: string, part = 1, parts = 1) {
     `compile/aot/${topic}`,
     all
       .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
-      .filter(path => (wanted === "quick" ? isQuick(path) : relative(root, path).includes(wanted))),
+      .filter(path => (wanted === "quick" ? isQuick(path) || runsWithASAN(path) : relative(root, path).includes(wanted))),
     {},
   );
 }

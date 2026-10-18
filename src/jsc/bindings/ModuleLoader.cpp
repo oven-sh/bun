@@ -618,6 +618,8 @@ JSValue resolveAndFetchBuiltinModule(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
+                if (isPublicModuleThatCannotBeMade(globalObject, tag & mask)) [[unlikely]]
+                    return {};
                 auto result = globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask));
                 RETURN_IF_EXCEPTION(scope, {});
                 return result;
@@ -1373,6 +1375,12 @@ extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return nullptr;
+        promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+        promise->rejectAsHandled(vm, exception);
+    }
     return promise;
 }
 

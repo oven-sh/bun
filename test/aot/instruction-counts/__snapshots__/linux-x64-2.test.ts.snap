@@ -53,10 +53,10 @@ untyped, module level: 94.75 instructions (stub IterHasInFrame 50.17, module 42.
 `;
 
 exports[`makes a Set from an array of four strings 1`] = `
-"typed, function: 1286.86 instructions (the runtime 1211, kernel 33.50, elsewhere 26.06, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2, module 0.30), 363 bytes
-typed, module level: 1275.94 instructions (the runtime 1211, elsewhere 26.06, module 22.88, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2), 1418 bytes
-untyped, function: 1305.89 instructions (the runtime 1211, kernel 52.52, elsewhere 26.06, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2, module 0.30), 595 bytes
-untyped, module level: 1290.94 instructions (the runtime 1211, module 37.88, elsewhere 26.06, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2), 1524 bytes"
+"typed, function: 331.30 instructions (the runtime 281.50, kernel 33.50, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2, module 0.30), 363 bytes
+typed, module level: 320.38 instructions (the runtime 281.50, module 22.88, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2), 1418 bytes
+untyped, function: 350.32 instructions (the runtime 281.50, kernel 52.52, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2, module 0.30), 595 bytes
+untyped, module level: 335.38 instructions (the runtime 281.50, module 37.88, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2), 1524 bytes"
 `;
 
 exports[`assigns the four fields of a new instance of a class that has an accessor 1`] = `

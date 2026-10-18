@@ -107,7 +107,8 @@ declare module "bun" {
    *
    * The objects and arrays that `T` describes are copied, and `value` itself is never changed. The copy has the same
    * keys in the same order, including properties that `T` does not declare.
-   * Available in programs built or run with `--aot`.
+   * Works wherever Bun compiles the call: `bun run`, `bun test`, `bun build` and `bun build --compile`, with or without `--aot`.
+   * Other tools erase the type argument, and the call then throws a `TypeError` that says so.
    *
    * ```ts
    * import type { Schema } from "bun";
@@ -3889,7 +3890,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "text" | "json" | "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json";
+  type AotReport = "text" | "json" | "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json" | "runtime-use";
 
   interface TrimOptions {
     /**
@@ -3906,6 +3907,13 @@ declare module "bun" {
      * Parts that stay, with the parts they need, even if nothing in the program was seen to use them.
      */
     keep?: Bun.Build.TrimFeature[];
+    /**
+     * Add notes to `BuildOutput.logs` that list what was removed, how much smaller the executable
+     * is, and which native libraries it still includes.
+     *
+     * @default false
+     */
+    log?: boolean;
   }
 
   interface CompileBuildOptions {
@@ -3930,12 +3938,15 @@ declare module "bun" {
      *   them or not, and nothing else.
      * - An object: see {@link TrimOptions}.
      *
-     * A program that reaches a part that was removed by name ends with exit code 70 and a message
-     * that says which part it was. An import of a built-in module that was removed, such as
-     * `bun:sqlite`, throws an `Error` instead, and the build warns where the program imports it.
+     * A program can find out that a part is gone: the way into a removed part is `undefined`, or a
+     * function that throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`. An import of a
+     * built-in module that was removed, such as `bun:sqlite`, throws an `Error` whose `code` is
+     * `"ERR_MODULE_NOT_FOUND"`, and the build warns where the program imports it. Each
+     * {@link Bun.Build.TrimFeature} says which. Past those, code that still reaches a removed part
+     * ends the process with exit code 70 and says which part it was.
      *
      * The build fails if a name is unknown, or if a part that stays needs a part that is removed.
-     * `BuildOutput.logs` says what was left out and how many bytes that saved.
+     * With `log: true`, `BuildOutput.logs` says what was left out and how many bytes that saved.
      *
      * @example
      * ```ts
@@ -4047,6 +4058,7 @@ declare module "bun" {
      * - `"throws-all"`: also the checks that can only fail if typed code produced a value of the wrong type
      * - `"throws-json"`, `"throws-all-json"`: the same, one JSON object per line
      * - `"rules-json"`: what the rules of `[aot]` in bunfig.toml found, one JSON object per line
+     * - `"runtime-use"`: what the compiler saw the program use of Bun, which is what `trim` goes by, one fact per line
      *
      * Equivalent CLI flag: `--aot-explain`
      */

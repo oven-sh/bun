@@ -2854,7 +2854,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     #[inline]
-    fn is_declared_externally(&self, ty: TypeId) -> bool {
+    pub(super) fn is_declared_externally(&self, ty: TypeId) -> bool {
         self.row(ty) & type_flags::IS_DECLARED_EXTERNALLY != 0
     }
 
@@ -5228,9 +5228,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub(super) fn is_served_by_untyped_clone(&mut self, signature: SigId) -> bool {
-        let Some((declared_in, func, _)) = self.sig_decl(signature) else { return false };
-        self.has_untyped_clone(declared_in, func)
+    pub(super) fn is_parameter_held_to_its_type(&mut self, signature: SigId, index: usize) -> bool {
+        let Some((declared_in, func, _)) = self.sig_decl(signature) else { return true };
+        if self.has_untyped_clone(declared_in, func) {
+            return false;
+        }
+        let written = self.hir(declared_in)[func].params;
+        index >= written.len() || self.hir(declared_in)[written.at(index)].ty.is_some() || self.param_storage(declared_in, written.at(index)).ty != TypeId::UNKNOWN
+    }
+
+    fn is_parameter_annotated(&mut self, signature: SigId, index: usize) -> bool {
+        let Some((declared_in, func, _)) = self.sig_decl(signature) else { return true };
+        let written = self.hir(declared_in)[func].params;
+        index >= written.len() || self.hir(declared_in)[written.at(index)].ty.is_some()
     }
 
     fn record_any_inflow_to_parameters(&mut self, ty: TypeId, depth: u32, seen: &mut FxHashSet<TypeId>) {
@@ -5242,12 +5252,12 @@ impl<'p, 's> Checker<'p, 's> {
                 let signatures: Vec<SigId> = self.signatures(part, constructs).iter().copied().collect();
                 for signature in signatures {
                     let parameters: Vec<TypeId> = self.sig_params(signature).iter().map(|parameter| parameter.ty).collect();
-                    for &parameter in &parameters {
-                        self.record_untyped_inflow_to_classes(parameter);
-                    }
-                    if !self.is_served_by_untyped_clone(signature) {
-                        for parameter in parameters {
+                    for (index, parameter) in parameters.into_iter().enumerate() {
+                        if self.is_parameter_held_to_its_type(signature, index) {
+                            self.record_untyped_inflow_to_classes(parameter);
                             self.record_any_inflow_to_records(parameter);
+                        } else if self.is_parameter_annotated(signature, index) {
+                            self.record_untyped_inflow_to_classes(parameter);
                         }
                     }
                     if constructs && depth < 2 {
@@ -6566,7 +6576,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_primitive(ty) || matches!(self.built_in_for_type(ty), Some(BuiltIn::Instance(_)))
     }
 
-    fn built_in_for_type(&mut self, ty: TypeId) -> Option<BuiltIn> {
+    pub(super) fn built_in_for_type(&mut self, ty: TypeId) -> Option<BuiltIn> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => match self.root_of(target) {
                 Root::Function => Some(BuiltIn::Function),

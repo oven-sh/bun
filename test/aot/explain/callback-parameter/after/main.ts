@@ -12,4 +12,4 @@ let sum = 0;
 for (const row of rows) sum += row.count;
 console.log(sum);
 
-await Promise.resolve(rows[0]!).then((row: Row) => console.log(row.name));
+await Promise.resolve(rows[0]!).then(row => console.log(row.name));

@@ -42,7 +42,7 @@ function lazyInspectModule() {
   return (utl ??= require("internal/util/inspect"));
 }
 
-var debugs = IS_BUN_AOT ? { __proto__: null } : {};
+var debugs = {};
 var debugEnvRegex = /^$/;
 const NODE_DEBUG = process.env.NODE_DEBUG;
 if (NODE_DEBUG) {

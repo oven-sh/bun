@@ -313,8 +313,8 @@ impl ParseTask {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        parse_worker::get_runtime_source(target)
+    pub(crate) fn get_runtime_source(target: options::Target, has_validation_helper: bool) -> RuntimeSource {
+        parse_worker::get_runtime_source(target, has_validation_helper)
     }
 }
 
@@ -554,7 +554,7 @@ export var __callDispose = (stack, error, hasError) => {
 pub mod parse_worker {
     use super::*;
 
-    fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
+    fn get_runtime_source_comptime(target: options::Target, has_validation_helper: bool) -> RuntimeSource {
         // The runtime module is the shared `runtime.js` body plus a per-target
         // `__require`/`__using` tail. Concatenating at compile time would embed
         // four copies of the 13 KB body, so each variant is assembled once on
@@ -572,13 +572,13 @@ pub mod parse_worker {
             options::Target::Node => Variant::Node,
             _ => Variant::Other,
         };
-        static SOURCES: [bun_core::Once<Box<[u8]>>; 4] = [
-            bun_core::Once::new(),
-            bun_core::Once::new(),
-            bun_core::Once::new(),
-            bun_core::Once::new(),
+        static SOURCES: [[bun_core::Once<Box<[u8]>>; 2]; 4] = [
+            [bun_core::Once::new(), bun_core::Once::new()],
+            [bun_core::Once::new(), bun_core::Once::new()],
+            [bun_core::Once::new(), bun_core::Once::new()],
+            [bun_core::Once::new(), bun_core::Once::new()],
         ];
-        let runtime_code: &'static [u8] = SOURCES[variant as usize].get_or_init(|| {
+        let runtime_code: &'static [u8] = SOURCES[variant as usize][usize::from(has_validation_helper)].get_or_init(|| {
             let (require, using, preload): (&str, &str, &str) = match variant {
                 Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN, ""),
                 Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER, ""),
@@ -589,7 +589,8 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            [include_str!("../runtime.js"), include_str!("../js/internal/validation.ts"), require, using, preload]
+            let validation = if has_validation_helper { include_str!("../js/internal/validation.ts") } else { "" };
+            [include_str!("../runtime.js"), validation, require, using, preload]
                 .concat()
                 .into_bytes()
                 .into_boxed_slice()
@@ -605,7 +606,7 @@ pub mod parse_worker {
             },
             contents_or_fd: ContentsOrFd::Contents(runtime_code),
             source_index: Index::RUNTIME,
-            loader: Some(Loader::Ts),
+            loader: Some(if has_validation_helper { Loader::Ts } else { Loader::Js }),
             known_target: target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
@@ -647,8 +648,8 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        get_runtime_source_comptime(target)
+    pub(crate) fn get_runtime_source(target: options::Target, has_validation_helper: bool) -> RuntimeSource {
+        get_runtime_source_comptime(target, has_validation_helper)
     }
 
     // ───────────────────────────────────────────────────────────────────────────

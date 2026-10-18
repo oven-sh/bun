@@ -22,6 +22,13 @@ test("every public name is spelled like an option, stands once, and says what it
   expect(all.names.filter(each => !each.saves || Number.isNaN(each.saves.linux + each.saves.macos)).map(each => each.name)).toEqual([]);
 });
 
+test("the writer knows every kind of condition in the table; a kind it does not know keeps its feature in every executable", () => {
+  const writer = readFileSync(join(import.meta.dir, "../../src/exe_islands/lib.rs"), "utf8");
+  const known = ["KINDS_OF_FACTS", "KINDS_LISTED_BY_THE_COMPILER"].flatMap(list => [...writer.match(new RegExp(`const ${list}: [^=]*= \\[(.*)\\];`))![1].matchAll(/b"([^"]+)"/g)].map(match => match[1]));
+  const kinds = new Set(doors.split("\n").filter(line => line.startsWith("when ")).map(line => line.split(" ")[2]));
+  expect([...kinds].filter(kind => kind !== "feature" && !known.includes(kind))).toEqual([]);
+});
+
 test("public names and libraries are made of features", () => {
   const named = [...all.names.flatMap(each => [...each.features, ...each.also.map(also => also.feature)]), ...all.libraries.flatMap(library => library.features)];
   expect(named.filter(feature => !features.includes(feature))).toEqual([]);
@@ -72,4 +79,24 @@ test("every vendored library stands in a library line, with the version that is 
 
 test("what compiled code calls, and what every executable needs, has no public name", () => {
   expect(all.names.flatMap(each => each.features).filter(feature => feature.startsWith("operations_") || feature === "file_sink")).toEqual([]);
+});
+
+const neverOffered: Record<string, string> = {
+  "what compiled code calls follows the program's own code":
+    "operations_common_data operations_common_objects operations_common_containers operations_common_text operations_common_numbers operations_rare_classes operations_rare_properties operations_rare_text operations_rare_data operations_rare_copies operations_rare_containers operations_rare_casts operations_rare_numbers",
+  "a part of the language: a dependency may use it unseen":
+    "atomics weak_references dataview sum_precise legacy_accessors get_or_insert set_methods json_raw promise_all promise_all_settled promise_any promise_race rare_array_methods typedarray_sort uint8array_base64 string_locale_case number_to_text string_padding string_html string_normalize string_well_formed string_repeat string_last_index_of escape_unescape uri_coding regexp regexp_properties float16array biguint64array bigint64array uint8clampedarray int16array int8array uint16array float32array int32array float64array uint32array",
+  "Bun's own modules stand on it":
+    "url events abort_signal headers form_data fs_stats web_streams bodies buffer file_sink text_codec base64_globals structured_clone outside_bytes node_fs node_os node_path node_validators node_util_natives node_small_modules node_url_natives string_decoder crypto_object brotli_decoder package_files node_http http_parser net_addresses",
+  "too small to be worth a name":
+    "unsafe ansi escape_html uuid node_assert module_graph node_v8 deep_equals parse_args console_table process_binding process_exec_argv process_usage process_about process_control bun_misc string_width",
+  "it has no name yet":
+    "bunfig cli_options compression_calls compression_streams histogram legacy_encodings libdeflate_compressor message_channel node_zlib performance_timeline post_message tls tls_users x509 x509_users zstd",
+};
+
+test("every feature has a public name, or a reason why it has none", () => {
+  const named = new Set(all.names.flatMap(each => each.features));
+  const excused = Object.values(neverOffered).flatMap(list => list.split(" "));
+  expect(features.filter(feature => !named.has(feature) && !excused.includes(feature))).toEqual([]);
+  expect(excused.filter((feature, index) => named.has(feature) || !features.includes(feature) || excused.indexOf(feature) !== index)).toEqual([]);
 });

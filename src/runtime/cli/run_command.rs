@@ -1245,6 +1245,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Self::refuse_to_load_code(b"\"preload\" in bunfig.toml");
             }
         }
+        if ctx.debug.global_cache != bun_options_types::global_cache::GlobalCache::disable && !arguments::has_package_manager() {
+            arguments::refuse_option_left_out_by_trimming(b"\"install.auto\" in bunfig.toml");
+        }
 
         // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete

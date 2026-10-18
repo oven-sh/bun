@@ -392,7 +392,7 @@ error: /path/to/job.ts:5: --aot does not support a type that cannot be validated
 
 Declare what the data holds. JSON has no dates, so a date arrives as a `string`.
 
-`Bun.validate` doesn't need `--aot`. It checks the same way under `bun run`, `bun test` and `bun compile --no-aot`. `bun build` puts the check into the file that it writes, for Bun, for Node.js and for the browser, which adds about 18 KB. If another tool removes the types from your source first, the call has no type argument left. It then throws a `TypeError` that has no `issues`.
+`Bun.validate` doesn't need `--aot`. It checks the same way under `bun run`, `bun test` and `bun compile --no-aot`. `bun build` puts the check into the file that it writes, for Bun, for Node.js and for the browser, which adds about 18 KB. If another tool removes the types from your source first, the call has no type argument left. It then throws a `TypeError` that has no `issues`. `bun build --no-bundle` removes them too, so it doesn't support validation by type.
 
 [Validate data by its type](/bundler/executables#validate-data-by-its-type) lists the types that `Bun.validate` can check. It also lists the `Schema` types for rules that TypeScript can't express, such as a whole number or a minimum length.
 

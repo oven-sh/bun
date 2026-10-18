@@ -161,7 +161,7 @@ JSObject* JSMessageChannel::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSMessageChannel>(vm, globalObject);
 }
 
-JSValue JSMessageChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+NEVER_INLINE JSValue JSMessageChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSMessageChannelDOMConstructor, DOMConstructorID::MessageChannel>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

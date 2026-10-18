@@ -88,6 +88,14 @@ pub struct PlanNode {
     pub message: Option<Vec<u8>>,
     pub default: Option<Constant>,
     pub is_recursive: bool,
+    pub is_ambiguous: bool,
+    pub reaches_ambiguous: bool,
+}
+
+pub struct TaggedArms<'a> {
+    pub name: &'a [u8],
+    pub tagged: Vec<(&'a Constant, u32)>,
+    pub untagged: Vec<u32>,
 }
 
 #[derive(Default, Debug)]
@@ -104,7 +112,7 @@ pub const OBJECT_PROTOTYPE_PROPERTIES: [&[u8]; 12] = [b"constructor", b"hasOwnPr
 
 fn write_json_text(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'"');
-    for unit in bstr::BStr::new(text).to_string().encode_utf16() {
+    for unit in bun_core::strings::wtf8_to_utf16(text) {
         match unit {
             0x22 | 0x5c => out.extend_from_slice(&[b'\\', unit as u8]),
             0x20..=0x7e => out.push(unit as u8),
@@ -246,6 +254,9 @@ impl ValidationPlan {
             }
             out.extend_from_slice(if node.default.is_some() { b",true," } else { b",false," });
             write_json_constant(&mut out, node.default.as_ref().unwrap_or(&Constant::Null));
+            if node.is_ambiguous {
+                out.extend_from_slice(b",1");
+            }
             if let Planned::Object { members, .. } = &node.planned {
                 let plain_primitives: Vec<u32> = members
                     .iter()
@@ -363,6 +374,112 @@ impl ValidationPlan {
             }
         })
     }
+
+    fn tag_under(&self, arm: u32, name: &[u8]) -> Option<&Constant> {
+        let Planned::Object { members, .. } = &self.nodes[arm as usize].planned else { return None };
+        let member = members.iter().find(|member| member.name == name && !member.is_optional)?;
+        match &self.nodes[member.node as usize] {
+            PlanNode { planned: Planned::Value(constant), rules, default: None, .. } if rules.is_empty() && *constant != Constant::Undefined => Some(constant),
+            _ => None,
+        }
+    }
+
+    pub fn tagged_arms(&self, arms: &[u32]) -> Option<TaggedArms<'_>> {
+        let tags_of = |&arm: &u32| match &self.nodes[arm as usize].planned {
+            Planned::Object { members, .. } => members.iter().filter(|member| self.tag_under(arm, &member.name).is_some()).collect(),
+            _ => Vec::new(),
+        };
+        arms.iter().flat_map(tags_of).find_map(|member| {
+            let tagged: Vec<(&Constant, u32)> = arms.iter().filter_map(|&arm| Some((self.tag_under(arm, &member.name)?, arm))).collect();
+            let are_distinct = tagged.iter().enumerate().all(|(at, one)| !tagged[..at].iter().any(|other| other.0 == one.0));
+            let untagged = arms.iter().copied().filter(|arm| !tagged.iter().any(|one| one.1 == *arm)).collect();
+            (tagged.len() >= 2 && are_distinct).then(|| TaggedArms { name: &member.name, tagged, untagged })
+        })
+    }
+
+    pub fn may_accept_object(&self, node: u32, is_array: bool, depth: u32) -> bool {
+        match &self.nodes[node as usize].planned {
+            Planned::Anything | Planned::AnyObject => true,
+            Planned::Object { .. } | Planned::Dictionary { .. } => !is_array,
+            Planned::Array { .. } | Planned::Tuple { .. } => is_array,
+            Planned::Union { arms, .. } => depth > 8 || arms.iter().any(|&arm| self.may_accept_object(arm, is_array, depth + 1)),
+            Planned::Nothing | Planned::Primitive(_) | Planned::Value(_) => false,
+        }
+    }
+
+    fn nodes_within(&self, node: u32) -> Vec<u32> {
+        match &self.nodes[node as usize].planned {
+            Planned::Array { element: one, .. } | Planned::Dictionary { held: one, .. } => vec![*one],
+            Planned::Tuple { elements: several, .. } | Planned::Union { arms: several, .. } => several.clone(),
+            Planned::Object { members, others, .. } => members.iter().map(|member| member.node).chain(if let OtherKeys::Checked(held) = others { Some(*held) } else { None }).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn mark_ambiguous_unions(&mut self) {
+        let count = self.nodes.len();
+        let mut holders = vec![Vec::new(); count];
+        for holder in 0..count as u32 {
+            for held in self.nodes_within(holder) {
+                holders[held as usize].push(holder);
+            }
+        }
+        let mut finished = Vec::with_capacity(count);
+        let mut is_seen = vec![false; count];
+        for start in 0..count as u32 {
+            if std::mem::replace(&mut is_seen[start as usize], true) {
+                continue;
+            }
+            let mut path = vec![(start, self.nodes_within(start).into_iter())];
+            while let Some(top) = path.last_mut() {
+                let Some(next) = top.1.next() else {
+                    finished.push(top.0);
+                    path.pop();
+                    continue;
+                };
+                if !std::mem::replace(&mut is_seen[next as usize], true) {
+                    path.push((next, self.nodes_within(next).into_iter()));
+                }
+            }
+        }
+        let mut cycle = vec![u32::MAX; count];
+        let mut pending = Vec::new();
+        for &first in finished.iter().rev() {
+            if cycle[first as usize] != u32::MAX {
+                continue;
+            }
+            cycle[first as usize] = first;
+            pending.push(first);
+            while let Some(node) = pending.pop() {
+                for &holder in &holders[node as usize] {
+                    if cycle[holder as usize] == u32::MAX {
+                        cycle[holder as usize] = first;
+                        pending.push(holder);
+                    }
+                }
+            }
+        }
+        for node in 0..count {
+            let Planned::Union { arms, .. } = &self.nodes[node].planned else { continue };
+            let (tagged, tried_in_turn) = match self.tagged_arms(arms) {
+                Some(by_tag) => (by_tag.tagged.iter().map(|one| one.1).collect(), by_tag.untagged),
+                None => (Vec::new(), arms.clone()),
+            };
+            let coming_back = |arms: &[u32], is_array: bool| arms.iter().filter(|&&arm| cycle[arm as usize] == cycle[node] && self.may_accept_object(arm, is_array, 0)).count();
+            if coming_back(&tried_in_turn, true) >= 2 || coming_back(&tried_in_turn, false) + coming_back(&tagged, false).min(1) >= 2 {
+                self.nodes[node].is_ambiguous = true;
+                self.nodes[node].reaches_ambiguous = true;
+                pending.push(node as u32);
+            }
+        }
+        while let Some(node) = pending.pop() {
+            for &holder in &holders[node as usize] {
+                if !std::mem::replace(&mut self.nodes[holder as usize].reaches_ambiguous, true) {
+                    pending.push(holder);
+                }
+            }
+        }
+    }
 }
 
 const MAX_EXACT_PLAN_NODES: usize = 1024;
@@ -388,7 +505,7 @@ struct Planning {
 
 impl Planning {
     fn add(&mut self, planned: Planned) -> u32 {
-        self.plan.nodes.push(PlanNode { planned, rules: Vec::new(), message: None, default: None, is_recursive: false });
+        self.plan.nodes.push(PlanNode { planned, rules: Vec::new(), message: None, default: None, is_recursive: false, is_ambiguous: false, reaches_ambiguous: false });
         self.plan.nodes.len() as u32 - 1
     }
 }
@@ -439,6 +556,7 @@ impl Checker<'_, '_> {
         for node in 0..planning.plan.nodes.len() as u32 {
             planning.plan.nodes[node as usize].is_recursive = planning.plan.reaches_inline(node, node, &mut Vec::new());
         }
+        planning.plan.mark_ambiguous_unions();
         planning.plan.is_strict_everywhere = planning.is_strict_everywhere;
         planning.plan
     }
@@ -593,6 +711,7 @@ impl Checker<'_, '_> {
         for node in 0..planning.plan.nodes.len() as u32 {
             planning.plan.nodes[node as usize].is_recursive = planning.plan.reaches_inline(node, node, &mut Vec::new());
         }
+        planning.plan.mark_ambiguous_unions();
         planning.plan.unsupported.clear();
         planning.plan.is_strict_everywhere = true;
         planning.plan.is_exact = true;
@@ -710,7 +829,7 @@ impl Checker<'_, '_> {
         let template_rule = self.template_literal_rule(base);
         let planned = if template_rule.is_some() { Planned::Primitive(PlannedPrimitive::Text) } else { self.plan_untagged(planning, base, is_strict, at) };
         let rules = template_rule.into_iter().filter(|_| !planning.is_exact).chain(tags.rules).collect();
-        planning.plan.nodes[node as usize] = PlanNode { planned, rules, message: tags.message, default: tags.default, is_recursive: false };
+        planning.plan.nodes[node as usize] = PlanNode { planned, rules, message: tags.message, default: tags.default, is_recursive: false, is_ambiguous: false, reaches_ambiguous: false };
         node
     }
 

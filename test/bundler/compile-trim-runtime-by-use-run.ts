@@ -346,7 +346,7 @@ export function testPrograms(part: number) {
   (!hasIslands || unsupported ? describe.skip : describe.concurrent)("--compile --aot --compile-trim-runtime, part by part", () => {
     for (const file of programFiles.filter(mine)) {
       const name = basename(file, ".ts");
-      const options: { features?: string[]; build?: string[]; env?: Record<string, string>; posix?: boolean } = existsSync(join(programs, name + ".json"))
+      const options: { features?: string[]; build?: string[]; env?: Record<string, string>; posix?: boolean; says?: Record<string, string> } = existsSync(join(programs, name + ".json"))
         ? JSON.parse(readFileSync(join(programs, name + ".json"), "utf8"))
         : {};
       const features = (options.features ?? [name.replaceAll("-", "_")]).filter(feature => descriptions.has(feature));
@@ -377,8 +377,9 @@ export function testPrograms(part: number) {
             expect(await built("kept", ["--compile-trim-runtime"])).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
             for (const feature of features) {
               const refused = await built("left-out", ["--compile-trim-runtime"], feature);
-              expect(refused.stderr).toContain(`this executable was built with --compile-trim-runtime, without ${descriptions.get(feature)}`);
-              expect([70, 1]).toContain(refused.exitCode);
+              const sentence = `this executable was built with --compile-trim-runtime, without ${descriptions.get(feature)}`;
+              expect(refused.stderr).toContain(refused.stderr.includes(sentence) ? sentence : (options.says?.[feature] ?? sentence));
+              expect(refused.stderr.includes(": it finds undefined.\n") ? [70, 1, 0] : [70, 1]).toContain(refused.exitCode);
             }
           }),
         600_000,

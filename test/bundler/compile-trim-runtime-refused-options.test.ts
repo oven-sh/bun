@@ -27,7 +27,7 @@ const probed = Bun.spawnSync({
 });
 const hasIslands = !probed.stderr.toString().includes("nothing can be left out of this Bun");
 
-const isLeftOut = "cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out";
+const isLeftOut = "cannot be used with this executable: the part of Bun that it needs was left out when it was built";
 const leftOut = [
   ["--stack-trace-limit", "--stack-trace-limit=3"],
   ["--stack-trace-limit", "--stack-trace-limit 3"],

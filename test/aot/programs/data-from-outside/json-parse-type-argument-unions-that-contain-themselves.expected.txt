@@ -14,6 +14,15 @@ within lists 1: what JSON.parse gives
 tags of four kinds 1: what JSON.parse gives
 tags of four kinds, in turn 1: what JSON.parse gives
 tags of four kinds, no arm has it 1: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 1: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 1: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 1: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 1: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 1: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 1: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 1: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 1: what JSON.parse gives
+a text or null, read by the engine and converted 1: what JSON.parse gives
 number tags 2: what JSON.parse gives
 number tags, the first arm 2: what JSON.parse gives
 number tags, in turn 2: what JSON.parse gives
@@ -30,6 +39,15 @@ within lists 2: what JSON.parse gives
 tags of four kinds 2: what JSON.parse gives
 tags of four kinds, in turn 2: what JSON.parse gives
 tags of four kinds, no arm has it 2: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 2: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 2: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 2: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 2: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 2: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 2: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 2: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 2: what JSON.parse gives
+a text or null, read by the engine and converted 2: what JSON.parse gives
 number tags 3: what JSON.parse gives
 number tags, the first arm 3: what JSON.parse gives
 number tags, in turn 3: what JSON.parse gives
@@ -46,6 +64,15 @@ within lists 3: what JSON.parse gives
 tags of four kinds 3: what JSON.parse gives
 tags of four kinds, in turn 3: what JSON.parse gives
 tags of four kinds, no arm has it 3: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 3: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 3: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 3: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 3: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 3: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 3: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 3: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 3: what JSON.parse gives
+a text or null, read by the engine and converted 3: what JSON.parse gives
 number tags 20: what JSON.parse gives
 number tags, the first arm 20: what JSON.parse gives
 number tags, in turn 20: what JSON.parse gives
@@ -60,7 +87,17 @@ text tags 20: what JSON.parse gives
 text tags, no arm has it 20: TypeError
 within lists 20: what JSON.parse gives
 tags of four kinds 20: what JSON.parse gives
+tags of four kinds, in turn 20: what JSON.parse gives
 tags of four kinds, no arm has it 20: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 20: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 20: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 20: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 20: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 20: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 20: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 20: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 20: what JSON.parse gives
+a text or null, read by the engine and converted 20: what JSON.parse gives
 number tags 40: what JSON.parse gives
 number tags, the first arm 40: what JSON.parse gives
 number tags, in turn 40: what JSON.parse gives
@@ -75,7 +112,17 @@ text tags 40: what JSON.parse gives
 text tags, no arm has it 40: TypeError
 within lists 40: what JSON.parse gives
 tags of four kinds 40: what JSON.parse gives
+tags of four kinds, in turn 40: what JSON.parse gives
 tags of four kinds, no arm has it 40: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 40: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 40: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 40: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 40: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 40: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 40: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 40: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 40: what JSON.parse gives
+a text or null, read by the engine and converted 40: what JSON.parse gives
 number tags 60: what JSON.parse gives
 number tags, the first arm 60: what JSON.parse gives
 number tags, in turn 60: what JSON.parse gives
@@ -90,7 +137,17 @@ text tags 60: what JSON.parse gives
 text tags, no arm has it 60: TypeError
 within lists 60: what JSON.parse gives
 tags of four kinds 60: what JSON.parse gives
+tags of four kinds, in turn 60: what JSON.parse gives
 tags of four kinds, no arm has it 60: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 60: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 60: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 60: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 60: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 60: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 60: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 60: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 60: what JSON.parse gives
+a text or null, read by the engine and converted 60: what JSON.parse gives
 number tags 63: what JSON.parse gives
 number tags, the first arm 63: what JSON.parse gives
 number tags, in turn 63: what JSON.parse gives
@@ -104,6 +161,18 @@ null | 1 63: what JSON.parse gives
 text tags 63: what JSON.parse gives
 text tags, no arm has it 63: TypeError
 within lists 63: what JSON.parse gives
+tags of four kinds 63: what JSON.parse gives
+tags of four kinds, in turn 63: what JSON.parse gives
+tags of four kinds, no arm has it 63: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 63: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 63: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 63: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 63: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 63: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 63: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 63: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 63: what JSON.parse gives
+a text or null, read by the engine and converted 63: what JSON.parse gives
 number tags 64: what JSON.parse gives
 number tags, the first arm 64: what JSON.parse gives
 number tags, in turn 64: what JSON.parse gives
@@ -117,6 +186,18 @@ null | 1 64: what JSON.parse gives
 text tags 64: what JSON.parse gives
 text tags, no arm has it 64: TypeError
 within lists 64: what JSON.parse gives
+tags of four kinds 64: what JSON.parse gives
+tags of four kinds, in turn 64: what JSON.parse gives
+tags of four kinds, no arm has it 64: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 64: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 64: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 64: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 64: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 64: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 64: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 64: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 64: what JSON.parse gives
+a text or null, read by the engine and converted 64: what JSON.parse gives
 number tags 65: what JSON.parse gives
 number tags, the first arm 65: what JSON.parse gives
 number tags, in turn 65: what JSON.parse gives
@@ -130,6 +211,18 @@ null | 1 65: what JSON.parse gives
 text tags 65: what JSON.parse gives
 text tags, no arm has it 65: TypeError
 within lists 65: what JSON.parse gives
+tags of four kinds 65: what JSON.parse gives
+tags of four kinds, in turn 65: what JSON.parse gives
+tags of four kinds, no arm has it 65: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 65: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 65: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 65: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 65: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 65: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 65: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 65: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 65: what JSON.parse gives
+a text or null, read by the engine and converted 65: what JSON.parse gives
 number tags 66: what JSON.parse gives
 number tags, the first arm 66: what JSON.parse gives
 number tags, in turn 66: what JSON.parse gives
@@ -143,6 +236,18 @@ null | 1 66: what JSON.parse gives
 text tags 66: what JSON.parse gives
 text tags, no arm has it 66: TypeError
 within lists 66: what JSON.parse gives
+tags of four kinds 66: what JSON.parse gives
+tags of four kinds, in turn 66: what JSON.parse gives
+tags of four kinds, no arm has it 66: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 66: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 66: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 66: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 66: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 66: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 66: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 66: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 66: what JSON.parse gives
+a text or null, read by the engine and converted 66: what JSON.parse gives
 number tags 200: what JSON.parse gives
 number tags, the first arm 200: what JSON.parse gives
 number tags, in turn 200: what JSON.parse gives
@@ -156,6 +261,26 @@ null | 1 200: what JSON.parse gives
 text tags 200: what JSON.parse gives
 text tags, no arm has it 200: TypeError
 within lists 200: what JSON.parse gives
+tags of four kinds 200: what JSON.parse gives
+tags of four kinds, in turn 200: what JSON.parse gives
+tags of four kinds, no arm has it 200: TypeError
+tags of four kinds, read by the engine and converted ,"k":null} 200: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":null} 200: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":"one"} 200: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":"one"} 200: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":2} 200: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":2} 200: what JSON.parse gives
+tags of four kinds, read by the engine and converted ,"k":false} 200: what JSON.parse gives
+tags of four kinds, validated and converted ,"k":false} 200: what JSON.parse gives
+a text or null, read by the engine and converted 200: what JSON.parse gives
+a tree of two branches 1: what JSON.parse gives
+a tree of two branches, validated and converted 1: what JSON.parse gives
+a tree of two branches 2: what JSON.parse gives
+a tree of two branches, validated and converted 2: what JSON.parse gives
+a tree of two branches 6: what JSON.parse gives
+a tree of two branches, validated and converted 6: what JSON.parse gives
+a tree of two branches 10: what JSON.parse gives
+a tree of two branches, validated and converted 10: what JSON.parse gives
 arms that hold no objects {"value":1,"unit":"m"}: what JSON.parse gives
 arms that hold no objects {"error":"none","code":4}: what JSON.parse gives
 arms that hold no objects {"value":"v"}: what JSON.parse gives

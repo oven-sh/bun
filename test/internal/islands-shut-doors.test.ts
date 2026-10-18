@@ -152,7 +152,7 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
   const putWord = (file: Buffer, address: number, word: number) => void file.writeUInt32LE(word, at(address));
 
   function exitStub(address: number, number: number, feature: number): Buffer {
-    const code = Buffer.from([0xbf, 0, 0, 0, 0, 0xe9, 0, 0, 0, 0]);
+    const code = Buffer.from([0xba, 0, 0, 0, 0, 0xe9, 0, 0, 0, 0]);
     code.writeUInt32LE(feature + number * 4096, 1);
     code.writeInt32LE(trimmedOut - (address + 10), 6);
     return code;
@@ -308,7 +308,7 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
     const file = shutDoors(before, arm64, ["a"], true);
     const words = (...addresses: number[]) => addresses.map(address => file.readUInt32LE(at(address)));
     expect([...file.subarray(at(0x202002), at(0x202004))]).toEqual([0x20, 0x00]);
-    expect(words(0x202004, 0x202008, 0x20200c)).toEqual([0x52800000, 0x72a00000, 0x17fffc01]);
+    expect(words(0x202004, 0x202008, 0x20200c)).toEqual([0x52800002, 0x72a00002, 0x17fffc01]);
     expect(words(0x202010, 0x202014)).toEqual([0x52800000, 0xd65f03c0]);
     expect(words(0x201100, 0x201104, 0x201108, 0x20110c, 0x201110, 0x201114)).toEqual([0x940003c1, 0xb0000000, 0x91001000, 0xb0000000, 0x91001000, 0x140003bf]);
     expect(words(0x201120, 0x201124)).toEqual([0xb0000003, 0x91001063]);

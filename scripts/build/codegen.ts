@@ -537,6 +537,10 @@ function emitLintDocs({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
 }
 
+function importedByRuntimeHelpers(cfg: CodegenFields): string[] {
+  return [resolve(cfg.cwd, "src", "runtime.js"), resolve(cfg.cwd, "src", "js", "internal", "validation.ts")];
+}
+
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   const src = resolve(cfg.cwd, "src", "runtime.bun.js");
   const out = resolve(cfg.codegenDir, "runtime.out.js");
@@ -545,7 +549,7 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
     outputs: [out],
     rule: "esbuild",
     inputs: [src],
-    implicitInputs: [o.rootInstall],
+    implicitInputs: [o.rootInstall, ...importedByRuntimeHelpers(cfg)],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -721,6 +725,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [...outputs, types],
     rule: "codegen",
     inputs: [script, ...sources.zigGeneratedClasses],
+    implicitInputs: [resolve(cfg.cwd, "scripts", "build", "islands.doors")],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -942,6 +947,7 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [...outputs, generatedTs],
     rule: "codegen_bun",
     inputs: [script, ...sources.bakeRuntime],
+    implicitInputs: [resolve(cfg.cwd, "src", "runtime.bun.js"), ...importedByRuntimeHelpers(cfg)],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -995,6 +1001,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
     inputs: [...sources.bindgen, ...sources.bindgenCodegen],
+    implicitInputs: [resolve(cfg.cwd, "scripts", "build", "islands.doors")],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

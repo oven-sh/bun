@@ -617,7 +617,9 @@ fn run(args: &[String]) {
                 only_the_globals: defaults.only_the_globals,
                 writes_declaration_files: defaults.writes_declaration_files,
                 without_sources_of_the_project: defaults.without_sources_of_the_project,
+                checks_what_only_augments: defaults.checks_what_only_augments,
                 declares_bun_intrinsics: defaults.declares_bun_intrinsics,
+                bun_intrinsics_add_no_file: defaults.bun_intrinsics_add_no_file,
                 memory: defaults.memory,
             };
             let request = bun_sema_driver::Request {
@@ -813,6 +815,9 @@ fn run(args: &[String]) {
                 {
                     for line in bun_core::strings::split(&found.runtime_use.text(), b"\n").filter(|line| !line.is_empty()) {
                         error_line!("aot: runtime use: {}", text(line));
+                    }
+                    if let Some(hint) = found.runtime_use.what_the_flag_against_code_from_strings_would_do() {
+                        error_line!("aot: runtime use: hint: {hint}");
                     }
                 }
                 // `--aot-explain=errors`: the errors that do not fail the build, and why each does not.

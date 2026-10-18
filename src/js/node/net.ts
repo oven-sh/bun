@@ -3171,12 +3171,23 @@ function lookupAndConnect(self, options) {
   const optionsLookup = options.lookup;
   if (optionsLookup != null) validateFunction(optionsLookup, "options.lookup");
 
-  if (dns === undefined) dns = require("node:dns");
+  const hasDns = Bun.dns !== undefined;
+  if (!hasDns && optionsLookup == null) {
+    process.nextTick(() => {
+      if (self.connecting) {
+        const addressType = socketToDnsFamily(options.family) === 6 ? 6 : 4;
+        internalConnect(self, options, host, port, addressType, localAddress, localPort);
+      }
+    });
+    return;
+  }
+
+  if (hasDns && dns === undefined) dns = require("node:dns");
   const dnsopts: { family: unknown; hints: number; all?: boolean } = {
     family: socketToDnsFamily(options.family),
     hints: options.hints || 0,
   };
-  if (!isWindows && dnsopts.family !== 4 && dnsopts.family !== 6 && dnsopts.hints === 0) {
+  if (hasDns && !isWindows && dnsopts.family !== 4 && dnsopts.family !== 6 && dnsopts.hints === 0) {
     dnsopts.hints = dns.ADDRCONFIG;
   }
 

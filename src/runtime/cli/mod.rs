@@ -1201,7 +1201,7 @@ pub(crate) mod command {
     #[cold]
     fn refuse_options_left_out_by_trimming(options: &[&bun_core::ZStr]) {
         let options: Vec<&[u8]> = options.iter().skip(1).map(|option| option.as_bytes()).collect();
-        if let Some(option) = arguments::option_left_out_by_trimming(&options) {
+        if let Some(option) = arguments::option_left_out_by_trimming(&options, arguments::is_trimmed_executable()) {
             arguments::refuse_option_left_out_by_trimming(&option);
         }
     }
@@ -1225,11 +1225,16 @@ pub(crate) mod command {
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
             // now — otherwise `bun_options_argc()` reads 0 here and the
             // standalone executable silently drops `BUN_OPTIONS` flags.
+            unsafe extern "C" {
+                safe fn Bun__evaluatesText() -> bool;
+            }
             let original_argv_len = bun::argv().len();
             let bun_options_argc = bun::bun_options_argc();
             let is_built_to_refuse_code_from_strings = bun_core::CodeGenerationFromStrings::in_exec_argv(graph.compile_exec_argv) != bun_core::CodeGenerationFromStrings::Allowed;
             if graph.runtime_options.runs_static_code_only && is_built_to_refuse_code_from_strings {
                 bun_core::disallow_code_generation_in_trimmed_executable();
+            } else if !Bun__evaluatesText() {
+                bun_core::disallow_code_generation_without_interpreter();
             }
             if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
                 let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
@@ -1253,9 +1258,7 @@ pub(crate) mod command {
                     0
                 };
 
-                if arguments::is_trimmed_executable() {
-                    refuse_options_left_out_by_trimming(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
-                }
+                refuse_options_left_out_by_trimming(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
 
                 // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                 // This prevents user arguments like --version/--help from being intercepted

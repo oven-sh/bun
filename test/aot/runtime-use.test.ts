@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { builtinModules } from "node:module";
 import { declared, of, runtimeUse } from "./runtime-use-harness";
 import { test } from "./supported";
 
@@ -48,6 +49,20 @@ describe.concurrent("what a program names of the runtime", () => {
     expect(use.facts.has("process binding")).toBe(false);
   });
 
+  test.each([
+    ["a member of Bun", `Bun.plugin({ name: "a", setup() {} });`],
+    ["an import from bun", `import { plugin } from "bun";\nplugin({ name: "a", setup() {} });`],
+    ["a function that is handed on", `const register = Bun.plugin;\nregister({ name: "a", setup() {} });`],
+  ])("Bun.plugin acts only on what is loaded at run time, so by itself it opens nothing: %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen, named: use.facts.has("Bun plugin") }).toEqual({ world: "closed", whyOpen: [], named: true });
+  });
+
+  test("Bun.plugin beside an import() of a computed name: the import opens the world", async () => {
+    const use = await of(`Bun.plugin({ name: "a", setup() {} });\nconst name: string = process.argv[2]; import(name);`);
+    expect({ world: use.world, whyOpen: use.whyOpen, named: use.facts.has("Bun plugin") }).toEqual({ world: "open", whyOpen: expect.arrayContaining(["import() of a name that is computed"]), named: true });
+  });
+
   test("console that escapes leaves the world closed and may be read by any name", async () => {
     const use = await of(`const logger = [console]; logger[0].log(1);`);
     expect(use.world).toBe("closed");
@@ -59,9 +74,9 @@ describe.concurrent("what a program names of the runtime", () => {
     const use = await runtimeUse({ "main.ts": `import { Database } from "bun:sqlite";\ndeclare const console: any;\nconsole.log(Database);` });
     expect(use.world).toBe("closed");
     expect(use.lines).toContain("module bun:sqlite");
-    expect(use.lines).toContain("native JSSQLStatement.cpp:createJSSQLStatementConstructor");
+    expect(use.lines).toContain("native JSSQLStatement.cpp:jsCreateSQLStatementConstructor");
     expect(without.facts.has("module bun:sqlite")).toBe(false);
-    expect(without.facts.has("native JSSQLStatement.cpp:createJSSQLStatementConstructor")).toBe(false);
+    expect(without.facts.has("native JSSQLStatement.cpp:jsCreateSQLStatementConstructor")).toBe(false);
   });
 
   test("names in a built-in module count only when the module is compiled in", async () => {
@@ -83,7 +98,6 @@ describe.concurrent("what a program names of the runtime", () => {
     ["import() of a computed path", `const name: string = process.argv[2]; import("./" + name);`, "import() of a path that is computed"],
     ["require that escapes", `console.log([require].length);`, "require"],
     ["a Worker", `new Worker("./other.ts");`, "Worker"],
-    ["Bun.plugin", `Bun.plugin({});`, "Bun.plugin"],
     ["Bun that escapes", `console.log(Object.keys(Bun));`, "Bun"],
     ["process that escapes", `console.log(Object.keys(process));`, "process"],
     ["the global object that escapes", `console.log(Object.keys(globalThis));`, "the global object"],
@@ -239,7 +253,7 @@ describe.concurrent("process as a member of the global object", () => {
 });
 
 describe.concurrent("delete makes the engine create every lazy property of the object", () => {
-  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *" && line !== "program-key *" && line !== "symbol *");
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *" && line !== "symbol *");
 
   test.each([
     ["the global object", `delete (globalThis as any).fetch;`, "global *"],
@@ -296,7 +310,7 @@ describe.concurrent("delete makes the engine create every lazy property of the o
 });
 
 describe.concurrent("asking an object for a member makes the engine create the member", () => {
-  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *" && line !== "program-key *" && line !== "symbol *");
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *" && line !== "symbol *");
 
   test.each([
     ["in, of the global object", `console.log("HTMLRewriter" in globalThis);`, "global HTMLRewriter"],
@@ -465,6 +479,17 @@ describe.concurrent("what a built-in function names counts on behalf of what han
   test("a program that names none of them names nothing of theirs", async () => {
     const use = await of(`console.log(1);`);
     expect({ world: use.world, named: named(use) }).toEqual({ world: "closed", named: [] });
+  });
+
+  test.each([
+    ["an import of bun:test", `import { spyOn } from "bun:test";\nconsole.log(spyOn);`],
+    ["require of bun:test", `console.log(require("bun:test").spyOn);`],
+    ["import() of bun:test", `console.log((await import("bun:test")).spyOn);`],
+    ["Bun.jest", `console.log(Bun.jest("a").spyOn);`],
+    ["node:test", `import { mock } from "node:test";\nconsole.log(mock);`],
+  ])("what reads a method under a name that nobody sees and hands out what calls it: any property may be read with %s", async (_, text) => {
+    const [use, without] = await Promise.all([of(`export {};\n` + text), of(`console.log(1);`)]);
+    expect({ any: use.facts.has("property *"), anyWithout: without.facts.has("property *") }).toEqual({ any: true, anyWithout: false });
   });
 
   test.each([
@@ -703,6 +728,10 @@ describe.concurrent("the names of properties", () => {
     ["Reflect of a variable that holds the global object", `const everything: any = globalThis;\nfunction read(key: string) { return everything.Reflect.get(given, key); }\nconsole.log(read("a"));`],
     ["a key of super", `class Text extends String { read(key: string) { return (super[key as any] as any); } }\nconsole.log(new Text().read(given.name));`],
     ["a parameter that only literals reach", `function read(key: string) { return given[key]; }\nconsole.log(read("a"));`],
+    ["a key, where what is found is kept and handed on", `const found = given[given.name];\nconsole.log(typeof found, found);`],
+    ["a key, where what is found is called", `given[given.name]();`],
+    ["a key, where what is found or else another value is handed on", `console.log(given[given.name] ?? 1);`],
+    ["a key, where a member of what is found is called", `console.log(given[given.name].call(1));`],
     ["a sum with what may be a text", `function read(one: any, other: any) { return given[one + other]; }\nconsole.log(read(given.one, given.other));`],
     ["a sum of what may be a text and a number", `function read(one: any) { return given[one + 1]; }\nconsole.log(read(given.one));`],
     ["a counter that starts as what may be a text", `function read(at: any) { for (; at < 9; at++) console.log(given[at]); }\nread(given.one);`],
@@ -722,14 +751,6 @@ describe.concurrent("the names of properties", () => {
   });
 
   test.each([
-    ["an interface", `interface Point { x: number }\nfunction look(point: Point, key: keyof Point) { return typeof point[key]; }\nconsole.log(look({ x: 1 }, given.name));`],
-    ["a type alias", `type Point = { x: number };\nfunction look(point: Point, key: keyof Point) { return point[key] === 1; }\nconsole.log(look({ x: 1 }, given.name));`],
-    ["an interface, whose parent is changed where nothing sees it", `interface Point { x: number }\nconst point: Point = { x: 1 };\nReflect.set(point, "__proto__", given);\nif (point[given.name as keyof Point]) console.log(1);`],
-  ])("an object literal does not keep its prototype: a look under a key may run any getter where its type is %s", async (_, text) => {
-    expect(await property(text)).toEqual({ world: "closed", named: false, any: true });
-  });
-
-  test.each([
     ["called on it", `const holder: any = {}.constructor;\nconsole.log(holder.getOwnPropertyDescriptor(given, given.name).value);`],
     ["all of them, called on it", `const holder: any = {}.constructor;\nconsole.log(holder.values(holder.getOwnPropertyDescriptors(given))[0].value);`],
     ["taken out of it", `const holder: any = {}.constructor;\nconst take = holder.getOwnPropertyDescriptor;\nconsole.log(take(given, given.name).value);`],
@@ -744,6 +765,13 @@ describe.concurrent("the names of properties", () => {
 
   test("no other property is read where that function of a holder without a name is only looked at", async () => {
     expect((await property(`console.log(typeof given.getOwnPropertyDescriptor, given.getOwnPropertyDescriptors === undefined);`)).any).toBe(false);
+  });
+
+  test.each([
+    ["WebAssembly, whose imports are named in the bytes", `declare const WebAssembly: any, Math: any;\nconsole.log(await WebAssembly.instantiate(given.bytes, { j: Math }));\nexport {};`],
+    ["bun:test, whose spyOn is handed a name", `import { spyOn } from "bun:test";\nconsole.log(spyOn(given, given.name));`],
+  ])("native code calls a member under a name out of data: any property may be read with %s", async (_, text) => {
+    expect((await runtimeUse({ "main.ts": declared + given + text })).facts.has("property *")).toBe(true);
   });
 
   test.each([
@@ -791,6 +819,11 @@ describe.concurrent("the names of properties", () => {
     ["a store", `function store(key: string) { given[key] = 1; }\nstore("a");`],
     ["a key of a class of the program's own", `class Point { x = 1; y = 2; }\nfunction read(point: Point, key: keyof Point) { return point[key] === 1; }\nconsole.log(read(new Point(), "x"));`],
     ["a number that is handed in", `function read(at: number) { return given[at]; }\nconsole.log(read(1));`],
+    ["a key, where what is found is only asked for its type", `console.log(typeof given[given.name]);`],
+    ["a key, where what is found is only tested", `if (given[given.name]) console.log(1);\nconsole.log(!given[given.name], given[given.name] ? 1 : 2, given[given.name] == null);`],
+    ["a key, where what is found is only compared", `console.log(given[given.name] === 1, given[given.name] !== given.other, given[given.name] > 1);`],
+    ["a key, where what is found is an operand that is turned into a primitive", "console.log(given[given.name] + 1, -given[given.name], given[given.name] * 2, `${given[given.name]}`);"],
+    ["a key of what an interface describes, where what is found is only looked at", `interface Point { x: number }\nfunction look(point: Point, key: keyof Point) { return typeof point[key]; }\nconsole.log(look({ x: 1 }, given.name));`],
     ["what has been counted down, whatever it was", `function read(at: any) { for (let i = at; i-- !== 0; ) console.log(given[i]); }\nread(given.length);`],
     ["what has been counted up, whatever it was", `function read(at: any) { at++; console.log(given[at], given[++at], given[at++]); }\nread(given.length);`],
     ["what an operator other than + answers, whatever it is handed", `function read(one: any, other: any) { console.log(given[one - other], given[one * other], given[one % other], given[one | other], given[-one], given[+one], given[~one]); }\nread(given.one, given.other);`],
@@ -802,12 +835,22 @@ describe.concurrent("the names of properties", () => {
 });
 
 describe.concurrent("what a built-in module lets escape", () => {
+  test("the built-in sources that hand a host on are these: a new one may hand it to the program, as the worker of node:cluster did", async () => {
+    const names = builtinModules.filter(name => name !== "bun:main");
+    const use = await runtimeUse({ "main.cjs": names.map(name => `console.log(typeof require(${JSON.stringify(name)}));`).join("\n") }, undefined, "main.cjs");
+    expect(use.lines.filter(line => /^escapes (process|Bun|global) \/\$bun\/js\//.test(line)).sort()).toEqual([
+      "escapes global /$bun/js/node/repl.js",
+      "escapes process /$bun/js/internal/worker/messaging.ts",
+      "escapes process /$bun/js/node/repl.js",
+      "escapes process /$bun/js/node/worker_threads.ts",
+    ]);
+  });
+
   test("any property of process may be read once node:cluster is in the program", async () => {
     const without = await of(`console.log(1);`);
     const use = await runtimeUse({ "main.ts": `import cluster from "node:cluster";\ndeclare const console: any;\nconsole.log(cluster.isPrimary);` });
     expect(use.world).toBe("closed");
     expect(use.lines).toContain("process *");
-    expect(use.lines.some(line => line.startsWith("escapes process "))).toBe(true);
     expect(without.lines.filter(line => !line.includes("property ") && line !== "symbol *" && (line.endsWith(" *") || line.startsWith("escapes ")))).toEqual([]);
   });
 
@@ -910,9 +953,23 @@ describe.concurrent("whether text may become code is the user's word", () => {
     ["new Function", `console.log(new Function("return 1")());`, "a call of Function"],
     ["a call of Function", `console.log(Function("return 1")());`, "a call of Function"],
     ["Function that is handed on", `console.log([Function].length);`, "Function"],
+    ["the constructor of Function.prototype", `console.log(Function.prototype.constructor("return 1")());`, "Function"],
+    ["the constructor of Function.prototype in brackets", `console.log((Function.prototype as any)["constructor"]("return 1")());`, "Function"],
+    ["a member of Function.prototype under a key that is not seen", `console.log((Function.prototype as any)[process.argv[2]]("return 1")());`, "Function"],
   ])("%s, by its binding, opens the world: the text may name anything", async (_, text, why) => {
     const use = await of(text);
     expect({ world: use.world, says: use.whyOpen.includes(why), allowed: use.facts.has(allowed) }).toEqual({ world: "open", says: true, allowed: true });
+  });
+
+  test.each([
+    ["a closed world", `console.log("hello");`, "hint: with --disallow-code-generation-from-strings, eval and Function throw and what evaluates text can be left out"],
+    ["a world that only eval and Function open", `console.log(new Function("return 1")(), (0, eval)("1"));`, "hint: only eval and Function open the world: with --disallow-code-generation-from-strings they throw and the world is closed"],
+    ["a world that something else opens too", `console.log(new Function("return 1")(), require(process.argv[2]));`, undefined],
+    ["a server whose options are not seen", `Bun.serve(JSON.parse(process.argv[2]));`, undefined],
+  ])("the report says what the flag would do for %s", async (_, text, hint) => {
+    const [byDefault, withTheFlag] = await Promise.all([of(text), runtimeUse({ "main.ts": declared + text }, ["check", "--aot", "--no-pretty", "--disallow-code-generation-from-strings"])]);
+    const hints = (use: { lines: string[] }) => use.lines.filter(line => line.startsWith("hint: "));
+    expect({ byDefault: hints(byDefault), withTheFlag: hints(withTheFlag) }).toEqual({ byDefault: hint ? [hint] : [], withTheFlag: [] });
   });
 
   test("the fact is there for a program that says nothing of it, and absent under --disallow-code-generation-from-strings", async () => {

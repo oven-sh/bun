@@ -1,1 +1,1 @@
-{ "features": ["http3", "mux", "nodehttp2"] }
+{ "features": ["http3", "mux", "nodehttp2"], "says": { "http3": "Failed to create HTTP/3 server", "mux": "Failed to create HTTP/2 server" } }

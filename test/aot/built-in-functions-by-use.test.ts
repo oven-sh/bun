@@ -126,6 +126,7 @@ const found = Reflect.ownKeys(ReadableStream.prototype).find(key => typeof key =
   "a timer function spread": { source: `const copy = { ...setTimeout }; const [custom] = Object.getOwnPropertySymbols(copy); console.log(String(custom), await copy[custom](1, "spread"));` },
   "a timer function handed on": { source: `function describe(timer) { return Object.values(Object.getOwnPropertyDescriptors(Object.assign({}, timer))).length + Reflect.ownKeys(Object.assign({}, timer)).length; } console.log(describe(setInterval), describe(setImmediate));` },
   "util.promisify of a timer": { source: `import { promisify } from "node:util"; console.log(await promisify(setTimeout)(1, "promisified"));` },
+  "Bun.validate, safeValidate, parse and schema with a plan that is a text": { source: `const plan = JSON.stringify([0, [[2, "string", null, [["pattern", "^[a-z]+$"]]]], []]); console.log(Bun.validate("ab", plan), typeof Bun.safeValidate("A1", plan), Bun.parse('"ab"', plan), typeof Bun.schema(plan)["~standard"].validate);` },
   "Bun.build with a plugin": {
     source: `const built = await Bun.build({ entrypoints: ["./entry.js"], plugins: [{ name: "text", setup(build) { build.onResolve({ filter: /^virtual$/ }, () => ({ path: "virtual", namespace: "made" })); build.onLoad({ filter: /.*/, namespace: "made" }, () => ({ contents: "export default 'from a plugin'", loader: "js" })); } }] }); console.log(built.success, (await built.outputs[0].text()).includes("from a plugin"));`,
     files: { "entry.js": `import text from "virtual"; console.log(text);` },

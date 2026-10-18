@@ -65,7 +65,7 @@ impl Typedness {
 pub(super) fn measure(program: &Program, accesses: &Accesses<'_>, is_runtime_layout: &[bool], modules: &[FileId], checked: &Checked<'_>, in_parallel: InParallel<'_>) -> Typedness {
     let mut tasks: Vec<(&[Func], Typedness)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Typedness::default())).collect();
     for_each_mut(&mut tasks, in_parallel, &|(funcs, counted)| {
-        let is_counted = |func: &&Func| func.flags & func_flags::IS_TYPED != 0 && func.flags & (func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) == 0;
+        let is_counted = |func: &&Func| func.flags & func_flags::IS_TYPED != 0 && func.flags & (func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE | func_flags::IS_HIDDEN_IN_STACK_TRACES) == 0;
         for value in funcs.iter().filter(is_counted).flat_map(|func| &func.values) {
             if let Def::Op(Op::PropGet { .. } | Op::ElemGet { .. }) = value.def {
                 counted.reads += 1;

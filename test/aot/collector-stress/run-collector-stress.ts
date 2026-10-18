@@ -9,6 +9,9 @@
 //
 // ../shell/tools.ts says what it needs. Linux x64 only: with fewer registers, fewer stale copies of a pointer lie
 // about that would keep a value alive by accident. A build with a sanitizer takes a third of each file's programs, a debug build a tenth.
+//
+// json-parse-*.test.ts name the programs that parse by a type while the collector runs, and ask for a collection at every such
+// allocation, or at every second: there none may run out of time.
 //   JSC=.. SEMA=.. PLAIN=.. python3 test/aot/shell/collector-stress.py [--young] strings/search     one program
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
@@ -40,5 +43,30 @@ export function collectorStress(collections: "full" | "young", part: number, par
       expect(exitCode).toBe(0);
     },
     isASAN ? 560_000 : 290_000,
+  );
+}
+
+export function collectorStressOn(collections: "full" | "young", every: 1 | 2 | 3, programs: string[]) {
+  const where = ["every", "every second", "every third"][every - 1] + " allocation that leaves the fast path";
+  const whySkipped =
+    whyNoScriptRuns ?? (!isLinux || process.arch !== "x64" ? "it is run on Linux x64, which shows the most" : isASAN || isDebug ? "this build is too slow for a collection at every allocation" : undefined);
+  if (whySkipped && !unsupported) console.error(`SKIPPED: ${programs.length} programs with a ${collections} collection at ${where}: ${whySkipped}`);
+
+  test.skipIf(!!whySkipped)(
+    `${programs.length} programs answer the same with a ${collections} collection at ${where}`,
+    async () => {
+      await using stress = Bun.spawn({
+        cmd: [python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs],
+        env: { ...bunEnv, JSC: jsc!, SEMA: sema!, PLAIN: bunExe() },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([stress.stdout.text(), stress.stderr.text(), stress.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").filter(line => line !== "")).toEqual([`${programs.length} programs, 0 fail under stress alone, 0 run out of time`]);
+      expect(exitCode).toBe(0);
+    },
+    290_000,
   );
 }

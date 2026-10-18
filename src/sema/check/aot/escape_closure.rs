@@ -292,10 +292,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let arguments = self.sig_params(called_as);
                 for &declared_sig in &declared_types_all {
                     let parameters = self.sig_params(declared_sig);
-                    let is_served = self.is_served_by_untyped_clone(declared_sig);
                     for index in 0..parameters.len() {
                         if let (Some(argument), Some(parameter)) = (self.param_type_at(&arguments, index), self.param_type_at(&parameters, index)) {
-                            if !is_served {
+                            if self.is_parameter_held_to_its_type(declared_sig, index) {
                                 self.aot.escape_closure.nested_parameter_indices.push(carried.len() as u32);
                             }
                             carried.push((argument, parameter));
@@ -590,12 +589,18 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return;
         }
-        self.record_flow_into_untyped_slot(own, if let Destination::Typed(target) = entered { Some(target) } else { None });
+        if !self.is_predicted(file, e) {
+            self.record_flow_into_untyped_slot(own, if let Destination::Typed(target) = entered { Some(target) } else { None });
+        }
         let is_inherited = matches!(parent, Parent::Expr(around) if matches!(self.hir(file)[around].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }));
         if is_inherited && matches!(entered, Destination::Untyped) && !self.is_this_in_own_class_method(file, e, parent) {
             let shown = self.apparent_type_of(file, e, 0);
-            let is_tested_on_entry = matches!(self.hir(file)[e].kind, ExprKind::Fn(func) if self.has_untyped_clone(file, func));
-            self.note_escape_query_once(EscapeQuery::EscapingValues(shown, is_tested_on_entry));
+            if matches!(self.hir(file)[e].kind, ExprKind::Fn(func) if self.is_checked_at_entry_by_context_alone(file, func)) {
+                self.record_escaping_types(shown, None);
+            } else {
+                let is_tested_on_entry = matches!(self.hir(file)[e].kind, ExprKind::Fn(func) if self.has_untyped_clone(file, func));
+                self.note_escape_query_once(EscapeQuery::EscapingValues(shown, is_tested_on_entry));
+            }
         }
         if let Destination::Typed(target) = entered
             && self.is_uninformative(own)

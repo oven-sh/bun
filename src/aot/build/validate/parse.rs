@@ -13,6 +13,7 @@ const MEMBERS_PER_MASK: usize = 30;
 const MAX_KEYS_COMPARED_SEQUENTIALLY: usize = 3;
 const MAX_KEY_BYTE_INSPECTED: usize = 32;
 const MAX_MEMBERS_PARSED_IN_PLACE: usize = 240;
+const MAX_MEMBERS_RECORDED_IN_SEQUENCE: usize = 13;
 const MAX_DEPTH_OF_UNIONS_LOOKED_INTO: u32 = 8;
 pub(super) const MIN_ARMS_OF_UNION_WITH_OWN_FUNCTION: usize = 4;
 
@@ -257,6 +258,12 @@ pub(super) fn is_parsed_by_type(plan: &ValidationPlan) -> bool {
     is_parsed_in_place(plan, plan.root)
 }
 
+pub(super) fn has_recursive_union_parsed_twice(plan: &ValidationPlan) -> bool {
+    (0..plan.nodes.len() as u32).any(|node| {
+        matches!(&plan.nodes[node as usize].planned, Planned::Union { arms, .. } if would_parse_nested_values_twice(plan, arms)) && reaches(plan, node, node, &mut vec![false; plan.nodes.len()])
+    })
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Found {
     Opened,
@@ -272,6 +279,7 @@ struct ObjectParse {
     in_text_order: Var,
     extra_properties: Var,
     key_order_mark: Var,
+    key_sequence: Option<Var>,
     failed_at: Var,
     failed_name: Var,
     refusal: BlockId,
@@ -397,18 +405,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(unreachable);
     }
 
-    pub(super) fn emit_parse_by_type(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, text: V, created: Ty) -> V {
+    fn emit_abandoning_handler(&mut self, fx: &mut Fx, throwing: BlockId) {
+        fx.b.seal(throwing);
+        fx.b.switch_to(throwing);
+        let error = self.emit(fx, Op::Caught);
+        self.emit_parser_operation(fx, Operation::JSONAbandon, &[], self.known.undefined);
+        let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
+        fx.b.terminate(Term::Throw { value: error, unwind, pos: 0 });
+    }
+
+    pub(super) fn emit_parse_by_type(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, text: V, decodes_bytes: bool, created: Ty) -> V {
         let (general_path, done) = (fx.b.new_block(), fx.b.new_block());
         let result = fx.b.new_var(self.or_anything(created.id));
         let opened = self.emit_parser_operation(fx, Operation::JSONOpen, &[text], self.known.counter);
         self.continue_if_parsed(fx, opened, general_path);
         let start = self.skip_whitespace(fx, opened);
         let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
+        let throwing = may_be_nested_value(plan, plan.root).then(|| fx.b.new_block());
+        fx.handlers.extend(throwing);
         let (value, end) = self.emit_parsed(fx, plan, number, plan.root, start, Found::Expected, general_path);
+        fx.handlers.truncate(fx.handlers.len() - usize::from(throwing.is_some()));
         self.validators.is_speculative = was_speculative;
         let is_complete = self.emit_parser_operation(fx, Operation::JSONClose, &[end], self.known.boolean);
         let complete = fx.b.new_block();
         fx.b.branch(is_complete, complete, general_path);
+        if let Some(throwing) = throwing {
+            self.emit_abandoning_handler(fx, throwing);
+        }
         fx.b.seal(complete);
         fx.b.switch_to(complete);
         let value = self.coerce_to(fx, value, created, CoerceReason::Cast);
@@ -417,7 +440,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(general_path);
         fx.b.switch_to(general_path);
         self.emit_parser_operation(fx, Operation::JSONAbandon, &[], self.known.undefined);
-        let text = self.emit_parser_operation(fx, Operation::JSONDecodeSource, &[text], self.out.tys.anything);
+        let decoded = self.emit_parser_operation(fx, Operation::JSONDecodeSource, &[text], self.out.tys.anything);
+        let text = if decodes_bytes { decoded } else { text };
         let parsed = self.emit_global_method_call(fx, b"JSON", b"parse", &[text]);
         let validated = self.emit_root_validation(fx, plan, number, None, parsed, false, created);
         fx.b.write(result, validated);
@@ -848,7 +872,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.jump(fails);
             }
         }
-        if would_parse_nested_values_twice(plan, &arms) {
+        if !plan.is_exact && would_parse_nested_values_twice(plan, &arms) {
             let (value, after) = self.emit_parsed_by_engine(fx, plan, number, node, cursor, fails);
             fx.b.write(held, value);
             fx.b.write(end, after);
@@ -1020,7 +1044,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let seen = (0..count.div_ceil(MEMBERS_PER_MASK)).map(|_| self.new_selector(fx)).collect();
         let (in_text_order, extra_properties, key_order_mark) = (self.new_temporary(fx), self.new_temporary(fx), fx.b.new_var(self.known.counter));
         let (failed_at, failed_name, refusal) = (fx.b.new_var(self.known.counter), fx.b.new_var(self.known.string), fx.b.new_block());
-        ObjectParse { cursor, held, seen, bits, in_text_order, extra_properties, key_order_mark, failed_at, failed_name, refusal }
+        let key_sequence = (members.len() <= MAX_MEMBERS_RECORDED_IN_SEQUENCE).then(|| fx.b.new_var(self.known.counter));
+        ObjectParse { cursor, held, seen, bits, in_text_order, extra_properties, key_order_mark, key_sequence, failed_at, failed_name, refusal }
     }
 
     fn exit_to_general_path(&mut self, fx: &mut Fx, parsed: &ObjectParse, cursor: V, seen: &[i64], to: BlockId) -> BlockId {
@@ -1080,15 +1105,30 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn record_key(&mut self, fx: &mut Fx, at: usize) {
-        let at = self.emit(fx, Op::Int(at as i64));
-        self.emit_parser_operation(fx, Operation::JSONRecordKey, &[at], self.known.undefined);
+    fn record_key(&mut self, fx: &mut Fx, parsed: &ObjectParse, at: usize) {
+        let Some(sequence) = parsed.key_sequence else {
+            let at = self.emit(fx, Op::Int(at as i64));
+            self.emit_parser_operation(fx, Operation::JSONRecordKey, &[at], self.known.undefined);
+            return;
+        };
+        let (so_far, key) = (fx.b.read(sequence), self.emit(fx, Op::Int(at as i64 + 1)));
+        let longer = self.emit_parser_operation(fx, Operation::JSONPushKey, &[so_far, key], self.known.counter);
+        fx.b.write(sequence, longer);
+    }
+
+    fn take_key_sequence(&mut self, fx: &mut Fx, parsed: &ObjectParse) -> V {
+        let none = self.emit(fx, Op::Int(0));
+        let Some(sequence) = parsed.key_sequence else { return none };
+        let so_far = fx.b.read(sequence);
+        fx.b.write(sequence, none);
+        so_far
     }
 
     fn start_key_order(&mut self, fx: &mut Fx, parsed: &ObjectParse) {
         let (mark, undefined) = (self.emit_parser_operation(fx, Operation::JSONKeyOrderMark, &[], self.known.counter), self.emit(fx, Op::Undefined));
         fx.b.write(parsed.key_order_mark, mark);
         fx.b.write(parsed.extra_properties, undefined);
+        self.take_key_sequence(fx, parsed);
     }
 
     fn emit_object_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, start: V, fails: BlockId) {
@@ -1204,7 +1244,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let next = fx.b.new_block();
             self.continue_unless(fx, is_absent, next);
             if is_made_by_layout {
-                self.record_key(fx, at);
+                self.record_key(fx, &parsed, at);
             } else {
                 let (created, value, name) = (fx.b.read(parsed.in_text_order), fx.b.read(parsed.held[at]), self.emit_text(fx, &member.name));
                 self.operation(fx, Operation::DefineField, &[created, name, value]);
@@ -1251,7 +1291,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let is_first = self.is_absent(fx, &parsed, index);
                 let next = fx.b.new_block();
                 self.continue_if(fx, is_first, next);
-                self.record_key(fx, index);
+                self.record_key(fx, &parsed, index);
                 fx.b.jump(next);
                 fx.b.seal(next);
                 fx.b.switch_to(next);
@@ -1282,7 +1322,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             OtherKeys::Untouched if is_made_by_layout => {
                 let (extra_properties, names, mark) = (fx.b.read(parsed.extra_properties), self.emit_text(fx, &declared_names), fx.b.read(parsed.key_order_mark));
-                let extra_properties = self.emit_parser_operation(fx, Operation::JSONExtraMembersAt, &[at, extra_properties, names, mark], self.out.tys.anything);
+                let sequence = self.take_key_sequence(fx, &parsed);
+                let extra_properties = self.emit_parser_operation(fx, Operation::JSONExtraMembersAt, &[at, extra_properties, names, mark, sequence], self.out.tys.anything);
                 fx.b.write(parsed.extra_properties, extra_properties);
                 let after = self.continue_after_parsed_value(fx, fails);
                 fx.b.write(parsed.cursor, after);
@@ -1304,7 +1345,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.seal(gives_up);
                 if is_made_by_layout {
                     let (extra_properties, mark) = (fx.b.read(parsed.extra_properties), fx.b.read(parsed.key_order_mark));
-                    let extra_properties = self.emit_parser_operation(fx, Operation::JSONAddExtraMember, &[extra_properties, name, value, mark], self.out.tys.anything);
+                    let sequence = self.take_key_sequence(fx, &parsed);
+                    let extra_properties = self.emit_parser_operation(fx, Operation::JSONAddExtraMember, &[extra_properties, name, value, mark, sequence], self.out.tys.anything);
                     fx.b.write(parsed.extra_properties, extra_properties);
                 } else {
                     let created = fx.b.read(parsed.in_text_order);
@@ -1347,7 +1389,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.continue_unless(fx, stays_absent, if member.is_optional { next } else { fails });
             if is_made_by_layout {
                 fx.b.write(held, filled);
-                self.record_key(fx, at);
+                self.record_key(fx, &parsed, at);
             } else {
                 let (created, name) = (fx.b.read(parsed.in_text_order), self.emit_text(fx, &member.name));
                 self.operation(fx, Operation::DefineField, &[created, name, filled]);
@@ -1360,7 +1402,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let values: Vec<V> = parsed.held.iter().map(|&held| fx.b.read(held)).collect();
             let created = self.emit_object_from_parsed_members(fx, plan, node, &values);
             let (extra_properties, names, mark) = (fx.b.read(parsed.extra_properties), self.emit_text(fx, &declared_names), fx.b.read(parsed.key_order_mark));
-            self.emit_parser_operation(fx, Operation::JSONApplyKeyOrder, &[created, extra_properties, names, mark], self.known.undefined);
+            let sequence = self.take_key_sequence(fx, &parsed);
+            self.emit_parser_operation(fx, Operation::JSONApplyKeyOrder, &[created, extra_properties, names, mark, sequence], self.known.undefined);
             created
         } else {
             let (created, validated_as) = (fx.b.read(parsed.in_text_order), Ty { id: self.ty_of(*ty), checked: *ty });

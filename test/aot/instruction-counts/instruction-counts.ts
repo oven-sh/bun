@@ -25,7 +25,7 @@ const roundsBeforeCounting = [1, 1, 1, 1],
   roundsOfMoreOperations = 3;
 
 type Door = { name: string; label: string; setup: string; costsNoMoreThan?: string; notYetIn?: string[] };
-type Form = { types: "typed" | "untyped"; place: "function" | "module level" | "function that no loop calls"; door?: Door };
+type Form = { types: "typed" | "untyped"; place: "function" | "module level" | "function that no loop calls"; door?: Door; heat?: Heat };
 const forms: Form[] = [
   { types: "typed", place: "function" },
   { types: "typed", place: "module level" },
@@ -177,13 +177,14 @@ async function lineOf(
   countsInstructions: boolean,
   heat: Heat,
 ) {
-  const stem = `${name}.${form.door ? `${form.door.name}.` : ""}${form.types}.${form.place.replaceAll(" ", "-")}`;
+  const stem = `${name}.${form.door ? `${form.door.name}.` : ""}${form.types}.${form.place.replaceAll(" ", "-")}${form.heat ? `.${form.heat.replaceAll(" ", "-")}` : ""}`;
   writeFileSync(join(dir, "tsconfig.json"), tsconfigWithTypesOfBun);
   writeFileSync(join(dir, `${stem}.ts`), programOf(form.door ? { ...parts, setup: `${form.door.setup}\n${parts.setup}` } : parts, form.place));
   let entry = `${stem}.ts`;
   if (form.types === "untyped") {
     const erased = await run([bunExe(), "build", "--no-bundle", entry], dir, bunEnv);
     expect({ stderr: erased.stderr, exitCode: erased.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    rmSync(join(dir, entry));
     entry = `${stem}.js`;
     writeFileSync(join(dir, entry), erased.stdout);
   }
@@ -192,13 +193,13 @@ async function lineOf(
   const built = await run(
     [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), entry, "--outfile", executable],
     dir,
-    { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile, ...optionsOf[heat] },
+    { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile, ...optionsOf[form.heat ?? heat] },
   );
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const map = readFileSync(mapFile, "utf8");
   const functions = functionsOf(map, entry);
   const bytes = bytesBeforeOutlining(map, entry, form.place === "module level" ? `module ${entry}` : "kernel");
-  const label = form.door?.label ?? `${form.types}, ${form.place}`;
+  const label = `${form.door?.label ?? `${form.types}, ${form.place}`}${form.heat ? `, ${form.heat}` : ""}`;
   if (!countsInstructions) return `${label}: ${bytes} bytes`;
 
   const counted = await countInstructions({
@@ -398,7 +399,7 @@ export async function describeInstructionCountsOutsideLoops(platform: string) {
   describeSnippets(files, `${platform}-outside-loops`, isThisPlatform, reason);
 }
 
-export async function describeInstructionCountsBehindDoors(platform: string) {
+export async function describeInstructionCountsBehindDoors(platform: string, heat: Heat = "outside the hottest functions") {
   const { isThisPlatform, reason } = await whetherItCounts(platform);
   const folder = join(snippets, "doors");
   const data = readFileSync(join(folder, "data.ts"), "utf8");
@@ -418,7 +419,20 @@ export async function describeInstructionCountsBehindDoors(platform: string) {
   ].map(door => ({ types: "typed", place: "function", door }));
   formsOfFile.push({ types: "untyped", place: "function", door: door("json-parse-type-argument", { label: "untyped" }) });
   const files = readdirSync(join(folder, "use")).map(file => ({ file, folder: join(folder, "use"), formsOfFile }));
-  describeSnippets(files, `${platform}-doors`, isThisPlatform, reason);
+  describeSnippets(files, heat === "as built" ? `${platform}-doors-as-built` : `${platform}-doors`, isThisPlatform, reason, heat);
+}
+
+export async function describeInstructionCountsWhereShapesDiffer(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  const folder = join(snippets, "several-shapes");
+  const formsOfFile: Form[] = [];
+  for (const types of ["typed", "untyped"] as const)
+    for (const place of ["function", "function that no loop calls"] as const)
+      for (const heat of ["outside the hottest functions", "as built"] as const) formsOfFile.push({ types, place, heat });
+  const files = readdirSync(folder)
+    .filter(file => file.endsWith(".ts"))
+    .map(file => ({ file, folder, formsOfFile }));
+  describeSnippets(files, `${platform}-several-shapes`, isThisPlatform, reason);
 }
 
 const commonOperations = [

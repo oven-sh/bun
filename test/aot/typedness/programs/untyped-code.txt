@@ -98,8 +98,8 @@ own-property-few-structures-alternating: 0 layouts, 0 given, 0 open, places 69 o
 own-property-literal-names-many-structures: 0 layouts, 0 given, 0 open, places 49 of 59, reads 0 of 8
 own-symbols-typed-objects-stay-compiled: 2 layouts, 0 given, 1 open, places 24 of 43, reads 6 of 25
 own-symbols-typed-objects: 3 layouts, 0 given, 1 open, places 34 of 65, reads 8 of 32
-parsed-data-type-mismatch-open-cases: 6 layouts, 4 given, 5 open, places 32 of 68, reads 9 of 27
-parsed-data-type-mismatch: 9 layouts, 29 given, 10 open, places 85 of 182, reads 2 of 144
+parsed-data-type-mismatch-open-cases: 6 layouts, 4 given, 5 open, places 21 of 46, reads 9 of 27
+parsed-data-type-mismatch: 9 layouts, 29 given, 10 open, places 57 of 136, reads 2 of 144
 program-required-by-other-realm: 0 layouts, 7 given, 0 open, places 0 of 10, reads 0 of 9
 records-obtained-by-js-keep-layout: 5 layouts, 3 given, 5 open, places 59 of 77, reads 25 of 44
 records-passed-to-js-keep-layout: 9 layouts, 8 given, 9 open, places 84 of 254, reads 11 of 119

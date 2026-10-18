@@ -13,7 +13,7 @@ array-and-function-with-matching-fields: 2 layouts, 0 given, 2 open, places 13 o
 arrow-callback-gets-proxy-and-parsed-data: 3 layouts, 0 given, 1 open, places 15 of 29, reads 7 of 12
 arrow-field-names-under-computed-keys: 1 layouts, 0 given, 0 open, places 4 of 13, reads 3 of 10
 as-any-literal-into-typed-parameter: 5 layouts, 0 given, 5 open, places 33 of 45, reads 4 of 8
-assignment-under-satisfies: 0 layouts, 1 given, 2 open, places 4 of 21, reads 0 of 9
+assignment-under-satisfies: 0 layouts, 1 given, 2 open, places 2 of 13, reads 0 of 9
 async-generator-consumes-another: 0 layouts, 0 given, 0 open, places 9 of 23, reads 0 of 9
 async-generator-static-private-methods: 0 layouts, 0 given, 0 open, places 5 of 15, reads 0 of 1
 async-returns-host-object-promise: 1 layouts, 0 given, 2 open, places 10 of 21, reads 1 of 3
@@ -90,9 +90,9 @@ function-typed-as-object-assign: 1 layouts, 0 given, 1 open, places 4 of 12, rea
 functions-as-objects: 0 layouts, 0 given, 1 open, places 25 of 50, reads 9 of 40
 functions-per-evaluation-are-distinct: 1 layouts, 0 given, 1 open, places 2 of 11, reads 0 of 3
 generator-in-literal-field: 1 layouts, 0 given, 0 open, places 3 of 11, reads 0 of 3
-generic-class-state-via-object-assign: 4 layouts, 1 given, 2 open, places 21 of 42, reads 16 of 24
+generic-class-state-via-object-assign: 4 layouts, 1 given, 2 open, places 10 of 22, reads 16 of 24
 generic-deep-merge: 4 layouts, 0 given, 2 open, places 10 of 18, reads 6 of 9
-generic-literal-fallback: 0 layouts, 3 given, 0 open, places 10 of 38, reads 0 of 10
+generic-literal-fallback: 0 layouts, 3 given, 0 open, places 6 of 28, reads 0 of 10
 generic-spread-from-set: 2 layouts, 0 given, 2 open, places 8 of 16, reads 5 of 8
 generic-spread-result: 2 layouts, 0 given, 0 open, places 11 of 21, reads 9 of 14
 generic-spread-through-identity: 2 layouts, 0 given, 2 open, places 8 of 18, reads 4 of 7
@@ -119,7 +119,7 @@ large-parsed-data-by-index: 2 layouts, 0 given, 2 open, places 19 of 30, reads 2
 large-parsed-data-checked: 2 layouts, 0 given, 2 open, places 21 of 32, reads 2 of 8
 large-parsed-data-from-iteration: 2 layouts, 0 given, 2 open, places 21 of 33, reads 2 of 9
 large-parsed-data-from-map: 2 layouts, 0 given, 2 open, places 21 of 34, reads 2 of 8
-large-parsed-data-updated-twice-in-place: 1 layouts, 7 given, 1 open, places 18 of 48, reads 1 of 29
+large-parsed-data-updated-twice-in-place: 1 layouts, 7 given, 1 open, places 12 of 34, reads 1 of 29
 large-parsed-data-via-any-into-field: 3 layouts, 0 given, 0 open, places 26 of 37, reads 5 of 12
 let-from-narrowed-number: 0 layouts, 0 given, 0 open, places 2 of 10, reads 0 of 1
 line-continuation-in-tagged-template: 0 layouts, 0 given, 0 open, places 2 of 11, reads 1 of 5
@@ -167,7 +167,7 @@ parameter-redeclared-by-var: 0 layouts, 0 given, 0 open, places 2 of 10, reads 0
 parsed-data-as-eight-field-record: 0 layouts, 1 given, 0 open, places 5 of 17, reads 0 of 7
 parsed-data-beside-and-inside-spread: 2 layouts, 0 given, 1 open, places 18 of 32, reads 4 of 17
 parsed-data-checked-against-two-types: 3 layouts, 0 given, 3 open, places 22 of 33, reads 6 of 13
-parsed-data-for-record-union-parameter: 0 layouts, 4 given, 0 open, places 14 of 29, reads 1 of 5
+parsed-data-for-record-union-parameter: 0 layouts, 4 given, 0 open, places 7 of 14, reads 1 of 5
 parsed-data-from-iteration: 2 layouts, 0 given, 2 open, places 18 of 48, reads 6 of 14
 parsed-data-frozen-via-untyped-ref: 2 layouts, 0 given, 3 open, places 13 of 25, reads 2 of 12
 parsed-data-key-checked: 2 layouts, 0 given, 2 open, places 21 of 32, reads 2 of 7
@@ -263,7 +263,7 @@ untyped-computed-key-literal-checked: 2 layouts, 0 given, 3 open, places 12 of 2
 untyped-object-inherits-required-field: 2 layouts, 0 given, 2 open, places 13 of 24, reads 3 of 12
 untyped-object-with-getter-checked: 2 layouts, 0 given, 3 open, places 15 of 27, reads 3 of 11
 untyped-subclass-checked-against-type: 4 layouts, 0 given, 2 open, places 8 of 23, reads 1 of 7
-variable-under-satisfies-as-non-null: 0 layouts, 1 given, 0 open, places 4 of 21, reads 0 of 11
+variable-under-satisfies-as-non-null: 0 layouts, 1 given, 0 open, places 2 of 13, reads 0 of 11
 variables-assigned-then-captured: 2 layouts, 0 given, 0 open, places 27 of 36, reads 4 of 5
 variables-in-hoisted-functions: 1 layouts, 0 given, 0 open, places 23 of 31, reads 0 of 1
 widened-record-same-object-as-argument: 43 layouts, 0 given, 1 open, places 181 of 195, reads 11 of 15

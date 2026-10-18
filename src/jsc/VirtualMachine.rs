@@ -4293,6 +4293,12 @@ impl VirtualMachine {
             && bun_core::code_generation_from_strings_by_flags() == bun_core::CodeGenerationFromStrings::Allowed
     }
 
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isInterpreterRemovedByName")]
+    pub(crate) extern "C" fn is_interpreter_removed_by_name_for_cpp() -> bool {
+        bun_core::is_interpreter_removed_by_name()
+    }
+
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
     pub fn allow_ffi_cc(&self) -> bool {
         let opts = &self.transpiler.options.transform_options;
@@ -5529,6 +5535,11 @@ impl VirtualMachine {
                 bun_ast::Target::Bun,
                 Default::default(),
             ) {
+                if let Some(error) =
+                    ModuleLoader::error_if_removed_by_name(global, hardcoded.path.as_bytes())
+                {
+                    return Ok(Err(error));
+                }
                 return Ok(Ok(
                     if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                         specifier.clone()
@@ -5547,6 +5558,11 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
+            if let Some(error) =
+                ModuleLoader::error_if_removed_by_name(global, hardcoded.path.as_bytes())
+            {
+                return Ok(Err(error));
+            }
             return Ok(Ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.clone()

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { constants, cpus, freemem, loadavg, totalmem, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -162,7 +162,13 @@ export function inJail(jail: Jail, cmd: string[], { cwd, env, seconds, core }: {
   ];
 }
 
+let jailFound: Jail | undefined;
+
 export function jailOfThisMachine(): Jail {
+  return (jailFound ??= firstJailThatWorks());
+}
+
+function firstJailThatWorks(): Jail {
   if (process.platform !== "linux") return "none";
   const jails: Jail[] = ["a unit of the user's systemd", "a unit of the system's systemd", "a process tree of its own"];
   const works = (jail: Jail) => {
@@ -172,7 +178,111 @@ export function jailOfThisMachine(): Jail {
   return jails.find(works) ?? "none";
 }
 
+interface Command {
+  cmd: string[];
+  cwd: string;
+  env: Record<string, string | undefined>;
+  seconds: number;
+  stdin?: string;
+}
+
+const ownProcessNamespace = () => readlinkSync("/proc/self/ns/pid");
+const aDay = 24 * 60 * 60;
+
+class Cell {
+  private readonly child;
+  private readonly answers;
+  private readonly decoder = new TextDecoder();
+  private unread: string[] = [];
+
+  constructor(
+    readonly jail: Jail,
+    readonly bun: string,
+    readonly core: string | undefined,
+  ) {
+    const env = { PATH: process.env.PATH, BUN_DEBUG_QUIET_LOGS: "1", BUN_ENABLE_CRASH_REPORTING: "0", DO_NOT_TRACK: "1" };
+    this.child = Bun.spawn({
+      cmd: inJail(jail, [bun, import.meta.path, "--cell", ownProcessNamespace()], { cwd: "/", env, seconds: aDay, core }),
+      cwd: "/",
+      env: jail.startsWith("a unit") ? process.env : env,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+      detached: true,
+    });
+    running.add(this.child.pid);
+    this.answers = this.child.stdout.getReader();
+  }
+
+  private async answer(): Promise<Ran | undefined> {
+    for (;;) {
+      const { done, value } = await this.answers.read();
+      if (done) return undefined;
+      const text = this.decoder.decode(value, { stream: true });
+      const end = text.indexOf("\n");
+      if (end < 0) {
+        this.unread.push(text);
+        continue;
+      }
+      const line = this.unread.join("") + text.slice(0, end);
+      this.unread = [text.slice(end + 1)];
+      return JSON.parse(line);
+    }
+  }
+
+  async run(command: Command): Promise<Ran | "no answer" | undefined> {
+    this.child.stdin.write(JSON.stringify(command) + "\n");
+    await this.child.stdin.flush();
+    const { promise: late, resolve } = Promise.withResolvers<"no answer">();
+    const timer = setTimeout(resolve, (command.seconds + 30) * 1000, "no answer");
+    try {
+      return await Promise.race([this.answer(), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  end() {
+    running.delete(this.child.pid);
+    endGroup(this.child.pid);
+  }
+}
+
+const idleCells: Cell[] = [];
+const cells = new Set<Cell>();
+
+async function inACell(jail: Jail, bun: string, core: string | undefined, command: Command): Promise<Ran> {
+  const at = idleCells.findIndex(cell => cell.jail === jail && cell.bun === bun && cell.core === core);
+  const cell = at < 0 ? new Cell(jail, bun, core) : idleCells.splice(at, 1)[0]!;
+  cells.add(cell);
+  const ran = await cell.run(command).catch(() => undefined);
+  if (ran !== undefined && ran !== "no answer") {
+    if (cells.has(cell)) idleCells.push(cell);
+    return ran;
+  }
+  cells.delete(cell);
+  cell.end();
+  if (ran === "no answer") return { stdout: "", stderr: "", exitCode: null, signal: "SIGKILL" };
+  throw new Error("the jail ended before the command did");
+}
+
+async function serveCommands(namespaceOutside: string) {
+  if (process.pid > 2 || ownProcessNamespace() === namespaceOutside) process.exit(70);
+  for await (const line of console) {
+    const { cmd, cwd, env, seconds, stdin }: Command = JSON.parse(line);
+    const ran = await spawned(cmd, cwd, env, seconds, stdin);
+    try {
+      process.kill(-1, "SIGKILL");
+    } catch {}
+    await Bun.write(Bun.stdout, JSON.stringify(ran) + "\n");
+  }
+  process.exit(0);
+}
+
 function endEverything(jail: Jail) {
+  for (const cell of cells) cell.end();
+  cells.clear();
+  idleCells.length = 0;
   for (const pid of running) endGroup(pid);
   if (!jail.startsWith("a unit")) return;
   const manager = jail === "a unit of the user's systemd" ? ["systemctl", "--user"] : ["sudo", "-n", "systemctl"];
@@ -267,10 +377,12 @@ class Bench {
   }
 
   async jailed(command: string[], cwd: string, env: Record<string, string | undefined>, seconds: number, stdin?: string): Promise<Ran> {
-    const { jail } = this.settings;
-    const launch = inJail(jail, command, { cwd, env, seconds, core: this.core });
+    const { jail, bun } = this.settings;
     const started = performance.now();
-    const ran = await spawned(launch, cwd, jail.startsWith("a unit") ? process.env : env, jail === "none" ? seconds : seconds + 15, stdin);
+    const ran =
+      jail === "none"
+        ? await spawned(inJail(jail, command, { cwd, env, seconds, core: this.core }), cwd, env, seconds, stdin)
+        : await inACell(jail, bun, this.core, { cmd: command, cwd, env, seconds, stdin });
     return performance.now() - started >= seconds * 1000 ? { ...ran, exitCode: null, signal: "SIGKILL" } : withSignalNamed(ran);
   }
 
@@ -382,7 +494,7 @@ export async function compare(program: Program, settings: Settings, folder: stri
     rmSync(join(folder, "whole"));
     if (isSame(whole, await bench.run("trimmed"))) return result({ verdict: "set aside", why: "trimmed differs only sometimes", detail: firstDifference(whole, trimmed), world });
 
-    const sentence = /built with --compile-trim-runtime, without (.*?), and something has just asked for it\..*?number: (\d+)/s.exec(trimmed.stderr);
+    const sentence = /built with --compile-trim-runtime, without (.*?)(?:, and something has just asked for it\..*?number: (\d+)|\n\s*code: "ERR_FEATURE_REMOVED")/s.exec(trimmed.stderr);
     const named = sentence && featureDescribedAs(sentence[1], settings.doors);
     const features = named ? [named] : settings.findsFeature ? await bench.smallestSetThatDiffers(leftOut, whole) : undefined;
     return differs(firstDifference(whole, trimmed), {
@@ -390,7 +502,7 @@ export async function compare(program: Program, settings: Settings, folder: stri
       leftOut,
       trimmedBytes,
       trimmed: shortened(trimmed),
-      door: sentence ? Number(sentence[2]) : undefined,
+      door: sentence?.[2] ? Number(sentence[2]) : undefined,
       features: features ?? undefined,
       detail: named ? undefined : features === undefined ? "no feature found" : features.length === 0 ? "not by a feature: the closed world itself" : undefined,
     });
@@ -516,3 +628,5 @@ export class Tally {
     return lines.join("\n");
   }
 }
+
+if (import.meta.main && process.argv[2] === "--cell") await serveCommands(process.argv[3]!);

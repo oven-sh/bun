@@ -578,6 +578,13 @@ struct ModuleRecord {
 
 static constexpr uint32_t moduleCount = ${nativeStartIndex};
 
+static constexpr char namesOfPublicModules[] =
+  ${moduleList
+    .slice(0, nativeStartIndex)
+    .map(id => idToPublicSpecifierOrEnumName(id))
+    .map(name => JSON.stringify(name.startsWith("internal:") ? "" : name).slice(0, -1) + '\\0"')
+    .join("\n  ")};
+
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
 static constexpr const char* fileNames[moduleCount] = {
   ${moduleList
@@ -613,6 +620,8 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
       .filter(([, n]) => n >= nativeStartIndex)
       .map(
         ([id]) => `case Field::${idToEnumName(id)}: {
+      if (Bun__throwIfRemovedByTrimming(globalObject, ${JSON.stringify(id)}, ${id.length})) [[unlikely]]
+        return {};
       return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});
     }`,
       )

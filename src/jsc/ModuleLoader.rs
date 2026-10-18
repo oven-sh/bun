@@ -40,8 +40,13 @@ pub fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
 /// Whether `bun:internal-for-testing` resolves: `--expose-internals` in release builds, always in debug builds.
 #[inline]
 pub fn is_allowed_to_use_internal_testing_apis() -> bool {
-    bun_core::env::IS_DEBUG
-        || IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.load(core::sync::atomic::Ordering::Relaxed)
+    (bun_core::env::IS_DEBUG
+        || IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.load(core::sync::atomic::Ordering::Relaxed))
+        && Bun__hasInternalTestingAPIs()
+}
+
+unsafe extern "C" {
+    safe fn Bun__hasInternalTestingAPIs() -> bool;
 }
 
 impl ModuleLoader {
@@ -162,9 +167,26 @@ fn name_that_removed(module: &[u8]) -> Option<&'static [u8]> {
     None
 }
 
-pub fn removed_by_trimming(global: &JSGlobalObject, module: &[u8]) -> Option<ErrorableResolvedSource> {
-    let name = name_that_removed(module)?;
-    Some(ErrorableResolvedSource::err(
+const LEFT_OUT_BY_ANALYSIS: &[u8] = b"-";
+
+pub fn error_that_module_was_not_compiled_in(
+    global: &JSGlobalObject,
+    code: jsc::ErrCode,
+    specifier: impl core::fmt::Display,
+) -> JSValue {
+    global
+        .err(
+            code,
+            format_args!(
+                "Cannot find module '{specifier}': it was not compiled into this executable, which was built with --compile-trim-runtime and loads nothing else",
+            ),
+        )
+        .to_js()
+}
+
+pub(crate) fn error_if_removed_by_name(global: &JSGlobalObject, module: &[u8]) -> Option<JSValue> {
+    let name = name_that_removed(module).filter(|name| *name != LEFT_OUT_BY_ANALYSIS)?;
+    Some(
         global
             .err(
                 jsc::ErrCode::ERR_MODULE_NOT_FOUND,
@@ -175,7 +197,50 @@ pub fn removed_by_trimming(global: &JSGlobalObject, module: &[u8]) -> Option<Err
                 ),
             )
             .to_js(),
-    ))
+    )
+}
+
+fn error_if_left_out(global: &JSGlobalObject, module: &[u8]) -> Option<JSValue> {
+    if !is_left_out(module) {
+        return None;
+    }
+    error_if_removed_by_name(global, module).or_else(|| {
+        Some(error_that_module_was_not_compiled_in(global, jsc::ErrCode::ERR_MODULE_NOT_FOUND, bstr::BStr::new(module)))
+    })
+}
+
+pub fn is_left_out(module: &[u8]) -> bool {
+    name_that_removed(module).is_some()
+}
+
+pub fn is_removed_by_trimming(module: &[u8]) -> bool {
+    name_that_removed(module).is_some_and(|name| name != LEFT_OUT_BY_ANALYSIS)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__isRemovedByTrimming(specifier: *const u8, length: usize) -> bool {
+    // SAFETY: the caller passes the bytes of a specifier, which outlive the call.
+    let specifier = unsafe { bun_core::ffi::slice(specifier, length) };
+    bun_aliases_get(specifier).is_some_and(|alias| is_removed_by_trimming(alias.path.as_bytes()))
+}
+
+pub fn removed_by_trimming(global: &JSGlobalObject, module: &[u8]) -> Option<ErrorableResolvedSource> {
+    error_if_left_out(global, module).map(ErrorableResolvedSource::err)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__throwIfRemovedByTrimming(
+    global: &JSGlobalObject,
+    module: *const u8,
+    length: usize,
+) -> bool {
+    // SAFETY: the caller passes the bytes of a module's name, which outlive the call.
+    let module = unsafe { bun_core::ffi::slice(module, length) };
+    let Some(error) = error_if_left_out(global, module) else {
+        return false;
+    };
+    let _ = global.throw_value(error);
+    true
 }
 
 #[unsafe(no_mangle)]
@@ -229,6 +294,9 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     let mut name = Vec::with_capacity(b"internal:".len() + rest.len());
     name.extend_from_slice(b"internal:");
     name.extend_from_slice(rest);
+    if name == b"internal:test/binding" && !Bun__hasInternalTestingAPIs() {
+        return None;
+    }
     let tag = crate::ResolvedSourceTag::try_from_name(&name)?;
     Some((name, tag))
 }

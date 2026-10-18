@@ -1,6 +1,6 @@
 // Bun.serve starts the development server, which bundles files from the disk when it runs and runs them beside the program. Where
-// the compiler sees `app`, the world is open. Where it does not see the options, it hunts for nothing: what bundles and runs the
-// files stays, and the server answers as in the whole executable.
+// the compiler sees `app`, and where it does not see the options, the world is open, and the server answers as in the whole
+// executable.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";

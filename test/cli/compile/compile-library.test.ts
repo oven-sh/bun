@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 import { unsupported } from "../../aot/run-programs";
 
@@ -352,6 +352,35 @@ describe.concurrent("bun compile --library", () => {
     expect(built.stderr).toContain("TS2322");
     expect(built.exitCode).toBe(1);
     expect(existsSync(join(String(dir), "dist"))).toBe(false);
+  });
+
+  test("a helper of Bun's own that calls itself does not cost the typed JavaScript", async () => {
+    using dir = tempDirWithBunTypes("library-with-a-helper", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, types: ["bun"], skipLibCheck: true } }),
+      "package.json": JSON.stringify({ name: "loader", version: "1.0.0" }),
+      "index.ts": `export interface Config {\n  port: number | string;\n}\nexport function load(value: unknown): Config {\n  return Bun.validate<Config>(value);\n}\n`,
+    });
+    const built = await bun(String(dir), "compile", "--library");
+    expect(built.stderr).toBe("");
+    expect(filesIn(join(String(dir), "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+    expect(built.exitCode).toBe(0);
+  });
+
+  test("a file of the project that only adds to a module's types, and that nothing imports, goes into the typed JavaScript", async () => {
+    using dir = tempDir("library-augments", {
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),
+      "package.json": JSON.stringify({ name: "inner", version: "1.0.0", dependencies: { outer: "1.0.0" } }),
+      "node_modules/outer/package.json": JSON.stringify({ name: "outer", version: "1.0.0", type: "module", main: "index.js", types: "index.d.ts" }),
+      "node_modules/outer/index.js": `export const state = {};\n`,
+      "node_modules/outer/index.d.ts": `export interface State {\n  known?: number;\n}\nexport declare const state: State;\n`,
+      "src/augment.ts": `import type { State } from "outer";\ndeclare module "outer" {\n  interface State {\n    added?: State;\n  }\n}\n`,
+      "src/index.ts": `import { state } from "outer";\nexport function added(): boolean {\n  return state.added !== undefined;\n}\n`,
+    });
+    const built = await bun(String(dir), "compile", "--library");
+    expect(built.stderr).toBe("");
+    expect(filesIn(join(String(dir), "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+    expect(readFileSync(join(String(dir), "dist/index.aot.ts"), "utf8")).toContain(`declare module "outer" {`);
+    expect(built.exitCode).toBe(0);
   });
 
   test("what the sources declare globally is not met twice when the typed JavaScript is judged", async () => {

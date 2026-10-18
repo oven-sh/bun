@@ -33,12 +33,11 @@ One of these; the first that is there wins.
 1. **In the project:** copy `<name>/<version>/sound.json` and `<name>/<version>/lay/` to
    `<project root>/.sound/<name>/`. Do not copy `src/`: its ambient `.d.ts` files would be picked up by
    your own tsconfig.
-2. **In the package itself:** nothing to do. A package written in TypeScript and built with `bun build --dts`
-   ships its own typed version: the first line of `index.d.ts` is `// @sound index.sound.ts <sha256 of index.js>`.
-   It has no `sound.json`.
-3. **As a dependency:** install the companion package (`@sound/<name>`, same version number as the
-   package it types) and keep it listed in `dependencies` or `devDependencies`. A companion that is
-   only there transitively is ignored.
+2. **In the package itself:** nothing to do. A package written in TypeScript and built with
+   `bun compile --library` ships its own typed version: `index.aot.ts` beside `index.js`, named by the
+   `"bun-aot"` condition of its `exports`. It has no `sound.json`.
+
+Bun looks nowhere else. It never takes a typed version of one package from another package in `node_modules`.
 
 Nothing on disk is modified. During an `--aot` build the bundler reads the files under `lay/` in place
 of (or beside) the installed ones. `bun run`, `bun test` and builds without `--aot` never see them.
@@ -56,7 +55,7 @@ The build goes on and the program is right; it is only not faster. What to do, b
 
 | the warning says | do this |
 |---|---|
-| it is for version X, and Y is installed | install the typed version for Y: `bun add -d @sound/<name>@Y` (the two numbers are always the same). The versions that exist are the folders here. If there is none for Y: pin the package to X, or remove the typed version, or [carry](#carrying-a-typed-version-to-another-version) it to Y |
+| it is for version X, and Y is installed | copy the typed version for Y in its place. The versions that exist are the folders here. If there is none for Y: pin the package to X, or remove the typed version, or [carry](#carrying-a-typed-version-to-another-version) it to Y |
 | the installed F differs from the published file that this typed version was made from | something changed `node_modules/<name>/F`: `patch-package`, `bun patch`, a postinstall script. A typed version fits npm's bytes only. Keep your own under `.sound/<name>/`, made from the patched file |
 | it is for a build that defines process.env.NODE_ENV as "production" | pass `--define 'process.env.NODE_ENV="production"'`. In other builds the package's entry loads its development files, which are not typed |
 | F is installed, and it was not when the package was typed | the package now ships a file at a path that the typed version adds. Treat it as another version |

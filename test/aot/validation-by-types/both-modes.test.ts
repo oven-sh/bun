@@ -31,6 +31,6 @@ test("without --aot a call that is not written as Bun.validate<T>() says what it
   await using proc = Bun.spawn({ cmd: [bunExe(), "run", "./program.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toStartWith("TypeError Bun.validate<T>() checks a value against a TypeScript type");
-  expect(stdout).toContain("bun run --aot");
+  expect(stdout).toContain("Write the type argument at the call, in a TypeScript file, and call the function by this name.");
   expect(exitCode).toBe(0);
 });

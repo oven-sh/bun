@@ -2394,6 +2394,19 @@ impl<'a> Transfer<'_, 'a, '_> {
         }
         let is_unchecked = |source: u32| written.get(source as usize).is_some_and(|module| module.as_ref().is_none_or(Written::is_unchecked));
         ignored.extend(mappings.entries.iter().filter(|entry| is_unchecked(entry.1)).map(|entry| line_start(javascript, entry.0 as usize)));
+        let output_file = self.output.file;
+        for statement in output_file.ids(output_file.body).map(|id| &output_file[id]).filter(|statement| matches!(statement.kind, StmtKind::Fn(_))) {
+            let (start, end) = (statement.start, statement.loc.end);
+            let first_inside = mappings.entries.get(mappings.entries.partition_point(|entry| entry.0 < start));
+            if first_inside.is_some_and(|entry| entry.0 < end) {
+                continue;
+            }
+            let mut line = line_start(javascript, start as usize);
+            while line < end as usize {
+                ignored.push(line);
+                line = bun_core::strings::index_of_char_usize(&javascript[line..], b'\n').map_or(javascript.len(), |length| line + length + 1);
+            }
+        }
         ignored.sort_unstable();
         ignored.dedup();
         for line in ignored {

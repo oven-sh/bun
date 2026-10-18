@@ -256,7 +256,7 @@ VersionSqlite3::~VersionSqlite3()
 // waits on readers via the connection's busy-handler, so a large user-set
 // timeout plus a cross-process reader would stall process.exit(); with a
 // zero handler TRUNCATE degrades to a passive checkpoint immediately.
-extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
+extern "C" NEVER_INLINE void Bun__sqliteCheckpointForTermination(sqlite3* db)
 {
     sqlite3_busy_timeout(db, 0);
     sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);

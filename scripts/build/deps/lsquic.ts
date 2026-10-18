@@ -119,6 +119,13 @@ export const lsquic: Dependency = {
     // lsquic_conn_transport_params, lsquic_conn_make_uni_stream, and the
     // server-side CONNECTION_CLOSE / IFC_TIMED_OUT immediate-close fixes.
     "patches/lsquic/node-quic-accessors.patch",
+    // lsquic_merge_acks() merges the ACK frames of one batch of packets into
+    // one. A range of one frame that lay inside a range of the other cut that
+    // range short: [16-8] merged with a saved [15-12][10-9] gave [16-12][10-9].
+    // The packets that the newer frame acknowledged in the gaps of the saved
+    // one (a late or reordered packet) stayed unacknowledged and were then
+    // declared lost.
+    "patches/lsquic/merge-acks-contained-range.patch",
     // send_packets_out() leaked every packet already coalesced into the
     // current out_spec when encrypting a later one failed.
     "patches/lsquic/coalesce-batch-drop.patch",

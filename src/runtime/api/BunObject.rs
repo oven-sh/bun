@@ -111,7 +111,7 @@ mod static_adapters {
 
     pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket_draft::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
+        crate::socket::udp_socket::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
@@ -244,7 +244,6 @@ pub(crate) mod bun_object {
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
-        BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
         BunObject_callback_resolveSync => super::resolve_sync,
         BunObject_callback_serve => super::serve,
@@ -318,14 +317,14 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 
 pub(crate) fn shell_escape<'a>(
     heap: &JsHeap<'a>,
-    input: BunString,
+    input: &BunString,
 ) -> bindgen::Result<'a, BunString> {
-    if !bun_shell_parser::needs_escape_bunstr(&input) {
-        return Ok(input);
+    if !bun_shell_parser::needs_escape_bunstr(input) {
+        return Ok(input.clone());
     }
 
     let mut outbuf: Vec<u8> = Vec::new();
-    if !bun_shell_parser::escape_bun_str::<true>(&input, &mut outbuf)? {
+    if !bun_shell_parser::escape_bun_str::<true>(input, &mut outbuf)? {
         return Err(heap.error(format_args!(
             "String has invalid utf-16: {}",
             bstr::BStr::new(input.byte_slice()),
@@ -339,11 +338,10 @@ pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
     cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
 }
 
-#[allow(clippy::needless_pass_by_value)] // the generated thunk hands over the string it owns
 pub(crate) fn braces(
     cx: &mut JsScope<'_>,
-    brace_str: BunString,
-    opts: BracesOptions,
+    brace_str: &BunString,
+    opts: &BracesOptions,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let brace_utf8 = brace_str.to_utf8();
@@ -399,7 +397,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, core::slice::from_ref(&brace_str));
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -446,7 +444,7 @@ pub(crate) fn braces(
 pub(crate) fn which<'a>(
     heap: &JsHeap<'a>,
     command: &'a [u8],
-    options: WhichOptions<'a>,
+    options: &WhichOptions<'a>,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSString>>> {
     if command.len() >= MAX_PATH_BYTES {
         return Err(heap.error(format_args!("bin path is too long")));
@@ -649,25 +647,23 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     fun
 }
 
-#[bun_jsc::host_fn]
-fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-    if arguments.len() < 2 || !arguments[0].is_number() {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "Internal error registering macros: invalid args"
-        )));
-    }
-    let id = arguments[0].to_int32();
+pub(crate) fn register_macro<'a>(
+    heap: &JsHeap<'a>,
+    id: f64,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, ()> {
+    let id = id as i32;
     if id == -1 || id == 0 {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "Internal error registering macros: invalid id"
-        )));
+        return Err(heap.error_with_code(
+            ErrorCode::INVALID_ARG_TYPE,
+            format_args!("Internal error registering macros: invalid id"),
+        ));
     }
 
-    if !arguments[1].is_cell() || !arguments[1].is_callable() {
-        // TODO: add "toTypeOf" helper
-        return Err(global_object.throw(format_args!("Macro must be a function")));
+    if callback.as_callable().is_none() {
+        return Err(heap.error(format_args!("Macro must be a function")));
     }
+    let callback = callback.to_js();
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
     let get_or_put_result = VirtualMachine::get()
@@ -679,10 +675,10 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         get_or_put_result.value_ptr.unprotect();
     }
 
-    arguments[1].protect();
-    *get_or_put_result.value_ptr = arguments[1];
+    callback.protect();
+    *get_or_put_result.value_ptr = callback;
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -822,7 +818,7 @@ thread_local! {
 pub(crate) fn open_in_editor<'a>(
     heap: &JsHeap<'a>,
     path: &'a [u8],
-    options: EditorOptions<'a>,
+    options: &EditorOptions<'a>,
 ) -> bindgen::Result<'a, ()> {
     let vm = VirtualMachine::get();
     let editor_name = options.editor.filter(|name| !name.is_empty());
@@ -1410,7 +1406,7 @@ pub(crate) fn alloc_unsafe<'a>(
     heap.create_uninitialized_uint8_array(size as usize)
 }
 
-pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: MMapOptions) -> JsResult<JSValue> {
+pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> JsResult<JSValue> {
     let global_this = cx.global();
 
     #[cfg(windows)]
@@ -1877,35 +1873,33 @@ pub(crate) mod JSZlib {
     pub(crate) fn gzip_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibCompressionOptions<'a>,
+        options: &ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
         gzip_or_deflate_sync(heap, data, options, true)
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn inflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibDecompressionOptions<'a>,
+        options: &ZlibDecompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gunzip_or_inflate_sync(heap, data, &options, false)
+        gunzip_or_inflate_sync(heap, data, options, false)
     }
 
     pub(crate) fn deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibCompressionOptions<'a>,
+        options: &ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
         gzip_or_deflate_sync(heap, data, options, false)
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn gunzip_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibDecompressionOptions<'a>,
+        options: &ZlibDecompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gunzip_or_inflate_sync(heap, data, &options, true)
+        gunzip_or_inflate_sync(heap, data, options, true)
     }
 
     fn gunzip_or_inflate_sync<'a>(
@@ -1998,7 +1992,7 @@ pub(crate) mod JSZlib {
     fn gzip_or_deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibCompressionOptions<'a>,
+        options: &ZlibCompressionOptions<'a>,
         is_gzip: bool,
     ) -> BufferResult<'a> {
         let level = options.level.map_or(6, |level| level as i32);
@@ -2015,6 +2009,8 @@ pub(crate) mod JSZlib {
                         window_bits: 15,
                         gzip: is_gzip,
                         level,
+                        mem_level: options.mem_level,
+                        strategy: options.strategy,
                         ..Default::default()
                     },
                 )
@@ -2068,7 +2064,7 @@ pub(crate) mod JSZstd {
 
     fn level_of<'a>(
         heap: &JsHeap<'a>,
-        options: ZstdCompressionOptions,
+        options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, i32> {
         let level = options.level.map_or(3, |level| level as i32);
         if !(1..=22).contains(&level) {
@@ -2162,7 +2158,7 @@ pub(crate) mod JSZstd {
     pub(crate) fn compress_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZstdCompressionOptions,
+        options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
         let level = level_of(heap, options)?;
         let output = compress_to_box(data, level).map_err(|failure| failure.into_error(heap))?;
@@ -2250,7 +2246,7 @@ pub(crate) mod JSZstd {
     pub(crate) fn compress<'a>(
         cx: &mut JsScope<'a>,
         data: PinnedBytes,
-        options: ZstdCompressionOptions,
+        options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JSValue> {
         let level = level_of(&cx.heap, options)?;
         Ok(schedule(cx, data, true, level))

@@ -52,8 +52,16 @@ pub(crate) fn utf8_owned(text: bun_core::Utf8Bytes<'static>) -> bun_core::Utf8By
     text
 }
 
-pub(crate) fn string_echo(text: bun_core::String) -> bun_core::String {
-    text
+pub(crate) fn string_echo(text: &bun_core::String) -> bun_core::String {
+    text.clone()
+}
+
+pub(crate) fn string_length(text: &bun_core::String) -> usize {
+    text.length()
+}
+
+pub(crate) fn expected_by_node(text: &bun_core::String, data: Option<&[u8]>, flag: bool) -> usize {
+    text.length() + data.map_or(0, <[u8]>::len) + usize::from(flag)
 }
 
 pub(crate) fn next_color(color: TestColor) -> TestColor {
@@ -64,7 +72,7 @@ pub(crate) fn next_color(color: TestColor) -> TestColor {
     }
 }
 
-pub(crate) fn options_echo<'a>(_: &JsHeap<'a>, options: TestOptions<'a>) -> TestOptionsEcho<'a> {
+pub(crate) fn options_echo<'a>(_: &JsHeap<'a>, options: &TestOptions<'a>) -> TestOptionsEcho<'a> {
     TestOptionsEcho {
         count: options.count,
         flag: options.flag,
@@ -110,8 +118,8 @@ pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a
     }
 }
 
-pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: TestOuter<'a>) -> Vec<u8> {
-    let inner = match options.inner {
+pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: &TestOuter<'a>) -> Vec<u8> {
+    let inner = match &options.inner {
         Some(inner) => {
             let name = bstr::BStr::new(inner.name);
             format!("a={} b={} name={name}", inner.a, inner.b)
@@ -224,8 +232,8 @@ pub(crate) fn sum_bytes_if_any(bytes: Option<&[u8]>, _: &[u8]) -> i32 {
     bytes.map_or(-1, |bytes| sum(bytes) as i32)
 }
 
-pub(crate) fn string_or_object_echo(text: bun_core::String) -> bun_core::String {
-    text
+pub(crate) fn string_or_object_echo(text: &bun_core::String) -> bun_core::String {
+    text.clone()
 }
 
 pub(crate) fn sum_before_and_after_callback<'a>(

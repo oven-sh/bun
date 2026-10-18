@@ -1613,19 +1613,13 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn hot_reload_generation(
-    global: &JSGlobalObject,
-    _frame: &bun_jsc::CallFrame,
-) -> JsResult<JSValue> {
-    let vm = global.bun_vm();
-    Ok(JSValue::js_number(
-        if vm.hot_reload == bun_jsc::virtual_machine::HotReload::Hot {
-            f64::from(vm.hot_reload_counter)
-        } else {
-            -1.0
-        },
-    ))
+pub(crate) fn hot_reload_generation() -> f64 {
+    let vm = VirtualMachine::get();
+    if vm.hot_reload == bun_jsc::virtual_machine::HotReload::Hot {
+        f64::from(vm.hot_reload_counter)
+    } else {
+        -1.0
+    }
 }
 
 /// `RuntimeHooks::cancel_timers` — cancel every `TimeoutObject` /

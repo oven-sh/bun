@@ -32,6 +32,9 @@ type MockServer = (
   received: Received[],
   hold: Hold,
   drops: (sql: string) => boolean,
+  leavesAfter: (sql: string) => boolean,
+  // PostgreSQL only
+  tagOf: (sql: string) => string,
 ) => Promise<{ port: number; server: net.Server }>;
 
 function answerInOrder(hold: Hold) {
@@ -42,7 +45,7 @@ function answerInOrder(hold: Hold) {
 }
 
 // A prepared statement is answered as one with text parameters and no columns.
-const pgMockServer: MockServer = (received, hold, drops) => {
+const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => {
   let nextConn = 0;
   return listeningServer(socket => {
     const connId = nextConn++;
@@ -88,16 +91,14 @@ const pgMockServer: MockServer = (received, hold, drops) => {
             socket.destroy();
             return;
           }
+          const send = (...reply: Buffer[]) =>
+            leavesAfter(sql)
+              ? socket.end(Buffer.concat([...reply, pgErrorResponse({ S: "FATAL", C: "57P01", M: "goodbye" })]))
+              : socket.write(Buffer.concat(reply));
           answer(
             sql,
-            () => socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()])),
-            () =>
-              socket.write(
-                Buffer.concat([
-                  pgErrorResponse({ S: "ERROR", C: "XX000", M: `refused: ${sql}` }),
-                  pgReadyForQuery("E"),
-                ]),
-              ),
+            () => send(pgCommandComplete(tagOf(sql)), pgReadyForQuery()),
+            () => send(pgErrorResponse({ S: "ERROR", C: "XX000", M: `refused: ${sql}` }), pgReadyForQuery("E")),
           );
         }
       }
@@ -106,7 +107,7 @@ const pgMockServer: MockServer = (received, hold, drops) => {
   });
 };
 
-const mysqlMockServer: MockServer = (received, hold, drops) => {
+const mysqlMockServer: MockServer = (received, hold, drops, leavesAfter) => {
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
   const COM_STMT_PREPARE = 0x16;
@@ -135,10 +136,14 @@ const mysqlMockServer: MockServer = (received, hold, drops) => {
             socket.destroy();
             return;
           }
+          const send = (reply: Buffer) =>
+            leavesAfter(sql)
+              ? socket.end(Buffer.concat([reply, mysqlErrPacket(0, 1053, "08S01", "goodbye")]))
+              : socket.write(reply);
           answer(
             sql,
-            () => socket.write(mysqlOkPacket(1)),
-            () => socket.write(mysqlErrPacket(1, 1105, "HY000", `refused: ${sql}`)),
+            () => send(mysqlOkPacket(1)),
+            () => send(mysqlErrPacket(1, 1105, "HY000", `refused: ${sql}`)),
           );
         } else if (payload[0] === COM_STMT_PREPARE) {
           prepared = payload.subarray(1).toString("utf8");
@@ -210,6 +215,10 @@ type Server = {
   refuse(text: string): void;
   /** The server drops the connection when `text` arrives, as it does for "SELECT 'KILL'". */
   drop(text: string): void;
+  /** The server shuts down behind its answer to `text`: the answer, its goodbye and the end of the connection in one write. */
+  leaveAfter(text: string): void;
+  /** PostgreSQL: the command tag in the answer to `text`. */
+  answerWithTag(text: string, tag: string): void;
 };
 
 async function withServer<T>({ adapter, mockServer }: Adapter, run: (server: Server) => Promise<T>): Promise<T> {
@@ -217,6 +226,8 @@ async function withServer<T>({ adapter, mockServer }: Adapter, run: (server: Ser
   const holds = new Map<string, { seen: PromiseWithResolvers<void>; gate: PromiseWithResolvers<void> }>();
   const refused = new Set<string>();
   const dropped = new Set(["SELECT 'KILL'"]);
+  const last = new Set<string>();
+  const tags = new Map<string, string>();
   const { port, server } = await mockServer(
     received,
     text => {
@@ -227,6 +238,8 @@ async function withServer<T>({ adapter, mockServer }: Adapter, run: (server: Ser
       return held.gate.promise;
     },
     text => dropped.has(text),
+    text => last.has(text),
+    text => tags.get(text) ?? "SELECT 0",
   );
   const options: Bun.SQL.Options = {
     adapter,
@@ -253,6 +266,8 @@ async function withServer<T>({ adapter, mockServer }: Adapter, run: (server: Ser
       },
       refuse: text => void refused.add(text),
       drop: text => void dropped.add(text),
+      leaveAfter: text => void last.add(text),
+      answerWithTag: (text, tag) => void tags.set(text, tag),
     });
   } finally {
     for (const held of holds.values()) held.gate.resolve();
@@ -1290,7 +1305,94 @@ describe.each(adapters)("$adapter", entry => {
       }),
   );
 
-  test("a refused statement that nothing handles is an unhandled rejection, one that never ran is nothing", () =>
+  const work = (tx: any) => tx.unsafe("SELECT 'T1'").then(() => "done");
+  const prepare = distributedEnd[0].at(-1)!;
+
+  test.each([
+    { scope: "begin()", decides: "COMMIT", run: (sql: SQL) => sql.begin(work) },
+    { scope: "beginDistributed()", decides: prepare, run: (sql: SQL) => sql.beginDistributed("x", work) },
+  ])("a connection that drops at $decides rejects $scope with that loss and no cause", ({ decides, run }) =>
+    scenario(async ({ sql, drop }) => {
+      drop(decides);
+      const { code, cause } = await errorOf(run(sql));
+      expect({ code, cause }).toEqual({ code: closedCode, cause: undefined });
+    }),
+  );
+
+  describe("the client reads an answer and the goodbye of the server in one go", () => {
+    test.each([
+      { scope: "begin()", decides: "COMMIT", run: (sql: SQL) => sql.begin(work) },
+      {
+        scope: "begin() with an array",
+        decides: "COMMIT",
+        run: (sql: SQL) => sql.begin(tx => [work(tx)]).then(String),
+      },
+      {
+        scope: "begin() on a reserved connection",
+        decides: "COMMIT",
+        run: (sql: SQL) => sql.reserve().then(reserved => reserved.begin(work)),
+      },
+      { scope: "beginDistributed()", decides: prepare, run: (sql: SQL) => sql.beginDistributed("x", work) },
+    ])("$scope resolves: $decides was answered", ({ decides, run }) =>
+      scenario(async ({ sql, log, leaveAfter }) => {
+        leaveAfter(decides);
+        expect(await outcome(run(sql))).toBe("done");
+        expect(log().at(-1)).toBe(decides);
+      }),
+    );
+
+    test("begin() rejects with the error that COMMIT was answered with", () =>
+      scenario(async ({ sql, refuse, leaveAfter }) => {
+        refuse("COMMIT");
+        leaveAfter("COMMIT");
+        expect((await errorOf(sql.begin(work))).message).toContain("refused: COMMIT");
+      }));
+
+    test.skipIf(entry.adapter !== "postgres")("begin() rejects: COMMIT was answered with the tag ROLLBACK", () =>
+      scenario(async ({ sql, answerWithTag, leaveAfter }) => {
+        answerWithTag("COMMIT", "ROLLBACK");
+        leaveAfter("COMMIT");
+        expect(await outcome(sql.begin(work))).toBe("ERR_POSTGRES_COMMIT_ROLLED_BACK");
+      }),
+    );
+
+    test("begin() rejects with the error of its callback: ROLLBACK was answered", () =>
+      scenario(async ({ sql, leaveAfter }) => {
+        leaveAfter("ROLLBACK");
+        const failure = new Error("callback failed");
+        expect(
+          await errorOf(
+            sql.begin(async tx => {
+              await work(tx);
+              throw failure;
+            }),
+          ),
+        ).toBe(failure);
+      }));
+
+    test.each(
+      [
+        { scope: "begin()", answered: BEGIN, run: (sql: SQL) => sql.begin(work) },
+        { scope: "begin()", answered: "SELECT 'T1'", run: (sql: SQL) => sql.begin(work) },
+        { scope: "begin()", answered: "RELEASE SAVEPOINT s0", run: (sql: SQL) => sql.begin(tx => tx.savepoint(work)) },
+        { scope: "beginDistributed()", answered: "SELECT 'T1'", run: (sql: SQL) => sql.beginDistributed("x", work) },
+        // XA END on MySQL: XA PREPARE is not handed over yet. PostgreSQL sends nothing ahead of PREPARE TRANSACTION.
+        {
+          scope: "beginDistributed()",
+          answered: distributedEnd[0][0],
+          run: (sql: SQL) => sql.beginDistributed("x", work),
+        },
+      ].filter(({ answered }) => answered !== prepare),
+    )("$scope rejects with the goodbye: only $answered was answered", ({ answered, run }) =>
+      scenario(async ({ sql, received, leaveAfter }) => {
+        leaveAfter(answered);
+        expect((await errorOf(run(sql))).message).toBe("goodbye");
+        expect(received.at(-1)).toEqual({ conn: 0, sql: answered });
+      }),
+    );
+  });
+
+  test("a refused statement that is only started is nothing, what then(f) returns and what a handler throws is reported", () =>
     scenario(async ({ log, options }) => {
       await using proc = Bun.spawn({
         cmd: [
@@ -1298,10 +1400,9 @@ describe.each(adapters)("$adapter", entry => {
           "-e",
           `
             const reported = [];
-            const first = Promise.withResolvers();
+            const both = Promise.withResolvers();
             process.on("unhandledRejection", err => {
-              reported.push(err.code);
-              first.resolve();
+              if (reported.push(err.code ?? err.message) === 2) both.resolve();
             });
             const sql = new Bun.SQL(${JSON.stringify(options)});
             let ended;
@@ -1312,8 +1413,13 @@ describe.each(adapters)("$adapter", entry => {
             ended\`SELECT 'never ran'\`;
             ended\`SELECT 'never ran'\`.values();
             ended.unsafe("SELECT 'late'").execute();
+            ended\`SELECT 'late'\`.execute();
+            ended.unsafe("SELECT 'late'").finally(() => {});
+            ended.unsafe("SELECT 'late'").then(() => {});
+            ended.unsafe("SELECT 'late'").catch(() => { throw new Error("handler"); });
             await sql.unsafe("SELECT 'pool'");
-            await first.promise;
+            await both.promise;
+            await new Promise(setImmediate);
             await sql.close();
             console.log(JSON.stringify(reported));
           `,
@@ -1324,7 +1430,7 @@ describe.each(adapters)("$adapter", entry => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([endedCode]);
+      expect(JSON.parse(stdout).sort()).toEqual([endedCode, "handler"].sort());
       expect(exitCode).toBe(0);
       expect(log()).toEqual([BEGIN, "SELECT 'T1'", "COMMIT", "SELECT 'pool'"]);
     }));

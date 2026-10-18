@@ -328,7 +328,6 @@ struct us_socket_group_t {
      * They are NOT in head_sockets while queued, so close_all/deinit must
      * account for them separately. */
     uint16_t low_prio_count;
-    unsigned char timestamp;
     unsigned char long_timestamp;
     unsigned char linked;
 };
@@ -359,7 +358,6 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) n
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
-unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
 void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;
 struct us_socket_group_t *us_socket_group_next(us_socket_group_r group) nonnull_fn_decl;

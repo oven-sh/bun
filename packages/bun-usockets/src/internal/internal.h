@@ -94,6 +94,7 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define LIBUS_ECANCELED ECANCELED
 #endif
 #include <stdbool.h>
+#include <stddef.h>
 /* Poll type and what it polls for */
 enum {
   /* Three first bits */
@@ -308,9 +309,11 @@ struct us_socket_flags {
 
 } __attribute__((packed));
 
+/* `timeout_tick` of a socket with no timeout armed. */
+#define LIBUS_TIMEOUT_NONE UINT32_MAX
+
 struct us_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
-  unsigned char timeout;
   unsigned char long_timeout;
   struct us_socket_flags flags;
   /* enum SocketKind. Selects the static dispatch arm in us_dispatch_*. */
@@ -387,6 +390,8 @@ struct us_socket_t {
    * us_socket_write_check_error). Reset by any send that makes progress.
    * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
   unsigned char unclassified_send_failures;
+  /* The group->global_tick at which the timeout is due. In the pad before `group` too. */
+  uint32_t timeout_tick;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
@@ -400,6 +405,7 @@ struct us_socket_t {
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
+_Static_assert(offsetof(struct us_socket_t, group) - offsetof(struct us_socket_t, long_timeout) == 2 * sizeof(void *), "us_socket_t grew past the pad before group");
 
 /* Whether a raw write can send: the fd is open and no FIN went out. */
 static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
@@ -440,11 +446,11 @@ struct us_connecting_socket_t {
      * different namespaces that overlap numerically, so consumers of `error`
      * must check this bit first. */
     unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
-    unsigned char timeout;
     unsigned char long_timeout;
     unsigned char kind;
     uint16_t port;
     int error;
+    uint32_t timeout_tick;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

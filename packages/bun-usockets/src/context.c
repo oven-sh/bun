@@ -147,10 +147,6 @@ void us_socket_group_close_all(struct us_socket_group_t *group) {
     us_socket_group_close_all_ex(group, 1);
 }
 
-unsigned short us_socket_group_timestamp(struct us_socket_group_t *group) {
-    return group->timestamp;
-}
-
 __attribute__((always_inline)) struct us_loop_t *us_socket_group_loop(struct us_socket_group_t *group) {
     return group->loop;
 }
@@ -304,13 +300,14 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             c->connecting_head = new_s;
             c->group = group;
             c->kind = kind;
+            c->timeout_tick = LIBUS_TIMEOUT_NONE; /* it counted the ticks of the old group */
             us_internal_socket_group_unlink_connecting_socket(old_group, c);
             us_internal_socket_group_link_connecting_socket(group, c);
         }
     }
     new_s->group = group;
     new_s->kind = kind;
-    new_s->timeout = 255;
+    new_s->timeout_tick = LIBUS_TIMEOUT_NONE;
     new_s->long_timeout = 255;
 
     if (new_s->flags.low_prio_state == 1) {
@@ -336,7 +333,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->group = group;
     s->kind = 0; /* listener itself never dispatches */
     s->ssl = NULL;
-    s->timeout = 255;
+    s->timeout_tick = LIBUS_TIMEOUT_NONE;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
@@ -515,7 +512,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->group = group;
     s->kind = kind;
     s->ssl = NULL;
-    s->timeout = 255;
+    s->timeout_tick = LIBUS_TIMEOUT_NONE;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
@@ -632,7 +629,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->loop = loop;
     c->ssl_ctx = ssl_ctx;
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
-    c->timeout = 255;
+    c->timeout_tick = LIBUS_TIMEOUT_NONE;
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
     c->addrinfo_req = ai_req;
@@ -702,7 +699,8 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         }
         ++opened;
         us_internal_init_connect_socket(s, group, c->kind, c->options);
-        s->timeout = c->timeout;
+        /* If the lookup outlasted the timeout, the next sweep fires it, unless the candidate opens first. */
+        s->timeout_tick = c->timeout_tick;
         s->long_timeout = c->long_timeout;
 
         us_internal_socket_group_link_socket(group, s);

@@ -600,8 +600,8 @@ impl WebSocketProxyTunnel {
     /// The upgrade client's `handle_timeout` closes the proxy connection.
     pub(crate) fn set_timeout(&self, seconds: core::ffi::c_uint) {
         match self.socket.get() {
-            SocketUnion::Tcp(s) => s.set_timeout(seconds),
-            SocketUnion::Ssl(s) => s.set_timeout(seconds),
+            SocketUnion::Tcp(s) => s.set_timeout_or_long_timeout(seconds),
+            SocketUnion::Ssl(s) => s.set_timeout_or_long_timeout(seconds),
             SocketUnion::None => {}
         }
     }

@@ -6856,11 +6856,37 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * Set a timeout until the socket automatically closes.
+     * Arm a timeout on this socket. When it expires, the
+     * {@link SocketHandler.timeout `timeout`} handler is called.
      *
-     * To reset the timeout, call this function again.
+     * The socket is not closed. Call {@link end `end()`} or
+     * {@link terminate `terminate()`} in the handler to close it.
      *
-     * When a timeout happens, the `timeout` callback is called and the socket is closed.
+     * On a TCP or Unix domain socket, with or without TLS, the handler is
+     * called once, `seconds` seconds after this call. Reads and writes do not
+     * restart the timer. Call `timeout()` again from the `data` handler to
+     * restart it each time data arrives. Bun checks the timer in steps of
+     * about 4 seconds, so the handler can run up to 4 seconds early. A step
+     * takes longer when the event loop is busy, so a long timeout runs late.
+     *
+     * A new call replaces the timeout. `0` cancels it, and so does
+     * {@link upgradeTLS `upgradeTLS()`}.
+     *
+     * @param seconds Time in seconds until the `timeout` handler is called,
+     * truncated to a whole number.
+     * @example
+     * ```ts
+     * // End the socket when no data has arrived for 5 minutes
+     * open(socket) {
+     *   socket.timeout(300);
+     * },
+     * data(socket, data) {
+     *   socket.timeout(300);
+     * },
+     * timeout(socket) {
+     *   socket.end();
+     * },
+     * ```
      */
     timeout(seconds: number): void;
 
@@ -7350,7 +7376,13 @@ declare module "bun" {
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
     /**
-     * Called when a message times out.
+     * Called when the timeout of the socket expires: the one that
+     * {@link Socket.timeout `socket.timeout()`} armed, or the 120 seconds that
+     * a TCP or Unix domain socket accepted by `Bun.listen` starts with.
+     *
+     * The socket stays open. Call {@link Socket.end `socket.end()`} or
+     * {@link Socket.terminate `socket.terminate()`} here to close it, or
+     * `socket.timeout()` to arm the timeout again.
      */
     timeout?(socket: Socket<Data>): void | Promise<void>;
     /**
@@ -9109,8 +9141,8 @@ declare module "bun" {
       | {
           /**
            * Seconds an idle connection stays in the pool before it is closed.
-           * The socket timer is coarse: it moves in 4 second steps up to four
-           * minutes, and in whole minutes beyond that. Bun rounds the value up
+           * The timer of the pool is coarse: it moves in 4 second steps up to
+           * four minutes, and in whole minutes beyond that. Bun rounds the value up
            * to the timer, so a connection is never closed before `idleTimeout`,
            * and it can stay open for up to two steps longer. The longest is
            * 238 minutes (14280), and a larger value means that.

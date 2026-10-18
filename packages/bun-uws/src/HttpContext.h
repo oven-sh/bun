@@ -38,7 +38,6 @@
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
-extern "C" void Bun__NodeHTTP__halfCloseAfterDrain(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -144,6 +143,10 @@ private:
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             // Set per-socket authorization status
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
+            /* Opened already: this reports the failure of the established session, and usockets closes behind it. */
+            if (httpResponseData->filteredOpen) {
+                return;
+            }
             /* The app-level flag reflects the default entry; a per-serverName
              * entry adds its own client-certificate policy for its name. */
             bool rejectUnauthorized = httpContextData->flags.rejectUnauthorized ||
@@ -246,17 +249,6 @@ private:
         us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 
-    /* node:http socket.end() (HTTP_NODE_SHUTDOWN_AFTER_DRAIN) sends its FIN when the queued bytes are out, at once when there are none. The peer's FIN ends the connection. */
-    static bool readsBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
-        return (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) != 0;
-    }
-
-    /* Behind that FIN the request in flight still gets the body that a handler takes. No other request is read (stopReadsBehindOwnFin). */
-    static bool readsBodyBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
-        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)) == HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN
-            && httpResponseData->inStream != nullptr;
-    }
-
     template <bool IsNodeHttp>
     static us_socket_t *onClose(us_socket_t *s, int code, void * /*reason*/) {
         ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
@@ -346,14 +338,10 @@ private:
         bool isHalfOpenTunnel = false;
         if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
         if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {
-            bool stillReads = false;
-            if constexpr (IsNodeHttp) stillReads = readsBodyBehindOwnFin(httpResponseData);
-            if (!stillReads) {
-                /* Balance the us_socket_ref above — every other return path
-                 * reaches the unref via returnedData. */
-                us_socket_unref(s);
-                return s;
-            }
+            /* Balance the us_socket_ref above — every other return path
+             * reaches the unref via returnedData. */
+            us_socket_unref(s);
+            return s;
         }
 
         /* HTTP/2: a cleartext connection that opens with the prior-knowledge
@@ -477,8 +465,6 @@ private:
              * the parser there); abandon the rest of the buffer. */
             if constexpr (IsNodeHttp) {
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) {
-                    /* The socket stays open: balance the ref of onData, as its end does for a read that is parsed to the end. */
-                    us_socket_unref((us_socket_t *) s);
                     return nullptr;
                 }
             }
@@ -503,7 +489,7 @@ private:
                 /* node:http also queues behind responses that were dispatched but
                  * are not the connection's current response yet, and behind a
                  * response that has ended but not finished: its bytes are still
-                 * in the outgoing buffer (or the TLS spill slot), and it owns the
+                 * in the outgoing buffer (or the TLS spill), and it owns the
                  * connection (Node's socket._httpMessage) until they have been
                  * written out, with later responses queued behind it (Node's
                  * state.outgoing). A write or uncork can empty the buffer before
@@ -540,8 +526,7 @@ private:
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
                 /* A connection that owes a queued response is not idle (see markDone). */
                 httpResponseData->isIdle = false;
-                /* Not behind this side's FIN (HTTP_NODE_SHUTDOWN_AFTER_DRAIN): what is buffered there never leaves, so nothing would end the pause. */
-                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0 && !us_socket_is_shut_down((us_socket_t *) s)) {
+                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     /* Like Node, the rest of this read is still parsed: the pause holds from the next read. */
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                     ((HttpResponse<SSL> *) s)->pause();
@@ -615,11 +600,7 @@ private:
 
             /* We absolutely have to terminate parsing if shutdown */
             if (us_socket_is_shut_down((us_socket_t *) s)) {
-                bool stillReads = false;
-                if constexpr (IsNodeHttp) stillReads = readsBodyBehindOwnFin(httpResponseData);
-                if (!stillReads) {
-                    return nullptr;
-                }
+                return nullptr;
             }
 
             /* node:http compat: the pipelined-dispatch marker is only meaningful
@@ -711,21 +692,13 @@ private:
 
                 /* We absolutely have to terminate parsing if shutdown */
                 if (us_socket_is_shut_down((us_socket_t *) user)) {
-                    bool stillReads = false;
-                    /* The tunnel of an Upgrade request starts behind the last chunk of its body. */
-                    if constexpr (IsNodeHttp) stillReads = fin ? switchToTunnelAfterThisChunk && readsBehindOwnFin(httpResponseData) : readsBodyBehindOwnFin(httpResponseData);
-                    if (!stillReads) {
-                        /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
-                        if constexpr (IsNodeHttp) {
-                            if (fin) {
-                                httpResponseData->inStream = nullptr;
-                                if (readsBehindOwnFin(httpResponseData) && !httpResponseData->isConnectRequest) {
-                                    ((HttpResponseData<SSL, true> *) httpResponseData)->stopReadsBehindOwnFin();
-                                }
-                            }
+                    /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
+                    if constexpr (IsNodeHttp) {
+                        if (fin) {
+                            httpResponseData->inStream = nullptr;
                         }
-                        return nullptr;
                     }
+                    return nullptr;
                 }
 
                 /* If we were given the last data chunk, reset data handler to ensure following
@@ -768,10 +741,7 @@ private:
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
-                /* Not for the body of an Upgrade request behind this side's FIN: Node.js reports no parse error while parser.upgrade is set, and the peer's FIN closes this socket. */
-                if (!((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) && us_socket_is_shut_down(s))) {
-                    httpContextData->onClientError(SSL, s, result.parserError, data, length);
-                }
+                httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */
@@ -879,24 +849,16 @@ private:
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
 
             /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
-            auto [written, failed] = asyncSocket->uncork();
-
-            /* If we succeeded in uncorking, check if we have sent WebSocket FIN */
-            if (!failed) {
-                WebSocketData *webSocketData = (WebSocketData *) asyncSocket->getAsyncSocketData();
-                if (webSocketData->isShuttingDown) {
-                    /* In that case, also send TCP FIN (this is similar to what we have in ws drain handler) */
-                    asyncSocket->shutdown();
-                }
-            }
+            asyncSocket->uncork();
 
             /* Reset upgradedWebSocket before we return */
             httpContextData->upgradedWebSocket = nullptr;
 
             /* Frames that a client sent without waiting for the 101 (RFC 6455 4.1) follow the
              * request head in this read, and the HTTP parser stopped there. Give them to the
-             * WebSocket now, as the loop would have for a read of its own. The parser counts a
-             * body that the request declared as consumed, so that is never taken for frames.
+             * WebSocket now, as the loop would have for a read of its own. If the request declared
+             * a body, the parser counts the whole read as consumed, so what this read holds of the
+             * body is not taken for frames. Nothing remembers the rest: a later read is all frames.
              * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
              * so ours is s): the field is per context, and a microtask of this dispatch, or an
              * earlier upgrade from a request body handler, can set it. */
@@ -1031,20 +993,6 @@ private:
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN) {
                     responseDone = true;
                 }
-                /* socket.end() issued while bytes were queued: Node half-closes
-                 * once they are out, whether or not the response in flight
-                 * ever ends. With no response pending, the close sites for a
-                 * connection marked to close own that state. */
-                if (!responseDone
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)
-                    && httpResponseData->onWritable == nullptr
-                    && !us_socket_is_shut_down(s)
-                    && asyncSocket->hasFullyDrained()) {
-                    /* onData still parses behind this FIN, so onEnd has to see the peer's. */
-                    s->end_after_shutdown = 1;
-                    Bun__NodeHTTP__halfCloseAfterDrain(SSL, s);
-                    return s;
-                }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
                 asyncSocket->shutdown();
@@ -1097,9 +1045,8 @@ private:
             }
 
             /* Before the body fin and onClientError below, whose listeners can destroy the socket. Not once this
-             * side shut down: TLS delivers the peer's answer to our close_notify here as an EOF. A socket.end()
-             * (HTTP_NODE_SHUTDOWN_AFTER_DRAIN) still reads behind its FIN, so that EOF is the peer's FIN. */
-            if (!us_socket_is_shut_down(s) || readsBehindOwnFin(httpResponseData)) {
+             * side shut down: TLS delivers the peer's answer to our close_notify here as an EOF. */
+            if (!us_socket_is_shut_down(s)) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
             }
 
@@ -1186,7 +1133,8 @@ private:
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
-        return asyncSocket->close();
+        asyncSocket->uncork();
+        return us_socket_close_now(s);
     }
 
     /* Static .rodata vtables — one per (SSL, IsNodeHttp), shared by every

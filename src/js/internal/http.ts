@@ -40,8 +40,18 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+// IncomingMessage slot for the request's native response. null if the request was parsed in JS.
+const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
+// Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
+const kRememberPeer = Symbol("kRememberPeer");
+// Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
+// into the socket in a task.
+const kHasQueuedReads = Symbol("kHasQueuedReads");
+// Property of a server socket: whether the connection closed before the kernel had taken everything that was written.
+// undefined until it has closed.
+const kClosedWithUnsentData = Symbol("kClosedWithUnsentData");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -191,11 +201,8 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
       // Like Node's parserOnBody: pause the connection once the buffer fills.
       // Upgrade-with-body routes through its own handle so the socket's flow
       // state stays with the upgrade listener; _read() balances it.
-      if (!this._consuming && socket?.[kHandle]?.finSent === true) {
-        // Behind the FIN of socket.end() nothing reads this body: uWS drops the rest, so that the peer's FIN closes the connection.
-        socket[kHandle].stopParsing();
-      } else if (this.upgrade) this[kHandle]?.pause();
-      else if (socket) {
+      if (this.upgrade) this[kHandle]?.pause();
+      else if (socket && !socket.writableEnded) {
         socket.pause();
         // For a pipelined request the socket's current response is an earlier one, and an ended response does not pause.
         this[kHandle]?.pause();
@@ -362,8 +369,8 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
-const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTTPHeaderSize", 1);
-const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
+const setMaxHTTPHeaderSize = $bindgen("node_http_binding.bind.ts", "setMaxHTTPHeaderSize");
+const getMaxHTTPHeaderSize = $bindgen("node_http_binding.bind.ts", "getMaxHTTPHeaderSize");
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
@@ -543,8 +550,11 @@ export {
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
+  kClosedWithUnsentData,
   kHandle,
   kHandoffResponse,
+  kHasQueuedReads,
+  kHeaderSource,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,
@@ -553,6 +563,7 @@ export {
   kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
+  kRememberPeer,
   kRequest,
   kWaitForProxyTunnel,
   noBodySymbol,

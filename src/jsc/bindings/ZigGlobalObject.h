@@ -70,7 +70,7 @@ struct node_module;
 #include "RejectedPromiseQueue.h"
 #include <js_native_api.h>
 #include <node_api.h>
-#include "BakeAdditionsToGlobalObject.h"
+#include "Bindgen/AdditionsToGlobalObject.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
 
@@ -317,10 +317,9 @@ public:
     Structure* NativePromiseContextStructure() const { return m_NativePromiseContextStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
+    Structure* JSSQLDatabaseStructure() const { return m_JSSQLDatabaseStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
-
-    Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -498,7 +497,7 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
-    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
+    V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                     \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
@@ -559,6 +558,9 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
+    /* Set when the realm makes its first error of the class: see SQLError.cpp. */                           \
+    V(public, WriteBarrier<Structure>, m_mySQLErrorStructure)                                                \
+    V(public, WriteBarrier<Structure>, m_postgresErrorStructure)                                             \
                                                                                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsBigIntClassStructure)                                        \
@@ -643,6 +645,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
+    /* Bun::LintHost, for the JavaScript plugins of `bun lint` */                                            \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_lintHost)                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
@@ -673,6 +677,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NativePromiseContextStructure)                       \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLDatabaseStructure)                              \
     V(private, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                   \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \
@@ -883,6 +888,13 @@ ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
 ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* globalObject)
 {
     return globalObject->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
+}
+
+// Whether `value` is an object of such a realm; native code does not call into one.
+ALWAYS_INLINE bool isFromRetiredTestIsolationRealm(JSC::JSValue value)
+{
+    JSC::JSObject* object = value.getObject();
+    return object && isRetiredTestIsolationRealm(object->globalObject());
 }
 
 }

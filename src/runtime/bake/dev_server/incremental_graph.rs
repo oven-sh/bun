@@ -19,7 +19,7 @@ use super::{
     SerializedFailure, TraceImportGoal, packed_map, route_bundle, serialized_failure,
     source_map_store,
 };
-use crate::bake::dev_server_body::{CachedFileIndex, HotUpdateContext};
+use crate::bake::dev_server::{CachedFileIndex, HotUpdateContext};
 use crate::bake::{self, Side};
 
 /// `bun.GenericIndex(u30, File)` — file index into `bundled_files`.
@@ -1320,9 +1320,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
         }
-        if self.stale_files.bit_length > idx {
-            self.stale_files.set(idx);
-        }
+        self.ensure_stale_bit_capacity(true)?;
+        self.stale_files.set(idx);
 
         match SIDE {
             Side::Client => {

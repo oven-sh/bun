@@ -3,7 +3,6 @@
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
-#include "CodeGenerationFromStrings.h"
 #include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -284,13 +283,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", \"json\", \"xml\", or \"md\""_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
-        return result;
-    }
-
-    // Source a plugin supplies is a string made into script. What it supplies for a loader of
-    // data (json, toml, ...) or as an object is not.
-    if (Bun::mayNotMakeScriptFromStrings() && (loader == BunLoaderTypeJS || loader == BunLoaderTypeJSX || loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX)) [[unlikely]] {
-        result.value.error = Bun::createCodeGenerationFromStringsError(globalObject);
         return result;
     }
 
@@ -667,11 +659,6 @@ JSValue fetchCommonJSModule(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
     BunString specifier = Bun::toString(specifierWtfString);
 
     bool wasModuleMock = false;
@@ -842,10 +829,6 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
-    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
@@ -925,6 +908,19 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, specifier->toWTFString()), {}, nullptr, /* useImportMap */ true);
+    if (scope.exception()) [[unlikely]]
+        return nullptr;
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    EXCEPTION_ASSERT(!!promise == !scope.exception());
+    return promise;
+}
+
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin
 template JSValue fetchCommonJSModuleNonBuiltin<true>(
     void* bunVM,
@@ -997,9 +993,6 @@ static JSValue fetchESMSourceCode(
             return code;
         }
     };
-
-    if (Bun::mayNotMakeScriptFromStrings() && Bun::isDataOrBlobURL(specifier->toWTFString(BunString::ZeroCopy))) [[unlikely]]
-        return reject(Bun::createCodeGenerationFromStringsError(globalObject));
 
     bool wasModuleMock = false;
 

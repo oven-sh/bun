@@ -1,0 +1,1739 @@
+{
+ "fixtures": {
+  "cli/arg-parsing": {
+   "file.js": "console.log(\"could be single quote and without semi\")\n",
+   "number/1e3": "hello(\n     'prettier')\n",
+   "number/3": "hello(\n     'prettier')\n",
+   "number/4.44": "hello(\n     'prettier')\n",
+   "number/1/file-in-dir-named-1.js": "hello(\n     'prettier')\n",
+   "number/2.2/file-in-dir-named-2.2.js": "hello(\n     'prettier')\n"
+  },
+  "cli/write": {
+   "formatted.js": "var x = 1;\n",
+   "invalid.js": "this is invalid!",
+   "unformatted.js": "var x      =      1;",
+   "unformatted2.js": "var x      =      1;\n"
+  },
+  "cli/config-external-config-syntax-error": {
+   "package.json": "{\n  \"prettier\": \"./syntax-error\"\n}\n",
+   "syntax-error.js": "\"use strict\";\n\nthrow new SyntaxError(\"THIS ERROR MESSAGE MUST COME FROM THIS syntax-error.js FILE\");\n"
+  },
+  "cli/config": {
+   ".prettierrc": "endOfLine: 'auto'\noverrides:\n- files: \"*.js\"\n  options:\n    semi: false\n- files: \"*.ts\"\n  options:\n    semi: true\n",
+   "$schema/.prettierrc": "{\n  \"$schema\": \"https://www.schemastore.org/prettierrc\",\n  \"tabWidth\": 42\n}\n",
+   "$schema/index.js": "",
+   "config-position/.prettierrc": "{}\n",
+   "config-position/file.js": "Hello\n.prettier()\n",
+   "custom-config-file-location/my-prettier-config.mjs": "export default {\n  tabWidth: 7\n}\n",
+   "dot-overrides/.prettierrc": "{\n  \"tabWidth\": 2,\n  overrides: [\n    {\n      \"files\": \"*.json\",\n      \"options\": {\n        \"tabWidth\": 4\n      }\n    }\n  ]\n}\n",
+   "editorconfig/.editorconfig": "root = true\n\n[*.js]\nindent_style = tab\ntab_width = 8\nindent_size = 2 # overridden by tab_width since indent_style = tab\nmax_line_length = 100\n\n# Indentation override for all JS under lib directory\n[lib/**.js]\nindent_style = space\nindent_size = 2\n\n[lib/indent_size=tab.js]\nindent_size = tab\n\n[tab_width=unset.js]\ntab_width = unset\n",
+   "editorconfig/file.js": "function f() {\n  console.log(\"should have tab width 8\");\n}\n",
+   "external-overrides/.prettierrc": "\"./real-config.cjs\"\n",
+   "external-overrides/real-config.cjs": "\"use strict\";\n\nmodule.exports = {\n  tabWidth: 3,\n  overrides: [\n    { files: \"*.js\", options: { semi: false } },\n    { files: \"*.ts\", options: { semi: true } },\n  ],\n};\n",
+   "filepath/.prettierrc": "{\n   \"tabWidth\": 3,\n   \"overrides\": [\n      {\n         \"files\": \"subfolder/file.js\",\n         \"options\": {\n            \"tabWidth\": 6\n         }\n      }\n   ]\n}\n",
+   "jest/.prettierrc": "semi: false\n\noverrides:\n- files:\n  - \"*.test.js\"\n  - \"**/__best-tests__/*.js\"\n  options:\n    semi: true\n",
+   "jest/Component.js": "console.log(\"jest/Component.js should not have semi\")\n",
+   "jest/Component.test.js": "console.log(\"jest/Component.test.js should have semi\");\n",
+   "js/.editorconfig": "# This file should be overridden by prettier.config.js\nroot = true\n\n[*]\ntab_width = 1\n",
+   "js/file.js": "function js() {\n  console.log(\"js/file.js should have tab width 8 (1 if CLI)\");\n}\n",
+   "js/prettier.config.cjs": "\"use strict\";\n\nmodule.exports = {\n  endOfLine: 'auto',\n  tabWidth: 8\n};\n",
+   "no-config/file.js": "function noConfigJs() {\n  console.log(\"no-config/file.js should have no semicolons\");\n}\n",
+   "no-config/file.ts": "function noConfigTs() {\n  console.log(\"no-config/file.ts should have semicolons because it has a .ts extension\");\n}\n",
+   "overrides-exclude-files/.prettierrc": "{\n  \"singleQuote\": true,\n  \"trailingComma\": \"all\",\n  \"overrides\": [\n    {\n      \"files\": [\"*.js\"],\n      \"options\": {\n        \"trailingComma\": \"es5\"\n      }\n    },\n    {\n      \"files\": [\"*.js\"],\n      \"excludeFiles\": [\"single-quote.js\"],\n      \"options\": {\n        \"singleQuote\": false\n      }\n    }\n  ]\n}\n",
+   "package-yaml/package.yaml": "name: my-package\nversion: 1.0.0\nprettier:\n  printWidth: 101\n",
+   "package/.editorconfig": "# This file should be overridden by package.json\n\n[*]\ntab_width = 1\n\n[*.ts]\ntab_width = 1\n",
+   "package/file.js": "function packageJs() {\n  console.log(\"package/file.js should have tab width 3\");\n}\n",
+   "package/file.ts": "function packageTs() {\n  console.log(\"package/file.ts should have tab width 5 because it has .ts extension\");\n}\n",
+   "package/package.json": "{\n  \"name\": \"my-package\",\n  \"version\": \"9000\",\n  \"prettier\": {\n    \"tabWidth\": 3,\n    \"overrides\": [\n      {\n        \"files\": \"*.ts\",\n        \"options\": {\n          \"tabWidth\": 5\n        }\n      }\n    ]\n  }\n}\n",
+   "plugin-search-dirs/.prettierrc": "{\n}\n",
+   "rc-json/.prettierrc.json": "{\n    \"trailingComma\": \"all\",\n    \"singleQuote\": true\n}\n",
+   "rc-json/file.js": "function rcJson() {\n  console.log.apply(null, [\n    \"rc-json/file.js\",\n    \"should have trailing comma\",\n    \"and single quotes\"\n  ]);\n}\n",
+   "rc-toml/.prettierrc.toml": "trailingComma = \"all\"\nsingleQuote = true\n",
+   "rc-toml/file.js": "function rcToml() {\n  console.log.apply(null, [\n    \"rc-toml/file.js\",\n    \"should have trailing comma\",\n    \"and single quotes\"\n  ]);\n}\n",
+   "rc-yaml/.prettierrc.yaml": "trailingComma: all\nsingleQuote: true\n",
+   "rc-yaml/file.js": "function rcYaml() {\n  console.log.apply(null, [\n    \"rc-yaml/file.js\",\n    \"should have trailing comma\",\n    \"and single quotes\"\n  ]);\n}\n",
+   "resolve-relative/.prettierrc": "{\n    \"plugins\": [\"../path-to-plugin\"]\n}\n",
+   "config-position/directory/.prettierrc": "{}\n",
+   "config-position/directory/file-indirectory.js": "Hello\n.prettier()\n",
+   "editorconfig/lib/file.js": "function f() {\n  console.log(\"should have space width 2\");\n}\n",
+   "editorconfig/lib/indent_size=tab.js": "function f() {\n  console.log(\"should have space width 8\");\n}\n",
+   "editorconfig/repo-root-git/README.md": "We can't commit file/directory named `.git` so it's generated by test hooks.\n",
+   "editorconfig/repo-root-git/file.js": "function f() {\n  console.log(\"should have space width 2 despite ../.editorconfig specifying 8, because ./.git is present\");\n}\n",
+   "editorconfig/repo-root/file.js": "function f() {\n  console.log(\"should have space width 2 despite ../.editorconfig specifying 8, because ./.hg is present\");\n}\n",
+   "external-config/cjs-package/index.js": "console.log(\"should have no semi\");\n",
+   "external-config/cjs-package/package.json": "{\n  \"prettier\": \"@company/prettier-config\"\n}\n",
+   "external-config/esm-file/index.js": "console.log(\"should have no semi\");\n",
+   "external-config/esm-file/my-prettier-config-file.js": "export default {\n  printWidth: 77,\n  semi: false,\n};\n",
+   "external-config/esm-file/package.json": "{\n  \"prettier\": \"./my-prettier-config-file.js\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "external-config/esm-package-forbids-require/index.js": "console.log(\"should have no semi\");\n",
+   "external-config/esm-package-forbids-require/package.json": "{\n  \"prettier\": \"prettier-config-forbids-require\"\n}\n",
+   "external-config/esm-package-with-tla/index.js": "console.log(\"should have no semi\");\n",
+   "external-config/esm-package-with-tla/package.json": "{\n  \"prettier\": \"@company/prettier-config\"\n}\n",
+   "external-config/esm-package/index.js": "console.log(\"should have no semi\");\n",
+   "external-config/esm-package/package.json": "{\n  \"prettier\": \"@company/prettier-config\"\n}\n",
+   "filepath/subfolder/file.js": "",
+   "invalid/broken-package-json/.prettierignore": "# will be created by test\npackage.json\n",
+   "invalid/broken-package-json/.prettierrc": "{}\n",
+   "invalid/invalid-config-value/prettier.config.mjs": "export default undefined\n",
+   "invalid/option/configPrecedence": "{\n    \"configPrecedence\": \"invalidValue\"\n}\n",
+   "invalid/option/int": "{\n    \"tabWidth\": 0.5\n}",
+   "invalid/option/kebab-case": "{\n    \"print-width\": 3\n}",
+   "invalid/option/trailingComma": "{\n    \"trailingComma\": \"wow\"\n}",
+   "invalid/option/unknown": "{\n    \"hello\": \"world\"\n}",
+   "jest/__best-tests__/.file.js": "console.log(\"jest/__best-tests__/.file.js should have semi\");\n",
+   "jest/__best-tests__/file.js": "console.log(\"jest/__best-tests__/file.js should have semi\");\n",
+   "plugins/absolute-path/prettier.config.mjs": "import path from 'node:path'\n\nexport default {\n  plugins: [\n    path.resolve('../../../../../config/prettier-plugins/prettier-plugin-uppercase-rocks/index.js')\n  ]\n}\n",
+   "rc-cjs/prettier-config-cjs-in-type-commonjs/package.json": "{\n  \"name\": \"prettier-config-cjs-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-cjs/prettier-config-cjs-in-type-commonjs/prettier.config.cjs": "module.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-cjs/prettier-config-cjs-in-type-module/package.json": "{\n  \"name\": \"prettier-config-cjs-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-cjs/prettier-config-cjs-in-type-module/prettier.config.cjs": "module.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-cjs/prettier-config-cjs-in-type-none/package.json": "{\n  \"name\": \"prettier-config-cjs-in-type-none\",\n  \"private\": true\n}\n",
+   "rc-cjs/prettier-config-cjs-in-type-none/prettier.config.cjs": "module.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-cjs/prettierrc-cjs-in-type-commonjs/.prettierrc.cjs": "module.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-cjs/prettierrc-cjs-in-type-commonjs/package.json": "{\n  \"name\": \"prettierrc-cjs-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-cjs/prettierrc-cjs-in-type-module/.prettierrc.cjs": "module.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-cjs/prettierrc-cjs-in-type-module/package.json": "{\n  \"name\": \"prettierrc-cjs-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-cjs/prettierrc-cjs-in-type-none/.prettierrc.cjs": "module.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-cjs/prettierrc-cjs-in-type-none/package.json": "{\n  \"name\": \"prettierrc-cjs-in-type-none\",\n  \"private\": true\n}\n",
+   "rc-js/cjs-prettier-config-js-in-type-commonjs/package.json": "{\n  \"name\": \"cjs-prettier-config-js-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-js/cjs-prettier-config-js-in-type-commonjs/prettier.config.js": "\"use strict\";\n\nmodule.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/cjs-prettier-config-js-in-type-module/package.json": "{\n  \"name\": \"cjs-prettier-config-js-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-js/cjs-prettier-config-js-in-type-module/prettier.config.js": "module.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/cjs-prettier-config-js-in-type-none/package.json": "{\n  \"name\": \"cjs-prettier-config-js-in-type-none\",\n  \"private\": true\n}\n",
+   "rc-js/cjs-prettier-config-js-in-type-none/prettier.config.js": "\"use strict\";\n\nmodule.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/cjs-prettierrc-js-in-type-commonjs/.prettierrc.js": "\"use strict\";\n\nmodule.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/cjs-prettierrc-js-in-type-commonjs/package.json": "{\n  \"name\": \"cjs-prettierrc-js-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-js/cjs-prettierrc-js-in-type-module/.prettierrc.js": "\"use strict\";\n\nmodule.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/cjs-prettierrc-js-in-type-module/package.json": "{\n  \"name\": \"cjs-prettierrc-js-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-js/cjs-prettierrc-js-in-type-none/.prettierrc.js": "\"use strict\";\n\nmodule.exports = {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/cjs-prettierrc-js-in-type-none/package.json": "{\n  \"name\": \"prettierrc-js-in-type-none\",\n  \"private\": true\n}\n",
+   "rc-js/mjs-prettier-config-js-in-type-commonjs/package.json": "{\n  \"name\": \"mjs-prettier-config-js-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-js/mjs-prettier-config-js-in-type-commonjs/prettier.config.js": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/mjs-prettier-config-js-in-type-module/package.json": "{\n  \"name\": \"mjs-prettier-config-js-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-js/mjs-prettier-config-js-in-type-module/prettier.config.js": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/mjs-prettier-config-js-in-type-none/package.json": "{\n  \"name\": \"mjs-prettier-config-js-in-type-none\",\n  \"private\": true\n}\n",
+   "rc-js/mjs-prettier-config-js-in-type-none/prettier.config.js": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/mjs-prettierrc-js-in-type-commonjs/.prettierrc.js": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/mjs-prettierrc-js-in-type-commonjs/package.json": "{\n  \"name\": \"mjs-prettierrc-js-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-js/mjs-prettierrc-js-in-type-module/.prettierrc.js": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/mjs-prettierrc-js-in-type-module/package.json": "{\n  \"name\": \"mjs-prettierrc-js-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-js/mjs-prettierrc-js-in-type-none/.prettierrc.js": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-js/mjs-prettierrc-js-in-type-none/package.json": "{\n  \"name\": \"mjs-prettierrc-js-in-type-none\",\n  \"private\": true\n}\n",
+   "rc-json5/invalid/.prettierrc.json5": "{\n",
+   "rc-json5/json5/.prettierrc.json5": "{\n// comment\n  trailingComma: 'all',\n          printWidth: +81,\n  tabWidth: 3.,\n}\n",
+   "rc-mjs/prettier-config-mjs-in-type-commonjs/package.json": "{\n  \"name\": \"prettier-config-mjs-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-mjs/prettier-config-mjs-in-type-commonjs/prettier.config.mjs": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-mjs/prettier-config-mjs-in-type-module/package.json": "{\n  \"name\": \"prettier-config-mjs-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-mjs/prettier-config-mjs-in-type-module/prettier.config.mjs": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-mjs/prettier-config-mjs-in-type-none/package.json": "{\n  \"name\": \"prettier-config-mjs-in-type-none\",\n  \"private\": true\n}\n",
+   "rc-mjs/prettier-config-mjs-in-type-none/prettier.config.mjs": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-mjs/prettierrc-mjs-in-type-commonjs/.prettierrc.mjs": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-mjs/prettierrc-mjs-in-type-commonjs/package.json": "{\n  \"name\": \"prettierrc-mjs-in-type-commonjs\",\n  \"private\": true,\n  \"type\": \"commonjs\"\n}\n",
+   "rc-mjs/prettierrc-mjs-in-type-module/.prettierrc.mjs": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-mjs/prettierrc-mjs-in-type-module/package.json": "{\n  \"name\": \"prettierrc-mjs-in-type-module\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+   "rc-mjs/prettierrc-mjs-in-type-none/.prettierrc.mjs": "export default {\n  \"trailingComma\": \"all\",\n  \"singleQuote\": true\n}\n",
+   "rc-mjs/prettierrc-mjs-in-type-none/package.json": "{\n  \"name\": \"prettierrc-mjs-in-type-none\",\n  \"private\": true\n}\n",
+   "ts/auto-discovery/.prettierrc.ts": "type PrettierConfig = {\n  tabWidth: number\n};\n\nconst config: PrettierConfig = {tabWidth: 3};\n\nexport default config;\n",
+   "ts/config-file-names/.prettierrc.cts": "type PrettierConfig = {\n  tabWidth: number\n};\n\nconst config: PrettierConfig = {tabWidth: 8};\n\nmodule.exports = config;\n",
+   "ts/config-file-names/.prettierrc.mts": "type PrettierConfig = {\n  tabWidth: number\n};\n\nconst config: PrettierConfig = {tabWidth: 3};\n\nexport default config;\n",
+   "ts/config-file-names/.prettierrc.ts": "type PrettierConfig = {\n  tabWidth: number\n};\n\nconst config: PrettierConfig = {tabWidth: 4};\n\nexport default config;\n",
+   "ts/config-file-names/file-to-format.js": "function foo() {\n    return bar;\n}\n",
+   "ts/config-file-names/prettier.config.cts": "type PrettierConfig = {\n  tabWidth: number\n};\n\nconst config: PrettierConfig = {tabWidth: 7};\n\nmodule.exports = config;\n",
+   "ts/config-file-names/prettier.config.mts": "type PrettierConfig = {\n  tabWidth: number\n};\n\nconst config: PrettierConfig = {tabWidth: 6};\n\nexport default config;\n",
+   "ts/config-file-names/prettier.config.ts": "type PrettierConfig = {\n  tabWidth: number\n};\n\nconst config: PrettierConfig = {tabWidth: 5};\n\nexport default config;\n",
+   "editorconfig/repo-root/.hg/.gitkeep": "This isn't really a Mercurial repo, but we want to pretend it is for testing purposes.\nSee https://github.com/prettier/prettier/pull/3559#issuecomment-353857109\n",
+   "invalid/folder/.prettierrc/placeholder": "",
+   "external-config/esm-package-forbids-require/node_modules/prettier-config-forbids-require/index.js": "export default { printWidth: 79 }\n",
+   "external-config/esm-package-forbids-require/node_modules/prettier-config-forbids-require/package.json": "{\n  \"name\": \"prettier-config-forbids-require\",\n  \"private\": true,\n  \"version\": \"0.0.0\",\n  \"type\": \"module\",\n  \"exports\": {\n    \"import\": \"./index.js\"\n  }\n}\n",
+   "external-config/cjs-package/node_modules/@company/prettier-config/index.json": "{\n  \"printWidth\": 77,\n  \"semi\": false\n}\n",
+   "external-config/cjs-package/node_modules/@company/prettier-config/package.json": "{\n  \"name\": \"@company/prettier-config\",\n  \"main\": \"index.json\",\n  \"version\": \"0.0.0\"\n}\n",
+   "external-config/esm-package-with-tla/node_modules/@company/prettier-config/index.js": "export default await Promise.resolve({\n  \"printWidth\": await Promise.resolve(77),\n  \"semi\": await Promise.resolve(false)\n})\n",
+   "external-config/esm-package-with-tla/node_modules/@company/prettier-config/package.json": "{\n  \"name\": \"@company/prettier-config\",\n  \"private\": true,\n  \"version\": \"0.0.0\",\n  \"type\": \"module\",\n  \"exports\": \"./index.js\"\n}\n",
+   "external-config/esm-package/node_modules/@company/prettier-config/index.js": "export default {\n  \"printWidth\": 77,\n  \"semi\": false\n}\n",
+   "external-config/esm-package/node_modules/@company/prettier-config/package.json": "{\n  \"name\": \"@company/prettier-config\",\n  \"private\": true,\n  \"version\": \"0.0.0\",\n  \"type\": \"module\",\n  \"exports\": \"./index.js\"\n}\n"
+  },
+  "cli/error-on-unmatched-pattern": {
+   "some.js": "const hello = \"there\";\n",
+   "some.json": "{\n  \"hello\": \"there\"\n}\n",
+   "some.yml": "hello: there\n"
+  },
+  "cli/ignore-in-subdirectories": {
+   ".prettierignore": "web1/ignore-me\n",
+   "web1/should-not-ignore.js": "var x = 'this should be formatted';\n",
+   "web2/should-not-ignore.js": "var x = 'this should be formatted';\n",
+   "web1/ignore-me/should-ignore.js": "var x = 'this should not be formatted';\n",
+   "web1/ignore-me/subdirectory/should-ignore.js": "var x = 'this should not be formatted';\n"
+  },
+  "cli/ignore-relative-path": {
+   ".prettierignore": "level1/level2/\nlevel1-glob/**/level3-glob/*.js\n",
+   "shouldNotBeIgnored.js": "var x = 'this should be formatted';\n\n",
+   "level1-glob/shouldNotBeIgnored.js": "var x = 'this should be formatted';\n\n",
+   "level1/level2/.prettierrc.js": "throw Error('This config should not be evaluated since the directory is ignored');\n",
+   "level1-glob/level2-glob/level3-glob/shouldNotBeFormat.js": "var x = 'this should not be formatted';\n",
+   "level1-glob/level2-glob/level3-glob/shouldNotBeIgnored.scss": "body { color: green }\n",
+   "level1/level2/level3/shouldNotBeFormat.js": "var x = 'this should not be formatted';\n"
+  },
+  "cli/ignore-unknown": {
+   ".prettierignore": "ignored.js\n",
+   ".prettierrc": "{\n  \"overrides\": [\n    {\n      \"files\": \"*.as-js-file\",\n      \"options\": {\n        \"parser\": \"babel\"\n      }\n    }\n  ]\n}\n",
+   "ignored.js": "",
+   "javascript.js": "const foo=        \"bar\";\n",
+   "override.as-js-file": "const foo=        \"bar\";\n",
+   "unkown-file-extension.unknown": "PRETTIER\n",
+   "unkown-filename": "PRETTIER\n"
+  },
+  "cli/ignore-vcs-files": {
+   "file.js": "'use strict';\n",
+   ".hg/file.js": "'use strict';\n",
+   ".jj/file.js": "'use strict';\n",
+   ".svn/file.js": "/* eslint-disable */\n'use strict';\n"
+  },
+  "cli/infer-parser": {
+   "FOO": "",
+   "foo.js": "foo  (    )\n",
+   ".husky/pre-commit": "content from file\n",
+   "interpreters/zx-script": "#!/usr/bin/env zx\n\nawait $`cat package.json | grep name`\n",
+   "known-unknown/known.js": "hello( 'world'\n)\n",
+   "known-unknown/unknown.jsonl": "{\"name\": \"Gilbert\", \"wins\": [[\"straight\", \"7♣\"], [\"one pair\", \"10♥\"]]}\n{\"name\": \"Alexa\", \"wins\": [[\"two pair\", \"4♠\"], [\"two pair\", \"9♠\"]]}\n{\"name\": \"May\", \"wins\": []}\n{\"name\": \"Deloise\", \"wins\": [[\"three of a kind\", \"5♣\"]]}\n",
+   "override-builtin-plugin-languages/.prettierrc": "{}\n",
+   "override-builtin-plugin-languages/dummy-js-plugin.js": "\nimport createPlugin from \"../../../../config/utilities/create-plugin.cjs\";\n\nconst PARSER_NAME = 'dummy-js-parser'\nconst PRINT_MARK = `formatted by '${PARSER_NAME}' parser`\n\nconst languages = [\n  {\n    parsers: [PARSER_NAME],\n    extensions: ['.js']\n  }\n]\n\nexport default {\n  ...createPlugin({\n    name: PARSER_NAME,\n    print: (content) => `${content.replace(PRINT_MARK,\"\").trim()}\\n${PRINT_MARK}`,\n    finalNewLine: false,\n  }),\n  languages,\n};\n"
+  },
+  "cli/invalid-ignore": {
+   "something.js": "",
+   ".prettierignore/placeholder": ""
+  },
+  "cli/syntax-errors": {
+   "invalid-1.js": "foo (+-) bar\n",
+   "invalid-2.js": "foo (+-) bar\n",
+   "invalid-2.unknown": "",
+   "valid-1.js": "function foo() {}\n"
+  },
+  "cli/patterns-glob": {
+   "fixtures-1/!file.js": "foo.\nbar()\n",
+   "fixtures-1/a.js": "foo.\nbar()\n",
+   "fixtures-1/b.js": "foo.\nbar()\n",
+   "fixtures-2/!b.js": "foo.\nbar()\n",
+   "fixtures-2/a.js": "foo.\nbar()\n",
+   "fixtures-3/outside.js": "foo\n.bar()\n",
+   "fixtures-4/level-0.js": "foo\n.bar()\n",
+   "fixtures-2/!dir.js/1.css": ".foo\n{}\n",
+   "fixtures-2/!dir.js/2.css": ".foo\n{}\n",
+   "fixtures-3/dir/inside.js": "foo\n.bar()\n",
+   "fixtures-4/0/level-1.js": "foo\n.bar()\n",
+   "fixtures-5/constructor/should-be-formatted.js": "console.log( \"*\");\n",
+   "fixtures-3/dir/.svn/in-svn.js": "foo\n.bar()\n",
+   "fixtures-3/dir/node_modules/in-node_modules.js": "foo\n.bar()\n",
+   "fixtures-4/0/1/level-2.js": "foo\n.bar()\n",
+   "fixtures-4/0/1/2/level-3.js": "foo\n.bar()\n"
+  },
+  "cli/patterns": {
+   "file.will-never-support": "",
+   "other-regular-modules.js": "'use strict';\n",
+   "other-supported-file.css": ".foo\n\n{}\n",
+   "regular-module.js": "'use strict';\n",
+   "directory/file.js": "'use strict';\n",
+   "node_modules/node-module.js": "/* eslint-disable */\n'use strict';\n",
+   "other-directory/file.js": "'use strict';\n",
+   "directory/nested-directory/nested-directory-file.js": "'use strict';\n",
+   "other-directory/nested-directory/nested-directory-file.js": "'use strict';\n"
+  },
+  "cli/print-code": {
+   ".prettierignore": "ignored.js\n",
+   "ignored.js": "foo(\n)\n",
+   "not-ignored.js": "foo(\n)\n"
+  },
+  "cli/skip-folders": {
+   "a/file.js": "fooA(     )\n",
+   "b/file.js": "fooB(   )\n"
+  },
+  "cli/special-characters-in-path": {
+   "ignore-emoji/.prettierignore": "ignored\n",
+   "ignore-emoji/not-ignored.js": "const foo\n=         'bar'\n;\n",
+   "square-brackets-and-dash/readme.md": "This is a test fixture for the following issue.\n\nIssue link:\n\nhttps://github.com/prettier/prettier/issues/15188\n\nCan debug with\n\nDevelopment version\n\n```sh\nnode ../../../../../bin/prettier test --check\n```\n\nStable version\n\n```sh\nnode ../../../../../node_modules/prettier/bin/prettier.cjs test test --check\n```\n",
+   "ignore-emoji/ignored/1.js": "const foo\n=         'bar'\n;\n",
+   "ignore-emoji/ignored/α.js": "// #6250\nconst foo\n=         'bar'\n;\n",
+   "ignore-emoji/ignored/中文.js": "const foo\n=         'bar'\n;\n",
+   "ignore-emoji/ignored/😁.js": "const foo\n=         'bar'\n;\n",
+   "square-brackets-and-dash/test/username[repo-name]/.editorconfig": "root = true\n\n[*]\nindent_size = 4\n",
+   "square-brackets-and-dash/test/username[repo-name]/test.js": "function a() {\nconst foo\n=         'bar'\n;\n}\n"
+  },
+  "cli/stdin-ignore": {
+   ".prettierignore": "ignore/\n"
+  },
+  "cli/config-precedence": {
+   "invalid-config/.prettierrc": "{\"printWidth\": 0.5}",
+   "invalid-config/foo.js": "function foo () {\nreturn bar;\n}\n",
+   "overrides/.prettierrc": "endOfLine: 'auto'\noverrides:\n- files: \"*.js\"\n  options:\n    semi: false\n- files: \"*.ts\"\n  options:\n    semi: true\n",
+   "valid-config/.prettierrc": "{\"tabWidth\": 3}\n",
+   "valid-config/foo.js": "function foo () {\nreturn bar;\n}\n"
+  },
+  "cli/with-node-modules": {
+   "regular-module.js": "'use strict';\n",
+   "node_modules/node-module.js": "/* eslint-disable */\n'use strict';\n",
+   "not_node_modules/file.js": "'use strict';\n",
+   "nested/node_modules/node-module.js": "/* eslint-disable */\n'use strict';\n"
+  },
+  "cli/with-parser-inference": {
+   "javascript.js": "/* JavaScript */\n\"use strict\";\n",
+   "stylesheet.css": "/* Stylesheet */\n* {\n  outline: none;\n}\n"
+  },
+  "cli/with-shebang": {
+   "issue1890.js": "#!/usr/bin/env node\n\"use strict\";\n"
+  }
+ },
+ "cases": [
+  {
+   "test": "arg-parsing.js",
+   "directory": "cli/arg-parsing",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "--single-quote",
+    "file.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/arg-parsing/file.js": "console.log('could be single quote and without semi');\n"
+   }
+  },
+  {
+   "test": "arg-parsing.js",
+   "directory": "cli/arg-parsing",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "--no-semi",
+    "file.js"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "arg-parsing.js",
+   "directory": "cli/arg-parsing",
+   "args": [
+    "file.js",
+    "--jsx-bracket-same-line"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/arg-parsing/file.js": "console.log(\"could be single quote and without semi\");\n"
+   }
+  },
+  {
+   "test": "arg-parsing.js",
+   "directory": "cli/arg-parsing",
+   "args": [
+    "--stdin-filepath",
+    "file.js"
+   ],
+   "input": "prettier()",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "prettier();\n"
+  },
+  {
+   "test": "arg-parsing.js",
+   "directory": "cli/arg-parsing",
+   "args": [
+    "--filepath",
+    "file.js"
+   ],
+   "input": "prettier()",
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "check.js",
+   "directory": "cli/write",
+   "args": [
+    "--check",
+    "formatted.js",
+    "unformatted.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "test": "check.js",
+   "directory": "cli/write",
+   "args": [
+    "--check",
+    "unformatted.js",
+    "unformatted2.js"
+   ],
+   "input": "0",
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js",
+    "unformatted2.js"
+   ]
+  },
+  {
+   "test": "config-invalid.js",
+   "directory": "cli/config-external-config-syntax-error",
+   "args": [
+    "syntax-error.js"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "config-resolution.js",
+   "directory": "cli/config/",
+   "args": [
+    "--config",
+    ".prettierrc",
+    "./js/file.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config/js/file.js": "function js() {\n console.log(\"js/file.js should have tab width 8 (1 if CLI)\")\n}\n"
+   }
+  },
+  {
+   "test": "config-resolution.js",
+   "directory": "cli/config/external-config/cjs-package",
+   "args": [
+    "index.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config/external-config/cjs-package/index.js": "console.log(\"should have no semi\")\n"
+   }
+  },
+  {
+   "test": "config-resolution.js",
+   "directory": "cli/config/external-config/esm-package",
+   "args": [
+    "index.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config/external-config/esm-package/index.js": "console.log(\"should have no semi\")\n"
+   }
+  },
+  {
+   "test": "config-resolution.js",
+   "directory": "cli/config/external-config/esm-package-with-tla",
+   "args": [
+    "index.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config/external-config/esm-package-with-tla/index.js": "console.log(\"should have no semi\")\n"
+   }
+  },
+  {
+   "test": "error-on-unmatched-pattern.js",
+   "directory": "cli/error-on-unmatched-pattern",
+   "args": [
+    "--no-error-on-unmatched-pattern",
+    "**/*.js"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "error-on-unmatched-pattern.js",
+   "directory": "cli/error-on-unmatched-pattern",
+   "args": [
+    "**/*.toml"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "error-on-unmatched-pattern.js",
+   "directory": "cli/error-on-unmatched-pattern",
+   "args": [
+    "--no-error-on-unmatched-pattern",
+    "**/*.{json,js,yml}",
+    "**/*.toml"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "error-on-unmatched-pattern.js",
+   "directory": "cli/error-on-unmatched-pattern",
+   "args": [
+    "**/*.{json,js,yml}",
+    "**/*.toml"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "ignore-in-subdirectories.js",
+   "directory": "cli/ignore-in-subdirectories/web1",
+   "args": [
+    "ignore-me/should-ignore.js",
+    "--ignore-path",
+    "../.prettierignore",
+    "-l"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "ignore-in-subdirectories.js",
+   "directory": "cli/ignore-in-subdirectories/web1",
+   "args": [
+    "ignore-me/subdirectory/should-ignore.js",
+    "--ignore-path",
+    "../.prettierignore",
+    "-l"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "ignore-in-subdirectories.js",
+   "directory": "cli/ignore-in-subdirectories/web1",
+   "args": [
+    "should-not-ignore.js",
+    "--ignore-path",
+    "../.prettierignore",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "should-not-ignore.js"
+   ]
+  },
+  {
+   "test": "ignore-in-subdirectories.js",
+   "directory": "cli/ignore-in-subdirectories/web2",
+   "args": [
+    "should-not-ignore.js",
+    "--ignore-path",
+    "../.prettierignore",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "should-not-ignore.js"
+   ]
+  },
+  {
+   "test": "ignore-in-subdirectories.js",
+   "directory": "cli/ignore-in-subdirectories/web1",
+   "args": [
+    "--ignore-path",
+    "../.prettierignore",
+    "--stdin-filepath",
+    "ignore-me/example.js"
+   ],
+   "input": "hello_world( );",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "hello_world( );"
+  },
+  {
+   "test": "ignore-in-subdirectories.js",
+   "directory": "cli/ignore-in-subdirectories/web1",
+   "args": [
+    "--ignore-path",
+    "../.prettierignore",
+    "--stdin-filepath",
+    "example.js"
+   ],
+   "input": "hello_world( );",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "hello_world();\n"
+  },
+  {
+   "test": "ignore-relative-path.js",
+   "directory": "cli/ignore-relative-path",
+   "args": [
+    "./shouldNotBeIgnored.js",
+    "./level1/level2/level3/shouldNotBeFormat.js",
+    "level1-glob/level2-glob/level3-glob/shouldNotBeFormat.js",
+    "./level1-glob/level2-glob/level3-glob/shouldNotBeIgnored.scss",
+    "level1-glob/shouldNotBeIgnored.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "level1-glob/level2-glob/level3-glob/shouldNotBeIgnored.scss",
+    "level1-glob/shouldNotBeIgnored.js",
+    "shouldNotBeIgnored.js"
+   ]
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    ".",
+    "--ignore-unknown",
+    "--list-different"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "javascript.js"
+   ]
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    ".",
+    "-u",
+    "--list-different"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "javascript.js"
+   ]
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    "*",
+    "--ignore-unknown",
+    "--list-different"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "javascript.js"
+   ]
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    ".",
+    "--ignore-unknown",
+    "--write",
+    "--list-different"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/ignore-unknown/javascript.js": "const foo = \"bar\";\n",
+    "cli/ignore-unknown/override.as-js-file": "const foo = \"bar\";\n"
+   },
+   "listed": [
+    "javascript.js"
+   ]
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    ".",
+    "--ignore-unknown",
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "javascript.js"
+   ]
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    "non-exist-file",
+    "--ignore-unknown"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    "*.non-exist-pattern",
+    "--ignore-unknown"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "ignore-unknown.js",
+   "directory": "cli/ignore-unknown",
+   "args": [
+    "ignored.js",
+    "--ignore-unknown"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "ignore-vcs-files.js",
+   "directory": "cli/ignore-vcs-files",
+   "args": [
+    ".svn/file.js",
+    ".hg/file.js",
+    ".jj/file.js",
+    "file.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "file.js"
+   ]
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--stdin-filepath",
+    "foo"
+   ],
+   "input": "foo",
+   "exitCode": 2,
+   "changed": {},
+   "stdout": ""
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--check",
+    "--stdin-filepath",
+    "foo"
+   ],
+   "input": "foo",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": ""
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--list-different",
+    "--stdin-filepath",
+    "foo"
+   ],
+   "input": "foo",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": ""
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "FOO"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "*"
+   ],
+   "exitCode": 2,
+   "changed": {
+    "cli/infer-parser/foo.js": "foo();\n"
+   }
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--check",
+    "FOO"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--check",
+    "*"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": [
+    "foo.js"
+   ]
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--list-different",
+    "FOO"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--list-different",
+    "*"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": [
+    "foo.js"
+   ]
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--write",
+    "FOO"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--write",
+    "*"
+   ],
+   "exitCode": 2,
+   "changed": {
+    "cli/infer-parser/foo.js": "foo();\n"
+   }
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--check",
+    "--write",
+    "FOO"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--check",
+    "--write",
+    "*"
+   ],
+   "exitCode": 2,
+   "changed": {
+    "cli/infer-parser/foo.js": "foo();\n"
+   },
+   "listed": [
+    "foo.js"
+   ]
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--list-different",
+    "--write",
+    "FOO"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/",
+   "args": [
+    "--list-different",
+    "--write",
+    "*"
+   ],
+   "exitCode": 2,
+   "changed": {
+    "cli/infer-parser/foo.js": "foo();\n"
+   },
+   "listed": [
+    "foo.js"
+   ]
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/override-builtin-plugin-languages",
+   "args": [
+    "--stdin-filepath=foo.js"
+   ],
+   "input": "foo(   )",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "foo();\n"
+  },
+  {
+   "test": "infer-parser.js",
+   "directory": "cli/infer-parser/known-unknown",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "--list-different",
+    "."
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "known.js"
+   ]
+  },
+  {
+   "test": "invalid-ignore.js",
+   "directory": "cli/invalid-ignore",
+   "args": [
+    "something.js"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "line-after-filepath-with-errors.js",
+   "directory": "cli/syntax-errors",
+   "args": [
+    "./*.{js,unknown}"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "line-after-filepath-with-errors.js",
+   "directory": "cli/syntax-errors",
+   "args": [
+    "--list-different",
+    "./*.{js,unknown}"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "line-after-filepath-with-errors.js",
+   "directory": "cli/syntax-errors",
+   "args": [
+    "--check",
+    "./*.{js,unknown}"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "line-after-filepath-with-errors.js",
+   "directory": "cli/syntax-errors",
+   "args": [
+    "--write",
+    "./*.{js,unknown}"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "test": "list-different.js",
+   "directory": "cli/write",
+   "args": [
+    "--list-different",
+    "formatted.js",
+    "unformatted.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "test": "log-level.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "unformatted.js",
+    "--log-level=silent"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/write/unformatted.js": "var x = 1;\n"
+   }
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-1",
+   "args": [
+    "*.js",
+    "!file.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "!file.js",
+    "a.js",
+    "b.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-1",
+   "args": [
+    "*.js",
+    "!a.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "!file.js",
+    "b.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-2",
+   "args": [
+    "*.js",
+    "!dir.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "!b.js",
+    "!dir.js/1.css",
+    "!dir.js/2.css",
+    "a.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-2",
+   "args": [
+    "*.js",
+    "!b.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "!b.js",
+    "a.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-2",
+   "args": [
+    "*.js",
+    "!a.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "!b.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-3",
+   "args": [
+    "**/*.js",
+    "-l",
+    "--with-node-modules"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "dir/inside.js",
+    "dir/node_modules/in-node_modules.js",
+    "outside.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-3",
+   "args": [
+    "**/*.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "dir/inside.js",
+    "outside.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-3",
+   "args": [
+    "*.js",
+    "dir/.svn/in-svn.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "outside.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-3",
+   "args": [
+    "*.js",
+    ".svn/in-svn.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "outside.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-4",
+   "args": [
+    "./0/./level-1.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "0/level-1.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-4",
+   "args": [
+    "./0/1/2/../../level-1.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "0/level-1.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-4",
+   "args": [
+    "./0/non-exists-dir/2/../../level-1.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "0/level-1.js"
+   ]
+  },
+  {
+   "test": "patterns-glob.js",
+   "directory": "cli/patterns-glob/fixtures-5",
+   "args": [
+    "./constructor/should-be-formatted.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "constructor/should-be-formatted.js"
+   ]
+  },
+  {
+   "test": "patterns.js",
+   "directory": "cli/patterns",
+   "args": [
+    "directory/**/*.js",
+    "other-directory/**/*.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "directory/file.js",
+    "directory/nested-directory/nested-directory-file.js",
+    "other-directory/file.js",
+    "other-directory/nested-directory/nested-directory-file.js"
+   ]
+  },
+  {
+   "test": "patterns.js",
+   "directory": "cli/patterns",
+   "args": [
+    "directory/**/*.js",
+    "non-existent.js",
+    "-l"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": [
+    "directory/file.js",
+    "directory/nested-directory/nested-directory-file.js"
+   ]
+  },
+  {
+   "test": "patterns.js",
+   "directory": "cli/patterns",
+   "args": [
+    "**/*.js",
+    "!**/nested-directory/**",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "directory/file.js",
+    "other-directory/file.js",
+    "other-regular-modules.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "patterns.js",
+   "directory": "cli/patterns",
+   "args": [
+    "**/*.js",
+    "!directory/**",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "other-directory/file.js",
+    "other-directory/nested-directory/nested-directory-file.js",
+    "other-regular-modules.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "patterns.js",
+   "directory": "cli/patterns",
+   "args": [
+    "./**/*.js",
+    "!./directory/**",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "other-directory/file.js",
+    "other-directory/nested-directory/nested-directory-file.js",
+    "other-regular-modules.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "patterns.js",
+   "directory": "cli/patterns",
+   "args": [
+    "**/*.js",
+    "!directory/**",
+    "-l",
+    "--with-node-modules"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "node_modules/node-module.js",
+    "other-directory/file.js",
+    "other-directory/nested-directory/nested-directory-file.js",
+    "other-regular-modules.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "patterns.js",
+   "directory": "cli/patterns",
+   "args": [
+    "non-existent.js",
+    "other-non-existent.js",
+    "-l"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "piped-output.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "--check",
+    "--no-color",
+    "unformatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/write/unformatted.js": "var x = 1;\n"
+   },
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "test": "piped-output.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "--check",
+    "--no-color",
+    "formatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "piped-output.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "--list-different",
+    "--no-color",
+    "unformatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/write/unformatted.js": "var x = 1;\n"
+   },
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "test": "piped-output.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "--list-different",
+    "--no-color",
+    "formatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "print-code.js",
+   "directory": "cli/print-code",
+   "args": [
+    "./ignored.js"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "print-code.js",
+   "directory": "cli/print-code",
+   "args": [
+    "./not-ignored.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/print-code/not-ignored.js": "foo();\n"
+   }
+  },
+  {
+   "test": "skip-folders.js",
+   "directory": "cli/skip-folders",
+   "args": [
+    "**/*",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "a/file.js",
+    "b/file.js"
+   ]
+  },
+  {
+   "test": "skip-folders.js",
+   "directory": "cli/skip-folders",
+   "args": [
+    "a",
+    "a/file.js",
+    "b",
+    "b/file.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "a/file.js",
+    "b/file.js"
+   ]
+  },
+  {
+   "test": "special-characters-in-path.js",
+   "directory": "cli/special-characters-in-path/ignore-emoji",
+   "args": [
+    "**/*.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "not-ignored.js"
+   ]
+  },
+  {
+   "test": "special-characters-in-path.js",
+   "directory": "cli/special-characters-in-path/square-brackets-and-dash",
+   "args": [
+    "test"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/special-characters-in-path/square-brackets-and-dash/test/username[repo-name]/test.js": "function a() {\n    const foo = \"bar\";\n}\n"
+   }
+  },
+  {
+   "test": "stdin-filepath.js",
+   "directory": "cli/stdin-ignore",
+   "args": [
+    "--stdin-filepath",
+    "ignore/example.js"
+   ],
+   "input": "hello_world( );",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "hello_world( );"
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config-precedence/valid-config",
+   "args": [
+    "foo.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config-precedence/valid-config/foo.js": "function foo() {\n   return bar;\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config-precedence/valid-config",
+   "args": [
+    "--tab-width",
+    "5",
+    "foo.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config-precedence/valid-config/foo.js": "function foo() {\n     return bar;\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config-precedence/valid-config",
+   "args": [
+    "--config-precedence",
+    "cli-override",
+    "foo.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config-precedence/valid-config/foo.js": "function foo() {\n   return bar;\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config-precedence/valid-config",
+   "args": [
+    "--config-precedence",
+    "cli-override",
+    "--tab-width",
+    "5",
+    "foo.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config-precedence/valid-config/foo.js": "function foo() {\n     return bar;\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config-precedence/valid-config",
+   "args": [
+    "--config-precedence",
+    "file-override",
+    "foo.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config-precedence/valid-config/foo.js": "function foo() {\n   return bar;\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config-precedence/valid-config",
+   "args": [
+    "--config-precedence",
+    "file-override",
+    "--tab-width",
+    "5",
+    "foo.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config-precedence/valid-config/foo.js": "function foo() {\n   return bar;\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config/no-config/",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "--tab-width",
+    "6",
+    "--config-precedence",
+    "file-override",
+    "file.js",
+    "--no-editorconfig"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config/no-config/file.js": "function noConfigJs() {\n      console.log(\"no-config/file.js should have no semicolons\")\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config/js/",
+   "args": [
+    "--print-width",
+    "1",
+    "--tab-width",
+    "1",
+    "--config-precedence",
+    "prefer-file",
+    "file.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config/js/file.js": "function js() {\n        console.log(\"js/file.js should have tab width 8 (1 if CLI)\");\n}\n"
+   }
+  },
+  {
+   "test": "with-config-precedence.js",
+   "directory": "cli/config/no-config/",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "--print-width",
+    "1",
+    "--tab-width",
+    "7",
+    "--no-config",
+    "--config-precedence",
+    "prefer-file",
+    "file.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/config/no-config/file.js": "function noConfigJs() {\n       console.log(\n              \"no-config/file.js should have no semicolons\",\n       );\n}\n"
+   }
+  },
+  {
+   "test": "with-node-modules.js",
+   "directory": "cli/with-node-modules",
+   "args": [
+    "**/*.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "not_node_modules/file.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "with-node-modules.js",
+   "directory": "cli/with-node-modules",
+   "args": [
+    "./**/*.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "not_node_modules/file.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "with-node-modules.js",
+   "directory": "cli/with-node-modules",
+   "args": [
+    "**/*.js",
+    "-l",
+    "--with-node-modules"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "nested/node_modules/node-module.js",
+    "node_modules/node-module.js",
+    "not_node_modules/file.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "with-node-modules.js",
+   "directory": "cli/with-node-modules",
+   "args": [
+    "node_modules/node-module.js",
+    "not_node_modules/file.js",
+    "nested/node_modules/node-module.js",
+    "regular-module.js",
+    "-l"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "not_node_modules/file.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "with-node-modules.js",
+   "directory": "cli/with-node-modules",
+   "args": [
+    "node_modules/node-module.js",
+    "not_node_modules/file.js",
+    "nested/node_modules/node-module.js",
+    "regular-module.js",
+    "-l",
+    "--with-node-modules"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "nested/node_modules/node-module.js",
+    "node_modules/node-module.js",
+    "not_node_modules/file.js",
+    "regular-module.js"
+   ]
+  },
+  {
+   "test": "with-parser-inference.js",
+   "directory": "cli/with-parser-inference",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "*"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "with-parser-inference.js",
+   "directory": "cli/with-parser-inference",
+   "args": [
+    "--check",
+    "*"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "with-parser-inference.js",
+   "directory": "cli/with-parser-inference",
+   "args": [
+    "--list-different",
+    "*"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "test": "with-shebang.js",
+   "directory": "cli/with-shebang",
+   "args": [
+    "--end-of-line",
+    "lf",
+    "issue1890.js"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "write.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "unformatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/write/unformatted.js": "var x = 1;\n"
+   }
+  },
+  {
+   "test": "write.js",
+   "directory": "cli/write",
+   "args": [
+    "-w",
+    "unformatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "cli/write/unformatted.js": "var x = 1;\n"
+   }
+  },
+  {
+   "test": "write.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "formatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "test": "write.js",
+   "directory": "cli/write",
+   "args": [
+    "--write",
+    "invalid.js"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  }
+ ]
+}

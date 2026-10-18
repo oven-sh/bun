@@ -154,7 +154,6 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     });
 
     const ws = new WebSocket(`wss+unix://${unix}`, {
-      // @ts-expect-error bun extension
       tls: { rejectUnauthorized: false },
     });
     const { promise, resolve, reject } = Promise.withResolvers<string>();
@@ -184,7 +183,6 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     try {
       for (const host of ["127.1", "10", "0x7f000001", "127.0.0.1", "localhost"]) {
         const ws = new WebSocket(`wss+unix://${host}${unix}`, {
-          // @ts-expect-error bun extension
           tls: { rejectUnauthorized: false },
         });
         const { promise, resolve } = Promise.withResolvers<void>();
@@ -192,6 +190,39 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
         await promise;
       }
       expect(seen).toEqual(["127.1", "10", "0x7f000001", null, "localhost"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("wss+unix:// takes the SNI and the verified name from tls.serverName", async () => {
+    const unix = sockPath("name");
+    const seen: (string | null)[] = [];
+    const server = tls.createServer(
+      { ...tlsCert, SNICallback: (name, cb) => (seen.push(name), cb(null, undefined)) },
+      socket => {
+        socket.on("error", () => {});
+        socket.destroy();
+      },
+    );
+    server.listen(unix);
+    await once(server, "listening");
+    try {
+      const errors: (string | undefined)[] = [];
+      // The harness certificate is for localhost. The server disconnects the client whose handshake succeeds.
+      for (const [host, serverName] of [
+        ["evil.test", "localhost"],
+        ["localhost", "evil.test"],
+      ]) {
+        const ws = new WebSocket(`wss+unix://${host}${unix}`, { tls: { ca: tlsCert.cert, serverName } });
+        const { promise, resolve } = Promise.withResolvers<string | undefined>();
+        ws.onerror = event => resolve((event as ErrorEvent).error?.code);
+        errors.push(await promise);
+      }
+      expect({ seen, errors }).toEqual({
+        seen: ["localhost", "evil.test"],
+        errors: ["ECONNRESET", "ERR_TLS_CERT_ALTNAME_INVALID"],
+      });
     } finally {
       server.close();
     }

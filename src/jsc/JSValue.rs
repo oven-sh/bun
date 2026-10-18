@@ -353,7 +353,9 @@ impl JSValue {
         JSC__JSValue__isAnyError(self)
     }
     /// Whether this object's realm was retired by `bun test --isolate` (its file finished).
-    #[inline]
+    /// Out of line: inlined into [`call`](Self::call), it keeps that from being inlined in turn.
+    #[cold]
+    #[inline(never)]
     pub fn is_from_retired_test_isolation_realm(self) -> bool {
         self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)
     }
@@ -362,15 +364,6 @@ impl JSValue {
     #[inline]
     pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
-    }
-    /// `JSValue.isJSXElement(globalObject)`. Checks via the
-    /// global's `Symbol.for("react.element")` / `Symbol.for("react.transitional.element")`
-    /// for `$$typeof`; may invoke a user getter and throw.
-    pub fn is_jsx_element(self, global: &JSGlobalObject) -> JsResult<bool> {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__isJSXElement(this: JSValue, global: &JSGlobalObject) -> bool;
-        }
-        host_fn::from_js_host_call_generic(global, || JSC__JSValue__isJSXElement(self, global))
     }
     /// `JSValue.isAggregateError(globalObject)`.
     #[inline]
@@ -471,7 +464,7 @@ impl JSValue {
         if i <= i32::MAX as u64 {
             Self::js_number_from_int32(i as i32)
         } else {
-            Self::js_number(i as f64)
+            Self::js_double_number(i as f64)
         }
     }
     /// `JSValue.jsNumberFromInt64` — int32 fast-path,
@@ -480,7 +473,7 @@ impl JSValue {
         if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
             Self::js_number_from_int32(i as i32)
         } else {
-            Self::js_number(i as f64)
+            Self::js_double_number(i as f64)
         }
     }
     pub fn js_number(n: f64) -> JSValue {
@@ -505,7 +498,7 @@ impl JSValue {
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
-    pub(crate) fn js_double_number(n: f64) -> JSValue {
+    pub fn js_double_number(n: f64) -> JSValue {
         const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
@@ -1371,19 +1364,6 @@ impl JSValue {
         }
         Ok(Some(prop))
     }
-    /// Own property lookup by key value (index or `toPropertyKey`). `None` when
-    /// absent; the C++ side also returns empty when a getter or `toPropertyKey`
-    /// throws, so the exception state is what tells the two apart.
-    pub fn get_own_by_value(
-        self,
-        global: &JSGlobalObject,
-        property_value: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let v = crate::call_check_slow(global, || {
-            JSC__JSValue__getOwnByValue(self, global, property_value)
-        })?;
-        Ok(if v.is_empty() { None } else { Some(v) })
-    }
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
     /// can throw, so this is routed through `from_js_host_call_generic`.
@@ -1587,7 +1567,6 @@ impl JSValue {
                 min,
                 max,
                 field_name: property_name.as_bytes(),
-                always_allow_zero: false,
             },
         )?))
     }
@@ -1719,8 +1698,7 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code.
-        if global.bun_vm().calls_nobody() {
+        if self.has_nobody_to_call(global) {
             return Ok(JSValue::UNDEFINED);
         }
         host_fn::from_js_host_call(global, || {
@@ -1728,6 +1706,22 @@ impl JSValue {
             // JSValues for the duration of the call.
             unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
         })
+    }
+
+    /// A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
+    /// test file that finished (only `--isolate` retires a realm).
+    #[inline]
+    fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
+        let vm = global.bun_vm();
+        vm.calls_nobody()
+            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+    }
+
+    /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
+    pub fn call_may_have_been_dropped(self, global: &JSGlobalObject) -> bool {
+        self.has_nobody_to_call(global)
+            || !global.bun_vm().script_allowed()
+            || global.vm().execution_forbidden()
     }
 }
 
@@ -2057,11 +2051,6 @@ unsafe extern "C" {
         buf: &mut [u8; 64],
     ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
-    safe fn JSC__JSValue__getOwnByValue(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSValue__hasOwnPropertyValue(
         this: JSValue,
         global: &JSGlobalObject,

@@ -91,6 +91,13 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+
+    /// The HTML pages that have a `<link rel="manifest">`. Once nothing is pending,
+    /// `web_manifest::follow` reads the files they link for the images those name.
+    pub(crate) pages_linking_web_manifest: Vec<IndexInt>,
+    /// False for a pass that only walks the module graph and writes no files:
+    /// it registers no page in `pages_linking_web_manifest`.
+    pub(crate) follows_web_manifests: bool,
 }
 
 #[derive(Default)]
@@ -152,6 +159,8 @@ bitflags::bitflags! {
         const IS_EXPORT_STAR_TARGET = 1 << 1;
         /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
         const IS_LOADED_BY_PLUGIN = 1 << 2;
+        /// A web app manifest whose import records `web_manifest::follow` has made.
+        const IS_WEB_MANIFEST_FOLLOWED = 1 << 3;
     }
 }
 
@@ -179,6 +188,8 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
+            pages_linking_web_manifest: Vec::new(),
+            follows_web_manifests: true,
         }
     }
 }

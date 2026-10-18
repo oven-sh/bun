@@ -2169,8 +2169,11 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
-                let is_css = self.all_loaders[source_index.get() as usize].is_css();
+                // A copied file with records is a web app manifest. Like JavaScript, it names a
+                // file by path, so the file has to be in the output.
+                let loader = self.all_loaders[source_index.get() as usize];
+                let is_js = loader.is_javascript_like() || loader == Loader::File;
+                let is_css = loader.is_css();
 
                 let import_record_list_id = source_index;
                 let mut has_redirect = false;
@@ -2311,6 +2314,10 @@ pub mod bv2_impl {
         pub(crate) fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop.
             let _trace = crate::perf::trace("Bundler.findReachableFiles");
+
+            if !self.graph.pages_linking_web_manifest.is_empty() {
+                crate::web_manifest::keep_copied_files(self);
+            }
 
             // Create a quick index for server-component boundaries.
             // We need to mark the generated files as reachable, or else many files will appear missing.
@@ -2456,6 +2463,11 @@ pub mod bv2_impl {
             }
 
             if self.graph.pending_items == 0 {
+                // Before the deferred `onLoad`s resume: they wait for every other file.
+                crate::web_manifest::follow(self);
+                if self.graph.pending_items != 0 {
+                    return false;
+                }
                 let this: *mut Self = self;
                 // reshaped for borrowck — `&self.graph` and
                 // `self` go to the same call. Take a raw ptr so the two `&mut` don't
@@ -4428,6 +4440,8 @@ pub mod bv2_impl {
                 alloc,
             )?;
             this.unique_key = generate_unique_key();
+            // A `fetcher` only lists the dependencies. No file is written.
+            this.graph.follows_web_manifests = fetcher.is_none();
 
             // Wrap so every exit path (incl. `?`) hits the cleanup below.
             let result = (|| -> Result<BuildResult, Error> {
@@ -4567,6 +4581,7 @@ pub mod bv2_impl {
         ) -> Result<Box<BundleV2<'a>>, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
+            this.graph.follows_web_manifests = false;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
@@ -4707,7 +4722,7 @@ pub mod bv2_impl {
                 let self_ptr: *mut Self = self;
                 // SAFETY: see note above — disjoint MultiArrayList columns,
                 // raw-ptr sidestep for split-borrow against `transpiler_for_target`
-                // inside the loop. All six column derefs share the same invariant.
+                // inside the loop. All seven column derefs share the same invariant.
                 let (
                     unique_key_for_additional_files,
                     content_hashes_for_additional_files,
@@ -4715,6 +4730,7 @@ pub mod bv2_impl {
                     targets,
                     additional_files,
                     loaders,
+                    import_records,
                 ) = unsafe {
                     (
                         (*self_ptr)
@@ -4724,15 +4740,18 @@ pub mod bv2_impl {
                         (*self_ptr)
                             .graph
                             .input_files
-                            .items_content_hash_for_additional_file(),
+                            .items_content_hash_for_additional_file_mut(),
                         (*self_ptr).graph.input_files.items_source_mut(),
                         (*self_ptr).graph.ast.items_target(),
                         (*self_ptr).graph.input_files.items_additional_files_mut(),
                         (*self_ptr).graph.input_files.items_loader(),
+                        (*self_ptr).graph.ast.items_import_records(),
                     )
                 };
+                let sanitize_parent_dirs = !self.transpiler.options.compile_mode.is_executable();
                 let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
                 let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
+                let mut web_manifests: Vec<crate::web_manifest::Copied<'_>> = Vec::new();
 
                 for reachable_source in reachable_files {
                     let index = reachable_source.get() as usize;
@@ -4800,12 +4819,34 @@ pub mod bv2_impl {
                                 template.placeholder.target = target.naming_placeholder().into();
                             }
                         }
+                        // A copied file with a resolved record is a web app manifest.
+                        if loader == Loader::File
+                            && (import_records[index].iter()).any(|r| r.source_index.is_valid())
+                        {
+                            web_manifests.push(crate::web_manifest::Copied {
+                                template: templates.len(),
+                                content_hash: content_hashes_for_additional_files[index],
+                                // SAFETY: see `asset_naming` above.
+                                public_path: unsafe {
+                                    &(*self_ptr).transpiler_for_target(target).options.public_path
+                                },
+                            });
+                        }
                         templates.push((index, template));
                     }
                 }
+                let template_of: Vec<u32> = if web_manifests.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut template_of = vec![u32::MAX; sources.len()];
+                    for (i, (index, _)) in templates.iter().enumerate() {
+                        template_of[*index] = i as u32;
+                    }
+                    template_of
+                };
 
                 // Two assets whose hashes differ only past `[hash]`'s width get wider names.
-                {
+                loop {
                     let hashed: Vec<usize> = (0..templates.len())
                         .filter(|&i| templates[i].1.placeholder.hash.is_some())
                         .collect();
@@ -4817,6 +4858,20 @@ pub mod bv2_impl {
                     for (&i, name) in hashed.iter().zip(names) {
                         templates[i].1.placeholder.hash = Some(name);
                     }
+                    // A web app manifest is named after the paths it holds. A new name can
+                    // need another width.
+                    if web_manifests.is_empty()
+                        || !crate::web_manifest::rename(
+                            &web_manifests,
+                            &mut templates,
+                            &template_of,
+                            content_hashes_for_additional_files,
+                            import_records,
+                            sanitize_parent_dirs,
+                        )
+                    {
+                        break;
+                    }
                 }
 
                 for (index, template) in templates {
@@ -4826,26 +4881,45 @@ pub mod bv2_impl {
 
                         let output_path: Box<[u8]> = {
                             let mut v = Vec::new();
-                            template
-                                .print(
-                                    &mut v,
-                                    !self.transpiler.options.compile_mode.is_executable(),
-                                )
-                                .expect("oom");
+                            template.print(&mut v, sanitize_parent_dirs).expect("oom");
                             // Like a chunk's `final_rel_path`: `/`-separated on every platform.
                             bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
                             v.into_boxed_slice()
                         };
 
-                        // Hand the existing `source.contents` buffer to the
-                        // OutputFile — no copy: move the contents
-                        // out instead of `to_vec()`-cloning,
-                        // which is prohibitively expensive for large assets.
-                        let contents_len = source.contents.len();
-                        let contents = match core::mem::take(&mut source.contents) {
-                            std::borrow::Cow::Owned(v) => v.into_boxed_slice(),
-                            std::borrow::Cow::Borrowed(b) => Box::<[u8]>::from(b),
+                        let records = import_records[index].as_slice();
+                        let contents = if loader == Loader::File
+                            && records.iter().any(|r| r.source_index.is_valid())
+                        {
+                            crate::web_manifest::with_paths(
+                                &source.contents,
+                                records,
+                                &output_path,
+                                // SAFETY: see `asset_naming` above.
+                                unsafe {
+                                    &(*self_ptr)
+                                        .transpiler_for_target(targets[index])
+                                        .options
+                                        .public_path
+                                },
+                                |named| match additional_files[named as usize].last() {
+                                    Some(crate::AdditionalFile::OutputFile(id)) => {
+                                        Some(&additional_output_files[*id as usize].dest_path)
+                                    }
+                                    _ => None,
+                                },
+                            )
+                        } else {
+                            // Hand the existing `source.contents` buffer to the
+                            // OutputFile — no copy: move the contents
+                            // out instead of `to_vec()`-cloning,
+                            // which is prohibitively expensive for large assets.
+                            match core::mem::take(&mut source.contents) {
+                                std::borrow::Cow::Owned(v) => v.into_boxed_slice(),
+                                std::borrow::Cow::Borrowed(b) => Box::<[u8]>::from(b),
+                            }
                         };
+                        let contents_len = contents.len();
 
                         additional_output_files.push(options::OutputFile::init(
                             crate::output_file::Options {
@@ -7754,6 +7828,19 @@ pub mod bv2_impl {
 
                     // Record which loader we used for this file
                     this.graph.input_files.items_loader_mut()[result_source_index] = result.loader;
+
+                    // The dev server and standalone HTML serve a web app manifest as written.
+                    if result.loader == Loader::Html
+                        && this.graph.follows_web_manifests
+                        && this.dev_server.is_none()
+                        && !this.transpiler.options.compile_mode.is_standalone_html()
+                        && result.ast.import_records.iter().any(|record| {
+                            (record.flags).contains(bun_ast::ImportRecordFlags::IS_WEB_MANIFEST)
+                        })
+                    {
+                        (this.graph.pages_linking_web_manifest)
+                            .push(result_source_index as IndexInt);
+                    }
 
                     bun_core::scoped_log!(
                         Bundle,

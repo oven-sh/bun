@@ -113,6 +113,7 @@ pub mod options_impl;
 #[path = "ParseTask.rs"]
 pub mod parse_task;
 pub mod transpiler;
+pub(crate) mod web_manifest;
 
 /// `linker_context/` submodule directory. Declared inline (no `mod.rs`).
 pub mod linker_context {

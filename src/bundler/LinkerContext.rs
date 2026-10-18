@@ -407,18 +407,22 @@ impl<'a> LinkerContext<'a> {
     /// Calls `each` with every other file that loading `source_index` loads first:
     /// what the import records of its live parts load
     /// (`file_loaded_by_import`) and the files declaring the bindings those
-    /// parts use. A CSS or HTML file has no parts; every record counts.
+    /// parts use. A CSS or HTML file has no parts; every record counts. So does
+    /// every record of a copied file (a web app manifest), whose one part has none.
     pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
         let records = &self.graph.ast.items_import_records()[source_index as usize];
-        if self.graph.ast.items_css()[source_index as usize].is_some()
-            || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
-        {
+        let loader = self.parse_graph().input_files.items_loader()[source_index as usize];
+        let has_no_parts =
+            self.graph.ast.items_css()[source_index as usize].is_some() || loader == Loader::Html;
+        if has_no_parts || loader == Loader::File {
             for record in records.iter() {
                 if record.source_index.is_valid() && record.source_index.get() != source_index {
                     each(record.source_index.get());
                 }
             }
-            return;
+            if has_no_parts {
+                return;
+            }
         }
         let parts_live = &self.graph.parts_live[source_index as usize];
         for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
@@ -2682,8 +2686,9 @@ impl<'a> LinkerContext<'a> {
                                 parse_graph.input_files.items_additional_files()
                                     [piece.query.index() as usize]
                                     .slice();
-                            debug_assert!(!additional_files.is_empty());
-                            if let AdditionalFile::OutputFile(output_file_id) = &additional_files[0]
+                            // A file's own output comes last, after the files it names.
+                            if let Some(AdditionalFile::OutputFile(output_file_id)) =
+                                additional_files.last()
                             {
                                 let path = &parse_graph.additional_output_files
                                     [*output_file_id as usize]
@@ -3087,7 +3092,10 @@ impl<'a> LinkerContext<'a> {
         // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
-        if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
+        // A copied file (a web app manifest) names assets the same way, and also
+        // has the one part that a JavaScript importer reads.
+        let loader = self.parse_graph().input_files.items_loader()[source_index as usize];
+        if loader == Loader::Html || loader == Loader::File {
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();
@@ -3096,7 +3104,9 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
-            return;
+            if loader == Loader::Html {
+                return;
+            }
         }
 
         let parts = ctx.parts[source_index as usize].as_slice();

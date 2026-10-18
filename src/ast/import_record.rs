@@ -107,6 +107,10 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// An HTML page's `<link rel="manifest" href>`. The target is a web app
+        /// manifest: the bundler also copies the image files it names.
+        const IS_WEB_MANIFEST = 1 << 19;
     }
 }
 

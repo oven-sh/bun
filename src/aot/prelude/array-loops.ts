@@ -20,6 +20,7 @@ declare function $growNewArray(out: unknown[], n: number): void;
 declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
 declare function $isPlainArrayLike(x: unknown): boolean;
 declare function $trySortByKey<T>(a: unknown[], name: unknown, flags: number): T[] | null;
+declare function $isKnownFunction(f: unknown): boolean;
 
 function isCallable(f: unknown): boolean {
     return typeof f === "function";
@@ -485,7 +486,7 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
     let k = 0;
     let acc: unknown = initial;
     const m = a.length;
-    if (typeof acc === "number") {
+    if (typeof acc === "number" && $isKnownFunction(f)) {
         let sum: number = acc;
         let isSum = true;
         if (m) {
@@ -545,7 +546,7 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
     let acc: unknown = $getIndex<T>(a, k);
     k++;
     const m = a.length;
-    if (typeof acc === "number") {
+    if (typeof acc === "number" && $isKnownFunction(f)) {
         let sum: number = acc;
         let isSum = true;
         if (m) {
@@ -606,7 +607,7 @@ export function Array$reduceRight<T, A>(a: T[], f: unknown, initial: A): A {
     if (!isCallable(f)) throw new TypeError("Array.prototype.reduceRight callback must be a function");
     let k = n - 1;
     let acc: unknown = initial;
-    if (typeof acc === "number") {
+    if (typeof acc === "number" && $isKnownFunction(f)) {
         let sum: number = acc;
         let isSum = true;
         if (isDoubleArray(a)) {
@@ -663,7 +664,7 @@ export function Array$reduceRightWithoutInitialValue<T>(a: T[], f: unknown): T {
     if (k < 0) throw new TypeError("reduceRight of empty array with no initial value");
     let acc: unknown = $getIndex<T>(a, k);
     k--;
-    if (typeof acc === "number") {
+    if (typeof acc === "number" && $isKnownFunction(f)) {
         let sum: number = acc;
         let isSum = true;
         if (isDoubleArray(a)) {

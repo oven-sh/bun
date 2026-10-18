@@ -249,6 +249,7 @@ pub struct Program<'s> {
     pub reads_of_any_property: Guarded<Vec<(FileId, u32)>>,
     pub reads_that_may_find_the_constructor_of_functions: Guarded<Vec<(FileId, u32)>>,
     pub reads_that_may_find_what_makes_or_loads_code: Guarded<Vec<(FileId, u32)>>,
+    pub releases_roots: AtomicBool,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -534,6 +535,7 @@ impl<'s> Program<'s> {
             reads_of_any_property: Default::default(),
             reads_that_may_find_the_constructor_of_functions: Default::default(),
             reads_that_may_find_what_makes_or_loads_code: Default::default(),
+            releases_roots: AtomicBool::new(false),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,

@@ -1240,7 +1240,7 @@ pub(crate) mod command {
 
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
-                if !crate::jsc_hooks::Bun__loadsModulesAtRunTime() {
+                if graph.runtime_options.runs_static_code_only || !crate::jsc_hooks::Bun__loadsModulesAtRunTime() {
                     refuse_options_that_load_code(result, bun::argv().as_slice());
                 }
 

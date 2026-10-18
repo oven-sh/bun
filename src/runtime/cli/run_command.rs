@@ -1241,7 +1241,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
-            if !ctx.preloads.is_empty() && !crate::jsc_hooks::Bun__loadsModulesAtRunTime() {
+            if !ctx.preloads.is_empty() && (graph.runtime_options.runs_static_code_only || !crate::jsc_hooks::Bun__loadsModulesAtRunTime()) {
                 Self::refuse_to_load_code(b"\"preload\" in bunfig.toml");
             }
         }

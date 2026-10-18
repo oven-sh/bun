@@ -4,7 +4,7 @@ use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId};
 use bun_sema::check::Program;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, PatKind, PropId, PropKey, PropKind, Span, SpecifierKind, StmtKind, UnOp};
-use bun_sema::program::{Builtin, FileId, LoadedBy, Module};
+use bun_sema::program::{Builtin, EVERY_ROOT, FileId, LoadedBy, Module};
 use bun_sema::util::{FxHashMap, FxHashSet};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -42,7 +42,7 @@ fn add_reason(reasons: &mut Vec<(&'static str, Vec<u8>)>, why: &'static str, pat
     }
 }
 
-const ESCAPES: [(&str, &[&[u8]]); 4] = [("the global object", &[b"global"]), ("Bun", &[b"Bun"]), ("process", &[b"process"]), ("Bun or process as a whole", &[b"Bun", b"process"])];
+const ESCAPES: [(&str, &[&[u8]]); 3] = [("the global object", &[b"global"]), ("Bun", &[b"Bun"]), ("process", &[b"process"])];
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Name {
@@ -50,10 +50,17 @@ enum Name {
     Native(Atom, Atom),
     NativeModule(Atom),
     Property(Atom),
+    PropertyReadByProgram(Atom),
     ConstructorOfFunctions,
     ExportOfNodeModule(Atom),
     ServeOption(Atom),
     ServeRouteOption(Atom),
+    Syntax(&'static str),
+    PrintsObject,
+    Value(Atom),
+    Symbol(Atom),
+    ListensFor(u8),
+    LoadsPage,
 }
 
 impl Name {
@@ -67,10 +74,17 @@ impl Name {
             Name::Native(file, symbol) => [b"native ", atoms.bytes(file), b":", atoms.bytes(symbol)].concat(),
             Name::NativeModule(specifier) => [&b"native "[..], Alias::get(atoms.bytes(specifier), bun_ast::Target::Bun, Cfg::default()).map_or_else(|| atoms.bytes(specifier), |alias| alias.path.as_bytes())].concat(),
             Name::ConstructorOfFunctions => b"finds Function".to_vec(),
+            Name::PrintsObject => b"prints object".to_vec(),
+            Name::LoadsPage => b"loader html".to_vec(),
+            Name::ListensFor(event) => [b"process on:", EVENTS_OF_THE_CHANNEL[usize::from(event)]].concat(),
+            Name::Value(name) => [&b"value "[..], atoms.bytes(name)].concat(),
+            Name::Symbol(name) => [&b"symbol "[..], if name.is_some() { atoms.bytes(name) } else { b"*" }].concat(),
             Name::Property(name) => [&b"property "[..], if name.is_some() { atoms.bytes(name) } else { b"*" }].concat(),
+            Name::PropertyReadByProgram(name) => [b"program-property ", atoms.bytes(name)].concat(),
             Name::ExportOfNodeModule(name) => [b"export node:module ", atoms.bytes(name)].concat(),
             Name::ServeOption(name) => [&b"serve-option "[..], if name.is_some() { atoms.bytes(name) } else { b"*" }].concat(),
             Name::ServeRouteOption(name) => [&b"serve-route-option "[..], if name.is_some() { atoms.bytes(name) } else { b"*" }].concat(),
+            Name::Syntax(name) => [b"syntax ", name.as_bytes()].concat(),
         }
     }
 }
@@ -95,8 +109,6 @@ pub struct RuntimeUse {
     files_that_may_be_sloppy: Vec<Vec<u8>>,
     reading_any_property: Vec<Vec<u8>>,
     named_at: Vec<(Vec<u8>, Vec<(ExprId, Name)>)>,
-    stored_on_globals: FxHashSet<(usize, Atom)>,
-    called_on_globals: Vec<(Vec<u8>, ExprId, usize, Atom)>,
 }
 
 impl RuntimeUse {
@@ -164,14 +176,16 @@ impl RuntimeUse {
     }
 }
 
-const GLOBALS: [(&[u8], &[&[u8]]); 4] = [(b"process", &[b"process", b"node:process"]), (b"Bun", &[b"bun"]), (b"console", &[]), (b"performance", &[])];
+const GLOBALS: [(&[u8], &[&[u8]]); 5] = [(b"process", &[b"process", b"node:process"]), (b"Bun", &[b"bun"]), (b"console", &[]), (b"performance", &[]), (b"Intl", &[])];
 const BUN: usize = 1;
 const PERFORMANCE: usize = 3;
 const GLOBAL_OBJECT: usize = GLOBALS.len();
 const GLOBAL_OBJECTS: [&[u8]; 4] = [b"globalThis", b"global", b"self", b"window"];
 const SAFE_REQUIRE_PROPERTIES: [&[u8]; 4] = [b"resolve", b"cache", b"main", b"extensions"];
 const OF_MODULE: [&[u8]; 7] = [b"exports", b"id", b"filename", b"path", b"paths", b"loaded", b"constructor"];
+const SAFE_FUNCTION_PROPERTIES: [&[u8]; 3] = [b"prototype", b"name", b"length"];
 const SAFE_IMPORT_META_PROPERTIES: [&[u8]; 9] = [b"url", b"dir", b"dirname", b"file", b"filename", b"path", b"main", b"env", b"resolve"];
+const EVENTS_OF_THE_CHANNEL: [&[u8]; 2] = [b"message", b"disconnect"];
 const LISTENS: [&[u8]; 5] = [b"on", b"once", b"addListener", b"prependListener", b"prependOnceListener"];
 const MODULES_WITH_LOADER_ACCESS: [&[u8]; 12] = [b"module", b"node:module", b"vm", b"node:vm", b"repl", b"node:repl", b"worker_threads", b"node:worker_threads", b"inspector", b"node:inspector", b"inspector/promises", b"node:inspector/promises"];
 const SAFE_NODE_MODULE_EXPORTS: [&[u8]; 5] = [b"builtinModules", b"isBuiltin", b"SourceMap", b"findSourceMap", b"syncBuiltinESMExports"];
@@ -198,6 +212,9 @@ fn member_that_opens_the_world(atoms: &Interner<'_>, global: usize, name: Atom) 
         (0, b"dlopen") => Some("process.dlopen"),
         (0, b"binding" | b"_linkedBinding") => Some("process.binding"),
         (1, b"FFI") => Some("bun:ffi"),
+        (1, b"ModuleGraph") => Some("Bun.ModuleGraph"),
+        (1, b"build") => Some("Bun.build"),
+        (1, b"Transpiler") => Some("Bun.Transpiler"),
         _ => None,
     }
 }
@@ -217,6 +234,7 @@ fn module_that_opens_the_world(atoms: &Interner<'_>, specifier: Atom) -> Option<
 const NATIVE_FUNCTIONS: [&[u8]; 9] = [b"queueMicrotask", b"setTimeout", b"setInterval", b"setImmediate", b"clearTimeout", b"clearInterval", b"clearImmediate", b"fetch", b"structuredClone"];
 
 const EVENT_TARGET_FUNCTIONS: [&[u8]; 3] = [b"addEventListener", b"removeEventListener", b"dispatchEvent"];
+const REACH_LISTENERS: [&[u8]; 2] = [b"addEventListener", b"dispatchEvent"];
 const EVENTS_OF_THE_GLOBAL_OBJECT: [&[u8]; 3] = [b"message", b"messageerror", b"error"];
 const LOOK_UP_A_MEMBER: [&[u8]; 4] = [b"hasOwnProperty", b"propertyIsEnumerable", b"__lookupGetter__", b"__lookupSetter__"];
 const HAND_THE_RECEIVER_ON: [&[u8]; 3] = [b"valueOf", b"__defineGetter__", b"__defineSetter__"];
@@ -239,7 +257,7 @@ fn is_read_only_by_literal_names(module: &Module<'_>, atoms: &Interner<'_>, star
     };
     let initializer_of_constant = |e: ExprId| {
         let symbol = bound.expr_symbol[e.idx()];
-        if symbol.is_none() || bound.symbols[symbol.idx()].flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) || !bound.assignments_to(symbol).is_empty() {
+        if symbol.is_none() || !is_never_stored_to(module, symbol) {
             return None;
         }
         match bound.symbols[symbol.idx()].decls[..] {
@@ -293,7 +311,7 @@ fn is_read_only_by_literal_names(module: &Module<'_>, atoms: &Interner<'_>, star
         let function = match hir[callee].kind {
             ExprKind::Fn(function) => function,
             ExprKind::Ident(_) if bound.expr_symbol[callee.idx()].is_some() => match bound.symbols[bound.expr_symbol[callee.idx()].idx()].decls[..] {
-                [Decl::Fn(function)] if !bound.symbols[bound.expr_symbol[callee.idx()].idx()].flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) && bound.assignments_to(bound.expr_symbol[callee.idx()]).is_empty() => function,
+                [Decl::Fn(function)] if is_never_stored_to(module, bound.expr_symbol[callee.idx()]) => function,
                 _ => match hir[initializer_of_constant(callee)?].kind {
                     ExprKind::Fn(function) => function,
                     _ => return None,
@@ -337,7 +355,7 @@ fn is_read_only_by_literal_names(module: &Module<'_>, atoms: &Interner<'_>, star
                         _ => (None, false),
                     };
                     let call = match bound.expr_parent[around.idx()] {
-                        Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(it) if hir[it].callee == around) => Some(call),
+                        Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(it) | ExprKind::TaggedTemplate(it) if hir[it].callee == around) => Some(call),
                         _ => None,
                     };
                     match (name, call) {
@@ -350,7 +368,7 @@ fn is_read_only_by_literal_names(module: &Module<'_>, atoms: &Interner<'_>, star
                         (None, _) => return false,
                     }
                 }
-                ExprKind::Assign { target, .. } if target == e => {}
+                ExprKind::Assign { op: None, target, .. } if target == e => {}
                 ExprKind::Assign { op: None, target, value } if value == e && matches!(hir[target].kind, ExprKind::Ident(_)) => {
                     holder = bound.expr_symbol[target.idx()];
                     if holder.is_none() {
@@ -409,7 +427,7 @@ fn is_read_only_by_literal_names(module: &Module<'_>, atoms: &Interner<'_>, star
             let is_plain = !symbol.flags.contains(SymFlags::MERGED)
                 && symbol.decls.iter().all(|&decl| match decl {
                     Decl::Var(_) | Decl::Require(_) => true,
-                    Decl::Param(pat) => matches!(bound.pat_parent[pat.idx()], PatParent::Param(parameter) if !mentions_arguments(bound.param_fn[parameter.idx()])),
+                    Decl::Param(pat) => matches!(bound.pat_parent[pat.idx()], PatParent::Param(parameter) if !hir[parameter].flags.contains(Flags::PARAMETER_PROPERTY) && !mentions_arguments(bound.param_fn[parameter.idx()])),
                     _ => false,
                 })
                 && !hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == symbol.name));
@@ -425,7 +443,7 @@ fn is_read_only_by_literal_names(module: &Module<'_>, atoms: &Interner<'_>, star
 
 fn string_arguments_for_parameter(module: &Module<'_>, e: ExprId) -> Option<Vec<Atom>> {
     let (hir, bound) = (&module.hir, &module.bound);
-    let is_stored_once = |symbol: SymbolId| symbol.is_some() && bound.symbols[symbol.idx()].decls.len() == 1 && !bound.symbols[symbol.idx()].flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) && bound.assignments_to(symbol).is_empty();
+    let is_stored_once = |symbol: SymbolId| symbol.is_some() && bound.symbols[symbol.idx()].decls.len() == 1 && is_never_stored_to(module, symbol);
     let taken = bound.expr_symbol[e.idx()];
     if !matches!(hir[e].kind, ExprKind::Ident(_)) || !is_stored_once(taken) {
         return None;
@@ -478,7 +496,7 @@ fn cannot_name_builtin_module(module: &Module<'_>, atoms: &Interner<'_>, mut e: 
     let requires_node_path = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if hir[call].args.len() == 1 && matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::require)) && matches!(hir[hir.id_at(hir[call].args, 0)].kind, ExprKind::String(specifier) if is_node_path(specifier)));
     let declarations_of = |e: ExprId| {
         let symbol = bound.expr_symbol[e.idx()];
-        let is_constant = symbol.is_some() && !bound.symbols[symbol.idx()].flags.intersects(bun_sema::bind::SymFlags::ASSIGNED | bun_sema::bind::SymFlags::MERGED) && bound.assignments_to(symbol).is_empty();
+        let is_constant = symbol.is_some() && is_never_stored_to(module, symbol);
         is_constant.then(|| &bound.symbols[symbol.idx()].decls[..])
     };
     let function_of_node_path = |callee: ExprId| match hir[callee].kind {
@@ -560,19 +578,52 @@ fn why_it_escapes(holder: usize, if_global_object: &'static str) -> &'static str
     }
 }
 
+const STORED_ON_THE_GLOBAL_OBJECT: &str = "what may be a function that sees the global object, stored on it";
+
 #[derive(Default)]
-struct OwnFunctionsOnGlobals {
-    stored: FxHashSet<(usize, Atom)>,
-    called: Vec<(usize, Atom, ExprId)>,
+struct StoredOnGlobals {
+    may_see_the_global: Vec<(usize, ExprId)>,
 }
 
-impl OwnFunctionsOnGlobals {
-    fn add_member(&mut self, module: &Module<'_>, holder: usize, name: Atom, member: ExprId) {
-        let Some(Parent::Expr(around)) = member.some().map(|member| module.bound.expr_parent[member.idx()]) else { return };
-        match module.hir[around].kind {
-            ExprKind::Assign { target, .. } if target == member => _ = self.stored.insert((holder, name)),
-            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if module.hir[call].callee == member => self.called.push((holder, name, member)),
-            _ => {}
+const MOST_STEPS_TO_A_STORED_VALUE: u32 = 8;
+const SETTERS_OF_PROCESS_THAT_KEEP_NO_FUNCTION: [&[u8]; 2] = [b"exitCode", b"title"];
+
+fn may_be_function_that_sees_the_global(module: &Module<'_>, value: ExprId, is_handed_events: bool, steps_left: u32) -> bool {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let may_be = |value: ExprId| steps_left == 0 || may_be_function_that_sees_the_global(module, value, is_handed_events, steps_left - 1);
+    match hir[value].kind {
+        ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Regex | ExprKind::Template { .. } | ExprKind::Unary { .. } => false,
+        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Class(_) => false,
+        ExprKind::Fn(function) => is_handed_events || hir[function].kind != FnKind::Arrow && mentions_its_receiver(module, function),
+        ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } | ExprKind::Cond { yes: left, no: right, .. } => may_be(left) || may_be(right),
+        ExprKind::Binary { op: BinOp::Comma, right: inner, .. } | ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } | ExprKind::AsConst(inner) | ExprKind::NonNull(inner) => may_be(inner),
+        ExprKind::Binary { .. } => false,
+        ExprKind::Ident(_) => match bound.expr_symbol[value.idx()].some().filter(|&holder| is_never_stored_to(module, holder)).map(|holder| (holder, &bound.symbols[holder.idx()].decls[..])) {
+            Some((_, &[Decl::Fn(function)])) => is_handed_events || matches!(hir[function].body, FnBody::None) || mentions_its_receiver(module, function),
+            Some((_, &[Decl::Class(_)])) => false,
+            Some((holder, _)) => initializer_of_variable_stored_once(module, holder).is_none_or(may_be),
+            None => true,
+        },
+        _ => true,
+    }
+}
+
+impl StoredOnGlobals {
+    fn add(&mut self, module: &Module<'_>, atoms: &Interner<'_>, holder: usize, name: Atom, value: ExprId, at: ExprId) {
+        let name = atoms.bytes(name);
+        let is_handed_events = holder == GLOBAL_OBJECT && name.starts_with(b"on");
+        let keeps_no_function = holder == 0 && SETTERS_OF_PROCESS_THAT_KEEP_NO_FUNCTION.contains(&name) || is_surely_primitive(module, atoms, value, MOST_STEPS_TO_A_STORED_VALUE);
+        if !keeps_no_function && may_be_function_that_sees_the_global(module, value, is_handed_events, MOST_STEPS_TO_A_STORED_VALUE) {
+            self.may_see_the_global.push((holder, at));
+        }
+    }
+
+    fn add_member(&mut self, module: &Module<'_>, atoms: &Interner<'_>, holder: usize, name: Atom, member: ExprId) {
+        if let Some(Parent::Expr(around)) = member.some().map(|member| module.bound.expr_parent[member.idx()])
+            && let ExprKind::Assign { target, value, .. } = module.hir[around].kind
+            && target == member
+        {
+            self.add(module, atoms, holder, name, value, member);
         }
     }
 }
@@ -598,12 +649,9 @@ fn mentions_of_destructured_property(module: &Module<'_>, name: Atom) -> Option<
     }
     let is_constant = |holder: SymbolId| {
         let symbol = &bound.symbols[holder.idx()];
-        symbol.decls.len() == 1
-            && !symbol.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED)
-            && bound.assignments_to(holder).is_empty()
-            && !hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == symbol.name))
+        symbol.decls.len() == 1 && is_never_stored_to(module, holder) && !hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == symbol.name))
     };
-    if !holders.iter().all(|&holder| is_constant(holder)) {
+    if holders.is_empty() || !holders.iter().all(|&holder| is_constant(holder)) {
         return None;
     }
     let identifiers = hir.exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Ident(_))).map(|it| ExprId::from(it.0 as u32));
@@ -633,6 +681,9 @@ fn reads_of_global_object(module: &Module<'_>, atoms: &Interner<'_>, global_obje
     if !is_read_only_by_literal_names(module, atoms, e, &is_global_object, &mut reads, &mut looked_up) {
         return None;
     }
+    if reads.iter().any(|it| is(it.0, b"__lookupGetter__") && looked_up_through(module, atoms, it.0, it.1).is_some_and(|asked| asked.is_none() || is_global_object(asked))) {
+        return None;
+    }
     looked_up.extend(reads.iter().filter_map(|it| looked_up_through(module, atoms, it.0, it.1)));
     let mut touched: Vec<(usize, Atom)> = looked_up.drain(..).map(|name| (GLOBAL_OBJECT, name)).collect();
     let mut found = Vec::new();
@@ -641,13 +692,13 @@ fn reads_of_global_object(module: &Module<'_>, atoms: &Interner<'_>, global_obje
             return None;
         }
         let Some(global) = globals.iter().position(|&global| global == Some(name)) else { continue };
-        if global == PERFORMANCE {
-            touched.push((PERFORMANCE, Atom::NONE));
+        if global >= PERFORMANCE {
+            touched.push((global, Atom::NONE));
             continue;
         }
         let members = if member.is_some() { vec![member] } else { mentions_of_destructured_property(module, name)? };
         let mut of_global = Vec::new();
-        if !members.into_iter().all(|member| is_read_only_by_literal_names(module, atoms, member, &|_| false, &mut of_global, &mut looked_up)) || of_global.iter().any(|it| Some(it.0) == get_builtin_module || is(it.0, b"mainModule") || RETURN_THE_RECEIVER.contains(&atoms.bytes(it.0))) {
+        if !members.into_iter().all(|member| is_read_only_by_literal_names(module, atoms, member, &|name| name == known::default, &mut of_global, &mut looked_up)) || of_global.iter().any(|it| Some(it.0) == get_builtin_module || is(it.0, b"mainModule") || RETURN_THE_RECEIVER.contains(&atoms.bytes(it.0))) {
             return None;
         }
         looked_up.extend(of_global.iter().filter_map(|it| looked_up_through(module, atoms, it.0, it.1)));
@@ -716,7 +767,7 @@ fn keeps_the_receiver_to_itself(module: &Module<'_>, method: ExprId, takes_liste
         ExprKind::Ident(_) => {
             let Some(symbol) = bound.expr_symbol[listener.idx()].some() else { return false };
             let declared = &bound.symbols[symbol.idx()];
-            if declared.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) || !bound.assignments_to(symbol).is_empty() {
+            if !is_never_stored_to(module, symbol) {
                 return false;
             }
             match declared.decls[..] {
@@ -736,16 +787,228 @@ fn keeps_the_receiver_to_itself(module: &Module<'_>, method: ExprId, takes_liste
     hir[function].kind == FnKind::Arrow || !mentions_its_receiver(module, function)
 }
 
-fn is_free(module: &Module<'_>, e: ExprId) -> bool {
+fn member_at(module: &Module<'_>, e: ExprId) -> Option<(ExprId, Atom)> {
+    match module.hir[e].kind {
+        ExprKind::Dot { obj, name, .. } => Some((obj, name)),
+        ExprKind::Index { obj, index, .. } => match module.hir[index].kind {
+            ExprKind::String(name) => Some((obj, name)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_member_of(host: &[u8], name: &[u8]) -> bool {
+    let lines = bun_core::strings::split(include_bytes!("members-of-host-objects.txt"), b"\n");
+    lines.map(|line| bun_core::strings::split(line.trim_ascii_end(), b" ")).any(|mut words| {
+        let is_of_host = words.next().is_some_and(|first| first == host || !cfg!(windows) && first.strip_suffix(b"-not-on-windows") == Some(host));
+        is_of_host && words.any(|member| member == name)
+    })
+}
+
+const MOST_STEPS_TO_NODE_EVENTS: usize = 8;
+
+fn is_event_emitter(module: &Module<'_>, atoms: &Interner<'_>, module_loaded_by: &dyn Fn(&bun_sema::hir::Call) -> Option<Atom>, e: ExprId, steps_left: usize) -> bool {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let Some(steps_left) = steps_left.checked_sub(1) else { return true };
+    let is_node_events = |specifier: Atom| specifier.is_some() && matches!(atoms.bytes(specifier), b"events" | b"node:events");
+    let is_itself = |name: Atom| name == known::default || atoms.bytes(name) == b"EventEmitter";
+    let is_one = |e: ExprId| e.is_some() && is_event_emitter(module, atoms, module_loaded_by, e, steps_left);
+    let e = without_assertions(module, e);
+    match hir[e].kind {
+        ExprKind::Call(call) => module_loaded_by(&hir[call]).is_some_and(is_node_events),
+        ExprKind::Ident(_) => bound.expr_symbol[e.idx()].some().is_some_and(|symbol| {
+            bound.symbols[symbol.idx()].decls.iter().any(|&decl| match decl {
+                Decl::ImportDefault(import) | Decl::ImportNamespace(import) => !hir[import].type_only && is_node_events(hir[import].spec),
+                Decl::ImportSpec(spec) => !hir[spec].type_only && !hir[hir[spec].import].type_only && is_itself(hir[spec].imported) && is_node_events(hir[hir[spec].import].spec),
+                Decl::Var(pat) | Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
+                    PatParent::Var(declaration) => is_one(hir[declaration].init),
+                    PatParent::Prop(outer, prop) => {
+                        let is_taken_out = match (hir[prop].key, hir[pat].kind) {
+                            (PropKey::Name(key), _) | (PropKey::None, PatKind::Ident(key)) => is_itself(key),
+                            _ => false,
+                        };
+                        is_taken_out && matches!(bound.pat_parent[outer.idx()], PatParent::Var(declaration) if is_one(hir[declaration].init))
+                    }
+                    _ => false,
+                },
+                _ => false,
+            })
+        }),
+        _ => member_at(module, e).is_some_and(|(obj, name)| is_itself(name) && is_one(obj)),
+    }
+}
+
+const READ_THEIR_FIRST_ARGUMENT: [&[u8]; 16] = [
+    b"create",
+    b"entries",
+    b"getOwnPropertyDescriptor",
+    b"getOwnPropertyDescriptors",
+    b"getOwnPropertyNames",
+    b"getOwnPropertySymbols",
+    b"getPrototypeOf",
+    b"has",
+    b"hasOwn",
+    b"is",
+    b"isExtensible",
+    b"isFrozen",
+    b"isSealed",
+    b"keys",
+    b"ownKeys",
+    b"values",
+];
+const READ_THEIR_LATER_ARGUMENTS: [&[u8]; 3] = [b"assign", b"is", b"setPrototypeOf"];
+const WRITE_THE_RECEIVER: [&[u8]; 2] = [b"__defineGetter__", b"__defineSetter__"];
+
+fn is_object_only_read(module: &Module<'_>, atoms: &Interner<'_>, start: ExprId) -> bool {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let is_function_of_object = |callee: ExprId, names: &[&[u8]]| member_at(module, callee).is_some_and(|(holder, name)| names.contains(&atoms.bytes(name)) && matches!(hir[holder].kind, ExprKind::Ident(holder_name) if matches!(atoms.bytes(holder_name), b"Object" | b"Reflect") && is_free(module, holder)));
+    let mut pending = vec![start];
+    let mut holders: Vec<SymbolId> = Vec::new();
+    let mut seen: FxHashSet<ExprId> = FxHashSet::default();
+    while let Some(e) = pending.pop() {
+        if !seen.insert(e) {
+            continue;
+        }
+        let mut holder = SymbolId::NONE;
+        match bound.expr_parent[e.idx()] {
+            Parent::Expr(around) => match hir[around].kind {
+                ExprKind::Unary { op: UnOp::Not | UnOp::Typeof | UnOp::Void, .. } | ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq, .. } => {}
+                ExprKind::Binary { op: BinOp::In, right, .. } if right == e => {}
+                ExprKind::Binary { op: BinOp::And | BinOp::Comma, left, .. } if left == e => {}
+                ExprKind::Cond { test, .. } if test == e => {}
+                ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::AsConst(_) | ExprKind::NonNull(_) | ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, .. } | ExprKind::Cond { .. } => pending.push(around),
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e => {
+                    if is_assignment_target(module, around) || is_deleted(module, around) || member_at(module, around).is_some_and(|member| WRITE_THE_RECEIVER.contains(&atoms.bytes(member.1))) {
+                        return false;
+                    }
+                }
+                ExprKind::Assign { op: None, target, .. } if target == e => {}
+                ExprKind::Assign { op: None, target, value } if value == e => {
+                    match hir[target].kind {
+                        ExprKind::Ident(_) if bound.expr_symbol[target.idx()].is_some() => holder = bound.expr_symbol[target.idx()],
+                        _ if member_at(module, target).is_some_and(|member| atoms.bytes(member.1) == b"__proto__") => {}
+                        _ => return false,
+                    }
+                    pending.push(around);
+                }
+                ExprKind::Call(call) => match hir.ids(hir[call].args).position(|argument: ExprId| argument == e) {
+                    Some(0) if is_function_of_object(hir[call].callee, &READ_THEIR_FIRST_ARGUMENT) => {}
+                    Some(1..) if is_function_of_object(hir[call].callee, &READ_THEIR_LATER_ARGUMENTS) => {}
+                    _ => return false,
+                },
+                _ => return false,
+            },
+            Parent::Stmt(around) => {
+                if !matches!(hir[around].kind, StmtKind::Expr(_) | StmtKind::If { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. } | StmtKind::ForIn { .. }) {
+                    return false;
+                }
+            }
+            Parent::VarInit(declaration) => match hir[hir[declaration].pat].kind {
+                PatKind::Ident(_) => holder = bound.pat_symbol[hir[declaration].pat.idx()],
+                PatKind::Object(_) => {}
+                _ => return false,
+            },
+            _ => return false,
+        }
+        if holder.is_some() && !holders.contains(&holder) {
+            holders.push(holder);
+            let symbol = &bound.symbols[holder.idx()];
+            if symbol.flags.contains(SymFlags::MERGED) || !symbol.decls.iter().all(|&decl| matches!(decl, Decl::Var(_) | Decl::Require(_))) || !is_seen_only_in_its_file(module, holder) {
+                return false;
+            }
+            pending.extend(mentions_of(module, |mentioned| mentioned == holder));
+        }
+    }
+    true
+}
+
+#[derive(Default)]
+struct CreatedRequires {
+    holders: Vec<SymbolId>,
+    called_at_once: Vec<ExprId>,
+    is_one_handed_on: bool,
+}
+
+impl CreatedRequires {
+    fn of(module: &Module<'_>, atoms: &Interner<'_>) -> CreatedRequires {
+        let (hir, bound) = (&module.hir, &module.bound);
+        let is_node_module = |specifier: Atom| specifier.is_some() && matches!(atoms.bytes(specifier), b"module" | b"node:module");
+        let mut found = CreatedRequires::default();
+        let names_node_module = |call: &bun_sema::hir::Call| matches!(hir.ids(call.args).next().map(|argument: ExprId| hir[argument].kind), Some(ExprKind::String(specifier)) if is_node_module(specifier));
+        if !hir.specifier_uses.iter().any(|used| is_node_module(used.spec)) && !hir.calls.iter().any(names_node_module) {
+            return found;
+        }
+        let requires_node_module = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if !hir[call].args.is_empty() && matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::require)) && matches!(hir[hir.id_at(hir[call].args, 0)].kind, ExprKind::String(specifier) if is_node_module(specifier)));
+        let is_create_require = |symbol: SymbolId| {
+            bound.symbols[symbol.idx()].decls.iter().any(|&decl| match decl {
+                Decl::ImportSpec(spec) => atoms.bytes(hir[spec].imported) == b"createRequire" && is_node_module(hir[hir[spec].import].spec),
+                Decl::Var(pat) | Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
+                    PatParent::Prop(outer, prop) => {
+                        let is_the_property = match (hir[prop].key, hir[pat].kind) {
+                            (PropKey::Name(key), _) | (PropKey::None, PatKind::Ident(key)) => atoms.bytes(key) == b"createRequire",
+                            _ => false,
+                        };
+                        is_the_property && matches!(bound.pat_parent[outer.idx()], PatParent::Var(declaration) if hir[declaration].init.is_some() && requires_node_module(hir[declaration].init))
+                    }
+                    _ => false,
+                },
+                _ => false,
+            })
+        };
+        let is_constant = |holder: SymbolId| {
+            let symbol = &bound.symbols[holder.idx()];
+            symbol.decls.len() == 1
+                && !symbol.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED)
+                && bound.assignments_to(holder).is_empty()
+                && !hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == symbol.name))
+        };
+        for (index, _) in hir.exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Ident(_))) {
+            let e = ExprId::from(index as u32);
+            if bound.expr_symbol[index].is_none() || bound.expr_parent[index] == Parent::None || bound.is_in_type_query(e) || !is_create_require(bound.expr_symbol[index]) {
+                continue;
+            }
+            let created = match bound.expr_parent[index] {
+                Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) if hir[call].callee == e) => around,
+                _ => {
+                    found.is_one_handed_on = true;
+                    continue;
+                }
+            };
+            match bound.expr_parent[created.idx()] {
+                Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Dot { obj, name, .. } if obj == created && atoms.bytes(name) == b"resolve") => {}
+                Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) if hir[call].callee == created) => found.called_at_once.push(created),
+                Parent::VarInit(declaration) if matches!(hir[hir[declaration].pat].kind, PatKind::Ident(_)) && !hir[declaration].flags.contains(Flags::EXPORT) && is_constant(bound.pat_symbol[hir[declaration].pat.idx()]) => found.holders.push(bound.pat_symbol[hir[declaration].pat.idx()]),
+                _ => found.is_one_handed_on = true,
+            }
+        }
+        found
+    }
+}
+
+fn is_made_by_the_program(module: &Module<'_>, symbol: SymbolId) -> bool {
     let hir = &module.hir;
-    let symbol = module.bound.expr_symbol[e.idx()];
-    symbol.is_none()
-        || !module.bound.symbols[symbol.idx()].decls.iter().any(|&decl| match decl {
-            Decl::Fn(f) => !matches!(hir[f].body, FnBody::None),
-            Decl::Var(_) | Decl::Class(_) | Decl::Module(_) | Decl::Enum(_) => !hir.is_ambient(hir.node(decl)),
-            Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) | Decl::CommonJsVariable => false,
-            _ => true,
-        })
+    module.bound.symbols[symbol.idx()].decls.iter().any(|&decl| match decl {
+        Decl::Fn(f) => !matches!(hir[f].body, FnBody::None),
+        Decl::Var(_) | Decl::Class(_) | Decl::Module(_) | Decl::Enum(_) => !hir.is_ambient(hir.node(decl)),
+        Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) | Decl::CommonJsVariable => false,
+        _ => true,
+    })
+}
+
+fn is_free(module: &Module<'_>, e: ExprId) -> bool {
+    module.bound.expr_symbol[e.idx()].some().is_none_or(|symbol| !is_made_by_the_program(module, symbol))
+}
+
+fn is_free_in(module: &Module<'_>, mut scope: bun_sema::bind::ScopeId, name: Atom) -> bool {
+    let bound = &module.bound;
+    while scope.is_some() {
+        if let Some(symbol) = bound.lookup(bound.scopes[scope.idx()].locals, name) {
+            return !is_made_by_the_program(module, symbol);
+        }
+        scope = bound.scopes[scope.idx()].parent;
+    }
+    true
 }
 
 const ANY_OPTION_OF_A_SERVER: [Name; 2] = [Name::ServeOption(Atom::NONE), Name::ServeRouteOption(Atom::NONE)];
@@ -785,7 +1048,7 @@ fn initializer_of_variable_stored_once(module: &Module<'_>, holder: SymbolId) ->
     let symbol = &bound.symbols[holder.idx()];
     let [Decl::Var(pat)] = symbol.decls[..] else { return None };
     let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return None };
-    let is_stored_once = hir[declaration].pat == pat && hir[declaration].init.is_some() && !symbol.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) && bound.assignments_to(holder).is_empty();
+    let is_stored_once = hir[declaration].pat == pat && hir[declaration].init.is_some() && is_never_stored_to(module, holder);
     is_stored_once.then(|| hir[declaration].init)
 }
 
@@ -815,14 +1078,20 @@ fn is_assignment_target(module: &Module<'_>, mut e: ExprId) -> bool {
     }
 }
 
+fn is_never_stored_to(module: &Module<'_>, holder: SymbolId) -> bool {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let symbol = &bound.symbols[holder.idx()];
+    let is_const = |decl: &Decl| matches!(*decl, Decl::Var(pat) | Decl::Require(pat) if matches!(bound.pat_parent[pat.idx()], PatParent::Var(declaration) if bound.is_const(hir, declaration)));
+    !symbol.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) && bound.assignments_to(holder).is_empty() && (symbol.decls.iter().all(is_const) || !mentions_of(module, |symbol| symbol == holder).into_iter().any(|mention| is_assignment_target(module, mention)))
+}
+
 fn is_function_stored_once(module: &Module<'_>, holder: SymbolId) -> bool {
     let (hir, bound) = (&module.hir, &module.bound);
     let symbol = &bound.symbols[holder.idx()];
-    let is_function = match symbol.decls[..] {
-        [Decl::Fn(function)] => !matches!(hir[function].body, FnBody::None) && !symbol.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) && bound.assignments_to(holder).is_empty(),
+    match symbol.decls[..] {
+        [Decl::Fn(function)] => !matches!(hir[function].body, FnBody::None) && is_never_stored_to(module, holder),
         _ => initializer_of_variable_stored_once(module, holder).is_some_and(|init| matches!(hir[without_assertions(module, init)].kind, ExprKind::Fn(_))),
-    };
-    is_function && !mentions_of(module, |symbol| symbol == holder).into_iter().any(|mention| is_assignment_target(module, mention))
+    }
 }
 
 fn is_in_prelude(module: &Module<'_>) -> bool {
@@ -1102,6 +1371,79 @@ fn native_module(atoms: &Interner<'_>, specifier: Atom) -> Option<Name> {
     (!is_internal && !has_source(alias.path.as_bytes())).then_some(Name::NativeModule(specifier))
 }
 
+const MAKE_PRIMITIVES: [&[u8]; 6] = [b"String", b"Number", b"Boolean", b"BigInt", b"parseInt", b"parseFloat"];
+const PRIMITIVE_GLOBALS: [&[u8]; 3] = [b"undefined", b"NaN", b"Infinity"];
+const JSON: [&[u8]; 1] = [b"JSON"];
+
+fn is_surely_primitive(module: &Module<'_>, atoms: &Interner<'_>, e: ExprId, depth: u32) -> bool {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let is_so = |e: ExprId| depth > 0 && is_surely_primitive(module, atoms, e, depth - 1);
+    let is_global = |e: ExprId, names: &[&[u8]]| matches!(hir[e].kind, ExprKind::Ident(name) if names.contains(&atoms.bytes(name))) && is_free(module, e);
+    match hir[e].kind {
+        ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Template { .. } | ExprKind::Unary { .. } => true,
+        ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } | ExprKind::Cond { yes: left, no: right, .. } => is_so(left) && is_so(right),
+        ExprKind::Binary { op: BinOp::Comma, right: inner, .. } | ExprKind::Assign { op: None, value: inner, .. } => is_so(inner),
+        ExprKind::Binary { .. } => true,
+        ExprKind::Assign { op: Some(op), .. } => !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish),
+        ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::NonNull(expr) => is_so(expr),
+        ExprKind::Call(call) => match hir[hir[call].callee].kind {
+            ExprKind::Ident(_) => is_global(hir[call].callee, &MAKE_PRIMITIVES),
+            ExprKind::Dot { obj, name, .. } => atoms.bytes(name) == b"stringify" && is_global(obj, &JSON),
+            _ => false,
+        },
+        ExprKind::Ident(_) if is_global(e, &PRIMITIVE_GLOBALS) => true,
+        ExprKind::Ident(_) => match bound.expr_symbol[e.idx()].some().map(|symbol| (symbol, &bound.symbols[symbol.idx()])) {
+            Some((symbol, declared)) if is_never_stored_to(module, symbol) => match declared.decls[..] {
+                [Decl::Var(pat)] => matches!(bound.pat_parent[pat.idx()], PatParent::Var(declaration) if hir[declaration].pat == pat && hir[declaration].init.is_some() && is_so(hir[declaration].init)),
+                _ => false,
+            },
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn is_called(module: &Module<'_>, e: ExprId) -> Option<bun_sema::hir::CallId> {
+    match module.bound.expr_parent[e.idx()] {
+        Parent::Expr(around) => match module.hir[around].kind {
+            ExprKind::Call(call) if module.hir[call].callee == e => Some(call),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn channel_events_listened_for(module: &Module<'_>, atoms: &Interner<'_>, listens: Option<ExprId>) -> Vec<Name> {
+    let first_argument = listens.and_then(|listens| is_called(module, listens)).and_then(|call| module.hir.ids(module.hir[call].args).next());
+    let event = first_argument.and_then(|first: ExprId| if let ExprKind::String(event) = module.hir[first].kind { Some(event) } else { None });
+    let events = (0..EVENTS_OF_THE_CHANNEL.len()).filter(|&index| event.is_none_or(|event| atoms.bytes(event) == EVENTS_OF_THE_CHANNEL[index]));
+    events.map(|index| Name::ListensFor(index as u8)).collect()
+}
+
+fn is_operand_of_typeof(module: &Module<'_>, e: ExprId) -> bool {
+    matches!(module.bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(module.hir[around].kind, ExprKind::Unary { op: UnOp::Typeof, .. }))
+}
+
+fn prints_only_primitives(module: &Module<'_>, atoms: &Interner<'_>, method: ExprId) -> bool {
+    is_called(module, method).is_some_and(|call| module.hir.ids(module.hir[call].args).all(|argument: ExprId| is_surely_primitive(module, atoms, argument, 8)))
+}
+
+fn symbol_made_through(module: &Module<'_>, atoms: &Interner<'_>, mention: ExprId) -> Option<Name> {
+    let hir = &module.hir;
+    let Parent::Expr(around) = module.bound.expr_parent[mention.idx()] else { return Some(Name::Symbol(Atom::NONE)) };
+    match hir[around].kind {
+        ExprKind::Dot { obj, name, .. } if obj == mention && atoms.bytes(name) != b"for" => None,
+        ExprKind::Dot { obj, .. } if obj == mention => match is_called(module, around).and_then(|call| hir.ids(hir[call].args).next()).map(|key: ExprId| hir[key].kind) {
+            Some(ExprKind::String(key)) => Some(Name::Symbol(key)),
+            _ => Some(Name::Symbol(Atom::NONE)),
+        },
+        ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee == mention => None,
+        ExprKind::Unary { op: UnOp::Typeof, .. } => None,
+        ExprKind::Binary { op: BinOp::Instanceof, right, .. } if right == mention => None,
+        _ => Some(Name::Symbol(Atom::NONE)),
+    }
+}
+
 fn names_global(module: &Module<'_>, atoms: &Interner<'_>, e: ExprId, name: Atom) -> bool {
     module.bound.expr_parent[e.idx()] != Parent::None && is_free(module, e) && !(module.builtin.is_some() && atoms.bytes(name).starts_with(b"$"))
 }
@@ -1189,6 +1531,7 @@ struct Properties<'a, 'p, 's> {
     module: &'a Module<'s>,
     file: FileId,
     checker: &'a std::cell::RefCell<bun_sema::check::Checker<'p, 's>>,
+    folded_to_new_texts: &'a std::cell::RefCell<Vec<Vec<u8>>>,
     reflection: Reflection,
 }
 
@@ -1211,8 +1554,7 @@ impl Properties<'_, '_, '_> {
             && let PatParent::Var(declaration) = bound.pat_parent[pat.idx()]
             && hir[declaration].pat == pat
             && hir[declaration].init.is_some()
-            && !bound.symbols[symbol.idx()].flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED)
-            && bound.assignments_to(symbol).is_empty()
+            && is_never_stored_to(self.module, symbol)
         {
             e = skip_assertions(hir[declaration].init);
         }
@@ -1220,7 +1562,15 @@ impl Properties<'_, '_, '_> {
             ExprKind::String(name) => Some(name),
             ExprKind::Template { exprs } if exprs.is_empty() => Some(hir.id_at(hir.template_texts(exprs), 0)),
             ExprKind::Number(_) => None,
-            _ => self.checker.borrow_mut().fold_constant_string(self.file, e).map(|folded| if folded.0.is_own() { Atom::NONE } else { folded.0 }),
+            _ => {
+                let mut checker = self.checker.borrow_mut();
+                let folded = checker.fold_constant_string(self.file, e)?.0;
+                if folded.is_own() {
+                    self.folded_to_new_texts.borrow_mut().push(checker.atoms().bytes(folded).to_vec());
+                    return None;
+                }
+                Some(folded)
+            }
         }
     }
 
@@ -1229,8 +1579,14 @@ impl Properties<'_, '_, '_> {
         let known = self.reflection;
         *hands_out_values = false;
         let hands_out = |obj: ExprId, name: Atom| name == known.get && self.is_global(obj, known.reflect) || name == known.get_own_property_descriptor && (self.is_global(obj, known.reflect) || self.is_global(obj, known.object));
+        let member_at = |e: ExprId| match hir[e].kind {
+            ExprKind::Dot { obj, name, .. } => Some((obj, name)),
+            ExprKind::Index { obj, index, .. } => self.constant_key(index).map(|name| (obj, name)),
+            _ => None,
+        };
         match hir[e].kind {
-            ExprKind::Dot { obj, name, .. } => {
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                let Some((obj, name)) = member_at(e) else { return };
                 found.push(name);
                 let is_called = matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) if hir[call].callee == e));
                 let is_read_from_global_object = (name == known.reflect || name == known.object) && known.global_objects.iter().any(|&global_object| global_object.is_some() && self.is_global(obj, global_object));
@@ -1239,9 +1595,9 @@ impl Properties<'_, '_, '_> {
                     found.push(Atom::NONE);
                 }
             }
-            ExprKind::Index { index: key, .. } | ExprKind::Binary { op: BinOp::In, left: key, .. } => found.extend(self.constant_key(key)),
+            ExprKind::Binary { op: BinOp::In, left: key, .. } => found.extend(self.constant_key(key)),
             ExprKind::Call(call) => {
-                if let ExprKind::Dot { obj, name, .. } = hir[hir[call].callee].kind
+                if let Some((obj, name)) = member_at(hir[call].callee)
                     && hands_out(obj, name)
                 {
                     found.push(hir.ids(hir[call].args).nth(1).and_then(|key: ExprId| self.constant_key(key)).unwrap_or(Atom::NONE));
@@ -1307,14 +1663,25 @@ struct Scan<'a, 's> {
     native_bindings: FxHashSet<(Atom, Atom)>,
     openings: Vec<(u32, ExprId, &'static str)>,
     openings_if_events_are_dispatched: Vec<(u32, ExprId, &'static str)>,
-    stored_on_globals: FxHashSet<(usize, Atom)>,
-    called_on_globals: Vec<(u32, ExprId, usize, Atom)>,
     touches_every_member_of: [bool; GLOBALS.len() + 1],
     named_at: Vec<(u32, ExprId, Name)>,
+    globals_that_roots_wait_for: Vec<Atom>,
+    values_that_roots_wait_for: Vec<Atom>,
+    symbol_constructor: Option<Atom>,
+    list_symbols: [Option<Atom>; 2],
 }
 
 impl<'a, 's> Scan<'a, 's> {
     fn empty(atoms: &'a Interner<'s>, preserves_source_paths: bool) -> Scan<'a, 's> {
+        let waited_for = |kind: &[u8]| {
+            let mut names: Vec<Atom> = Vec::new();
+            for name in Archive::embedded().manifest().roots_made_for().flat_map(|waiting| waiting.1).filter_map(|fact| atoms.lookup(fact.strip_prefix(kind)?)) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            names
+        };
         Scan {
             atoms,
             get_builtin_module: atoms.lookup(b"getBuiltinModule"),
@@ -1335,10 +1702,12 @@ impl<'a, 's> Scan<'a, 's> {
             native_bindings: FxHashSet::default(),
             openings: Vec::new(),
             openings_if_events_are_dispatched: Vec::new(),
-            stored_on_globals: FxHashSet::default(),
-            called_on_globals: Vec::new(),
             touches_every_member_of: Default::default(),
             named_at: Vec::new(),
+            globals_that_roots_wait_for: waited_for(b"global "),
+            values_that_roots_wait_for: waited_for(b"value "),
+            symbol_constructor: atoms.lookup(b"Symbol"),
+            list_symbols: [atoms.lookup(b"getOwnPropertySymbols"), atoms.lookup(b"ownKeys")],
         }
     }
 
@@ -1364,8 +1733,6 @@ impl<'a, 's> Scan<'a, 's> {
         self.native_bindings.extend(later.native_bindings);
         self.openings.extend(later.openings);
         self.openings_if_events_are_dispatched.extend(later.openings_if_events_are_dispatched);
-        self.stored_on_globals.extend(later.stored_on_globals);
-        self.called_on_globals.extend(later.called_on_globals);
         for (touches, later) in self.touches_every_member_of.iter_mut().zip(later.touches_every_member_of) {
             *touches |= later;
         }
@@ -1385,22 +1752,85 @@ impl<'a, 's> Scan<'a, 's> {
         let is_free = |e: ExprId| is_free(module, e);
         let is_runtime_source = module.builtin.is_some();
         let mut named_at: Vec<(ExprId, Name)> = Vec::new();
+        named_at.extend(hir.import_attributes.iter().next().map(|_| (ExprId::NONE, Name::LoadsPage)));
         let mut why_open: Vec<(&'static str, ExprId)> = Vec::new();
         let mut global_names: Vec<Atom> = Vec::new();
         let mut listeners: Vec<ExprId> = Vec::new();
-        let mut own_functions = OwnFunctionsOnGlobals::default();
-        let mut aliases: Vec<(Atom, usize)> = Vec::new();
+        let mut stored = StoredOnGlobals::default();
+        let mut bound_at_top_level: Vec<(Atom, usize)> = Vec::new();
+        let mut taken_by_name: Vec<(usize, Atom)> = Vec::new();
+        let mut escaping: Vec<usize> = Vec::new();
         for import in hir.imports.iter().filter(|import| !import.type_only) {
             let Some(global) = self.module_global(import.spec) else { continue };
-            aliases.extend([import.default, import.namespace].into_iter().filter(|name| name.is_some()).map(|name| (name, global)));
+            bound_at_top_level.extend([import.default, import.namespace].into_iter().filter(|name| name.is_some()).map(|name| (name, global)));
             for spec in import.named.iter().map(|spec| &hir[spec]).filter(|spec| !spec.type_only) {
-                self.read.insert((global, spec.imported));
-                named_at.push((ExprId::NONE, Name::member(global, spec.imported)));
-                why_open.extend(member_that_opens_the_world(self.atoms, global, spec.imported).map(|why| (why, ExprId::NONE)));
-                if global == 0 && RETURN_THE_RECEIVER.contains(&self.atoms.bytes(spec.imported)) {
-                    why_open.push(("process", ExprId::NONE));
+                match spec.imported {
+                    known::default => bound_at_top_level.push((spec.local, global)),
+                    imported => taken_by_name.push((global, imported)),
                 }
             }
+        }
+        for alias in hir.import_equals.iter().filter(|alias| !alias.flags.contains(Flags::TYPE_ONLY)) {
+            match self.module_global(alias.target.spec()) {
+                Some(global) if alias.flags.contains(Flags::EXPORT) => escaping.push(global),
+                Some(global) => bound_at_top_level.push((alias.name, global)),
+                None => {}
+            }
+        }
+        for export in hir.exports.iter().filter(|export| !export.type_only) {
+            for item in export.items.iter().map(|item| &hir[item]).filter(|item| !item.type_only) {
+                match self.module_global(export.spec) {
+                    Some(global) if item.local == known::default => escaping.push(global),
+                    Some(global) => {
+                        taken_by_name.push((global, item.local));
+                        if global == BUN && self.atoms.bytes(item.local) == b"serve" {
+                            named_at.extend(ANY_OPTION_OF_A_SERVER.map(|name| (ExprId::NONE, name)));
+                        }
+                    }
+                    None if export.has_module_specifier => {}
+                    None => escaping.extend(bound_at_top_level.iter().filter(|held| held.0 == item.local).map(|held| held.1)),
+                }
+            }
+        }
+        escaping.extend(hir.ids(hir.body).filter_map(|stmt| match hir[stmt].kind {
+            StmtKind::ExportStar { spec, type_only: false, .. } => self.module_global(spec),
+            _ => None,
+        }));
+        for (index, alias) in hir.import_equals.iter().enumerate().filter(|it| !it.1.flags.contains(Flags::TYPE_ONLY)) {
+            let bun_sema::hir::ImportEqualsTarget::Entity(path) = alias.target else { continue };
+            if hir.texts(path).next().is_none_or(|first| !is_free_in(module, module.bound.import_equals_scope[index], first)) {
+                continue;
+            }
+            let mut names = hir.texts(path).skip_while(|name| self.global_objects.contains(name));
+            let Some(name) = names.next() else {
+                why_open.push(("the global object", ExprId::NONE));
+                continue;
+            };
+            global_names.push(name);
+            named_at.push((ExprId::NONE, Name::member(GLOBAL_OBJECT, name)));
+            named_at.extend(names.clone().map(|member| (ExprId::NONE, Name::Property(member))));
+            match (self.globals.iter().position(|&global| global == Some(name)), names.next()) {
+                (Some(global), Some(member)) => taken_by_name.push((global, member)),
+                (Some(global), None) if global < 2 => escaping.push(global),
+                (Some(global), None) => {
+                    self.read.insert((global, Atom::NONE));
+                    named_at.push((ExprId::NONE, Name::member(global, Atom::NONE)));
+                }
+                (None, _) => {}
+            }
+        }
+        for (global, name) in taken_by_name {
+            self.read.insert((global, name));
+            named_at.push((ExprId::NONE, Name::member(global, name)));
+            why_open.extend(member_that_opens_the_world(self.atoms, global, name).map(|why| (why, ExprId::NONE)));
+            let hands_out_process_or_modules = RETURN_THE_RECEIVER.contains(&self.atoms.bytes(name)) || Some(name) == self.get_builtin_module || self.atoms.bytes(name) == b"mainModule";
+            escaping.extend((global == 0 && hands_out_process_or_modules).then_some(0));
+        }
+        for global in escaping {
+            self.read.insert((global, Atom::NONE));
+            self.has_unlocated_loader_entry = true;
+            self.file_loader_entry_sites.push((number, ExprId::NONE));
+            why_open.push((why_it_escapes(global, "the global object"), ExprId::NONE));
         }
         for used in hir.specifier_uses.iter() {
             let mut imports = hir.imports.iter().filter(|import| import.spec == used.spec).peekable();
@@ -1410,34 +1840,33 @@ impl<'a, 's> Scan<'a, 's> {
                 continue;
             }
             self.name(used.spec);
+            if used.spec.is_some() && self.atoms.bytes(used.spec).ends_with(b".html") {
+                named_at.push((ExprId::NONE, Name::LoadsPage));
+            }
             if !used.kind.is_call() {
                 named_at.extend(native_module(self.atoms, used.spec).map(|name| (ExprId::NONE, name)));
             }
             why_open.extend(module_that_opens_the_world(self.atoms, used.spec).map(|why| (why, ExprId::NONE)));
-            if used.kind != SpecifierKind::Import
-                && used.kind != SpecifierKind::SideEffect
-                && used.kind != SpecifierKind::RequireCall
-                && let Some(global) = self.module_global(used.spec)
-            {
-                self.read.insert((global, Atom::NONE));
-                self.has_unlocated_loader_entry = true;
-                self.file_loader_entry_sites.push((number, ExprId::NONE));
-                why_open.push(("Bun or process as a whole", ExprId::NONE));
-            }
         }
-        for call in hir.calls.iter().filter(|call| !call.args.is_empty()) {
-            let ExprKind::String(specifier) = hir[hir.id_at(call.args, 0)].kind else { continue };
+        let created_requires = CreatedRequires::of(module, self.atoms);
+        let get_builtin_module = self.get_builtin_module;
+        let module_loaded_by = |call: &bun_sema::hir::Call| {
+            let ExprKind::String(specifier) = hir[hir.ids(call.args).next()?].kind else { return None };
             let loads = match hir[call.callee].kind {
                 ExprKind::Ident(known::require) => call.args.len() == 1,
-                ExprKind::Dot { name, .. } if Some(name) == self.get_builtin_module => true,
+                ExprKind::Ident(_) => created_requires.holders.contains(&module.bound.expr_symbol[call.callee.idx()]),
+                ExprKind::Call(_) => created_requires.called_at_once.contains(&call.callee),
+                ExprKind::Dot { name, .. } if Some(name) == get_builtin_module => true,
                 ExprKind::Dot { obj, name: known::require, .. } => call.args.len() == 1 && matches!(hir[obj].kind, ExprKind::Ident(known::module)),
                 _ => false,
             };
-            if loads {
-                self.name(specifier);
-                named_at.extend(native_module(self.atoms, specifier).map(|name| (call.callee, name)));
-                why_open.extend(module_that_opens_the_world(self.atoms, specifier).map(|why| (why, call.callee)));
-            }
+            loads.then_some(specifier)
+        };
+        for call in hir.calls.iter() {
+            let Some(specifier) = module_loaded_by(call) else { continue };
+            self.name(specifier);
+            named_at.extend(native_module(self.atoms, specifier).map(|name| (call.callee, name)));
+            why_open.extend(module_that_opens_the_world(self.atoms, specifier).map(|why| (why, call.callee)));
         }
         let asserted = |mut e: ExprId| loop {
             match hir[e].kind {
@@ -1449,21 +1878,34 @@ impl<'a, 's> Scan<'a, 's> {
             ExprKind::Ident(object) if self.global_objects.contains(&object) && is_free(asserted(obj)) => self.globals.iter().position(|&global| global == Some(name)),
             _ => None,
         };
-        let global_at = |e: ExprId| match hir[e].kind {
-            ExprKind::Ident(name) => match self.globals.iter().position(|&global| global == Some(name)) {
-                Some(global) if is_free(e) => Some(global),
-                _ => aliases.iter().find(|alias| alias.0 == name).map(|alias| alias.1),
-            },
-            ExprKind::Dot { obj, name, .. } => global_of_global_object(obj, name),
-            ExprKind::Index { obj, index, .. } => match hir[index].kind {
-                ExprKind::String(name) => global_of_global_object(obj, name),
-                _ => None,
-            },
-            ExprKind::Call(call) if hir[call].args.len() == 1 && matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::require)) => match hir[hir.id_at(hir[call].args, 0)].kind {
-                ExprKind::String(specifier) => GLOBALS.iter().position(|global| global.1.contains(&self.atoms.bytes(specifier))),
+        let global_of_module = |specifier: Atom| GLOBALS.iter().position(|global| specifier.is_some() && global.1.contains(&self.atoms.bytes(specifier)));
+        let global_bound_by = |decl: Decl| match decl {
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) if !hir[import].type_only => global_of_module(hir[import].spec),
+            Decl::ImportSpec(spec) if hir[spec].imported == known::default && !hir[spec].type_only && !hir[hir[spec].import].type_only => global_of_module(hir[hir[spec].import].spec),
+            Decl::ImportEquals(alias) if !hir[alias].flags.contains(Flags::TYPE_ONLY) => global_of_module(hir[alias].target.spec()),
+            _ => None,
+        };
+        let global_imported_by = |e: ExprId| match hir[e].kind {
+            ExprKind::ImportCall { args } => match hir[hir.id_at(args, 0)].kind {
+                ExprKind::String(specifier) => global_of_module(specifier),
                 _ => None,
             },
             _ => None,
+        };
+        let member_at = |e: ExprId| member_at(module, e);
+        let global_at = |mut e: ExprId| {
+            while let Some((obj, known::default)) = member_at(e) {
+                e = asserted(obj);
+            }
+            match hir[e].kind {
+                ExprKind::Ident(name) => match self.globals.iter().position(|&global| global == Some(name)) {
+                    Some(global) if is_free(e) => Some(global),
+                    _ => module.bound.symbols[module.bound.expr_symbol[e.idx()].some()?.idx()].decls.iter().find_map(|&decl| global_bound_by(decl)),
+                },
+                ExprKind::Call(call) => module_loaded_by(&hir[call]).and_then(global_of_module),
+                ExprKind::Await(promise) => global_imported_by(asserted(promise)),
+                _ => member_at(e).and_then(|(obj, name)| global_of_global_object(obj, name)),
+            }
         };
         for call in hir.calls.iter().filter(|call| is_runtime_source && call.args.len() >= 2) {
             if let ExprKind::Ident(callee) = hir[call.callee].kind
@@ -1494,6 +1936,7 @@ impl<'a, 's> Scan<'a, 's> {
         let mut read: Vec<(usize, Atom, ExprId)> = Vec::new();
         let mut mentions: Vec<(ExprId, usize)> = Vec::new();
         let mut touched: Vec<(usize, Atom, ExprId)> = Vec::new();
+        let mut promised: Vec<(usize, ExprId)> = Vec::new();
         let hands_receiver_on = |name: Atom| name.is_some() && (HAND_THE_RECEIVER_ON.contains(&self.atoms.bytes(name)) || LEAD_TO_THE_PROTOTYPE.contains(&self.atoms.bytes(name)));
         for (index, expr) in hir.exprs.iter().enumerate() {
             let e = ExprId::from(index as u32);
@@ -1508,10 +1951,24 @@ impl<'a, 's> Scan<'a, 's> {
             {
                 named_at.extend(native_module(self.atoms, specifier).map(|name| (e, name)));
             }
+            if let Some(global) = global_imported_by(e)
+                && !matches!(module.bound.expr_parent[with_assertions(module, e).idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Await(_)))
+            {
+                promised.push((global, e));
+            }
             if let ExprKind::Ident(name) = expr.kind
                 && names_global(module, self.atoms, e, name)
             {
                 global_names.push(name);
+                if self.globals_that_roots_wait_for.contains(&name) && !(is_runtime_source && name == known::require && is_called(module, e).is_some()) {
+                    named_at.push((e, Name::member(GLOBAL_OBJECT, name)));
+                }
+                if self.values_that_roots_wait_for.contains(&name) && is_called(module, e).is_none() && !is_operand_of_typeof(module, e) {
+                    named_at.push((e, Name::Value(name)));
+                }
+                if Some(name) == self.symbol_constructor {
+                    named_at.extend(symbol_made_through(module, self.atoms, e).map(|name| (e, name)));
+                }
                 touched.extend(is_deleted(module, e).then_some((GLOBAL_OBJECT, Atom::NONE, e)));
                 if self.atoms.bytes(name) == b"addEventListener" {
                     listeners.push(e);
@@ -1527,10 +1984,19 @@ impl<'a, 's> Scan<'a, 's> {
                 _ => continue,
             };
             let obj = asserted(obj);
+            if self.list_symbols.contains(&Some(name)) {
+                named_at.push((e, Name::Symbol(Atom::NONE)));
+            }
             if let Some(global) = global_at(obj).filter(|_| !hands_receiver_on(name)) {
                 is_only_read.insert(obj);
                 if name.is_some() {
                     read.push((global, name, e));
+                    if global == 2 && !prints_only_primitives(module, self.atoms, e) {
+                        named_at.push((e, Name::PrintsObject));
+                    }
+                    if global == 0 && LISTENS.contains(&self.atoms.bytes(name)) {
+                        named_at.extend(channel_events_listened_for(module, self.atoms, Some(e)).into_iter().map(|name| (e, name)));
+                    }
                     touched.extend(looked_up_through(module, self.atoms, name, e).map(|name| (global, name, e)));
                 }
             }
@@ -1551,18 +2017,27 @@ impl<'a, 's> Scan<'a, 's> {
                 })
                 .collect();
             let loads_modules = |name: Atom| Some(name) == self.get_builtin_module || self.atoms.bytes(name) == b"mainModule";
-            if let Some(names) = names.filter(|names| !names.iter().any(|&name| loads_modules(name))) {
+            if let Some(names) = names.filter(|names| !names.iter().any(|&name| loads_modules(name) || name == known::default)) {
                 is_only_read.insert(destructured);
+                if global == 0 && names.iter().any(|&name| LISTENS.contains(&self.atoms.bytes(name))) {
+                    named_at.extend(channel_events_listened_for(module, self.atoms, None).into_iter().map(|name| (destructured, name)));
+                }
                 read.extend(names.into_iter().map(|name| (global, name, destructured)));
+                named_at.extend((global == 2).then_some((destructured, Name::PrintsObject)));
             }
         }
         let loads_modules = |name: Atom| Some(name) == self.get_builtin_module || self.atoms.bytes(name) == b"mainModule";
         let mut file_loader_entries: Vec<(&'static str, u32, ExprId)> = Vec::new();
+        for (global, promise) in promised {
+            read.push((global, Atom::NONE, promise));
+            file_loader_entries.push((why_it_escapes(global, "the global object"), hir[promise].pos, promise));
+        }
         for (mention, global) in mentions.into_iter().filter(|mention| !is_only_read.contains(&mention.0)) {
             let mut reads = Vec::new();
             let mut looked_up = Vec::new();
+            named_at.extend((global == 2).then_some((mention, Name::PrintsObject)));
             let hands_itself_on = |name: Atom| global == 0 && RETURN_THE_RECEIVER.contains(&self.atoms.bytes(name));
-            if global != PERFORMANCE && is_read_only_by_literal_names(module, self.atoms, mention, &|_| false, &mut reads, &mut looked_up) && !reads.iter().any(|it| loads_modules(it.0) || hands_itself_on(it.0)) {
+            if global < PERFORMANCE && is_read_only_by_literal_names(module, self.atoms, mention, &|name| name == known::default, &mut reads, &mut looked_up) && !reads.iter().any(|it| loads_modules(it.0) || hands_itself_on(it.0)) {
                 looked_up.extend(reads.iter().filter_map(|it| looked_up_through(module, self.atoms, it.0, it.1)));
                 touched.extend(looked_up.into_iter().map(|name| (global, name, mention)));
                 read.extend(reads.into_iter().map(|it| (global, it.0, it.1.some().unwrap_or(mention))));
@@ -1582,20 +2057,59 @@ impl<'a, 's> Scan<'a, 's> {
                 file_loader_entries.push(("process", hir[method].pos, method));
             }
         }
+        let inherits_from_prototype_of = |holder: ExprId| {
+            let holder = asserted(holder);
+            let name_of_global = match hir[holder].kind {
+                ExprKind::Ident(name) if is_free(holder) => Some(name),
+                _ => member_at(holder).filter(|member| matches!(hir[asserted(member.0)].kind, ExprKind::Ident(object) if self.global_objects.contains(&object) && is_free(asserted(member.0)))).map(|member| member.1),
+            };
+            match name_of_global.map(|name| self.atoms.bytes(name)) {
+                Some(b"EventTarget" | b"Performance") => Some(PERFORMANCE),
+                _ => is_event_emitter(module, self.atoms, &module_loaded_by, holder, MOST_STEPS_TO_NODE_EVENTS).then_some(0),
+            }
+        };
+        let mut written_prototypes: Vec<(usize, ExprId)> = Vec::new();
+        for e in hir.exprs.iter().enumerate().filter(|_| !is_runtime_source).map(|it| ExprId::from(it.0 as u32)) {
+            if let Some((holder, known::prototype)) = member_at(e)
+                && !is_operand_of_type_query(module, e)
+                && let Some(global) = inherits_from_prototype_of(holder)
+                && !is_object_only_read(module, self.atoms, e)
+            {
+                written_prototypes.push((global, e));
+            }
+        }
+        for declaration in hir.var_decls.iter().filter(|declaration| !is_runtime_source && declaration.init.is_some()) {
+            let PatKind::Object(props) = hir[declaration.pat].kind else { continue };
+            let may_take_the_prototype = |prop: &bun_sema::hir::PatProp| match (prop.key, hir[prop.value].kind) {
+                (PropKey::Name(key), _) | (PropKey::None, PatKind::Ident(key)) => key == known::prototype,
+                _ => true,
+            };
+            if props.iter().any(|prop| may_take_the_prototype(&hir[prop])) {
+                written_prototypes.extend(inherits_from_prototype_of(declaration.init).map(|global| (global, declaration.init)));
+            }
+        }
+        for (global, prototype) in written_prototypes {
+            read.push((global, Atom::NONE, prototype));
+            if global == 0 {
+                file_loader_entries.push(("process", hir[prototype].pos, prototype));
+            }
+        }
         for &(global, name, member) in read.iter().filter(|it| it.1.is_some()) {
-            own_functions.add_member(module, global, name, member);
+            stored.add_member(module, self.atoms, global, name, member);
         }
         for expr in hir.exprs.iter() {
-            if let ExprKind::Assign { target, .. } = expr.kind
+            if let ExprKind::Assign { target, value, .. } = expr.kind
                 && let ExprKind::Ident(name) = hir[target].kind
                 && names_global(module, self.atoms, target, name)
             {
-                own_functions.stored.insert((GLOBAL_OBJECT, name));
+                stored.add(module, self.atoms, GLOBAL_OBJECT, name, value, target);
             }
         }
         let is_stored_to = |member: ExprId| matches!(module.bound.expr_parent[member.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Assign { target, .. } if target == member));
-        let mut stored_on_performance: Vec<(usize, Atom, ExprId)> = read.iter().filter(|it| it.0 == PERFORMANCE && is_stored_to(it.2)).map(|it| (PERFORMANCE, Atom::NONE, it.2)).collect();
+        let mut stored_on_performance: Vec<(usize, Atom, ExprId)> = read.iter().filter(|it| it.0 >= PERFORMANCE && is_stored_to(it.2)).map(|it| (it.0, Atom::NONE, it.2)).collect();
         read.append(&mut stored_on_performance);
+        let mut inherited_by_performance: Vec<(usize, Atom, ExprId)> = read.iter().filter(|it| it.0 == PERFORMANCE && it.1.is_some() && !is_member_of(b"performance", self.atoms.bytes(it.1))).map(|it| (PERFORMANCE, Atom::NONE, it.2)).collect();
+        read.append(&mut inherited_by_performance);
         named_at.extend(read.iter().filter(|it| it.1.is_some() || it.0 >= 2).map(|it| (it.2, Name::member(it.0, it.1))));
         self.read.extend(read.into_iter().map(|it| (it.0, it.1)));
 
@@ -1619,7 +2133,7 @@ impl<'a, 's> Scan<'a, 's> {
             {
                 listens_for_messages = true;
             }
-            if matches!(hir[call.callee].kind, ExprKind::Ident(known::require)) && cannot_name_builtin_module(module, self.atoms, hir.id_at(call.args, 0)) {
+            if call.args.len() == 1 && matches!(hir[call.callee].kind, ExprKind::Ident(known::require)) && cannot_name_builtin_module(module, self.atoms, hir.id_at(call.args, 0)) {
                 is_harmless.insert(call.callee);
                 if !matches!(hir[hir.id_at(call.args, 0)].kind, ExprKind::String(_)) && is_free(call.callee) {
                     self.file_loader_entry_sites.push((number, call.callee));
@@ -1628,7 +2142,7 @@ impl<'a, 's> Scan<'a, 's> {
             }
             if let ExprKind::String(_) = hir[hir.id_at(call.args, 0)].kind {
                 match hir[call.callee].kind {
-                    ExprKind::Ident(known::require) => _ = is_harmless.insert(call.callee),
+                    ExprKind::Ident(known::require) if call.args.len() == 1 => _ = is_harmless.insert(call.callee),
                     ExprKind::Dot { name, .. } if Some(name) == self.get_builtin_module => _ = is_harmless.insert(call.callee),
                     ExprKind::Dot { obj, name: known::require, .. } if call.args.len() == 1 && matches!(hir[obj].kind, ExprKind::Ident(known::module)) => _ = is_harmless.insert(obj),
                     _ => {}
@@ -1680,8 +2194,21 @@ impl<'a, 's> Scan<'a, 's> {
                 ExprKind::Ident(object) if self.global_objects.contains(&object) && is_free(obj) && !is_operand_of_type_query(module, obj) => {
                     global_names.push(name);
                     named_at.push((ExprId::from(index as u32), Name::member(GLOBAL_OBJECT, name)));
-                    touched.extend(looked_up_through(module, self.atoms, name, ExprId::from(index as u32)).map(|name| (GLOBAL_OBJECT, name, ExprId::from(index as u32))));
-                    own_functions.add_member(module, GLOBAL_OBJECT, name, ExprId::from(index as u32));
+                    if self.values_that_roots_wait_for.contains(&name) && is_called(module, ExprId::from(index as u32)).is_none() {
+                        named_at.push((ExprId::from(index as u32), Name::Value(name)));
+                    }
+                    if is(name, b"Symbol") {
+                        named_at.push((ExprId::from(index as u32), Name::Symbol(Atom::NONE)));
+                    }
+                    if is(name, b"console") {
+                        named_at.push((ExprId::from(index as u32), Name::PrintsObject));
+                    }
+                    let asked = looked_up_through(module, self.atoms, name, ExprId::from(index as u32));
+                    if is(name, b"__lookupGetter__") && asked.is_some_and(|asked| asked.is_none() || self.global_objects.contains(&asked)) {
+                        why_open.push(("the global object", ExprId::from(index as u32)));
+                    }
+                    touched.extend(asked.map(|name| (GLOBAL_OBJECT, name, ExprId::from(index as u32))));
+                    stored.add_member(module, self.atoms, GLOBAL_OBJECT, name, ExprId::from(index as u32));
                     if self.global_objects.contains(&name) {
                         global_object_members.push(ExprId::from(index as u32));
                     }
@@ -1698,7 +2225,7 @@ impl<'a, 's> Scan<'a, 's> {
                 ExprKind::Ident(known::require) => is_one_of(name, &SAFE_REQUIRE_PROPERTIES),
                 ExprKind::Ident(known::module) => is_one_of(name, &OF_MODULE) || is(name, b"hot") || (is(name, b"parent") || is(name, b"children")) && does_not_escape(ExprId::from(index as u32)),
                 ExprKind::Ident(object) if self.global_objects.contains(&object) => !hands_receiver_on(name),
-                _ => variable_at(obj) == Some(known::Function),
+                _ => variable_at(obj) == Some(known::Function) && is_one_of(name, &SAFE_FUNCTION_PROPERTIES),
             };
             if may_be_read {
                 is_harmless.insert(obj);
@@ -1711,6 +2238,9 @@ impl<'a, 's> Scan<'a, 's> {
         let mut stays_visible = |e: ExprId| match reads_of_global_object(module, self.atoms, &self.global_objects, &self.globals, self.get_builtin_module, e) {
             Some((names, found, touched)) => {
                 named_via_global_object.extend(names.iter().map(|&(name, member)| (member.some().unwrap_or(e), Name::member(GLOBAL_OBJECT, name))));
+                named_via_global_object.extend(names.iter().filter(|it| self.values_that_roots_wait_for.contains(&it.0)).map(|&(name, _)| (e, Name::Value(name))));
+                named_via_global_object.extend(names.iter().filter(|it| self.atoms.bytes(it.0) == b"Symbol").map(|_| (e, Name::Symbol(Atom::NONE))));
+                named_via_global_object.extend(names.iter().filter(|it| self.atoms.bytes(it.0) == b"console").map(|_| (e, Name::PrintsObject)));
                 let reflecting = names.iter().filter(|it| matches!(self.atoms.bytes(it.0), b"Reflect" | b"Object"));
                 named_via_global_object.extend(reflecting.flat_map(|&(_, member)| [Name::Property(Atom::NONE), Name::ConstructorOfFunctions].map(|name| (member.some().unwrap_or(e), name))));
                 named_via_global_object.extend(found.iter().map(|&(global, name)| (e, Name::member(global, name))));
@@ -1822,22 +2352,6 @@ impl<'a, 's> Scan<'a, 's> {
                 let mut reads = Vec::new();
                 is_read_only_by_literal_names(module, self.atoms, e, &|_| false, &mut reads, &mut Vec::new()) && reads.iter().all(|it| is_one_of(it.0, names) || may_bind_create_require && it.1.is_none() && is(it.0, b"createRequire"))
             };
-            let is_create_require = |symbol: SymbolId| {
-                bound.symbols[symbol.idx()].decls.iter().any(|&decl| match decl {
-                    Decl::ImportSpec(spec) => makes_requires(spec),
-                    Decl::Var(pat) | Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
-                        PatParent::Prop(outer, prop) => {
-                            let is_the_property = match (hir[prop].key, hir[pat].kind) {
-                                (PropKey::Name(key), _) | (PropKey::None, PatKind::Ident(key)) => is(key, b"createRequire"),
-                                _ => false,
-                            };
-                            is_the_property && matches!(bound.pat_parent[outer.idx()], PatParent::Var(declaration) if required.iter().any(|it| it.0 == hir[declaration].init && matches!(self.atoms.bytes(it.1), b"module" | b"node:module")))
-                        }
-                        _ => false,
-                    },
-                    _ => false,
-                })
-            };
             if !required.iter().all(|&(call, specifier)| reads_only_safe_names(call, specifier)) {
                 is_always_safe = false;
             }
@@ -1850,44 +2364,13 @@ impl<'a, 's> Scan<'a, 's> {
                     is_always_safe = false;
                 }
             }
-            let mut created: Vec<bun_sema::bind::SymbolId> = Vec::new();
-            for &e in &identifiers {
-                if !is_create_require(bound.expr_symbol[e.idx()]) {
-                    continue;
-                }
-                if called_by(e).is_some_and(|(call, _)| matches!(bound.expr_parent[call.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Dot { obj, name, .. } if obj == call && is(name, b"resolve")))) {
-                    continue;
-                }
-                let holder = called_by(e).and_then(|(call, _)| match bound.expr_parent[call.idx()] {
-                    Parent::VarInit(declaration) if matches!(hir[hir[declaration].pat].kind, bun_sema::hir::PatKind::Ident(_)) && !hir[declaration].flags.contains(bun_sema::hir::Flags::EXPORT) => Some(bound.pat_symbol[hir[declaration].pat.idx()]),
-                    _ => None,
-                });
-                let is_plain = |holder: bun_sema::bind::SymbolId| {
-                    let symbol = &bound.symbols[holder.idx()];
-                    symbol.decls.len() == 1
-                        && !symbol.flags.intersects(bun_sema::bind::SymFlags::ASSIGNED | bun_sema::bind::SymFlags::MERGED)
-                        && bound.assignments_to(holder).is_empty()
-                        && !hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == symbol.name))
-                };
-                match holder.filter(|&holder| holder.is_some() && is_plain(holder)) {
-                    Some(holder) => created.push(holder),
-                    None => is_always_safe = false,
-                }
-            }
-            for &e in &identifiers {
-                if !created.contains(&bound.expr_symbol[e.idx()]) {
-                    continue;
-                }
-                let written = called_by(e).filter(|found| !hir[found.1].args.is_empty()).and_then(|found| match hir[hir.id_at(hir[found.1].args, 0)].kind {
-                    ExprKind::String(specifier) => Some(specifier),
-                    _ => None,
-                });
+            is_always_safe &= !created_requires.is_one_handed_on;
+            let held = identifiers.iter().copied().filter(|&e| created_requires.holders.contains(&bound.expr_symbol[e.idx()]));
+            for e in held.chain(created_requires.called_at_once.iter().copied()) {
+                let written = called_by(e).and_then(|found| module_loaded_by(&hir[found.1]));
                 let is_resolve = matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Dot { obj, name, .. } if obj == e && is(name, b"resolve")));
                 match written {
-                    Some(specifier) => {
-                        named_via_created_requires.push(specifier);
-                        named_at.extend(native_module(self.atoms, specifier).map(|name| (e, name)));
-                    }
+                    Some(specifier) => named_via_created_requires.push(specifier),
                     None if is_resolve => {}
                     None => is_always_safe = false,
                 }
@@ -1955,9 +2438,9 @@ impl<'a, 's> Scan<'a, 's> {
             }
         }
         let is_callee = |e: ExprId| matches!(module.bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(call) if hir[call].callee == e));
-        let taken_off_their_receiver = hir.exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Dot { name, .. } if is_one_of(name, &EVENT_TARGET_FUNCTIONS))).map(|it| ExprId::from(it.0 as u32));
+        let taken_off_their_receiver = hir.exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Dot { name, .. } if is_one_of(name, &REACH_LISTENERS))).map(|it| ExprId::from(it.0 as u32));
         why_open.extend(taken_off_their_receiver.filter(|&member| !is_callee(member) && !is_under_typeof(member)).map(|member| ("addEventListener of the global object", member)));
-        let is_taken_out = |prop: &bun_sema::hir::PatProp| matches!((prop.key, hir[prop.value].kind), (PropKey::Name(name), _) | (PropKey::None, PatKind::Ident(name)) if is_one_of(name, &EVENT_TARGET_FUNCTIONS));
+        let is_taken_out = |prop: &bun_sema::hir::PatProp| matches!((prop.key, hir[prop.value].kind), (PropKey::Name(name), _) | (PropKey::None, PatKind::Ident(name)) if is_one_of(name, &REACH_LISTENERS));
         if hir.pat_props.iter().any(is_taken_out) {
             why_open.push(("addEventListener of the global object", ExprId::NONE));
         }
@@ -1978,7 +2461,7 @@ impl<'a, 's> Scan<'a, 's> {
             }
         }
         for &(name, member) in &names_via_global_object {
-            own_functions.add_member(module, GLOBAL_OBJECT, name, member);
+            stored.add_member(module, self.atoms, GLOBAL_OBJECT, name, member);
         }
         for call in hir.calls.iter().filter(|call| call.args.len() >= 2 && is_define_property(call.callee)) {
             let receiver = asserted(hir.id_at(call.args, 0));
@@ -1992,12 +2475,26 @@ impl<'a, 's> Scan<'a, 's> {
             let has_only_a_value = call.args.len() == 3
                 && matches!(hir[hir.id_at(call.args, 2)].kind, ExprKind::Object(props) if props.iter().all(|prop| matches!(hir[prop].key, PropKey::Name(key) if !is(key, b"get") && !is(key, b"set"))));
             match hir[hir.id_at(call.args, 1)].kind {
-                ExprKind::String(name) if has_only_a_value => _ = own_functions.stored.insert((holder, name)),
+                ExprKind::String(name) if has_only_a_value => {
+                    let ExprKind::Object(props) = hir[hir.id_at(call.args, 2)].kind else { continue };
+                    for prop in props.iter().map(|prop| &hir[prop]).filter(|prop| matches!(prop.key, PropKey::Name(key) if is(key, b"value"))) {
+                        match prop.kind {
+                            PropKind::Init | PropKind::Shorthand | PropKind::Method if prop.value.is_some() => stored.add(module, self.atoms, holder, name, prop.value, receiver),
+                            _ => stored.may_see_the_global.push((holder, receiver)),
+                        }
+                    }
+                }
                 _ => why_open.push((why_it_escapes(holder, "an accessor on the global object"), receiver)),
             }
         }
-        self.stored_on_globals.extend(own_functions.stored);
-        self.called_on_globals.extend(own_functions.called.into_iter().map(|(holder, name, member)| (number, member, holder, name)));
+        for (holder, at) in stored.may_see_the_global {
+            if holder < 2 || holder == GLOBAL_OBJECT {
+                why_open.push((why_it_escapes(holder, STORED_ON_THE_GLOBAL_OBJECT), at));
+            } else {
+                named_at.push((at, Name::member(holder, Atom::NONE)));
+                self.touches_every_member_of[holder] = true;
+            }
+        }
         if names_via_global_object.iter().any(|&(name, _)| is(name, b"addEventListener")) {
             why_open.push(("addEventListener of the global object", ExprId::NONE));
         }
@@ -2132,7 +2629,9 @@ pub(crate) fn find(loaded: &[Option<Box<Module<'_>>>], atoms: &Interner<'_>, is_
             continue;
         }
         let is_read_by_dynamic_name = matches!(why.get(&id), Some(InclusionReason::AnyName(_)));
+        let waits_to_be_named = !preserves_source_paths && scan.loader_entry().is_none() && !roots_without_loader_entries.contains(&id) && manifest.waits_to_be_named(bun_builtin_syntax::MODULE_ROOT | id);
         let loaded_by = match (without_loader_entries.get(&id), reason) {
+            (Some(Reason::Root), _) if waits_to_be_named => LoadedBy::RuntimeModulesOnly,
             (Some(Reason::Root), _) => LoadedBy::NativeCodeOrLiteralName,
             (Some(Reason::RequiredBy(_)), _) if is_read_by_dynamic_name => LoadedBy::RuntimeModulesOrComputedName,
             (Some(Reason::RequiredBy(_)), _) => LoadedBy::RuntimeModulesOnly,
@@ -2154,8 +2653,6 @@ pub(crate) fn find(loaded: &[Option<Box<Module<'_>>>], atoms: &Interner<'_>, is_
     runtime_use.runs_in_place = preserves_source_paths;
     let dispatches_events = atoms.lookup(b"dispatchEvent").is_some_and(|name| scan.global_names.contains(&name));
     let if_dispatched = scan.openings_if_events_are_dispatched.iter().filter(|_| dispatches_events);
-    runtime_use.stored_on_globals = scan.stored_on_globals.clone();
-    runtime_use.called_on_globals = scan.called_on_globals.iter().filter_map(|&(number, at, holder, name)| Some((loaded[number as usize].as_deref()?.path.text.to_vec(), at, holder, name))).collect();
     runtime_use.openings = scan.openings.iter().chain(if_dispatched).filter_map(|&(number, at, why)| Some((loaded[number as usize].as_deref()?.path.text.to_vec(), at, why))).collect();
     runtime_use.open_for(runtime_use.openings.iter().map(|opening| (opening.2, opening.0.clone())).collect());
     runtime_use.facts.extend(native.iter().map(|module| [b"native ", &module.0[..]].concat()));
@@ -2224,12 +2721,11 @@ pub(crate) fn add_what_the_loaded_program_shows(found: &mut Found, program: &Pro
                     let reflecting = names_of_this.iter().filter(|it| matches!(atoms.bytes(it.0), b"Reflect" | b"Object"));
                     named_through_this.extend(reflecting.flat_map(|&(_, member)| [Name::Property(Atom::NONE), Name::ConstructorOfFunctions].map(|name| (member.some().unwrap_or(this), name))));
                     named_through_this.extend(read_of_this.iter().chain(&touched_through_this).map(|&(kind, name)| (this, Name::member(kind, name))));
-                    let mut own_functions = OwnFunctionsOnGlobals::default();
+                    let mut stored = StoredOnGlobals::default();
                     for &(name, member) in &names_of_this {
-                        own_functions.add_member(module, GLOBAL_OBJECT, name, member);
+                        stored.add_member(module, atoms, GLOBAL_OBJECT, name, member);
                     }
-                    found.runtime_use.stored_on_globals.extend(own_functions.stored);
-                    found.runtime_use.called_on_globals.extend(own_functions.called.into_iter().map(|(holder, name, member)| (path.clone(), member, holder, name)));
+                    found.runtime_use.openings.extend(stored.may_see_the_global.into_iter().map(|it| (path.clone(), it.1, STORED_ON_THE_GLOBAL_OBJECT)));
                     names.extend(names_of_this.into_iter().map(|read| read.0));
                     found.runtime_use.openings.extend(read_of_this.iter().filter_map(|&(global, name)| Some((path.clone(), this, member_that_opens_the_world(atoms, global, name)?))));
                     read.extend(read_of_this);
@@ -2259,19 +2755,60 @@ pub(crate) fn add_what_the_loaded_program_shows(found: &mut Found, program: &Pro
         named_through_this.extend(serving.into_iter().flat_map(|this| ANY_OPTION_OF_A_SERVER.map(|name| (this, name))));
     }
 
-    for (path, at, holder, name) in std::mem::take(&mut found.runtime_use.called_on_globals) {
-        if !found.runtime_use.stored_on_globals.contains(&(holder, name)) {
-            continue;
-        }
-        if holder < 2 || holder == GLOBAL_OBJECT {
-            found.runtime_use.openings.push((path, at, why_it_escapes(holder, "a function of the program's own that is called on the global object")));
-        } else {
-            found.runtime_use.facts.push([GLOBALS[holder].0, b" *"].concat());
-            found.runtime_use.named_at.push((path, vec![(at, Name::member(holder, Atom::NONE))]));
-        }
-    }
     let reasons = found.runtime_use.openings.iter().map(|opening| (opening.2, opening.0.clone())).collect();
     found.runtime_use.open_for(reasons);
+    release_roots(&found.runtime_use, program);
+}
+
+fn release_roots(runtime_use: &RuntimeUse, program: &Program) {
+    if runtime_use.names_plugin || runtime_use.runs_in_place {
+        return;
+    }
+    let (atoms, files) = (&program.files.atoms, &program.files);
+    let mut made_for: FxHashMap<&[u8], Vec<u32>> = FxHashMap::default();
+    for (root, facts) in Archive::embedded().manifest().roots_made_for() {
+        for fact in facts {
+            made_for.entry(&fact[..]).or_default().push(root);
+            let kind = bun_core::strings::split(fact, b" ").next().unwrap_or(fact);
+            made_for.entry(kind).or_default().push(root);
+        }
+    }
+    let roots_of = |named_at: &[(ExprId, Name)]| -> Vec<(ExprId, u32)> {
+        let mut found = Vec::new();
+        for &(place, name) in named_at.iter().filter(|it| !matches!(it.1, Name::Native(..) | Name::Property(_))) {
+            let fact = name.fact(atoms);
+            let roots = made_for.get(fact.strip_suffix(b" *").unwrap_or(&fact));
+            found.extend(roots.into_iter().flatten().map(|&root| (place, root)));
+        }
+        found
+    };
+    let mut released: FxHashMap<FileId, Vec<(FnId, u32)>> = FxHashMap::default();
+    let mut release = |path: &[u8], places: Vec<(ExprId, u32)>| {
+        let Some(file) = files.by_path.get(path) else { return };
+        let module = files.module(file);
+        for (place, root) in places.into_iter().filter(|it| it.0.is_none() || files.enclosing_dead_range_start(file, module.hir[it.0].pos).is_none()) {
+            let holder = place.some().map_or(FnId::NONE, |place| function_around(module, module.bound.expr_parent[place.idx()]));
+            released.entry(file).or_default().push((holder, root));
+        }
+    };
+    for (path, named_at) in &runtime_use.named_at {
+        release(path, roots_of(named_at));
+    }
+    for source in &runtime_use.runtime_sources {
+        let mut places = roots_of(&source.named_at);
+        places.extend(source.escapes.iter().map(|escape| (escape.0, EVERY_ROOT)));
+        places.extend(source.module.iter().filter_map(|module| made_for.get(&module[..])).flatten().map(|&root| (ExprId::NONE, root)));
+        release(&source.path, places);
+    }
+    for opening in &runtime_use.openings {
+        release(&opening.0, vec![(opening.1, EVERY_ROOT)]);
+    }
+    for (file, mut released) in released {
+        released.sort_unstable_by_key(|it| (it.0.idx(), it.1));
+        released.dedup();
+        _ = files.module(file).roots_released.set(program.session.arena().alloc_slice_copy(&released));
+    }
+    program.releases_roots.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn outermost_function_at(module: &Module<'_>, pos: u32) -> FnId {
@@ -2294,6 +2831,7 @@ struct Counted {
     reading_any_property: Vec<FileId>,
     finding_the_constructor_of_functions: Vec<FileId>,
     on_behalf_of: Vec<(&'static [Box<[u8]>], Name, FileId)>,
+    properties_folded_to_new_texts: Vec<(Vec<u8>, bool)>,
 }
 
 impl Counted {
@@ -2314,6 +2852,11 @@ impl Counted {
             let manifest = Archive::embedded().manifest();
             let written = Some(module.hir[function].name).filter(|written| written.is_some());
             stands_for = written.and_then(|written| manifest.builtin_function_id(module.file_name(), atoms.bytes(written))).and_then(|id| manifest.on_behalf_of(id, &name.fact(atoms)));
+        }
+        if let Some(Builtin::Module(id, _)) = module.builtin
+            && Archive::embedded().manifest().is_vouched_for(bun_builtin_syntax::MODULE_ROOT | id)
+        {
+            stands_for = Archive::embedded().manifest().on_behalf_of(bun_builtin_syntax::MODULE_ROOT | id, &name.fact(atoms));
         }
         match stands_for {
             Some(stands_for) => self.on_behalf_of.push((stands_for, name, file)),
@@ -2337,9 +2880,13 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
         return;
     }
     let mut counted = Counted::default();
+    let mut reading_what_process_may_inherit: Vec<&[u8]> = Vec::new();
     for (path, named_at) in &runtime_use.named_at {
         let (is_reached, file) = (reached_in(path), files.by_path.get(path));
         for name in named_at.iter().filter(|it| is_reached(it.0)).map(|it| it.1) {
+            if matches!(name, Name::Member(0, member) if member.is_some() && member != known::default && !is_member_of(b"process", atoms.bytes(member))) {
+                reading_what_process_may_inherit.push(path);
+            }
             match file {
                 Some(file) if name == Name::Property(Atom::NONE) => counted.reading_any_property.push(file),
                 Some(file) if name == Name::ConstructorOfFunctions => counted.finding_the_constructor_of_functions.push(file),
@@ -2368,15 +2915,29 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
         let mut of_slice = Counted::default();
         let mut names: Vec<Atom> = Vec::new();
         let checker = std::cell::RefCell::new(program.checker());
+        let folded_to_new_texts = std::cell::RefCell::new(Vec::new());
         for &file in slices[slice] {
             let module = files.module(file);
-            let (hir, properties) = (&module.hir, Properties { module, file, checker: &checker, reflection });
+            let (hir, properties) = (&module.hir, Properties { module, file, checker: &checker, folded_to_new_texts: &folded_to_new_texts, reflection });
             let is_private = |name: Atom| module.builtin.is_some() && name.is_some() && atoms.bytes(name).starts_with(b"$");
             let is_of_program = module.builtin.is_none() && !bun_core::strings::contains(module.path.text, PRELUDE_DIRECTORY);
             let add = |of_slice: &mut Counted, name: Name, parent: Parent, pos: u32| {
                 if !of_slice.is_known(name, file) && is_child_in_compiled_program(program, file, parent, pos) {
                     of_slice.add(atoms, module, file, function_around(module, parent), name);
                 }
+            };
+            let add_property = |of_slice: &mut Counted, name: Atom, parent: Parent, pos: u32| {
+                add(of_slice, Name::Property(name), parent, pos);
+                if is_of_program && name.is_some() {
+                    add(of_slice, Name::PropertyReadByProgram(name), parent, pos);
+                }
+            };
+            let add_new_texts = |of_slice: &mut Counted, parent: Parent, pos: u32| {
+                let mut texts = folded_to_new_texts.borrow_mut();
+                if !texts.is_empty() && is_child_in_compiled_program(program, file, parent, pos) {
+                    of_slice.properties_folded_to_new_texts.extend(texts.drain(..).map(|text| (text, is_of_program)));
+                }
+                texts.clear();
             };
             for (index, expr) in hir.exprs.iter().enumerate().filter(|it| module.bound.expr_parent[it.0] != Parent::None) {
                 let (e, parent) = (ExprId::from(index as u32), module.bound.expr_parent[index]);
@@ -2387,20 +2948,26 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
                 {
                     add(&mut of_slice, Name::member(GLOBAL_OBJECT, name), parent, expr.pos);
                 }
-                if matches!(expr.kind, ExprKind::Dot { name, .. } if !reflection.is_name_of_function(name) && of_slice.names.contains(&Name::Property(name))) {
+                match expr.kind {
+                    ExprKind::Regex => add(&mut of_slice, Name::Syntax("regexp-literal"), parent, expr.pos),
+                    ExprKind::BigInt(_) => add(&mut of_slice, Name::Syntax("bigint-literal"), parent, expr.pos),
+                    _ => {}
+                }
+                if matches!(expr.kind, ExprKind::Dot { name, .. } if !reflection.is_name_of_function(name) && of_slice.names.contains(&if is_of_program { Name::PropertyReadByProgram(name) } else { Name::Property(name) })) {
                     continue;
                 }
                 let mut hands_out_values = false;
                 properties.named_by(e, &mut names, &mut hands_out_values);
+                add_new_texts(&mut of_slice, parent, expr.pos);
                 if is_of_program && hands_out_values && names.iter().any(|&name| name.is_none() || atoms.bytes(name) == b"constructor") {
                     add(&mut of_slice, Name::ConstructorOfFunctions, parent, expr.pos);
                 }
                 for name in names.drain(..).filter(|&name| !is_private(name)) {
-                    add(&mut of_slice, Name::Property(name), parent, expr.pos);
+                    add_property(&mut of_slice, name, parent, expr.pos);
                 }
             }
             for imported in hir.imports.iter().filter(|import| !import.type_only).flat_map(|import| import.named.iter()).map(|spec| &hir[spec]).filter(|spec| !spec.type_only) {
-                add(&mut of_slice, Name::Property(imported.imported), Parent::File, 0);
+                add_property(&mut of_slice, imported.imported, Parent::File, 0);
             }
             for (index, prop) in hir.pat_props.iter().enumerate().filter(|it| !it.1.is_rest) {
                 let name = match (prop.key, hir[prop.value].kind) {
@@ -2408,8 +2975,9 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
                     (PropKey::Computed(key), _) => properties.constant_key(key),
                     _ => None,
                 };
+                add_new_texts(&mut of_slice, Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
                 if let Some(name) = name.filter(|&name| !is_private(name)) {
-                    add(&mut of_slice, Name::Property(name), Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
+                    add_property(&mut of_slice, name, Parent::PatKey(bun_sema::hir::PatPropId::from(index as u32)), prop.pos);
                 }
             }
         }
@@ -2418,6 +2986,7 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
         counted.reading_any_property.extend(of_slice.reading_any_property);
         counted.finding_the_constructor_of_functions.extend(of_slice.finding_the_constructor_of_functions);
         counted.on_behalf_of.extend(of_slice.on_behalf_of);
+        counted.properties_folded_to_new_texts.extend(of_slice.properties_folded_to_new_texts);
     });
     let mut counted = core::mem::take(walked.get_mut());
     for &(file, pos) in program.reads_of_any_property.lock().iter() {
@@ -2429,6 +2998,8 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
         counted.add(atoms, module, file, outermost_function_at(module, pos), Name::ConstructorOfFunctions);
     }
     let mut facts: FxHashSet<Vec<u8>> = counted.names.iter().map(|name| name.fact(atoms)).collect();
+    facts.extend(counted.properties_folded_to_new_texts.iter().map(|folded| [b"property ", &folded.0[..]].concat()));
+    facts.extend(counted.properties_folded_to_new_texts.iter().filter(|folded| folded.1).map(|folded| [b"program-property ", &folded.0[..]].concat()));
     for source in &runtime_use.runtime_sources {
         facts.extend(source.facts.iter().cloned());
         facts.extend(source.escapes.iter().flat_map(|escape| ESCAPES.iter().filter(move |it| it.0 == escape.1)).flat_map(|it| it.1).map(|kind| [kind, &b" *"[..]].concat()));
@@ -2447,6 +3018,12 @@ pub(crate) fn keep_what_the_compiled_program_reaches(found: &mut Found, program:
         });
         if counted.on_behalf_of.len() == waiting {
             break;
+        }
+    }
+    if facts.contains(&b"module node:events"[..]) {
+        facts.insert(b"process *".to_vec());
+        for path in reading_what_process_may_inherit {
+            add_reason(&mut runtime_use.why_open, "a member that process may inherit from EventEmitter.prototype", path);
         }
     }
     let mut finding = counted.finding_the_constructor_of_functions;

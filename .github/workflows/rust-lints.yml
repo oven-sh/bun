@@ -124,6 +124,29 @@ jobs:
         working-directory: vendor/lolhtml
         run: cargo test
 
+  exe-islands:
+    name: exe_islands cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
+
+      - name: cargo test
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: cargo test -p bun_exe_islands
+
   mordant:
     name: mordant
     runs-on: ubuntu-latest

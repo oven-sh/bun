@@ -177,6 +177,7 @@ const standardStream = ["node:tty", "node:fs", "internal/fs/streams"];
 const alsoRequired: Record<string, string[]> = {
   "node:fs/promises": ["internal/fifo"],
   "node:console": console_,
+  "node:events": standardStream,
   "internal/promisify": ["node:timers/promises"],
   "node:worker_threads": ["internal/worker/stdio"],
   "node:child_process": ipc,
@@ -271,39 +272,18 @@ for (const line of fs.readFileSync(path.join(ENGINE, "functions.txt"), "utf8").s
   functionIds.set(`engine/${file}\t${name}`, Number(id));
 }
 
-const standardOutput = ["process stdout", "process stderr"];
-const standardInput = ["process stdin", "process openStdin"];
-const bundlerPlugins = { "*": ["Bun build", "Bun serve", "Bun plugin"] };
 const keysAreIndexesOrSymbols = { "property *": [] };
 const keysAreCountedAtTheCaller = { "property *": [] };
 const readsOnlyItsOwnNewObject = { "property *": [] };
+const buffers = { "*": ["global Buffer", "native node:buffer"] };
 const onBehalfOf: Record<string, Record<string, string[]>> = {
-  "Bake.ts\trenderRoutesForProdStatic": { "*": ["Bun build"] },
-  "BundlerPlugin.ts\tloadAndResolvePluginsForServe": bundlerPlugins,
-  "BundlerPlugin.ts\trunOnEndCallbacks": bundlerPlugins,
-  "BundlerPlugin.ts\trunOnLoadPlugins": bundlerPlugins,
-  "BundlerPlugin.ts\trunOnResolvePlugins": bundlerPlugins,
-  "BundlerPlugin.ts\trunSetupFunction": bundlerPlugins,
+  "JSBufferConstructor.ts\tfrom": { ...keysAreIndexesOrSymbols, ...buffers },
+  "JSBufferConstructor.ts\tisBuffer": buffers,
+  "JSBufferPrototype.ts\toffset": buffers,
+  "JSBufferPrototype.ts\tparent": buffers,
+  "JSBufferPrototype.ts\ttoJSON": buffers,
   "CommonJS.ts\tinternalRequire": { "process dlopen": ["loader napi"] },
   "CommonJS.ts\toverridableRequire": { "Bun jest": ["native bun:test"] },
-  "ConsoleObject.ts\tasyncIterator": { "*": ["console @@asyncIterator"] },
-  "ConsoleObject.ts\tcreateConsoleConstructor": { "*": ["console Console"] },
-  "ConsoleObject.ts\twrite": { "*": ["console write"] },
-  "Glob.ts\tscan": { "*": ["Bun Glob"] },
-  "Glob.ts\tscanSync": { "*": ["Bun Glob"] },
-  "Peek.ts\tpeek": { "*": ["Bun peek"] },
-  "Peek.ts\tpeekStatus": { "*": ["Bun peek"] },
-  "ProcessObjectInternals.ts\tbuildAllowedNodeEnvironmentFlags": { "*": ["process allowedNodeEnvironmentFlags"] },
-  "ProcessObjectInternals.ts\tcreateProcessFinalization": { "*": ["process finalization"] },
-  "ProcessObjectInternals.ts\tgetChannel": { "*": ["process channel"] },
-  "ProcessObjectInternals.ts\tgetNodeWorkerStdioStream": { "*": [...standardOutput, ...standardInput] },
-  "ProcessObjectInternals.ts\tgetStdinStream": { "*": standardInput },
-  "ProcessObjectInternals.ts\tgetStdioWriteStream": { "*": standardOutput },
-  "ProcessObjectInternals.ts\tloadEnvFile": { "*": ["process loadEnvFile"] },
-  "ProcessObjectInternals.ts\trawDebug": { "*": ["process _rawDebug"] },
-  "WasmStreaming.ts\tconsumeStream": { "*": ["global WebAssembly"] },
-  "shell.ts\tcreateBunShellTemplateFunction": { "*": ["Bun $"] },
-  "JSBufferConstructor.ts\tfrom": keysAreIndexesOrSymbols,
   "ProcessObjectInternals.ts\twindowsEnv": keysAreCountedAtTheCaller,
   "engine/ArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
   "engine/ArrayConstructor.js\tfromAsync": keysAreIndexesOrSymbols,
@@ -335,6 +315,84 @@ for (const [key, names] of Object.entries(onBehalfOf)) {
   for (const [name, facts] of Object.entries(names)) {
     lines.push(`behalf\t${id}\t${name}\t${facts.join("\t")}`);
   }
+}
+
+const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
+  "internal/util/inspect": { "global Buffer": [], "native node:buffer": [] },
+};
+for (const [specifier, names] of Object.entries(onBehalfOfInModules)) {
+  for (const [name, facts] of Object.entries(names)) {
+    lines.push(`behalf-module\t${resolve(specifier, "")}\t${name}\t${facts.join("\t")}`);
+  }
+}
+
+const standardOutput = ["process stdout", "process stderr", "console _stdout", "console _stderr"];
+const standardInput = ["process stdin", "process openStdin"];
+const bundlerPlugins = ["Bun build", "Bun plugin", "loader html"];
+const nodeModule = ["native node:module"];
+const requireFunction = ["global require", "global module", ...nodeModule];
+const printedObjects = ["Bun inspect", "Bun jest", "console *", "native bun:test", "prints object", "symbol nodejs.util.inspect.custom"];
+const channel = [
+  "process send",
+  "process channel",
+  "process disconnect",
+  "process connected",
+  "process on:message",
+  "process on:disconnect",
+  "Bun spawn",
+  "module node:child_process",
+  "module node:cluster",
+];
+const rootsMadeFor: Record<string, string[]> = {
+  "internal/util/inspect": printedObjects,
+  "node:path": [],
+  "node:timers/promises": ["value setTimeout", "value setInterval", "value setImmediate", "symbol nodejs.util.promisify.custom"],
+  "Bake.ts\trenderRoutesForProdStatic": ["Bun build"],
+  "BundlerPlugin.ts\tloadAndResolvePluginsForServe": bundlerPlugins,
+  "BundlerPlugin.ts\trunOnEndCallbacks": bundlerPlugins,
+  "BundlerPlugin.ts\trunOnLoadPlugins": bundlerPlugins,
+  "BundlerPlugin.ts\trunOnResolvePlugins": bundlerPlugins,
+  "BundlerPlugin.ts\trunSetupFunction": bundlerPlugins,
+  "CommonJS.ts\tcreateRequireCache": requireFunction,
+  "CommonJS.ts\tgetWrapperArrayProxy": nodeModule,
+  "CommonJS.ts\tinternalRequire": requireFunction,
+  "CommonJS.ts\tloadEsmIntoCjs": requireFunction,
+  "CommonJS.ts\tmain": requireFunction,
+  "CommonJS.ts\toverridableRequire": requireFunction,
+  "CommonJS.ts\trequire": requireFunction,
+  "CommonJS.ts\trequireESM": requireFunction,
+  "CommonJS.ts\trequireESMFromHijackedExtension": nodeModule,
+  "CommonJS.ts\trequireResolve": requireFunction,
+  "ConsoleObject.ts\tasyncIterator": ["console *"],
+  "ConsoleObject.ts\tcreateConsoleConstructor": ["console Console"],
+  "ConsoleObject.ts\twrite": ["console write"],
+  "Fifo.ts\tcreateFIFO": ["module node:fs/promises"],
+  "Glob.ts\tscan": ["Bun Glob"],
+  "Glob.ts\tscanSync": ["Bun Glob"],
+  "Ipc.ts\tparseHandle": channel,
+  "Ipc.ts\trestoreAdvancedBuffers": channel,
+  "Ipc.ts\tserialize": channel,
+  "Ipc.ts\ttagAdvancedBuffers": channel,
+  "NodeModuleObject.ts\t_initPaths": nodeModule,
+  "Peek.ts\tpeek": ["Bun peek"],
+  "Peek.ts\tpeekStatus": ["Bun peek"],
+  "ProcessObjectInternals.ts\tbuildAllowedNodeEnvironmentFlags": ["process allowedNodeEnvironmentFlags"],
+  "ProcessObjectInternals.ts\tcreateProcessFinalization": ["process finalization"],
+  "ProcessObjectInternals.ts\tgetChannel": ["process channel"],
+  "ProcessObjectInternals.ts\tgetNodeWorkerStdioStream": [...standardOutput, ...standardInput],
+  "ProcessObjectInternals.ts\tgetStdinStream": standardInput,
+  "ProcessObjectInternals.ts\tgetStdioWriteStream": [...standardOutput, "module node:events"],
+  "ProcessObjectInternals.ts\tloadEnvFile": ["process loadEnvFile"],
+  "ProcessObjectInternals.ts\trawDebug": ["process _rawDebug"],
+  "UtilInspect.ts\tgetStylizeWithColor": [...printedObjects, "module internal:util/inspect"],
+  "UtilInspect.ts\tstylizeWithNoColor": [...printedObjects, "module internal:util/inspect"],
+  "WasmStreaming.ts\tconsumeStream": ["global WebAssembly"],
+  "shell.ts\tcreateBunShellTemplateFunction": ["Bun $"],
+};
+for (const [key, facts] of Object.entries(rootsMadeFor)) {
+  const id = key.includes("\t") ? functionIds.get(key) : resolve(key, "");
+  if (id === undefined) throw new Error(`\`rootsMadeFor\` names ${key.replace("\t", ": ")}, which is no built-in function`);
+  lines.push(["root", key.includes("\t") ? "function" : "module", id, ...facts].join("\t"));
 }
 
 for (const [property, specifiers] of Object.entries(triggers)) {

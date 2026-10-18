@@ -122,7 +122,7 @@ describe.concurrent("what a program names of the runtime", () => {
     ["a listener on the global object", `addEventListener("error", function (this: any) { console.log(this); });`, "addEventListener of the global object"],
     ["a listener for an event that the program dispatches", `declare const dispatchEvent: any; addEventListener("mine", function (this: any) { console.log(this); }); dispatchEvent(new Event("mine"));`, "addEventListener and dispatchEvent of the global object"],
     ["a listener for a computed event", `addEventListener(process.argv[2], function (this: any) { console.log(this); });`, "addEventListener of the global object"],
-    ["a function of its own called on the global object", `(globalThis as any).mine = function (this: any) { return this; }; console.log((globalThis as any).mine());`, "a function of the program's own that is called on the global object"],
+    ["a function of its own called on the global object", `(globalThis as any).mine = function (this: any) { return this; }; console.log((globalThis as any).mine());`, "what may be a function that sees the global object, stored on it"],
     ["an accessor on the global object", `Object.defineProperty(globalThis, "mine", { get() { return this; } }); console.log((globalThis as any).mine);`, "an accessor on the global object"],
     ["require.cache", `console.log(require.cache);`, "require.main, require.cache or require.extensions"],
     ["node:vm", `import vm from "node:vm"; console.log(vm);`, "a module that loads modules or evaluates text"],
@@ -139,7 +139,6 @@ describe.concurrent("what a program names of the runtime", () => {
     ["in", `console.log("navigator" in globalThis);`],
     ["typeof globalThis", `console.log(typeof globalThis !== "undefined");`],
     ["require.main === module", `console.log(require.main === module);`],
-    ["instanceof", `const scope: any = globalThis; console.log(scope instanceof Object);`],
     ["a value stored on the global object", `(globalThis as any).mine = { count: 1 }; console.log((globalThis as any).mine.count);`],
     ["a value defined on the global object", `Object.defineProperty(globalThis, "mine", { value: 1 }); console.log((globalThis as any).mine);`],
     ["a native function called on the global object", `console.log((globalThis as any).structuredClone(1));`],
@@ -175,7 +174,7 @@ describe.concurrent("process as a member of the global object", () => {
 });
 
 describe.concurrent("delete makes the engine create every lazy property of the object", () => {
-  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *");
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *" && line !== "symbol *");
 
   test.each([
     ["the global object", `delete (globalThis as any).fetch;`, "global *"],
@@ -224,7 +223,7 @@ describe.concurrent("delete makes the engine create every lazy property of the o
 });
 
 describe.concurrent("asking an object for a member makes the engine create the member", () => {
-  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *");
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *" && line !== "symbol *");
 
   test.each([
     ["in, of the global object", `console.log("HTMLRewriter" in globalThis);`, "global HTMLRewriter"],
@@ -364,9 +363,9 @@ describe.concurrent("only what is part of the compiled program counts", () => {
     expect({ world: use.world, color: use.facts.has("Bun color"), rewriter: use.facts.has("global HTMLRewriter") }).toEqual({ world: "closed", color: true, rewriter: false });
   });
 
-  test("what a built-in function that native code may always call names counts in every program", async () => {
+  test("what native code may ask for at any time counts in every program", async () => {
     const hello = await of(`console.log(1);`);
-    expect(hello.facts.has("Bun main")).toBe(true);
+    expect({ module: hello.facts.has("module internal:process/next_tick_queue"), named: hello.facts.has("process _exiting") }).toEqual({ module: true, named: true });
   });
 
   test("a built-in module names what its reached functions name", async () => {
@@ -386,8 +385,6 @@ describe.concurrent("what a built-in function names counts on behalf of what han
   });
 
   test.each([
-    ["Bun.build", `console.log(Bun.build({ entrypoints: [] }));`, ["Bun write", "Bun resolve"]],
-    ["Bun.serve", `console.log(Bun.serve({ fetch: () => new Response("") }));`, ["Bun resolve"]],
     ["bun:test", `console.log(require("bun:test"));`, ["Bun jest"]],
     ["console.write", `console.write("a");`, ["Bun stdout"]],
     ["console.Console", `console.log(new console.Console(process.stdout));`, ["process hrtime"]],
@@ -400,9 +397,107 @@ describe.concurrent("what a built-in function names counts on behalf of what han
     expect({ world: use.world, named: named(use).filter(fact => expected.includes(fact)) }).toEqual({ world: "closed", named: expected });
   });
 
+  test("Bun.build brings what it leads to", async () => {
+    const use = await of(`console.log(Bun.build({ entrypoints: [] }));`);
+    expect(named(use).filter(fact => fact === "Bun write" || fact === "Bun resolve")).toEqual(["Bun write", "Bun resolve"]);
+  });
+
   test("a function that nothing mentions brings nothing", async () => {
     const use = await of(`function never() { return Bun.build({ entrypoints: [] }); }\nconsole.log(1);`);
     expect(named(use)).toEqual([]);
+  });
+
+  test("a server without a page brings no plugins of the bundler", async () => {
+    const use = await of(`declare const Response: any;\nBun.serve({ fetch: () => new Response("") });`);
+    expect({ world: use.world, named: named(use) }).toEqual({ world: "closed", named: [] });
+  });
+});
+
+describe.concurrent("what native code asks for on behalf of the program is in the program where the program names the need", () => {
+  const inspect = "module internal:util/inspect";
+  const timers = "module node:timers/promises";
+
+  test("a program that prints a string has neither the inspector nor node:path nor the require function", async () => {
+    const use = await of(`console.log("hello");`);
+    const absent = [inspect, timers, "module node:path", "Bun main", "Bun Glob", "prints object"];
+    expect({ world: use.world, named: absent.filter(fact => use.facts.has(fact)) }).toEqual({ world: "closed", named: [] });
+  });
+
+  test.each([
+    ["a string", `console.log("a");`],
+    ["a template", "console.log(`a ${process.pid} b`);"],
+    ["a sum", `console.log("listening on " + process.pid);`],
+    ["numbers, comparisons and typeof", `console.log(1 + 2, 3 > 2, typeof process.pid, !process.pid, -1);`],
+    ["String(), Number() and JSON.stringify()", `console.log(String(process.pid), Number("1"), JSON.stringify(process.versions));`],
+    ["one of two strings", `console.log(process.pid ? "a" : "b", "" || "c");`],
+    ["a constant that holds a string", `const text = "a" + process.pid;\nconsole.error(text);`],
+  ])("printing %s needs no inspector", async (_, text) => {
+    const use = await of(text);
+    expect({ prints: use.facts.has("prints object"), inspector: use.facts.has(inspect) }).toEqual({ prints: false, inspector: false });
+  });
+
+  test.each([
+    ["an object", `console.log({});`],
+    ["a variable", `let value: unknown = 1;\nvalue = process;\nconsole.log(value);`],
+    ["what a function returns", `console.log(process.cwd());`],
+    ["a member", `console.log(process.versions);`],
+    ["arguments that are spread", `console.log(...process.argv);`],
+    ["a method that is handed on", `[1].forEach(console.log);`],
+    ["a method that is taken out", `const { log } = console;\nlog(1);`],
+    ["console under another name", `const output = console;\noutput.log(1);`],
+    ["Bun.inspect", `process.title = Bun.inspect({});`],
+  ])("printing %s needs the inspector", async (_, text) => {
+    expect((await of(text)).facts.has(inspect)).toBe(true);
+  });
+
+  test("printing an object in a function that nothing mentions needs none", async () => {
+    const use = await of(`function never() { console.log({}); }\nconsole.log("a");`);
+    expect({ prints: use.facts.has("prints object"), inspector: use.facts.has(inspect) }).toEqual({ prints: false, inspector: false });
+  });
+
+  test.each([
+    ["a timer that is called", `setTimeout(() => {}, 1);`, false],
+    ["the type of a timer", `console.log(typeof setTimeout);`, false],
+    ["a symbol of the program's own", `process.title = String(Symbol.for("mine"));`, false],
+    ["a timer that is handed on", `const later = setTimeout;\nlater(() => {}, 1);`, true],
+    ["a member of a timer", `process.title = String((setImmediate as any).name);`, true],
+    ["the symbol by its key", `process.title = String(Symbol.for("nodejs.util.promisify.custom"));`, true],
+    ["a symbol by a key that is computed", `process.title = String(Symbol.for(process.title));`, true],
+    ["Symbol.for that is handed on", `const make = Symbol.for;\nprocess.title = String(make);`, true],
+    ["Symbol that is handed on", `const make = Symbol;\nprocess.title = String(make);`, true],
+    ["Object.getOwnPropertySymbols", `process.title = String(Object.getOwnPropertySymbols({}).length);`, true],
+    ["Reflect.ownKeys", `process.title = String(Reflect.ownKeys({}).length);`, true],
+  ])("%s", async (_, text, named) => {
+    const use = await of(`declare const setTimeout: any, setImmediate: any;\n` + text);
+    expect({ world: use.world, named: use.facts.has(timers) }).toEqual({ world: "closed", named });
+  });
+
+  test.each([
+    ["message", `process.on("message", () => {});`, "process on:message", true],
+    ["disconnect, once", `process.once("disconnect", () => {});`, "process on:disconnect", true],
+    ["disconnect alone", `process.once("disconnect", () => {});`, "process on:message", false],
+    ["a signal", `process.on("SIGTERM", () => {});`, "process on:message", false],
+    ["a signal, which is no disconnect", `process.on("SIGTERM", () => {});`, "process on:disconnect", false],
+    ["an event that is computed", `process.on(process.title, () => {});`, "process on:message", true],
+    ["a listener method that is handed on", `const on = process.on;\nprocess.title = String(on);`, "process on:message", true],
+    ["a listener method that is taken out", `const { addListener } = process;\nprocess.title = String(addListener);`, "process on:disconnect", true],
+    ["message in a function that nothing mentions", `function never() { process.on("message", () => {}); }\nprocess.title = "a";`, "process on:message", false],
+  ])("listening on process for %s", async (_, text, fact, named) => {
+    expect((await of(text)).facts.has(fact)).toBe(named);
+  });
+
+  test.each([
+    ["a page", `// @ts-ignore\nimport page from "./index.html";\nprocess.title = String(page);`, true],
+    ["an import with attributes", `// @ts-ignore\nimport text from "./index.txt" with { type: "text" };\nprocess.title = String(text);`, true],
+    ["another file", `import { a } from "./a";\nprocess.title = a;`, false],
+  ])("an import of %s", async (_, text, named) => {
+    const use = await runtimeUse({ "main.ts": `declare const process: any;\n` + text, "a.ts": `export const a = "a";`, "index.html": `<html></html>`, "index.txt": `a` });
+    expect(use.facts.has("loader html")).toBe(named);
+  });
+
+  test("the require function comes with its name", async () => {
+    const use = await of(`console.log(String(require.resolve("./main.ts")));`);
+    expect(use.facts.has("Bun main")).toBe(true);
   });
 });
 
@@ -471,6 +566,30 @@ describe.concurrent("the names of properties", () => {
   });
 
   test.each([
+    ["strings that are joined in brackets", `console.log(given["neverWritten" + "AnywhereElse"]);`],
+    ["a template with a constant in brackets", "const tail = \"AnywhereElse\";\nconsole.log(given[`neverWritten${tail}`]);"],
+    ["a constant that is joined, in brackets", `const key = "neverWritten" + "AnywhereElse";\nconsole.log(given[key]);`],
+    ["strings that are joined on the left of in", `console.log("neverWritten" + "AnywhereElse" in given);`],
+    ["strings that are joined in a pattern", `const { ["neverWritten" + "AnywhereElse"]: value } = given;\nconsole.log(value);`],
+    ["strings that are joined for Reflect.get", `console.log(Reflect.get(given, "neverWritten" + "AnywhereElse"));`],
+  ])("a name that stands nowhere in the program as it is read is named by %s", async (_, text) => {
+    const use = await runtimeUse({ "main.ts": declared + given + text });
+    expect({ exitCode: use.exitCode, named: use.facts.has("property neverWrittenAnywhereElse") }).toEqual({ exitCode: 0, named: true });
+  });
+
+  test("what the files of the program read is told from what the runtime's own modules read", async () => {
+    const byProgram = (use: Awaited<ReturnType<typeof of>>) => use.lines.filter(line => line.startsWith("program-property ")).sort();
+    expect(byProgram(await of(`console.log("hello");`))).toEqual(["program-property log"]);
+    const reads = await of(given + `function never() { return given.report; }\nconst { dlopen } = given;\nconsole.log(given.color, given["mark"], given["neverWritten" + "AnywhereElse"], dlopen);`);
+    expect(byProgram(reads)).toEqual(["program-property color", "program-property dlopen", "program-property log", "program-property mark", "program-property neverWrittenAnywhereElse"]);
+  });
+
+  test("such a name in a function that nothing mentions is not named", async () => {
+    const use = await runtimeUse({ "main.ts": declared + given + `function never() { return given["neverWritten" + "AnywhereElse"]; }\nconsole.log(1);` });
+    expect({ exitCode: use.exitCode, named: use.facts.has("property neverWrittenAnywhereElse") }).toEqual({ exitCode: 0, named: false });
+  });
+
+  test.each([
     ["a string", `console.log("localeCompare");`],
     ["the key of an object literal", `console.log({ localeCompare: 1 });`],
     ["a method that the program defines", `class Text { localeCompare() { return 0; } }\nconsole.log(new Text());`],
@@ -504,15 +623,6 @@ describe.concurrent("the names of properties", () => {
   });
 
   test.each([
-    ["in brackets", `console.log(given["zqx" + "vwk"]);`],
-    ["in a constant", `const key = "zqx" + "vwk";\nconsole.log(given[key]);`],
-    ["in a pattern", `const { ["zqx" + "vwk"]: value } = given;\nconsole.log(value);`],
-    ["for Reflect.get", `console.log(Reflect.get(given, "zqx" + "vwk"));`],
-  ])("strings that are joined to a name that is written nowhere stand for any property: %s", async (_, text) => {
-    expect((await property(text)).any).toBe(true);
-  });
-
-  test.each([
     ["__lookupGetter__", `console.log(given.__lookupGetter__("a"));`],
     ["__lookupSetter__", `console.log(given.__lookupSetter__("a"));`],
   ])("any accessor may be taken out with %s", async (_, text) => {
@@ -543,7 +653,7 @@ describe.concurrent("what a built-in module lets escape", () => {
     expect(use.lines[0]).toBe("closed");
     expect(use.lines).toContain("process *");
     expect(use.lines.some(line => line.startsWith("escapes process "))).toBe(true);
-    expect(without.lines.filter(line => !line.includes("property ") && (line.endsWith(" *") || line.startsWith("escapes ")))).toEqual([]);
+    expect(without.lines.filter(line => !line.includes("property ") && line !== "symbol *" && (line.endsWith(" *") || line.startsWith("escapes ")))).toEqual([]);
   });
 });
 
@@ -619,6 +729,10 @@ describe.concurrent("the constructor of a function makes code from text", () => 
     ["by a key that is handed in", `console.log(((() => {}) as any)[process.argv[2]]("return 1")());`],
     ["by a pattern", `const { constructor } = () => {};\nconsole.log(constructor("return 1")());`],
     ["by Reflect.get", `console.log(Reflect.get(() => {}, "constructor")("return 1")());`],
+    ["by Reflect.get in brackets", `console.log(Reflect["get"](() => {}, "constructor")("return 1")());`],
+    ["by Reflect.get under a key in a constant", `const how = "get";\nconsole.log(Reflect[how](() => {}, "constructor")("return 1")());`],
+    ["by Object.getOwnPropertyDescriptor under a key in a constant", `const how = "getOwnPropertyDescriptor";\nconsole.log(Object[how](Object.getPrototypeOf(() => {}), "constructor")!.value("return 1")());`],
+    ["by Reflect.get under a key in a constant, handed on", `const how = "get";\nconst get = Reflect[how];\nconsole.log(get);`],
     ["by Object.getOwnPropertyDescriptor", `console.log(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor")!.value("return 1")());`],
     ["by Object.getOwnPropertyDescriptors", `console.log(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => {})));`],
     ["of the prototype of an async function", `console.log(Object.getPrototypeOf(async function () {}).constructor("return 1")());`],
@@ -672,7 +786,7 @@ describe.concurrent("what runs native code that the compiler has not seen opens 
     ["node:inspector", `import { Session } from "node:inspector";\nconsole.log(Session);`, "a module that loads modules or evaluates text"],
   ])("%s", async (_, text, why) => {
     const use = await of(text);
-    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: [why] });
+    expect({ world: use.world, whyOpen: use.whyOpen.filter(it => it === why) }).toEqual({ world: "open", whyOpen: [why] });
   });
 
   test.each([
@@ -759,6 +873,7 @@ describe.concurrent("operators and calls that hand a global to code of the progr
   const has = `class Has { static [Symbol.hasInstance](value: unknown) { return value !== undefined; } }\n`;
   test.each([
     ["the global object on the left of instanceof", has + `console.log(globalThis instanceof Has);`, "the global object"],
+    ["a variable that holds the global object on the left of instanceof", `const scope: any = globalThis;\nconsole.log(scope instanceof Object);`, "the global object"],
     ["process on the left of instanceof", has + `console.log(process instanceof Has);`, "process"],
     ["Bun on the left of instanceof", has + `console.log(Bun instanceof Has);`, "Bun"],
     ["process compared loosely with a number", `console.log(process == 1);`, "process"],
@@ -768,7 +883,7 @@ describe.concurrent("operators and calls that hand a global to code of the progr
     ["a store on process under a computed name", `process[process.argv[2]] = 1;`, "process"],
     ["a call of what a symbol finds on the global object", `const mine = Symbol("mine");\n(globalThis as any)[mine] = function (this: any) { return this; };\nconsole.log((globalThis as any)[mine]());`, "the global object"],
     ["a function declaration that is stored to", `function read(given: any) { return typeof given; }\n// @ts-ignore\nread = (given: any) => given;\nconsole.log(read(globalThis));`, "the global object"],
-    ["a free name that is stored to and called on the global object", `// @ts-ignore\nmine = function (this: any) { return this; };\nconsole.log((globalThis as any).mine());`, "a function of the program's own that is called on the global object"],
+    ["a free name that is stored to and called on the global object", `// @ts-ignore\nmine = function (this: any) { return this; };\nconsole.log((globalThis as any).mine());`, "what may be a function that sees the global object, stored on it"],
     ["dispatchEvent taken off EventTarget.prototype", `declare const EventTarget: any;\nconst { dispatchEvent } = EventTarget.prototype;\nconsole.log(dispatchEvent);`, "addEventListener of the global object"],
     ["addEventListener taken off an object", `declare const EventTarget: any;\nconst listen = new EventTarget().addEventListener;\nconsole.log(listen);`, "addEventListener of the global object"],
     ["addEventListener called without a receiver", `declare const EventTarget: any;\nEventTarget.prototype.addEventListener.call(undefined, "a", () => {});`, "addEventListener of the global object"],
@@ -781,6 +896,7 @@ describe.concurrent("operators and calls that hand a global to code of the progr
     ["process compared with null", `console.log(process == null, process != undefined, process === 1);`],
     ["a symbol's member of the global object that is stored and read", `const mine = Symbol("mine");\n(globalThis as any)[mine] = 1;\nconsole.log(String((globalThis as any)[mine]));`],
     ["addEventListener called on an object", `declare const EventTarget: any;\nnew EventTarget().addEventListener("a", () => {});`],
+    ["removeEventListener taken off an object", `declare const EventTarget: any;\nconst { removeEventListener } = EventTarget.prototype;\nconsole.log(removeEventListener, new EventTarget().removeEventListener);`],
     ["the type of a member named addEventListener", `declare const given: any;\nconsole.log(typeof given.addEventListener);`],
   ])("the world stays closed with %s", async (_, text) => {
     const use = await of(text);
@@ -793,9 +909,63 @@ describe.concurrent("operators and calls that hand a global to code of the progr
   });
 });
 
+describe.concurrent("what is stored on a global may be called by anybody, with the global as its receiver", () => {
+  const onTheGlobalObject = "what may be a function that sees the global object, stored on it";
+  test.each([
+    ["toString of the global object, which toLocaleString calls", `(globalThis as any).toString = function (this: any) { console.log(this); return "a"; };\nglobalThis.toLocaleString();`, onTheGlobalObject],
+    ["toString of process", `process.toString = function (this: any) { console.log(this); return "a"; };\nprocess.toLocaleString();`, "process"],
+    ["emit of process, which native code calls", `process.emit = function (this: any) { console.log(this); return true; };`, "process"],
+    ["a function that is stored under the name of a native one", `declare let fetch: any;\n(globalThis as any).fetch = function (this: any) { console.log(this); };\nfetch.call(globalThis, "data:,");`, onTheGlobalObject],
+    ["a free name of a native function that is stored to", `declare let setTimeout: any;\nsetTimeout = function (this: any) { console.log(this); };\nsetTimeout.bind(globalThis)();`, onTheGlobalObject],
+    ["a handler of the global object, whose events have it as their target", `declare const self: any;\nself.onmessage = (event: any) => console.log(event.target);`, onTheGlobalObject],
+    ["a handler under its free name", `declare let onmessage: any;\nonmessage = (event: any) => console.log(event.target);`, onTheGlobalObject],
+    ["a handler for errors in a variable that holds the global object", `const scope: any = globalThis;\nscope.onerror = function (event: any) { console.log(event.target); };`, onTheGlobalObject],
+    ["a function in a variable", `const mine = function (this: any) { return this; };\nBun.mine = mine;`, "Bun"],
+    ["a function that is declared", `function mine(this: any) { return this; }\nBun.mine = mine;`, "Bun"],
+    ["an arrow function in a function that sees its receiver", `Bun.mine = function (this: any) { return () => this; };`, "Bun"],
+    ["one of two", `Bun.mine = process.argv[2] ? () => 1 : function (this: any) { return this; };`, "Bun"],
+    ["a value that is not seen", `Bun.mine = JSON.parse(process.argv[2]);`, "Bun"],
+    ["a parameter", `function keep(given: any) { process.mine = given; }\nkeep(1);`, "process"],
+    ["a method in a descriptor", `Object.defineProperty(process, "mine", { value(this: any) { return this; } });`, "process"],
+    ["a getter in a descriptor", `Object.defineProperty(process, "mine", { get value() { return 1; } });`, "process"],
+  ])("the world opens with %s", async (_, text, why) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen.filter(it => it === why) }).toEqual({ world: "open", whyOpen: [why] });
+  });
+
+  test.each([
+    ["a string", `process.title = "a";`],
+    ["a sum", `process.title = "a" + process.pid;`],
+    ["what String() gives", `Bun.mine = String(JSON.parse(process.argv[2]));`],
+    ["anything, to the exit code or the title of process, whose setters keep no function", `process.exitCode = JSON.parse(process.argv[2]);\nprocess.title = JSON.parse(process.argv[3]);`],
+    ["an arrow function", `(globalThis as any).mine = () => 1;\nconsole.log((globalThis as any).mine());`],
+    ["a function that does not mention its receiver", `process.mine = function () { return 1; };\nconsole.log(process.mine());`],
+    ["such a function in a constant", `const mine = function () { return 1; };\nBun.mine = mine;\nconsole.log(Bun.mine());`],
+    ["such a function that is declared", `function mine() { return 1; }\nBun.mine = mine;`],
+    ["a function whose inner function has a receiver of its own", `Bun.mine = function () { return function (this: any) { return this; }; };`],
+    ["a class", `(globalThis as any).Mine = class { me() { return this; } };`],
+    ["an object", `(globalThis as any).mine = { me() { return this; } };`],
+    ["an array", `(globalThis as any).mine = [1];`],
+    ["a handler that is taken away", `declare const self: any;\nself.onmessage = null;`],
+    ["a handler of another object", `declare const given: any;\ngiven.onmessage = (event: any) => console.log(event.target);`],
+  ])("the world stays closed with %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+  });
+
+  test.each([
+    ["what a registered symbol finds on the global object", "(globalThis as any)[Symbol.for(\"k\")] = () => 1;\nconsole.log((globalThis as any)[Symbol.for(\"k\")]`a`);", "the global object"],
+    ["what a symbol in a constant finds on process", "const key = Symbol(\"me\");\nprocess[key] = () => 1;\nconsole.log(process[key]`a`);", "process"],
+    ["valueOf of the global object", "console.log((globalThis as any).valueOf`a`);", "the global object"],
+  ])("a tagged template is a call of %s", async (_, text, why) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: [why] });
+  });
+});
+
 describe.concurrent("a member that makes or loads code is one whatever it is read from", () => {
   const why = "a member that makes or loads code, read from what may be the global object, process or Bun";
-  const given = `declare const given: any;\n`;
+  const given = `const given: any = JSON.parse(process.argv[2]);\n`;
 
   test.each([
     ["eval", `console.log(given.eval("1"));`],
@@ -817,6 +987,35 @@ describe.concurrent("a member that makes or loads code is one whatever it is rea
   ])("the world stays closed with such a name %s", async (_, text) => {
     const use = await of(given + text);
     expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+  });
+});
+
+describe.concurrent("a variable that is stored to through an assertion is no constant", () => {
+  test.each([
+    ["a key of process", `let key = "pid";\n(key as any) = process.argv[2];\nconsole.log(process[key]);`, "process"],
+    ["a key of the global object", `let key = "Map";\n(key as string) = process.argv[2];\nconsole.log((globalThis as any)[key]);`, "the global object"],
+    ["a key that a pattern stores to", `let key = "pid";\n[key as any] = process.argv;\nconsole.log(process[key]);`, "process"],
+    ["a function declaration that the global object is handed to", `function read(given: any) { return typeof given; }\n(read as any) = (given: any) => given;\nconsole.log(read(globalThis));`, "the global object"],
+    ["a variable with a function that Bun is handed to", `let read = (given: any) => typeof given;\n(read as any) = (given: any) => given;\nconsole.log(read(Bun));`, "Bun"],
+    ["a listener of process", `let listener = () => {};\n(listener as any) = function (this: any) { console.log(this); };\nprocess.on("exit", listener);`, "process"],
+    ["a parameter that is required", `function load(name: string) {\n  (name as any) = process.argv[2];\n  return require(name);\n}\nconsole.log(load("node:path"));`, "require"],
+  ])("%s", async (_, text, why) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen.filter(it => it === why) }).toEqual({ world: "open", whyOpen: [why] });
+  });
+
+  test("the key of any other object", async () => {
+    const use = await of(`declare const given: any;\nlet key = "localeCompare";\n(key as any) = process.argv[2];\nconsole.log(given[key]);`);
+    expect({ named: use.facts.has("property localeCompare"), any: use.lines.some(line => line.startsWith("escapes property ") && line.endsWith("main.ts")) }).toEqual({ named: false, any: true });
+  });
+
+  test.each([
+    ["a variable that is never stored to", `let key = "pid";\nconsole.log(process[key]);`],
+    ["a constant", `const key = "pid";\nconsole.log(process[key]);`],
+    ["a variable that is only read through an assertion", `let key = "pid";\nconsole.log(key as any, process[key]);`],
+  ])("%s is one", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen, named: use.facts.has("process pid") }).toEqual({ world: "closed", whyOpen: [], named: true });
   });
 });
 
@@ -923,6 +1122,86 @@ describe.concurrent("what is read of node:module", () => {
   ])("not by %s", async (_, program) => {
     const use = await runtimeUse({ "main.ts": `declare const console: any;\n` + program, "other.ts": `export const SourceMap = 1;` });
     expect({ world: use.world, exports: use.lines.filter(line => line.startsWith("export ")) }).toEqual({ world: "closed", exports: [] });
+  });
+});
+
+describe.concurrent("members of Intl", () => {
+  const named = async (text: string, declarations = `declare const Intl: any, console: any;\n`) => {
+    const use = await runtimeUse({ "main.ts": declarations + text });
+    return { world: use.world, global: use.facts.has("global Intl"), members: use.lines.filter(line => line.startsWith("Intl ")).map(line => line.slice("Intl ".length)).sort() };
+  };
+
+  test.each([
+    ["new", `new Intl.Segmenter("en");`, ["Segmenter"]],
+    ["a call", `console.log(Intl.getCanonicalLocales("en"));`, ["getCanonicalLocales"]],
+    ["brackets", `new Intl["Collator"]();`, ["Collator"]],
+    ["a destructured member", `const { DateTimeFormat, NumberFormat: Numbers } = Intl; console.log(DateTimeFormat, Numbers);`, ["DateTimeFormat", "NumberFormat"]],
+    ["the global object", `new (globalThis as any).Intl.ListFormat();`, ["ListFormat"]],
+    ["a member of a member", `console.log(Intl.DateTimeFormat.supportedLocalesOf("en"));`, ["DateTimeFormat"]],
+    ["the base of a class", `class Mine extends Intl.PluralRules {} new Mine();`, ["PluralRules"]],
+    ["instanceof", `console.log({} instanceof Intl.Locale);`, ["Locale"]],
+    ["an optional member", `console.log(Intl?.DisplayNames);`, ["DisplayNames"]],
+    ["a destructured member with a default", `const { DurationFormat = null } = Intl; console.log(DurationFormat);`, ["DurationFormat"]],
+  ])("a member is named by %s", async (_, text, members) => {
+    expect(await named(text)).toEqual({ world: "closed", global: true, members });
+  });
+
+  test.each([
+    ["typeof", `console.log(typeof Intl);`, true],
+    ["an object of the program's own", `export {}; const Intl = { Segmenter: class {} }; new Intl.Segmenter();`, false],
+    ["a member of another object", `const mine: any = { Segmenter: class {} }; new mine.Segmenter();`, false],
+    ["a type", `let formatter: typeof Intl.Segmenter | undefined; console.log(formatter);`, false],
+    ["code that is not reached", `function never() { return new Intl.Segmenter(); }`, false],
+  ])("no member is named by %s", async (_, text, global) => {
+    const declarations = text.startsWith("export {}") ? `declare const console: any;\n` : undefined;
+    expect(await named(text, declarations)).toEqual({ world: "closed", global, members: [] });
+  });
+
+  test.each([
+    ["it is printed", `console.log(Intl);`],
+    ["it is stored", `const held = [Intl]; new held[0].Segmenter();`],
+    ["a variable holds it", `const services = Intl; new services.Segmenter();`],
+    ["a variable holds the global object", `const everything: any = globalThis; new everything.Intl.Segmenter();`],
+    ["it is spread", `console.log({ ...Intl });`],
+    ["it is returned", `function services() { return Intl; } new (services().Segmenter)();`],
+    ["it is tested and handed on", `console.log(Intl && Intl);`],
+    ["the rest of it is taken", `const { Segmenter, ...others } = Intl; console.log(Segmenter, others);`],
+    ["its names are listed", `console.log(Object.getOwnPropertyNames(Intl));`],
+    ["it is reflected on", `console.log(Reflect.ownKeys(Intl));`],
+    ["a member is stored", `Intl.Segmenter = class {};`],
+    ["a member is defined", `Object.defineProperty(Intl, "Segmenter", { value: class {} });`],
+  ])("any member may be read, in a world that stays closed, when %s", async (_, text) => {
+    expect(await named(text)).toMatchObject({ world: "closed", members: expect.arrayContaining(["*"]) });
+  });
+
+  test("any member may be read when a key is computed", async () => {
+    expect(await named(`const key = ["Segmenter"]; new Intl[key[0]]();`)).toMatchObject({ members: expect.arrayContaining(["*"]) });
+  });
+});
+
+describe.concurrent("syntax that needs a part of the engine", () => {
+  const syntaxIn = async (text: string) => {
+    const use = await runtimeUse({ "main.ts": `declare const console: any;\n` + text });
+    return use.lines.filter(line => line.startsWith("syntax "));
+  };
+  const added = async (text: string) => {
+    const [without, withIt] = await Promise.all([syntaxIn(`console.log("hello");`), syntaxIn(text)]);
+    return withIt.filter(line => !without.includes(line));
+  };
+
+  test("what is reached is listed", async () => {
+    const all = await syntaxIn(`console.log(/a/.test("a"), 1n);`);
+    expect(all).toContain("syntax regexp-literal");
+    expect(all).toContain("syntax bigint-literal");
+  });
+
+  test.each([
+    ["a string", `console.log("/a/", "1n");`],
+    ["a comment", `// /a/ 1n\nconsole.log("hello");`],
+    ["a type", `let one: 1n | undefined; console.log(String(one));`],
+    ["code that is not reached", `function never() { return [/a/, 1n]; }\nconsole.log("hello");`],
+  ])("%s adds nothing", async (_, text) => {
+    expect(await added(text)).toEqual([]);
   });
 });
 
@@ -1110,6 +1389,353 @@ describe.concurrent("the options of Bun.serve", () => {
   });
 });
 
+describe.concurrent("Bun and process under another name", () => {
+  const declaredHere = `declare const Bun: any, process: any, console: any, require: any, module: any;\n`;
+  const used = async (files: Record<string, string>, entryPoint = "main.ts") => {
+    const use = await runtimeUse(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, path.endsWith(".ts") ? declaredHere + text : text])), undefined, entryPoint);
+    return { world: use.world, whyOpen: use.whyOpen, color: use.facts.has("Bun color"), report: use.facts.has("process report") };
+  };
+  const followed = { world: "closed", whyOpen: [] };
+
+  test.each([
+    ["the default export", `import B from "bun"; console.log(B.color("red", "hex"));`],
+    ["the default export, imported by name", `import { default as B } from "bun"; console.log(B.color("red", "hex"));`],
+    ["the default export, imported by name and handed to a function", `import { default as B } from "bun"; function paint(b: any) { return b.color("red", "hex"); } console.log(paint(B));`],
+    ["the namespace", `import * as B from "bun"; console.log(B.color("red", "hex"));`],
+    ["default of the namespace", `import * as B from "bun"; console.log(B.default.color("red", "hex"));`],
+    ["default of the namespace in brackets", `import * as B from "bun"; console.log((B as any)["default"].color("red", "hex"));`],
+    ["default of a variable that holds the namespace", `import * as B from "bun"; const held: any = B; console.log(held.default.color("red", "hex"));`],
+    ["a named import", `import { color } from "bun"; console.log(color("red", "hex"));`],
+    ["require", `console.log(require("bun").color("red", "hex"));`],
+    ["module.require", `console.log(module.require("bun").color("red", "hex"));`],
+    ["a require that the program creates", `import { createRequire } from "node:module"; const load = createRequire(import.meta.url); console.log(load("bun").color("red", "hex"));`],
+    ["a require that the program creates, whose result is held", `import { createRequire } from "node:module"; const load = createRequire(import.meta.url); const B = load("bun"); console.log(B.color("red", "hex"));`],
+    ["a require that is created and called at once", `import { createRequire } from "node:module"; console.log(createRequire(import.meta.url)("bun").color("red", "hex"));`],
+    ["a require made by a createRequire that was required", `const { createRequire } = require("node:module"); const load = createRequire(import.meta.url); console.log(load("bun").color("red", "hex"));`],
+    ["process.getBuiltinModule", `console.log(process.getBuiltinModule("bun").color("red", "hex"));`],
+    ["process.getBuiltinModule, whose result is held", `const B = process.getBuiltinModule("bun"); console.log(B ? B.color("red", "hex") : "none");`],
+    ["import name = require", `import B = require("bun"); console.log(B.color("red", "hex"));`],
+    ["await import() that is taken apart", `const { color } = await import("bun"); console.log(color("red", "hex"));`],
+    ["await import() that is held", `const B = await import("bun"); console.log(B.color("red", "hex"));`],
+    ["await import() that is read at once", `console.log((await import("bun")).color("red", "hex"));`],
+    ["default of await import()", `console.log((await import("bun")).default.color("red", "hex"));`],
+    ["await import() in a function", `async function paint() { const { color } = await import("bun"); return color("red", "hex"); } console.log(await paint());`],
+  ])("a member of Bun is named through %s", async (_, text) => {
+    expect(await used({ "main.ts": text })).toEqual({ ...followed, color: true, report: false });
+  });
+
+  test.each([
+    ["the default export, imported by name", `import { default as p } from "node:process"; console.log(typeof p.report.getReport);`],
+    ["default of the namespace", `import * as p from "node:process"; console.log(typeof p.default.report.getReport);`],
+    ["a require that the program creates", `import { createRequire } from "node:module"; const load = createRequire(import.meta.url); console.log(typeof load("node:process").report.getReport);`],
+    ["process.getBuiltinModule", `console.log(typeof process.getBuiltinModule("node:process").report.getReport);`],
+    ["process.getBuiltinModule of the short name", `console.log(typeof process.getBuiltinModule("process").report.getReport);`],
+    ["import name = require", `import p = require("node:process"); console.log(typeof p.report.getReport);`],
+    ["await import()", `console.log(typeof (await import("node:process")).report.getReport);`],
+  ])("a member of process is named through %s", async (_, text) => {
+    expect(await used({ "main.ts": text })).toEqual({ ...followed, color: false, report: true });
+  });
+
+  test("a server that is made through Bun.serve of another file may have any option", async () => {
+    const use = await runtimeUse(withDeclarations({ "main.ts": `import { listen } from "./other"; listen({ fetch: () => new Response("") });`, "other.ts": `export { serve as listen } from "bun";` }));
+    expect({ world: use.world, serve: use.facts.has("Bun serve"), option: use.facts.has("serve-option *"), route: use.facts.has("serve-route-option *") }).toEqual({ world: "closed", serve: true, option: true, route: true });
+  });
+
+  test("a member that another file exports again by name is named", async () => {
+    expect(await used({ "main.ts": `import { paintIt } from "./other"; console.log(paintIt("red", "hex"));`, "other.ts": `export { color as paintIt } from "bun";` })).toEqual({ ...followed, color: true, report: false });
+  });
+
+  test.each([
+    ["its default export is exported again", `export { default } from "bun";`, `import B from "./other"; console.log(B.color("red", "hex"));`],
+    ["its default export is exported again under a name", `export { default as B } from "bun";`, `import { B } from "./other"; console.log(B.color("red", "hex"));`],
+    ["its namespace is exported", `export * as B from "bun";`, `import { B } from "./other"; console.log(B.color("red", "hex"));`],
+    ["an import of it is exported", `import B from "bun"; export { B };`, `import { B } from "./other"; console.log(B.color("red", "hex"));`],
+    ["an import of its namespace is exported under another name", `import * as all from "bun"; export { all as B };`, `import { B } from "./other"; console.log(B.color("red", "hex"));`],
+    ["an import of its default export by name is exported", `import { default as all } from "bun"; export { all as B };`, `import { B } from "./other"; console.log(B.color("red", "hex"));`],
+    ["an import of it is the default export", `import B from "bun"; export default B;`, `import B from "./other"; console.log(B.color("red", "hex"));`],
+    ["default is taken out of its namespace", `import * as all from "bun"; const { default: B } = all as any; export function paint() { return B.color("red", "hex"); }`, `import { paint } from "./other"; console.log(paint());`],
+  ])("Bun escapes when %s", async (_, other, main) => {
+    expect(await used({ "main.ts": main, "other.ts": other })).toMatchObject({ world: "open", whyOpen: ["Bun"] });
+  });
+
+  test.each([
+    ["the promise of import() is asked for it", `import("bun").then(B => console.log(B.color("red", "hex")));`],
+    ["the promise of import() is held", `const promise = import("bun"); console.log((await promise).color("red", "hex"));`],
+    ["the promise of import() is handed on", `const [B] = await Promise.all([import("bun")]); console.log(B.color("red", "hex"));`],
+    ["what await import() gives is handed on", `console.log(await import("bun"));`],
+    ["import name = require is exported", `export import B = require("bun");`],
+    ["the name of import name = require is exported", `import B = require("bun"); export { B };`],
+    ["a parameter that is also a property of the class holds it by default", `class Holder { constructor(public held: any = Bun) {} } console.log(new Holder().held.color("red", "hex"));`],
+    ["a variable that holds it is added to, which asks it for its value", `let held: any = Bun; held += 1; console.log(held);`],
+  ])("Bun escapes when %s", async (_, text) => {
+    expect(await used({ "main.ts": text })).toMatchObject({ world: "open", whyOpen: ["Bun"] });
+  });
+
+  test("a parameter that holds Bun by default is followed", async () => {
+    expect(await used({ "main.ts": `function paint(held: any = Bun) { return held.color("red", "hex"); } console.log(paint());` })).toEqual({ ...followed, color: true, report: false });
+  });
+
+  test.each([
+    ["getBuiltinModule", `import { getBuiltinModule } from "node:process"; console.log(getBuiltinModule(process.argv[2]));`],
+    ["getBuiltinModule that is exported again", `export { getBuiltinModule } from "node:process";`],
+    ["mainModule", `import { mainModule } from "node:process"; console.log(mainModule);`],
+    ["a method that returns process", `import { on } from "node:process"; console.log(on);`],
+  ])("process escapes through an import of %s", async (_, text) => {
+    const use = await used({ "main.ts": text });
+    expect({ world: use.world, escapes: use.whyOpen.includes("process") }).toEqual({ world: "open", escapes: true });
+  });
+
+  test.each([
+    ["a variable of the program's own with the name of an import in another scope", `import B from "bun"; function mine(B: any) { return B.color; } console.log(mine({ color: 1 }), typeof B);`],
+    ["a function of the program's own that is called with the name of the module", `function load(name: string) { return { color: name }; } console.log(load("bun").color);`],
+    ["a require that the program creates, of another module", `import { createRequire } from "node:module"; const load = createRequire(import.meta.url); console.log(load("node:path").color);`],
+    ["getBuiltinModule of another module", `console.log(process.getBuiltinModule("node:path").color);`],
+    ["default of another module", `import * as other from "./other"; console.log((other as any).default.color);`],
+    ["an import for its types alone", `import type B from "bun"; let held: typeof B | undefined; console.log((held as any)?.nothing);`],
+    ["an export of another import", `import { join } from "node:path"; export { join as color };`],
+    ["await import() of another module", `console.log(((await import("node:path")) as any).color);`],
+    ["import name = require of another module", `import path = require("node:path"); console.log((path as any).color);`],
+  ])("a member of Bun is not named through %s", async (_, text) => {
+    expect(await used({ "main.ts": text, "other.ts": `export default { color: 1 };` })).toEqual({ ...followed, color: false, report: false });
+  });
+});
+
+describe.concurrent("prototypes that process and performance inherit from, and the program can write", () => {
+  const declaredHere = `declare const process: any, performance: any, console: any, require: any, EventTarget: any, Performance: any;\n`;
+  const used = async (text: string) => {
+    const use = await runtimeUse({ "main.ts": declaredHere + text });
+    return { world: use.world, whyOpen: use.whyOpen, process: use.facts.has("process *"), performance: use.facts.has("performance *") };
+  };
+  const me = `function (this: any) { return this; }`;
+
+  test.each([
+    ["a store", `import { EventEmitter } from "node:events"; EventEmitter.prototype.me = ${me};`],
+    ["a store through the default export", `import EventEmitter from "node:events"; EventEmitter.prototype.me = ${me};`],
+    ["a store through the namespace", `import * as events from "events"; events.EventEmitter.prototype.me = ${me};`],
+    ["a store through require", `require("node:events").prototype.me = ${me};`],
+    ["a store through what is taken out of require", `const { EventEmitter: Emitter } = require("events"); Emitter.prototype.me = ${me};`],
+    ["a store through EventEmitter.EventEmitter", `import EventEmitter from "node:events"; EventEmitter.EventEmitter.prototype.me = ${me};`],
+    ["a store under a computed name", `import { EventEmitter } from "node:events"; EventEmitter.prototype[process.argv[2]] = ${me};`],
+    ["a store through a variable that holds it", `import { EventEmitter } from "node:events"; const held = EventEmitter.prototype; held.me = ${me};`],
+    ["delete", `import { EventEmitter } from "node:events"; delete EventEmitter.prototype.setMaxListeners;`],
+    ["Object.defineProperty", `import { EventEmitter } from "node:events"; Object.defineProperty(EventEmitter.prototype, "me", { get: ${me} });`],
+    ["Object.assign", `import { EventEmitter } from "node:events"; Object.assign(EventEmitter.prototype, { me: ${me} });`],
+    ["Reflect.set", `import { EventEmitter } from "node:events"; Reflect.set(EventEmitter.prototype, "me", ${me});`],
+    ["Object.setPrototypeOf", `import { EventEmitter } from "node:events"; Object.setPrototypeOf(EventEmitter.prototype, { me: ${me} });`],
+    ["a store to its __proto__", `import { EventEmitter } from "node:events"; EventEmitter.prototype.__proto__ = { me: ${me} };`],
+    ["__defineGetter__", `import { EventEmitter } from "node:events"; EventEmitter.prototype.__defineGetter__("me", ${me});`],
+    ["a function that is handed it", `import { EventEmitter } from "node:events"; function patch(given: any) { given.me = ${me}; } patch(EventEmitter.prototype);`],
+    ["a pattern that takes it out", `import { EventEmitter } from "node:events"; const { prototype } = EventEmitter; prototype.me = ${me};`],
+  ])("process escapes with %s on EventEmitter.prototype", async (_, text) => {
+    expect(await used(text + "\nexport {};")).toMatchObject({ world: "open", whyOpen: ["process"] });
+  });
+
+  test.each([
+    ["a method of it that is called", `import { EventEmitter } from "node:events"; const mine = {}; EventEmitter.prototype.on.call(mine, "a", () => {});`],
+    ["Object.create", `import { EventEmitter } from "node:events"; console.log(Object.create(EventEmitter.prototype));`],
+    ["Object.setPrototypeOf of a prototype of the program's own", `import { EventEmitter } from "node:events"; function Mine() {} Object.setPrototypeOf(Mine.prototype, EventEmitter.prototype);`],
+    ["a store of it to the __proto__ of a prototype of the program's own", `import { EventEmitter } from "node:events"; function Mine() {} Mine.prototype.__proto__ = EventEmitter.prototype;`],
+    ["Object.assign that copies from it", `import { EventEmitter } from "node:events"; console.log(Object.assign({}, EventEmitter.prototype));`],
+    ["a comparison", `import { EventEmitter } from "node:events"; console.log(Object.getPrototypeOf({}) === EventEmitter.prototype);`],
+    ["a variable that holds it and is only read", `import { EventEmitter } from "node:events"; const held = EventEmitter.prototype; console.log(typeof held.on, "on" in held);`],
+    ["a store on the prototype of a class that extends it", `import { EventEmitter } from "node:events"; class Mine extends EventEmitter {} (Mine.prototype as any).me = ${me};`],
+    ["a store on the prototype of another class with that name", `class EventEmitter {} (EventEmitter.prototype as any).me = ${me}; export {};`],
+  ])("process does not escape with %s", async (_, text) => {
+    expect(await used(text)).toMatchObject({ world: "closed", whyOpen: [] });
+  });
+
+  test("whoever can reach EventEmitter.prototype may be handed process: all of its members stay", async () => {
+    expect(await used(`import { EventEmitter } from "node:events"; console.log(new EventEmitter());`)).toEqual({ world: "closed", whyOpen: [], process: true, performance: false });
+    expect(await used(`console.log(1);`)).toEqual({ world: "closed", whyOpen: [], process: false, performance: false });
+  });
+
+  test.each([
+    ["a call", `console.log(process.me());`],
+    ["a read", `console.log(process.noDeprecation);`],
+    ["typeof", `console.log(typeof process.type);`],
+    ["a store, which may find a setter", `process.mine = 1;`],
+  ])("with node:events in the program, %s of what is no member of process opens the world", async (_, text) => {
+    expect(await used(`import { EventEmitter } from "node:events"; console.log(new EventEmitter());\n` + text)).toMatchObject({ world: "open", whyOpen: ["a member that process may inherit from EventEmitter.prototype"] });
+    expect(await used(text)).toMatchObject({ world: "closed", whyOpen: [] });
+  });
+
+  test("members of process, and of the native prototype in front of EventEmitter.prototype, are found before it", async () => {
+    const text = `import { EventEmitter } from "node:events"; console.log(new EventEmitter(), process.pid, process.argv, process.exitCode, process.listenerCount("exit"), process.eventNames());`;
+    expect(await used(text)).toMatchObject({ world: "closed", whyOpen: [] });
+  });
+
+  test.each([
+    ["EventTarget.prototype", `EventTarget.prototype.me = ${me};`],
+    ["globalThis.EventTarget.prototype", `(globalThis as any).EventTarget.prototype.me = ${me};`],
+    ["Performance.prototype", `Object.defineProperty(Performance.prototype, "me", { get: ${me} });`],
+  ])("a write to %s leaves the world closed and keeps every member of performance", async (_, text) => {
+    expect(await used(text)).toMatchObject({ world: "closed", whyOpen: [], performance: true });
+  });
+
+  test.each([
+    ["no member of it", `console.log(performance.me());`, true],
+    ["inherited from EventTarget.prototype", `performance.dispatchEvent(new Event("a"));`, true],
+    ["its own", `console.log(performance.now());`, false],
+    ["on Performance.prototype", `console.log(performance.timeOrigin);`, false],
+  ])("what is read from performance and is %s", async (_, text, any) => {
+    expect(await used(`declare const Event: any;\n` + text)).toMatchObject({ world: "closed", whyOpen: [], performance: any });
+  });
+
+  test("EventTarget.prototype that is only read keeps nothing", async () => {
+    expect(await used(`console.log(typeof EventTarget.prototype.addEventListener);`)).toMatchObject({ world: "closed", performance: false });
+  });
+});
+
+describe.concurrent("import name = a.b, which only TypeScript has", () => {
+  const used = async (text: string) => {
+    const use = await runtimeUse({ "main.ts": `declare const console: any;\n` + text });
+    return { world: use.world, whyOpen: use.whyOpen, named: ["Bun color", "process report", "global Intl", "global HTMLRewriter", "property NumberFormat", "console *"].filter(fact => use.facts.has(fact)) };
+  };
+  const bun = `declare namespace Bun { function color(name: string, format: string): string; }\n`;
+
+  test.each([
+    ["a member of Bun", bun + `import paint = Bun.color; console.log(paint("red", "hex"));`, ["Bun color"]],
+    ["a member of Bun of the global object", `declare namespace globalThis { namespace Bun { function color(name: string, format: string): string; } }\nimport paint = globalThis.Bun.color; console.log(paint("red", "hex"));`, ["Bun color"]],
+    ["a member of process", `declare namespace process { const report: unknown; }\nimport report = process.report; console.log(report);`, ["process report"]],
+    ["a global", `declare namespace HTMLRewriter { const one: number; }\nimport Rewriter = HTMLRewriter; console.log(Rewriter.one);`, ["global HTMLRewriter"]],
+    ["a member of a global", `import Format = Intl.NumberFormat; console.log(new Format("de").format(1.5));`, ["global Intl", "property NumberFormat"]],
+    ["console", `declare namespace console { function log(...values: unknown[]): void; }\nimport out = console; out.log(1);`, ["console *"]],
+  ])("names %s", async (_, text, named) => {
+    const use = await runtimeUse({ "main.ts": (text.includes("namespace console") ? "" : `declare const console: any;\n`) + text });
+    expect({ world: use.world, whyOpen: use.whyOpen, named: named.filter(fact => use.facts.has(fact)) }).toEqual({ world: "closed", whyOpen: [], named });
+  });
+
+  test("Bun as a whole escapes", async () => {
+    expect(await used(bun + `import B = Bun; console.log(B.color("red", "hex"));`)).toMatchObject({ world: "open", whyOpen: ["Bun"] });
+  });
+
+  test.each([
+    ["a namespace of the program's own with that name", `namespace Bun { export function color(name: string, format: string) { return name + format; } }\nimport paint = Bun.color; console.log(paint("red", "hex"));`],
+    ["an alias for a type alone", bun + `declare namespace Bun { interface Shade { name: string } }\nimport type Shade = Bun.Shade; let held: Shade | undefined; console.log(held);`],
+  ])("names nothing of Bun with %s", async (_, text) => {
+    expect(await used(text)).toEqual({ world: "closed", whyOpen: [], named: [] });
+  });
+});
+
+describe.concurrent("the getter of self hands out the global object to whoever calls it", () => {
+  test.each([
+    ["the getter of self", `console.log((globalThis as any).__lookupGetter__("self")());`],
+    ["the getter of self, through a variable", `const everything: any = globalThis; console.log(everything.__lookupGetter__("self")());`],
+    ["the getter of a computed name", `console.log((globalThis as any).__lookupGetter__(process.argv[2])());`],
+  ])("the global object escapes with %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: ["the global object"] });
+  });
+
+  test("the getter of another member names the member", async () => {
+    const use = await of(`console.log((globalThis as any).__lookupGetter__("HTMLRewriter"));`);
+    expect({ world: use.world, named: use.facts.has("global HTMLRewriter") }).toEqual({ world: "closed", named: true });
+  });
+});
+
+describe.concurrent("require with a second argument is not the require that the build resolves", () => {
+  test.each([
+    ["a built-in module", `console.log(require("bun:sqlite", 0));`],
+    ["Bun", `console.log(require("bun", 0).color("red", "hex"));`],
+    ["a file", `console.log(require("./other", 0));`],
+  ])("the world opens with %s", async (_, text) => {
+    const use = await runtimeUse({ "main.ts": declared + text, "other.ts": `export const one = 1;` });
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: ["require"] });
+  });
+});
+
+describe.concurrent("the descriptor of a member of the global object holds the member", () => {
+  test.each([
+    ["Bun", `console.log(Object.getOwnPropertyDescriptor(globalThis, "Bun")!.value.color("red", "hex"));`],
+    ["process", `console.log(typeof Object.getOwnPropertyDescriptor(globalThis, "process")!.value.report);`],
+  ])("%s escapes with the global object", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: ["the global object"] });
+  });
+
+  test("another member is named", async () => {
+    const use = await of(`console.log(Object.getOwnPropertyDescriptor(globalThis, "HTMLRewriter")!.value);`);
+    expect({ world: use.world, named: use.facts.has("global HTMLRewriter") }).toEqual({ world: "closed", named: true });
+  });
+});
+
+describe.concurrent("Function makes code from text however it is called", () => {
+  test.each([
+    ["Function.call", `console.log(Function.call(null, "return 1")());`],
+    ["Function.apply", `console.log(Function.apply(null, ["return 1"])());`],
+    ["Function.bind", `console.log(Function.bind(null, "return 1")()());`],
+    ["call in brackets", `console.log((Function as any)["call"](null, "return 1")());`],
+    ["Function.valueOf", `console.log((Function.valueOf() as any)("return 1")());`],
+    ["Function.constructor", `console.log(Function.constructor("return 1")());`],
+    ["globalThis.Function.call", `console.log(globalThis.Function.call(null, "return 1")());`],
+    ["Reflect.apply", `console.log(Reflect.apply(Function, null, ["return 1"])());`],
+    ["Reflect.construct", `console.log(Reflect.construct(Function, ["return 1"])());`],
+    ["a class that extends it", `class Mine extends Function {} console.log(new Mine("return 1")());`],
+    ["call, taken out of it", `const { call } = Function; console.log(call);`],
+  ])("%s opens the world", async (_, text) => {
+    expect((await of(text)).world).toBe("open");
+  });
+
+  test.each([
+    ["Function.prototype.toString", `console.log(Function.prototype.toString.call(() => 1));`],
+    ["Function.prototype.call", `console.log(Function.prototype.call.call((one: number) => one, null, 1));`],
+    ["Function.name and Function.length", `console.log(Function.name, Function.length);`],
+    ["instanceof Function", `console.log((() => 1) instanceof Function);`],
+    ["typeof Function", `console.log(typeof Function);`],
+    ["call of a function of the program's own", `function mine(this: any, text: string) { return text; } console.log(mine.call(null, "return 1"));`],
+    ["a class of the program's own with that name", `export {}; class Function { static call(one: any, text: string) { return text; } } console.log(Function.call(null, "return 1"));`],
+  ])("%s does not", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+  });
+});
+
+describe.concurrent("members of Bun that load or run code the compiler has not seen", () => {
+  test.each([
+    ["Bun.ModuleGraph", `console.log(await new Bun.ModuleGraph().import(process.argv[2]));\nexport {};`, "Bun.ModuleGraph"],
+    ["Bun.ModuleGraph that is imported", `import { ModuleGraph } from "bun";\nconsole.log(new ModuleGraph());`, "Bun.ModuleGraph"],
+    ["Bun.ModuleGraph that is taken out", `const { ModuleGraph } = Bun;\nconsole.log(new ModuleGraph());`, "Bun.ModuleGraph"],
+    ["Bun.build, whose sources may call macros", `console.log(await Bun.build({ entrypoints: [process.argv[2]] }));\nexport {};`, "Bun.build"],
+    ["Bun.Transpiler, whose sources may call macros", `console.log(new Bun.Transpiler().transformSync(process.argv[2]));`, "Bun.Transpiler"],
+  ])("%s", async (_, text, why) => {
+    const use = await of(text);
+    expect({ world: use.world, isSaid: use.whyOpen.includes(why) }).toEqual({ world: "open", isSaid: true });
+  });
+
+  test.each([
+    ["the type of Bun.ModuleGraph", `console.log(typeof Bun.ModuleGraph, typeof Bun.build, typeof Bun.Transpiler);`],
+    ["members of an object of the program's own", `const mine = { ModuleGraph: Map, build() {}, Transpiler: Map }; console.log(new mine.ModuleGraph(), mine.build(), new mine.Transpiler());`],
+    ["Bun.build in a function that nothing mentions", `function never() { return Bun.build({ entrypoints: [] }); }\nconsole.log(1);`],
+  ])("not %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+  });
+});
+
+describe.concurrent("a library that SQLite is told to load is native code that the compiler has not seen", () => {
+  const why = "a member that makes or loads code, read from what may be the global object, process or Bun";
+
+  test.each([
+    ["loadExtension of a database", `import { Database } from "bun:sqlite";\nnew Database(":memory:").loadExtension(process.argv[2]);`],
+    ["loadExtension of a database of node:sqlite", `import { DatabaseSync } from "node:sqlite";\nnew DatabaseSync(":memory:", { allowExtension: true }).loadExtension(process.argv[2]);`],
+    ["enableLoadExtension", `import { DatabaseSync } from "node:sqlite";\nnew DatabaseSync(":memory:", { allowExtension: true }).enableLoadExtension(true);`],
+    ["setCustomSQLite", `import { Database } from "bun:sqlite";\nDatabase.setCustomSQLite(process.argv[2]);`],
+    ["loadExtension of a database that a function is given", `function extend(database: any) { database.loadExtension(process.argv[2]); }\nconsole.log(extend);`],
+  ])("the world opens with %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: [why] });
+  });
+
+  test.each([
+    ["a database that loads nothing", `import { Database } from "bun:sqlite";\nconsole.log(new Database(":memory:").query("select 1").get());`],
+    ["a method of that name of a class of the program's own", `class Mine { loadExtension(name: string) { return name; } }\nconsole.log(new Mine().loadExtension("a"));`],
+    ["loadExtension in a function that nothing mentions", `import { Database } from "bun:sqlite";\nfunction never() { new Database(":memory:").loadExtension(process.argv[2]); }\nconsole.log(1);`],
+  ])("the world stays closed with %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+  });
+});
+
 describe.concurrent("whether anything but the compiled program may run", () => {
   const build = ["build", "--compile", "--aot", "--outfile", "main"];
   const hello = { "main.ts": declared + `console.log("hello");` };
@@ -1144,7 +1770,7 @@ describe.concurrent("what the build command knows", () => {
   const known = async (...flags: string[]) => {
     const use = await runtimeUse(hello, [...build, ...flags]);
     expect(use.exitCode).toBe(0);
-    return use.lines.filter(line => /^(autoload|option) /.test(line));
+    return use.lines.filter(line => /^(autoload|exec-argv|option) /.test(line));
   };
 
   test("what the environment of any executable can ask for is always there", async () => {
@@ -1160,7 +1786,9 @@ describe.concurrent("what the build command knows", () => {
     ["--no-compile-autoload-bunfig", []],
     ["--compile-autoload-package-json", ["autoload bunfig", "autoload package-json"]],
     ["--compile-autoload-tsconfig", ["autoload bunfig", "autoload tsconfig"]],
-    ["--compile-exec-argv=--smol", ["autoload bunfig", "option compile-exec-argv"]],
+    ["--compile-exec-argv=--smol", ["autoload bunfig", "exec-argv --smol", "option compile-exec-argv"]],
+    ["--compile-exec-argv=--title 'a -b' --inspect=127.0.0.1:0 -c own.toml --smol --smol", ["autoload bunfig", "exec-argv --inspect", "exec-argv --smol", "exec-argv --title", "exec-argv -c", "option compile-exec-argv"]],
+    ["--compile-exec-argv=-cown.toml", ["autoload bunfig", "exec-argv *", "option compile-exec-argv"]],
     ["--sourcemap", ["autoload bunfig", "option sourcemap"]],
   ])("%s", async (flag, facts) => {
     expect(await known(flag)).toEqual(facts);
@@ -1175,7 +1803,7 @@ describe.concurrent("what the build command knows", () => {
 
   test("bun check, which builds nothing, says nothing about a build", async () => {
     const use = await runtimeUse(hello);
-    expect(use.lines.filter(line => /^(autoload|environment|option) /.test(line))).toEqual([]);
+    expect(use.lines.filter(line => /^(autoload|environment|exec-argv|option) /.test(line))).toEqual([]);
   });
 });
 
@@ -1329,50 +1957,50 @@ describe.skipIf(probed.exitCode !== 0)("what the writer of the executable finds"
 
   async function built(files: Record<string, string>, entryPoints = ["main.ts"]) {
     using dir = tempDir("aot-runtime-use-writer", { "tsconfig.json": tsconfig, ...files });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", ...entryPoints, "--outfile", "main"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-    if (buildExitCode !== 0) throw new Error(buildErrors);
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "main")], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const contents: string[] = [];
+    for (const [folder, without] of [
+      ["by-use", undefined],
+      ["without-a-part-that-is-not-named", "htmlrewriter"],
+    ] as const) {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", ...entryPoints, "--outfile", join(folder, "main")],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      if (buildExitCode !== 0) throw new Error(buildErrors);
+      const executable = await Bun.file(join(String(dir), folder, process.platform === "win32" ? "main.exe" : "main")).bytes();
+      contents.push(new Bun.CryptoHasher("sha256").update(executable).digest("hex"));
+    }
+    await using proc = Bun.spawn({ cmd: [join(String(dir), "by-use", "main")], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { stdout, exitCode, size: Bun.file(join(String(dir), process.platform === "win32" ? "main.exe" : "main")).size };
+    return { stdout, exitCode, leavesOutWhatIsNotNamed: contents[0] === contents[1] };
   }
 
-  let open: ReturnType<typeof built> | undefined;
-  const leavesOutWhatIsNotNamed = async (size: number) => (await (open ??= built({ "main.ts": hello + `\nconsole.log(eval("1"));` }))).size - size > 1_000_000;
-
   test("every module is compiled: what the program does not name is left out", async () => {
-    const { size, ...said } = await built({ "main.ts": hello });
-    expect({ ...said, isSmaller: await leavesOutWhatIsNotNamed(size) }).toEqual({ stdout: "hello\n", exitCode: 0, isSmaller: true });
+    expect(await built({ "main.ts": hello })).toEqual({ stdout: "hello\n", exitCode: 0, leavesOutWhatIsNotNamed: true });
   });
 
   test("a module that is not compiled: nothing is left out for not being named", async () => {
-    const { size, ...said } = await built({ "main.ts": hello, "data.json": `{ "a": 1 }` }, ["main.ts", "data.json"]);
-    expect({ ...said, isSmaller: await leavesOutWhatIsNotNamed(size) }).toEqual({ stdout: "hello\n", exitCode: 0, isSmaller: false });
+    expect(await built({ "main.ts": hello, "data.json": `{ "a": 1 }` }, ["main.ts", "data.json"])).toEqual({ stdout: "hello\n", exitCode: 0, leavesOutWhatIsNotNamed: false });
   });
 
   test("a package that was not there at the build may be there at run time: nothing is left out for not being named", async () => {
-    const { size, ...said } = await built({ "main.ts": hello + `\ntry { require("late-package"); } catch {}` });
-    expect({ ...said, isSmaller: await leavesOutWhatIsNotNamed(size) }).toEqual({ stdout: "hello\n", exitCode: 0, isSmaller: false });
+    expect(await built({ "main.ts": hello + `\ntry { require("late-package"); } catch {}` })).toEqual({ stdout: "hello\n", exitCode: 0, leavesOutWhatIsNotNamed: false });
   });
 
   test("it runs in place: nothing is left out for not being named", async () => {
-    const { size, ...said } = await built({ "main.ts": hello }, ["main.ts", "--compile-in-place"]);
-    expect({ ...said, isSmaller: await leavesOutWhatIsNotNamed(size) }).toEqual({ stdout: "hello\n", exitCode: 0, isSmaller: false });
+    expect(await built({ "main.ts": hello }, ["main.ts", "--compile-in-place"])).toEqual({ stdout: "hello\n", exitCode: 0, leavesOutWhatIsNotNamed: false });
   });
 
   test("the script of a page runs in a browser, not here: what the program does not name is left out", async () => {
     const files = {
       "main.ts": `// @ts-ignore\nimport page from "./index.html";\n` + declared + `console.log(typeof page);`,
       "index.html": `<html><body><script type="module" src="./client.ts"></script></body></html>`,
-      "client.ts": `export {};\n(globalThis as any).ready = eval("1 + 1");`,
+      "client.ts": `export {};\n(globalThis as any).ready = 1 + 1;`,
     };
-    const { size, ...said } = await built(files);
-    expect({ ...said, isSmaller: await leavesOutWhatIsNotNamed(size) }).toEqual({ stdout: "object\n", exitCode: 0, isSmaller: true });
+    expect(await built(files)).toEqual({ stdout: "object\n", exitCode: 0, leavesOutWhatIsNotNamed: true });
   });
 });

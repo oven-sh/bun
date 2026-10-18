@@ -522,12 +522,48 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-export function createOnWarning(process, redirectPath, disabledArr, writeToUntouchedStderr, basename, appendToWarningsFile) {
+export function createOnWarning(process, redirectPath, disabledArr, writeToUntouchedStderr, basename, appendToWarningsFile, kindOfStandardError) {
   const appendFileSync = redirectPath && !appendToWarningsFile ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
   const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
   let traceWarningHelperShown = false;
+  let writeWithoutStreams;
+  if (IS_BUN_AOT && kindOfStandardError !== undefined) {
+    const file = 0;
+    const socket = 2;
+    const terminal = 3;
+    let sink;
+    let hasEmittedError = false;
+    writeWithoutStreams = text => {
+      const rest = sink ? text : writeToUntouchedStderr(text);
+      if (rest === undefined) return;
+      if (!sink) {
+        sink = $newRustFunction("runtime/webcore/FileSink.rs", "standardErrorSink", 1)(kindOfStandardError === socket);
+        if (kindOfStandardError === terminal) process.on("SIGWINCH", () => {});
+      }
+      const written = sink.write(rest);
+      if (!$isPromise(written)) return;
+      written.then(
+        () => {},
+        error => {
+          error.stack;
+          if (kindOfStandardError === file) {
+            hasEmittedError = false;
+            process.nextTick(() => {
+              if (hasEmittedError) return;
+              hasEmittedError = true;
+              throw error;
+            });
+            return;
+          }
+          if (hasEmittedError) return;
+          hasEmittedError = true;
+          throw error;
+        },
+      );
+    };
+  }
 
   function writeOut(message) {
     if (redirectPath && appendToWarningsFile && appendToWarningsFile(redirectPath, message + "\n")) return;
@@ -544,6 +580,7 @@ export function createOnWarning(process, redirectPath, disabledArr, writeToUntou
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
+    if (IS_BUN_AOT && writeWithoutStreams) return writeWithoutStreams(message + "\n");
     const rest = writeToUntouchedStderr(message + "\n");
     if (rest !== undefined) process.stderr.write(rest);
   }

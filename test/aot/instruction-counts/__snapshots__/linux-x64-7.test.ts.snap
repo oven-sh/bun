@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`doubles numbers with map, keeps some with filter and asks how many are left 1`] = `
+"typed, function: 23.80 instructions (kernel 23.68, module 0.12), 845 bytes
+typed, module level: 23.69 instructions (module 23.69), 2106 bytes
+untyped, function: 67.89 instructions (kernel 55.43, stub NewArrayUnderConstructionWithContiguous 5.74, the runtime 5.54, elsewhere 0.74, stub ColdOperationValueWithoutFPRs 0.27, module 0.12, stub ColdOperationValueWithoutFPRs to operationAOTTypedTruncateNewArray with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedTruncateNewArray 0.02), 2740 bytes
+untyped, module level: 68.75 instructions (module 56.41, stub NewArrayUnderConstructionWithContiguous 5.74, the runtime 5.54, elsewhere 0.74, stub ColdOperationValueWithoutFPRs 0.27, stub ColdOperationValueWithoutFPRs to operationAOTTypedTruncateNewArray with arguments 0.03, stub ColdOperationValueWithoutFPRs to operationAOTTypedTruncateNewArray 0.02), 4067 bytes"
+`;
+
 exports[`reads a name beyond the declared type from objects whose further keys differ; the receiver's type is declared and has an index signature 1`] = `
 "typed, function: 64.15 instructions (kernel 39.55, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadExtraPropertyByNamePreservingTwo 11, module 0.60), 238 bytes
 typed, module level: 56.55 instructions (module 32.55, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadExtraPropertyByNamePreservingTwo 11), 1968 bytes

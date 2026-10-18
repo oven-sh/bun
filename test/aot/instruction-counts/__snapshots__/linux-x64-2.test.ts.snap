@@ -64,17 +64,17 @@ untyped, module level: 820.60 instructions (the runtime 717.60, module 38, stub 
 `;
 
 exports[`reads four declared fields of a class instance through a parameter of type any 1`] = `
-"typed, function: 114.29 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 42, kernel 29.17, stub GetByNameWithDirectColumnWithReceiverInRCX 14, stub ReadFieldCell32ByName 10, stub ReadFieldCell32ByNamePreservingTwo 7, stub ReadFieldInt32ByNamePreservingTwo 7, stub ReadFieldBooleanByNamePreservingTwo 5, module 0.12), 244 bytes
-typed, module level: 114.12 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 56, module 29.12, stub ReadFieldCell32ByNamePreservingTwo 17, stub ReadFieldInt32ByNamePreservingTwo 7, stub ReadFieldBooleanByNamePreservingTwo 5), 1496 bytes
+"typed, function: 44.22 instructions (kernel 44.10, module 0.12), 525 bytes
+typed, module level: 44.14 instructions (module 44.14), 1816 bytes
 untyped, function: 89.38 instructions (kernel 49.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 30, stub GetByNameWithDirectColumnWithReceiverInRCX 10, module 0.12), 482 bytes
-untyped, module level: 87.26 instructions (module 47.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 40), 2071 bytes"
+untyped, module level: 87.26 instructions (module 47.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 40), 2060 bytes"
 `;
 
 exports[`makes a record of sixteen fields, twelve of them born undefined, and stores to three of those through a parameter of type any 1`] = `
-"typed, function: 460.51 instructions (stub PutThroughSlotByName 233.78, kernel 81.29, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, stub AllocateTypedObject 18, stub WriteBarrier 4, the runtime 0.25, module 0.12, elsewhere 0.07), 872 bytes
-typed, module level: 462.29 instructions (stub PutThroughSlotByName 233.78, module 83.25, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, stub AllocateTypedObject 18, stub WriteBarrier 4, the runtime 0.20, elsewhere 0.07), 1929 bytes
-untyped, function: 172.37 instructions (kernel 100.23, stub NewObjectFromDescriptor4 53.86, the runtime 16.32, elsewhere 1.83, module 0.12), 1115 bytes
-untyped, module level: 172.82 instructions (module 100.20, stub NewObjectFromDescriptor4 53.86, the runtime 16.79, elsewhere 1.98), 2153 bytes"
+"typed, function: 380.94 instructions (stub PutThroughSlotByName 233.78, kernel 58.28, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 26, stub AllocateTypedObject 17, module 0.12, elsewhere 0.07, the runtime -0.31), 556 bytes
+typed, module level: 376.86 instructions (stub PutThroughSlotByName 233.78, module 58.29, stub PutByNameThroughSlotsPreservingTwo 23, stub PutByNameThroughSlots 19, stub AllocateTypedObject 17, stub PutByNameWithDirectColumn 13, stub PutByNameWithDirectColumnPreservingTwo 13, elsewhere 0.07, the runtime -0.28), 1699 bytes
+untyped, function: 172.64 instructions (kernel 100.23, stub NewObjectFromDescriptor4 53.86, the runtime 16.59, elsewhere 1.83, module 0.12), 1110 bytes
+untyped, module level: 172.68 instructions (module 100.20, stub NewObjectFromDescriptor4 53.86, the runtime 16.79, elsewhere 1.83), 2134 bytes"
 `;
 
 exports[`sets the value of a string that a Map holds 1`] = `
@@ -235,4 +235,11 @@ exports[`tests a path against a router's pattern that is made at run time 1`] = 
 typed, module level: 496.82 instructions (the runtime 439.60, stub RegExpTestWithFastPath 33, module 24.22), 2561 bytes
 untyped, function: 553.12 instructions (the runtime 440.60, kernel 47.40, stub RegExpTestBoxedWithFastPath 33, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 14, stub RegExpTestOrCallValue 12, stub ReadInheritedOutOfLineByName 6, module 0.12), 554 bytes
 untyped, module level: 550 instructions (the runtime 440.60, module 45.40, stub RegExpTestBoxedWithFastPath 33, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub RegExpTestOrCallValue 12, stub ReadInheritedOutOfLineByName 6), 3306 bytes"
+`;
+
+exports[`counts the small bytes of a Uint8Array, adds up the others and counts equal neighbors 1`] = `
+"typed, function: 13.03 instructions (kernel 12.91, module 0.12), 938 bytes
+typed, module level: 13.96 instructions (module 13.96), 2292 bytes
+untyped, function: 19.47 instructions (kernel 19.23, module 0.12, outlined code 0.12), 1884 bytes
+untyped, module level: 19.24 instructions (module 19.24), 3379 bytes"
 `;

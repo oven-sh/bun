@@ -731,7 +731,8 @@ extern "C" bool Bun__hasTypeChecker();
 extern "C" void bun_initialize_process()
 {
 #if OS(DARWIN)
-    makePiecesOfConstantsReadOnly();
+    if (!Bun__hasTypeChecker())
+        makePiecesOfConstantsReadOnly();
 #endif
 
     // Disable printf() buffering. We buffer it ourselves.

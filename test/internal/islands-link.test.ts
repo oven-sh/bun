@@ -542,37 +542,8 @@ describe.skipIf(!canLink)("code of one feature that names a door of another", ()
     ["is listed", "", 0, "other <- extra: 1 references"],
     ["stops the link once pairs are argued and this one is not", "argued extra other the other way round\n", 1, "other <- extra: 1 references"],
     ["is argued", "argued other extra whoever gets there has asked for both\n", 0, ""],
-    ["is kept with it by a condition", "argued extra other the other way round\nwhen other feature extra\n", 0, ""],
-  ])("%s", async (_, lines, exitCode, listed) => {
-    using dir = tempDir("islands-pair", { ...pair, "doors": doors + lines });
-    const said = await wrapped(String(dir), "none", objects, {}, []);
-    expect(said.exitCode).toBe(exitCode);
-    if (exitCode !== 0) expect(said.stderr).toContain('no line "argued" says why');
-    expect(readFileSync(join(String(dir), "work", "pairs.txt"), "utf8").split("\n")[0]).toBe(listed);
-  });
-
-  test("what every stub jumps to stays, though only code behind a door names it", async () => {
-    using dir = tempDir("islands-pair", { ...pair, "more.c": `void Bun__trimmedOut(int); int more(int x) { if (x == 12345) Bun__trimmedOut(x); return x; }` });
-    const { canGo } = await linked(String(dir), "none", ["behind", "door", "more", "main"]);
-    expect({ more: canGo("more"), Bun__trimmedOut: canGo("Bun__trimmedOut") }).toEqual({ more: true, Bun__trimmedOut: false });
-  });
-});
-
-describe.skipIf(!canLink)("code of one feature that names a door of another", () => {
-  const pair = {
-    ...sources,
-    "door.c": doorTo("more"),
-    "more.c": `int door_of_another(int); int more(int x) { return door_of_another(x) + 1; }`,
-    "other.c": `__attribute__((noinline)) int door_of_another(int x) { for (int i = 0; i < 9; i++) x = x * 11 + i; return x; }`,
-    "main.c": start + `int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : 0; }`,
-  };
-  const objects = ["behind", "door", "more", "other", "main"];
-  const doors = sources.doors + "feature other something else\ndoor other exit ^door_of_another$\nwhen extra global Extra\nwhen other global Other\n";
-
-  test.each([
-    ["is listed", "", 0, "other <- extra: 1 references"],
-    ["stops the link once pairs are argued and this one is not", "argued extra other the other way round\n", 1, "other <- extra: 1 references"],
-    ["is argued", "argued other extra whoever gets there has asked for both\n", 0, ""],
+    ["is argued by a pattern over the whole of each name", "argued oth.* ex(tra|cess) whoever gets there has asked for both\n", 0, ""],
+    ["is not argued by a pattern that matches a part of a name", "argued oth extra whoever gets there has asked for both\n", 1, "other <- extra: 1 references"],
     ["is kept with it by a condition", "argued extra other the other way round\nwhen other feature extra\n", 0, ""],
   ])("%s", async (_, lines, exitCode, listed) => {
     using dir = tempDir("islands-pair", { ...pair, "doors": doors + lines });
@@ -598,6 +569,12 @@ describe.skipIf(!canLink)("code of one feature that names a door of another", ()
     expect(said).toContain("1 functions that match a door run before main or after it, or have a second entry, and are no doors");
     expect({ isDoor: isDoor("early"), early: canGo("early"), behind_early: canGo("behind_early"), more: canGo("more") }).toEqual({ isDoor: false, early: false, behind_early: false, more: true });
     expect(ranTrimmed.exitCode).toBe(0);
+  });
+
+  test("the name of a condition is all the words behind its kind", async () => {
+    using dir = tempDir("islands-pair", { ...sources, "doors": sources.doors + "when extra export node:module SourceMap\n" });
+    const { table } = await linked(String(dir), "none");
+    expect(table.conditions).toEqual([{ feature: "extra", kind: "export", name: "node:module SourceMap" }]);
   });
 
   test("what every stub jumps to stays, though only code behind a door names it", async () => {

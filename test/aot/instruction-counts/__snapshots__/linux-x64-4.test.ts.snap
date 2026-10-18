@@ -118,7 +118,7 @@ untyped, module level: 105.58 instructions (module 40.34, stub NewObjectLiteral4
 `;
 
 exports[`creates four declared optional fields in an instance that was first given an undeclared property; the receiver's type is known 1`] = `
-"typed, function: 48.42 instructions (kernel 48.30, module 0.12), 492 bytes
+"typed, function: 48.42 instructions (kernel 48.30, module 0.12), 519 bytes
 typed, module level: 44.41 instructions (module 44.41), 2046 bytes
 untyped, function: 174.37 instructions (kernel 92.25, stub PutByNameWithDirectColumnPreservingTwo 39, stub ReplaceOutOfLineByName 22, stub PutByNameWithDirectColumn 13, stub WriteBarrier 8, module 0.12), 934 bytes
 untyped, module level: 177.23 instructions (module 95.23, stub PutByNameWithDirectColumnPreservingTwo 52, stub ReplaceOutOfLineByName 22, stub WriteBarrier 8), 2507 bytes"

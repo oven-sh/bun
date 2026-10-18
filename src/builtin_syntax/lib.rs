@@ -31,7 +31,10 @@ pub struct Manifest {
     always_included: Vec<u32>,
     triggers: Vec<Trigger>,
     on_behalf_of: Vec<OnBehalfOf>,
+    roots_made_for: Vec<(u32, Vec<Box<[u8]>>)>,
 }
+
+pub const MODULE_ROOT: u32 = 1 << 31;
 
 struct OnBehalfOf {
     function: u32,
@@ -168,6 +171,16 @@ impl Manifest {
                     let function = number(field()?).ok_or_else(error)?;
                     let name = field()?.into();
                     manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.map(Into::into).collect() });
+                }
+                b"behalf-module" => {
+                    let function = MODULE_ROOT | number(field()?).ok_or_else(error)?;
+                    let name = field()?.into();
+                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.map(Into::into).collect() });
+                }
+                b"root" => {
+                    let kind = if field()? == b"module" { MODULE_ROOT } else { 0 };
+                    let id = number(field()?).ok_or_else(error)?;
+                    manifest.roots_made_for.push((kind | id, fields.map(Into::into).collect()));
                 }
                 b"trigger" => {
                     let path = field()?;
@@ -331,9 +344,21 @@ impl Manifest {
         find(&self.builtin_functions, &[path, name].join(&b'\t'))
     }
 
+    pub fn is_vouched_for(&self, function: u32) -> bool {
+        self.on_behalf_of.iter().any(|entry| entry.function == function)
+    }
+
     pub fn on_behalf_of(&self, function: u32, name: &[u8]) -> Option<&[Box<[u8]>]> {
         let of_function = self.on_behalf_of.iter().filter(|entry| entry.function == function);
         of_function.filter(|entry| *entry.name == *name || *entry.name == *b"*").map(|entry| &entry.facts[..]).next()
+    }
+
+    pub fn waits_to_be_named(&self, root: u32) -> bool {
+        self.roots_made_for.iter().any(|waiting| waiting.0 == root)
+    }
+
+    pub fn roots_made_for(&self) -> impl Iterator<Item = (u32, &[Box<[u8]>])> {
+        self.roots_made_for.iter().map(|waiting| (waiting.0, &waiting.1[..]))
     }
 
     pub fn native_bindings(&self) -> impl Iterator<Item = NativeBinding<'_>> {

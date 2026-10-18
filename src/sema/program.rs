@@ -242,6 +242,7 @@ pub struct Module<'s> {
     pub loader_entry_points: &'s [hir::ExprId],
     pub file_loader_entry_points: &'s [hir::ExprId],
     pub compiled_functions: std::sync::OnceLock<CompiledFunctions<'s>>,
+    pub roots_released: std::sync::OnceLock<&'s [(hir::FnId, u32)]>,
     /// No file refers to it, and it adds no globally visible declarations. So only the task that
     /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
     /// nothing that mentions one of its nodes is published.
@@ -251,6 +252,8 @@ pub struct Module<'s> {
     /// Whether it contains a conditional or a mapped type node.
     has_conditional_or_mapped_type: bool,
 }
+
+pub const EVERY_ROOT: u32 = u32::MAX;
 
 pub struct CompiledFunctions<'s> {
     pub defined: &'s [u64],
@@ -7026,6 +7029,7 @@ impl<'s> Files<'s> {
             loader_entry_points: &[],
             file_loader_entry_points: &[],
             compiled_functions: std::sync::OnceLock::new(),
+            roots_released: std::sync::OnceLock::new(),
             is_leaf: false,
             adds_nothing,
             has_conditional_or_mapped_type,
@@ -7142,6 +7146,7 @@ impl<'s> Files<'s> {
                 loader_entry_points,
                 file_loader_entry_points,
                 compiled_functions,
+                roots_released,
             } = self.module(file);
             // Of a program that is compiled. Nothing of it is shared.
             if !decisions.is_empty()
@@ -7155,6 +7160,7 @@ impl<'s> Files<'s> {
                 || !loader_entry_points.is_empty()
                 || !file_loader_entry_points.is_empty()
                 || compiled_functions.get().is_some()
+                || roots_released.get().is_some()
             {
                 return None;
             }

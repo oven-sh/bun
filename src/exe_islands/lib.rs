@@ -608,7 +608,8 @@ pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
     Ok(Table::parse(&file[range])?.features)
 }
 
-const KINDS_OF_FACTS: [&[u8]; 16] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option"];
+const KINDS_OF_FACTS: [&[u8]; 19] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"exec-argv", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option", b"Intl", b"syntax"];
+const SYNTAX_THAT_IS_A_FACT: [&[u8]; 2] = [b"regexp-literal", b"bigint-literal"];
 
 pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {
     let range = Container::of(file)?.table_range(file)?;
@@ -625,6 +626,7 @@ pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {
 }
 
 const KINDS_LISTED_BY_THE_COMPILER: [&[u8]; 2] = [b"operation", b"language-operation"];
+const KINDS_OF_MEMBERS: [&[u8]; 6] = [b"global", b"Bun", b"process", b"console", b"performance", b"Intl"];
 
 fn is_closed_world(facts: &[u8]) -> bool {
     facts == b"closed" || facts.starts_with(b"closed\n")
@@ -641,8 +643,13 @@ fn unused_by(table: &Table, facts: &[u8]) -> Vec<usize> {
     let follows_a_feature = |condition: &&Condition| condition.kind == b"feature";
     let holds = |condition: &Condition| {
         let mut names = bun_core::strings::split(facts, b"\n").filter_map(|line| line.strip_prefix(condition.kind)?.strip_prefix(b" ")).peekable();
-        let is_listed = if KINDS_LISTED_BY_THE_COMPILER.contains(&condition.kind) { names.peek().is_some() } else { KINDS_OF_FACTS.contains(&condition.kind) };
-        !follows_a_feature(&condition) && (!is_listed || names.any(|name| name == b"*" || name == condition.name))
+        let is_listed = match condition.kind {
+            b"syntax" => SYNTAX_THAT_IS_A_FACT.contains(&condition.name),
+            kind if KINDS_LISTED_BY_THE_COMPILER.contains(&kind) => names.peek().is_some(),
+            kind => KINDS_OF_FACTS.contains(&kind),
+        };
+        let is_read_from_something = KINDS_OF_MEMBERS.contains(&condition.kind) && bun_core::strings::split(facts, b"\n").any(|line| line.strip_prefix(b"program-property ") == Some(condition.name));
+        !follows_a_feature(&condition) && (!is_listed || is_read_from_something || names.any(|name| name == b"*" || name == condition.name))
     };
     let conditions_of = |feature: usize| table.conditions.iter().filter(move |condition| condition.feature == feature);
     let mut is_kept: Vec<bool> = (0..table.features.len()).map(|feature| conditions_of(feature).next().is_none() || conditions_of(feature).any(holds)).collect();
@@ -737,6 +744,7 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bun_sema_standalone as _;
 
     const SMALL: [&[u8]; 10] = [
         TABLE_HEADER,
@@ -1179,6 +1187,20 @@ mod tests {
         assert_eq!(unused_by(&one_another, b"Bun serve\n"), [0, 1]);
         let unknown = Table { conditions: vec![when(0, b"feature", b"nothing of that name"), when(1, b"Bun", b"serve"), when(2, b"Bun", b"serve")], ..table() };
         assert_eq!(unused_by(&unknown, b""), [1, 2]);
+        let syntax = Table { conditions: vec![when(0, b"syntax", b"regexp-literal"), when(1, b"syntax", b"bigint-literal"), when(2, b"syntax", b"that nobody writes")], ..table() };
+        assert_eq!(unused_by(&syntax, b"closed\nsyntax bigint-literal\n"), [0]);
+    }
+
+    #[test]
+    fn a_member_is_named_by_a_property_of_its_name_whatever_the_program_reads_it_from() {
+        let when = |feature, kind: &'static [u8], name: &'static [u8]| Condition { feature, kind, name };
+        let members = Table { conditions: vec![when(0, b"Bun", b"color"), when(1, b"process", b"report"), when(2, b"native", b"color")], ..table() };
+        assert_eq!(unused_by(&members, b"closed\nprogram-property other\n"), [0, 1, 2]);
+        assert_eq!(unused_by(&members, b"closed\nprogram-property color\n"), [1, 2]);
+        assert_eq!(unused_by(&members, b"closed\nprogram-property report\nprogram-property colors\n"), [0, 2]);
+        assert_eq!(unused_by(&members, b"closed\nproperty color\nproperty report\n"), [0, 1, 2]);
+        let others = Table { conditions: vec![when(0, b"global", b"HTMLRewriter"), when(1, b"console", b"takeHeapSnapshot"), when(2, b"performance", b"mark")], ..table() };
+        assert_eq!(unused_by(&others, b"closed\nprogram-property HTMLRewriter\nprogram-property takeHeapSnapshot\nprogram-property mark\n"), []);
     }
 
     #[test]

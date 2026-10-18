@@ -134,7 +134,7 @@ fn may_find_the_constructor_of_functions(program: &Program, func: &Func, at: V, 
     }
 }
 
-const MAKE_OR_LOAD_CODE: [&[u8]; 14] = [
+const MAKE_OR_LOAD_CODE: [&[u8]; 17] = [
     b"FFI",
     b"Function",
     b"ModuleGraph",
@@ -143,12 +143,15 @@ const MAKE_OR_LOAD_CODE: [&[u8]; 14] = [
     b"_linkedBinding",
     b"binding",
     b"dlopen",
+    b"enableLoadExtension",
     b"eval",
     b"getBuiltinModule",
     b"getProtectedObjects",
+    b"loadExtension",
     b"mainModule",
     b"plugin",
     b"require",
+    b"setCustomSQLite",
 ];
 
 fn may_find_what_makes_or_loads_code(program: &Program, func: &Func, at: V, op: &Op, is_own: &[bool]) -> bool {

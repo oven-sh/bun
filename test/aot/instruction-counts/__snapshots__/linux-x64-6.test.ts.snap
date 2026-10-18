@@ -92,10 +92,10 @@ untyped, module level: 68.27 instructions (module 37.27, stub GetByValCachedOfCe
 `;
 
 exports[`reads three fields that were born undefined, one of them stored since, through a parameter of type any 1`] = `
-"typed, function: 94.29 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 28, kernel 25.17, stub GetByNameWithDirectColumnWithReceiverInRCX 14, stub ReadFieldCell32ByNamePreservingTwo 10, stub ReadFieldDoubleByNamePreservingTwo 10, stub ReadFieldCell32ByName 7, module 0.12), 204 bytes
-typed, module level: 94.12 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 42, module 25.12, stub ReadFieldCell32ByNamePreservingTwo 17, stub ReadFieldDoubleByNamePreservingTwo 10), 1482 bytes
+"typed, function: 45.37 instructions (kernel 45.25, module 0.12), 703 bytes
+typed, module level: 44.21 instructions (module 44.21), 1991 bytes
 untyped, function: 28.33 instructions (kernel 28.21, module 0.12), 977 bytes
-untyped, module level: 73.26 instructions (module 43.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 30), 1810 bytes"
+untyped, module level: 73.26 instructions (module 43.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 30), 1796 bytes"
 `;
 
 exports[`iterates with for await over a class whose next() is an async method 1`] = `
@@ -243,4 +243,18 @@ exports[`reads three search parameters of a URL made from a string 1`] = `
 typed, module level: 2058 instructions (the runtime 1639, module 339, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2), 3820 bytes
 untyped, function: 2062.80 instructions (the runtime 1630, kernel 352.20, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2, module 0.60), 3094 bytes
 untyped, module level: 2061 instructions (the runtime 1639, module 342, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2), 4028 bytes"
+`;
+
+exports[`tallies five numbers by a function that calls itself last with a new object 1`] = `
+"typed, function: 105.24 instructions (kernel 105.12, module 0.12), 537 bytes
+typed, module level: 79.08 instructions (module 79.08), 1850 bytes
+untyped, function: 581.79 instructions (tallyFrom 266.16, stub NewObjectFromDescriptor2 126.25, kernel 103.08, stub Add 32, the runtime 26.09, outlined code 25.87, elsewhere 2.21, module 0.12), 1012 bytes
+untyped, module level: 586.38 instructions (tallyFrom 266.16, stub NewObjectFromDescriptor2 126.25, module 94.09, stub Add 32, outlined code 25.87, the runtime 23.80, stub GetTwoByName 16, elsewhere 2.21), 2135 bytes"
+`;
+
+exports[`adds to a cell of a shared Int32Array with Atomics.add and reads another with Atomics.load 1`] = `
+"typed, function: 27.26 instructions (kernel 27.14, module 0.12), 438 bytes
+typed, module level: 21.13 instructions (module 21.13), 1729 bytes
+untyped, function: 39.26 instructions (kernel 39.14, module 0.12), 801 bytes
+untyped, module level: 37.14 instructions (module 37.14), 1809 bytes"
 `;

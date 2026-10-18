@@ -32,11 +32,12 @@ attempt("toSorted", () => rows.toSorted((a, b) => a.k - b.k).map(r => r.k + ":" 
 attempt("toSorted leaves the array", () => rows.map(r => r.at));
 console.log("toSorted makes an array:", rows.toSorted((a, b) => a.k - b.k) !== rows, rows.sort((a, b) => a.at - b.at) === rows);
 const big: Row[] = [];
-for (let i = 0; i < 5000; i++) big.push({ k: (next() % 1000) / 4, at: i });
+const byQuarter: number[][] = [];
+for (let quarter = 0; quarter < 1000; quarter++) byQuarter.push([]);
+for (let i = 0; i < 5000; i++) { const quarter = next() % 1000; big.push({ k: quarter / 4, at: i }); byQuarter[quarter]!.push(i); }
 big.sort((a, b) => a.k - b.k);
-let inOrder = true, sum = 0;
-for (let i = 1; i < big.length; i++) { const x = big[i - 1]!, y = big[i]!; if (x.k > y.k || (x.k === y.k && x.at > y.at)) inOrder = false; sum = (sum * 31 + y.at) % 1000003; }
-console.log("five thousand:", inOrder, sum);
+const wanted = byQuarter.flat();
+console.log("five thousand:", big.length === wanted.length, big.filter((row, place) => row.at !== wanted[place]).length, big[0]!.at, big[2500]!.at, big[4999]!.at);
 
 const plain: any[] = JSON.parse('[{"k":3,"n":"a"},{"k":1,"n":"b"},{"k":2,"n":"c"},{"k":1,"n":"d"}]');
 attempt("plain objects", () => plain.slice().sort(function (a: any, b: any): any { return a.k - b.k; }));

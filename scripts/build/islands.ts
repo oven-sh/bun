@@ -57,7 +57,7 @@ interface Doors {
   data: Claim[];
   dataKeptOnWindows: RegExp[];
   loadNativeCode: string[];
-  argued: Set<string>;
+  argued: { door: RegExp; namer: RegExp }[];
   fingerprint: string;
 }
 
@@ -116,13 +116,13 @@ function fail(message: string): never {
 
 function readDoors(path: string): Doors {
   const text = readFileSync(path, "utf8");
-  const result: Doors = { features: [], doors: [], conditions: [], smallest: new Map(), data: [], dataKeptOnWindows: [], loadNativeCode: [], argued: new Set(), fingerprint: createHash("sha256").update(text).digest("hex").slice(0, 16) };
+  const result: Doors = { features: [], doors: [], conditions: [], smallest: new Map(), data: [], dataKeptOnWindows: [], loadNativeCode: [], argued: [], fingerprint: createHash("sha256").update(text).digest("hex").slice(0, 16) };
   for (const line of text.split("\n")) {
     const words = line.trim().split(/\s+/);
     if (words[0] === "feature") result.features.push({ name: words[1]!, description: words.slice(2).join(" ") });
-    else if (words[0] === "when") result.conditions.push({ feature: words[1]!, kind: words[2]!, name: words[3]! });
+    else if (words[0] === "when") result.conditions.push({ feature: words[1]!, kind: words[2]!, name: words.slice(3).join(" ") });
     else if (words[0] === "exported") result.loadNativeCode.push(...words.slice(1));
-    else if (words[0] === "argued") result.argued.add(`${words[1]} <- ${words[2]}`);
+    else if (words[0] === "argued") result.argued.push({ door: new RegExp(`^(?:${words[1]})$`), namer: new RegExp(`^(?:${words[2]})$`) });
     else if (words[0] === "smallest") result.smallest.set(words[1]!, Number(words[2]));
     else if (words[0] === "data") result.data.push({ feature: words[1]!, pattern: new RegExp(words.slice(2).join(" ")) });
     else if (words[0] === "windows-keeps") result.dataKeptOnWindows.push(new RegExp(words.slice(1).join(" ")));
@@ -1796,7 +1796,8 @@ function pairsToArgue(graph: Graph, check: Analysis, declared: Doors, spell: (no
       for (const holder of holders) {
         if (members.includes(holder) || members.some(member => isKeptWith(member, holder))) continue;
         const pair = `${members.join(",")} <- ${holder}`;
-        if (!declared.argued.has(pair)) found.set(pair, [...(found.get(pair) ?? []), `${spell(next)} <- ${spell(node)}`]);
+        if (declared.argued.some(({ door, namer }) => door.test(members.join(",")) && namer.test(holder))) continue;
+        found.set(pair, [...(found.get(pair) ?? []), `${spell(next)} <- ${spell(node)}`]);
       }
     }
   });
@@ -1844,7 +1845,7 @@ function listedDoors(graph: Graph, check: Analysis, declared: Doors, work: strin
   writeFileSync(join(work, "doors.txt"), review.join(""));
   const pairs = pairsToArgue(graph, check, declared, spell);
   writeFileSync(join(work, "pairs.txt"), pairs.join(""));
-  if (declared.argued.size > 0 && pairs.length > 0) {
+  if (declared.argued.length > 0 && pairs.length > 0) {
     fail(`${pairs.length} times code of one feature names a door of another, no condition keeps the second wherever the first is kept, and no line "argued" says why that is right:\n` + pairs.join(""));
   }
   if (process.env.BUILDKITE !== undefined) {
@@ -2265,7 +2266,13 @@ function machO({ work, output, declared, demangler, command, assemble, link }: L
       const stem = (name: string) => name.split(".llvm.")[0]!.split(".__uniq.")[0]!;
       const spell = (object: string, name: string) => (graph.externalNames.has(name) ? name : `${base(object)}:${name}`);
       const namesOf = (node: number): [string, string][] => [[graph.object[node]!, graph.section[node]!], ...(graph.aliases.get(node) ?? [])];
-      const moves = (node: number) => analysis.neededBy.has(node) && isMovable(graph.output[node]!) && !staysAsDoor(analysis, node);
+      const goesByFacts = (feature: string) => declared.conditions.some(condition => condition.feature === feature) || declared.doors.some(door => door.isOperation && door.feature === feature);
+      const aheadOfWhatAlwaysGoes = new Set(islands.slice(0, Math.max(0, islands.findIndex(features => !features.split(",").some(goesByFacts)))));
+      const moves = (node: number) =>
+        analysis.neededBy.has(node) &&
+        isMovable(graph.output[node]!) &&
+        !staysAsDoor(analysis, node) &&
+        (graph.output[node] === "__TEXT,__text" || !aheadOfWhatAlwaysGoes.has(analysis.neededBy.get(node)!));
       const taken = new Set<string>();
       const takenAnywhere = new Set<string>();
       for (let node = 0; node < graph.address.length; node++) {

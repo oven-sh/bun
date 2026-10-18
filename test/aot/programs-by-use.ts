@@ -10,7 +10,7 @@ import { test } from "./supported";
 export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number };
 
 using probe = tempDir("aot-built-in-functions-by-use-probe", { "hello.ts": `console.log("hello world");` });
-const canTrim = !Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stdout: "pipe", stderr: "pipe" })
+export const canTrim = !Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stdout: "pipe", stderr: "pipe" })
   .stderr.toString()
   .includes("nothing can be left out of this Bun");
 

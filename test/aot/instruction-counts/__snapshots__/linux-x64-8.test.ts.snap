@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`finds the greatest element of an Int32Array, its place and how many are odd 1`] = `
+"typed, function: 18.68 instructions (kernel 18.56, module 0.12), 966 bytes
+typed, module level: 15.50 instructions (module 15.50), 2115 bytes
+untyped, function: 15.85 instructions (kernel 15.73, module 0.12), 1464 bytes
+untyped, module level: 15.68 instructions (module 15.68), 2858 bytes"
+`;
+
 exports[`passes a typed object whose type is lost to a typed function, which reads three fields 1`] = `
 "typed, function: 24.33 instructions (kernel 24.21, module 0.12), 745 bytes
 typed, module level: 4.26 instructions (module 4.26), 1505 bytes
@@ -178,7 +185,7 @@ untyped, module level: 10.63 instructions (module 10.63), 2526 bytes"
 exports[`scans a string by index to the closing quote, with a test for an escape and one for control characters 1`] = `
 "typed, function: 14.29 instructions (kernel 14.17, module 0.12), 418 bytes
 typed, module level: 12.08 instructions (module 12.08), 2076 bytes
-untyped, function: 16.33 instructions (kernel 16.21, module 0.12), 777 bytes
+untyped, function: 16.33 instructions (kernel 16.21, module 0.12), 825 bytes
 untyped, module level: 15.14 instructions (module 15.14), 2407 bytes"
 `;
 

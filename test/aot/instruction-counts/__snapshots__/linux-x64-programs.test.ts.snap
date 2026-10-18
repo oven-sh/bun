@@ -54,7 +54,7 @@ exports[`Code made at run time meets compiled code: 8 JSON.stringify of a typed 
 
 exports[`Code made at run time meets compiled code: 8 JSON.stringify of an untyped object 1`] = `"a turn: 1141.99 instructions (the runtime 1124.35, elsewhere 17.64), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 8 Map.prototype.get 1`] = `"a turn: 395.44 instructions (the runtime 395.07, elsewhere 0.36), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 8 Map.prototype.get 1`] = `"a turn: 524.95 instructions (the runtime 524.59, elsewhere 0.36), 0 bytes"`;
 
 exports[`Untyped access to typed objects: 0 empty loop 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
 

@@ -61,4 +61,12 @@ describe.concurrent("the built-in code that is part of every program", () => {
     const facts = await factsOf(`console.log(require("node:events").on);`);
     expect(facts.has("module internal:fixed_queue")).toBe(true);
   });
+
+  test("whoever holds node:events holds what process.stderr is made of, which the warning printer then writes through", async () => {
+    const standardStream = ["module node:tty", "module node:fs", "module internal:fs/streams"];
+    const withEvents = await factsOf(`console.log(require("node:events").on);`);
+    expect(standardStream.filter(fact => !withEvents.has(fact))).toEqual([]);
+    const without = await factsOf(`console.log("hello");`);
+    expect(["module node:events", ...standardStream].filter(fact => without.has(fact))).toEqual([]);
+  });
 });

@@ -78,6 +78,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIntrinsicTypedArrayConstructor, (JSGlobalObje
     return JSValue::encode(globalObject->typedArrayConstructor(typedArrayType(value.asCell()->type())));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBufferClassMade, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsBoolean(!!defaultGlobalObject(globalObject)->m_JSBufferClassStructure.getConcurrently()));
+}
+
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by
 // util.inspect and the REPL completer: own keys minus array indices, without materializing
 // a name (or descriptor) per element the way Object.getOwnPropertyNames() on an array would.

@@ -1,63 +1,72 @@
-function descend(depth: number): number {
-  if (depth === 0) throw new RangeError("deep");
-  return descend(depth - 1) + 1;
+function slot(table: readonly number[], at: number): number {
+  if (at >= table.length) throw new RangeError("past the end");
+  return table[at]!;
 }
 
-function refuse(): never {
-  throw new TypeError("refused");
+function follow(table: readonly number[], at: number, hops: number): number {
+  const next = slot(table, at);
+  return hops > 0 ? follow(table, next, hops - 1) * 2 + 1 : next;
 }
 
-function describe(error: unknown): string {
-  if (!(error instanceof Error)) return "not an error: " + String(error);
-  return [error.name, error.message, error.constructor.name, Object.getPrototypeOf(error) === RangeError.prototype, Object.getPrototypeOf(error) === TypeError.prototype, typeof error.stack].join(" | ");
+function forbid(): never {
+  throw new TypeError("forbidden");
 }
 
-const descenders: ((depth: number) => number)[] = [descend];
-const refusers: (() => never)[] = [refuse];
+function portrait(error: unknown): string {
+  if (!(error instanceof Error)) return "no error at all: " + String(error);
+  const parent = Object.getPrototypeOf(error);
+  return [error.constructor.name, error.name, error.message, parent === RangeError.prototype ? "range" : parent === TypeError.prototype ? "type" : "other", typeof error.stack].join(" / ");
+}
 
-let ignored = 0;
-for (let i = 0; i < 2000; i++) {
+const ring: number[] = [];
+for (let i = 0; i < 24; i++) ring.push(i + 1);
+const followers: ((table: readonly number[], at: number, hops: number) => number)[] = [follow];
+const forbidders: (() => never)[] = [forbid];
+
+let tally = 0;
+for (let round = 0; round < 2000; round++) {
   try {
-    ignored += descenders[0](20);
+    tally += followers[0](ring, round % 4, 100);
   } catch {
-    ignored += 1;
+    tally += 3;
   }
 }
-console.log(String(ignored));
+console.log(String(tally));
 
-for (const depth of [0, 1, 20]) {
+for (const start of [24, 23, 3, 0]) {
   try {
-    console.log(String(descenders[0](depth)));
+    console.log(String(followers[0](ring, start, 100)));
   } catch (error) {
-    console.log(describe(error));
+    console.log(portrait(error));
   }
 }
+console.log(String(followers[0](ring, 0, 5)), String(followers[0](ring, 20, 0)));
 
-let cleanups = 0;
-for (let i = 0; i < 3; i++) {
+let tidied = "";
+for (const mark of ["a", "b", "c"]) {
   try {
     try {
-      refusers[0]();
+      forbidders[0]();
     } finally {
-      cleanups++;
+      tidied += mark;
     }
   } catch (error) {
-    console.log(describe(error), String(cleanups));
+    console.log(portrait(error), tidied);
   }
 }
 
-const distinct = new Set<unknown>();
-for (let i = 0; i < 4; i++) {
+const caught: unknown[] = [];
+for (let round = 0; round < 4; round++) {
   try {
-    descenders[0](2);
+    followers[0](ring, 22, 9);
   } catch (error) {
-    distinct.add(error);
+    caught.push(error);
   }
 }
-console.log(String(distinct.size));
+console.log(String(new Set(caught).size), String(caught[0] === caught[1]), String((caught[2] as Error).message === (caught[3] as Error).message));
 
-async function later(): Promise<number> {
-  await null;
-  return descenders[0](3);
+async function afterATurn(start: number): Promise<number> {
+  await undefined;
+  return followers[0](ring, start, 40);
 }
-console.log(await later().then(String, describe));
+console.log(await afterATurn(21).then(String, portrait), await afterATurn(30).then(String, portrait));

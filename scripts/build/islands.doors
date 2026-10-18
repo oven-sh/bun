@@ -49,10 +49,30 @@ feature nodehttp2 node:http2
 feature sql Bun.sql and Bun.SQL for PostgreSQL and MySQL
 feature node_assert the diff that node:assert prints
 feature urlpattern URLPattern
-feature intl Intl.DisplayNames, ListFormat, Locale, PluralRules, RelativeTimeFormat, Segmenter, getCanonicalLocales and supportedValuesOf
+feature segmenter Intl.Segmenter
+feature display_names Intl.DisplayNames
+feature intl Intl.ListFormat, Locale, PluralRules, RelativeTimeFormat, getCanonicalLocales and supportedValuesOf
 feature libdeflate_compressor gzip and deflate compression in one call
 feature compression_calls Bun.gzipSync, gunzipSync, deflateSync, inflateSync, zstdCompress, zstdDecompress and their Sync forms
 feature compression_streams CompressionStream and DecompressionStream
+feature inspector the debugger and node:inspector
+feature node_vm node:vm
+feature bun_jsc bun:jsc
+feature atomics Atomics
+feature message_channel MessageChannel, MessagePort and BroadcastChannel
+feature brotli_encoder compression with Brotli
+feature node_zlib the native half of node:zlib
+feature text what turns text and files into code at run time
+feature bundler Bun.build, HTML imports and the development server
+feature zstd compression with zstd
+feature package_files reading package.json and tsconfig.json at run time
+feature performance_timeline performance.mark, performance.measure, PerformanceObserver and the entries they make
+feature source_maps reading source maps: those inside the executable and node:module's SourceMap
+feature module_graph Bun.ModuleGraph
+feature histogram node:perf_hooks' createHistogram and monitorEventLoopDelay
+feature dialogs alert, confirm and prompt
+feature node_v8 node:v8's native half
+feature post_message the global postMessage
 feature float16array Float16Array
 feature biguint64array BigUint64Array
 feature bigint64array BigInt64Array
@@ -64,23 +84,16 @@ feature float32array Float32Array
 feature int32array Int32Array
 feature float64array Float64Array
 feature uint32array Uint32Array
-feature inspector the debugger and node:inspector
 feature napi native addons: N-API and the V8 and libuv symbols
-feature node_vm node:vm
-feature bun_jsc bun:jsc
 feature terminal Bun.Terminal
 feature cryptohasher Bun.CryptoHasher
-feature atomics Atomics
 feature udp Bun.udpSocket and node:dgram
 feature net_addresses net.BlockList and net.SocketAddress
 feature process_report process.report
 feature deep_equals Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual and assert.partialDeepStrictEqual
 feature parse_args util.parseArgs
-feature message_channel MessageChannel, MessagePort and BroadcastChannel
 feature outside_bytes values that arrive serialized from another program: IPC with advanced serialization, deserialize of bun:jsc and node:v8
 feature legacy_encodings TextDecoder for encodings other than UTF-8, UTF-16 and Latin-1
-feature brotli_encoder compression with Brotli
-feature node_zlib the native half of node:zlib
 feature websocket the WebSocket client
 feature webcrypto crypto.subtle, SubtleCrypto and CryptoKey
 feature nodecrypto node:crypto
@@ -90,31 +103,38 @@ feature spawn Bun.spawn and Bun.spawnSync
 feature sockets Bun.listen, Bun.connect and node:net
 feature dns Bun.dns and node:dns
 feature http_parser node:http's own parser (process.binding('http_parser'))
-feature text what turns text and files into code at run time
-feature bundler Bun.build, HTML imports and the development server
-feature zstd compression with zstd
-feature package_files reading package.json and tsconfig.json at run time
+feature structured_clone structuredClone and every other copy of a value by serialization
+feature string_decoder node:string_decoder
+feature console_table console.table and Bun.inspect.table
+feature process_binding process.binding
+feature process_exec_argv process.execArgv
+feature process_usage process.memoryUsage, cpuUsage, threadCpuUsage, resourceUsage, uptime, availableMemory and constrainedMemory
+feature process_about process.versions, release, config, features, allowedNodeEnvironmentFlags, revision, mainModule, finalization, assert, ref, unref, openStdin, loadEnvFile, getBuiltinModule and the capture callback
+feature text_codec TextDecoder and TextEncoder
+feature node_cluster node:cluster's native half
+feature node_url_natives node:url's domainToASCII and domainToUnicode
+feature bun_misc Bun.stripANSI, mmap, which, indexOfLine, sleep, sleepSync, gc, shrink, allocUnsafe, nanoseconds, peek and concatArrayBuffers
+feature ipc process.send, disconnect, channel, connected and the 'message' and 'disconnect' events
+feature process_control process.kill, chdir, umask, execve, title and the functions for users and groups
 feature mux HTTP/2 and HTTP/3 in Bun.serve
 feature bun_info the /bun:info route of a development server
 feature node_http the native half of node:http's server
 feature serve Bun.serve
+feature worker Worker and node:worker_threads
 feature profiler the CPU and heap profilers, heap snapshots and code coverage
 feature image Bun.Image
 feature temporal Temporal and Date.prototype.toTemporalInstant
 feature valkey Bun.redis and Bun.RedisClient
 feature s3 reading what an S3 server answers
 feature s3client Bun.s3, Bun.S3Client and s3: URLs
-feature worker Worker and node:worker_threads
-feature structured_clone structuredClone and every other copy of a value by serialization
-feature performance_timeline performance.mark, performance.measure, PerformanceObserver and the entries they make
 feature regexp_properties Unicode property escapes in regular expressions
 feature cookie Bun.Cookie and Bun.CookieMap
 feature glob Bun.Glob
 feature collation Intl.Collator and localeCompare
 feature units units in Intl.NumberFormat, Intl.DurationFormat and toLocaleString
-feature formatting Intl.NumberFormat, Intl.DateTimeFormat, toLocaleString, toLocaleDateString and toLocaleTimeString
+feature date_formatting Intl.DateTimeFormat and toLocaleString, toLocaleDateString and toLocaleTimeString of a Date or a Temporal object
+feature number_formatting Intl.NumberFormat, Intl.DurationFormat and toLocaleString of a Number or a BigInt
 feature brotli_decoder decompression of Brotli
-feature source_maps reading source maps: those inside the executable and node:module's SourceMap
 feature cli_options options given to the executable by --compile-exec-argv or BUN_OPTIONS
 feature bunfig reading bunfig.toml when the executable starts
 feature node_path the native half of node:path
@@ -122,6 +142,21 @@ feature http3 HTTP/3 in Bun.serve and fetch
 feature x509 X509Certificate and KeyObject
 feature tls TLS
 feature fetch fetch and Bun.FetchSession
+feature crypto_object the global crypto: getRandomValues, randomUUID, timingSafeEqual
+feature string_width Bun.stringWidth
+feature node_validators the native validators of Node's built-in modules
+feature node_util_natives the native helpers of node:util, util.inspect and node:events
+feature node_small_modules the native modules node:util/types and node:constants
+feature base64_globals atob and btoa
+feature url URL and URLSearchParams
+feature buffer Buffer
+feature events Event, CustomEvent, ErrorEvent, MessageEvent and CloseEvent
+feature abort_signal AbortController and AbortSignal
+feature headers Headers
+feature form_data FormData and .formData()
+feature fs_stats the classes fs.Stats, BigIntStats, StatFs and Dirent
+feature web_streams ReadableStream, WritableStream, TransformStream, the native sources and sinks behind them
+feature bodies Blob, File, Request, Response, Bun.file, Bun.write, Bun.stdin, Bun.stdout and Bun.stderr
 door tools exit ^bun_runtime::cli::command::(exec_\w+|bun_info|bun_create|bun_getcompletes|which|tag_print_help)$
 door tools return ^Bun__AOT__hasCompiler$
 door tools return ^Bun__hasTypeChecker$
@@ -427,13 +462,43 @@ door shell exit ^_R\w*16bun_shell_parser
 door shell exit ^__bun_dispatch__ProcessExit__Shell__
 door shell exit ^WebCore::JS(ShellInterpreter|ParsedShellScript)::create(Prototype|Structure|Constructor)\(
 door shell exit ^(ShellInterpreter|ParsedShellScript)(Prototype|Class)__
-when intl global Intl
-smallest intl 30000
-door intl exit ^JSC::create(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter)Constructor\(JSC::VM&, JSC::JSObject\*\)
-door intl exit ^JSC::Intl(DisplayNames|ListFormat(?!::formatToParts)|Locale|PluralRules|RelativeTimeFormat|Segmenter|Segments|SegmentIterator)(Prototype|Constructor)?::(?!destroy\()
-door intl exit ^JSC::intl(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter|Segments|SegmentIterator)\w*\(
-door intl exit ^JSC::(construct|call)Intl(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter)\(
+when segmenter Intl Segmenter
+when segmenter Intl *
+when segmenter global *
+smallest segmenter 0
+door segmenter exit ^JSC::createSegmenterConstructor\(JSC::VM&, JSC::JSObject\*\)
+door segmenter exit ^JSC::Intl(Segmenter|Segments|SegmentIterator)(Prototype|Constructor)?::(?!destroy\()
+door segmenter exit ^JSC::intl(Segmenter|Segments|SegmentIterator)\w*\(
+door segmenter exit ^JSC::(construct|call)IntlSegmenter\(
+data segmenter ^brkitr/
+when display_names Intl DisplayNames
+when display_names Intl *
+when display_names global *
+smallest display_names 0
+door display_names exit ^JSC::createDisplayNamesConstructor\(JSC::VM&, JSC::JSObject\*\)
+door display_names exit ^JSC::IntlDisplayNames(Prototype|Constructor)?::(?!destroy\()
+door display_names exit ^JSC::intlDisplayNames\w*\(
+door display_names exit ^JSC::(construct|call)IntlDisplayNames\(
+data display_names ^brkitr/(sent\w*\.brk|\w+\.res)$
+data display_names ^(lang|region|curr|rbnf)/
+data display_names ^(?!(en|en_US|res_index)\.res$)[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
+when intl Intl ListFormat
+when intl Intl Locale
+when intl Intl PluralRules
+when intl Intl RelativeTimeFormat
+when intl Intl getCanonicalLocales
+when intl Intl supportedValuesOf
+when intl Intl *
+when intl global *
+smallest intl 0
+door intl exit ^JSC::create(ListFormat|Locale|PluralRules|RelativeTimeFormat)Constructor\(JSC::VM&, JSC::JSObject\*\)
+door intl exit ^JSC::Intl(ListFormat(?!::formatToParts)|Locale|PluralRules|RelativeTimeFormat)(Prototype|Constructor)?::(?!destroy\()
+door intl exit ^JSC::intl(ListFormat|Locale|PluralRules|RelativeTimeFormat)\w*\(
+door intl exit ^JSC::(construct|call)Intl(ListFormat|Locale|PluralRules|RelativeTimeFormat)\(
 door intl exit ^JSC::intlObjectFunc
+data intl ^(curr|rbnf)/
+data intl ^(?!(en|en_US|res_index)\.res$)[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
+data intl ^(currencyNumericCodes|genderList)\.res$
 data tools \.(cnv|spp|cfu)$
 data tools ^(cnvalias|unames)\.icu$
 data tools ^translit/
@@ -441,9 +506,12 @@ data tools ^nfkc_scf\.nrm$
 data tools ^windowsZones\.res$
 data text ^coll/(ucadata\.icu|(res_index|root|en|en_US)\.res)$
 data bundler ^coll/(ucadata\.icu|(res_index|root|en|en_US)\.res)$
-data intl ^brkitr/
-when collation global Intl
 when collation property localeCompare
+when collation Intl Collator
+when collation Intl Locale
+when collation Intl supportedValuesOf
+when collation Intl *
+when collation global *
 smallest collation 0
 door collation exit ^JSC::IntlCollator(Prototype|Constructor)?::(?!destroy\()
 door collation exit ^JSC::intlCollator\w*\(
@@ -453,29 +521,52 @@ door collation exit ^JSC::stringProtoFuncLocaleCompare\(
 door collation exit ^operation(AOTTyped)?StringLocaleCompare$
 door collation exit ^JSC::JSGlobalObject::cachedLocaleCompareCollator\(
 data collation ^coll/
-when units global Intl
 when units property toLocaleString
+when units Intl NumberFormat
+when units Intl DurationFormat
+when units Intl *
+when units global *
 data units ^unit/
 data units ^(units|grammaticalFeatures)\.res$
-when formatting global Intl
-when formatting property toLocaleString
-when formatting property toLocaleDateString
-when formatting property toLocaleTimeString
-smallest formatting 0
-door formatting exit ^JSC::Intl(NumberFormat|DateTimeFormat|DurationFormat)(Prototype|Constructor)?::(?!destroy\(|~)
-door formatting exit ^JSC::intl(NumberFormat|DateTimeFormat|DurationFormat)\w*\(
-door formatting exit ^JSC::(construct|call)Intl(NumberFormat|DateTimeFormat|DurationFormat)\(
-door formatting exit ^JSC::create(NumberFormat|DateTimeFormat|DurationFormat)Constructor\(JSC::VM&, JSC::JSObject\*\)
-door formatting exit ^JSC::(number|bigInt|date)ProtoFuncToLocale(Date|Time)?String\(
-door formatting exit ^JSC::temporal\w+PrototypeFuncToLocaleString\(
-door formatting exit ^JSC::JSGlobalObject::cachedToLocaleStringNumberFormat\(
-door formatting exit ^operationAOTTyped\w*Format\w*$
-door formatting exit ^icu_\d+::TimeZoneFormat::(format|parse|parseObject|clone|operator==)\(
-door formatting exit ^JSC::UNumber(Range)?FormatterDeleter::operator\(\)\(
-data formatting ^(curr|lang|region|rbnf)/
-data formatting ^zone/(?!(root|pool|en)\.res$)
-data formatting ^(?!(en|en_US|res_index)\.res$)[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
-data formatting ^(currencyNumericCodes|dayPeriods|genderList|plurals|pluralRanges)\.res$
+when date_formatting property toLocaleString
+when date_formatting property toLocaleDateString
+when date_formatting property toLocaleTimeString
+when date_formatting Intl DateTimeFormat
+when date_formatting Intl *
+when date_formatting global *
+smallest date_formatting 0
+door date_formatting exit ^JSC::IntlDateTimeFormat(Prototype|Constructor)?::(?!destroy\(|~|hourCycleFromPattern\()
+door date_formatting exit ^JSC::intlDateTimeFormat\w*\(
+door date_formatting exit ^JSC::(construct|call)IntlDateTimeFormat\(
+door date_formatting exit ^JSC::createDateTimeFormatConstructor\(JSC::VM&, JSC::JSObject\*\)
+door date_formatting exit ^JSC::dateProtoFuncToLocale(Date|Time)?String\(
+door date_formatting exit ^JSC::temporal(?!Duration)\w+PrototypeFuncToLocaleString\(
+door date_formatting exit ^operationAOTTypedFormat(DateTime|TimeValueWithPattern)$
+door date_formatting exit ^icu_\d+::TimeZoneFormat::(format|parse|parseObject|clone|operator==)\(
+data date_formatting ^(curr|lang|region|rbnf)/
+data date_formatting ^zone/(?!(root|pool|en)\.res$)
+data date_formatting ^(?!(en|en_US|res_index)\.res$)[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
+data date_formatting ^(currencyNumericCodes|genderList|dayPeriods)\.res$
+when number_formatting property toLocaleString
+when number_formatting Intl NumberFormat
+when number_formatting Intl DurationFormat
+when number_formatting Intl PluralRules
+when number_formatting Intl RelativeTimeFormat
+when number_formatting Intl *
+when number_formatting global *
+smallest number_formatting 0
+door number_formatting exit ^JSC::Intl(NumberFormat|DurationFormat)(Prototype|Constructor)?::(?!destroy\(|~)
+door number_formatting exit ^JSC::intl(NumberFormat|DurationFormat)\w*\(
+door number_formatting exit ^JSC::(construct|call)Intl(NumberFormat|DurationFormat)\(
+door number_formatting exit ^JSC::create(NumberFormat|DurationFormat)Constructor\(JSC::VM&, JSC::JSObject\*\)
+door number_formatting exit ^JSC::(number|bigInt)ProtoFuncToLocaleString\(
+door number_formatting exit ^JSC::temporalDurationPrototypeFuncToLocaleString\(
+door number_formatting exit ^JSC::JSGlobalObject::cachedToLocaleStringNumberFormat\(
+door number_formatting exit ^operationAOTTypedFormatNumber(WithPattern)?$
+door number_formatting exit ^JSC::UNumber(Range)?FormatterDeleter::operator\(\)\(
+data number_formatting ^curr/
+data number_formatting ^(?!(en|en_US|res_index)\.res$)[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
+data number_formatting ^(currencyNumericCodes|genderList|plurals|pluralRanges)\.res$
 windows-keeps ^zone/
 windows-keeps ^windowsZones\.res$
 windows-keeps ^[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
@@ -942,9 +1033,6 @@ door text exit ^JSC::CodeBlock::dumpBytecode\(WTF::PrintStream&\)$
 door text exit ^JSC::ModuleProgramExecutable::getUnlinkedCodeBlock\(
 door tools exit ^Bun::LintHost::create\(
 when webview Bun WebView
-when websocket Bun WebView
-when tls Bun WebView
-when x509 Bun WebView
 smallest webview 30000
 door webview exit ^Bun::setupJSWebViewClassStructure\(
 door webview exit ^Bun::(JSWebView\w*|WebView\w*|CDP)::
@@ -1372,3 +1460,554 @@ door uint32array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC
 door uint32array exit ^JSC::constructUint32Array\(
 door uint32array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Uint32Adaptor>>\(
 door uint32array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Uint32Adaptor>::
+when module_graph Bun ModuleGraph
+smallest module_graph 0
+when histogram native JSNodePerformanceHooksHistogram.cpp:jsFunction_createHistogram
+when histogram native JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_monitorEventLoopDelay
+when histogram native JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_enableEventLoopDelay
+when histogram native JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_disableEventLoopDelay
+smallest histogram 0
+when dialogs global alert
+when dialogs global confirm
+when dialogs global prompt
+smallest dialogs 0
+when node_v8 native NodeV8.cpp:Bun::createNodeV8Binding
+smallest node_v8 0
+when string_decoder native node:string_decoder
+when string_decoder module node:string_decoder
+smallest string_decoder 0
+when console_table console table
+when console_table Bun inspect
+smallest console_table 0
+when process_binding process binding
+smallest process_binding 0
+when process_exec_argv process execArgv
+when process_exec_argv feature process_report
+when process_exec_argv feature parse_args
+smallest process_exec_argv 0
+when process_control process kill
+when process_control process _kill
+when process_control process chdir
+when process_control process umask
+when process_control process execve
+when process_control process title
+when process_control process getegid
+when process_control process geteuid
+when process_control process getgid
+when process_control process getgroups
+when process_control process getuid
+when process_control process setegid
+when process_control process seteuid
+when process_control process setgid
+when process_control process setgroups
+when process_control process initgroups
+when process_control process setuid
+smallest process_control 0
+when process_usage process memoryUsage
+when process_usage process cpuUsage
+when process_usage process threadCpuUsage
+when process_usage process resourceUsage
+when process_usage process uptime
+when process_usage process availableMemory
+when process_usage process constrainedMemory
+smallest process_usage 0
+when process_about process versions
+when process_about process release
+when process_about process config
+when process_about process features
+when process_about process allowedNodeEnvironmentFlags
+when process_about process revision
+when process_about process mainModule
+when process_about process finalization
+when process_about process assert
+when process_about process ref
+when process_about process unref
+when process_about process openStdin
+when process_about process loadEnvFile
+when process_about process getBuiltinModule
+when process_about process setUncaughtExceptionCaptureCallback
+when process_about process hasUncaughtExceptionCaptureCallback
+when process_about process setSourceMapsEnabled
+when process_about process _rawDebug
+when process_about feature process_report
+smallest process_about 0
+when text_codec global TextDecoder
+when text_codec global TextEncoder
+smallest text_codec 0
+when post_message global postMessage
+when post_message native Worker.cpp:jsFunctionPostMessage
+smallest post_message 0
+when node_cluster native node_cluster_binding.rs:channelIgnoreOneDisconnectEventListener
+when node_cluster native node_cluster_binding.rs:clusterCloseHandle
+when node_cluster native node_cluster_binding.rs:clusterRawBind
+when node_cluster native node_cluster_binding.rs:clusterValidateFd
+when node_cluster native node_cluster_binding.rs:onInternalMessageChild
+when node_cluster native node_cluster_binding.rs:onInternalMessagePrimary
+when node_cluster native node_cluster_binding.rs:sendHelperPrimary
+when node_cluster native node_cluster_binding.rs:setRef
+smallest node_cluster 0
+when node_url_natives native NodeURL.cpp:Bun::createNodeURLBinding
+smallest node_url_natives 0
+when bun_misc Bun stripANSI
+when bun_misc Bun mmap
+when bun_misc Bun which
+when bun_misc Bun indexOfLine
+when bun_misc Bun sleep
+when bun_misc Bun sleepSync
+when bun_misc Bun gc
+when bun_misc Bun shrink
+when bun_misc Bun allocUnsafe
+when bun_misc Bun nanoseconds
+when bun_misc Bun peek
+when bun_misc Bun concatArrayBuffers
+smallest bun_misc 0
+when ipc process send
+when ipc process disconnect
+when ipc process channel
+when ipc process connected
+when ipc process on
+when ipc process once
+when ipc process addListener
+when ipc process prependListener
+when ipc process prependOnceListener
+when ipc process off
+when ipc process removeListener
+when ipc process removeAllListeners
+when ipc feature spawn
+when ipc feature node_cluster
+smallest ipc 0
+when crypto_object global crypto
+when crypto_object global Crypto
+when crypto_object feature webcrypto
+when crypto_object feature nodecrypto
+when crypto_object feature s3client
+smallest crypto_object 0
+when string_width Bun stringWidth
+when string_width native stringWidth.cpp:jsFunctionBunStringWidth
+when string_width feature console_table
+when string_width feature ansi
+smallest string_width 0
+when node_validators native NodeValidator.cpp:jsFunction_checkRangesOrGetDefault
+when node_validators native NodeValidator.cpp:jsFunction_validateAbortSignal
+when node_validators native NodeValidator.cpp:jsFunction_validateArray
+when node_validators native NodeValidator.cpp:jsFunction_validateBuffer
+when node_validators native NodeValidator.cpp:jsFunction_validateEncoding
+when node_validators native NodeValidator.cpp:jsFunction_validateFiniteNumber
+when node_validators native NodeValidator.cpp:jsFunction_validateInt32
+when node_validators native NodeValidator.cpp:jsFunction_validateInteger
+when node_validators native NodeValidator.cpp:jsFunction_validateNumber
+when node_validators native NodeValidator.cpp:jsFunction_validateObject
+when node_validators native NodeValidator.cpp:jsFunction_validateOneOf
+when node_validators native NodeValidator.cpp:jsFunction_validatePort
+when node_validators native NodeValidator.cpp:jsFunction_validateUint32
+smallest node_validators 0
+when node_util_natives native node_util_binding.rs:ecanceledErrorCode
+when node_util_natives native node_util_binding.rs:enobufsErrorCode
+when node_util_natives native node_util_binding.rs:etimedoutErrorCode
+when node_util_natives native node_util_binding.rs:extractedSplitNewLinesFastPathStringsOnly
+when node_util_natives native node_util_binding.rs:internalErrorEntries
+when node_util_natives native node_util_binding.rs:internalErrorName
+when node_util_natives native node_util_binding.rs:normalizeEncoding
+when node_util_natives native node_util_binding.rs:parseEnv
+when node_util_natives native node_util_binding.rs:uvTranslateSysError
+when node_util_natives native UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties
+when node_util_natives native UtilInspect.cpp:jsFunctionIntrinsicTypedArrayConstructor
+when node_util_natives native NodeUtilTypesModule.cpp:jsFunctionIsError
+when node_util_natives native runtime/node/types.rs:jsAssertEncodingValid
+when node_util_natives native JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners
+when node_util_natives native JSEventTarget.cpp:jsEventTargetGetEventListenersCount
+smallest node_util_natives 0
+when node_small_modules native node:util/types
+when node_small_modules module node:util/types
+when node_small_modules native node:constants
+when node_small_modules module node:constants
+when node_small_modules process binding
+when node_small_modules feature process_binding
+smallest node_small_modules 0
+when base64_globals global atob
+when base64_globals global btoa
+when base64_globals native node:buffer
+when base64_globals module node:buffer
+smallest base64_globals 0
+when url global URL
+when url global URLSearchParams
+when url Bun pathToFileURL
+when url native Undici.cpp:createUndiciInternalBinding
+when url feature serve
+when url feature tls
+smallest url 0
+when buffer road a-warning-to-a-stderr-that-blocks
+when buffer global Buffer
+when buffer native node:buffer
+when buffer module node:buffer
+when buffer module internal:stream
+when buffer module internal:streams/legacy
+when buffer module internal:streams/readable
+when buffer module node:dgram
+when buffer module node-fetch
+when buffer native NodeFetch.cpp:createNodeFetchInternalBinding
+when buffer process stdin
+when buffer process openStdin
+when buffer process stdout
+when buffer process stderr
+when buffer console _stdout
+when buffer console _stderr
+when buffer console Console
+when buffer feature archive
+when buffer feature bun_jsc
+when buffer feature compression_calls
+when buffer feature compression_streams
+when buffer feature cryptohasher
+when buffer feature deep_equals
+when buffer feature ffi
+when buffer feature hashers
+when buffer feature http_parser
+when buffer feature image
+when buffer feature napi
+when buffer feature node_fs
+when buffer feature node_http
+when buffer feature node_vm
+when buffer feature nodecrypto
+when buffer feature nodehttp2
+when buffer feature nodequic
+when buffer feature serve
+when buffer feature shell
+when buffer feature sockets
+when buffer feature spawn
+when buffer feature sql
+when buffer feature sqlite
+when buffer feature string_decoder
+when buffer feature terminal
+when buffer feature testing
+when buffer feature text
+when buffer feature tls
+when buffer feature udp
+when buffer feature uuid
+when buffer feature valkey
+when buffer feature websocket
+when buffer feature webview
+when buffer feature x509
+smallest buffer 0
+when events global Event
+when events global CustomEvent
+when events global ErrorEvent
+when events global MessageEvent
+when events global CloseEvent
+when events native Undici.cpp:createUndiciInternalBinding
+when events feature abort_signal
+when events feature archive
+when events feature bodies
+when events feature compression_streams
+when events feature http3
+when events feature message_channel
+when events feature mux
+when events feature s3client
+when events feature serve
+when events feature tls
+when events feature web_streams
+when events feature websocket
+when events feature webview
+when events feature worker
+smallest events 0
+when abort_signal global AbortController
+when abort_signal global AbortSignal
+when abort_signal native abort-controller
+when abort_signal module abort-controller
+when abort_signal native Undici.cpp:createUndiciInternalBinding
+when abort_signal feature bodies
+when abort_signal feature bundler
+when abort_signal feature compression_streams
+when abort_signal feature cron
+when abort_signal feature fetch
+when abort_signal feature form_data
+when abort_signal feature message_channel
+when abort_signal feature mux
+when abort_signal feature napi
+when abort_signal feature node_fs
+when abort_signal feature node_http
+when abort_signal feature nodehttp2
+when abort_signal feature s3client
+when abort_signal feature serve
+when abort_signal feature shell
+when abort_signal feature sockets
+when abort_signal feature spawn
+when abort_signal feature sql
+when abort_signal feature test
+when abort_signal feature tls
+when abort_signal feature udp
+when abort_signal feature valkey
+when abort_signal feature web_streams
+when abort_signal feature websocket
+when abort_signal feature webview
+when abort_signal feature worker
+smallest abort_signal 0
+when headers global Headers
+when headers native Undici.cpp:createUndiciInternalBinding
+when headers native NodeFetch.cpp:createNodeFetchInternalBinding
+when headers feature bodies
+when headers feature bundler
+when headers feature deep_equals
+when headers feature fetch
+when headers feature form_data
+when headers feature htmlrewriter
+when headers feature mux
+when headers feature serve
+when headers feature test
+when headers feature tls
+when headers feature webassembly
+when headers feature websocket
+smallest headers 0
+when form_data global FormData
+when form_data Bun readableStreamToFormData
+when form_data feature bodies
+when form_data feature s3client
+when form_data feature web_streams
+when form_data native Undici.cpp:createUndiciInternalBinding
+when form_data native NodeFetch.cpp:createNodeFetchInternalBinding
+smallest form_data 0
+when fs_stats feature node_fs
+when fs_stats feature bodies
+when fs_stats feature testing
+smallest fs_stats 0
+when web_streams global ReadableStream
+when web_streams global ReadableStreamDefaultReader
+when web_streams global ReadableStreamBYOBReader
+when web_streams global ReadableStreamBYOBRequest
+when web_streams global ReadableStreamDefaultController
+when web_streams global ReadableByteStreamController
+when web_streams global WritableStream
+when web_streams global WritableStreamDefaultWriter
+when web_streams global WritableStreamDefaultController
+when web_streams global TransformStream
+when web_streams global TransformStreamDefaultController
+when web_streams global TextEncoderStream
+when web_streams global TextDecoderStream
+when web_streams global ByteLengthQueuingStrategy
+when web_streams global CountQueuingStrategy
+when web_streams Bun readableStreamToArray
+when web_streams Bun readableStreamToArrayBuffer
+when web_streams Bun readableStreamToBlob
+when web_streams Bun readableStreamToBytes
+when web_streams Bun readableStreamToFormData
+when web_streams Bun readableStreamToJSON
+when web_streams Bun readableStreamToText
+when web_streams Bun ArrayBufferSink
+when web_streams native streams/BunStreamConsumers.cpp:jsFunctionTransferToNativeReadableStream
+when web_streams feature bodies
+when web_streams feature bundler
+when web_streams feature compression_streams
+when web_streams feature fetch
+when web_streams feature form_data
+when web_streams feature htmlrewriter
+when web_streams feature mux
+when web_streams feature s3client
+when web_streams feature serve
+when web_streams feature shell
+when web_streams feature spawn
+when web_streams feature testing
+when web_streams feature text
+when web_streams feature tls
+when web_streams feature valkey
+when web_streams feature webassembly
+when web_streams Bun Image
+when web_streams process stdin
+when web_streams process openStdin
+when web_streams process stdout
+when web_streams process stderr
+when web_streams console write
+when web_streams console _stdout
+when web_streams console _stderr
+when web_streams console Console
+smallest web_streams 0
+when bodies global Blob
+when bodies global File
+when bodies global Request
+when bodies global Response
+when bodies Bun file
+when bodies Bun write
+when bodies Bun stdin
+when bodies Bun stdout
+when bodies Bun stderr
+when bodies Bun embeddedFiles
+when bodies Bun Image
+when bodies native node:buffer
+when bodies module node:buffer
+when bodies process stdin
+when bodies process openStdin
+when bodies process stdout
+when bodies process stderr
+when bodies console write
+when bodies console _stdout
+when bodies console _stderr
+when bodies console Console
+when bodies native Undici.cpp:createUndiciInternalBinding
+when bodies native NodeFetch.cpp:createNodeFetchInternalBinding
+when bodies feature archive
+when bodies feature bundler
+when bodies feature fetch
+when bodies feature form_data
+when bodies feature fsrouter
+when bodies feature histogram
+when bodies feature htmlrewriter
+when bodies feature http3
+when bodies feature message_channel
+when bodies feature mux
+when bodies feature node_http
+when bodies feature node_zlib
+when bodies feature outside_bytes
+when bodies feature s3client
+when bodies feature serve
+when bodies feature shell
+when bodies feature sockets
+when bodies feature spawn
+when bodies feature sql
+when bodies feature test
+when bodies feature text
+when bodies feature tls
+when bodies feature valkey
+when bodies feature web_streams
+when bodies feature webassembly
+when bodies feature websocket
+when bodies feature webview
+when bodies feature worker
+smallest bodies 0
+when text Bun registerMacro
+door module_graph exit ^Bun::constructModuleGraphObject\(
+door module_graph exit ^Bun::initJSModuleGraphClassStructure\(
+door histogram exit ^Bun::setupJSNodePerformanceHooksHistogramClassStructure\(
+door histogram exit ^Bun::jsFunction_(createHistogram|monitorEventLoopDelay|enableEventLoopDelay|disableEventLoopDelay)\(
+door string_decoder exit ^WebCore::JSStringDecoder(Prototype::finishCreation|Constructor::create)\(
+door string_decoder exit ^Zig::generateNativeModule_NodeStringDecoder\([^()]*\)$
+door console_table exit ^<bun_jsc::console_object::TablePrinter>::(init|print_table::<(true|false)>)$
+door console_table exit ^bun_runtime::api::bun_object::__jsc_host_inspect_table$
+door string_width exit ^Bun::jsFunctionBunStringWidth\(
+door string_width exit ^Bun__visibleWidthExcludeANSI_(latin1|utf16)$
+door string_width exit ^Bun::StringWidth::(visibleUTF16Width|visibleLatin1Width(ExcludeANSI|AmbiguousAsWide)\w*|UTF16WidthAccumulator::)
+door process_binding exit ^Bun::Process_functionBinding\(
+door process_binding exit ^Bun::ProcessBinding(Buffer|Fs|HTTPParser|Natives)::createStructure\(
+door process_binding exit ^Bun::ProcessBinding(Buffer|UV)::create\(
+door process_exec_argv exit ^Bun::processExecArgv\(
+door process_exec_argv exit ^Bun__Process__createExecArgv$
+door process_control exit ^Bun::Process_function(Kill|ReallyKill|Chdir|Umask|Execve|getegid|geteuid|getgid|getgroups|getuid|setegid|seteuid|setgid|setgroups|initgroups|setuid)\(
+door process_control exit ^Bun::(setP|p)rocessTitle\(
+door process_usage exit ^Bun::Process_function(CpuUsage|ThreadCpuUsage|ResourceUsage|Uptime|ConstrainedMemory)\(
+door process_usage exit ^Bun::Process_availableMemory\(
+door process_usage exit ^Bun::constructMemoryUsage\(
+door process_about exit ^Bun::construct(Versions|ProcessReleaseObject|ProcessConfigObject|Features|AllowedNodeEnvironmentFlags|Revision|MainModuleProperty|Finalization|LoadEnvFile|RawDebug)\(
+door process_about exit ^Bun::Process_function(Assert|OpenStdin|LoadBuiltinModule)\(
+door process_about exit ^Bun::Process_(ref|unref|setUncaughtExceptionCaptureCallback|hasUncaughtExceptionCaptureCallback|setSourceMapsEnabled)\(
+door fs_stats exit ^Bun::initJS(BigInt)?(Stats|StatFS)ClassStructure\(
+door fs_stats exit ^Bun::initJSDirentClassStructure\(
+door fs_stats exit ^Bun__(createJS(BigInt)?Stat(s|FS)Object|JS(BigInt)?Stat(s|FS)ObjectConstructor|Dirent__toJS|JSDirentObjectConstructor)$
+door buffer exit ^WebCore::createBuffer(Prototype|Structure|Constructor)\(
+door buffer exit ^JSBuffer__(bufferFromPointerAndLengthAndDeinit|bufferFromLength|fromMmap)$
+door buffer exit ^WebCore::(createBuffer\(JSC::JSGlobalObject\*, WTF::Ref<|createUninitializedBuffer\(|createEmptyBuffer\()
+door buffer exit ^Bun__allocArrayBufferForCopy$
+door node_http exit ^Bun::createNodeHTTPServerSocketStructure\(
+door serve exit ^Bun::create(JSBunRequestStructure|ServerRouteListStructure|JSBunRequestParamsPrototype)\(
+door form_data exit ^WebCore::JS(DOMFormData)(Prototype|Constructor|Owner)?::(?!deref\(|ref\(|toWrapped\(|info\(|subspaceFor)
+door form_data exit ^WebCore::JSDOMConstructor(NotConstructable)?<WebCore::JS(DOMFormData)[,>]
+door form_data exit ^(\S+ )?WebCore::(getDOMStructure|getDOMPrototype|getDOMConstructor|createWrapper|wrap)<(WebCore::JSDOMConstructor(NotConstructable)?<)?WebCore::(JS)?(DOMFormData)[,>]
+door form_data exit ^WebCore::(js|setJS)(DOMFormData)(Prototype|Constructor|_)\w*\(
+door form_data exit ^WebCore::(DOMFormData)::(?!deref\(|ref\(|toWrapped\(|info\(|subspaceFor)
+door form_data exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(DOMFormData)[&,]
+door form_data exit ^WebCore__DOMFormData__(?!fromJS)
+door form_data exit ^WebCore::(DOMFormDataIterator|JSDOMIterator\w*<WebCore::JSDOMFormData)
+door form_data exit ^<*bun_runtime::webcore::form_data::
+door form_data exit ^(Request|Response|Blob)Prototype__getFormData$
+door form_data exit ^WebCore::(Request|Response|Blob)Prototype__formDataCallback\(
+door form_data exit ^ZigGlobalObject__readableStreamToFormData$
+door form_data exit ^WebCore::jsFunctionReadableStreamToFormData\(
+door form_data exit ^<bun_jsc::webcore_types::Blob as bun_runtime::webcore::blob::BlobExt>::from_dom_form_data
+door url exit ^WebCore::JS(DOMURL|URLSearchParams)(Prototype|Constructor|Owner)?::(?!toWrapped\(|info\(|subspaceFor)
+door url exit ^WebCore::JSDOMConstructor(NotConstructable)?<WebCore::JS(DOMURL|URLSearchParams)[,>]
+door url exit ^(\S+ )?WebCore::(getDOMStructure|getDOMPrototype|getDOMConstructor|createWrapper|wrap)<(WebCore::JSDOMConstructor(NotConstructable)?<)?WebCore::(JS)?(DOMURL|URLSearchParams)[,>]
+door url exit ^WebCore::(js|setJS)(DOMURL|URLSearchParams)(Prototype|Constructor|_)\w*\(
+door url exit ^WebCore::(DOMURL|URLSearchParams)::(?!toWrapped\(|info\(|subspaceFor)
+door url exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(DOMURL|URLSearchParams)[&,]
+door url exit ^WebCore::(URLSearchParamsIterator|JSDOMIterator\w*<WebCore::JSURLSearchParams)
+door url exit ^Bun::functionPathToFileURL\(
+door text_codec exit ^WebCore::JSTextDecoder::create(Prototype|Structure|Constructor)\(
+door text_codec exit ^WebCore::JSTextEncoder::getConstructor\(
+door text_codec exit ^(WebCore::)?TextDecoder(Prototype|Class)__(?!\w+CachedValue|finalize$)
+door abort_signal exit ^WebCore::JS(AbortController|AbortSignal)(Prototype|Constructor|Owner)?::(?!derefEventTarget|refEventTarget|signal\(|deref\(|ref\(|scriptExecutionContext\(|~JSAbort\w+Owner|isReachableFromOpaqueRoots|finalize\(|toWrapped\(|info\(|subspaceFor)
+door abort_signal exit ^WebCore::JSDOMConstructor(NotConstructable)?<WebCore::JS(AbortController|AbortSignal)[,>]
+door abort_signal exit ^(\S+ )?WebCore::(getDOMStructure|getDOMPrototype|getDOMConstructor|createWrapper|wrap)<(WebCore::JSDOMConstructor(NotConstructable)?<)?WebCore::(JS)?(AbortController|AbortSignal)[,>]
+door abort_signal exit ^WebCore::(js|setJS)(AbortController|AbortSignal)(Prototype|Constructor|_)\w*\(
+door abort_signal exit ^WebCore::(AbortController|AbortSignal)::(?!derefEventTarget|refEventTarget|signal\(|deref\(|ref\(|scriptExecutionContext\(|~JSAbort\w+Owner|isReachableFromOpaqueRoots|finalize\(|toWrapped\(|info\(|subspaceFor)
+door abort_signal exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(AbortController|AbortSignal)[&,]
+door abort_signal exit ^WebCore__AbortSignal__(?!(fromJS|unref|ref|getTimeout)$)
+door abort_signal exit ^Zig::(add|remove)AbortAlgorithm(To|From)Signal\(
+door abort_signal exit ^Zig::generateNativeModule_AbortControllerModule\(
+door abort_signal exit ^<*bun_jsc::abort_signal::(?!AbortSignal>::(ref_)?from_js\b)
+door headers exit ^WebCore::JS(FetchHeaders)(Prototype|Constructor|Owner)?::(?!toWrapped\(|info\(|subspaceFor)
+door headers exit ^WebCore::JSDOMConstructor(NotConstructable)?<WebCore::JS(FetchHeaders)[,>]
+door headers exit ^(\S+ )?WebCore::(getDOMStructure|getDOMPrototype|getDOMConstructor|createWrapper|wrap)<(WebCore::JSDOMConstructor(NotConstructable)?<)?WebCore::(JS)?(FetchHeaders)[,>]
+door headers exit ^WebCore::(js|setJS)(FetchHeaders)(Prototype|Constructor|_)\w*\(
+door headers exit ^WebCore::(FetchHeaders)::(?!toWrapped\(|info\(|subspaceFor)
+door headers exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(FetchHeaders)[&,]
+door headers exit ^WebCore__FetchHeaders__(?!cast_|fromJS|deref$)
+door headers exit ^WebCore::(FetchHeadersIterator|JSDOMIterator\w*<WebCore::JSFetchHeaders)
+door headers exit ^Bun__callHeadersMethod$
+door web_streams exit ^WebCore::JS(ReadableStream|ReadableStreamDefaultReader|ReadableStreamBYOBReader|ReadableStreamBYOBRequest|ReadableStreamDefaultController|ReadableByteStreamController|WritableStream|WritableStreamDefaultWriter|WritableStreamDefaultController|TransformStream|TransformStreamDefaultController|TextEncoderStream|TextDecoderStream|ByteLengthQueuingStrategy|CountQueuingStrategy)::getConstructor\(
+door web_streams exit ^(JSC::\w+\* )?JSC::LazyProperty<JSC::JSGlobalObject, JSC::\w+>::callFunc<WebCore::JSStreamsRuntime::initialize\(
+door web_streams exit ^ZigGlobalObject__(createNative(Text)?ReadableStream|readableStreamTo(?!FormData)\w+)$
+door web_streams exit ^ReadableStream__(empty|used|errored|fromDecodedText|textDecodeFrom|tee|cancel|lockNative|markConsumedAsBody|closeConsumedAsBody|isClosedUnread|detach|abort|forceDetach)$
+door web_streams exit ^Bun::WebStreams::readableStreamFromAsyncIterator\(
+door web_streams exit ^Bun__NativeStreamSource(Adapter)?__
+door web_streams exit ^WebCore::jsFunction(ReadableStreamTo(?!FormData)\w+|TransferToNativeReadableStream)\(
+door web_streams exit ^Zig::jsWebStream(ClosedPromise|ControllerError)\(
+door web_streams exit ^Bun::WebStreams::(sinkControllerOn(Close|Ready)|assignToStream|readStreamIntoSink|readDirectStream|startJSSinkController)\(
+door web_streams exit ^<*bun_runtime::webcore::(readable_stream|streams|file_reader|byte_stream|byte_blob_loader|sink|array_buffer_sink|file_sink)::
+door web_streams exit ^<bun_runtime::webcore::(SinkHandle|AutoFlusher)>::
+door web_streams exit ^WebCore::JS(Blob|Bytes|File)InternalReadableStreamSource::create(Prototype|Structure|Constructor)\(
+door web_streams exit ^(WebCore::)?(Blob|Bytes|File)InternalReadableStreamSource(Prototype|Class)__(?!\w+CachedValue|updateRefFromJS)
+door web_streams exit ^(ArrayBuffer|File|HTTPResponse|HTTPSResponse|Network|FetchRequestBody)Sink__(?!(fromJS|close|endWithSink|finalize|controllerFinalize|controllerDetached|memoryCost|getInternalFd|updateRef)$)
+door web_streams exit ^JSSinkController__
+door web_streams exit ^WebCore::createJSSink(Prototype|ControllerPrototype|ControllerStructure)\(
+door compression_streams exit ^WebCore::JS(De)?[cC]ompressionStream::getConstructor\(
+door bodies exit ^WebCore::JS(Blob|Request|Response)::create(Prototype|Structure|Constructor)\(
+door bodies exit ^(WebCore::)?(Blob|Request|Response)(Prototype|Class)__(?!\w+CachedValue|getFormData|formDataCallback|image|finalize$|get(Integrity|ReferrerPolicy|Destination)$)
+door bodies exit ^(Blob|Request|Response)__(create|dangerouslySetPtr)\w*$
+door bodies exit ^Bun::createJSDOMFileConstructor\(
+door bodies exit ^BunObject_callback_(file|write)$
+door bodies exit ^BunObject__createBunStd(in|out|err)$
+door bodies exit ^BunObject_lazyPropCb_wrap_embeddedFiles\(
+door bodies exit ^jsFunctionResolveObjectURL$
+door bodies exit ^<*bun_runtime::webcore::(request|response|body|blob)::
+door bodies exit ^<bun_jsc::webcore_types::Blob as bun_runtime::webcore::blob::BlobExt>::(?!from_dom_form_data)
+door bodies exit ^_RINv[XM](s[0-9A-Za-z]{0,3}_)?(Nt)+Cs[0-9A-Za-z]{6,16}_11bun_runtime7webcore4blob
+door s3client exit ^Bun::createJSS3FileStructure\(
+door dialogs exit ^WebCore__(alert|confirm|prompt)$
+door base64_globals exit ^Zig::function(ATOB|BTOA)\(
+door crypto_object exit ^WebCore::JSCrypto::create(Prototype|Structure|Constructor)\(
+door crypto_object exit ^CryptoObject__create$
+door crypto_object exit ^(WebCore::)?Crypto(Prototype|Class)__(?!\w+CachedValue|finalize$)
+door post_message exit ^WebCore::jsFunctionPostMessage\(
+door node_cluster exit ^JS2Rust___src_runtime_node_node_cluster_binding_rs__
+door node_v8 exit ^Bun::createNodeV8Binding\(
+door node_validators exit ^Bun::jsFunction_(checkRangesOrGetDefault|validate(AbortSignal|Array|Buffer|Encoding|FiniteNumber|Int32|Integer|Number|Object|OneOf|Port|Uint32))\(
+door node_util_natives exit ^JS2Rust___src_runtime_node_node_util_binding_rs__
+door node_util_natives exit ^Bun::jsFunction(GetOwnNonIndexProperties|IntrinsicTypedArrayConstructor|NodeEventsGetEventListeners)\(
+door node_util_natives exit ^jsFunctionIsError\(
+door node_util_natives exit ^jsEventTargetGetEventListenersCount\(
+door node_util_natives exit ^JS2Rust___src_runtime_node_types_rs__jsAssertEncodingValid$
+door node_url_natives exit ^Bun::createNodeURLBinding\(
+door bun_misc exit ^Bun::jsFunctionBunStripANSI\(
+door bun_misc exit ^Bun::Bindgen::Generated::BunObject::js(Mmap|Which|IndexOfLine|SleepSync|Gc|Shrink|AllocUnsafe)\(
+door bun_misc exit ^Bun::function(BunSleep|BunNanoseconds|ConcatTypedArrays)\(
+door bun_misc exit ^Bun::constructBunPeekObject\(
+door text exit ^BunObject_callback_registerMacro$
+door node_small_modules exit ^Zig::generateNativeModule_Node(UtilTypes|Constants)\([^()]*\)$
+door buffer exit ^Zig::generateNativeModule_NodeBuffer\([^()]*\)$
+door events exit ^WebCore::JS(Event|CustomEvent|MessageEvent|ErrorEvent|CloseEvent)(Prototype|Constructor|Owner)?::(?!finishCreation\(|deref\(|ref\(|Init::~Init|JS(Error)?Event\(|~JS\w+Owner|isReachableFromOpaqueRoots|finalize\(|toWrapped\(|info\(|subspaceFor)
+door events exit ^WebCore::JSDOMConstructor(NotConstructable)?<WebCore::JS(Event|CustomEvent|MessageEvent|ErrorEvent|CloseEvent)[,>]
+door events exit ^(\S+ )?WebCore::(getDOMStructure|getDOMPrototype|getDOMConstructor|createWrapper|wrap)<(WebCore::JSDOMConstructor(NotConstructable)?<)?WebCore::(JS)?(Event|CustomEvent|MessageEvent|ErrorEvent|CloseEvent)[,>]
+door events exit ^WebCore::(js|setJS)(Event|CustomEvent|MessageEvent|ErrorEvent|CloseEvent)(Prototype|Constructor|_)\w*\(
+door events exit ^WebCore::(Event|CustomEvent|MessageEvent|ErrorEvent|CloseEvent)::(?!finishCreation\(|deref\(|ref\(|Init::~Init|JS(Error)?Event\(|~JS\w+Owner|isReachableFromOpaqueRoots|finalize\(|toWrapped\(|info\(|subspaceFor)
+door events exit ^WebCore::toJS(NewlyCreated)?\(JSC::JSGlobalObject\*, \w+::\w*GlobalObject\*, (WTF::Ref<)?WebCore::(Event|CustomEvent|MessageEvent|ErrorEvent|CloseEvent)[&,]
+door ipc exit ^Bun::constructProcess(Send|Disconnect|Channel)\(
+door ipc exit ^<*bun_runtime::ipc(_host)?::
+door ipc exit ^Bun__(Process__send|closeChildIPC|GlobalObject__(hasIPC|connectedIPC)|ensureProcessIPCInitialized|shouldIgnoreOneDisconnectEventListener)$
+door ipc exit ^JS2Rust___src_runtime_ipc\w*_rs__
+exported napi ffi sqlite

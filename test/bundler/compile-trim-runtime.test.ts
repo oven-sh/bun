@@ -168,10 +168,6 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
   }
 
   describe.skipIf(!!unsupported)("--compile --aot: a program in which nothing is seen to make or load code", () => {
-    const refusal =
-      "EvalError: Code generation from strings disallowed for this context: this executable was built with --compile-trim-runtime, " +
-      "and nothing in the program was seen to turn a string into code or to load code at run time";
-
     const cannotBeUsed = "cannot be used with this executable: it was built with --compile-trim-runtime and runs only the code that was compiled into it";
 
     async function built(program: string, folder: string) {
@@ -189,7 +185,9 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       expect(await run([trimmed], folder)).toEqual({ stdout: "made 2\n[]\n", stderr: "", exitCode: 0 });
       const forced = [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", "reads-the-constructor-of-a-function.ts", "--outfile", "forced"];
       expect(await run(forced, folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: "text" })).toMatchObject({ exitCode: 0 });
-      expect(await run([join(folder, "forced")], folder)).toEqual({ stdout: refusal + "\n[]\n", stderr: "", exitCode: 0 });
+      const asked = await run([join(folder, "forced")], folder);
+      expect(asked.stderr).toStartWith("error: this executable was built with --compile-trim-runtime, without what turns text and files into code at run time, and something has just asked for it.");
+      expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
     });
 
     test("loads nothing that BUN_OPTIONS names, and starts no debugger", async () => {
@@ -197,7 +195,7 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       const folder = String(dir);
       const { whole, trimmed } = await built("names-nothing", folder);
       const preloads = { ...bunEnv, BUN_OPTIONS: "--preload ./preloaded.js" };
-      expect((await run([whole], folder, preloads)).stdout).toStartWith("preloaded\n[]\n");
+      expect((await run([whole], folder, preloads)).stdout).toStartWith('preloaded\n["--preload","./preloaded.js"]\n');
       const refused = await run([trimmed], folder, preloads);
       expect(refused).toEqual({ stdout: "", stderr: "error: --preload " + cannotBeUsed + "\n", exitCode: 1 });
       const inspected = await run([trimmed], folder, { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/trimmed" });

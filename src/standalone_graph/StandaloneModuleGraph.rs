@@ -2765,14 +2765,30 @@ fn is_closed_world(runtime_use: &[u8]) -> bool {
     runtime_use == b"closed" || runtime_use.starts_with(b"closed\n")
 }
 
+fn options_named_in(compile_exec_argv: &[u8]) -> Vec<u8> {
+    let mut arguments: Vec<Box<ZStr>> = vec![ZStr::boxed(b"")];
+    bun_core::append_options_env(compile_exec_argv, &mut arguments);
+    let fact_of = |option: &[u8]| -> Vec<u8> {
+        let name = &option[..strings::index_of_any(option, b"= \t\n\x0C\r").unwrap_or(option.len())];
+        let name: &[u8] = if name.starts_with(b"--") || name.len() <= 2 { name } else { b"*" };
+        [&b"exec-argv "[..], name, b"\n"].concat()
+    };
+    let mut facts: Vec<Vec<u8>> = arguments[1..].iter().map(|argument| argument.as_bytes()).filter(|argument| argument.starts_with(b"-")).map(fact_of).collect();
+    facts.sort_unstable();
+    facts.dedup();
+    facts.concat()
+}
+
 pub fn facts_of_build(output_files: &[OutputFile], compile_exec_argv: &[u8], flags: Flags) -> Vec<u8> {
-    let facts: [(&[u8], bool); 8] = [
+    let options = options_named_in(compile_exec_argv);
+    let facts: [(&[u8], bool); 9] = [
         (b"autoload bunfig\n", !flags.contains(Flags::DISABLE_AUTOLOAD_BUNFIG)),
         (b"autoload package-json\n", !flags.contains(Flags::DISABLE_AUTOLOAD_PACKAGE_JSON)),
         (b"autoload tsconfig\n", !flags.contains(Flags::DISABLE_AUTOLOAD_TSCONFIG)),
         (b"environment BUN_DESTRUCT_VM_ON_EXIT\n", true),
         (b"environment BUN_JSC\n", true),
         (b"environment BUN_OPTIONS\n", true),
+        (options.as_slice(), true),
         (b"option compile-exec-argv\n", !compile_exec_argv.is_empty()),
         (b"option sourcemap\n", output_files.iter().any(|file| file.source_map_index != u32::MAX)),
     ];

@@ -177,6 +177,7 @@ const {
 // previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
 const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
 const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
+const isBufferClassMade = $newCppFunction("UtilInspect.cpp", "jsFunctionIsBufferClassMade", 0);
 
 function assert(p: unknown, message?: string): void {
   if (!p) throw new (require("internal/errors").AssertionError)(message);
@@ -2724,7 +2725,7 @@ function formatArray(ctx: Context, value: any, recurseTimes: number): unknown[] 
 }
 
 function formatTypedArray(value: any, length: any, ctx: Context): unknown[] {
-  if (Buffer.isBuffer(value)) {
+  if (isBufferClassMade() && Buffer.isBuffer(value)) {
     BufferModule ??= require("node:buffer");
     const INSPECT_MAX_BYTES = $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? BufferModule.INSPECT_MAX_BYTES;
     ctx.maxArrayLength = $min(ctx.maxArrayLength as any, INSPECT_MAX_BYTES);

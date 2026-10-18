@@ -35,11 +35,10 @@ function hideFromStack(...fns: Function[]) {
   }
 }
 
-const NumberIsSafeInteger = Number.isSafeInteger;
 let internalErrorName: (err: number) => string;
 function getSystemErrorName(err: any) {
   if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
-  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  if (err >= 0 || err % 1 !== 0 || err < -9007199254740991) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
   internalErrorName ??= $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
   return internalErrorName(err);
 }

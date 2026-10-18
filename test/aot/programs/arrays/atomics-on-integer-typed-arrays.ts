@@ -1,7 +1,7 @@
 // Atomics on integer typed arrays with numbers for the index and the operands are machine instructions. What they return, what they leave in the array and what they throw is what the functions of the engine do.
 declare const console: { log(...v: unknown[]): void };
 function counts(slots: Int32Array, n: number): number { let t = 0; for (let i = 0; i < n; i++) { t += Atomics.add(slots, 0, 1); Atomics.sub(slots, 1, 2); Atomics.store(slots, 2, i); t += Atomics.load(slots, 2); } return t + Atomics.load(slots, 0) * 3 + Atomics.load(slots, 1) * 5; }
-function swaps(slots: Int32Array, n: number): number { let spins = 0; for (let i = 0; i < n; i++) for (;;) { const held = Atomics.load(slots, 3); if (Atomics.compareExchange(slots, 3, held, held + 3) === held) break; spins++; } return spins * 1000 + Atomics.exchange(slots, 3, -1) + Atomics.load(slots, 3); }
+function swaps(slots: Int32Array, n: number): number { let retries = 0; for (let i = 0; i < n; i++) { let held = Atomics.load(slots, 3); while (Atomics.compareExchange(slots, 3, held, held + 3) !== held) { retries++; held = Atomics.load(slots, 3); } } return retries * 1000 + Atomics.exchange(slots, 3, -1) + Atomics.load(slots, 3); }
 function said(run: () => unknown): string { try { const v = run(); return Object.is(v, -0) ? "-0" : String(v); } catch (e) { return (e as Error).constructor.name; } }
 
 function int8(a: Int8Array, i: number, v: number): string { return [Atomics.add(a, i, v), Atomics.and(a, i, v | 0x55), Atomics.or(a, i, v), Atomics.xor(a, i, 0x7f), Atomics.sub(a, i, v), Atomics.exchange(a, i, v), Atomics.compareExchange(a, i, v, v + 1), Atomics.load(a, i), Atomics.store(a, i, v), a[i]].join(); }

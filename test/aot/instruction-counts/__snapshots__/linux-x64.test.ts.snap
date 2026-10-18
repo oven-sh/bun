@@ -1,5 +1,19 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`filters records, makes a smaller record of each and sums a field of those 1`] = `
+"typed, function: 20.03 instructions (kernel 19.91, module 0.12), 513 bytes
+typed, module level: 19.89 instructions (module 19.89), 1808 bytes
+untyped, function: 155.28 instructions (kernel 87.43, stub NewObjectFromDescriptor1 17.98, stub Add 13.76, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 10, a function without a name 9.46, stub GetByNameWithDirectColumnWithReceiverInRAX 8.60, stub GetByNameWithDirectColumnWithReceiverInRDI 8.60, stub NewArrayUnderConstructionWithContiguous 5.39, module 0.12, elsewhere -1.42, the runtime -4.64), 2345 bytes
+untyped, module level: 155.18 instructions (module 94.27, stub NewObjectFromDescriptor1 17.98, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 10, a function without a name 9.46, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 8.60, stub GetByNameWithDirectColumnWithReceiverInRDI 8.60, stub Add 6.88, stub NewArrayUnderConstructionWithContiguous 5.39, elsewhere -1.28, the runtime -4.71), 3989 bytes"
+`;
+
+exports[`counts how often neighbors in an Int32Array differ in sign 1`] = `
+"typed, function: 10.25 instructions (kernel 10.13, module 0.12), 669 bytes
+typed, module level: 9.36 instructions (module 9.36), 2000 bytes
+untyped, function: 15.24 instructions (kernel 15.12, module 0.12), 1060 bytes
+untyped, module level: 15.39 instructions (module 15.39), 2533 bytes"
+`;
+
 exports[`makes an object with Object.assign(Object.create(prototype), { .. }) and reads two of its three properties 1`] = `
 "typed, function: 77.55 instructions (kernel 55.09, stub AllocateTypedObject 17.16, the runtime 5.01, elsewhere 0.21, module 0.07), 506 bytes
 typed, module level: 76.36 instructions (module 54.09, stub AllocateTypedObject 17.16, the runtime 4.89, elsewhere 0.21), 1651 bytes
@@ -57,10 +71,10 @@ untyped, module level: 2412.30 instructions (the runtime 2279.15, module 68.15, 
 `;
 
 exports[`replaces the values of four declared fields of a class instance through a parameter of type any 1`] = `
-"typed, function: 298.40 instructions (kernel 66.28, stub PutByNameStoresFieldCell32 62, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, stub PutByNameStoresFieldInt32PreservingTwo 37, stub PutByNameStoresFieldBooleanPreservingTwo 35, stub PutByNameWithDirectColumn 13, stub WriteBarrier 8, module 0.12), 777 bytes
-typed, module level: 300.22 instructions (stub PutByNameStoresFieldCell32PreservingTwo 100, module 68.22, stub PutByNameWithDirectColumnPreservingTwo 52, stub PutByNameStoresFieldInt32PreservingTwo 37, stub PutByNameStoresFieldBooleanPreservingTwo 35, stub WriteBarrier 8), 2107 bytes
+"typed, function: 51.40 instructions (kernel 51.28, module 0.12), 637 bytes
+typed, module level: 51.24 instructions (module 51.24), 2188 bytes
 untyped, function: 88.41 instructions (kernel 88.29, module 0.12), 1140 bytes
-untyped, module level: 88.26 instructions (module 88.26), 2790 bytes"
+untyped, module level: 88.26 instructions (module 88.26), 2780 bytes"
 `;
 
 exports[`writes a date with toLocaleDateString, a constant locale and constant options 1`] = `
@@ -193,7 +207,7 @@ untyped, module level: 59.35 instructions (module 44.35, stub GetByNameWithDirec
 `;
 
 exports[`creates four declared optional fields in instances that were each first given an undeclared property under a key of their own 1`] = `
-"typed, function: 48.42 instructions (kernel 48.30, module 0.12), 492 bytes
+"typed, function: 48.42 instructions (kernel 48.30, module 0.12), 519 bytes
 typed, module level: 44.41 instructions (module 44.41), 2149 bytes
 untyped, function: 174.37 instructions (kernel 92.25, stub PutByNameWithDirectColumnPreservingTwo 39, stub ReplaceOutOfLineByName 22, stub PutByNameWithDirectColumn 13, stub WriteBarrier 8, module 0.12), 934 bytes
 untyped, module level: 177.23 instructions (module 95.23, stub PutByNameWithDirectColumnPreservingTwo 52, stub ReplaceOutOfLineByName 22, stub WriteBarrier 8), 2605 bytes"

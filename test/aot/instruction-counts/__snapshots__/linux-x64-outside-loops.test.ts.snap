@@ -39,7 +39,7 @@ exports[`appends to an array, outside loops 1`] = `
 "typed, function: 22.75 instructions (kernel 19.75, module 3), 675 bytes
 typed, function that no loop calls: 51 instructions (stub PushDoubleToFullVector 18, stub PushToFullVector 18, kernel 11.50, module 3.50), 237 bytes
 untyped, function: 30.50 instructions (kernel 27.50, module 3), 1163 bytes
-untyped, function that no loop calls: 69.25 instructions (stub PushToFullVector 18, kernel 15.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub ArrayPushOrCallValue 12, stub ReadInheritedOutOfLineByName 6, module 3.50), 374 bytes"
+untyped, function that no loop calls: 54.25 instructions (kernel 16.75, stub PushToFullVector 16, stub GetArrayPushByNamePreservingTwo 10, stub ArrayPushReadAheadOrCallValue 8, module 3.50), 417 bytes"
 `;
 
 exports[`reads elements of an array, outside loops 1`] = `

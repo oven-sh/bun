@@ -9,7 +9,7 @@ use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
 use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, ConstantSymbol, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
-use bun_sema::program::{Builtin, CompiledFunctions, FileId, LoadedBy};
+use bun_sema::program::{Builtin, CompiledFunctions, EVERY_ROOT, FileId, LoadedBy};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::types::TypeId;
 use bun_sema::util::{InParallel, for_each_mut};
@@ -391,6 +391,8 @@ struct Reachability {
     runtime: Guarded<RuntimeModules>,
     loader_entry_points: FxHashSet<FragmentIndex>,
     has_unreached_loader_entries: AtomicBool,
+    roots_released_by: FxHashMap<FragmentIndex, Vec<u32>>,
+    roots_waiting: FxHashMap<u32, u32>,
     unresolved: Unresolved,
 }
 
@@ -852,6 +854,11 @@ impl<'a> ReachWorker<'a> {
                 }
                 if reach.has_unreached_loader_entries.load(Ordering::Relaxed) && reach.loader_entry_points.contains(&at) {
                     self.reach_loader_entries();
+                }
+                for &number in reach.roots_released_by.get(&at).into_iter().flatten() {
+                    for (_, &root) in reach.roots_waiting.iter().filter(|waiting| number == EVERY_ROOT || *waiting.0 == number) {
+                        self.reach_function(root, true);
+                    }
                 }
                 self.reach_requested_runtime_modules(function);
                 self.reach_function_mentions(function);
@@ -2880,16 +2887,20 @@ fn link_with_helper_threads<'scope>(
                 match loaded_by {
                     LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName if loader_entries_have_sites => reach.runtime.get_mut().behind_loader_entries.push(evaluation),
                     LoadedBy::NativeCodeOrLiteralName | LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName => reach.add_root(evaluation, true),
+                    LoadedBy::RuntimeModulesOnly if bun_builtin_syntax::Archive::embedded().manifest().waits_to_be_named(bun_builtin_syntax::MODULE_ROOT | id) => _ = reach.roots_waiting.insert(bun_builtin_syntax::MODULE_ROOT | id, evaluation),
                     LoadedBy::RuntimeModulesOnly | LoadedBy::RuntimeModulesBehindLoader => {}
                 }
             }
         }
     }
+    let releases_roots = checked.releases_roots.load(Ordering::Relaxed);
     let runtime_helpers = checked.files.by_path.get(&crate::prelude::path_of(shown_from, crate::prelude::RUNTIME_HELPERS.0)).map(FuncKey::NamespaceForHost);
     if let Some((namespace, id)) = runtime_helpers.and_then(|namespace| Some((namespace, index.func_by_key(ids, namespace)?))) {
         builtin_roots.push((0x7fff_fffe, namespace));
         if loader_entries_have_sites {
             reach.runtime.get_mut().behind_loader_entries.push(id);
+        } else if releases_roots {
+            reach.roots_waiting.insert(0x7fff_fffe, id);
         } else {
             reach.add_root(id, true);
         }
@@ -2907,8 +2918,31 @@ fn link_with_helper_threads<'scope>(
         }
     }
     builtin_functions.sort_unstable_by_key(|function| function.0);
-    for function in builtin_functions.iter().filter_map(|function| index.func_by_key(ids, function.1)) {
-        reach.add_root(function, true);
+    for (number, function) in builtin_functions.iter().filter_map(|function| Some((function.0, index.func_by_key(ids, function.1)?))) {
+        if releases_roots && bun_builtin_syntax::Archive::embedded().manifest().waits_to_be_named(number) {
+            reach.roots_waiting.insert(number, function);
+        } else {
+            reach.add_root(function, true);
+        }
+    }
+    for (number, fragment) in fragments.iter().enumerate().filter(|it| it.1.file != NO_FILE) {
+        let module = checked.files.module(fragment.file);
+        let Some(&released) = module.roots_released.get() else { continue };
+        let own = || fragment.funcs.iter().enumerate().filter(|it| it.1.body.is_some() && it.1.key.file() == fragment.file);
+        let holders_of = |key: FuncKey| match key {
+            FuncKey::Function(_, held) | FuncKey::TypedBody(_, held) | FuncKey::GenericEntrypoint(_, held) => [held, held],
+            FuncKey::UntypedClone(_, held, root) => [held, root],
+            _ => [hir::FnId::NONE; 2],
+        };
+        let defined: FxHashSet<hir::FnId> = own().flat_map(|it| holders_of(it.1.key)).collect();
+        for &(mut holder, root) in released {
+            while holder.is_some() && !defined.contains(&holder) {
+                holder = module.bound.fns[holder.idx()].enclosing;
+            }
+            for (index, _) in own().filter(|it| holders_of(it.1.key).contains(&holder)) {
+                reach.roots_released_by.entry(FragmentIndex::new(number, index)).or_default().push(root);
+            }
+        }
     }
     let mut generic_entrypoints: FxHashMap<LayoutKey, Vec<u32>> = FxHashMap::default();
     let mut extra_function_entries: Vec<(Option<u32>, u32)> = Vec::new();
@@ -3502,7 +3536,7 @@ fn link_with_helper_threads<'scope>(
     let file_ranks: Vec<u32> = (0..checked.files.modules.len() as u32).map(|file| checked.files.rank_of_file(FileId(file))).collect();
     let integer_verdicts = std::thread::Builder::new().spawn(move || [number_flows, flows_of_runtime].map(|flows| expected_int32(&flows, |file| file_ranks[file.idx()]))).expect("a thread");
     program.builtin_modules = builtin_roots.iter().filter_map(|(id, root)| Some((*id, func_ids.get(*root)?))).collect();
-    program.builtin_functions = builtin_functions.iter().map(|(id, root, visibility)| (*id, func_ids.get(*root).expect("a builtin function that is in the index is reached"), *visibility)).collect();
+    program.builtin_functions = builtin_functions.iter().filter_map(|(id, root, visibility)| Some((*id, func_ids.get(*root)?, *visibility))).collect();
     let init_of = |file: FileId| func_ids.get(FuncKey::Module(file)).unwrap_or(FuncId::NONE);
     let mut precomputed_line_tables: Vec<LineTable> = precomputed_line_tables.map_or_else(Vec::new, |created| created.join().expect("the thread that makes the line tables panicked"));
     let precomputed: FxHashMap<FileId, usize> = precomputed_line_tables.iter().enumerate().map(|(at, created)| (created.0, at)).collect();

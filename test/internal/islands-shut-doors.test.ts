@@ -153,7 +153,7 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
 
   function exitStub(address: number, number: number, feature: number): Buffer {
     const code = Buffer.from([0xbf, 0, 0, 0, 0, 0xe9, 0, 0, 0, 0]);
-    code.writeUInt32LE(feature + number * 256, 1);
+    code.writeUInt32LE(feature + number * 4096, 1);
     code.writeInt32LE(trimmedOut - (address + 10), 6);
     return code;
   }

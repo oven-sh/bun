@@ -591,6 +591,7 @@ version = "0.0.0"
 dependencies = [
  "bun_collections",
  "bun_core",
+ "bun_sema_standalone",
 ]
 
 [[package]]

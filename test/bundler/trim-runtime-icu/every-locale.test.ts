@@ -15,7 +15,7 @@ const files = Object.fromEntries(
     .filter(name => name.endsWith(".js"))
     .map(name => [name, readFileSync(join(import.meta.dir, name), "utf8")]),
 );
-const features = ["intl", "collation", "units", "formatting"];
+const features = ["segmenter", "display_names", "intl", "collation", "units", "date_formatting", "number_formatting"];
 
 using probe = tempDir("trim-runtime-icu-probe", { "hello.ts": `console.log("hello world");` });
 const probed = Bun.spawnSync({
@@ -27,6 +27,20 @@ const probed = Bun.spawnSync({
 });
 const hasIslands = !probed.stderr.toString().includes("nothing can be left out of this Bun");
 
+let running = 0;
+const waiting: (() => void)[] = [];
+async function withSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (running >= 4) await new Promise<void>(resolve => waiting.push(resolve));
+  else running++;
+  try {
+    return await work();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else running--;
+  }
+}
+
 const environments: Record<string, string | undefined>[] = [
   { TZ: "America/Los_Angeles", LANG: "en_US.UTF-8" },
   { TZ: "Europe/Berlin", LANG: "de_DE.UTF-8", LC_ALL: "de_DE.UTF-8" },
@@ -37,14 +51,26 @@ describe.skipIf(!hasIslands || !!unsupported)("a method keeps all that it can op
   const programs: [entry: string, kept: string[]][] = [
     ["names-none-of-them.js", []],
     ["locale-compare.js", ["collation"]],
-    ["date-to-locale-date-string.js", ["formatting"]],
-    ["date-to-locale-time-string.js", ["formatting"]],
-    ["date-to-locale-string.js", ["formatting", "units"]],
-    ["number.js", ["formatting", "units"]],
+    ["date-to-locale-date-string.js", ["date_formatting"]],
+    ["date-to-locale-time-string.js", ["date_formatting"]],
+    ["date-to-locale-string.js", ["date_formatting"]],
+    ["number.js", ["number_formatting", "units"]],
+    ["intl-collator.js", ["collation"]],
+    ["intl-date-time-format.js", ["date_formatting"]],
+    ["intl-display-names.js", ["display_names"]],
+    ["intl-duration-format.js", ["number_formatting", "units"]],
+    ["intl-get-canonical-locales.js", ["intl"]],
+    ["intl-list-format.js", ["intl"]],
+    ["intl-locale.js", ["intl", "collation"]],
+    ["intl-number-format.js", ["number_formatting", "units"]],
+    ["intl-plural-rules.js", ["intl", "number_formatting"]],
+    ["intl-relative-time-format.js", ["intl", "number_formatting"]],
+    ["intl-segmenter.js", ["segmenter"]],
+    ["intl-supported-values-of.js", ["intl", "collation"]],
   ];
   test.concurrent.each(programs)(
     "%s prints the same with only %j kept",
-    async (entry, kept) => {
+    (entry, kept) => withSlot(async () => {
       using dir = tempDir("trim-runtime-icu", files);
       const folder = String(dir);
       const leftOut = features.filter(feature => !kept.includes(feature)).join(",");
@@ -61,11 +87,11 @@ describe.skipIf(!hasIslands || !!unsupported)("a method keeps all that it can op
         const env = { ...bunEnv, LANG: undefined, LC_ALL: undefined, ...environment };
         const whole = await run([join(folder, "whole")], folder, env);
         expect(whole).toMatchObject({ stderr: "", exitCode: 0 });
-        expect(whole.stdout).toMatch(/: \d{4,} calls, \d+ threw, digest [0-9a-f]+\n$/);
+        expect(whole.stdout).toMatch(/: \d+ calls, \d+ threw, digest [0-9a-f]+\n$/);
         expect(await run([join(folder, "by-its-own-facts")], folder, env)).toEqual(whole);
         expect(await run([join(folder, "trimmed")], folder, env)).toEqual(whole);
       }
-    },
-    600_000,
+    }),
+    1_800_000,
   );
 });

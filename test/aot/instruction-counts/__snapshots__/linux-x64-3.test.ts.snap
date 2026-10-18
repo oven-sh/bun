@@ -78,10 +78,10 @@ untyped, module level: 135.44 instructions (stub Add 86.87, module 25.45, stub C
 `;
 
 exports[`calls a method of an instance that was given an undeclared property under a key, through a parameter of type any 1`] = `
-"typed, function: 91.50 instructions (kernel 38.90, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub CallValue0 12, bump 8, stub BoxNumber 8, stub CheckCallableNamed 5, stub ReadInheritedInlineByName 5, module 0.60), 276 bytes
-typed, module level: 85.75 instructions (module 31.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub CallValue0 12, bump 8, stub BoxNumber 8, stub CheckCallableNamed 5, stub ReadInheritedInlineByName 5, namespace 2), 1570 bytes
+"typed, function: 30.50 instructions (kernel 29.90, module 0.60), 306 bytes
+typed, module level: 25.75 instructions (module 25.75), 1589 bytes
 untyped, function: 137 instructions (kernel 49.40, Counter.bump 19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 14, stub PutByNameWithDirectColumnPreservingTwo 14, stub CallValue0 12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, stub Add 8, stub CheckCallableNamed 5, stub ReadInheritedInlineByName 5, module 0.60), 438 bytes
-untyped, module level: 104.35 instructions (module 61.35, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 24, stub PutByNameWithDirectColumnPreservingTwo 14, stub ReadInheritedInlineByName 5), 2072 bytes"
+untyped, module level: 104.35 instructions (module 61.35, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 24, stub PutByNameWithDirectColumnPreservingTwo 14, stub ReadInheritedInlineByName 5), 2127 bytes"
 `;
 
 exports[`copies parsed objects with a spread that replaces one number; nothing reads the copies by field 1`] = `

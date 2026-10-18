@@ -34,5 +34,5 @@ file.run("create table kept (n integer)");
 file.run("insert into kept values (7)");
 process.on("exit", () => {
   console.log("left open at exit", statSync(join(folder, "left-open.db")).size > 0);
-  rmSync(folder, { recursive: true, force: true });
+  if (process.platform !== "win32") rmSync(folder, { recursive: true, force: true });
 });

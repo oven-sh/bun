@@ -93,9 +93,34 @@ const files = {
     show("number", () => new Intl.NumberFormat("ja", { style: "unit", unit: "kilometer-per-hour" }).format(50));
     show("date", () => new Intl.DateTimeFormat("zh", { dateStyle: "full", timeStyle: "full", timeZone: "Asia/Shanghai" }).format(at));
   `,
-  "uses-intl.ts": `console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("two words")].length);`,
+  "names-number-toLocaleString.ts": `
+    ${show}
+    const amount: number = 1234567.891;
+    const large: bigint = 12345678901234567890n;
+    show("default", () => [amount.toLocaleString(), large.toLocaleString()]);
+    for (const locale of ["en-IN", "de", "ja", "ar-EG", "hi", "ru", "xx"]) {
+      show(locale, () => [
+        amount.toLocaleString(locale),
+        large.toLocaleString(locale),
+        amount.toLocaleString(locale, { notation: "compact", compactDisplay: "long" }),
+        amount.toLocaleString(locale, { style: "currency", currency: "EUR", currencyDisplay: "name" }),
+        amount.toLocaleString(locale, { style: "unit", unit: "kilometer-per-hour", unitDisplay: "long" }),
+      ]);
+    }
+  `,
+  "names-date-toLocaleString.ts": `
+    ${show}
+    show("default", () => at.toLocaleString());
+    for (const locale of ["en-IN", "de", "ja", "ar-EG", "hi", "ru", "he-u-ca-hebrew", "xx"]) {
+      show(locale, () => [at.toLocaleString(locale, { timeZone: "UTC", dateStyle: "full", timeStyle: "full" }), at.toLocaleString(locale, { timeZone: "Asia/Kolkata", timeZoneName: "longGeneric" })]);
+    }
+  `,
+  "uses-segmenter.ts": `console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("two words")].length);`,
+  "uses-display_names.ts": `console.log(new Intl.DisplayNames("de", { type: "region" }).of("US"));`,
+  "uses-intl.ts": `console.log(new Intl.ListFormat("de").format(["a", "b"]));`,
   "uses-collation.ts": `console.log("b".localeCompare("a"));`,
-  "uses-formatting.ts": `console.log((1234.5).toLocaleString(process.env.LOCALE ?? "de"));`,
+  "uses-number_formatting.ts": `console.log((1234.5).toLocaleString(process.env.LOCALE ?? "de"));`,
+  "uses-date_formatting.ts": `console.log(new Date(0).toLocaleDateString(process.env.LOCALE ?? "de", { timeZone: "UTC" }));`,
   "uses-units.ts": `
     ${show}
     show("unit", () => (3.5).toLocaleString("en", { style: "unit", unit: "liter", unitDisplay: "long" }));
@@ -103,7 +128,7 @@ const files = {
   `,
 };
 
-const features = ["intl", "collation", "units", "formatting"];
+const features = ["segmenter", "display_names", "intl", "collation", "units", "date_formatting", "number_formatting"];
 const without = (...kept: string[]) => features.filter(feature => !kept.includes(feature)).join(",");
 
 using probe = tempDir("compile-trim-runtime-icu-data-probe", { "hello.ts": files["hello.ts"] });
@@ -170,12 +195,20 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     await runsAsWhole("names-localeCompare.ts", without("collation"));
   });
 
-  test("toLocaleDateString and toLocaleTimeString need only the data of formatting", async () => {
-    await runsAsWhole("names-toLocaleDateString.ts", without("formatting"));
+  test("toLocaleDateString and toLocaleTimeString need only the data of date formatting", async () => {
+    await runsAsWhole("names-toLocaleDateString.ts", without("date_formatting"));
   });
 
-  test("toLocaleString needs the data of formatting and of units", async () => {
-    await runsAsWhole("names-toLocaleString.ts", without("formatting", "units"));
+  test("toLocaleString of a Date needs only the data of date formatting", async () => {
+    await runsAsWhole("names-date-toLocaleString.ts", without("date_formatting"));
+  });
+
+  test("toLocaleString of a Number or a BigInt needs only the data of number formatting and of units", async () => {
+    await runsAsWhole("names-number-toLocaleString.ts", without("number_formatting", "units"));
+  });
+
+  test("toLocaleString of anything needs the data of both and of units", async () => {
+    await runsAsWhole("names-toLocaleString.ts", without("date_formatting", "number_formatting", "units"));
   });
 
   test("a program that names Intl keeps all of it", async () => {
@@ -183,9 +216,12 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
   });
 
   const leftOutSays = {
-    intl: "without Intl.DisplayNames, ListFormat, Locale, PluralRules, RelativeTimeFormat, Segmenter, getCanonicalLocales and supportedValuesOf",
+    segmenter: "without Intl.Segmenter",
+    display_names: "without Intl.DisplayNames",
+    intl: "without Intl.ListFormat, Locale, PluralRules, RelativeTimeFormat, getCanonicalLocales and supportedValuesOf",
     collation: "without Intl.Collator and localeCompare",
-    formatting: "without Intl.NumberFormat, Intl.DateTimeFormat, toLocaleString, toLocaleDateString and toLocaleTimeString",
+    date_formatting: "without Intl.DateTimeFormat and toLocaleString, toLocaleDateString and toLocaleTimeString of a Date or a Temporal object",
+    number_formatting: "without Intl.NumberFormat, Intl.DurationFormat and toLocaleString of a Number or a BigInt",
   };
   for (const [feature, says] of Object.entries(leftOutSays)) {
     test(`${feature}: an executable without it says so`, async () => {

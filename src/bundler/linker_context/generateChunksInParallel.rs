@@ -1854,6 +1854,8 @@ fn runtime_use(c: &LinkerContext) -> Option<Box<[u8]>> {
         Some([&b"a native addon"[..], &b""[..]])
     } else if loaders.contains(&Loader::SqliteEmbedded) {
         Some([&b"a database that is embedded"[..], &b""[..]])
+    } else if loaders.contains(&Loader::Html) && !strings::split(facts, b"\n").any(|fact| fact == b"loader html") {
+        Some([&b"a page that is not imported by the name of a page"[..], &b""[..]])
     } else {
         import_resolved_at_run_time(c).map(|specifier| [&b"an import that is resolved at run time: "[..], specifier])
     };

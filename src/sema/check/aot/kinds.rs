@@ -5,10 +5,12 @@ use crate::bind::{Decl, Flow, FlowId, FlowTarget, FnOwner, Parent, PatParent, Sy
 use crate::check::Checker;
 use crate::check::errors::Container;
 use crate::check::errors_names_and_exports::root_declaration;
-use crate::hir::{BinOp, Chain, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, PatKind, StmtId, StmtKind, UnOp, VarKind};
+use crate::hir::{BinOp, Chain, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, MemberId, MemberKind, PatKind, PropKey, Span, StmtId, StmtKind, TypeNodeKind, UnOp, VarKind};
 use crate::program::{FileId, Sym};
+use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 pub mod kind {
     pub const UNDEFINED: u16 = 1;
@@ -42,6 +44,7 @@ pub(super) struct State {
     asserted: FxHashMap<(FileId, FnId, u32, u8), u16>,
     at_flow: FxHashMap<(Sym, FlowId), u16>,
     at_flow_this_round: FxHashMap<(SymbolId, FlowId), u16>,
+    used_as: FxHashMap<Sym, Option<TypeId>>,
 }
 
 struct Uses {
@@ -62,6 +65,8 @@ pub(super) struct Shared {
     used_as_numbers: ByFile<Uses>,
     used_as_arrays: ByFile<Uses>,
     used_as_strings: ByFile<FxHashSet<SymbolId>>,
+    property_names_used: ByFile<FxHashMap<SymbolId, Vec<Atom>>>,
+    declarations_by_property_name: OnceLock<FxHashMap<Atom, Vec<Sym>>>,
 }
 
 impl State {
@@ -469,6 +474,107 @@ impl<'p, 's> Checker<'p, 's> {
         }
         as_strings.retain(|symbol| !otherwise.contains(symbol));
         as_strings
+    }
+
+    pub(super) fn declared_type_used_as(&mut self, at: Sym) -> Option<TypeId> {
+        if self.is_untyped_file(at.file) {
+            return None;
+        }
+        if let Some(&known) = self.aot.kinds.used_as.get(&at) {
+            return known;
+        }
+        let found = self.find_declared_type_used_as(at);
+        self.aot.kinds.used_as.insert(at, found);
+        found
+    }
+
+    fn find_declared_type_used_as(&mut self, at: Sym) -> Option<TypeId> {
+        const MAX_DECLARATIONS: usize = 8;
+        let program = self.p;
+        let names = program.aot.kinds.property_names_used.get_or_init(program.files.modules.len(), at.file, || self.find_property_names_used(at.file)).get(&at.id)?;
+        let declaring = self.declarations_by_property_name();
+        let rarest = names.iter().filter_map(|name| declaring.get(name)).min_by_key(|declarations| declarations.len())?;
+        if rarest.len() > MAX_DECLARATIONS {
+            return None;
+        }
+        let mut only = None;
+        for &declaration in rarest {
+            let declared = self.declared_type(declaration);
+            if Some(declared) == only || !names.iter().all(|&name| self.type_of_property(declared, name).is_some()) {
+                continue;
+            }
+            if only.is_some() {
+                return None;
+            }
+            only = Some(declared);
+        }
+        only
+    }
+
+    fn find_property_names_used(&self, file: FileId) -> FxHashMap<SymbolId, Vec<Atom>> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut used: FxHashMap<SymbolId, Vec<Atom>> = FxHashMap::default();
+        for &e in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
+            let symbol = bound.expr_symbol[e.idx()];
+            let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { continue };
+            if symbol.is_none() || parent.is_none() {
+                continue;
+            }
+            if let ExprKind::Dot { obj, name, .. } = hir[parent].kind
+                && obj == e
+            {
+                let names = used.entry(symbol).or_default();
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        used
+    }
+
+    fn declarations_by_property_name(&self) -> &'p FxHashMap<Atom, Vec<Sym>> {
+        self.p.aot.kinds.declarations_by_property_name.get_or_init(|| {
+            let mut declaring: FxHashMap<Atom, Vec<Sym>> = FxHashMap::default();
+            for file in self.files_declaring_classes() {
+                if self.is_untyped_file(file) {
+                    continue;
+                }
+                let (hir, bound) = (self.hir(file), self.bound(file));
+                let mut add = |members: Span<MemberId>, id: SymbolId| {
+                    let declaration = Sym { file, id };
+                    for m in members.iter().map(|member| &hir[member]) {
+                        if let PropKey::Name(name) = m.key
+                            && m.kind == MemberKind::Property
+                            && !m.flags.contains(Flags::STATIC)
+                            && id.is_some()
+                        {
+                            let declarations = declaring.entry(name).or_default();
+                            if declarations.last() != Some(&declaration) {
+                                declarations.push(declaration);
+                            }
+                        }
+                    }
+                };
+                for (index, class) in hir.classes.iter().enumerate() {
+                    if class.type_params.is_empty() && !class.flags.contains(Flags::AMBIENT) {
+                        add(class.members, bound.class_symbol[index]);
+                    }
+                }
+                for (index, interface) in hir.interfaces.iter().enumerate() {
+                    if interface.type_params.is_empty() {
+                        add(interface.members, bound.interface_symbol[index]);
+                    }
+                }
+                for (index, alias) in hir.aliases.iter().enumerate() {
+                    if let TypeNodeKind::Object(members) = hir[alias.ty].kind
+                        && alias.type_params.is_empty()
+                    {
+                        add(members, bound.alias_symbol[index]);
+                    }
+                }
+            }
+            declaring
+        })
     }
 
     fn declared_kinds(&mut self, at: Sym) -> u16 {

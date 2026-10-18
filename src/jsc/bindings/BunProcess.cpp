@@ -10,6 +10,7 @@
 #include "bun_dependency_versions.h"
 #include <node_version.h>
 #include <wtf/Scope.h>
+#include <JavaScriptCore/AOTFunction.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -1761,6 +1762,13 @@ Process::~Process()
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
+enum class BunProcessStdinFdType : int32_t {
+    file = 0,
+    pipe = 1,
+    socket = 2,
+};
+extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
+
 #if !OS(WINDOWS)
 static bool acceptsBytesWithoutBlocking(int descriptor)
 {
@@ -1908,7 +1916,8 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
         return onWarning;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* factory = JSC::JSFunction::create(vm, globalObject, processObjectInternalsCreateOnWarningCodeGenerator(vm), globalObject);
+    JSC::BuiltinCode code = processObjectInternalsCreateOnWarningCodeGenerator(vm);
+    auto* factory = JSC::JSFunction::create(vm, globalObject, code, globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(this);
     // --redirect-warnings, then NODE_REDIRECT_WARNINGS.
@@ -1947,8 +1956,14 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionBasenameForWarning, JSC::ImplementationVisibility::Private));
     JSValue nodeFS = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::NodeFS).get();
     bool isNodeFSLoaded = nodeFS && !nodeFS.isUndefined();
-    if (!isNodeFSLoaded)
-        args.append(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionAppendToWarningsFile, JSC::ImplementationVisibility::Private));
+    args.append(isNodeFSLoaded ? jsUndefined() : JSValue(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionAppendToWarningsFile, JSC::ImplementationVisibility::Private)));
+#if ENABLE(AOT)
+    bool canProgramReachStreams = code.executable || JSC::AOT::Typed::hasBuiltinModule(globalObject, InternalModuleRegistry::NodeEvents) || globalObject->nodeWorkerStdioPorts();
+    if (!canProgramReachStreams) {
+        constexpr int32_t terminal = 3;
+        args.append(jsNumber(bun_stdio_tty[2] ? terminal : static_cast<int32_t>(Bun__Process__getStdinFdType(Bun::vm(vm), 2))));
+    }
+#endif
     JSValue onWarning = JSC::profiledCall(globalObject, ProfilingReason::API, factory, JSC::getCallData(factory), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_onWarning.set(vm, this, asObject(onWarning));
@@ -3163,13 +3178,6 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
 
     return hrtime;
 }
-enum class BunProcessStdinFdType : int32_t {
-    file = 0,
-    pipe = 1,
-    socket = 2,
-};
-extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
-
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 // node:worker_threads worker: process.stdout/stderr forward to the parent Worker's
 // worker.stdout/stderr over a MessagePort; process.stdin is port-fed for { stdin: true }

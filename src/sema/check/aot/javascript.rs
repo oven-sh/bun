@@ -1,5 +1,5 @@
 use crate::atom::{Atom, known};
-use crate::bind::{Decl, Parent, PatParent, SymFlags, SymbolId};
+use crate::bind::{Decl, Flow, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
 use crate::hir::{BinOp, CallId, ExprId, ExprKind, FileKind, Flags, FnBody, FnId, FnKind, MemberKind, ParamId, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp};
 use super::kinds::kind;
@@ -15,6 +15,7 @@ use super::OnceLock;
 const FILES_PER_CHECKER: usize = 32;
 
 const MAX_CALLS: usize = 32;
+const MAX_STORED_ELEMENTS: usize = 32;
 const MAX_DEPTH: usize = 48;
 const MAX_CYCLE_ROUNDS: usize = 4;
 const MAX_CYCLE_MEMBERS: usize = 1 << 14;
@@ -330,6 +331,7 @@ pub(super) struct State {
     declared: super::ByExpression<bool>,
     predicted: super::ByExpression<Option<TypeId>>,
     calls_passing_arguments: FxHashMap<Function, Rc<[(FileId, ExprId, usize)]>>,
+    stored_elements: FxHashMap<FileId, Rc<FxHashMap<Sym, Vec<ExprId>>>>,
     are_program_calls: bool,
     predicted_by_use: super::ByExpression<Option<TypeId>>,
     property_types: FxHashMap<(TypeId, Atom, bool), Option<TypeId>>,
@@ -371,6 +373,7 @@ impl Default for State {
             declared: Default::default(),
             predicted: Default::default(),
             calls_passing_arguments: FxHashMap::default(),
+            stored_elements: FxHashMap::default(),
             are_program_calls: false,
             predicted_by_use: Default::default(),
             property_types: FxHashMap::default(),
@@ -502,9 +505,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if matches!(hir[e].kind, ExprKind::Ident(_))
             && let Some(id) = bound.expr_symbol[e.idx()].some()
-            && self.is_used_as_string(Sym { file, id })
         {
-            return Some(TypeId::STRING);
+            if self.is_used_as_string(Sym { file, id }) {
+                return Some(TypeId::STRING);
+            }
+            if let Some(declared) = self.declared_type_used_as(Sym { file, id }) {
+                return Some(declared);
+            }
         }
         let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return None };
         match hir[parent].kind {
@@ -571,7 +578,10 @@ impl<'p, 's> Checker<'p, 's> {
         let checked = self.type_of_pat(file, pat);
         match self.informative_type(checked) {
             Some(checked) => Some(checked),
-            None => self.predict(Subject::Pat(file, pat)),
+            None => self.predict(Subject::Pat(file, pat)).or_else(|| {
+                let id = self.bound(file).pat_symbol[pat.idx()].some()?;
+                self.declared_type_used_as(Sym { file, id })
+            }),
         }
     }
 
@@ -786,7 +796,29 @@ impl<'p, 's> Checker<'p, 's> {
                     _ => return None,
                 };
                 let element = self.cached_index_type(object, kind)?;
-                self.informative_type(element)
+                if let Some(element) = self.informative_type(element) {
+                    return Some(element);
+                }
+                if self.is_untyped_file(file) {
+                    return None;
+                }
+                let mut found = Vec::new();
+                if let Some(stored) = self.predict(Subject::Expr(file, obj)) {
+                    let stored = self.non_nullable(stored);
+                    let element = self.cached_index_type(stored, kind).and_then(|element| self.informative_type(element));
+                    self.add(&mut found, element);
+                }
+                if kind == TypeId::NUMBER
+                    && let ExprKind::Ident(name) = hir[obj].kind
+                    && let Some(sym) = self.symbol_of_identifier(file, obj, name)
+                {
+                    let stored = self.elements_stored_in_file(file);
+                    for &value in stored.get(&sym).into_iter().flatten().take(MAX_STORED_ELEMENTS) {
+                        let value = self.predicted_expr_type(file, value);
+                        self.add(&mut found, value);
+                    }
+                }
+                self.either(&found)
             }
             ExprKind::Call(call) => self.predict_call(file, call, false),
             ExprKind::New(call) => self.predict_call(file, call, true),
@@ -829,6 +861,34 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => None,
         }
+    }
+
+    fn elements_stored_in_file(&mut self, file: FileId) -> Rc<FxHashMap<Sym, Vec<ExprId>>> {
+        if let Some(known) = self.aot.javascript.stored_elements.get(&file) {
+            return Rc::clone(known);
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut stored: FxHashMap<Sym, Vec<ExprId>> = FxHashMap::default();
+        for &node in bound.flow.iter() {
+            let Flow::ArrayMutation { expr, .. } = node else { continue };
+            let (obj, values): (ExprId, Vec<ExprId>) = match hir[expr].kind {
+                ExprKind::Call(call) => match hir[hir[call].callee].kind {
+                    ExprKind::Dot { obj, .. } => (obj, hir.ids(hir[call].args).collect()),
+                    _ => continue,
+                },
+                ExprKind::Assign { target, value, .. } => match hir[target].kind {
+                    ExprKind::Index { obj, .. } => (obj, vec![value]),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let ExprKind::Ident(name) = hir[obj].kind else { continue };
+            let Some(sym) = self.symbol_of_identifier(file, obj, name) else { continue };
+            stored.entry(sym).or_default().extend(values.into_iter().filter(|&value| !matches!(hir[value].kind, ExprKind::Spread(_))));
+        }
+        let stored = Rc::new(stored);
+        self.aot.javascript.stored_elements.insert(file, Rc::clone(&stored));
+        stored
     }
 
     fn predict_prototype_member(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {

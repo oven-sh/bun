@@ -40,21 +40,20 @@ export async function render(request: Request, meta: RouteMetadata): Promise<Res
         {meta.modulepreload.map(href => (
           <link key={href} rel="modulepreload" href={href} />
         ))}
-      </head>
-      <body>
-        <div id="root">{element}</div>
-        {/* `client.tsx` reads the params from here, to hydrate the same tree. */}
+        {/* `client.tsx` reads the params from here, to hydrate the same tree. In <head>, so it is
+            there before the browser bundle runs. */}
         <script
           id="__bun_bake_params"
           type="application/json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(params).replaceAll("<", "\\u003c") }}
         />
-        {meta.modules.map(src => (
-          <script key={src} type="module" src={src} />
-        ))}
+      </head>
+      <body>
+        <div id="root">{element}</div>
       </body>
     </html>,
-    { signal: request.signal },
+    // React writes these with the shell, so hydration starts before the slowest Suspense boundary.
+    { signal: request.signal, bootstrapModules: [...meta.modules] },
   );
   return new Response(stream, { headers: { "content-type": "text/html; charset=utf-8" } });
 }

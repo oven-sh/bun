@@ -236,6 +236,10 @@ function loadFramework(name: string, dir: string, pluginName: string, value: any
     }
   };
   for (const router of value.fileSystemRouterTypes ?? []) {
+    // Bake reads the routes of a router from its root folder, relative to the project.
+    if (typeof router?.root === "string" && !require("node:fs").existsSync(path.resolve(router.root))) {
+      throw fail(`its router's root folder "${router.root}" does not exist.`);
+    }
     resolve(router.serverEntryPoint, "serverEntryPoint");
     resolve(router.clientEntryPoint, "clientEntryPoint");
   }

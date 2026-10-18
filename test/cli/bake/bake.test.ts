@@ -248,6 +248,7 @@ test.concurrent.each([
   {
     name: "two plugins in bake.config.ts with a framework",
     files: {
+      "app/pages/.keep": "",
       "r.ts": `export function render() { return new Response("x"); }`,
       "bake.config.ts": `
         const framework = { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts" }] };
@@ -303,8 +304,18 @@ test.concurrent.each([
     error: `"app/pages/index.tsx" and "app/pages/index.html" are both the page "/". Move the script of the .html page out of app/pages/.`,
   },
   {
+    name: "a framework router whose root folder does not exist",
+    files: {
+      "r.ts": `export function render() { return new Response("x"); }`,
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { fileSystemRouterTypes: [{ root: "src/route", style: "nextjs-pages", serverEntryPoint: "./r.ts" }] } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": its router's root folder "src/route" does not exist.`,
+  },
+  {
     name: "a framework entry point that cannot be found",
     files: {
+      "app/pages/.keep": "",
       "bake.config.ts": `export default { plugins: [{ name: "a", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./nope.ts" }] } }] };`,
     },
     waits: true,
@@ -1190,7 +1201,7 @@ test.concurrent("bun bake sends a page's new code to a page load after an edit",
   );
   // Until the dev server has the edit. Before, it served the bundle it made before the edit.
   let code = await bundle();
-  while (!code.includes("second-version")) code = await bundle();
+  for (let i = 0; i < 200 && !code.includes("second-version"); i++) code = await bundle();
   expect(code).not.toContain("first-version");
 });
 
@@ -1245,6 +1256,44 @@ test.concurrent("bun bake rejects a route with dir and style in app/server.ts", 
   const output = collectOutput(proc);
   await output.waitFor(/does not support a route with "dir" and "style"/);
   expect(output.text).not.toContain("url: ");
+});
+
+test.concurrent("the default framework sends the browser bundle before a slow Suspense boundary", async () => {
+  using dir = tempDir("bake-command-bootstrap", {
+    // The boundary waits until the test requests /release.
+    "app/server.ts": `
+      globalThis.gate ??= Promise.withResolvers();
+      export default { routes: { "/release": () => { globalThis.gate.resolve(); globalThis.released = true; return new Response("ok"); } } };
+    `,
+    "app/pages/index.tsx": `
+      import { Suspense } from "react";
+      function Late() {
+        if (!globalThis.released) throw globalThis.gate.promise;
+        return <p>late content</p>;
+      }
+      export default () => <Suspense fallback={<p>loading</p>}><Late /></Suspense>;
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+  const response = await fetch(url);
+  const decoder = new TextDecoder();
+  let html = "";
+  const reader = response.body!.getReader();
+  while (!html.includes('src="/_bun/client/')) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    html += decoder.decode(value, { stream: true });
+  }
+  // The browser can start hydrating while the boundary is still pending.
+  expect(html).toContain('src="/_bun/client/');
+  expect(html).not.toContain("late content");
+
+  await fetch(new URL("/release", url));
+  for (let r = await reader.read(); !r.done; r = await reader.read()) html += decoder.decode(r.value, { stream: true });
+  expect(html).toContain("late content");
 });
 
 test.concurrent("bun bake reports a page that a route of app/server.ts hides", async () => {

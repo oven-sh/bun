@@ -1514,9 +1514,8 @@ class ChildProcess extends EventEmitter {
         this.disconnect = this.#disconnect;
         this.channel = new Control();
         this.#pendingMessages = [];
-        this.on("newListener", name => {
-          if (name === "message" && this.#pendingMessages.length > 0)
-            process.nextTick(() => this.#emitPendingMessages());
+        this.on("newListener", () => {
+          if (this.#pendingMessages.length > 0) process.nextTick(() => this.#emitPendingMessages());
         });
         Object.defineProperty(this, "_channel", {
           get() {
@@ -1580,9 +1579,9 @@ class ChildProcess extends EventEmitter {
   #emitPendingMessages() {
     if (!this.connected || this.listenerCount("message") === 0) return;
     const messages = this.#pendingMessages;
-    // Node empties the list after the loop, so a listener that throws gets the same messages again at the next listener.
+    const { length } = messages;
+    for (let i = 0; i < length; i++) this.emit("message", messages[i][0], messages[i][1]);
     this.#pendingMessages = [];
-    for (let i = 0; i < messages.length; i++) this.emit("message", messages[i][0], messages[i][1]);
   }
 
   #send(message, handle, options, callback) {

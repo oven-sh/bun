@@ -4,10 +4,12 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 
 const throws = "a listener that throws";
+const throwsThenOtherEvent = "a listener that throws, then a listener for another event";
 const variants = [
   "a late listener",
   "a handle",
   throws,
+  throwsThenOtherEvent,
   "once",
   "added and removed in one tick",
   "disconnect() in the tick that adds it",
@@ -47,12 +49,20 @@ function receive(target, variant, whenWritten) {
   // In a child this is also what opens the channel, so that it is read with no 'message' listener.
   target.send("ready");
   // Two turns of the loop after the sender's callback ran, the channel has been read.
+  const throwAtFirst = message => {
+    if (message === "first") throw new Error(throws);
+  };
   whenWritten(() =>
     setImmediate(setImmediate, () => {
       if (variant === throws) {
         listenAndAskForTheEnd();
-        target.on("message", message => {
-          if (message === "first") throw new Error(throws);
+        target.on("message", throwAtFirst);
+      } else if (variant === throwsThenOtherEvent) {
+        listen();
+        target.on("message", throwAtFirst);
+        setImmediate(() => {
+          target.on("another event", () => {});
+          setImmediate(() => target.send("more"));
         });
       } else if (variant === "once") {
         target.once("message", message => got.push(message));

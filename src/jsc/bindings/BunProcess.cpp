@@ -1597,16 +1597,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
     if (!pending || !Bun__GlobalObject__connectedIPC(global) || !process->wrapped().hasEventListeners(vm.propertyNames->message))
         return JSValue::encode(jsUndefined());
 
-    // Node empties the list after the loop, so a listener that throws gets the same messages again at the next listener.
-    process->m_pendingMessages.clear();
     for (unsigned i = 0, length = pending->length(); i < length; i += 2) {
         JSC::MarkedArgumentBuffer args;
         args.append(pending->getIndex(global, i));
         RETURN_IF_EXCEPTION(scope, {});
         args.append(pending->getIndex(global, i + 1));
         RETURN_IF_EXCEPTION(scope, {});
-        process->wrapped().emit(vm.propertyNames->message, args);
+        bool listenerThrew = false;
+        process->wrapped().emit(vm.propertyNames->message, args, &listenerThrew);
+        // In Node the exception leaves the loop, and the next listener gets all of them again.
+        if (listenerThrew)
+            return JSValue::encode(jsUndefined());
     }
+    process->m_pendingMessages.clear();
     return JSValue::encode(jsUndefined());
 }
 
@@ -1625,10 +1628,13 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             return;
         }
 
+        auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
+        auto& vm = JSC::getVM(global);
+        if (isAdded && global->processObject()->m_pendingMessages)
+            global->processObject()->queueNextTick(global, JSFunction::create(vm, global, 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
+
         // IPC handlers
         if (eventName == "message" || eventName == "disconnect") {
-            auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
-            auto& vm = JSC::getVM(global);
             auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
             auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
             if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
@@ -1636,8 +1642,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             }
             auto totalListenerCount = messageListenerCount + disconnectListenerCount;
             if (isAdded) {
-                if (eventName == "message" && global->processObject()->m_pendingMessages)
-                    global->processObject()->queueNextTick(global, JSFunction::create(vm, global, 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
                 if (Bun__GlobalObject__hasIPC(global)
                     && totalListenerCount == 1) {
                     Bun__ensureProcessIPCInitialized(global);

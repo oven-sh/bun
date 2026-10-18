@@ -19,7 +19,7 @@ import type { Config } from "../config.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir } from "../source.ts";
 
-const LIBARCHIVE_COMMIT = "27cbc7827172698143e440801fc0ba39ccb4f1f5";
+const LIBARCHIVE_COMMIT = "0c48412be2d94afe1859a807ea7896a18d8900bd";
 
 // The unconditional list from libarchive/CMakeLists.txt, minus the read
 // formats/filters bun never registers (it only registers tar/gnutar/gzip,

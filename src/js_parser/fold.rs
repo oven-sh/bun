@@ -622,11 +622,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // Inline import.meta properties for Bake. A CommonJS module cannot
-                    // read `import.meta`, so a delete folds too: `delete "str"` is `true`.
+                    // read `import.meta`, so a delete folds there too: `delete "str"` is `true`.
+                    let is_cjs = p.options.bundle
+                        && p.options.output_format == js_parser::options::Format::Cjs;
                     if identifier_opts.assign_target() == js_ast::AssignTarget::None
-                        && (p.options.framework.is_some()
-                            || (p.options.bundle
-                                && p.options.output_format == js_parser::options::Format::Cjs))
+                        && (!identifier_opts.is_delete_target() || is_cjs)
+                        && (p.options.framework.is_some() || is_cjs)
                     {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir

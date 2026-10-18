@@ -4688,16 +4688,21 @@ describe.concurrent("bundler", () => {
       stdout: "1\n2",
     },
   });
-  // A define with a constant value (`a`) is only substituted where it is read;
-  // as an assignment target the identifier stays as written, since `null = 0`
-  // is a syntax error. esbuild also logs an "assign-to-define" warning there,
-  // bun does not. A define whose value is an identifier (`d`) is substituted
-  // in both positions.
+  // A define with a constant value (`a`, `b.c`) is only substituted where it
+  // is read; as an assignment target the reference stays as written, since
+  // `null = 0` is a syntax error. esbuild also logs an "assign-to-define"
+  // warning there, bun does not. A define whose value is an identifier
+  // (`d`, `e.f`, `g`, `h.i`) is substituted in both positions. A delete
+  // target is never substituted: `delete ident` is a strict mode error.
   itBundled("default/DefineAssignWarning", {
     files: {
       "/read.js": /* js */ `
         capture(a);
+        capture(b.c);
         capture(d);
+        capture(e.f);
+        capture(g);
+        capture(h.i);
       `,
       "/write.js": /* js */ `
         capture(a = 1);
@@ -4709,26 +4714,40 @@ describe.concurrent("bundler", () => {
         capture(a ??= 5);
         for (a in { 5: 0 });
         for (a of [6]);
+        capture(b.c = 1);
+        capture(delete b.c);
         capture(d = 7);
-        console.log(a, globalThis.a, globalThis.ident);
+        capture(e.f = 8);
+        capture(delete e.f);
+        capture(g = 9);
+        capture(h.i = 10);
+        console.log(a, globalThis.a, globalThis.ident, globalThis.b.c, globalThis.ident2);
       `,
     },
     entryPoints: ["/read.js", "/write.js"],
     define: {
       a: "null",
+      "b.c": "null",
       d: "ident",
+      "e.f": "ident2",
+      g: "dot.chain",
+      "h.i": "dot.chain2",
     },
     runtimeFiles: {
       // The output is an ES module, so the globals it assigns to must exist.
       "/test.js": /* js */ `
         globalThis.capture = x => x;
         globalThis.a = undefined;
+        globalThis.b = { c: undefined };
+        globalThis.e = { f: undefined };
         globalThis.ident = undefined;
+        globalThis.ident2 = undefined;
+        globalThis.dot = { chain: undefined, chain2: undefined };
         await import("./out/write.js");
       `,
     },
     onAfterBundle(api) {
-      expect(api.captureFile("/out/read.js")).toEqual(["null", "ident"]);
+      expect(api.captureFile("/out/read.js")).toEqual(["null", "null", "ident", "ident2", "dot.chain", "dot.chain2"]);
       expect(api.captureFile("/out/write.js")).toEqual([
         "a = 1",
         "a += 1",
@@ -4737,7 +4756,13 @@ describe.concurrent("bundler", () => {
         "[a] = [3]",
         "{ x: a } = { x: 4 }",
         "a ??= 5",
+        "b.c = 1",
+        "delete b.c",
         "ident = 7",
+        "ident2 = 8",
+        "delete e.f",
+        "dot.chain = 9",
+        "dot.chain2 = 10",
       ]);
       const write = api.readFile("/out/write.js");
       expect(write).toContain("for (a in { 5: 0 })");
@@ -4745,9 +4770,9 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
-      // The read of `a` is replaced with the define, the writes went to the
-      // real global.
-      stdout: "null 6 7",
+      // The reads of `a` and `b.c` are replaced with the define, the writes
+      // went to the real globals.
+      stdout: "null 6 7 undefined 8",
     },
   });
   itBundled("default/KeepNamesTreeShaking", {

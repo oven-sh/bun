@@ -1336,24 +1336,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(parts) = defines.dots_for(e_.name.slice()) {
             for define in parts.as_slice() {
                 if p.is_dot_define_match(expr, &define.parts) {
-                    if in_.assign_target == js_ast::AssignTarget::None && !is_delete_target {
-                        // Substitute user-specified defines
-                        if !define.data.valueless() {
-                            *e = p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
-                            return;
-                        }
+                    let is_read =
+                        in_.assign_target == js_ast::AssignTarget::None && !is_delete_target;
+                    // Substitute user-specified defines. An identifier is a valid
+                    // assignment target, a value is not. `delete ident` is a strict mode error.
+                    if !define.data.valueless()
+                        && (is_read
+                            || (!is_delete_target
+                                && matches!(define.data.value, Data::EIdentifier(_))))
+                    {
+                        *e = p.value_for_define(
+                            expr.loc,
+                            in_.assign_target,
+                            is_delete_target,
+                            &define.data,
+                        );
+                        return;
+                    }
 
-                        if define.data.method_call_must_be_replaced_with_undefined()
-                            && in_
-                                .property_access_for_method_call_maybe_should_replace_with_undefined
-                        {
-                            p.method_call_must_be_replaced_with_undefined = true;
-                        }
+                    if is_read
+                        && define.data.method_call_must_be_replaced_with_undefined()
+                        && in_.property_access_for_method_call_maybe_should_replace_with_undefined
+                    {
+                        p.method_call_must_be_replaced_with_undefined = true;
                     }
 
                     // Copy the side effect flags over in case this expression is unused

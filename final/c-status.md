@@ -4,8 +4,7 @@ This PR is now one PR on `main`, with one commit for each part:
 
 1. #44248, as it is.
 2. The pins (this was #44335).
-3. The commit of #37985, rebased, with alii as the author.
-4. The limit: a stream over the advertised limit is refused in the engine before it is opened, on node's budget (`maxSessionInvalidFrames`), with an O(1) native count.
+3. The limit: a stream over the advertised limit is refused in the engine before it is opened, on node's budget (`maxSessionInvalidFrames`), with an O(1) native count.
 
 Removed since the last status: the rule that held a slot until the end of the read. A slot is free when its stream closes, as on Bun 1.4.3. The PR body says why.
 

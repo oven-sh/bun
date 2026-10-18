@@ -1,0 +1,80 @@
+(node:27883) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///workspace/bun/test/js/node/http2/node-http2-max-concurrent-streams.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /workspace/bun/test/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ the slots of SETTINGS_MAX_CONCURRENT_STREAMS
+  ✔ limit 0 refuses every stream (14.953439ms)
+  ✔ requests in one write are refused while the first response waits for a later turn (9.13307ms)
+  ✔ requests over the limit in one write are refused by a server of the core API (2.35533ms)
+  ✔ requests over the limit in one write are refused by a server of the compatibility API (2.313099ms)
+  ✔ requests over the limit in one write are refused by a TLS server (9.88941ms)
+  ✔ requests over the limit in one write are refused by performServerHandshake() over a Duplex (8.714739ms)
+  ▶ a slot is free again
+    ✔ after both sides ended the stream (5.35725ms)
+    ✔ after a response that is only HEADERS (2.48762ms)
+    ✔ after sendTrailers() (6.124339ms)
+    ✔ after res.end() of the compatibility API (5.13089ms)
+    ✔ after the end of a response that waited for the window of the peer (3.87243ms)
+    ✔ after the request ended, in one write with the next request (1.71615ms)
+    ✔ after RST_STREAM(CANCEL) from the peer, in one write with the next request (2.81899ms)
+    ✔ after RST_STREAM(NO_ERROR) from the peer, in one write with the next request (5.421969ms)
+    ✔ after RST_STREAM(INTERNAL_ERROR) from the peer, in one write with the next request (3.4825ms)
+    ✔ after RST_STREAM(REFUSED_STREAM) from the peer, in one write with the next request (2.14941ms)
+    ✔ after the peer reset a stream that waits for trailers, in one write with the next request (3.28364ms)
+    ✔ after the peer reset a request of the compatibility API, in one write with the next request (5.068159ms)
+    ✔ after the server reset the stream with close(CANCEL) (3.04246ms)
+    ✔ after the server reset the stream with close(NO_ERROR) (2.2449ms)
+    ﹣ after respond() failed for a weight out of range (0.09975ms) # SKIP
+    ﹣ after respond() failed for a parent out of range (0.05487ms) # SKIP
+    ﹣ after respond() failed for options that are not an object (0.03312ms) # SKIP
+    ﹣ after respond() failed for a header block over maxSendHeaderBlockLength (0.02837ms) # SKIP
+  ✔ a slot is free again (55.845437ms)
+  ✔ session.settings() in the 'session' event sets the limit for the first request (1.30463ms)
+  ✔ server.updateSettings() before the connection sets the limit for the first request (1.56042ms)
+  ▶ session.settings()
+    ✔ in a handler lowers the limit for the next request of the same write (1.56631ms)
+    ✔ in a handler raises the limit for the next request of the same write (1.77397ms)
+    ✔ keeps the open streams when it lowers the limit below their number (2.248239ms)
+  ✔ session.settings() (5.936309ms)
+  ✔ a trailer block on the one open stream is not a new stream (2.04337ms)
+  ✔ a pushed stream does not use a slot (2.53104ms)
+  ✔ a field that a refused block added to the HPACK table is known to the next request (1.98031ms)
+  ✔ the frames that follow a refused request in the same write get no answer (1.25778ms)
+✔ the slots of SETTINGS_MAX_CONCURRENT_STREAMS (122.975443ms)
+▶ a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS
+  ▶ a first flight of 150 requests at limit 10, with the default budgets
+    ✔ keeps the session of a server of the core API (5.24904ms)
+    ✔ keeps the session of a server of the compatibility API (11.150319ms)
+    ✔ keeps the session of a TLS server (15.056829ms)
+    ✔ keeps the session of performServerHandshake() over a Duplex (19.794109ms)
+  ✔ a first flight of 150 requests at limit 10, with the default budgets (51.962957ms)
+  ▶ a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3
+    ✔ keeps the session of a server of the core API (4.40217ms)
+    ✔ keeps the session of a server of the compatibility API (2.425429ms)
+    ✔ keeps the session of a TLS server (5.6544ms)
+    ✔ keeps the session of performServerHandshake() over a Duplex (5.16874ms)
+  ✔ a first flight of 150 requests at limit 10, with maxSessionRejectedStreams: 3 (18.443659ms)
+  ✔ maxSessionInvalidFrames: 0 allows 1 refused streams (2.50599ms)
+  ✔ maxSessionInvalidFrames: 3 allows 4 refused streams (1.087239ms)
+  ﹣ a request behind a stream that the handler ended in the same write is served (0.07513ms) # SKIP
+  ✔ a request behind a stream that the peer reset in the same write is served (1.16145ms)
+  ✔ a trailer block on a stream that the server reset does not take a slot (1.13306ms)
+  ✔ the default budget keeps 1001 refused streams and ends the session at the next one (11.6908ms)
+  ✔ a first flight through http2.connect() loses only the requests over the limit (10.610249ms)
+  ✔ the limit that a client advertises does not apply to its own requests (2.18642ms)
+  ✔ a refused stream and a malformed block use the same allowance (1.85852ms)
+  ✔ a refused stream with a malformed block gets one RST_STREAM (0.91478ms)
+  ✔ a refused stream is not the last stream that the session processed (1.3117ms)
+  ﹣ a stream whose respond() failed and that the peer resets gives back one slot (0.10227ms) # SKIP
+  ﹣ a stream whose respond() failed and that the peer has ended gives back one slot (0.07491ms) # SKIP
+  ✔ a limit that was not sent to the peer refuses nothing (2.716309ms)
+  ✔ an 'aborted' listener that throws does not keep the slot (81.397676ms)
+✔ a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS (191.071959ms)
+ℹ tests 56
+ℹ suites 6
+ℹ pass 49
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 7
+ℹ todo 0
+ℹ duration_ms 324.62025

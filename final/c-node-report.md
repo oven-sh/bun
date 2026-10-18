@@ -20,7 +20,7 @@ The 7 tests that node skips are marked Bun only.
 
 What changed since the first version of this report:
 
-- An earlier head held a slot until the end of the read, to follow node in that last case. A review measured that the rule cannot follow node (node serves 300 of 300 requests with `respond(); end(); destroy()`, the rule served 210) and that it refused requests that Bun 1.4.3 serves. The rule and its 7 tests are removed.
+- An earlier head held a slot until the end of the read, to follow node in that last case. A review measured that the rule cannot follow node (node serves 300 of 300 requests with `respond(); end(); destroy()`, the rule served 210) and that it refused requests that Bun 1.4.3 serves. The rule and the tests that pinned it are removed.
 - 3 tests on a session that reads from a Duplex used the PING ACK as the barrier. Node writes the ACK before the responses there. `outcome()` now waits for an answer to every request.
 - 1 test asserted that a stream over a limit that the client ACKed is refused and the session stays open. Node ends the session. The test is removed and the difference is an open question in the PR body.
 

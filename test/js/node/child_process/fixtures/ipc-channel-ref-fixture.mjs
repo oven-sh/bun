@@ -1,6 +1,7 @@
 // Prints whether the event loop is held after a sequence of operations on `subprocess.channel` or `process.channel`.
 // Runs unchanged on Node, which skips the Bun.spawn() row. Its only other answer is "held" for `send(small)`.
 import { fork, spawn } from "node:child_process";
+import cluster from "node:cluster";
 import { once } from "node:events";
 import { createServer } from "node:net";
 
@@ -24,6 +25,11 @@ async function applyAndReport(table) {
 const send = (target, length) => new Promise(sent => target.send(Buffer.alloc(length, "a").toString(), sent));
 // Too big for the pipe's buffer, so the write finishes later.
 const sendBig = target => send(target, 1_000_000);
+const listen = async () => {
+  const server = createServer().listen(0);
+  await once(server, "listening");
+  return server;
+};
 const channelOps = channel => ({
   "none": () => {},
   "ref": () => channel.ref(),
@@ -35,24 +41,49 @@ const channelOps = channel => ({
 if (role === "idle") {
   // exit(): a handle it was sent and has no listener for would hold its loop.
   process.on("disconnect", () => process.exit());
+  if (ops === "sends a handle") {
+    const server = await listen();
+    process.send("handle", server, () => server.close());
+  }
 } else if (role === "parent") {
-  const child = fork(self, ["idle"], {
+  const options = {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     serialization: ops.startsWith("advanced") ? "advanced" : "json",
-  });
+  };
+  const args = ["idle", ...(ops.includes("receive(handle)") ? ["sends a handle"] : [])];
+  let child;
+  if (ops.startsWith("cluster")) {
+    cluster.setupPrimary({ exec: self, args, ...options });
+    const worker = cluster.fork();
+    // A worker that starts after the primary has left ends with EPIPE.
+    await once(worker, "online");
+    child = worker.process;
+  } else {
+    child = fork(self, args, options);
+  }
+  const sendHandle = async (...more) => {
+    const server = await listen();
+    await Promise.all([
+      new Promise(sent => child.send("handle", server, sent)),
+      ...more.map(length => send(child, length)),
+    ]);
+    await new Promise(closed => server.close(closed));
+  };
   await applyAndReport({
     ...channelOps(child.channel),
     "advanced": () => {},
+    "cluster": () => {},
     "child.unref": () => child.unref(),
     "disconnect": () => child.disconnect(),
     "send(small)": () => send(child, 1),
     "send(big)": () => sendBig(child),
     "send(big)x2": () => Promise.all([sendBig(child), sendBig(child)]),
-    "send(handle)": async () => {
-      const server = createServer().listen(0);
-      await once(server, "listening");
-      await new Promise(sent => child.send("handle", server, sent));
-      await new Promise(closed => server.close(closed));
+    "send(big)x3": () => Promise.all([sendBig(child), sendBig(child), sendBig(child)]),
+    "send(handle)": () => sendHandle(),
+    "send(handle+small)": () => sendHandle(1),
+    "receive(handle)": async () => {
+      const [, handle] = await once(child, "message");
+      await new Promise(closed => handle.close(closed));
     },
   });
 } else if (role === "Bun.spawn") {
@@ -85,8 +116,13 @@ if (role === "idle") {
     ["parent", "child.unref send(big)"],
     ["parent", "child.unref ref send(big)"],
     ["parent", "child.unref unrefCounted send(big)x2"],
+    ["parent", "child.unref unrefCounted unrefCounted send(big)x3"],
     ["parent", "child.unref send(handle)"],
+    ["parent", "child.unref unrefCounted send(handle+small)"],
+    ["parent", "child.unref receive(handle)"],
     ["parent", "advanced child.unref"],
+    ["parent", "cluster child.unref"],
+    ["parent", "cluster child.unref unref"],
     ...(process.versions.bun ? [["Bun.spawn", "child.unref"]] : []),
     ["child", "none"],
     ["child", "on(message,a)"],

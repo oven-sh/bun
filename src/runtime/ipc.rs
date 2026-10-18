@@ -783,7 +783,7 @@ pub(crate) struct SendHandle {
     /// keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
     pub(crate) handle: Option<Handle>,
     pub(crate) callbacks: CallbackList,
-    /// How many `send()` are in `data`. None for the version packet alone, which Node does not have.
+    /// How many `send()` are in `data`: none in the version packet alone, an ACK or a NACK.
     pub(crate) sends: i32,
 }
 
@@ -1496,8 +1496,16 @@ impl SendQueue {
 
     fn update_ref(&self) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
-        let under_way = self.waiting_for_ack.get().iter().chain(self.queue.get());
-        let sending: i32 = under_way.map(|message| message.sends).sum();
+        let mut sending = 0;
+        if self.waiting_for_ack.get().is_none() {
+            for message in self.queue.get() {
+                sending += message.sends;
+                // Node's `_handleQueue`: what is sent after a handle is not written before the handle's ACK.
+                if message.handle.is_some() {
+                    break;
+                }
+            }
+        }
         self.add_refs(sending - self.control.sending.replace(sending));
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`; dispatch is
@@ -2192,7 +2200,7 @@ fn handle_ipc_message(
                     data: StreamBuffer::default(),
                     handle: None,
                     callbacks: CallbackList::AckNack,
-                    sends: 1,
+                    sends: 0,
                 };
                 handle_oom(handle.data.write(packet));
 
@@ -2273,7 +2281,7 @@ fn handle_ipc_message(
                         data: StreamBuffer::default(),
                         handle: None,
                         callbacks: CallbackList::AckNack,
-                        sends: 1,
+                        sends: 0,
                     };
                     handle_oom(reply.data.write(packet));
                     send_queue.insert_message(reply);

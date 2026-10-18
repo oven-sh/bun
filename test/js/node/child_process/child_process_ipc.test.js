@@ -31,8 +31,13 @@ test.concurrent("which operations on subprocess.channel hold the event loop", as
     parent: child.unref send(big): not held
     parent: child.unref ref send(big): held
     parent: child.unref unrefCounted send(big)x2: not held
+    parent: child.unref unrefCounted unrefCounted send(big)x3: not held
     parent: child.unref send(handle): not held
+    parent: child.unref unrefCounted send(handle+small): held
+    parent: child.unref receive(handle): held
     parent: advanced child.unref: held
+    parent: cluster child.unref: held
+    parent: cluster child.unref unref: not held
     Bun.spawn: child.unref: not held
     "
   `);
@@ -84,15 +89,18 @@ test.concurrent("a child held only by process.channel.ref() leaves when the pare
   expect(await child.exited).toBe(0);
 });
 
-test.concurrent("a channel that could not be opened does not hold the event loop", async () => {
-  await using child = Bun.spawn({
-    cmd: [bunExe(), "-e", `process.on("message", () => {});`],
-    env: { ...bunEnv, NODE_CHANNEL_FD: "99", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
-    stderr: "pipe",
-  });
-  expect(await child.stderr.text()).toContain("Unable to start IPC");
-  expect(await child.exited).toBe(0);
-});
+test.concurrent.each([`process.on("message", () => {});`, `process.channel.ref();`])(
+  "a channel that could not be opened does not hold the event loop after %s",
+  async script => {
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_CHANNEL_FD: "99", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+      stderr: "pipe",
+    });
+    expect(await child.stderr.text()).toContain("Unable to start IPC");
+    expect(await child.exited).toBe(0);
+  },
+);
 
 test.concurrent("a message that arrives before there is a 'message' listener is kept for it", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-fixture.mjs`.env(bunEnv).text();

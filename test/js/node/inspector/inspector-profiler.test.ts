@@ -133,6 +133,131 @@ const entry = coverage.result.find(script => script.url.endsWith("exported-fn.mj
 console.log(JSON.stringify({ rangeCount, zeroWidth, fixtureRanges: entry?.functions.length ?? 0 }));
 `;
 
+// The skipped right operand of a short-circuit operator, and the rest of an
+// optional chain after a nullish base, get a zero-count range like V8 reports.
+// A loop emits its condition twice; its body keeps its own count (#44722).
+// A vm script keeps its text as written, so offsets are exact.
+const shortCircuitFixture = `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const code = [
+  "function coalesce(value, missing) {",
+  "  return value ?? missing();",
+  "}",
+  "function logicalOr(value, missing) {",
+  "  return value || missing();",
+  "}",
+  "function statement(value, missing) {",
+  "  value && missing();",
+  "  return 1;",
+  "}",
+  "function condition(value, missing) {",
+  "  if (value && missing()) return 1;",
+  "  return 2;",
+  "}",
+  "function ternaryCondition(value, missing) {",
+  "  if (value ? true : missing()) return 1;",
+  "  return 2;",
+  "}",
+  "function optionalChain(object) {",
+  "  return object?.method();",
+  "}",
+  "function whileLoop(limit, again) {",
+  "  let i = 0;",
+  "  while (i < limit && again()) {",
+  "    i++;",
+  "  }",
+  "  return i;",
+  "}",
+  "function forLoop(limit, more) {",
+  "  let sum = 0;",
+  "  for (let i = 0; i < limit && more(); i++) {",
+  "    sum += i;",
+  "  }",
+  "  return sum;",
+  "}",
+  "({ coalesce, logicalOr, statement, condition, ternaryCondition, optionalChain, whileLoop, forLoop });",
+].join("\\n");
+const url = "file:///inspector-coverage-short-circuit/virtual.js";
+const m = vm.runInThisContext(code, { filename: url });
+let missingCalls = 0;
+const missing = () => { missingCalls++; return "missing"; };
+let checks = 0;
+const again = () => { checks++; return true; };
+m.coalesce("present", missing);
+m.logicalOr(true, missing);
+m.statement(false, missing);
+m.condition(false, missing);
+m.ternaryCondition(true, missing);
+m.optionalChain(null);
+m.whileLoop(3, again);
+m.forLoop(3, again);
+
+const coverage = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+
+const entry = coverage.result.find(script => script.url === url);
+const ranges = entry.functions.flatMap(fn => fn.ranges);
+const offset = text => {
+  const index = code.indexOf(text);
+  if (index < 0) throw new Error("fixture does not contain " + text);
+  return index;
+};
+// The innermost range that contains the offset, the way a coverage consumer
+// attributes a source position to a count.
+const countAt = text => {
+  const at = offset(text);
+  let best;
+  for (const range of ranges) {
+    if (range.startOffset <= at && at < range.endOffset) {
+      if (!best || range.endOffset - range.startOffset < best.endOffset - best.startOffset) best = range;
+    }
+  }
+  return best.count;
+};
+let partialOverlaps = 0;
+for (const a of ranges) {
+  for (const b of ranges) {
+    const disjoint = a.endOffset <= b.startOffset || b.endOffset <= a.startOffset;
+    const nested = (a.startOffset <= b.startOffset && b.endOffset <= a.endOffset) || (b.startOffset <= a.startOffset && a.endOffset <= b.endOffset);
+    if (!disjoint && !nested) partialOverlaps++;
+  }
+}
+console.log(
+  JSON.stringify({
+    missingCalls,
+    checks,
+    partialOverlaps,
+    zeroWidth: ranges.filter(range => range.startOffset >= range.endOffset).length,
+    counts: {
+      coalesceRight: countAt("?? missing()"),
+      coalesceReturn: countAt("return value ?? missing()"),
+      logicalOrRight: countAt("|| missing()"),
+      statementRight: countAt("&& missing();"),
+      statementAfter: countAt("return 1;"),
+      conditionRight: countAt("&& missing()) return 1"),
+      conditionAfter: countAt("return 2;"),
+      ternaryTrueArm: countAt("? true"),
+      ternaryFalseArm: countAt(": missing()"),
+      optionalChainLink: countAt("?.method()"),
+      whileRight: countAt("&& again()"),
+      whileBody: countAt("i++"),
+      whileAfter: countAt("return i"),
+      forRight: countAt("&& more()"),
+      forBody: countAt("sum += i"),
+      forAfter: countAt("return sum"),
+    },
+  }),
+);
+`;
+
 // Picks the entry whose primary range most tightly encloses the offset, the
 // same way a coverage consumer attributes an AST node to a function.
 function entryCoveringOffset(functions: any[], offset: number) {
@@ -687,6 +812,46 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       // double() ran twice, neverCalled() never ran.
       expect(functionCounts).toContain(2);
       expect(functionCounts).toContain(0);
+    });
+
+    test.concurrent("reports the skipped operand of a short-circuit operator as a zero-count range", async () => {
+      using dir = tempDir("inspector-coverage-short-circuit", {
+        "fixture.mjs": shortCircuitFixture,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout)).toEqual({
+        missingCalls: 0,
+        checks: 6,
+        partialOverlaps: 0,
+        zeroWidth: 0,
+        counts: {
+          coalesceRight: 0,
+          coalesceReturn: 1,
+          logicalOrRight: 0,
+          statementRight: 0,
+          statementAfter: 1,
+          conditionRight: 0,
+          conditionAfter: 1,
+          ternaryTrueArm: 1,
+          ternaryFalseArm: 0,
+          optionalChainLink: 0,
+          whileRight: 3,
+          whileBody: 3,
+          whileAfter: 1,
+          forRight: 3,
+          forBody: 3,
+          forAfter: 1,
+        },
+      });
     });
 
     // V8 never emits startOffset === endOffset; @bcoe/v8-coverage (vitest/c8

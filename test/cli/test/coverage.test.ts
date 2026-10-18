@@ -1059,3 +1059,68 @@ test("b", () => {
     });
   });
 });
+
+// The right operand of a short-circuit operator that was skipped is a basic
+// block of its own, so a line that holds only that operand is uncovered (#44722).
+test("a skipped short-circuit operand on its own line is uncovered", () => {
+  using dir = tempDir("cov-short-circuit", {
+    "short-circuit.ts": `
+export function fallback(value: unknown, missing: () => unknown) {
+  return (
+    value ??
+    missing()
+  );
+}
+export function guard(value: unknown, missing: () => unknown) {
+  if (
+    value &&
+    missing()
+  ) {
+    return 1;
+  }
+  return 2;
+}
+export function chain(object: { method(): number } | null) {
+  return object
+    ?.method();
+}
+`,
+    "short-circuit.test.ts": `
+import { test, expect } from "bun:test";
+import { fallback, guard, chain } from "./short-circuit";
+
+test("short-circuit", () => {
+  let calls = 0;
+  const missing = () => { calls++; return "missing"; };
+  expect(fallback("present", missing)).toBe("present");
+  expect(guard(false, missing)).toBe(2);
+  expect(chain(null)).toBe(undefined);
+  expect(calls).toBe(0);
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-skip-test-files"], {
+    cwd: dir,
+    env: bunEnv,
+    stdio: [null, null, "pipe"],
+  });
+
+  const stderr = normalizeBunSnapshot(result.stderr.toString("utf-8"), dir);
+  expect(stderr).toMatchInlineSnapshot(`
+"short-circuit.test.ts:
+(pass) short-circuit
+------------------|---------|---------|-------------------
+File              | % Funcs | % Lines | Uncovered Line #s
+------------------|---------|---------|-------------------
+All files         |  100.00 |   66.67 |
+ short-circuit.ts |  100.00 |   66.67 | 5,11-13,19
+------------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 4 expect() calls
+Ran 1 test across 1 file."
+`);
+  expect(result.exitCode).toBe(0);
+});

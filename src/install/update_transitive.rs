@@ -434,7 +434,7 @@ fn reresolve(manager: &mut PackageManager, dep_id: DependencyID) -> crate::Resul
     let mut dep = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
     dep.behavior = dep.behavior.with(Behavior::PEER, false);
     manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
-    enqueue_dependency_with_main(manager, dep_id, &dep, invalid_package_id, false)
+    enqueue_dependency_with_main(manager, dep_id, &dep, invalid_package_id)
 }
 
 /// `bun update <name>`: the `plannable_peer_rows` naming a requested package, re-resolved after their manifests are fetched; each is appended to `moved` for `redirect_moved_edges`, and every package in `moved` is registered so the summary prints its update row.

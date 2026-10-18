@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::cmp::Ordering;
 
 use bun_collections::index_sort;
 use bun_core::{Output, strings};
@@ -7,7 +6,7 @@ use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
-use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
+use crate::lockfile_real::package::{Package, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
@@ -215,7 +214,6 @@ impl PackageManager {
         bun_core::handle_oom(
             (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                 rows: package.dependencies,
-                install_peer: false,
                 from_command: false,
             }),
         );
@@ -550,8 +548,7 @@ impl PackageManager {
     }
 
     /// For each task that fetches a git, GitHub or tarball package: the lowest dependency that
-    /// waits for it. A task that has failed is skipped, and so is one that was never started,
-    /// which is what a deferred peer waits for.
+    /// waits for it. A task that has failed is skipped, and so is one that was never started.
     fn remote_rows_waiting(&self) -> impl core::iter::Iterator<Item = (DependencyID, Task::Id)> {
         self.remote_packages.tasks.iter().filter_map(|&task_id| {
             if !self.network_dedupe_map.contains_key(&task_id)
@@ -567,14 +564,6 @@ impl PackageManager {
                 .min()?;
             Some((lowest, task_id))
         })
-    }
-
-    /// Whether a git, GitHub or tarball package is still to be added to the lockfile.
-    pub(crate) fn waits_for_remote_package(&self) -> bool {
-        !self.remote_packages.tasks.is_empty()
-            // With nothing running and nothing downloaded, none of them can be added any more.
-            && (self.pending_task_count() > 0 || !self.remote_packages.arrived.is_empty())
-            && self.remote_rows_waiting().next().is_some()
     }
 
     /// Adds the git, GitHub or tarball package whose turn it is to the lockfile, and resolves the
@@ -607,12 +596,10 @@ impl PackageManager {
         ) else {
             return true;
         };
-        let install_peer = self.look_ahead.in_peer_pass;
         if let Err(err) = run_tasks::resolve_waiters_of_appended_package(
             self,
             task_id,
             &package,
-            install_peer,
             &Cell::new(false),
         ) {
             let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
@@ -629,7 +616,6 @@ impl PackageManager {
         &mut self,
         item: &TaskCallbackContext,
         any_root: Option<&Cell<bool>>,
-        install_peer: bool,
     ) -> Result<(), crate::Error> {
         match *item {
             TaskCallbackContext::Dependency(dependency_id)
@@ -644,7 +630,6 @@ impl PackageManager {
                     dependency_id,
                     &dependency,
                     resolution,
-                    install_peer,
                     if is_root {
                         PackageManager::assign_root_resolution
                     } else {
@@ -656,7 +641,6 @@ impl PackageManager {
                 if row != enqueue::Row::Done && !is_root {
                     (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                         rows: DependencySlice::new(dependency_id, 1),
-                        install_peer,
                         from_command: false,
                     })?;
                 }
@@ -674,92 +658,5 @@ impl PackageManager {
             _ => {}
         }
         Ok(())
-    }
-
-    /// Whether `process_peer_dependency_list` has something to do. The peers that were found while
-    /// the queue was being resolved wait until it is empty, so that they all see the same tree.
-    /// A git, GitHub or tarball package brings dependencies of its own, so they wait for it too.
-    pub(crate) fn has_peers_to_process(&self) -> bool {
-        self.peer_dependencies.readable_length() > 0
-            && self.lockfile.scratch.dependency_list_queue.is_empty()
-            && !self.waits_for_remote_package()
-    }
-
-    /// Whether the deferred peers are all that is left to resolve, and are worth resolving.
-    pub(crate) fn is_ready_for_peers(&self) -> bool {
-        self.has_peers_to_process()
-            // An error ends the install, so the peers are not worth their requests.
-            && !self.log_mut().has_errors()
-    }
-
-    /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`: the first row
-    /// of a name to resolve decides what the others bind to.
-    pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
-        if !self.has_peers_to_process() {
-            return Ok(());
-        }
-        let mut batch: Vec<DependencyID> =
-            Vec::with_capacity(self.peer_dependencies.readable_length());
-        while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
-            batch.push(peer_dependency_id);
-        }
-        self.look_ahead.in_peer_pass = true;
-        self.look_ahead.deferred_peers_seen = 0;
-        for i in self.peer_batch_order(&mut batch) {
-            (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
-                rows: DependencySlice::new(batch[i as usize], 1),
-                install_peer: true,
-                from_command: true,
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Sorts `batch` by id and returns indices into it, in an order independent of arrival.
-    fn peer_batch_order(&self, batch: &mut [DependencyID]) -> Vec<u32> {
-        let mut order = index_sort::identity(batch.len());
-        if batch.len() < 2 {
-            return order;
-        }
-        index_sort::sort_indices_unstable(batch, &mut |a, b| a.cmp(&b));
-
-        let lockfile = &*self.lockfile;
-        let mut owners: Vec<PackageID> = vec![INVALID_PACKAGE_ID; batch.len()];
-        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
-            let first = batch.partition_point(|&id| id < slice.begin());
-            let end = first + batch[first..].partition_point(|&id| id < slice.end());
-            owners[first..end].fill(owner as PackageID);
-        }
-
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let names = lockfile.packages.items_name();
-        let resolutions = lockfile.packages.items_resolution();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        // The project's own ranges decide first; a package's peer then takes what they resolved to.
-        let rank = |owner: usize| match resolutions[owner].tag {
-            ResolutionTag::Root => 0u8,
-            ResolutionTag::Workspace => 1,
-            _ => 2,
-        };
-        index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
-            let (a, b) = (a as usize, b as usize);
-            let by_owner = match (owners[a] as usize, owners[b] as usize) {
-                (x, y) if x == y => Ordering::Equal,
-                (x, y) if x >= names.len() || y >= names.len() => x.cmp(&y),
-                (x, y) => rank(x)
-                    .cmp(&rank(y))
-                    .then_with(|| strings::order(names[x].slice(buf), names[y].slice(buf)))
-                    .then_with(|| resolutions[x].order(&resolutions[y], buf, buf)),
-            };
-            by_owner
-                .then_with(|| {
-                    strings::order(
-                        dependencies[batch[a] as usize].name.slice(buf),
-                        dependencies[batch[b] as usize].name.slice(buf),
-                    )
-                })
-                .then(batch[a].cmp(&batch[b]))
-        });
-        order
     }
 }

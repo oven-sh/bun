@@ -99,7 +99,6 @@ fn run_tasks_until_done(
             if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                 manager,
                 closure.installer,
-                true,
                 log_level,
             ) {
                 closure.err = Some(err);
@@ -510,7 +509,6 @@ pub(crate) fn install_hoisted_packages(
                     run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                         this,
                         &mut installer,
-                        true,
                         log_level,
                     )?;
                     if !this.options.do_.install_packages() {
@@ -525,12 +523,7 @@ pub(crate) fn install_hoisted_packages(
                 installer.install_package(*dependency_id, log_level);
             }
 
-            run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                this,
-                &mut installer,
-                true,
-                log_level,
-            )?;
+            run_tasks::run_tasks::<HoistedRunTasksCallbacks>(this, &mut installer, log_level)?;
             if !this.options.do_.install_packages() {
                 return Err(crate::Error::InstallFailed);
             }

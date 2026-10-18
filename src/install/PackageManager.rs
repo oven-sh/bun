@@ -8,7 +8,7 @@ use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
-use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
+use bun_collections::linear_fifo::StaticBuffer;
 use bun_collections::{
     ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap, index_sort,
 };
@@ -315,8 +315,8 @@ pub(crate) enum HeldAbout {
 //
 // - A "row" is one dependency of one package: an index into `lockfile.buffers.dependencies`.
 // - `lockfile::DependencyQueue` holds the rows that are not resolved yet. Its "commanded" lane has
-//   what the command itself wants resolved, and the peer dependencies. Its "found" lane has the
-//   dependencies of the packages that were resolved. Commanded rows go first.
+//   what the command itself wants resolved. Its "found" lane has the dependencies of the packages
+//   that were resolved. Commanded rows go first.
 // - The "head" is the first row of the queue. It is the only row that is ever resolved, and the
 //   only one that the queue waits for (`enqueue::advance`).
 // - The rows behind the head "request ahead": they start their manifest requests and downloads, but
@@ -327,6 +327,11 @@ pub(crate) enum HeldAbout {
 //   made on a wrong guess must not fail the install.
 // - What a git, GitHub or tarball package depends on is only known after its download, so these
 //   packages are added one at a time once the queue is empty. See `RemotePackages`.
+// - A peer dependency is a row like any other. In its turn it takes what the lockfile has for it
+//   (`enqueue::peer_provider`), and is resolved like a regular dependency if that is nothing.
+//   Whether the peers of a name share a version is decided once everything is resolved
+//   (`dedupe::Pass::find_spare`). Until then nothing shares a package that is only there for a peer
+//   (`Lockfile::only_peers`), so what that decision sees does not depend on which peer came first.
 
 /// A manifest request that ended without a manifest. The message is logged by the first dependency
 /// that needs the manifest when it is resolved, not when the answer arrives: `LookAhead` requests
@@ -385,8 +390,6 @@ pub(crate) struct Wanted {
     pub(crate) range_len: usize,
     /// The hash of the name in the registry.
     pub(crate) name_hash: PackageNameHash,
-    /// It was found in the peer pass, where a peer that nothing provides gets installed.
-    pub(crate) follows_peers: bool,
 }
 
 /// While the dependency at the front of the queue waits for its manifest, nothing behind it can be
@@ -403,11 +406,6 @@ pub(crate) struct LookAhead {
     pub(crate) waiting: HashMap<Task::Id, Wanted, bun_collections::IdentityContext<Task::Id>>,
     /// The manifest tasks that have finished since `request_ahead` last ran.
     pub(crate) arrived: Vec<Task::Id>,
-    /// The peer pass has started. The peers of a package that it adds wait in
-    /// `PackageManager::peer_dependencies` for the queue to empty, but may ask for their manifests.
-    pub(crate) in_peer_pass: bool,
-    /// How many entries of `PackageManager::peer_dependencies` `request_ahead` has looked at.
-    pub(crate) deferred_peers_seen: usize,
 }
 
 /// A git, GitHub or tarball package that is downloaded and waits for its turn. See
@@ -557,15 +555,6 @@ pub struct PackageManager {
 
     pub(crate) on_wake: WakeHandler,
 
-    pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
-
-    // Every required peer dependency as (name hash, dependency, the package that declares it),
-    // sorted by name. `enqueue::index_peer_askers` fills this and the next two fields.
-    pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID)>>,
-    // The names that the root package resolves to a folder, a tarball or a git repository.
-    pub(crate) local_in_root: Vec<PackageNameHash>,
-    // Every `npm:` alias as (name hash, the package that declares it, the package it resolved to).
-    pub(crate) alias_rows: Vec<(PackageNameHash, PackageID, PackageID)>,
     // The packages that the keys of `patchedDependencies` name. See
     // `enqueue::index_patched_versions`.
     pub(crate) patched_versions: Option<Vec<(PackageNameHash, Semver::Version)>>,
@@ -1748,13 +1737,6 @@ fn allocate_package_manager(
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
-        wr!(
-            peer_dependencies,
-            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
-        );
-        wr!(peer_askers, None);
-        wr!(local_in_root, Vec::new());
-        wr!(alias_rows, Vec::new());
         wr!(patched_versions, None);
         wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());

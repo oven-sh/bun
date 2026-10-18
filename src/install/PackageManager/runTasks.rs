@@ -267,14 +267,12 @@ impl ErasedCallbacks {
 pub fn run_tasks<C: RunTasksCallbacks>(
     manager: &mut PackageManager,
     extract_ctx: &mut C::Ctx,
-    install_peer: bool,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     run_tasks_erased(
         manager,
         core::ptr::from_mut(extract_ctx).cast(),
         &ErasedCallbacks::of::<C>(),
-        install_peer,
         log_level,
     )
 }
@@ -367,11 +365,9 @@ fn resolve_waiters_and_notify(
     extract_ctx: *mut (),
     task_id: Task::Id,
     pkg: &Package,
-    install_peer: bool,
 ) -> crate::Result<()> {
     let any_root = Cell::new(false);
-    let result =
-        resolve_waiters_of_appended_package(manager, task_id, pkg, install_peer, &any_root);
+    let result = resolve_waiters_of_appended_package(manager, task_id, pkg, &any_root);
     if cb.has_on_resolve && any_root.get() {
         (cb.on_resolve)(extract_ctx);
     }
@@ -385,7 +381,6 @@ pub(crate) fn resolve_waiters_of_appended_package(
     manager: &mut PackageManager,
     task_id: Task::Id,
     pkg: &Package,
-    install_peer: bool,
     any_root: &Cell<bool>,
 ) -> crate::Result<()> {
     // For a dependency enqueued later on the same task; see `AppendedTaskPackageMap`.
@@ -404,7 +399,7 @@ pub(crate) fn resolve_waiters_of_appended_package(
                     pkg.name,
                     &pkg.resolution,
                 );
-                result = manager.process_dependency_list_item(&dep, Some(any_root), install_peer);
+                result = manager.process_dependency_list_item(&dep, Some(any_root));
                 if result.is_err() {
                     break;
                 }
@@ -420,7 +415,6 @@ fn run_tasks_erased(
     manager: &mut PackageManager,
     extract_ctx: *mut (),
     cb: &ErasedCallbacks,
-    install_peer: bool,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     // `Cell<bool>` so `FinishPass` below can read it via `&self`
@@ -732,7 +726,6 @@ fn run_tasks_erased(
                             cb,
                             manager,
                             extract_ctx,
-                            install_peer,
                             task.task_id,
                             log_mark,
                             failure,
@@ -828,7 +821,6 @@ fn run_tasks_erased(
                         cb,
                         manager,
                         extract_ctx,
-                        install_peer,
                         task.task_id,
                         log_mark,
                         failure,
@@ -914,7 +906,6 @@ fn run_tasks_erased(
                                 manager,
                                 &dependency_list,
                                 extract_ctx,
-                                install_peer,
                             )?;
                         }
 
@@ -1219,7 +1210,6 @@ fn run_tasks_erased(
                             cb,
                             manager,
                             extract_ctx,
-                            install_peer,
                             task.id,
                             log_mark,
                             failure,
@@ -1252,13 +1242,7 @@ fn run_tasks_erased(
                 if let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id) {
                     let dependency_list = core::mem::take(dependency_list_entry);
 
-                    process_dependency_list_for_ctx(
-                        cb,
-                        manager,
-                        &dependency_list,
-                        extract_ctx,
-                        install_peer,
-                    )?;
+                    process_dependency_list_for_ctx(cb, manager, &dependency_list, extract_ctx)?;
                 }
 
                 if let Some(name) = progress_name {
@@ -1377,14 +1361,7 @@ fn run_tasks_erased(
                     task.data_extract(),
                     log_level,
                 ) {
-                    resolve_waiters_and_notify(
-                        cb,
-                        manager,
-                        extract_ctx,
-                        task.id,
-                        &pkg,
-                        install_peer,
-                    )?;
+                    resolve_waiters_and_notify(cb, manager, extract_ctx, task.id, &pkg)?;
                 } else if let Some(dependency_list_entry) =
                     manager.task_queue.get_mut(&Task::Id::for_manifest(
                         manager
@@ -1394,7 +1371,7 @@ fn run_tasks_erased(
                 {
                     // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
                     for item in core::mem::take(dependency_list_entry).iter() {
-                        manager.process_dependency_list_item(item, None, install_peer)?;
+                        manager.process_dependency_list_item(item, None)?;
                     }
                 }
 
@@ -1536,13 +1513,7 @@ fn run_tasks_erased(
                         .remove(&task.id)
                         .expect("infallible: task queued");
 
-                    process_dependency_list_for_ctx(
-                        cb,
-                        manager,
-                        &dependency_list,
-                        extract_ctx,
-                        install_peer,
-                    )?;
+                    process_dependency_list_for_ctx(cb, manager, &dependency_list, extract_ctx)?;
                 }
 
                 name_progress(manager, name, DOWNLOAD);
@@ -1583,13 +1554,7 @@ fn run_tasks_erased(
                     .task_queue
                     .remove(&task.id)
                     .expect("infallible: task queued");
-                process_dependency_list_for_ctx(
-                    cb,
-                    manager,
-                    &dependency_list,
-                    extract_ctx,
-                    install_peer,
-                )?;
+                process_dependency_list_for_ctx(cb, manager, &dependency_list, extract_ctx)?;
             }
             Task::Tag::GitCheckout => {
                 // SAFETY: `task.tag == GitCheckout` — active union arm.
@@ -1670,14 +1635,7 @@ fn run_tasks_erased(
                     task.data_git_checkout(),
                     log_level,
                 ) {
-                    resolve_waiters_and_notify(
-                        cb,
-                        manager,
-                        extract_ctx,
-                        task.id,
-                        &pkg,
-                        install_peer,
-                    )?;
+                    resolve_waiters_and_notify(cb, manager, extract_ctx, task.id, &pkg)?;
                 }
 
                 name_progress(manager, alias.slice(), DOWNLOAD);
@@ -2296,7 +2254,6 @@ fn leave_failure_to_dependencies(
     cb: &ErasedCallbacks,
     manager: &mut PackageManager,
     extract_ctx: *mut (),
-    install_peer: bool,
     task_id: Task::Id,
     log_mark: usize,
     failure: ManifestFailure,
@@ -2307,7 +2264,7 @@ fn leave_failure_to_dependencies(
     };
     manager.keep_manifest_failure(task_id, log_mark, failure);
     // `advance` tries the queued dependencies again. Only imports of the runtime wait in this list.
-    process_dependency_list_for_ctx(cb, manager, &waiting, extract_ctx, install_peer)?;
+    process_dependency_list_for_ctx(cb, manager, &waiting, extract_ctx)?;
     Ok(true)
 }
 
@@ -2317,11 +2274,10 @@ fn process_dependency_list_for_ctx(
     manager: &mut PackageManager,
     dependency_list: &TaskCallbackList,
     extract_ctx: *mut (),
-    install_peer: bool,
 ) -> crate::Result<()> {
     let any_root = Cell::new(false);
     for item in dependency_list.iter() {
-        manager.process_dependency_list_item(item, Some(&any_root), install_peer)?;
+        manager.process_dependency_list_item(item, Some(&any_root))?;
     }
     if cb.has_on_resolve && any_root.get() {
         (cb.on_resolve)(extract_ctx);

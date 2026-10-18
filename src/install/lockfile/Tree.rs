@@ -550,6 +550,11 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// Peers that `bind_peer` resolved by version, each with the different package that its
     /// dependent finds from the first tree it is placed in. See `bind_served_peers`.
     pub(crate) served: Vec<(DependencyID, PackageID)>,
+    /// Set once a package that was nested for a peer is part of a `repeating_period`. `hoist` then
+    /// starts over with `ends_cycles_at_peers`.
+    pub(crate) found_peer_cycle: bool,
+    /// A peer does not get its package nested again below a copy that was nested for it.
+    pub(crate) ends_cycles_at_peers: bool,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
@@ -794,6 +799,29 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile.get()
     }
 
+    /// Tree `id` is a folder of the package that has `dependency_id`. Is it below another folder of
+    /// that package in which the dependency is nested?
+    fn is_below_nested(&self, id: Id, dependency_id: DependencyID) -> bool {
+        let trees = self.list.items_tree();
+        let package_of = |tree: Id| {
+            self.resolutions
+                .get(trees[tree as usize].dependency_id as usize)
+        };
+        let mut nested = id;
+        loop {
+            let folder = trees[nested as usize].parent;
+            if folder == INVALID_ID {
+                return false;
+            }
+            if trees[nested as usize].dependency_id == dependency_id
+                && package_of(folder) == package_of(id)
+            {
+                return true;
+            }
+            nested = folder;
+        }
+    }
+
     fn bind_pending_peers(&mut self, name_hash: PackageNameHash, pkg_id: PackageID) {
         if let Some((_, peers)) = self.pending_peers.fetch_swap_remove(&name_hash) {
             for &dep_id in peers.keys() {
@@ -834,6 +862,20 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             self.resolutions[dep_id as usize] = pkg_id;
         }
         bound.is_some()
+    }
+
+    /// Was a package of the round that ends with `dependency_id` below `parent` nested for a peer?
+    fn is_peer_cycle(&self, parent: Id, dependency_id: DependencyID, period: usize) -> bool {
+        let trees = self.list.items_tree();
+        let (mut row, mut tree_id) = (dependency_id, parent);
+        for _ in 0..period {
+            if self.dependencies[row as usize].behavior.is_peer() {
+                return true;
+            }
+            row = trees[tree_id as usize].dependency_id;
+            tree_id = trees[tree_id as usize].parent;
+        }
+        false
     }
 
     #[cold]
@@ -1404,7 +1446,13 @@ impl Tree {
         }
 
         if let Some(period) = repeating_period(&builder.list, self.id, dependency_id) {
-            builder.crash_on_endless_nesting(self.id, dependency_id, period);
+            if builder.ends_cycles_at_peers
+                || !builder.is_peer_cycle(self.id, dependency_id, period)
+            {
+                builder.crash_on_endless_nesting(self.id, dependency_id, period);
+            }
+            builder.found_peer_cycle = true;
+            return Ok(());
         }
 
         builder.list.append(BuilderEntry {
@@ -1952,6 +2000,13 @@ impl Tree {
             );
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return id; // 1 or 2
+            }
+            // The copy that was nested for this peer further up led back here. So would another.
+            if builder.ends_cycles_at_peers
+                && dependency.behavior.is_peer()
+                && builder.is_below_nested(this.id, input_dep_id)
+            {
+                return HoistDependencyResult::Hoisted; // 1
             }
         }
 

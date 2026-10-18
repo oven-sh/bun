@@ -273,7 +273,6 @@ async function installFreshAndFromLockfile(opts: {
 describe.concurrent("a dependency cycle that nests without end is an error", () => {
   const x = "hoist-cycle-x";
   const y = "hoist-cycle-y";
-  const peer = "hoist-optional-peer-cycle-";
   const twoVersions = `${y}@1.0.0 > ${x}@2.0.0 > ${y}@2.0.0 > ${x}@1.0.0 > ${y}@1.0.0`;
 
   test.each([
@@ -298,18 +297,6 @@ describe.concurrent("a dependency cycle that nests without end is an error", () 
       },
       twoVersions,
     ],
-    [
-      "closed through an optional peer",
-      "hoisted",
-      {
-        "package.json": JSON.stringify({
-          name: "pkg",
-          dependencies: { other: `npm:${peer}x@2.0.0` },
-          devDependencies: { [`${peer}entry`]: "1.0.0" },
-        }),
-      },
-      `${peer}y@1.0.0 > ${peer}x@2.0.0 > ${peer}y@2.0.0 > ${peer}x@1.0.0 > ${peer}y@1.0.0`,
-    ],
   ] as const)("%s", async (_, linker, files, cycle) => {
     for (const args of [[], ["--lockfile-only"]]) {
       const packageDir = await createTestDir({ bunfigOpts: { linker }, files });
@@ -325,6 +312,56 @@ describe.concurrent("a dependency cycle that nests without end is an error", () 
     }
   });
 });
+
+test.concurrent.each(["hoisted", "isolated"] as const)(
+  "a dependency cycle that is closed through a peer ends at the peer (%s linker)",
+  async linker => {
+    // x@1.0.0 > y@1.0.0 > x@2.0.0 > y@2.0.0 > x@1.0.0, where both steps from y to x are peers. The
+    // second y@1.0.0 is below the x@2.0.0 that was nested for the first, so it does not get another.
+    const at = (...names: string[]) => names.map(name => `hoist-optional-peer-cycle-${name}`).join("/");
+    const files = {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        dependencies: { other: `npm:${at("x")}@2.0.0` },
+        devDependencies: { [at("entry")]: "1.0.0" },
+      }),
+    };
+
+    const packageDir = await createTestDir({ bunfigOpts: { linker }, files });
+    await run(packageDir, "install");
+    const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(await lockfileTree(packageDir)).toEqual({
+      [at("entry")]: `${at("entry")}@1.0.0`,
+      "other": `${at("x")}@2.0.0`,
+      [at("x")]: `${at("x")}@1.0.0`,
+      [at("y")]: `${at("y")}@2.0.0`,
+      [at("z")]: `${at("z")}@2.0.0`,
+      [at("x", "y")]: `${at("y")}@1.0.0`,
+      [at("x", "z")]: `${at("z")}@1.0.0`,
+      [at("x", "y", "x")]: `${at("x")}@2.0.0`,
+      [at("x", "z", "y")]: `${at("y")}@2.0.0`,
+      [at("x", "y", "x", "y")]: `${at("y")}@2.0.0`,
+      [at("x", "y", "x", "z")]: `${at("z")}@2.0.0`,
+      [at("x", "y", "x", "y", "x")]: `${at("x")}@1.0.0`,
+      [at("x", "y", "x", "y", "x", "y")]: `${at("y")}@1.0.0`,
+      [at("x", "y", "x", "y", "x", "z")]: `${at("z")}@1.0.0`,
+      [at("x", "y", "x", "y", "x", "z", "y")]: `${at("y")}@2.0.0`,
+    });
+    const installed = await installedPackageJsons(packageDir);
+
+    await run(packageDir, "install", "--frozen-lockfile");
+    expect(await run(packageDir, "install")).toContain("(no changes)");
+    expect(await installedPackageJsons(packageDir)).toEqual(installed);
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    const reloadDir = await createTestDir({ bunfigOpts: { linker }, files: { ...files, "bun.lock": lockfile } });
+    await run(reloadDir, "install", "--frozen-lockfile");
+    expect(await installedPackageJsons(reloadDir)).toEqual(installed);
+
+    await run(reloadDir, "install", "--lockfile-only");
+    expect(await Bun.file(join(reloadDir, "bun.lock")).text()).toBe(lockfile);
+  },
+);
 
 test.concurrent.each(["hoisted", "isolated"] as const)(
   "the same packages are installed when the optional peer is bound to the root's version (%s linker)",

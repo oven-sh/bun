@@ -5467,11 +5467,10 @@ describe.concurrent("bun-install", () => {
       },
       holds: [{ wide: "kept" }, { narrow: "kept" }],
       packages: {
-        "kept": "kept@1.1.0",
+        "kept": "kept@1.0.0",
         "moo": "moo@workspace:moo",
         "narrow": "narrow@1.0.0",
         "wide": "wide@1.0.0",
-        "narrow/kept": "kept@1.0.0",
       },
     },
     {

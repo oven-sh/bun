@@ -1416,5 +1416,5 @@ fn enqueue_pinned_as(
         },
     };
     manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
-    enqueue_dependency_with_main(manager, dep_id, &pinned, invalid_package_id, false)
+    enqueue_dependency_with_main(manager, dep_id, &pinned, invalid_package_id)
 }

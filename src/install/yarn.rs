@@ -489,7 +489,7 @@ fn bind_importer_dependency(
         let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes);
         let resolutions = this.packages.items_resolution();
         let index = &this.package_index;
-        // Nothing satisfies it: the highest version there is, as a fresh install's peer pass picks.
+        // Nothing satisfies it: the highest version there is.
         let newest = || index.get(&name_hash)?.as_slice().first().copied();
         return lockfile::bun_lock::resolve_peer_dep_by_range(
             range,

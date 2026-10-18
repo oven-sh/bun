@@ -615,23 +615,14 @@ pub fn install_with_manager(
         manager.drain_dependency_list();
     }
 
-    // When everything came from the cache, the peers usually do too. Resolving them here keeps
-    // such an install from announcing a round of downloads that never happens.
-    if manager.pending_task_count() == 0 {
-        resolve_peers_without_waiting(manager)?;
-    }
-
-    if manager.pending_task_count() > 0
-        || manager.peer_dependencies.readable_length() > 0
-        || !named.latest_rows.is_empty()
-    {
+    if manager.pending_task_count() > 0 || !named.latest_rows.is_empty() {
         resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
     if manager.summary.changes_resolutions()
         && !manager.options.enable.frozen_lockfile()
         && reresolve_links_to_dropped_workspaces(manager)
-        && (manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0)
+        && manager.pending_task_count() > 0
     {
         resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
     }
@@ -1099,7 +1090,7 @@ impl RunTasksCallbacks for InstallWaitCallbacks {
     const PROGRESS_BAR: bool = true;
 }
 
-struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
+struct RunAndWaitClosure<const ONLY_PRE_PATCH: bool> {
     // The caller also holds the same
     // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
     // borrow in `run_and_wait`. Keep a raw pointer; `run_and_wait` derives this pointer
@@ -1108,14 +1099,9 @@ struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     // See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
     manager: *mut PackageManager,
     err: Option<crate::Error>,
-    /// The wait also ends once only the deferred peers are left to resolve. The tarballs that are
-    /// still being downloaded then do not hold up the requests that the peers need.
-    stops_for_peers: bool,
 }
 
-impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
-    RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
-{
+impl<const ONLY_PRE_PATCH: bool> RunAndWaitClosure<ONLY_PRE_PATCH> {
     fn is_done(closure: &mut Self) -> bool {
         // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`.
         // `sleep_until` is now an associated fn taking `*mut PackageManager` and
@@ -1124,35 +1110,15 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // duration of the callback (no `&mut event_loop` straddles it). The original
         // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
         let this = unsafe { &mut *closure.manager };
-        loop {
-            if CHECK_PEERS {
-                if let Err(err) = this.process_peer_dependency_list() {
-                    closure.err = Some(err);
-                    return true;
-                }
-            }
+        this.drain_dependency_list();
 
-            this.drain_dependency_list();
-
-            // void RunTasksCallbacks — the trait dispatch needs a
-            // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-            // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
-            let log_level = this.options.log_level;
-            if let Err(err) =
-                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
-            {
-                closure.err = Some(err);
-                return true;
-            }
-
-            // `run_tasks` can resolve a package whose deferred peers create no
-            // new async task (e.g. its tarball is already extracted). With zero
-            // pending tasks nothing wakes this loop again, so drain the peer
-            // queue now instead of sleeping on a wakeup that never comes.
-            if CHECK_PEERS && this.has_peers_to_process() {
-                continue;
-            }
-            break;
+        // void RunTasksCallbacks — the trait dispatch needs a
+        // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
+        // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
+        let log_level = this.options.log_level;
+        if let Err(err) = run_tasks::<InstallWaitCallbacks>(this, &mut (), log_level) {
+            closure.err = Some(err);
+            return true;
         }
 
         if ONLY_PRE_PATCH {
@@ -1171,10 +1137,10 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
             }
         }
 
-        pending_tasks == 0 || (closure.stops_for_peers && this.is_ready_for_peers())
+        pending_tasks == 0
     }
 
-    fn run_and_wait(this: &mut PackageManager, stops_for_peers: bool) -> crate::Result<()> {
+    fn run_and_wait(this: &mut PackageManager) -> crate::Result<()> {
         // Derive the raw pointer first and route *every* manager access through it.
         // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
         // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
@@ -1182,10 +1148,9 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // an invalidated provenance. Now `mgr` is the root: both the `sleep_until`
         // receiver and the closure share it, and `this` is never touched again.
         let mgr: *mut PackageManager = this;
-        let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
+        let mut closure = RunAndWaitClosure::<ONLY_PRE_PATCH> {
             manager: mgr,
             err: None,
-            stops_for_peers,
         };
 
         // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
@@ -1203,16 +1168,10 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 }
 
 fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, true>::run_and_wait(this, false)
+    RunAndWaitClosure::<true>::run_and_wait(this)
 }
-pub(crate) fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, false>::run_and_wait(this, false)
-}
-fn wait_until_ready_for_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, false>::run_and_wait(this, true)
-}
-fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<true, false>::run_and_wait(this, false)
+pub(crate) fn wait_for_pending_tasks(this: &mut PackageManager) -> crate::Result<()> {
+    RunAndWaitClosure::<false>::run_and_wait(this)
 }
 
 // Outlined cold so the install fast path (`install_with_manager` tail) does not
@@ -1719,7 +1678,7 @@ fn reresolve_owned_rows(
 fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
     let dependency = manager.lockfile.buffers.dependencies[row as usize].clone();
     let resolution = manager.lockfile.buffers.resolutions[row as usize];
-    if let Err(err) = enqueue_dependency_with_main(manager, row, &dependency, resolution, false) {
+    if let Err(err) = enqueue_dependency_with_main(manager, row, &dependency, resolution) {
         add_dependency_error(manager, &dependency, err);
     }
 }
@@ -2282,37 +2241,8 @@ fn refresh_children_of_named(
 }
 
 fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
-    // What was queued since the last peer pass can provide a peer, so it is resolved first.
-    manager.look_ahead.in_peer_pass = false;
     if manager.pending_task_count() > 0 {
-        wait_until_ready_for_peers(manager)?;
-    }
-
-    resolve_peers_without_waiting(manager)?;
-
-    if manager.pending_task_count() > 0 {
-        wait_for_peers(manager)?;
-    }
-    Ok(())
-}
-
-/// Resolves the deferred peers without waiting. A peer that needs a download stays in the queue.
-fn resolve_peers_without_waiting(manager: &mut PackageManager) -> crate::Result<()> {
-    // An error ends the install, so the peers are not worth another round of requests.
-    if manager.log_mut().has_errors() {
-        return Ok(());
-    }
-    manager.peer_askers = None;
-
-    // Resolving a peer dep can create a NEW package whose own peer deps
-    // get re-queued to `peer_dependencies` during `drainDependencyList`.
-    // When all manifests are cached (synchronous resolution), no I/O tasks
-    // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
-    // queue iteratively here — entering the event loop (`waitForPeers`)
-    // with zero pending I/O would block forever.
-    while manager.has_peers_to_process() {
-        manager.process_peer_dependency_list()?;
-        manager.drain_dependency_list();
+        wait_for_pending_tasks(manager)?;
     }
     Ok(())
 }
@@ -2516,7 +2446,7 @@ fn reresolve_rows_outside_overrides(
     }
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     manager.drain_dependency_list();
-    if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
+    if manager.pending_task_count() > 0 {
         resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
     }
     if manager.log_mut().has_errors() {

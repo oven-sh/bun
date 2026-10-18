@@ -907,8 +907,8 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
-  // What `bun init` writes. Peers are resolved after everything else, so offline they doubled the wait.
-  it("does not ask for the project's peers once a dependency has failed", async () => {
+  // What `bun init` writes. Asking for the peers only after everything else has failed would double the wait offline.
+  it("asks for the project's peers while it asks for the dependencies, not after they have failed", async () => {
     const requested: string[] = [];
     using server = Bun.serve({
       port: 0,
@@ -929,13 +929,15 @@ describe.concurrent("backoff", () => {
     const { lines, exitCode } = await install(String(dir));
     expect(lines.filter(line => line.startsWith("error:"))).toEqual([
       "error: GET " + server.url.href + "bar - 503",
+      "error: GET " + server.url.href + "baz - 503",
       "error: bar@latest failed to resolve",
     ]);
-    expect(requested).toEqual(Array(6).fill("/bar"));
+    expect(requested.toSorted()).toEqual([...Array(6).fill("/bar"), ...Array(6).fill("/baz")]);
+    expect(requested.indexOf("/baz")).toBeLessThan(requested.indexOf("/bar", requested.indexOf("/bar") + 1));
     expect(exitCode).toBe(1);
   });
 
-  it("does not ask for a package's peers once a dependency of that package has failed", async () => {
+  it("asks for a package's peers while it asks for the dependencies of that package, not after they have failed", async () => {
     const requested: string[] = [];
     using server = Bun.serve({
       port: 0,
@@ -960,7 +962,8 @@ describe.concurrent("backoff", () => {
     });
     const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only");
     expect(lines).toContain("error: GET " + server.url.href + "qux - 503");
-    expect(requested).toEqual(["/bar", ...Array(6).fill("/qux")]);
+    expect(requested.toSorted()).toEqual(["/bar", ...Array(6).fill("/baz"), ...Array(6).fill("/qux")]);
+    expect(requested.indexOf("/baz")).toBeLessThan(requested.indexOf("/qux", requested.indexOf("/qux") + 1));
     expect(exitCode).toBe(1);
   });
 

@@ -315,13 +315,12 @@ impl Queue {
 
         if bun_core::output::enable_ansi_colors_stderr() {
             pm.start_progress_bar_if_none();
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, true, LogLevel::Default)
+            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, LogLevel::Default)
                 .expect("unreachable");
         } else {
             run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
                 pm,
                 self,
-                true,
                 LogLevel::DefaultNoProgress,
             )
             .expect("unreachable");

@@ -7,7 +7,7 @@ use super::enqueue::{
     enqueue_git_for_checkout, enqueue_package_for_download, enqueue_tarball_for_download,
     enqueue_tarball_for_reading,
 };
-use super::install_with_manager::{install_with_manager, wait_for_everything_except_peers};
+use super::install_with_manager::{install_with_manager, wait_for_pending_tasks};
 use super::package_manager_options::{Do, LogLevel};
 use super::{Command, PackageManager};
 use crate::network_task::ForTarballError;
@@ -191,7 +191,7 @@ pub(crate) fn download_pinned_packages(
             Output::flush();
         }
 
-        let waited = wait_for_everything_except_peers(manager);
+        let waited = wait_for_pending_tasks(manager);
 
         if log_level.show_progress() {
             manager.end_progress_bar();

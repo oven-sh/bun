@@ -433,7 +433,7 @@ impl<'a> Pass<'a> {
     ///   for a package below itself.
     ///
     /// If only peers hold the versions of bun.lock, a peer of the project keeps the version it got.
-    fn find_spare(&mut self, cur: &[PackageID]) {
+    fn find_spare(&mut self, cur: &[PackageID], live: &DynamicBitSet) {
         let Some(below) = self.frozen_below else {
             return;
         };
@@ -451,17 +451,22 @@ impl<'a> Pass<'a> {
             .map(|row| (deps[row].name_hash, cur[row]))
             .collect();
         of_project.sort_unstable();
-        let mut cur = cur.to_vec();
-        for (target, dep) in cur.iter_mut().zip(deps) {
+        let mut hoisted: Option<Vec<PackageID>> = None;
+        for (row, dep) in deps.iter().enumerate() {
             if dep.behavior.is_peer()
-                && *target != invalid_package_id
+                && cur[row] != invalid_package_id
                 && let Ok(i) = of_project.binary_search_by_key(&dep.name_hash, |&(name, _)| name)
+                && cur[row] != of_project[i].1
             {
-                *target = of_project[i].1;
+                hoisted.get_or_insert_with(|| cur.to_vec())[row] = of_project[i].1;
             }
         }
-        let cur = cur.as_slice();
-        let live = reachable(lockfile, cur, self.frozen_below);
+        let still_live =
+            (hoisted.as_deref()).map(|cur| reachable(lockfile, cur, self.frozen_below));
+        let (cur, live) = (
+            hoisted.as_deref().unwrap_or(cur),
+            still_live.as_ref().unwrap_or(live),
+        );
         live.copy_into(&mut self.voters);
         self.collect_edges(cur);
         for (g, group) in self.groups.iter().enumerate() {
@@ -743,7 +748,7 @@ fn dedupe_lockfile(
                 moves_only_peers,
                 max_edges,
             );
-            pass.find_spare(&cur);
+            pass.find_spare(&cur, &live);
             loop {
                 cur = pass.settle(&cur, &live);
                 let after = reachable(lockfile, &cur, frozen_below);

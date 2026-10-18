@@ -223,7 +223,7 @@ pub(crate) fn advance(this: &mut PackageManager) {
                     // It stays unresolved, which `verify_resolutions` reports if it matters.
                     Err(_) => {}
                 }
-                if may_be_dropped {
+                if may_be_dropped && this.log_mut().msgs.len() > log_mark {
                     this.hold_log_since(log_mark, id);
                 }
             }

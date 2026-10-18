@@ -196,7 +196,7 @@ console.log("How...dashing?");
     if (!sourceMapURL) {
       throw new Error("No source map URL found");
     }
-    const sourceMap = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
+    const sourceMap: any = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
     sourceMap.sourcesContent = sourceMap.sourcesContent.map(a => a.trim());
     expect(sourceMap.debugId).toMatch(/^[0-9A-F]{32}$/);
     sourceMap.debugId = "<debug-id>";
@@ -645,11 +645,12 @@ test("serve html error handling", async () => {
     const path = join(dir, "index.html");
 
     const { default: html } = await import(path);
-    let servers: Server[] = [];
+    let servers: Server<undefined>[] = [];
     for (let i = 0; i < 10; i++) {
       servers.push(
         Bun.serve({
           port: 0,
+          // @ts-expect-error legacy option name
           static: {
             "/": html,
           },
@@ -1097,6 +1098,90 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   });
 });
 
+// The dev server's HMR socket and the user's `websocket` handlers are separate
+// uWS websocket behaviors on the same app, each with its own context.
+test.concurrent("HMR clients never reach the user's websocket handlers, before or after server.reload()", async () => {
+  using dir = tempDir("bun-serve-html-hmr-and-user-websocket", {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      const options = version => ({
+        port: 0,
+        development: true,
+        routes: { "/": html },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("not a websocket", { status: 400 });
+        },
+        websocket: {
+          message(ws, message) {
+            ws.send("user v" + version + " got " + message);
+          },
+        },
+      });
+      const server = Bun.serve(options(1));
+
+      // The dev server replies to the HMR client's "set url" message ('n' + route
+      // pattern) with 'n' + the route bundle index as a u32.
+      async function hmrRouteBundleIndex() {
+        const url = new URL("/_bun/hmr", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onerror = reject;
+        ws.onclose = () => reject(new Error("hmr socket closed before replying"));
+        ws.onmessage = ({ data }) => {
+          if (typeof data === "string") return reject(new Error("hmr socket replied with text: " + data));
+          const view = new DataView(data);
+          if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
+        };
+        ws.onopen = () => ws.send(new TextEncoder().encode("n/"));
+        try {
+          return await promise;
+        } finally {
+          ws.onclose = null;
+          ws.close();
+        }
+      }
+
+      async function userEcho(message) {
+        const url = new URL("/ws", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onerror = reject;
+        ws.onclose = () => reject(new Error("user socket closed before replying"));
+        ws.onmessage = ({ data }) => resolve(data);
+        ws.onopen = () => ws.send(message);
+        try {
+          return await promise;
+        } finally {
+          ws.onclose = null;
+          ws.close();
+        }
+      }
+
+      await fetch(server.url);
+      const before = { hmr: await hmrRouteBundleIndex(), user: await userEcho("hello") };
+      server.reload(options(2));
+      const after = { hmr: await hmrRouteBundleIndex(), user: await userEcho("hello") };
+      console.log(JSON.stringify({ before, after }));
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({
+      before: { hmr: 0, user: "user v1 got hello" },
+      after: { hmr: 0, user: "user v2 got hello" },
+    }),
+    exitCode: 0,
+  });
+});
+
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure
 // relativizes the failing file against that root and hit a debug assertion
@@ -1143,6 +1228,7 @@ test("wildcard static routes", async () => {
   for (let development of [true, false]) {
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: {
         "/*": html,
       },
@@ -1169,6 +1255,7 @@ test("serve html with JSX runtime in development mode", async () => {
   using server = Bun.serve({
     port: 0,
     development: true,
+    // @ts-expect-error legacy option name
     static: {
       "/": html,
     },
@@ -1195,6 +1282,7 @@ test("serve html with JSX runtime in production mode", async () => {
   using server = Bun.serve({
     port: 0,
     development: false,
+    // @ts-expect-error legacy option name
     static: {
       "/": html,
     },
@@ -1222,6 +1310,7 @@ test("you can have HTML imports apply to only specific methods outside of the de
   using server = Bun.serve({
     port: 0,
     development: false,
+    // @ts-expect-error legacy option name
     static: {
       "/boop": html,
 
@@ -1276,6 +1365,7 @@ for (let development of [true, false, { hmr: false }]) {
     using server = Bun.serve({
       port: 0,
       development,
+      // @ts-expect-error legacy option name
       static: {
         "/*": html,
         "/api": false,
@@ -1319,6 +1409,7 @@ for (let development of [true, false, { hmr: false }]) {
     using server = Bun.serve({
       port: 0,
       development,
+      // @ts-expect-error legacy option name
       static: {
         "/*": html,
         "/api/*": false,

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "root.h"
+#include "GeneratedBindings+Counts.h"
 
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -23,6 +24,7 @@ public:
     IsoSubspace* m_subspaceForWrappingFunction { nullptr };
     IsoSubspace* m_subspaceForNapiClass { nullptr };
     IsoSubspace* m_subspaceForJSSQLStatement { nullptr };
+    IsoSubspace* m_subspaceForJSSQLDatabase { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteDatabaseSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSyncIterator { nullptr };
@@ -55,6 +57,7 @@ public:
     IsoSubspace* m_subspaceForErrorCodeCache { nullptr };
     IsoSubspace* m_subspaceForBunInspectorConnection { nullptr };
     IsoSubspace* m_subspaceForJSNextTickQueue { nullptr };
+    IsoSubspace* m_subspaceForJSModuleGraph { nullptr };
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
     IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
     IsoSubspace* m_subspaceForNapiHandleScopeImpl { nullptr };
@@ -75,6 +78,7 @@ public:
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
+    IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 
     IsoSubspace* m_subspaceForFetchHeaders { nullptr };
@@ -175,7 +179,6 @@ public:
     IsoSubspace* m_subspaceForJSHash { nullptr };
     IsoSubspace* m_subspaceForServerRouteList { nullptr };
     IsoSubspace* m_subspaceForBunRequest { nullptr };
-    IsoSubspace* m_subspaceForBakeResponse { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellman { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellmanGroup { nullptr };
     IsoSubspace* m_subspaceForJSECDH { nullptr };

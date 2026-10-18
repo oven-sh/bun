@@ -2554,35 +2554,40 @@ impl Lockfile {
         (self.only_peers).is_set_allow_out_of_bound(id as usize, false)
     }
 
-    /// `id` stays, so what it depends on is queued.
-    pub(crate) fn unmark_only_peers(&mut self, id: PackageID) -> crate::Result<()> {
+    /// `id` stays, so what it depends on is queued. Returns whether it was marked.
+    pub(crate) fn unmark_only_peers(&mut self, id: PackageID) -> crate::Result<bool> {
         if !self.is_only_for_peers(id) {
-            return Ok(());
+            return Ok(false);
         }
         self.only_peers.unset(id as usize);
         self.scratch.dependency_list_queue.push(QueuedRows {
             rows: self.packages.items_dependencies()[id as usize],
             from_command: false,
         })?;
-        Ok(())
+        Ok(true)
     }
 
-    /// `unmark_only_peers` for the ones that a dependency still resolves to. Returns whether there
-    /// was one.
-    pub(crate) fn unmark_reachable_only_peers(&mut self) -> crate::Result<bool> {
+    /// `unmark_only_peers` for the ones that a dependency still resolves to. Returns the first such
+    /// dependency of each.
+    pub(crate) fn unmark_reachable_only_peers(&mut self) -> crate::Result<Vec<DependencyID>> {
+        let mut rows = Vec::new();
         if self.only_peers.count() == 0 {
-            return Ok(false);
+            return Ok(rows);
         }
         let all = reachable::Options::all(0);
         let reachable = reachable::packages(self, &self.buffers.resolutions, all);
-        let mut found = false;
-        for id in 0..self.only_peers.bit_length() {
-            if self.only_peers.is_set(id) && reachable.is_set(id) {
-                self.unmark_only_peers(id as PackageID)?;
-                found = true;
+        for owner in 0..self.packages.len() {
+            if !reachable.is_set(owner) {
+                continue;
+            }
+            let list = self.packages.items_dependencies()[owner];
+            for row in list.begin()..list.end() {
+                if self.unmark_only_peers(self.buffers.resolutions[row as usize])? {
+                    rows.push(row);
+                }
             }
         }
-        Ok(found)
+        Ok(rows)
     }
 
     /// Is the row a bundled dependency, or owned by a package only bundles hold?

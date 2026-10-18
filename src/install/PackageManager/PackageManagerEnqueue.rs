@@ -58,16 +58,49 @@ fn bind_existing(
     package_id: PackageID,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    if !is_peer {
-        this.lockfile.unmark_only_peers(package_id)?;
-    }
+    let is_kept = !is_peer && this.lockfile.unmark_only_peers(package_id)?;
     success_fn(this, dependency_id, package_id);
+    let task = match is_kept {
+        true => kept_tarball_task(this, dependency_id, package_id)?,
+        false => None,
+    };
     Ok(Some(ResolvedPackageResult {
         // read after `success_fn`, which can change the packages array
         package: *this.lockfile.packages.get(package_id as usize),
         is_first_time: false,
-        task: None,
+        task,
     }))
+}
+
+/// The download that a package did not get while it was `Lockfile::only_peers`, on behalf of `row`,
+/// which resolves to it. A patch is left to the install phase.
+fn kept_tarball_task(
+    this: &mut PackageManager,
+    row: DependencyID,
+    package_id: PackageID,
+) -> crate::Result<Option<ResolvedPackageTask>> {
+    let package = *this.lockfile.packages.get(package_id as usize);
+    let behavior = this.lockfile.buffers.dependencies[row as usize].behavior;
+    let inside_bundle = this.lockfile.is_row_inside_bundle(row, behavior);
+    if this.get_preinstall_state(package_id) != install::PreinstallState::Extract
+        || !this.options.do_.contains(Do::PREFETCH_RESOLVED_TARBALLS)
+        || is_row_unplaced(this, &package, behavior, row, inside_bundle)
+    {
+        return Ok(None);
+    }
+    let url = this.lockfile.str(&package.resolution.npm().url).to_vec();
+    tarball_task(this, package.name, &package, behavior, row, &url)
+}
+
+/// `rows` is what `Lockfile::unmark_reachable_only_peers` returned.
+pub(crate) fn download_kept(this: &mut PackageManager, rows: &[DependencyID]) -> crate::Result<()> {
+    for &row in rows {
+        let package_id = this.lockfile.buffers.resolutions[row as usize];
+        if let Some(task) = kept_tarball_task(this, row, package_id)? {
+            enqueue_resolved_task(this, package_id, task);
+        }
+    }
+    Ok(())
 }
 
 fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut TaskCallbackList {
@@ -3249,7 +3282,7 @@ fn get_or_put_resolved_package_with_find_result(
             install::PreinstallState::Done => None,
             // If a placed dependency needs it too, the install phase fetches and patches it.
             _ if unplaced => None,
-            // `dedupe::collapse_appended_peers` may drop it. If not, the install phase fetches it.
+            // `dedupe::collapse_appended_peers` may drop it. See `kept_tarball_task`.
             _ if is_peer => None,
             // e.g., --lockfile-only
             install::PreinstallState::Extract

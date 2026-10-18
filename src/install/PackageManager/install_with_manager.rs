@@ -38,7 +38,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
-use crate::package_manager_real::enqueue::add_dependency_error;
+use crate::package_manager_real::enqueue::{add_dependency_error, download_kept};
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
@@ -643,6 +643,7 @@ pub fn install_with_manager(
         _ => crate::dedupe::collapse_appended_peers,
     };
     settle_only_peers(manager, &root, &mut progress, collapse_peers)?;
+    wait_for_pending_tasks(manager)?;
     progress.close(manager);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
     if !matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit) {
@@ -1111,6 +1112,9 @@ struct RunAndWaitClosure<const ONLY_PRE_PATCH: bool> {
     // See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
     manager: *mut PackageManager,
     err: Option<crate::Error>,
+    /// The wait also ends once only the `Lockfile::only_peers` packages are left to resolve. The
+    /// tarballs that are still being downloaded then do not hold up the requests that those need.
+    stops_for_only_peers: bool,
 }
 
 impl<const ONLY_PRE_PATCH: bool> RunAndWaitClosure<ONLY_PRE_PATCH> {
@@ -1149,10 +1153,10 @@ impl<const ONLY_PRE_PATCH: bool> RunAndWaitClosure<ONLY_PRE_PATCH> {
             }
         }
 
-        pending_tasks == 0
+        pending_tasks == 0 || (closure.stops_for_only_peers && this.is_ready_for_only_peers())
     }
 
-    fn run_and_wait(this: &mut PackageManager) -> crate::Result<()> {
+    fn run_and_wait(this: &mut PackageManager, stops_for_only_peers: bool) -> crate::Result<()> {
         // Derive the raw pointer first and route *every* manager access through it.
         // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
         // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
@@ -1163,6 +1167,7 @@ impl<const ONLY_PRE_PATCH: bool> RunAndWaitClosure<ONLY_PRE_PATCH> {
         let mut closure = RunAndWaitClosure::<ONLY_PRE_PATCH> {
             manager: mgr,
             err: None,
+            stops_for_only_peers,
         };
 
         // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
@@ -1180,13 +1185,19 @@ impl<const ONLY_PRE_PATCH: bool> RunAndWaitClosure<ONLY_PRE_PATCH> {
 }
 
 fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<true>::run_and_wait(this)
+    RunAndWaitClosure::<true>::run_and_wait(this, false)
 }
 pub(crate) fn wait_for_pending_tasks(this: &mut PackageManager) -> crate::Result<()> {
     if this.pending_task_count() == 0 {
         return Ok(());
     }
-    RunAndWaitClosure::<false>::run_and_wait(this)
+    RunAndWaitClosure::<false>::run_and_wait(this, false)
+}
+fn wait_until_ready_for_only_peers(this: &mut PackageManager) -> crate::Result<()> {
+    if this.pending_task_count() == 0 {
+        return Ok(());
+    }
+    RunAndWaitClosure::<false>::run_and_wait(this, true)
 }
 
 // Outlined cold so the install fast path (`install_with_manager` tail) does not
@@ -1792,9 +1803,11 @@ fn settle_only_peers(
 ) -> crate::Result<()> {
     loop {
         collapse_peers(manager);
-        if !manager.lockfile.unmark_reachable_only_peers()? {
+        let kept = manager.lockfile.unmark_reachable_only_peers()?;
+        if kept.is_empty() {
             return Ok(());
         }
+        download_kept(manager, &kept)?;
         manager.drain_dependency_list();
         if manager.pending_task_count() > 0 {
             resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
@@ -2249,14 +2262,13 @@ fn resolve_pending_tasks(
         wait_for_calcing_patch_hashes(manager)?;
     }
 
-    wait_for_pending_tasks(manager)?;
-
-    if !named.latest_rows.is_empty() {
-        let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
-        named.moved.extend(child_moves);
-        wait_for_pending_tasks(manager)?;
+    if named.latest_rows.is_empty() {
+        return wait_until_ready_for_only_peers(manager);
     }
-    Ok(())
+    wait_for_pending_tasks(manager)?;
+    let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
+    named.moved.extend(child_moves);
+    wait_for_pending_tasks(manager)
 }
 
 /// What is shown from the first `resolve_pending_tasks` to the last.
@@ -2540,6 +2552,7 @@ fn reresolve_rows_outside_overrides(
     redirect_moved_edges(&mut manager.lockfile, &moved, false);
     let collapse_peers = crate::dedupe::collapse_appended_peers;
     settle_only_peers(manager, root, &mut progress, collapse_peers)?;
+    wait_for_pending_tasks(manager)?;
     progress.close(manager);
     if manager.log_mut().has_errors() {
         manager.crash();

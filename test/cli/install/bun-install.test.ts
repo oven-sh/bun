@@ -5092,9 +5092,9 @@ describe.concurrent("bun-install", () => {
   // "kept" is an `npm:` alias that another manifest declares: a dependency of the project, or a
   // workspace. The root package's own "kept" names the registry package of that name and does
   // not follow that alias. Every registry package gets the same fixture tarball, so `packages`
-  // (the section of bun.lock, name -> resolution) tells which package a folder holds. A packument
+  // (the section of bun.lock, name -> resolution) tells which package a folder holds. A request
   // listed in `hold` is answered when the request named by its value arrives, which fixes the
-  // order in which bun reads the packuments.
+  // order in which bun reads the answers.
   const holder = { "1.0.0": { dependencies: { kept: "npm:short@1.0.0" } } };
   const kept = { "1.0.0": {} };
   const short = { "1.0.0": {} };
@@ -5115,11 +5115,11 @@ describe.concurrent("bun-install", () => {
       const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "");
       urls.push(path);
       arrival(path).resolve();
+      if (path in hold) await arrival(hold[path]).promise;
       if (path.endsWith(".tgz")) {
         return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
       }
       if (!(path in registry)) return new Response(null, { status: 404 });
-      if (path in hold) await arrival(hold[path]).promise;
       const versions: Record<string, object> = {};
       for (const [version, fields] of Object.entries(registry[path])) {
         versions[version] = {
@@ -5632,6 +5632,24 @@ describe.concurrent("bun-install", () => {
         "other": "other@1.0.0",
         "second": "second@1.0.0",
         "slow": "slow@1.0.0",
+      });
+    });
+  });
+
+  it("downloads a package that a peer installed and what it depends on while another tarball is on its way", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const registry = {
+        first: { "1.0.0": { peerDependencies: { near: "1.0.0" } } },
+        near: { "1.0.0": { dependencies: { far: "1.0.0" } } },
+        far: { "1.0.0": {} },
+      };
+      const hold = { "first-1.0.0.tgz": "far-1.0.0.tgz", "far-1.0.0.tgz": "near-1.0.0.tgz" };
+      setContextHandler(ctx, heldRegistry(ctx, [], registry, hold));
+      await writeProject(ctx, { "package.json": { name: "foo", dependencies: { first: "1.0.0" } } });
+      expect(await installAndReadLock(ctx)).toEqual({
+        "far": "far@1.0.0",
+        "first": "first@1.0.0",
+        "near": "near@1.0.0",
       });
     });
   });

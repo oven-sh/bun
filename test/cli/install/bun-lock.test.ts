@@ -5246,7 +5246,7 @@ describe.each(["hoisted", "isolated"] as const)(
         },
         shape: [
           '"no-deps": ["no-deps@1.1.0"',
-          '"peer-deps-lvl0/peer-deps-lvl2": ["peer-deps-lvl2@1.0.0"',
+          '"peer-deps-lvl0/peer-deps-lvl1/peer-deps-lvl2": ["peer-deps-lvl2@1.0.0"',
           '"peer-deps-lvl0/no-deps": ["no-deps@1.0.0"',
           '"provides-peer-deps-2-0-0/no-deps": ["no-deps@2.0.0"',
         ],

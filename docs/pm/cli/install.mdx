@@ -500,9 +500,9 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 `bun install` installs peer dependencies automatically, and picks versions the way pnpm does:
 
-1. If a package above the one with the peer dependency depends on that name, the peer uses that version. "Above" means its parent, its parent's parent, and so on up to your workspace and the root `package.json`. This applies even if the version is out of range: if your app depends on `react@17`, every library in it uses `react@17`.
+1. If a package above the one with the peer dependency depends on that name, the peer uses that version. "Above" means its parent, its parent's parent, and so on up to your workspace and the root `package.json`. This applies even if the version is out of range: if your app depends on `react@17`, every library that it uses gets `react@17`.
 2. Otherwise, Bun picks a version that satisfies every package with a peer dependency on that name, so they all share one copy. It prefers a version that's already installed, then the newest matching version in the registry.
-3. If no version satisfies all of them, each package gets a version that satisfies its own range.
+3. If no version satisfies all of them, a package uses the same copy as the nearest package above it that has the same peer dependency. Unrelated packages each get a version that satisfies their own range.
 
 If a peer dependency is marked optional in `peerDependenciesMeta`, Bun doesn't install it, but uses a version that's already installed if there is one.
 
@@ -637,7 +637,7 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 
 Other flags from those tools that Bun has no equivalent for are ignored, for example `--ci`, `--no-color`, `--no-package-lock`, `--network-timeout=100000` and `--reporter=silent`.
 
-Three flags are errors because ignoring them would install or save to the wrong place: use `--cwd` instead of `--prefix` or `--dir`, and `--filter` instead of `--workspace`. A flag that none of these tools has is also an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
+Some flags are errors because ignoring them would install or save to the wrong place. Use `--cwd` instead of `--prefix` or `--dir`, and `--filter` instead of `--workspace`. A flag that none of these tools has is also an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
 
 ## pnpm migration
 

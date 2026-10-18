@@ -1051,7 +1051,8 @@ impl Stringifier {
             Negatable::<Npm::Architecture>::to_json(meta.arch, &mut AsFmt::new(writer))?;
         }
 
-        // Only a restriction to one libc matters; by name rather than `Negatable`'s "!musl".
+        // Only a restriction to a single libc matters. It's written by name instead of
+        // `Negatable`'s "!musl".
         if let Some(libc) = meta.libc.single_name() {
             write_key(&mut *writer, b" \"libc\": \"")?;
             writer.write_all(libc)?;
@@ -1517,7 +1518,8 @@ pub(crate) enum ResolveError {
     Unresolvable,
 }
 
-/// A package printed at several paths binds its edges per row; equal or better evidence wins.
+/// A package that's printed at several paths binds its dependencies once per path. Equal or better
+/// evidence wins.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
 enum RowEvidence {
     Unbound,
@@ -2244,7 +2246,8 @@ pub(crate) fn parse_into_binary_lockfile(
 
         root_pkg.meta.id = 0;
         root_pkg.meta.origin = Origin::Local;
-        // Before the packages are read: a `<name>@root:` entry is this package, not a second one.
+        // Set before the packages are read, so that a `<name>@root:` entry is recognized as this
+        // package and not as a second one.
         root_pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Root);
         let root_name_hash = root_pkg.name_hash;
         lockfile.packages.append(root_pkg)?;
@@ -2713,7 +2716,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 _ => {}
             }
 
-            // Optional: older lockfiles have none for tarball and git deps.
+            // Optional, because older lockfiles don't have one for tarball and git dependencies.
             if matches!(
                 res.tag,
                 ResolutionTag::LocalTarball
@@ -3152,7 +3155,8 @@ impl PeerRanges<'_> {
     }
 }
 
-/// What that scan looks for; `None` for an edge the path walk binds.
+/// Returns the range and the name that the scan looks for, or `None` for a dependency that the path
+/// walk binds.
 fn version_based_peer_range<'a>(
     dep: &'a Dependency,
     catalogs: &'a CatalogMap,
@@ -3187,7 +3191,7 @@ fn version_based_peer_range<'a>(
     Some((range, name_hash))
 }
 
-/// `package_index` is keyed by real package names; for an alias, `range` carries it.
+/// `package_index` is keyed by real package names. For an alias, `range` has the real name.
 pub(crate) fn peer_candidate_name_hash(
     dep: &Dependency,
     range: &DependencyVersion,
@@ -3204,7 +3208,7 @@ pub(crate) fn peer_candidate_name_hash(
     StringBuilder::string_hash(name.slice(string_buf))
 }
 
-/// The scan itself; the yarn.lock migration also binds `*` and overridden peers with it.
+/// The scan itself. The yarn.lock migration also uses it to bind `*` and overridden peers.
 pub(crate) fn resolve_peer_dep_by_range(
     range: &DependencyVersion,
     name_hash: PackageNameHash,
@@ -3222,7 +3226,7 @@ pub(crate) fn resolve_peer_dep_by_range(
     })
 }
 
-/// Call after hoisting: binds ranged peers whose target is in no tree the way a reload would.
+/// Call after hoisting. Binds the peers whose target isn't in any tree the way a reload would.
 pub(crate) fn rebind_peers_to_printed_packages(
     lockfile: &mut BinaryLockfile,
 ) -> Result<(), bun_alloc::AllocError> {

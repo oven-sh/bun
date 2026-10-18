@@ -336,7 +336,7 @@ pub(crate) struct ManifestFailure {
     pub(crate) msgs: Vec<bun_ast::Msg>,
     /// The registry answered 404, so it has no package of this name.
     pub(crate) is_missing: bool,
-    /// No attempt got an answer about the package, as `fail_update_requests` wants to know.
+    /// True if no attempt got a response about the package. `fail_update_requests` reads this.
     pub(crate) is_unanswered: bool,
     /// An optional dependency that needs the manifest only logs a warning.
     pub(crate) spares_optional: bool,
@@ -344,8 +344,8 @@ pub(crate) struct ManifestFailure {
 }
 
 impl ManifestFailure {
-    /// For a failure that somebody else has reported. A dependency that needs the manifest then
-    /// gives up without a message of its own.
+    /// Use this for a failure that was already reported elsewhere. A dependency that needs the
+    /// manifest then fails without logging anything.
     pub(crate) fn already_reported() -> Self {
         ManifestFailure {
             reported: FailureReport::Errored,
@@ -366,7 +366,7 @@ impl Default for ManifestFailure {
     }
 }
 
-/// How far the messages of a `ManifestFailure` have gotten.
+/// How far along the messages of a `ManifestFailure` are in being reported.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FailureReport {
     NotYet,
@@ -385,7 +385,7 @@ pub(crate) struct Wanted {
     pub(crate) range_len: usize,
     /// The hash of the name in the registry.
     pub(crate) name_hash: PackageNameHash,
-    /// It was found in the peer pass, where a peer that nothing provides gets installed.
+    /// True if it was found during the peer pass, which installs the peers that nothing provides.
     pub(crate) follows_peers: bool,
 }
 
@@ -433,9 +433,10 @@ pub(crate) struct RemotePackages {
 /// Which package `append_next_remote_package` may add.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteTurn {
-    /// Only the one that the lowest waiting dependency asks for.
+    /// Only the package that the lowest waiting dependency needs.
     InOrder,
-    /// No task is running, so a package that has not arrived never will. The lowest one that has.
+    /// No task is running, so a package that hasn't arrived never will. Add the lowest one that has
+    /// arrived.
     NothingElseArrives,
 }
 
@@ -496,7 +497,8 @@ pub struct PackageManager {
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
 
-    /// Of the `name` in the root package.json, which `workspace_paths` (the members) does not hold.
+    /// The hash of the `name` in the root package.json. `workspace_paths` only has the workspaces,
+    /// not the root.
     pub(crate) workspace_root_name_hash: PackageNameHash,
     /// The `version` in the root package.json, as written. The lockfile records none for the root.
     pub(crate) workspace_root_version: Box<[u8]>,
@@ -797,12 +799,14 @@ pub struct PackageUpdateInfo {
 }
 
 impl PackageUpdateInfo {
-    /// One name can sit in several catalogs, each with its version. No name contains `@catalog:`.
+    /// A name can be in several catalogs, with a different version in each. No package name
+    /// contains `@catalog:`, so the key is unambiguous.
     pub(crate) fn catalog_row_key(name: &[u8], catalog_name: &[u8]) -> Vec<u8> {
         [name, b"@catalog:".as_slice(), catalog_name].concat()
     }
 
-    /// `version`'s tag strings live in `buf`, which cleaning rebuilds: the original keeps a copy.
+    /// `version`'s tag strings point into `buf`, which is rebuilt when the lockfile is cleaned, so
+    /// this keeps its own copy of them.
     pub(crate) fn set_original_version(&mut self, version: Semver::Version, buf: &[u8]) {
         let mut tag_buf =
             vec![0u8; version.tag.pre.len() + version.tag.build.len()].into_boxed_slice();
@@ -1057,7 +1061,7 @@ impl PackageManager {
         }
     }
 
-    /// `nothing`: what a missing lockfile leaves undone, e.g. "nothing to update".
+    /// `nothing` is the end of the error message for a missing lockfile, e.g. "nothing to update".
     pub fn load_lockfile_from_cwd_or_exit(&mut self, nothing: &str) {
         let silent = self.options.log_level == package_manager_options::LogLevel::Silent;
         match self.load_lockfile_from_cwd::<true>() {
@@ -1380,7 +1384,7 @@ fn configure_env_for_scripts_run(
 
 static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
 
-/// Scripts find the shim through PATH until the process ends.
+/// Kept until the process exits, because scripts find the shim through PATH.
 static NODE_GYP_TEMPDIR: std::sync::OnceLock<(Fd, Box<[u8]>)> = std::sync::OnceLock::new();
 
 extern "C" fn remove_node_gyp_tempdir() {
@@ -1739,7 +1743,7 @@ fn allocate_package_manager(
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
-    // Not before this line: it reads `thread_pool`.
+    // This has to come after `thread_pool` is initialized, because the callback reads it.
     bun_core::add_exit_callback(crate::npm::package_manifest::Serializer::finish_saves_at_exit);
     p
 }
@@ -1936,7 +1940,7 @@ fn load_npmrc_files<'a>(
     install
 }
 
-/// Whether npm's `ignore-scripts` is set in the environment. It can only turn scripts off.
+/// Returns true if npm's `ignore-scripts` is set in the environment. It can only turn scripts off.
 fn env_ignores_scripts(env: &dot_env::Loader) -> bool {
     [
         b"NPM_CONFIG_IGNORE_SCRIPTS" as &[u8],
@@ -1947,8 +1951,8 @@ fn env_ignores_scripts(env: &dot_env::Loader) -> bool {
     .any(|value| !value.is_empty() && ini::npm_config_bool(value))
 }
 
-/// Whether the configuration makes `bun install` in `cwd`, the working directory, skip lifecycle
-/// scripts even without `--ignore-scripts`. This is for `bun create`, which has no
+/// Returns true if the configuration makes `bun install` in `cwd`, the working directory, skip
+/// lifecycle scripts even without `--ignore-scripts`. This is for `bun create`, which has no
 /// `PackageManager`. It resets the AST store.
 pub fn config_ignores_scripts(
     ctx: Command::Context,
@@ -1979,8 +1983,8 @@ pub fn config_ignores_scripts(
     Ok(npmrc.ignore_scripts.unwrap_or(false))
 }
 
-/// The cache directory set in the user's own `.bunfig.toml`, or else in their `.npmrc`. Those are
-/// the files that the `bun add` spawned by `bunx` reads. This is for `bunx`, which has no
+/// Returns the cache directory set in the user's own `.bunfig.toml`, or else in their `.npmrc`.
+/// Those are the files that the `bun add` spawned by `bunx` reads. This is for `bunx`, which has no
 /// `PackageManager`.
 pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8]>> {
     let bunfig = (::bun_bunfig::arguments::load_user_install_section().ok())
@@ -1994,11 +1998,13 @@ pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8
     load_npmrc_files(&bunfig, env, cwd, &mut core::iter::empty(), diagnostics).cache_directory
 }
 
-/// The one upward walk of [`init`]: to the first `package.json`, then on to the workspace root.
+/// The upward directory walk that [`init`] does: first to the nearest `package.json`, then on to
+/// the workspace root.
 struct PackageJsonWalk<'a> {
     cwd: &'a [u8],
     next_dir: Option<&'a [u8]>,
-    /// `<dir>/package.json` of `next`'s last directory. The cwd alone can fill a path buffer.
+    /// `<dir>/package.json` for the directory that `next` returned last. It's a `Vec` because the
+    /// cwd alone can fill a path buffer.
     path: Vec<u8>,
 }
 
@@ -2011,7 +2017,7 @@ impl<'a> PackageJsonWalk<'a> {
         }
     }
 
-    /// The next directory and what opening its `package.json` returned.
+    /// Returns the next directory and the result of opening its `package.json`.
     fn next(&mut self, flags: i32) -> Option<(&'a [u8], bun_sys::Maybe<bun_sys::File>)> {
         loop {
             let dir = self.next_dir?;
@@ -2243,7 +2249,8 @@ fn find_workspace_root_above<'a>(
     Ok(None)
 }
 
-/// Sticky and group- or world-writable, like `/tmp`: any local user can put a `package.json` there.
+/// Returns true if `dir` is sticky and group- or world-writable, like `/tmp`. Any local user can
+/// create a `package.json` there.
 #[cfg(unix)]
 fn is_shared_directory(dir: &[u8]) -> bool {
     use bun_sys::S;
@@ -2371,7 +2378,8 @@ pub fn init(
     // `holder::RAW_PTR`) instead of `Box::leak`.
     let env: &mut dot_env::Loader = unsafe {
         let mut loader_ptr = holder::ENV_LOADER.load();
-        // A second `init()` has another cwd: it keeps what the first read from `--env-file` paths.
+        // A second `init()` runs with a different cwd, so it keeps what the first one read from the
+        // `--env-file` paths.
         if loader_ptr.is_null() {
             loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
             holder::ENV_LOADER.store(loader_ptr);
@@ -2379,7 +2387,7 @@ pub fn init(
         &mut *loader_ptr
     };
     if !cli.env_files.is_empty() {
-        // Before the cwd they are relative to changes.
+        // Load these before the cwd changes, because their paths are relative to it.
         env.load_process()?;
         env.load(
             &dot_env::DirEntryKeys(Vec::new()),
@@ -2493,7 +2501,8 @@ pub fn init(
             } else {
                 bun_sys::O::RDONLY
             }) {
-                // `-g` names its project, the global directory. What is above it is another one's.
+                // With `-g`, the project is the global directory. A package.json above it belongs
+                // to some other project.
                 if cli.global {
                     walk.next_dir = None;
                 }
@@ -2535,7 +2544,8 @@ pub fn init(
                 && (subcommand == Subcommand::Add
                     || (subcommand == Subcommand::Install && cli.positionals.len() > 1))
             {
-                // The package.json that `bun add <package>` would create here stays in memory.
+                // The package.json that `bun add <package>` would create here is only kept in
+                // memory.
                 workspace_package_json_cache.insert_unwritten(
                     &mut bun_ast::Log::init(),
                     original_package_json_path.as_bytes(),
@@ -2581,7 +2591,8 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root(cli.positionals.len() > 1) {
-            // Above `bunx`'s tree are the user's cache and home: no workspace of it.
+            // The directories above `bunx`'s tree are the user's cache and home, so it isn't a
+            // workspace of anything there.
             let is_bunx_install = run_tasks::is_bunx_tree(child_cwd);
             if !created_package_json
                 && !no_project
@@ -2638,7 +2649,8 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // From `top_level_dir`, not the fd's realpath: relative paths never cross drives.
+        // Build it from `top_level_dir`, not from the fd's real path, so that relative paths never
+        // cross drives.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
         let tld_no_slash = strings::without_trailing_slash(tld);
         let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
@@ -2647,7 +2659,8 @@ pub fn init(
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
-    // From here on package.json is read (and, by the commands that do, written) by path.
+    // From here on, package.json is read by path, and written by path by the commands that write
+    // it.
     let _ = root_package_json_file.close();
 
     // Returns the resolver's BSSMap-owned
@@ -3078,8 +3091,8 @@ fn init_with_runtime_once(
             Err(path) => unreadable = Some(path),
         }
     }
-    // This also finds a scanner in a folder between the two. `bun install` would not read that
-    // file, but when in doubt the scanner counts.
+    // This also finds a scanner in a folder between the two. `bun install` wouldn't read that file,
+    // but when in doubt, the scanner counts.
     let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner only sees what `bun install` is about to install, so auto-install is refused.
     if [

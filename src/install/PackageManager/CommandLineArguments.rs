@@ -64,7 +64,8 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
 }
 
 type ParamType = clap::Param<clap::Help>;
-/// Slices, joined on use: a param is 96 bytes and most are shared by 17 commands.
+/// A list of slices that's joined on use, because a param is 96 bytes and most params are shared by
+/// 17 commands.
 type ParamTable = &'static [&'static [ParamType]];
 
 // `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`.
@@ -82,7 +83,8 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
-// The valueless flags of `AUTO_PARAMS` (runtime/cli/Arguments.rs) no table here has; ignored.
+// The flags of `AUTO_PARAMS` (runtime/cli/Arguments.rs) that take no value and that no table here
+// has. They're ignored.
 const RUNTIME_FLAGS_PARAM: ParamType = clap::param!(
     "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
 );
@@ -398,6 +400,7 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--save-optional", AliasOf(b"--optional")),
     (b"--save-peer", AliasOf(b"--peer")),
     (b"--save-catalog", AliasOf(b"--catalog")),
+    (b"--location=global", AliasOf(b"--global")),
     (b"--no-optional", AliasOf(b"--omit=optional")),
     (b"--ignore-optional", AliasOf(b"--omit=optional")),
     // Not `--production`, because `--production` also freezes the lockfile.
@@ -484,13 +487,12 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"mutex", b"network-timeout", b"no-proxy", b"node-gyp", b"node-linker", b"node-options",
     b"noproxy", b"npmrc-auth-file", b"only", b"otp", b"package-import-method", b"pnpmfile",
     b"pnpr-server", b"preferred-cache-folder", b"proxy", b"public-hoist-pattern",
-    b"replace-registry-host", b"reporter", b"save-catalog-name", b"save-prefix", b"scope",
+    b"replace-registry-host", b"reporter", b"save-prefix", b"scope",
     b"script-shell", b"state-dir", b"store-dir", b"tag", b"test-pattern", b"umask", b"use-yarnrc",
     b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace-concurrency",
     b"workspace-packages",
     ],
-    // pnpm's `--config.<setting>=<value>`
-    prefixes: &[b"config."],
+    except: &[],
 };
 
 /// `bun update` accepts these flags too, but there they select which dependencies to update, so no
@@ -822,7 +824,8 @@ pub struct CommandLineArguments {
     pub(crate) pack_gzip_level: Option<&'static [u8]>,
 
     pub(crate) dependency_group: Options::DependencyGroup,
-    /// `--dev`, `--optional`, `--peer` or `--save-prod`: an entry another group has moves.
+    /// True if `--dev`, `--optional`, `--peer` or `--save-prod` was passed. An entry that's in
+    /// another group then moves.
     pub(crate) names_group: bool,
 
     pub(crate) omit: Option<Omit>,
@@ -849,7 +852,7 @@ pub struct CommandLineArguments {
     pub(crate) node_linker: Option<Options::NodeLinker>,
 
     pub(crate) minimum_release_age_ms: Option<f64>,
-    /// As typed: each value is a comma-separated list.
+    /// As typed. Each value is a comma-separated list.
     pub(crate) minimum_release_age_excludes: &'static [&'static [u8]],
 
     // `bun pm version` options
@@ -1400,7 +1403,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Audit => AUDIT_PARAMS,
             Subcommand::Info => INFO_PARAMS,
         };
-        // `clap::parse` interns what it builds from a table under the table's address.
+        // `clap::parse` caches what it builds from a table, keyed by the table's address.
         let params: &'static [ParamType] = table.concat().leak();
         debug_assert!(
             (RUNTIME_FLAGS_PARAM.names.long_aliases.iter())
@@ -1455,10 +1458,14 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 stop_after_positional_at: 0,
                 short_aliases: REWRITES.get_or_init(|| rewrites),
                 unknown_long_flags_are_errors: true,
-                ignored_long_flags: if foreign_flags.is_empty() {
-                    Default::default()
-                } else {
-                    IGNORED_FOREIGN_FLAGS
+                ignored_long_flags: match subcommand {
+                    _ if foreign_flags.is_empty() => Default::default(),
+                    Subcommand::Install => IGNORED_FOREIGN_FLAGS,
+                    // For a command that edits a package.json, these flags choose which one.
+                    _ => clap::IgnoredLongFlags {
+                        except: &[b"workspace-root", b"ws", b"include-workspace-root", b"iwr"],
+                        ..IGNORED_FOREIGN_FLAGS
+                    },
                 },
                 ..Default::default()
             },
@@ -1755,7 +1762,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(concurrency) = args.option(b"--concurrent-scripts") {
-            // 0 is the default, as in bunfig.toml: with a limit of 0 no script starts.
+            // 0 means the default, like in bunfig.toml. With a real limit of 0, no script would
+            // ever start.
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10)
                 .ok()
                 .filter(|&n| n != 0);

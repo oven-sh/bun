@@ -17003,7 +17003,6 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--yes", "true"],
     // The next flag isn't this option's value.
     ["--cache", "--no-progress"],
-    ["--config.node-linker=hoisted"],
   ].flat();
 
   it.each([
@@ -17109,6 +17108,13 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["install", "--frozen-lockfil"], "install", "--frozen-lockfil"],
     [["install", "--no-ignore-script"], "install", "--no-ignore-script"],
     [["add", "--recursive", "./dep"], "add", "--recursive"],
+    // These choose which package.json a dependency is saved to.
+    [["add", "--workspace-root", "./dep"], "add", "--workspace-root"],
+    [["add", "--ws", "./dep"], "add", "--ws"],
+    [["add", "--save-catalog-name=tools", "./dep"], "add", "--save-catalog-name"],
+    // Ignoring these would turn a safety setting off.
+    [["install", "--config.frozen-lockfile=true"], "install", "--config.frozen-lockfile"],
+    [["install", "--config.ignore-scripts=true"], "install", "--config.ignore-scripts"],
   ] as [string[], string, string][])("bun %j is still an error", async (cmd, command, flag) => {
     const { stderr, packageJson, exitCode } = await outcome(cmd);
     expect(stderr).toBe(

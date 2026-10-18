@@ -56,7 +56,7 @@ pub fn install_with_manager(
 ) -> crate::Result<()> {
     let log_level = manager.options.log_level;
 
-    // Under `--no-verify` the name of a tarball's cache entry depends on what the cache holds.
+    // With `--no-verify`, the name of a tarball's cache entry depends on what's in the cache.
     if manager.skips_verify(ResolutionTag::RemoteTarball) {
         let _ = manager.get_cache_directory();
     }
@@ -250,7 +250,8 @@ pub fn install_with_manager(
                     )?
                 };
 
-                // package.json has the rules of `packageExtensions`, the lockfile what they added.
+                // package.json has the `packageExtensions` themselves, and the lockfile has what
+                // they added.
                 manager.lockfile.package_extensions.rules =
                     core::mem::take(&mut lockfile.package_extensions.rules);
                 let mut extension_rows: Vec<DependencyID> = Vec::new();
@@ -289,7 +290,7 @@ pub fn install_with_manager(
                     manager.lockfile.self_contained_workspaces.put(*key, ())?;
                 }
                 manager.lockfile.linked_members = core::mem::take(&mut lockfile.linked_members);
-                // Nor does the lockfile's record of `trustedDependencies` decide.
+                // The lockfile's record of `trustedDependencies` doesn't decide either.
                 manager.lockfile.trusted_dependencies = lockfile.trusted_dependencies.take();
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
@@ -664,7 +665,8 @@ pub fn install_with_manager(
         )?;
     }
 
-    // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
+    // With `--depth 0`, a transitive dependency that shared the old package with a moved dependency
+    // stays where it is.
     let direct_only = manager.options.do_.update_direct_only();
     direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
@@ -732,7 +734,7 @@ pub fn install_with_manager(
         }
 
         if manager.options.security_scanner.is_some() {
-            // Another package manager's lockfile says nothing about what the scanner has seen.
+            // Another package manager's lockfile doesn't say what the scanner has already seen.
             let loaded_bun_lockfile = lockfile_before_clean.loaded_package_count > 0
                 && load_result.migrated_from().is_none();
             run_security_scanner(
@@ -809,7 +811,8 @@ pub fn install_with_manager(
         'frozen_lockfile: {
             let mut changed_section = frozen_changed_section(manager, root_package_json_path);
             if changed_section.is_none() {
-                // Only an install stores a hash in bun.lockb: it covers lifecycle scripts too.
+                // Only an install stores a hash in bun.lockb. The hash covers lifecycle scripts
+                // too.
                 let same_packages = if load_result.loaded_from_text_lockfile()
                     || load_result.migrated_from().is_some()
                     || manager.lockfile.meta_hash == [0; 32]
@@ -1003,7 +1006,8 @@ pub fn install_with_manager(
         Global::crash();
     }
 
-    // Deleted while the rest of this function runs; its end waits for the deletion.
+    // Deleted in the background while the rest of this function runs. The end of the function waits
+    // for the deletion.
     let _old_modules_removal = (install_summary.old_modules.as_ref())
         .filter(|_| install_summary.fail == 0)
         .map(crate::prune::OldModules::remove);
@@ -1505,7 +1509,8 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     }
 }
 
-/// Both linkers leave out what cannot run on the target: warns for what the project requires.
+/// Both linkers skip packages that can't run on the target platform. This warns about the ones that
+/// the project requires.
 #[cold]
 #[inline(never)]
 fn warn_unsupported_platform(
@@ -1702,7 +1707,7 @@ fn reresolve_owned_rows(
     pinned_rows: &DynamicBitSet,
     selects: impl Fn(&Dependency) -> bool,
 ) {
-    // Resolving appends packages and rows; only the lists present now are walked.
+    // Resolving appends packages and dependencies, so only walk the lists that exist now.
     let lists: Vec<lockfile::DependencySlice> =
         manager.lockfile.packages.items_dependencies().to_vec();
     for list in lists {
@@ -1726,7 +1731,8 @@ fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
     }
 }
 
-/// Runs when all else is resolved: a row that `clean` discards must not ask the registry.
+/// Runs once everything else is resolved, because a dependency that `clean` is going to discard
+/// must not send a request to the registry.
 #[cold]
 #[inline(never)]
 fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
@@ -2152,7 +2158,8 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    // A loaded lockfile describes the project; a pnpm migration imports the yaml itself.
+    // A loaded lockfile already describes the project, and a pnpm migration imports the yaml
+    // itself.
     if !matches!(load_result, lockfile::LoadResult::Ok { .. }) {
         crate::pnpm::migrate_pnpm_workspace_config(manager)?;
     }
@@ -2293,7 +2300,7 @@ fn refresh_children_of_named(
 }
 
 fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
-    // What was queued since the last peer pass can provide a peer, so it is resolved first.
+    // Anything queued since the last peer pass can provide a peer, so it's resolved first.
     manager.look_ahead.in_peer_pass = false;
     if manager.pending_task_count() > 0 {
         wait_until_ready_for_peers(manager)?;
@@ -2354,10 +2361,12 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
-    // For what `reresolve_rows_outside_overrides` resolves: the copy has only what is saved.
+    // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
+    // lockfile.
     manager.lockfile.package_extensions.rules =
         core::mem::take(&mut before_clean.package_extensions.rules);
-    // The log had no error before: the tree builder refused a name. Stop before the linker.
+    // The log had no errors before this, so the tree builder refused a name. Stop before the linker
+    // runs.
     if manager.log_mut().has_errors() {
         manager.crash();
     }
@@ -2448,7 +2457,8 @@ fn reresolve_rows_outside_overrides(
     for &(row, _) in &outside {
         is_outside.set(row as usize);
     }
-    // The packages that stay in the lockfile, because a row that no rule forbids resolves to them.
+    // The packages that stay in the lockfile, because a dependency that no rule forbids resolves to
+    // them.
     let mut held = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
     for (row, &package_id) in lockfile.buffers.resolutions.iter().enumerate() {
         if !is_outside.is_set(row) && (package_id as usize) < held.bit_length() {
@@ -2457,8 +2467,9 @@ fn reresolve_rows_outside_overrides(
     }
     outside.retain(|&(row, package_id)| {
         let dependency = &dependencies[row as usize];
-        // A peer takes the version that is installed, and loading bun.lock binds an optional row
-        // that never resolved by its name. Both only move if their package does not stay anyway.
+        // A peer uses the version that's installed, and loading bun.lock binds an optional
+        // dependency that never resolved by its name. Both only move if their package would
+        // otherwise be dropped.
         if dependency.behavior.is_peer() || dependency.behavior.is_optional() {
             return !held.is_set(package_id as usize);
         }
@@ -2609,7 +2620,8 @@ fn run_security_scanner(
     }
 }
 
-// The one write while `Do::SAVE_LOCKFILE` is off; migrations save via `FORCE_SAVE_LOCKFILE`.
+// The only write that happens while `Do::SAVE_LOCKFILE` is off. Migrations save through
+// `FORCE_SAVE_LOCKFILE`.
 fn converts_binary_lockfile_to_text(
     load_result: &lockfile::LoadResult,
     save_format: lockfile::Format,

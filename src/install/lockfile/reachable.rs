@@ -220,32 +220,34 @@ pub(crate) fn peer_provider(
         .map(|id| id as DependencyID)
 }
 
-/// Returns the packages that have to find a peer dependency on `name_hash` by themselves: the ones
-/// that can be reached from the root without going through a package that provides it. This is how
-/// pnpm decides which peer dependencies are missing.
+/// Returns the packages that nothing provides a peer dependency on `name_hash` for: the ones that
+/// aren't a provider and aren't below one.
+///
+/// pnpm decides this for each path to a package. bun.lock has one resolution per dependency and the
+/// hoisted linker usually installs one copy of a package, so a provider on any path counts.
 pub(crate) fn packages_without_peer_provider(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
     name_hash: PackageNameHash,
 ) -> DynamicBitSet {
     let lists = lockfile.packages.items_dependencies();
-    let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
-    let mut without_provider = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
-    let mut stack: Vec<PackageID> = vec![0];
-    seen.set(0);
+    let mut provided = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut stack: Vec<PackageID> = (0..lists.len() as PackageID)
+        .filter(|&id| peer_provider(lockfile, resolutions, id, name_hash).is_some())
+        .collect();
+    for &id in &stack {
+        provided.set(id as usize);
+    }
     while let Some(id) = stack.pop() {
-        if peer_provider(lockfile, resolutions, id, name_hash).is_some() {
-            continue;
-        }
-        without_provider.set(id as usize);
         let list = lists[id as usize];
         for row in list.begin() as usize..list.end() as usize {
-            if mark(&mut seen, resolutions[row]) {
+            if mark(&mut provided, resolutions[row]) {
                 stack.push(resolutions[row]);
             }
         }
     }
-    without_provider
+    provided.toggle_all();
+    provided
 }
 
 fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {

@@ -446,15 +446,17 @@ fn check_assignment<'a>(
     compares: bool,
 ) -> bool {
     // Neither `any` nor a type with type arguments.
-    if matches!(
-        sender_node.tag(),
-        ExprTag::Number
-            | ExprTag::String
-            | ExprTag::BigInt
-            | ExprTag::True
-            | ExprTag::False
-            | ExprTag::Null
-    ) {
+    if !sender_node.has_jsdoc_cast()
+        && matches!(
+            sender_node.tag(),
+            ExprTag::Number
+                | ExprTag::String
+                | ExprTag::BigInt
+                | ExprTag::True
+                | ExprTag::False
+                | ExprTag::Null
+        )
+    {
         return false;
     }
     check_assignment_of_type(

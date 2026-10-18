@@ -649,19 +649,6 @@ pub fn install_with_manager(
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 
-    match core::mem::take(&mut manager.deprecated_transitive) {
-        0 => {}
-        count => manager.log_mut().add_warning_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "{} deprecated {} among the dependencies of dependencies (--verbose lists them)",
-                count,
-                if count == 1 { "version" } else { "versions" },
-            ),
-        ),
-    }
-
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
         .log_mut()
@@ -815,26 +802,36 @@ pub fn install_with_manager(
                         .unwrap_or(false))
                 };
                 if same_packages {
-                    // Same packages, other rows: a save would rewrite it. A migration is exempt.
-                    if load_result.migrated_from().is_some()
-                        || !manager.summary.changes_dependencies()
-                    {
-                        break 'frozen_lockfile;
-                    }
-                    changed_section = Some("dependencies");
+                    break 'frozen_lockfile;
                 }
             }
 
+            if changed_section.is_none() && manager.summary.first_change.is_some() {
+                changed_section = Some("dependencies");
+            }
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
                 if let Some(section) = changed_section {
-                    bun_core::note!(
-                        "{} in package.json changed since {} was saved",
-                        section,
-                        loaded_lockfile_name(&load_result)
-                    );
+                    let lockfile_name = loaded_lockfile_name(&load_result);
+                    match &manager.summary.first_change {
+                        Some(change) if section == "dependencies" => {
+                            bun_core::note!(
+                                "{} in package.json changed since {} was saved: {}",
+                                section,
+                                lockfile_name,
+                                change
+                            );
+                        }
+                        _ => {
+                            bun_core::note!(
+                                "{} in package.json changed since {} was saved",
+                                section,
+                                lockfile_name
+                            );
+                        }
+                    }
                 }
                 bun_core::note!(
                     "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
@@ -1042,13 +1039,11 @@ pub fn install_with_manager(
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
-    // `skipped > 0` means that parts of an earlier install are still in place. Folders that the
-    // root's scripts created may be removed too, so this only runs if they run again afterwards.
+    // `skipped > 0` means part of an earlier install is still on disk.
     if !install_summary.places.is_empty()
         && install_summary.success > 0
         && install_summary.skipped > 0
         && install_summary.fail == 0
-        && (runs_root_scripts || manager.root_lifecycle_scripts.is_none())
     {
         crate::prune::remove_copies_of_the_older_layout(
             manager,
@@ -1549,7 +1544,7 @@ fn warn_unsupported_platform(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "{}@{} was not installed: unsupported platform (wants {})",
+                "skipping {}@{}: unsupported platform (wants {})",
                 pkgs.items_name()[id as usize].fmt(string_buf),
                 bun_core::fmt::for_terminal(
                     pkgs.items_resolution()[id as usize]
@@ -1579,7 +1574,7 @@ fn note_members_outside(manager: &PackageManager) {
         return;
     }
     bun_core::note!(
-        "skipped the dependencies and scripts of {} workspace{} outside the project: {}",
+        "skipping dependencies and scripts of {} workspace{} outside the project: {}",
         left_alone.len(),
         if left_alone.len() == 1 { "" } else { "s" },
         lockfile::pruned_workspaces::quoted_names(&mut left_alone.iter().copied()),
@@ -1615,7 +1610,7 @@ fn frozen_changed_section(
     root_package_json_path: &ZStr,
 ) -> Option<&'static str> {
     if manager.summary.overrides_changed {
-        Some(overrides_field_name(manager, root_package_json_path))
+        Some(overrides_field(manager, root_package_json_path).json_name())
     } else if manager.summary.catalogs_changed {
         Some("the catalog")
     } else if manager.summary.package_extensions_changed {
@@ -1627,19 +1622,19 @@ fn frozen_changed_section(
 
 #[cold]
 #[inline(never)]
-fn overrides_field_name(
+fn overrides_field(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
-) -> &'static str {
+) -> lockfile::override_map::Field {
+    use lockfile::override_map::Field;
     let log = manager.log_mut();
     let WorkspacePackageJsonCacheResult::Entry(entry) = manager
         .workspace_package_json_cache
         .get_with_path(log, root_package_json_path.as_bytes(), Default::default())
     else {
-        return "overrides";
+        return Field::Overrides;
     };
-    lockfile::override_map::Field::of(&entry.root)
-        .map_or("overrides", |(field, _)| field.json_name())
+    Field::of(&entry.root).map_or(Field::Overrides, |(field, _)| field)
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {
@@ -2114,7 +2109,7 @@ pub(crate) fn exit_on_empty_package_json(path: &[u8]) -> ! {
         "failed to parse '{}': file is empty",
         (bstr::BStr::new(path),),
     );
-    bun_core::note!("Restore package.json, or write {{}} to it to start without dependencies");
+    bun_core::note!("restore package.json, or write {{}} to start without dependencies");
     Global::exit(1)
 }
 
@@ -2397,6 +2392,23 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .collect()
 }
 
+/// Returns true if yarn would accept the locked version of `row`: it satisfies the `resolutions`
+/// rule that yarn applies to `row`, or `row`'s own range if yarn applies no rule to it.
+fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dependency = &lockfile.buffers.dependencies[row as usize];
+    crate::dedupe::effective_version_as_yarn(lockfile, row, dependency).is_some_and(|version| {
+        version.try_npm().is_some_and(|npm| {
+            let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
+            npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
+                // `*` and an empty range resolve to `latest`, which can be a prerelease.
+                && (npm.version.is_empty()
+                    || crate::npm::is_any_version_range(version.literal.slice(buf))
+                    || npm.version.satisfies(resolved.version, buf, buf))
+        })
+    })
+}
+
 /// Resolves the rows in `outside` again and returns the packages that they now resolve to. If the
 /// lockfile is frozen, `frozen` is its file name, and this exits with an error instead.
 #[cold]
@@ -2409,6 +2421,16 @@ fn reresolve_rows_outside_overrides(
     root: &mut lockfile::Package,
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
+    // yarn applies `"x@^1.0.0"` in `resolutions` only to dependencies declared as exactly `^1.0.0`.
+    // Bun also applies it to overlapping ranges like `^1.1.0`. Rows that follow yarn's rule are
+    // accepted too, so that a lockfile migrated from yarn.lock is not rejected.
+    if manager.lockfile.overrides.has_scoped()
+        && overrides_field(manager, root_package_json_path)
+            == lockfile::override_map::Field::Resolutions
+    {
+        let lockfile: &Lockfile = &manager.lockfile;
+        outside.retain(|&(row, package_id)| !is_as_yarn_resolves(lockfile, row, package_id));
+    }
     let lockfile: &Lockfile = &manager.lockfile;
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let mut is_outside = DynamicBitSet::init_empty(dependencies.len()).unwrap_or_oom();
@@ -2448,19 +2470,26 @@ fn reresolve_rows_outside_overrides(
     };
     if let Some(lockfile_name) = frozen {
         if log_level != Options::LogLevel::Silent {
-            let field = overrides_field_name(manager, root_package_json_path);
+            let field = overrides_field(manager, root_package_json_path);
             let lockfile: &Lockfile = &manager.lockfile;
             let dependency = &lockfile.buffers.dependencies[first_row as usize];
-            let wanted = crate::dedupe::effective_version(lockfile, first_row, dependency)
-                .map_or(dependency.version.literal, |version| version.literal);
+            let wanted = match field {
+                lockfile::override_map::Field::Overrides => {
+                    crate::dedupe::effective_version(lockfile, first_row, dependency)
+                }
+                lockfile::override_map::Field::Resolutions => {
+                    crate::dedupe::effective_version_as_yarn(lockfile, first_row, dependency)
+                }
+            }
+            .map_or(dependency.version.literal, |version| version.literal);
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
             );
             bun_core::note!(
-                "{} has {}, and {} in package.json asks for {}",
+                "{} has {}, {} in package.json wants {}",
                 lockfile_name,
                 bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
-                field,
+                field.json_name(),
                 bun_core::fmt::for_terminal(wanted.fmt(lockfile.buffers.string_bytes.as_slice())),
             );
             bun_core::note!(
@@ -2585,7 +2614,7 @@ fn converts_binary_lockfile_to_text(
 #[cold]
 #[inline(never)]
 fn note_migrated_lockfile_not_saved(manager: &PackageManager, source: &str) {
-    if manager.options.log_level.is_silent() {
+    if !manager.options.log_level.is_verbose() {
         return;
     }
     Output::flush();
@@ -2595,7 +2624,7 @@ fn note_migrated_lockfile_not_saved(manager: &PackageManager, source: &str) {
         "bun.lock and package.json"
     };
     bun_core::note!(
-        "the lockfile is frozen, so the migration from {} was not written to {}; run 'bun install' and commit the result",
+        "lockfile is frozen, migration from {} not written to {}; run 'bun install' and commit the result",
         source,
         files,
     );

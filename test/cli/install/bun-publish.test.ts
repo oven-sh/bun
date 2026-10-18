@@ -2424,7 +2424,7 @@ describe.concurrent("tag", () => {
     "%j is refused as the tag before a request is sent",
     async tag => {
       using mock = mockRegistry();
-      const error = `error: invalid tag "${tag}": a tag cannot be a version or a version range\n`;
+      const error = `error: invalid tag "${tag}": cannot be a version or range\n`;
 
       for (const [fields, flags] of [
         [{}, ["--tag", tag]],
@@ -2450,7 +2450,7 @@ describe.concurrent("tag", () => {
     for (const args of [[], ["./pkg.tgz"], ["--dry-run"]]) {
       const { err, exitCode } = await publish(env, String(dir), ...args);
       expect(err).toBe(
-        'error: a prerelease needs a tag: 2.0.0-beta.1 would become "latest", the version that `bun add` installs\n' +
+        'error: prerelease needs a tag: 2.0.0-beta.1 would become "latest"\n' +
           'note: pass a tag, for example bun publish --tag next, or --tag latest to publish it as "latest" anyway\n',
       );
       expect(exitCode).toBe(1);
@@ -3854,6 +3854,31 @@ describe.concurrent("--recursive and --filter", () => {
     expect(registry.asked).toEqual([]);
     expect(exitCode).toBe(1);
   });
+
+  test.each(["--filter=*", "-F=*", "-F*", "-r", "--recursive", "--filter publish"])(
+    "`bun %s publish` publishes nothing",
+    async flags => {
+      using registry = workspaceRegistry();
+      using dir = workspace(registry.mock, { named: { name: "publish", version: "1.0.0" } });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...flags.split(" "), "publish"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [flag] = flags.split(" ");
+      expect(err).toBe(
+        `error: refusing to publish: ${flag} must come after "publish"\n` +
+          `note: use bun publish ${flag}, or bun run publish to run the "publish" script\n`,
+      );
+      expect(published(out)).toEqual([]);
+      expect(registry.asked).toEqual([]);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test("--filter publishes only the matching packages", async () => {
     using registry = workspaceRegistry();

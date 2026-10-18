@@ -26,6 +26,8 @@ use crate::api::bun::process::sync as proc_sync;
 
 bun_output::declare_scope!(bunx, visible);
 
+const SEP: &[u8] = &[bun_paths::SEP];
+
 pub(crate) struct BunxCommand;
 
 /// One entry of the `bin` field in a package.json.
@@ -72,7 +74,6 @@ pub(crate) fn cache_root_name() -> Vec<u8> {
 
 /// How many packages `<base>/.bunx-<uid>` holds. The packages of one scope count as one.
 pub(crate) fn count_cached_packages(base: &[u8]) -> usize {
-    const SEP: &[u8] = &[bun_paths::SEP];
     let root = [base, SEP, cache_root_name().as_slice()].concat();
     let Ok(root) = bun_sys::Dir::open(&root) else {
         return 0;
@@ -401,7 +402,6 @@ impl BunxCommand {
         bin_name: &[u8],
         only_that_bin: bool,
     ) -> crate::Result<Option<ZBox>> {
-        const SEP: &[u8] = &[bun_paths::SEP];
         let project = strings::without_trailing_slash(project);
         let mut next_dir = Some(cwd);
         while let Some(dir) = next_dir.map(strings::without_trailing_slash) {
@@ -475,18 +475,26 @@ impl BunxCommand {
         package_name: &[u8],
         preferred: &[u8],
     ) -> crate::Result<Box<[u8]>> {
-        let mut subpath = bun_paths::path_buffer_pool::get();
-        let subpath_z = bun_core::fmt::buf_print_z(
-            &mut subpath[..],
-            format_args!(
-                "{cache}{sep}node_modules{sep}{pkg}{sep}package.json",
-                cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
-                pkg = BStr::new(package_name),
-            ),
-        )
-        .map_err(|_| crate::Error::PathTooLong)?;
-        Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), subpath_z, preferred)?.name)
+        let subpath = Self::path_in_cache(&[
+            bunx_cache_dir,
+            SEP,
+            b"node_modules",
+            SEP,
+            package_name,
+            SEP,
+            b"package.json",
+        ])?;
+        Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), &subpath, preferred)?.name)
+    }
+
+    /// Concatenates raw bytes. Formatting the path would replace invalid UTF-8 and point at a
+    /// different directory.
+    fn path_in_cache(parts: &[&[u8]]) -> crate::Result<ZBox> {
+        let path = parts.concat();
+        if path.len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(crate::Error::PathTooLong);
+        }
+        Ok(ZBox::from_vec(path))
     }
 
     /// `.bunx-<uid>`, this user's with mode 0700, is the trust boundary: nothing below is checked.
@@ -531,7 +539,7 @@ impl BunxCommand {
             }
             if create && is_shared {
                 bun_core::warn!(
-                    "bunx is installing into the shared temp directory because no cache directory of your own is usable. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write."
+                    "no usable private cache directory, installing into shared temp directory. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write."
                 );
                 // macOS replaces this process with the tool, which drops what is still buffered.
                 Output::flush();
@@ -558,7 +566,6 @@ impl BunxCommand {
         bunx_cache_dir: &[u8],
         path: &[u8],
     ) -> crate::Result<()> {
-        const SEP: &[u8] = &[bun_paths::SEP];
         let mut new_path = [bunx_cache_dir, SEP, b"node_modules", SEP, b".bin"].concat();
         if !path.is_empty() {
             new_path.push(DELIMITER);
@@ -574,18 +581,16 @@ impl BunxCommand {
         cwd: &[u8],
         bin_name: &[u8],
     ) -> crate::Result<Option<&'a ZStr>> {
-        let mut absolute_buf = bun_paths::path_buffer_pool::get();
-        let absolute = bun_core::fmt::buf_print_z(
-            &mut absolute_buf[..],
-            format_args!(
-                "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
-                cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
-                bin = BStr::new(bin_name),
-                exe = EXE_SUFFIX,
-            ),
-        )
-        .map_err(|_| crate::Error::PathTooLong)?;
+        let absolute = Self::path_in_cache(&[
+            bunx_cache_dir,
+            SEP,
+            b"node_modules",
+            SEP,
+            b".bin",
+            SEP,
+            bin_name,
+            EXE_SUFFIX.as_bytes(),
+        ])?;
         Ok(bun_which::which(
             buf,
             bunx_cache_dir,
@@ -981,7 +986,7 @@ impl BunxCommand {
             Self::cache_dir(env_loader, configured_cache, &package_fmt, true)
         else {
             Output::err_generic(
-                "bunx could not create a cache directory that only the current user can access. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory you own.",
+                "failed to create private cache directory. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory you own.",
                 (),
             );
             Global::exit(1);
@@ -1179,7 +1184,7 @@ impl BunxCommand {
                         // without a network connection would first wait for another failed attempt.
                         write_package_json(package_json);
                         bun_core::warn!(
-                            "Could not reach the registry. Using the installation of <b>{}<r> that bunx has.",
+                            "registry unreachable, using cached <b>{}<r>",
                             BStr::new(&update_request.name),
                         );
                     }

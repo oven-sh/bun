@@ -442,6 +442,25 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     },
   );
 
+  // A library tests against the catalog's version and lists the versions it supports by hand.
+  test.each([">=1.0.0", "^1.0.0 || ^2.0.0", "*"])(
+    "bun update --latest keeps the peerDependencies range %s when devDependencies uses catalog:",
+    async range => {
+      const library = { devDependencies: { "no-deps": "catalog:" }, peerDependencies: { "no-deps": range } };
+      for (const update of [
+        (dir: string) => run(dir, "update", "--latest", "-r"),
+        (dir: string) => runIn(dir, PKG1, "update", "--latest"),
+      ]) {
+        const dir = await setup(MONOREPO(library, { catalog: { "no-deps": "^1.0.0" } }));
+        expect((await update(dir)).stderr).toBe(SAVED);
+        expect(await pkg(dir, PKG1)).toMatchObject(library);
+        expect((await pkg(dir)).catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+        expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+        await expectInSync(dir);
+      }
+    },
+  );
+
   // Naming a workspace member used to rewrite the entry linking it to `workspace:*` (or, with --latest / an explicit
   // range, to send the name to the registry), and to add an entry to a root that did not declare the member.
   test.each([

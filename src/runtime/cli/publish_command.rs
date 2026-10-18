@@ -375,7 +375,7 @@ impl PublishCommand {
         let tag = manager.options.publish_config.tag;
         if dependency::Tag::infer(tag) == dependency::Tag::Npm {
             Output::err_generic(
-                "invalid tag \"{}\": a tag cannot be a version or a version range",
+                "invalid tag \"{}\": cannot be a version or range",
                 (bstr::BStr::new(tag),),
             );
             Global::crash();
@@ -386,7 +386,7 @@ impl PublishCommand {
             && bun_semver::Version::parse_exact(version).is_some_and(|it| it.tag.has_pre())
         {
             Output::err_generic(
-                "a prerelease needs a tag: {} would become \"latest\", the version that `bun add` installs",
+                "prerelease needs a tag: {} would become \"latest\"",
                 (bstr::BStr::new(package_version),),
             );
             bun_core::note!(
@@ -404,6 +404,26 @@ impl PublishCommand {
         Output::flush();
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
+
+        // `bun --filter='*' publish` means "run every workspace's `publish` script", not "publish
+        // every workspace".
+        let mut args_before_publish =
+            (bun_core::argv().into_iter().skip(1)).take_while(|arg| *arg != b"publish");
+        if let Some(flag) = args_before_publish.find(|arg| {
+            matches!(*arg, b"-r" | b"--recursive" | b"--filter")
+                || arg.starts_with(b"--filter=")
+                || arg.starts_with(b"-F")
+        }) {
+            Output::err_generic(
+                "refusing to publish: {} must come after \"publish\"",
+                (bun_fmt::escape_control_chars(flag),),
+            );
+            bun_core::note!(
+                "use <b>bun publish {}<r>, or <b>bun run publish<r> to run the \"publish\" script",
+                bun_fmt::escape_control_chars(flag)
+            );
+            Global::crash();
+        }
 
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, &cli, Subcommand::Publish) {

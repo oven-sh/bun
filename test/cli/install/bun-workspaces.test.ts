@@ -391,8 +391,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
 // pnpm and npm accept workspace members whose package.json has no "name" (vite's
 // pnpm-workspace.yaml matches dozens of test fixtures shaped like `{"type":"module"}`).
 describe("workspace member package.json without a name", () => {
-  const skippedWarning =
-    'warn: Skipping workspace "packages/fixture": its package.json has no "name", so its dependencies will not be installed\n';
+  const skippedWarning = 'warn: skipping workspace "packages/fixture": package.json has no "name"\n';
 
   async function setupMonorepo(packageDir: string, workspaces: string[], fixturePackageJson: object) {
     await Promise.all([
@@ -650,6 +649,40 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
 });
 
 // What the command installs and locks is what a clean install of the package.json it wrote gives.
+// The installed registry package has the same name and version as the new workspace.
+test.concurrent.each(["hoisted", "isolated"])(
+  "links a new workspace that has the same name and version as an installed package (%s)",
+  async linker => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const app = join(packageDir, "packages", "app");
+    const appJson = (range: string) =>
+      JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": range } });
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: { cache: join(packageDir, ".bun-cache"), registry: verdaccio.registryUrl(), linker },
+        }),
+      ),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+      write(join(app, "package.json"), appJson("1.0.0")),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    const workspace = { name: "no-deps", version: "1.0.0", description: "the workspace" };
+    await Promise.all([
+      write(join(packageDir, "packages", "no-deps", "package.json"), JSON.stringify(workspace)),
+      write(join(app, "package.json"), appJson("workspace:*")),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    const nested = join(app, "node_modules", "no-deps", "package.json");
+    const loaded = existsSync(nested) ? nested : join(packageDir, "node_modules", "no-deps", "package.json");
+    expect(await file(loaded).json()).toEqual(workspace);
+  },
+);
+
 describe.each(["hoisted", "isolated"] as const)("a member asks for a workspace that is also published (%s)", linker => {
   const registry = { name: "no-deps", version: "2.0.0" };
   test.concurrent.each([
@@ -2005,7 +2038,7 @@ describe("a local devDependency whose target is missing", () => {
   const specs = {
     "workspace:*": 'Workspace dependency "missing-local" not found',
     "link:missing-local": 'Package "missing-local" is not linked',
-    "file:../does-not-exist": 'package.json for "file:../does-not-exist" dependency "missing-local"',
+    "file:../does-not-exist": 'package.json not found for "file:../does-not-exist" dependency "missing-local"',
   } as const;
 
   async function install(ctx: TestCtx, manifest: object, ...args: string[]) {
@@ -4290,7 +4323,7 @@ describe("a workspace outside the project", () => {
   }
 
   const note = (path: string) =>
-    `note: skipped the dependencies and scripts of 1 workspace outside the project: "${path}"\n`;
+    `note: skipping dependencies and scripts of 1 workspace outside the project: "${path}"\n`;
 
   // `entry`: in "workspaces". `spec`: of the root's dependency on it. `path`: in bun.lock.
   const layouts: { entry?: string; spec?: string; path: string; link?: [path: string, target: string] }[] = [
@@ -4538,7 +4571,7 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
       }).sort();
     }
 
-    const skipped = 'note: skipped the dependencies and scripts of 1 workspace outside the project: "packages/w"\n';
+    const skipped = 'note: skipping dependencies and scripts of 1 workspace outside the project: "packages/w"\n';
 
     test.concurrent.each(["before", "after"])(
       "a command that installs, typed there %s the project is installed, changes nothing",
@@ -4569,7 +4602,7 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
           expect({ args, err }).toEqual({
             args,
             err:
-              `error: workspace "packages/w" is a link to "${real}", which is outside the project, so nothing was changed\n` +
+              `error: workspace "packages/w" links to "${real}" outside the project, no changes made\n` +
               `note: run the command in "${real}" to use that folder as its own project\n`,
           });
           expect({ args, contents: contentsOf(ctx.packageDir) }).toEqual({ args, contents: before });
@@ -4743,7 +4776,7 @@ describe("workspace packages whose name is too long to link", () => {
       env: ctx.env,
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).toContain(`error: Invalid dependency name "${name}"`);
+    expect(err).toContain(`error: invalid dependency name "${name}"`);
     expect(out).not.toContain("installed");
     expect([await exists(join(packageDir, "bun.lock")), await exists(join(packageDir, "node_modules"))]).toEqual([
       false,

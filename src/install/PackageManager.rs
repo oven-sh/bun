@@ -2,7 +2,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::collections::VecDeque;
-use std::io::Write as _;
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -24,7 +23,7 @@ use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::string_paths::without_trailing_slash_windows_path;
-use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_paths::{DELIMITER, PathBuffer, SEP};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -614,9 +613,6 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
-    // Newly resolved deprecated versions no package.json of the project names: one summary line.
-    pub(crate) deprecated_transitive: u32,
-
     // `Some` while `bun install` resolves. A "no such package" or "no such version" message about a
     // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
     // it.
@@ -934,7 +930,8 @@ impl PackageManager {
             Some(&bun_ast::Source::init_path_string(path, b"")),
             bun_ast::Loc::EMPTY,
             format_args!(
-                "This file cannot be read, and bun does not {verb} packages without its settings"
+                "cannot read {}, refusing to {verb} packages",
+                bstr::BStr::new(bun_paths::basename(path)),
             ),
         );
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -1531,41 +1528,29 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Global::crash();
     }
 
+    // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
+    let parts: [&[u8]; 3] = [
+        strings::without_trailing_slash(tempdir.name),
+        &[SEP],
+        &manager.node_gyp_tempdir_name,
+    ];
+    let node_gyp_abs_dir = parts.concat();
+
     // Add our node-gyp tempdir to the path
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
-    let mut path_var: Vec<u8> = Vec::with_capacity(
-        existing_path.len() + 1 + tempdir.name.len() + 1 + manager.node_gyp_tempdir_name.len(),
-    );
+    let mut path_var: Vec<u8> =
+        Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
     path_var.extend_from_slice(existing_path);
     if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
         path_var.push(DELIMITER);
     }
-    path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
-    path_var.push(SEP);
-    path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
+    path_var.extend_from_slice(&node_gyp_abs_dir);
     manager.env_mut().map.put(b"PATH", &path_var)?;
 
-    let path_buf_len = path_buf.len();
-    let mut cursor = &mut path_buf[..];
-    write!(
-        cursor,
-        "{}{}{}{}{}",
-        bstr::BStr::new(strings::without_trailing_slash(tempdir.name)),
-        SEP_STR,
-        bstr::BStr::new(strings::without_trailing_slash(
-            &manager.node_gyp_tempdir_name
-        )),
-        SEP_STR,
-        FILE_NAME
-    )?;
-    let written = path_buf_len - cursor.len();
-    let npm_config_node_gyp = &path_buf[..written];
-
-    let node_gyp_abs_dir = bun_core::dirname(npm_config_node_gyp).unwrap();
     manager
         .env_mut()
         .map
-        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
+        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", &node_gyp_abs_dir)?;
 
     Ok(())
 }
@@ -1780,7 +1765,6 @@ fn allocate_package_manager(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
-        wr!(deprecated_transitive, 0);
         wr!(held_messages, None);
         wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());
@@ -2104,7 +2088,7 @@ impl<'a> PackageJsonWalk<'a> {
                 && is_shared_directory(dir)
             {
                 bun_core::warn!(
-                    "other local users can add files to <b>{}<r>, so bun ignored the package.json in it",
+                    "ignoring package.json in <b>{}<r>: directory is writable by other users",
                     bstr::BStr::new(dir),
                 );
                 continue;
@@ -2335,7 +2319,7 @@ fn exit_if_started_in_member_outside(
     };
     let real_path = bun_core::fmt::escape_control_chars(real_path);
     Output::err_generic(
-        "workspace \"{}\" is a link to \"{}\", which is outside the project, so nothing was changed",
+        "workspace \"{}\" links to \"{}\" outside the project, no changes made",
         (bun_core::fmt::escape_control_chars(path), &real_path),
     );
     bun_core::note!(
@@ -3232,7 +3216,7 @@ fn init_with_runtime_once(
         log.add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!("\"{}\" cannot be read or parsed", bstr::BStr::new(&path)),
+            format_args!("cannot read or parse \"{}\"", bstr::BStr::new(&path)),
         );
         return Err(bun_resolver::Error::UnreadableConfig.into());
     }

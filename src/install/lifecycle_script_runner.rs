@@ -892,16 +892,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())));
+                // Write the raw bytes. Formatting them would replace invalid UTF-8 with U+FFFD.
+                let _ = Output::error_writer().write_all(stdout.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stdout.clear();
                 stdout.shrink_to_fit();
             }
 
             if stderr_len > 0 {
                 let stderr = self.stderr.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())));
+                let _ = Output::error_writer().write_all(stderr.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stderr.clear();
                 stderr.shrink_to_fit();
             }
@@ -946,7 +947,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     // Git dependencies are the only dependencies whose `prepare` scripts run.
                     if self.scripts.is_dependency && self.script_name().ends_with(b"prepare") {
                         bun_core::note!(
-                            "Bun does not install the devDependencies of a git dependency before its prepare scripts"
+                            "devDependencies of a git dependency are not installed before its prepare scripts"
                         );
                     }
                     self.discard_packages_with_unfinished_scripts();

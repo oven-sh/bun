@@ -898,6 +898,30 @@ export const api = { f1 };
     });
   });
 
+  // `f1` and `f2` report errors whose messages print a type, so `f3`'s return type is inferred two messages deep, where
+  // TypeScript discards errors. It caches the expression of a `return` statement without its parentheses, so the walk checks
+  // a parenthesized one again and reports. An expression body is checked again too.
+  test.each([
+    [`function f3() { return ("x" * 2); }`, 32],
+    [`function f3() { return ((("x" * 2))); }`, 34],
+    [`const f3 = () => "x" * 2;`, 25],
+    [`function f3() { return "x" * 2; }`, 0],
+    [`function f3() { return [("x" * 2)]; }`, 0],
+  ])("reports an error two messages deep only where tsc checks the expression again: %s", async (f3, column) => {
+    using dir = project({
+      "a.ts": `declare function takesNumber(n: number): number;
+export function f1() { return takesNumber({ g: f2 }); }
+export function f2() { return takesNumber({ g: f3 }); }
+export ${f3}
+`,
+    });
+    const { stdout } = await check(dir, ["--threads", "1"]);
+    const inF3 = stdout.split("\n").filter(line => line.startsWith("a.ts(4,"));
+    const message =
+      "error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
+    expect(inF3).toEqual(column ? [`a.ts(4,${column}): ${message}`] : []);
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

@@ -593,8 +593,18 @@ impl Checker<'_, '_> {
             Some(Query::LiteralProp(file, p)) => self.hir(file)[p].kind == PropKind::Getter,
             _ => false,
         };
+        // The walk checks a parenthesized `return` expression and an expression body with `checkExpression`, whoever
+        // evaluated them first.
+        let is_body = |file: FileId, e: ExprId| match self.bound(file).parent_of_expr(e) {
+            Parent::Stmt(s) => {
+                let hir = self.hir(file);
+                matches!(hir[s].kind, StmtKind::Return(_)) && is_parenthesized(hir, e)
+            }
+            Parent::FnBody(_) => true,
+            _ => false,
+        };
         let is_checked_again = match (*self.stack.get(from)?, asked_by) {
-            (Query::Expr(file, e), _) if is_return_type_from_body => {
+            (Query::Expr(file, e), _) if is_return_type_from_body || is_body(file, e) => {
                 let hir = self.hir(file);
                 is_parenthesized(hir, e)
                     || !matches!(self.bound(file).parent_of_expr(e),

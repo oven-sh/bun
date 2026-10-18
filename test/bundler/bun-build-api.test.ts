@@ -970,6 +970,40 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The .env discovery of a build reads the listing of the working directory before any module is resolved.
+  // The build loads the file into its own copy of the env: a child of the process does not get the variable.
+  test.concurrent("a build with env inlining sees a .env file written before the call", async () => {
+    using dir = tempDir("build-sees-new-dotenv", {
+      "package.json": `{}`,
+      "entry.js": `console.log(process.env.BUN_BUILD_NEW_DOTENV);\n`,
+      "driver.ts": `
+        import { writeFileSync } from "node:fs";
+        writeFileSync(".env", "BUN_BUILD_NEW_DOTENV=from-dotenv\\n");
+        const build = await Bun.build({ entrypoints: ["./entry.js"], env: "inline", throw: false });
+        const child = Bun.spawnSync({
+          cmd: [process.execPath, "--no-env-file", "-e", "console.log(process.env.BUN_BUILD_NEW_DOTENV ?? null)"],
+        });
+        console.log(
+          JSON.stringify({
+            bundle: build.success ? /console\\.log\\(.*\\);/.exec(await build.outputs[0].text())?.[0] : build.logs[0].message,
+            child: child.stdout.toString().trim(),
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "driver.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ bundle: `console.log("from-dotenv");`, child: "null" });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
     // indexed by the property position instead of a dense counter, leaving garbage in

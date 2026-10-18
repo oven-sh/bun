@@ -1,27 +1,25 @@
 use bun_alloc::AllocError;
 #[cfg(not(windows))]
+use bun_paths::typed::SubPath;
+use bun_paths::typed::{AbsPathBuf, AnyPathBuf, Pooled};
+use bun_paths::{OSPathChar, OSPathSlice};
+#[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
-// OS-unit paths are u8 on POSIX, u16
-// on Windows — encoded here via the `OSPathChar` type alias so the struct's
-// `slice()`/`slice_z()` produce the platform-native width without per-field
-// `#[cfg]` divergence.
-use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
-use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
-// Length-checked: the walker opens each directory from its parent, so entry paths are unbounded.
-type OsAbsPath = AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-// `PathSeparators::ANY` appends the walker's paths unchanged. They already use the native
-// separator, and `AUTO` would rewrite a `\` that is part of a file name on POSIX.
-type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::ANY }, { CheckLength::CHECK }>;
+use super::path_error;
+
+pub(crate) type OsAbsPathBuf = AbsPathBuf<Pooled<OSPathChar>, OSPathChar>;
+pub(crate) type OsPathBuf = AnyPathBuf<Pooled<OSPathChar>, OSPathChar>;
 
 pub(crate) struct Hardlinker {
-    pub(crate) src: OsAbsPath,
-    pub(crate) dest: OsPath,
+    pub(crate) src: OsAbsPathBuf,
+    pub(crate) dest: OsPathBuf,
     pub(crate) walker: Walker,
 }
 
+#[cfg(windows)]
 fn name_too_long() -> sys::Error {
     sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::link)
 }
@@ -29,13 +27,13 @@ fn name_too_long() -> sys::Error {
 impl Hardlinker {
     pub(crate) fn init(
         folder_dir: Fd,
-        src: AbsPath<OSPathChar, { PathSeparators::AUTO }>,
-        dest: Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }>,
+        src: OsAbsPathBuf,
+        dest: OsPathBuf,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
-            src: src.into_checked(),
-            dest: dest.into_sep::<{ PathSeparators::ANY }>().into_checked(),
+            src,
+            dest,
             walker: {
                 let mut w = bun_sys::walker_skippable::walk(
                     folder_dir,
@@ -50,11 +48,14 @@ impl Hardlinker {
     }
 
     pub(crate) fn link(&mut self) -> sys::Result<()> {
+        let path_error = path_error(sys::Tag::link);
+        let src = self.src.get().map_err(path_error)?;
+        let dest = self.dest.get().map_err(path_error)?;
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",
-                bun_core::fmt::fmt_os_path(self.src.slice(), Default::default()),
-                bun_core::fmt::fmt_os_path(self.dest.slice(), Default::default()),
+                bun_core::fmt::fmt_os_path(src.units(), Default::default()),
+                bun_core::fmt::fmt_os_path(dest.units(), Default::default()),
             );
             bun_core::output::flush();
         }
@@ -216,45 +217,43 @@ impl Hardlinker {
         #[cfg(not(windows))]
         {
             while let Some(entry) = self.walker.next()? {
-                // A `dest.save()` ResetScope would hold `&mut Path` and keep
-                // `self.dest` exclusively borrowed across the body. Capture
-                // `len()` and restore via `set_length()` after the body so the
-                // truncation runs on every exit.
-                let dest_saved_len = self.dest.len();
+                let mark = self.dest.mark();
+                self.dest.push(SubPath::from_os(entry.path.as_bytes()));
 
                 let result: sys::Result<()> = 'body: {
-                    if self.dest.append(entry.path.as_bytes()).is_err() {
-                        break 'body Err(name_too_long());
-                    }
+                    let dest = match self.dest.z() {
+                        Ok(dest) => dest,
+                        Err(err) => break 'body Err(path_error(err)),
+                    };
 
                     match entry.kind {
-                        EntryKind::Directory => Fd::cwd().make_path(self.dest.slice()),
+                        EntryKind::Directory => Fd::cwd().make_path(dest),
                         EntryKind::File => {
                             let (dir, name) = (entry.dir, entry.basename);
-                            let Err(link_err1) =
-                                sys::linkat(dir, name, Fd::cwd(), self.dest.slice_z())
-                            else {
+                            let Err(link_err1) = sys::linkat(dir, name, Fd::cwd(), dest) else {
                                 break 'body Ok(());
                             };
                             match link_err1.get_errno() {
                                 sys::E::EEXIST => {
-                                    let _ = Fd::cwd().delete_tree(self.dest.slice());
+                                    let _ = Fd::cwd().delete_tree(dest);
                                 }
                                 sys::E::ENOENT => {
-                                    let Some(dest_parent) = self.dest.dirname() else {
+                                    let Some(dest_parent) =
+                                        self.dest.get().ok().and_then(|dest| dest.parent())
+                                    else {
                                         break 'body Err(link_err1);
                                     };
-                                    let _ = Fd::cwd().make_path(dest_parent);
+                                    let _ = Fd::cwd().make_path(dest_parent.as_bytes());
                                 }
                                 _ => break 'body Err(link_err1),
                             }
-                            sys::linkat(dir, name, Fd::cwd(), self.dest.slice_z())
+                            sys::linkat(dir, name, Fd::cwd(), dest)
                         }
                         _ => Ok(()),
                     }
                 };
 
-                self.dest.set_length(dest_saved_len);
+                self.dest.back_to(mark);
 
                 result?;
             }

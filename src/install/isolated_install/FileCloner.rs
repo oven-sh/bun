@@ -1,31 +1,23 @@
-use bun_paths::path_options::{Kind, PathSeparators};
-use bun_paths::{AutoRelPath, Path};
+use bun_core::ZStr;
+use bun_paths::typed::{AnyPathBuf, Pooled};
 use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
+
+use super::path_error;
 
 // macOS clonefileat only
 
-// `cache_dir_subpath` is borrowed mutably (rather than owned) so the caller's
-// path survives a clonefile→hardlink fallback (`continue 'backend` in
-// `Installer::Task::run`). The borrow must be `&mut` because `Path::slice_z`
-// writes the NUL terminator into the pooled buf.
 pub(crate) struct FileCloner<'a> {
     pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a mut AutoRelPath,
-    pub dest_subpath: Path<u8, { Kind::ANY }, { PathSeparators::AUTO }>,
+    pub cache_dir_subpath: &'a ZStr,
+    pub dest_subpath: AnyPathBuf<Pooled>,
 }
 
 impl FileCloner<'_> {
-    fn clonefileat(&mut self) -> sys::Result<()> {
-        sys::clonefileat(
-            self.cache_dir,
-            self.cache_dir_subpath.slice_z(),
-            Fd::cwd(),
-            self.dest_subpath.slice_z(),
-        )
-    }
-
-    pub(crate) fn clone(&mut self) -> sys::Result<()> {
-        match self.clonefileat() {
+    pub(crate) fn clone(&self) -> sys::Result<()> {
+        let dest = (self.dest_subpath.z()).map_err(path_error(sys::Tag::clonefile))?;
+        let clonefileat =
+            || sys::clonefileat(self.cache_dir, self.cache_dir_subpath, Fd::cwd(), dest);
+        match clonefileat() {
             Ok(()) => Ok(()),
             Err(err) => match err.get_errno() {
                 Errno::EEXIST => {
@@ -36,16 +28,18 @@ impl FileCloner<'_> {
                     // to wipe and re-clone here — we're only ever writing
                     // into a per-process staging directory or a project-local
                     // path, never into a published shared directory.
-                    let _ = Fd::cwd().delete_tree(self.dest_subpath.slice());
-                    self.clonefileat()
+                    let _ = Fd::cwd().delete_tree(dest);
+                    clonefileat()
                 }
 
                 Errno::ENOENT => {
-                    let Some(parent_dest_dir) = self.dest_subpath.dirname() else {
+                    let Some(parent_dest_dir) =
+                        (self.dest_subpath.get().ok()).and_then(|dest| dest.parent())
+                    else {
                         return Err(err);
                     };
-                    let _ = Fd::cwd().make_path(parent_dest_dir);
-                    self.clonefileat()
+                    let _ = Fd::cwd().make_path(parent_dest_dir.as_bytes());
+                    clonefileat()
                 }
                 _ => Err(err),
             },

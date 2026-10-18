@@ -34,8 +34,11 @@ use bun_collections::{
     StringArrayHashMap, index_sort,
 };
 use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
-use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath};
+use bun_paths::platform::{Loose, Posix};
+use bun_paths::typed::{
+    AbsPathBuf, Component, PathError, RelPathBuf, Scratch, Storage, top_level_dir,
+};
+use bun_paths::{self as paths, component};
 use bun_semver as semver;
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
@@ -86,6 +89,17 @@ struct DedupeInfo {
 struct QueuedEntry {
     node_id: store::node::Id,
     entry_parent_id: store::entry::Id,
+}
+
+/// For `map_err` on what a `typed::PathBuf` gives.
+pub(crate) fn path_error(tag: sys::Tag) -> impl Fn(PathError) -> sys::Error + Copy {
+    move |err| {
+        let errno = match err {
+            PathError::TooLong => sys::E::ENAMETOOLONG,
+            PathError::Escapes | PathError::Absolute | PathError::BadName => sys::E::EINVAL,
+        };
+        sys::Error::from_code(errno, tag)
+    }
 }
 
 /// The DefinitelyTyped name: `react` -> `@types/react`, `@scope/pkg` -> `@types/scope__pkg`.
@@ -1479,32 +1493,31 @@ pub(crate) fn move_node_modules_aside(
     keep_links: bool,
     log_level: LogLevel,
 ) -> Option<OldModules> {
-    let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
+    let (mut old_modules_mem, mut node_modules_mem) = (Scratch::new(), Scratch::new());
+    let mut old_modules = RelPathBuf::from_in(&mut old_modules_mem, component!("node_modules"));
     let rand = fast_random();
-    old_modules
-        .append_fmt(format_args!(
-            "{}{}",
-            OldModules::PREFIX,
-            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-        ))
-        .assume_ok();
-    if sys::mkdirat(Fd::cwd(), old_modules.slice_z(), 0o755).is_err() {
+    old_modules.push_fmt(format_args!(
+        "{}{}",
+        OldModules::PREFIX,
+        bun_fmt::hex_lower(bun_core::bytes_of(&rand))
+    ));
+    if sys::mkdirat(Fd::cwd(), old_modules.z().ok()?, 0o755).is_err() {
         return None;
     }
-    let old_modules_name = old_modules.basename().to_vec();
+    let old_modules_name = old_modules.get().ok()?.basename()?.as_bytes().to_vec();
     let mut not_cleared: Vec<Box<[u8]>> = Vec::new();
     // Nothing is moved out of a `node_modules` that is a symlink. See `LinkedNodeModules`.
     // Returns `None` if `node_modules` does not exist.
-    let mut is_linked = |node_modules: &mut AutoRelPath| {
-        let is_linked = LinkedNodeModules::is_at(node_modules.slice_z())?;
-        if is_linked && holds_a_tree(node_modules.slice(), &old_modules_name) {
-            not_cleared.push(node_modules.slice().into());
+    let mut is_linked = |node_modules: &bun_core::ZStr| {
+        let is_linked = LinkedNodeModules::is_at(node_modules)?;
+        if is_linked && holds_a_tree(node_modules, &old_modules_name) {
+            not_cleared.push(node_modules.as_bytes().into());
         }
         Some(is_linked)
     };
 
-    let mut node_modules = AutoRelPath::from(b"node_modules").assume_ok();
-    if is_linked(&mut node_modules) == Some(false) {
+    let mut node_modules = RelPathBuf::from_in(&mut node_modules_mem, component!("node_modules"));
+    if is_linked(paths::path_literal!("node_modules")) == Some(false) {
         move_entries_aside(&mut node_modules, &mut old_modules, keep_links, log_level);
     }
 
@@ -1513,17 +1526,16 @@ pub(crate) fn move_node_modules_aside(
         if lockfile.is_member_path_outside(workspace_path) {
             continue;
         }
-        let mut workspace_node_modules = AutoRelPath::from(workspace_path).assume_ok();
-        workspace_node_modules.append(b"node_modules").assume_ok();
-        if is_linked(&mut workspace_node_modules) != Some(false) {
+        let mut workspace_node_modules = RelPathBuf::new_in(&mut node_modules_mem);
+        let _ = workspace_node_modules.join_below::<Loose>(workspace_path);
+        workspace_node_modules.push(component!("node_modules"));
+        if workspace_node_modules.z().ok().and_then(&mut is_linked) != Some(false) {
             continue;
         }
 
         // Not the folder's name: `apps/web` and `packages/web` would collide.
-        let old_modules_len = old_modules.len();
-        old_modules
-            .append_fmt(format_args!(".old_{i}_modules"))
-            .assume_ok();
+        let old_modules_dir = old_modules.mark();
+        old_modules.push_fmt(format_args!(".old_{i}_modules"));
 
         move_entries_aside(
             &mut workspace_node_modules,
@@ -1531,13 +1543,15 @@ pub(crate) fn move_node_modules_aside(
             false,
             log_level,
         );
-        let _ = sys::rmdir(workspace_node_modules.slice_z());
+        if let Ok(workspace_node_modules) = workspace_node_modules.z() {
+            let _ = sys::rmdir(workspace_node_modules);
+        }
 
-        old_modules.set_length(old_modules_len);
+        old_modules.back_to(old_modules_dir);
     }
     LinkedNodeModules::warn_not_cleared(log_level, &not_cleared);
 
-    if sys::rmdir(old_modules.slice_z()).is_ok() {
+    if sys::rmdir(old_modules.z().ok()?).is_ok() {
         // nothing was there
         return None;
     }
@@ -1584,46 +1598,54 @@ fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
 /// Creates `to` and moves every entry that a linker created from `from` into it. `to` may be a
 /// directory inside `from`.
 fn move_entries_aside(
-    from: &mut AutoRelPath,
-    to: &mut AutoRelPath,
+    from: &mut RelPathBuf<impl Storage<u8>>,
+    to: &mut RelPathBuf<impl Storage<u8>>,
     keep_links: bool,
     log_level: LogLevel,
 ) {
     use bun_sys::FdExt as _;
 
-    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), from.slice()) else {
+    let (Ok(from_dir), Ok(to_dir)) = (from.z(), to.z()) else {
         return;
     };
-    let _ = sys::mkdirat(Fd::cwd(), to.slice_z(), 0o755);
+    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), from_dir) else {
+        return;
+    };
+    let _ = sys::mkdirat(Fd::cwd(), to_dir, 0o755);
     let mut iter = sys::iterate_dir(dir);
     while let Ok(Some(entry)) = iter.next() {
-        let name = entry.name.slice_u8();
-        if !is_a_linkers(name) || name == to.basename() {
+        let name = Component::from_os(entry.name.slice_u8());
+        if !is_a_linkers(name.as_bytes()) || to.get().is_ok_and(|to| to.basename() == Some(name)) {
             continue;
         }
         if keep_links && entry.kind == sys::EntryKind::SymLink {
             continue;
         }
 
-        let (from_len, to_len) = (from.len(), to.len());
-        from.append(name).assume_ok();
-        to.append(name).assume_ok();
+        let (from_dir, to_dir) = (from.mark(), to.mark());
+        from.push(name);
+        to.push(name);
 
-        if entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
+        if entry.kind == sys::EntryKind::Directory && name.as_bytes()[0] == b'@' {
             move_entries_aside(from, to, keep_links, log_level);
-            let _ = sys::rmdir(from.slice_z());
-        } else if let Err(err) = move_or_delete(from.slice_z(), to.slice_z())
-            && log_level != LogLevel::Silent
+            if let Ok(from) = from.z() {
+                let _ = sys::rmdir(from);
+            }
+        } else if let Err(err) = match (from.z(), to.z()) {
+            (Ok(from), Ok(to)) => move_or_delete(from, to),
+            (Err(err), _) | (_, Err(err)) => Err(path_error(sys::Tag::rename)(err)),
+        } && log_level != LogLevel::Silent
         {
+            // MISFIT: a path that did not fit cannot be shown, so only its last name is.
             bun_core::warn!(
                 "{}: failed to remove {} (installed by another linker)",
                 BStr::new(err.name()),
-                BStr::new(from.slice()),
+                BStr::new(from.get().map_or(name.as_bytes(), |from| from.as_bytes())),
             );
         }
 
-        from.set_length(from_len);
-        to.set_length(to_len);
+        from.back_to(from_dir);
+        to.back_to(to_dir);
     }
     dir.close();
 }
@@ -2057,9 +2079,10 @@ pub(crate) fn install_isolated_packages(
     };
 
     let linked = {
-        let mut node_modules = AbsPath::init_top_level_dir();
-        node_modules.append(b"node_modules").assume_ok();
-        LinkedNodeModules::at(node_modules.slice_z())
+        let mut mem = Scratch::new();
+        let mut node_modules = AbsPathBuf::from_in(&mut mem, top_level_dir());
+        node_modules.push(component!("node_modules"));
+        node_modules.z().ok().and_then(LinkedNodeModules::at)
     };
 
     // setup node_modules/.bun
@@ -2305,9 +2328,12 @@ pub(crate) fn install_isolated_packages(
                     // copied the project into the store, so that copy is deleted.
                     if !is_new_bun_modules {
                         use bun_sys::FdExt as _;
-                        let mut old_copy: AbsPath = AbsPath::init_top_level_dir();
+                        let mut mem = Scratch::new();
+                        let mut old_copy = AbsPathBuf::from_in(&mut mem, top_level_dir());
                         installer.append_local_store_entry_path(&mut old_copy, entry_id);
-                        let _ = Fd::cwd().delete_tree(old_copy.slice());
+                        if let Ok(old_copy) = old_copy.z() {
+                            let _ = Fd::cwd().delete_tree(old_copy);
+                        }
                     }
                     installer.set_step(entry_id, Step::Done);
                     installer.on_task_complete(entry_id, CompleteState::Skipped);
@@ -2326,10 +2352,12 @@ pub(crate) fn install_isolated_packages(
                 }
                 ResolutionTag::Symlink => {
                     // Same target check as the hoisted linker's `install_from_link`.
-                    let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
+                    let mut mem = Scratch::new();
+                    let mut link_target = AbsPathBuf::from_in(&mut mem, top_level_dir());
                     installer.append_store_path(&mut link_target, entry_id);
-                    match expect_directory(link_target.slice_z()) {
-                        Ok(()) => installer.start_link_task(entry_id, link_target.slice_z()),
+                    let link_target = link_target.z().map_err(path_error(sys::Tag::fstatat));
+                    match link_target.and_then(|target| expect_directory(target).map(|()| target)) {
+                        Ok(target) => installer.start_link_task(entry_id, target),
                         Err(err) => installer.on_task_fail(entry_id, &TaskError::LinkPackage(err)),
                     }
                 }
@@ -2364,10 +2392,14 @@ pub(crate) fn install_isolated_packages(
 
                     // folders are always hardlinked to keep them up-to-date
                     if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
-                        let mut store_path: AbsPath = AbsPath::init_top_level_dir();
+                        let mut mem = Scratch::new();
+                        let mut store_path = AbsPathBuf::from_in(&mut mem, top_level_dir());
                         installer.append_real_store_path(&mut store_path, entry_id, Which::Final);
-                        if let (Ok(src), Ok(dest)) =
-                            (sys::Dir::open(folder), sys::Dir::open(store_path.slice()))
+                        if let Ok(store_path) = store_path.get()
+                            && let (Ok(src), Ok(dest)) = (
+                                sys::Dir::open(folder),
+                                sys::Dir::open(store_path.as_bytes()),
+                            )
                             && crate::package_install::is_linked_folder(&src, &dest)
                         {
                             installer.start_relink_task(entry_id);
@@ -2400,35 +2432,33 @@ pub(crate) fn install_isolated_packages(
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, PatchInfo::Remove)
                         || 'needs_install: {
-                            let mut store_path: AbsPath = AbsPath::init_top_level_dir();
+                            let mut mem = Scratch::new();
                             if uses_global_store {
                                 // Global entries are built under a per-process
                                 // staging path and renamed into place as the
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
-                                installer.append_global_store_entry_path(&mut store_path, entry_id, Which::Final);
-                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
+                                let store_path = installer.global_store_entry_path_in(&mut mem, entry_id, Which::Final);
+                                break 'needs_install !store_path.z().ok()
+                                    .and_then(|store_path| sys::directory_exists_at(Fd::cwd(), store_path).ok())
                                     .unwrap_or(false);
                             }
                             // Likewise, the package directory appears here only once fully linked.
+                            let mut store_path = AbsPathBuf::from_in(&mut mem, top_level_dir());
                             installer.append_local_store_entry_path(&mut store_path, entry_id);
-                            let local_entry_len = store_path.len();
-                            store_path.append(b"node_modules").assume_ok();
-                            store_path.append(pkg_name.slice(string_buf)).assume_ok();
-                            let package_len = store_path.len();
-                            let mut hash_buf: install::BuntagHashBuf = Default::default();
-                            store_path
-                                .append(installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf))
-                                .assume_ok();
+                            let local_entry = store_path.mark();
+                            store_path.push(component!("node_modules"));
+                            let _ = store_path.join_below::<Posix>(pkg_name.slice(string_buf));
+                            let package = store_path.mark();
+                            installer::push_installed_marker(&mut store_path, pkg_res.tag, &patch_info);
                             // `exists` follows the link of an entry that left the global store.
-                            if !sys::exists_z(store_path.slice_z()) {
+                            if !store_path.z().is_ok_and(sys::exists_z) {
                                 break 'needs_install true;
                             }
                             // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.
                             if matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball) {
-                                store_path.set_length(package_len);
-                                store_path.append(crate::package_install::BUN_TAG).assume_ok();
-                                let is_current = sys::File::read_from(Fd::cwd(), store_path.slice()).is_ok_and(|tag| {
+                                store_path.back_to(package).push(installer::BUN_TAG_NAME);
+                                let is_current = store_path.z().ok().and_then(|tag| sys::File::read_from(Fd::cwd(), tag).ok()).is_some_and(|tag| {
                                     crate::package_install::tarball_tag_matches(
                                         &tag,
                                         &pkgs.items_meta()[pkg_id as usize].integrity,
@@ -2442,19 +2472,30 @@ pub(crate) fn install_isolated_packages(
                             if cfg!(windows) {
                                 // The `..` check below does not work on Windows, which removes `..`
                                 // from a path before it follows links.
-                                store_path.set_length(local_entry_len);
-                                break 'needs_install installer::is_link(store_path.slice_z()) == Some(true);
+                                break 'needs_install store_path.back_to(local_entry).z()
+                                    .is_ok_and(|entry| installer::is_link(entry) == Some(true));
                             }
                             // `..` goes up from a symlink's target. If part of this path is a link
                             // out of the store, going back up does not reach `node_modules/.bun`.
-                            store_path.set_length(package_len);
-                            let up: &[u8] = if bun_core::strings::contains_char(pkg_name.slice(string_buf), b'/') {
-                                b"../../../.."
-                            } else {
-                                b"../../.."
+                            let Ok(package) = store_path.back_to(package).get() else {
+                                break 'needs_install true;
                             };
-                            store_path.append(up).assume_ok();
-                            !sys::stat(store_path.slice_z()).is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
+                            let up: &[u8] = if bun_core::strings::contains_char(pkg_name.slice(string_buf), b'/') {
+                                b"/../../../.."
+                            } else {
+                                b"/../../.."
+                            };
+                            // MISFIT: no view holds a `..` that the OS is to resolve after a name, so this is raw bytes.
+                            let mut up_buf = paths::path_buffer_pool::get();
+                            let up_len = package.len() + up.len();
+                            if up_len >= up_buf.len() {
+                                break 'needs_install true;
+                            }
+                            up_buf[..package.len()].copy_from_slice(package.as_bytes());
+                            up_buf[package.len()..up_len].copy_from_slice(up);
+                            up_buf[up_len] = 0;
+                            !sys::stat(bun_core::ZStr::from_buf(&up_buf[..], up_len))
+                                .is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
                         };
 
                     if !needs_install {

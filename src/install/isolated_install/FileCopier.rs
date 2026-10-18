@@ -2,36 +2,33 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
-// The path-builder types here use the OS path unit: u8 on POSIX,
-// u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
-// the platform-native width. The auto separator mode normalizes `/` → `\` on Windows
-// during `from`/`append`, which is load-bearing for the Win32 calls below.
-// Length-checked like the Hardlinker's paths: the walker entries appended on Windows are unbounded.
-type AbsPathAutoOs =
-    bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-type PathAutoOs =
-    bun_paths::Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
+#[cfg(windows)]
+use super::hardlinker::OsAbsPathBuf;
+use super::hardlinker::OsPathBuf;
+#[cfg(not(windows))]
+use super::path_error;
 
 pub(crate) struct FileCopier {
-    pub(crate) src_path: AbsPathAutoOs,
-    pub(crate) dest_subpath: PathAutoOs,
+    #[cfg(windows)]
+    pub(crate) src_path: OsAbsPathBuf,
+    pub(crate) dest_subpath: OsPathBuf,
     pub(crate) walker: Walker,
 }
 
 impl FileCopier {
     pub(crate) fn init(
         src_dir: Fd,
-        src_path: bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }>,
-        dest_subpath: bun_paths::Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }>,
+        #[cfg(windows)] src_path: OsAbsPathBuf,
+        dest_subpath: OsPathBuf,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
-            src_path: src_path.into_checked(),
-            dest_subpath: dest_subpath.into_checked(),
+            #[cfg(windows)]
+            src_path,
+            dest_subpath,
             walker: {
                 let mut w = walker_skippable::walk(
                     src_dir,
@@ -53,8 +50,7 @@ impl FileCopier {
         // narrow it via the same infallible `from_w_path` transcode that
         // `bun_sys::make_path_w` uses. Don't synthesise EINVAL on
         // conversion — store paths are built from UTF-8 package names and are
-        // always WTF-8 round-trippable. On POSIX `OSPathChar == u8` and
-        // `slice_z()` already yields `&ZStr`, so deref-coerce to `&[u8]`.
+        // always WTF-8 round-trippable.
         #[cfg(windows)]
         let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
@@ -62,7 +58,9 @@ impl FileCopier {
             bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest_subpath.slice())
                 .as_bytes();
         #[cfg(not(windows))]
-        let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
+        let dest_subpath_u8: &[u8] = (self.dest_subpath.get())
+            .map_err(path_error(sys::Tag::copyfile))?
+            .as_bytes();
         let dest_dir = match bun_sys::make_path::make_open_path(
             &Dir::cwd(),
             dest_subpath_u8,

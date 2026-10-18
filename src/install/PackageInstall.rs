@@ -263,26 +263,37 @@ impl StagingLock {
 /// The sibling `.bun-tmp-<hash>` a package is linked in before it is renamed onto its real path.
 pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8], pub(crate) Staging);
 
-impl StagingPath<'_> {
+impl<'a> StagingPath<'a> {
     pub(crate) const PREFIX: &'static str = ".bun-tmp-";
-}
 
-impl core::fmt::Display for StagingPath<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    /// The directories it shares with the package, with their last `/`.
+    pub(crate) fn scope(&self) -> &'a [u8] {
+        let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
+        &self.0[..name_start]
+    }
+
+    /// Its name in `scope`.
+    pub(crate) fn name(&self) -> StagingName {
         let seed = match self.1 {
             Staging::Unlocked(seed) => seed,
             Staging::Locked | Staging::Off => 0,
         };
-        let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
-        let scope = &self.0[..name_start];
         // A hash, because the name can be NAME_MAX long already.
-        write!(
-            f,
-            "{}{}{:016x}",
-            bstr::BStr::new(scope),
-            Self::PREFIX,
-            bun_wyhash::hash_with_seed(seed, self.0)
-        )
+        StagingName(bun_wyhash::hash_with_seed(seed, self.0))
+    }
+}
+
+pub(crate) struct StagingName(u64);
+
+impl core::fmt::Display for StagingName {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}{:016x}", StagingPath::PREFIX, self.0)
+    }
+}
+
+impl core::fmt::Display for StagingPath<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}{}", bstr::BStr::new(self.scope()), self.name())
     }
 }
 

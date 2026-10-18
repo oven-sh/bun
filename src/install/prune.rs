@@ -9,7 +9,7 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
-use bun_paths::path_options::AssumeOk as _;
+use bun_paths::typed::{AbsPath, AbsPathBuf, Storage};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2095,20 +2095,15 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve<const KIND: u8, const SEP: u8>(
-        &self,
-        path: &mut bun_paths::Path<u8, KIND, SEP>,
-    ) -> bool {
-        let below = match path.slice().strip_prefix(&*self.abs_path) {
-            Some([]) => Vec::new(),
-            Some([sep, below @ ..]) if bun_paths::is_sep_any(*sep) => below.to_vec(),
-            _ => return false,
-        };
-        if !self.real_path.is_empty() {
-            *path = bun_paths::Path::from(&*self.real_path).assume_ok();
-            path.append(&below).assume_ok();
+    pub(crate) fn resolve(&self, path: &mut AbsPathBuf<impl Storage<u8>>) -> bool {
+        // BOUNDARY: `at` takes the `z()` of an `AbsPathBuf` and keeps its bytes.
+        let abs_path = AbsPath::from_os(&self.abs_path);
+        if self.real_path.is_empty() {
+            return path
+                .get()
+                .is_ok_and(|path| path.strip_prefix(abs_path).is_some());
         }
-        true
+        path.rebase(abs_path, AbsPath::from_os(&self.real_path))
     }
 
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a

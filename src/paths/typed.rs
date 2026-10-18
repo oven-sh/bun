@@ -34,6 +34,8 @@ use crate::resolve_path::{Platform, PlatformT};
 pub trait View {
     type Unit: PathUnit;
     const ABSOLUTE: Absolute;
+    /// Whether it may start with `..` components.
+    const CLIMBS: bool;
     #[doc(hidden)]
     fn wrap(units: &[Self::Unit]) -> &Self;
     fn units(&self) -> &[Self::Unit];
@@ -102,10 +104,11 @@ macro_rules! derefs_to {
     };
 }
 macro_rules! buildable {
-    ($name:ident, $absolute:ident) => {
+    ($name:ident, $absolute:ident, climbs: $climbs:literal) => {
         impl<C: PathUnit> View for $name<C> {
             type Unit = C;
             const ABSOLUTE: Absolute = Absolute::$absolute;
+            const CLIMBS: bool = $climbs;
             #[inline(always)]
             fn wrap(units: &[C]) -> &Self {
                 Self::wrap_units(units)
@@ -142,9 +145,10 @@ derefs_to!(Component => SubPath);
 derefs_to!(SubPath => RelPath);
 derefs_to!(RelPath => Path);
 derefs_to!(AbsPath => Path);
-buildable!(Path, Maybe);
-buildable!(AbsPath, Always);
-buildable!(RelPath, Never);
+buildable!(Path, Maybe, climbs: true);
+buildable!(AbsPath, Always, climbs: false);
+buildable!(RelPath, Never, climbs: true);
+buildable!(SubPath, Never, climbs: false);
 
 pub enum Classified<'a, C> {
     Abs(&'a AbsPath<C>),
@@ -599,6 +603,7 @@ pub struct PathBuf<V: View + ?Sized, S: Storage<V::Unit>> {
 }
 pub type AbsPathBuf<S, C = u8> = PathBuf<AbsPath<C>, S>;
 pub type RelPathBuf<S, C = u8> = PathBuf<RelPath<C>, S>;
+pub type SubPathBuf<S, C = u8> = PathBuf<SubPath<C>, S>;
 pub type AnyPathBuf<S, C = u8> = PathBuf<Path<C>, S>;
 
 impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
@@ -618,6 +623,16 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     /// Replaces the whole path, and forgets an earlier failure.
     #[inline]
     pub fn set(&mut self, path: &V) -> &mut Self {
+        self.len = 0;
+        self.err = None;
+        self.write(0, false, path.units());
+        self
+    }
+
+    /// [`set`](Self::set) to an absolute path. Not for a view that is never absolute.
+    #[inline]
+    pub fn set_abs(&mut self, path: &AbsPath<V::Unit>) -> &mut Self {
+        const { assert!(!matches!(V::ABSOLUTE, Absolute::Never)) };
         self.len = 0;
         self.err = None;
         self.write(0, false, path.units());
@@ -789,7 +804,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     }
 
     /// Removes the last name, as `..` does: a root stays, and a relative path with nothing left to
-    /// remove gets a `..`.
+    /// remove gets a `..`, or fails if it is a `SubPath`.
     #[inline]
     pub fn up(&mut self) -> &mut Self {
         self.up_to(self.root());
@@ -802,9 +817,11 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         let last = last_sep(below).map_or(0, |i| i + 1);
         if !below.is_empty() && !is_dot_dot(&below[last..]) {
             self.truncate(floor + last.saturating_sub(1));
-        } else if floor == 0 {
+        } else if floor == 0 && V::CLIMBS {
             let dots = [V::Unit::from_u8(b'.'); 2];
             self.write(self.len, self.needs_sep(), &dots);
+        } else if floor == 0 {
+            self.err = Some(PathError::Escapes);
         }
     }
 
@@ -846,6 +863,34 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         };
         this.write(0, false, &[]);
         this
+    }
+}
+
+impl<C: PathUnit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
+    /// Moves the path from `from`, or below it, to the same place below `to`, in place. False, and
+    /// no change, if it is neither `from` nor below it.
+    pub fn rebase(&mut self, from: &AbsPath<C>, to: &AbsPath<C>) -> bool {
+        let Some(below) = AbsPath::wrap_units(self.written()).strip_prefix(from) else {
+            return false;
+        };
+        let below = below.len();
+        let start = to.len() + usize::from(below > 0 && !to.is_root());
+        if !self.mem.reserve(self.len, start + below + 1) {
+            self.err = Some(PathError::TooLong);
+            return true;
+        }
+        // SAFETY: `reserve` made room for `start + below + 1` units, the last `below` written units
+        // may overlap where they go, and `to` is not in `mem`, which `self` borrows mutably or owns.
+        unsafe {
+            let base = self.mem.ptr_mut();
+            core::ptr::copy(base.add(self.len - below), base.add(start), below);
+            base.add(start + below).write(C::from_u8(0));
+            // Overwritten by `to` when there is no separator to write.
+            base.add(start - 1).write(C::from_u8(SEP));
+            core::ptr::copy_nonoverlapping(to.units().as_ptr(), base, to.len());
+        }
+        self.len = start + below;
+        true
     }
 }
 

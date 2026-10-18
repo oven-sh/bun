@@ -7,6 +7,7 @@ use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::platform;
 use bun_paths::resolve_path;
+use bun_paths::typed::Pooled;
 use bun_paths::{AbsPath, Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
@@ -14,6 +15,7 @@ use crate::bin;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _, without_build_tag};
+use crate::isolated_install::hardlinker::OsPathBuf;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
 use crate::isolated_install::{FileCopier, build_whole_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
@@ -1508,24 +1510,15 @@ fn copy_cache_entry(
     // Open the cache entry before changing anything, because it may no longer exist.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
-    // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
-    // is generic over the *input* width and converts internally, so accepting
-    // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
-    // is required so `/` is normalized to `\` on Windows. On POSIX it turns a `\` into a `/`, so
-    // `from_cwd` keeps the project's own path, which may contain a `\`, out of `to`.
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let to = from_cwd(sys::getcwd_z(&mut cwd_buf)?.as_bytes(), to);
-    let dest_subpath = bun_paths::Path::<
-        bun_paths::OSPathChar,
-        { bun_paths::path_options::Kind::ANY },
-        { bun_paths::path_options::PathSeparators::AUTO },
-    >::from(to.as_slice())?;
+    // BOUNDARY: `to` is raw bytes in this file.
+    let mut dest_subpath = OsPathBuf::new_in(Pooled::new());
+    let _ = dest_subpath.join::<platform::Auto>(to);
 
+    #[cfg(windows)]
     let src_path: bun_paths::AbsPath<
         bun_paths::OSPathChar,
         { bun_paths::path_options::PathSeparators::AUTO },
     > = 'src_path: {
-        #[cfg(windows)]
         {
             let mut path_buf = bun_paths::w_path_buffer_pool::get();
             let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
@@ -1539,15 +1532,12 @@ fn copy_cache_entry(
 
             break 'src_path sp;
         }
-
-        // unused if not windows
-        #[cfg(not(windows))]
-        {
-            break 'src_path bun_paths::AbsPath::init();
-        }
     };
 
+    #[cfg(windows)]
     FileCopier::init(cached_package_folder.fd, src_path, dest_subpath, &[])?.copy()?;
+    #[cfg(not(windows))]
+    FileCopier::init(cached_package_folder.fd, dest_subpath, &[])?.copy()?;
     Ok(())
 }
 

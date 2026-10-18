@@ -1533,7 +1533,8 @@ enum RowEvidence {
     /// The walk found a copy that is outside an optional peer's range. If the peer resolved to any
     /// other package, that package would be printed in this row's own path.
     Refused,
-    /// The copy printed in the package's own path, only there for the package's own edge.
+    /// The copy that's printed under the package's own path. It's only there for the package's own
+    /// dependency.
     OwnEntry,
     /// The walk found nothing, so the optional peer is unresolved. A resolved one has a copy above
     /// every path that its package is printed at.
@@ -3079,8 +3080,8 @@ pub(crate) fn resolve_peer_dep_version_based(
     )
 }
 
-/// For each package name, the packages that nothing provides a peer dependency on it for, and their
-/// required peer dependencies on it, one per distinct range. Filled on demand.
+/// For each package name: the packages that have no provider for a peer dependency on that name,
+/// and their required peer dependencies on it, one per distinct range. Filled on demand.
 #[derive(Default)]
 pub(crate) struct PeerRangeCache(
     core::cell::RefCell<HashMap<PackageNameHash, (DynamicBitSet, Box<[DependencyID]>)>>,

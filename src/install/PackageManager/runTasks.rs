@@ -453,7 +453,7 @@ fn run_tasks_erased(
 
     const DOWNLOAD: &str = ProgressStrings::DOWNLOAD_EMOJI;
     const EXTRACT: &str = ProgressStrings::EXTRACT_EMOJI;
-    // The first task of a pass names the line of the progress bar.
+    // The progress bar shows the name of the first task in each pass.
     let name_progress = |manager: &mut PackageManager, name: &[u8], emoji: &str| {
         if log_level.show_progress() && !has_updated_this_run.replace(true) {
             manager.set_node_name::<true>(manager.downloads_node_mut(), name, emoji.as_bytes());
@@ -1458,7 +1458,8 @@ fn run_tasks_erased(
                         }
                     }
 
-                    // git's own lines were warnings if the requiring dependency joined later.
+                    // If the dependency that requires it joined later, git's own output was only
+                    // logged as warnings, so report the error here.
                     if !is_required || !cb.is_store_installer {
                         add_error_or_warning_pretty!(
                             manager.log_mut(),
@@ -1473,7 +1474,8 @@ fn run_tasks_erased(
 
                 manager.git_repositories.insert(task.id, repo_fd);
 
-                // `bun pm fetch` has no installer, and parks its checkouts on the clone like one.
+                // `bun pm fetch` has no installer, but like an installer, it queues its checkouts
+                // on the clone task.
                 let has_checkout_waiters = cb.has_on_extract
                     || manager.task_queue.get(&task.id).is_some_and(|waiters| {
                         waiters.iter().any(|waiter| {

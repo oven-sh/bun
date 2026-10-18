@@ -320,7 +320,7 @@ fn peers_served_in(
 
 /// A dependency's directory under `node_modules/.bun`.
 pub struct StoreFolder {
-    /// One of the edges that resolve to it.
+    /// One of the dependencies that resolve to it.
     pub dep_id: DependencyID,
     pub pkg_id: PackageID,
     /// Edges between the root and `dep_id`'s owner.
@@ -2528,7 +2528,8 @@ pub(crate) fn install_isolated_packages(
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
-                        // no entry name until extraction records a tarball's integrity
+                        // A tarball's cache entry has no name until extraction records its
+                        // integrity.
                         _ if cache_subpath_z.is_empty() => true,
                         install::PreinstallState::Done => false,
                         _ => {

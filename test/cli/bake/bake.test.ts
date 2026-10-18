@@ -125,7 +125,7 @@ test.concurrent.each([
     name: "routes that are not an object",
     waits: true,
     files: { "app/server.ts": `export default { routes: null };` },
-    error: `The "routes" argument must be of type object`,
+    error: `"app/server.ts": "routes" must be an object.`,
   },
   {
     name: "a default export that is not an object",
@@ -156,7 +156,7 @@ test.concurrent.each([
   {
     name: "nothing to serve",
     files: { "README.md": "" },
-    error: `there are no pages in app/pages/ and no app/server.ts.`,
+    error: `Add a page, such as app/pages/index.html, or an app/server.ts.`,
   },
   {
     name: "an unknown argument",
@@ -229,7 +229,7 @@ test.concurrent.each([
     name: "plugins in bake.config.ts that are not an array",
     waits: true,
     files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: {} };` },
-    error: `The "plugins" argument must be of type array.`,
+    error: `"bake.config.ts": "plugins" must be an array.`,
   },
   {
     name: "a plugin in bake.config.ts that is not an object",
@@ -269,7 +269,11 @@ test.concurrent.each([
     await output.waitFor(/url: /);
   } else {
     expect(await proc.exited).toBe(1);
+    // One line, once: not a stack trace into Bun's own code, and not again as an unhandled rejection.
+    expect(output.text.trim()).toBe(`error: ${output.text.trim().slice("error: ".length)}`);
+    expect(output.text.split(error).length).toBe(2);
   }
+  expect(output.text).not.toContain("internal:bake");
 });
 
 test.concurrent("bun bake --help", async () => {

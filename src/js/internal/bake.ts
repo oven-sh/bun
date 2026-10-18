@@ -57,6 +57,19 @@ type Page = {
   bundle: HTMLBundle;
 };
 
+/**
+ * A mistake that `bun bake` found in the arguments or in the files of the app. It prints as one line:
+ * its stack is in Bun, not in the app. `fixable`: a change to `app/server.ts` or `bake.config.ts` can
+ * fix it, so the process waits for that change instead of exiting.
+ */
+class BakeError extends Error {
+  fixable: boolean;
+  constructor(message: string, fixable: boolean) {
+    super(message);
+    this.fixable = fixable;
+  }
+}
+
 /** The default export of `app/server.ts`: options of `Bun.serve()`, as for `export default` in `bun app.ts`. */
 type AppServer = Record<string, any>;
 
@@ -90,14 +103,15 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
     // `Bun.serve` routes read `:` as a parameter and `*` as a wildcard. `[` is the parameter syntax of page files.
     // In a URL, `?` and `#` end the path and `%` starts an escape.
     if (/[[\]:*?#%]/.test(relative)) {
-      throw new Error(
+      throw new BakeError(
         `"${display(file)}": a page cannot have "[", "]", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
+        false,
       );
     }
     const route = routeOfPage(relative);
     const other = fileOfRoute[route];
     if (other !== undefined) {
-      throw new Error(`"${display(other)}" and "${display(file)}" are both the page "/${route}".`);
+      throw new BakeError(`"${display(other)}" and "${display(file)}" are both the page "/${route}".`, false);
     }
     fileOfRoute[route] = file;
     // Encoded as browsers send it: non-ASCII characters and spaces are, `&` and `=` are not.
@@ -131,17 +145,17 @@ async function loadConfig(cwd: string): Promise<Config> {
   let config = await (await import(file)).default;
   if ($isCallable(config)) config = await config({ mode: "development" });
   if (config === null || typeof config !== "object") {
-    throw new TypeError(`"${name}" must have a default export: a config object, or a function that returns one.`);
+    throw new BakeError(`"${name}" must have a default export: a config object, or a function that returns one.`, true);
   }
   const keys = ObjectKeys(config);
   for (let i = 0; i < keys.length; i++) {
     if (keys[i] !== "plugins") {
-      throw new TypeError(`"${name}": the config has "${keys[i]}", but "bun bake" only uses "plugins".`);
+      throw new BakeError(`"${name}": the config has "${keys[i]}", but "bun bake" only uses "plugins".`, true);
     }
   }
   const list = config.plugins;
   if (list === undefined) return { plugins: [], names: [], name, key };
-  if (!$isArray(list)) throw $ERR_INVALID_ARG_TYPE("plugins", "array", list);
+  if (!$isArray(list)) throw new BakeError(`"${name}": "plugins" must be an array.`, true);
 
   const plugins: unknown[] = [];
   const names: string[] = [];
@@ -149,15 +163,16 @@ async function loadConfig(cwd: string): Promise<Config> {
     const plugin = list[i];
     // A function with `name` and `setup` is a plugin too, as in `Bun.build()`.
     if (plugin === null || (typeof plugin !== "object" && typeof plugin !== "function")) {
-      throw new TypeError(`"${name}": plugins[${i}] is not a plugin object.`);
+      throw new BakeError(`"${name}": plugins[${i}] is not a plugin object.`, true);
     }
     const pluginName = plugin.name;
     if (typeof pluginName !== "string" || pluginName === "") {
-      throw new TypeError(`"${name}": plugins[${i}] has no "name".`);
+      throw new BakeError(`"${name}": plugins[${i}] has no "name".`, true);
     }
     if (!$isCallable(plugin.setup)) {
-      throw new TypeError(
+      throw new BakeError(
         `"${name}": the plugin "${pluginName}" has no setup() function. "bun bake" takes Bun plugins.`,
+        true,
       );
     }
     plugins.push(plugin);
@@ -182,22 +197,22 @@ async function loadAppServer(
   const server = (await import(file)).default;
   const name = display(file);
   if (server === null || typeof server !== "object") {
-    throw new TypeError(`"${name}" must have a default export with "routes", "fetch" or "websocket".`);
+    throw new BakeError(`"${name}" must have a default export with "routes", "fetch" or "websocket".`, true);
   }
   // Read once each: a getter may return a new value on each read.
   const { fetch, websocket } = server;
   if (fetch !== undefined && !$isCallable(fetch)) {
-    throw $ERR_INVALID_ARG_TYPE("fetch", "function", fetch);
+    throw new BakeError(`"${name}": "fetch" must be a function.`, true);
   }
   // As in `Bun.serve()`, a `routes` array is not a route table: a Hono app has one.
   let routes = server.routes;
   if (routes === undefined) routes = server.static;
   if ($isArray(routes)) routes = undefined;
   if (routes !== undefined && (routes === null || typeof routes !== "object")) {
-    throw $ERR_INVALID_ARG_TYPE("routes", "object", routes);
+    throw new BakeError(`"${name}": "routes" must be an object.`, true);
   }
   if (websocket !== undefined && (websocket === null || typeof websocket !== "object")) {
-    throw $ERR_INVALID_ARG_TYPE("websocket", "object", websocket);
+    throw new BakeError(`"${name}": "websocket" must be an object.`, true);
   }
   return { file, server, routes, fetch };
 }
@@ -206,25 +221,6 @@ async function loadAppServer(
 let runs = 0;
 /** Whether this process is `bun bake --check` started again after a change. */
 let restarted = false;
-
-/**
- * At the start, prints the message of `error` and exits: it comes from a file that `bun bake` does
- * not load, so no change to a file reloads it. An error that a change to `app/server.ts` or
- * `bake.config.ts` can fix is thrown instead: the process waits for that change and reloads. On a
- * reload, the server is up: throw, so it keeps serving until the next change.
- */
-function exitWith(error: any): never {
-  // `--check` starts the process again on a change: a restart is a first run here too, but the
-  // session goes on.
-  if (runs > 1 || restarted) throw $isObject(error) ? error : new Error(error);
-  exitForArguments(error);
-}
-
-/** Prints the message of `error` and exits: a change to a file does not change the arguments. */
-function exitForArguments(error: any): never {
-  console.error(`error: ${error?.message ?? error}`);
-  process.exit(1);
-}
 
 async function start() {
   if (++runs === 1) restarted = isRestart();
@@ -239,10 +235,10 @@ async function start() {
     let used: number;
     try {
       used = parseServeFlag(argv, i, flags);
-    } catch (error) {
-      exitForArguments(error);
+    } catch (error: any) {
+      throw new BakeError(error.message, false);
     }
-    if (used === 0) exitForArguments(`Unknown argument "${arg}". Run "bun bake --help" for the usage.`);
+    if (used === 0) throw new BakeError(`Unknown argument "${arg}". Run "bun bake --help" for the usage.`, false);
     i += used;
   }
 
@@ -253,10 +249,13 @@ async function start() {
   }
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
-  const pages = await loadPages(path.join(cwd, "app", "pages")).catch(exitWith);
+  const pages = await loadPages(path.join(cwd, "app", "pages"));
   const app = await loadAppServer(cwd);
   if (pages.length === 0 && app === undefined) {
-    exitWith(`Nothing to serve in "${cwd}": there are no pages in app/pages/ and no app/server.ts.`);
+    throw new BakeError(
+      `Nothing to serve in "${cwd}". Add a page, such as app/pages/index.html, or an app/server.ts.`,
+      false,
+    );
   }
 
   const routes: Record<string, unknown> = {};
@@ -273,7 +272,10 @@ async function start() {
       const route = names[i];
       const page = pageOfRoute[route];
       if (page !== undefined) {
-        throw new Error(`The route "${route}" in "${display(app!.file)}" is also the page "${display(page.file)}".`);
+        throw new BakeError(
+          `The route "${route}" in "${display(app!.file)}" is also the page "${display(page.file)}".`,
+          true,
+        );
       }
       routes[route] = appRoutes[route];
     }
@@ -326,7 +328,7 @@ async function start() {
       (flags.port === undefined &&
         flags.hostname === undefined &&
         (exportedPort !== undefined || exportedHostname !== undefined));
-    if (error?.syscall === "listen" && !addressFromExport) exitWith(error);
+    if (error?.syscall === "listen" && !addressFromExport) throw new BakeError(error.message, false);
     throw error;
   }
   configKeyInServer ??= config.key;
@@ -339,4 +341,17 @@ async function start() {
   printBannerAndHandleShortcuts({ server, elapsed, pathname: "/", routes: listed });
 }
 
-export default start;
+/** `bun bake`. Prints a `BakeError` as one line, then exits or waits for a change. */
+async function main() {
+  try {
+    await start();
+  } catch (error) {
+    if (!(error instanceof BakeError)) throw error;
+    console.error(`error: ${error.message}`);
+    // `--check` starts the process again on a change: a restart is a first run here too, but the
+    // session goes on. On a reload, the server is up and keeps serving until the next change.
+    if (!error.fixable && runs === 1 && !restarted) process.exit(1);
+  }
+}
+
+export default main;

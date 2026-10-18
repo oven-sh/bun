@@ -1,1 +1,1 @@
-{"features": ["file_sink"], "keptToday": true}
+{"features": ["file_sink"], "keptToday": true, "posix": true}

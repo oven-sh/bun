@@ -66,6 +66,39 @@ describe.concurrent("bun compile --library with JavaScript sources", () => {
     });
   });
 
+  test("--format=cjs: CommonJS sources stay CommonJS", async () => {
+    using dir = tempDir("library-commonjs", {
+      "library/package.json": JSON.stringify({ name: "twice", version: "1.0.0", main: "index.js" }),
+      "library/index.js": `const { same } = require("./same");\n/** @param {number} n */\nmodule.exports = function twice(n) {\n  return same(n) * 2;\n};\n`,
+      "library/same.js": `exports.same = function (n) {\n  return n;\n};\n`,
+      "app/tsconfig.json": tsconfig,
+      "app/app.ts": `import twice = require("twice");\nexport const result: number = twice(21);\nexport const wrong: string = twice(1);\n`,
+      "app/run.cjs": `console.log(require("twice")(21));\n`,
+    });
+    const built = await bun(join(String(dir), "library"), "compile", "--library", "--format=cjs", "--outdir", "../app/node_modules/twice");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    const installed = join(String(dir), "app/node_modules/twice");
+    expect(JSON.parse(readFileSync(join(installed, "package.json"), "utf8"))).toEqual({
+      name: "twice",
+      version: "1.0.0",
+      type: "commonjs",
+      main: "./index.js",
+      types: "./index.d.ts",
+      exports: { ".": { types: "./index.d.ts", default: "./index.js" }, "./package.json": "./package.json" },
+      files: ["index.d.ts", "index.js", "same.d.ts"],
+    });
+    expect(readFileSync(join(installed, "index.d.ts"), "utf8")).toContain("export = twice;");
+    expect(await bun(join(String(dir), "app"), "run.cjs")).toEqual({ stdout: "42\n", stderr: "", exitCode: 0 });
+    const options = { ...JSON.parse(tsconfig).compilerOptions, module: "nodenext", moduleResolution: "nodenext" };
+    await Bun.write(join(String(dir), "app/tsconfig.json"), JSON.stringify({ compilerOptions: options }));
+    await Bun.write(join(String(dir), "app/package.json"), JSON.stringify({ name: "app", type: "commonjs" }));
+    for (const check of [["check"], [require.resolve("typescript/bin/tsc")]]) {
+      const { stdout, stderr, exitCode } = await bun(join(String(dir), "app"), ...check, "-p", "tsconfig.json");
+      expect({ said: (stdout + stderr).match(/TS\d+/g), failed: exitCode !== 0 }).toEqual({ said: ["TS2322"], failed: true });
+    }
+  });
+
   test("what it writes is accepted by bun check and by tsc", async () => {
     using dir = tempDir("library-javascript-checked", {
       ...Object.fromEntries(Object.entries(sources).map(([path, text]) => ["library/" + path, text])),

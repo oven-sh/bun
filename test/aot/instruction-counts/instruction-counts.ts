@@ -24,7 +24,8 @@ const roundsBeforeCounting = [1, 1, 1, 1],
   roundsOfFewerOperations = 1,
   roundsOfMoreOperations = 3;
 
-type Form = { types: "typed" | "untyped"; place: "function" | "module level" | "function that no loop calls" };
+type Door = { name: string; label: string; setup: string; costsNoMoreThan?: string };
+type Form = { types: "typed" | "untyped"; place: "function" | "module level" | "function that no loop calls"; door?: Door };
 const forms: Form[] = [
   { types: "typed", place: "function" },
   { types: "typed", place: "module level" },
@@ -37,6 +38,12 @@ const formsOutsideLoops: Form[] = [
   { types: "untyped", place: "function" },
   { types: "untyped", place: "function that no loop calls" },
 ];
+
+type Heat = "outside the hottest functions" | "as built";
+const optionsOf: Record<Heat, Record<string, string>> = {
+  "outside the hottest functions": { BUN_JSC_aotHotByTextForTesting: "4" },
+  "as built": {},
+};
 
 function partsOf(name: string, text: string) {
   const parts = /^\/\/ (.*)\n([^]*?)\nkernel: \{\n([^]*?)\n\}\n([^]*)$/.exec(text);
@@ -168,10 +175,11 @@ async function lineOf(
   form: Form,
   dir: string,
   countsInstructions: boolean,
+  heat: Heat,
 ) {
-  const stem = `${name}.${form.types}.${form.place.replaceAll(" ", "-")}`;
+  const stem = `${name}.${form.door ? `${form.door.name}.` : ""}${form.types}.${form.place.replaceAll(" ", "-")}`;
   writeFileSync(join(dir, "tsconfig.json"), tsconfigWithTypesOfBun);
-  writeFileSync(join(dir, `${stem}.ts`), programOf(parts, form.place));
+  writeFileSync(join(dir, `${stem}.ts`), programOf(form.door ? { ...parts, setup: `${form.door.setup}\n${parts.setup}` } : parts, form.place));
   let entry = `${stem}.ts`;
   if (form.types === "untyped") {
     const erased = await run([bunExe(), "build", "--no-bundle", entry], dir, bunEnv);
@@ -184,13 +192,13 @@ async function lineOf(
   const built = await run(
     [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), entry, "--outfile", executable],
     dir,
-    { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile, BUN_JSC_aotHotByTextForTesting: "4" },
+    { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile, ...optionsOf[heat] },
   );
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const map = readFileSync(mapFile, "utf8");
   const functions = functionsOf(map, entry);
   const bytes = bytesBeforeOutlining(map, entry, form.place === "module level" ? `module ${entry}` : "kernel");
-  const label = `${form.types}, ${form.place}`;
+  const label = form.door?.label ?? `${form.types}, ${form.place}`;
   if (!countsInstructions) return `${label}: ${bytes} bytes`;
 
   const counted = await countInstructions({
@@ -390,11 +398,81 @@ export async function describeInstructionCountsOutsideLoops(platform: string) {
   describeSnippets(files, `${platform}-outside-loops`, isThisPlatform, reason);
 }
 
+export async function describeInstructionCountsBehindDoors(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  const folder = join(snippets, "doors");
+  const data = readFileSync(join(folder, "data.ts"), "utf8");
+  const door = (name: string, more: Partial<Door> = {}): Door => {
+    const [, label, text] = /^\/\/ (.*)\n([^]*)$/.exec(readFileSync(join(folder, "door", `${name}.ts`), "utf8"))!;
+    return { name, label, setup: data + text, ...more };
+  };
+  const literal = door("typed-literal");
+  const formsOfFile: Form[] = [
+    literal,
+    door("json-parse-type-argument", { costsNoMoreThan: literal.label }),
+    door("json-parse-type-argument-one-undeclared-key"),
+    door("json-parse-type-argument-ten-undeclared-keys"),
+    door("json-parse-cast"),
+    door("json-parse-annotated"),
+  ].map(door => ({ types: "typed", place: "function", door }));
+  formsOfFile.push({ types: "untyped", place: "function", door: door("json-parse-type-argument", { label: "untyped" }) });
+  const files = readdirSync(join(folder, "use")).map(file => ({ file, folder: join(folder, "use"), formsOfFile }));
+  describeSnippets(files, `${platform}-doors`, isThisPlatform, reason);
+}
+
+const commonOperations = [
+  "array-push",
+  "await-async-function",
+  "call-closure",
+  "call-function",
+  "call-method",
+  "iterate-for-of",
+  "json-parse",
+  "json-stringify",
+  "map-get",
+  "new-class-instance",
+  "object-literal",
+  "object-spread",
+  "read-field-of-class",
+  "read-field-of-object-literal",
+  "read-field-of-parsed-object",
+  "string-concat",
+  "switch-on-union",
+  "write-field-of-class",
+  "write-field-of-parsed-object",
+];
+const operationsThatPlacesDoNotRemember = [
+  "call-own-function-far-out-of-line",
+  "extra-properties-added-by-name",
+  "extra-properties-read-kept-as-any",
+  "extra-property-write-type-lost",
+  "intl-number-format",
+  "method-call-after-keyed-property-type-known",
+  "missing-name-read-extra-keys-type-lost",
+  "read-inherited-property-far-out-of-line",
+  "read-own-getter-far-out-of-line",
+  "read-own-property-far-out-of-line",
+  "write-own-property-far-out-of-line",
+];
+
+export async function describeInstructionCountsAsBuilt(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  const outsideLoops = join(snippets, "outside-loops");
+  const files = [
+    ...[...commonOperations, ...operationsThatPlacesDoNotRemember].map(name => ({ file: `${name}.ts`, folder: snippets, formsOfFile: forms })),
+    ...readdirSync(outsideLoops)
+      .filter(file => file.endsWith(".ts"))
+      .map(file => ({ file, folder: outsideLoops, formsOfFile: formsOutsideLoops })),
+  ];
+  describeSnippets(files, `${platform}-as-built`, isThisPlatform, reason, "as built");
+}
+
 function describeSnippets(
   files: { file: string; folder: string; formsOfFile: Form[] }[],
   testFile: string,
   isThisPlatform: boolean,
   reason: string | undefined,
+  heat: Heat = "outside the hottest functions",
 ) {
   for (const { file, folder, formsOfFile } of files.sort((a, b) => (a.file < b.file ? -1 : 1))) {
     const name = basename(file, ".ts");
@@ -402,7 +480,7 @@ function describeSnippets(
     const lines = linesOf(async () => {
       using dir = tempDir(`instruction-counts-${name}`, {});
       const counted: string[] = [];
-      for (const form of formsOfFile) counted.push(await lineOf(name, pieces, form, String(dir), !reason));
+      for (const form of formsOfFile) counted.push(await lineOf(name, pieces, form, String(dir), !reason, heat));
       return counted;
     });
     test.skipIf(!isThisPlatform || (!!reason && process.platform === "linux"))(
@@ -410,10 +488,17 @@ function describeSnippets(
       async () => {
         const recorded = recordedLines(testFile, pieces.title);
         const operationsCountedOnce = isCountedTwice(pieces.operations) ? 0 : pieces.operations * (roundsOfMoreOperations - roundsOfFewerOperations);
-        const shownLines = (await lines()).map((line, index) =>
+        const counted = await lines();
+        const shownLines = counted.map((line, index) =>
           recorded[index] !== undefined && isNoWorse(line, recorded[index], operationsCountedOnce) ? recorded[index] : line,
         );
         expect(shownLines.join("\n")).toMatchSnapshot();
+        formsOfFile.forEach(({ door }, index) => {
+          if (!door?.costsNoMoreThan) return;
+          const other = counted[formsOfFile.findIndex(form => form.door?.label === door.costsNoMoreThan)];
+          const isKept = isNoWorse(counted[index].replace(door.label, door.costsNoMoreThan), other, operationsCountedOnce);
+          expect({ line: counted[index], other, isKept }).toEqual({ line: counted[index], other, isKept: true });
+        });
       },
       600_000,
     );

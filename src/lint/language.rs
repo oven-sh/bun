@@ -171,7 +171,6 @@ bitflags::bitflags! {
         /// It leaves to `bun/aot-outside-data` what that reports.
         const NO_UNSAFE_TYPE_ASSERTION_LEAVES = 1 << 7;
         /// The rest are left what they report, by the rule of `bun/aot` that reports it too.
-        const NO_NON_NULL_ASSERTION = 1 << 3;
         const NO_EXTEND_NATIVE = 1 << 4;
         const NO_GLOBAL_ASSIGN = 1 << 5;
         const NO_UNSAFE_TYPE_ASSERTION = 1 << 6;
@@ -179,42 +178,39 @@ bitflags::bitflags! {
 }
 
 impl RuleOverlaps {
-    const NAMED: [(crate::rule::Plugin, &'static str); 10] = {
+    const NAMED: [(crate::rule::Plugin, &'static str); 8] = {
         use crate::rule::Plugin::{Bun, TypeScript};
         [
             (Bun, "aot-no-any-to-typed"),
             (Bun, "aot-outside-data"),
-            (Bun, "aot-non-null-escapes"),
             (Bun, "aot-cast-lacks-member"),
             (Bun, "aot-locked-builtin-write"),
             (TypeScript, "no-unsafe-argument"),
             (TypeScript, "no-unsafe-assignment"),
             (TypeScript, "no-unsafe-return"),
             (TypeScript, "no-unsafe-type-assertion"),
-            (TypeScript, "no-non-null-assertion"),
         ]
     };
-    /// Which of [`RuleOverlaps::NAMED`] reports the place, and which leaves it. 10, 11: `no-extend-native`, `no-global-assign`.
-    const PAIRS: [(usize, usize, RuleOverlaps); 8] = [
-        (0, 5, RuleOverlaps::NO_UNSAFE_ARGUMENT_LEAVES),
-        (0, 6, RuleOverlaps::NO_UNSAFE_ASSIGNMENT_LEAVES),
-        (0, 7, RuleOverlaps::NO_UNSAFE_RETURN_LEAVES),
-        (1, 8, RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION_LEAVES),
-        (9, 2, RuleOverlaps::NO_NON_NULL_ASSERTION),
-        (8, 3, RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION),
-        (10, 4, RuleOverlaps::NO_EXTEND_NATIVE),
-        (11, 4, RuleOverlaps::NO_GLOBAL_ASSIGN),
+    /// Which of [`RuleOverlaps::NAMED`] reports the place, and which leaves it. 8, 9: `no-extend-native`, `no-global-assign`.
+    const PAIRS: [(usize, usize, RuleOverlaps); 7] = [
+        (0, 4, RuleOverlaps::NO_UNSAFE_ARGUMENT_LEAVES),
+        (0, 5, RuleOverlaps::NO_UNSAFE_ASSIGNMENT_LEAVES),
+        (0, 6, RuleOverlaps::NO_UNSAFE_RETURN_LEAVES),
+        (1, 7, RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION_LEAVES),
+        (7, 2, RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION),
+        (8, 3, RuleOverlaps::NO_EXTEND_NATIVE),
+        (9, 3, RuleOverlaps::NO_GLOBAL_ASSIGN),
     ];
 
     /// `rules`: those that run, each with its severity.
     pub fn among<'r>(rules: impl Iterator<Item = (&'r crate::rule::Meta, crate::context::Severity)>) -> RuleOverlaps {
         use crate::context::Severity;
         use crate::rule::Plugin;
-        let mut severities = [Severity::Off; 12];
+        let mut severities = [Severity::Off; 10];
         for (meta, severity) in rules.filter(|it| it.1 != Severity::Off) {
             let at = match (meta.plugin, meta.name) {
-                (Plugin::Eslint, "no-extend-native") => Some(10),
-                (Plugin::Eslint, "no-global-assign") => Some(11),
+                (Plugin::Eslint, "no-extend-native") => Some(8),
+                (Plugin::Eslint, "no-global-assign") => Some(9),
                 (Plugin::Bun | Plugin::TypeScript, name) => RuleOverlaps::NAMED.iter().position(|it| *it == (meta.plugin, name)),
                 _ => None,
             };

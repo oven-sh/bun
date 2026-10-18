@@ -1236,8 +1236,17 @@ function highlightRegExp(regexpString) {
   return out;
 }
 
+const ownStyle = IS_BUN_AOT
+  ? function ownStyle(table, styleType) {
+      const own = ObjectGetOwnPropertyDescriptor(table, styleType);
+      if (own === undefined) return undefined;
+      return own.get === undefined ? own.value : own.get.$call(table);
+    }
+  : undefined;
+
 function stylizeWithColor(str, styleType) {
-  const style = inspectAsObject.styles[styleType];
+  const table = inspectAsObject.styles;
+  const style = IS_BUN_AOT ? ownStyle!(table, styleType) : table[styleType];
   if (style !== undefined) {
     // Checked first: a function style (regexp) would otherwise be stringified
     // into a property key on every lookup.
@@ -3500,4 +3509,5 @@ export default {
   formatWithOptions,
   getStringWidth,
   stripVTControlCharacters,
+  stylizeWithColor,
 };

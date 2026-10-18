@@ -15,6 +15,7 @@ import {
   __MEMO_CACHE_SENTINEL,
   __name,
   __using,
+  __validate,
 } from "../../runtime.bun";
 // This import is different based on client vs server side.
 // On the server, remapping is done automatically.
@@ -916,6 +917,7 @@ registerSynthetic("bun:wrap", {
   __callDispose,
   __MEMO_CACHE_SENTINEL,
   __EARLY_RETURN_SENTINEL,
+  __validate,
 });
 
 if (side === "server") {

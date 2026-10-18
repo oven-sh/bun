@@ -37,8 +37,12 @@ function expectedOf(nodes: any[], at: number): string {
   }
 }
 
+function isObject(value: any): boolean {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
 function isPlainObject(value: any): boolean {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObject(value) && !Array.isArray(value);
 }
 
 function matchesPlaceholder(kind: string, part: string): boolean {
@@ -107,7 +111,11 @@ function define(made: any, key: string, value: any): void {
   Object.defineProperty(made, key, { value, writable: true, enumerable: true, configurable: true });
 }
 
-function build(nodes: any[], at: number, input: any, refused: object): any {
+function memberOf(input: any, member: any[]): any {
+  return Object.prototype.propertyIsEnumerable.call(input, member[0]) ? input[member[0]] : undefined;
+}
+
+function build(nodes: any[], at: number, input: any, refused: object, copies: boolean): any {
   const node = nodes[at];
   if (node[5] && input === undefined) input = node[6];
   let made: any = input;
@@ -125,68 +133,61 @@ function build(nodes: any[], at: number, input: any, refused: object): any {
       made = node[1];
       break;
     case 4:
-      if (typeof input !== "object" || input === null) return refused;
+      if (!isObject(input)) return refused;
       break;
     case 5: {
       if (!Array.isArray(input)) return refused;
-      if (!allHold(node, input)) return refused;
-      made = [];
-      for (let i = 0, length = input.length; i < length; i++) {
-        const item = build(nodes, node[1], input[i], refused);
+      if (copies) made = Array.from(input);
+      if (!allHold(node, made)) return refused;
+      for (let i = 0, length = made.length; i < length; i++) {
+        const item = build(nodes, node[1], made[i], refused, copies);
         if (item === refused) return refused;
-        made.push(item);
+        if (copies) made[i] = item;
       }
       return made;
     }
     case 6: {
       const elements = node[1];
       if (!Array.isArray(input) || input.length !== elements.length) return refused;
-      made = [];
+      if (copies) made = [];
       for (let i = 0; i < elements.length; i++) {
-        const item = build(nodes, elements[i], input[i], refused);
+        const item = build(nodes, elements[i], input[i], refused, copies);
         if (item === refused) return refused;
-        made.push(item);
+        if (copies) made.push(item);
       }
       break;
     }
     case 7: {
       if (!isPlainObject(input)) return refused;
-      made = {};
+      if (copies) made = {};
       const keys = Object.keys(input);
       for (let i = 0; i < keys.length; i++) {
-        const item = build(nodes, node[1], input[keys[i]], refused);
+        const item = build(nodes, node[1], input[keys[i]], refused, copies);
         if (item === refused) return refused;
-        define(made, keys[i], item);
+        if (copies) define(made, keys[i], item);
       }
       break;
     }
     case 8: {
       if (!isPlainObject(input)) return refused;
       const members = node[1];
-      const checked: any[] = [];
+      if (copies) made = { ...input };
       for (let i = 0; i < members.length; i++) {
-        let item = build(nodes, members[i][1], input[members[i][0]], refused);
-        if (item === refused) {
-          if (members[i][2] !== 2) return refused;
-          item = undefined;
-        }
-        checked.push(item);
-      }
-      made = {};
-      for (let i = 0; i < members.length; i++) {
-        if (!members[i][2]) define(made, members[i][0], checked[i]);
-      }
-      for (let i = 0; i < members.length; i++) {
-        if (members[i][2] && checked[i] !== undefined) define(made, members[i][0], checked[i]);
+        const given = memberOf(made, members[i]);
+        const item = build(nodes, members[i][1], given, refused, copies);
+        if (item === refused) return refused;
+        if (item === undefined) {
+          if (!(members[i][2] & 1) && !Object.hasOwn(made, members[i][0])) return refused;
+        } else if (item !== given) define(made, members[i][0], item);
       }
       if (node[2] !== -1) {
-        const keys = Object.keys(input);
+        const keys = Object.keys(made);
         for (let i = 0; i < keys.length; i++) {
           if (isDeclared(members, keys[i])) continue;
           if (node[2] === -2) return refused;
-          const item = build(nodes, node[2], input[keys[i]], refused);
+          const item = build(nodes, node[2], made[keys[i]], refused, copies);
           if (item === refused) return refused;
-          define(made, keys[i], item);
+          if (item !== made[keys[i]]) define(made, keys[i], item);
         }
       }
       break;
@@ -197,11 +198,15 @@ function build(nodes: any[], at: number, input: any, refused: object): any {
     default: {
       const arms = node[1];
       made = refused;
-      for (let i = 0; i < arms.length && made === refused; i++) made = build(nodes, arms[i], input, refused);
+      for (let i = 0; i < arms.length && made === refused; i++) made = build(nodes, arms[i], input, refused, copies);
       if (made === refused) return refused;
     }
   }
   return allHold(node, made) ? made : refused;
+}
+
+function isMissing(input: any, member: any[], value: any): boolean {
+  return value === undefined && (member[2] & 4) !== 0 && !Object.hasOwn(input, member[0]);
 }
 
 function add(issues: any[], path: any[], code: string, expected: string, value: any, message: any): void {
@@ -289,6 +294,49 @@ function isNearArm(arm: any[], input: any): boolean {
   }
 }
 
+function tagUnder(nodes: any[], arm: any[], name: string): any[] | undefined {
+  if (arm[0] !== 8) return undefined;
+  const members = arm[1];
+  for (let i = 0; i < members.length; i++) {
+    const member = members[i];
+    if (member[0] !== name) continue;
+    const held = nodes[member[1]];
+    return held[0] === 3 && !(member[2] & 1) && !held[5] && held[3].length === 0 ? held : undefined;
+  }
+  return undefined;
+}
+
+function tagsOf(nodes: any[], union: any[]): any[] {
+  if (union[2] !== null) return union[2];
+  const arms = union[1];
+  let tags: any[] = [];
+  for (let i = 0; i < arms.length && tags.length === 0; i++) {
+    const members = nodes[arms[i]][0] === 8 ? nodes[arms[i]][1] : [];
+    for (let j = 0; j < members.length && tags.length === 0; j++) {
+      const name = members[j][0];
+      if (tagUnder(nodes, nodes[arms[i]], name) === undefined) continue;
+      const values: any[] = [];
+      const tagged: number[] = [];
+      const untagged: number[] = [];
+      let expected = "";
+      for (let k = 0; k < arms.length; k++) {
+        const tag = tagUnder(nodes, nodes[arms[k]], name);
+        if (tag === undefined) {
+          untagged.push(arms[k]);
+          continue;
+        }
+        if (values.includes(tag[1])) break;
+        expected += (values.length ? " | " : "") + JSON.stringify(tag[1]);
+        values.push(tag[1]);
+        tagged.push(arms[k]);
+      }
+      if (values.length > 1 && values.length + untagged.length === arms.length) tags = [name, values, tagged, untagged, expected];
+    }
+  }
+  union[2] = tags;
+  return tags;
+}
+
 function reportMembers(nodes: any[], node: any[], from: number, input: any, path: any[], issues: any[]): void {
   reportMembersWith(undefined, undefined, nodes, node, from, input, path, issues);
 }
@@ -310,10 +358,13 @@ function reportMembersWith(pending: any, compiled: any, nodes: any[], node: any[
   const kinds: number[] = node[0] === 8 ? node[7] : [];
   for (let i = from; i < members.length; i++) {
     const member = members[i];
-    if (member[2] === 2) continue;
     const name = member[0];
-    const value = input[name];
+    const value = memberOf(input, member);
     const kind = kinds[i];
+    if (isMissing(input, member, value)) {
+      add(issues, withKey(path, name), "invalid_type", expectedOf(nodes, member[1]), undefined, nodes[member[1]][4]);
+      continue;
+    }
     if (kind === 1 ? typeof value === "number" && Number.isFinite(value) : kind === 2 ? typeof value === "string" : kind === 3 && typeof value === "boolean") continue;
     let validate: any = undefined;
     if (compiled !== undefined) {
@@ -370,7 +421,7 @@ function report(nodes: any[], at: number, input: any, path: any[], issues: any[]
       expected = "undefined";
       break;
     case 4:
-      if (typeof input === "object" && input !== null) return;
+      if (isObject(input)) return;
       break;
     case 5:
       expected = "array";
@@ -390,8 +441,20 @@ function report(nodes: any[], at: number, input: any, path: any[], issues: any[]
     default: {
       let ofNearArm: any[] = [];
       let count = 0;
-      for (let i = 0; i < detail.length; i++) {
-        const arm = detail[i];
+      let arms = detail;
+      const tags = isPlainObject(input) ? tagsOf(nodes, node) : [];
+      let ofTaggedArm: any[] | undefined = undefined;
+      if (tags.length !== 0) {
+        const which = tags[1].indexOf(input[tags[0]]);
+        if (which >= 0) {
+          ofTaggedArm = [];
+          report(nodes, tags[2][which], input, path, ofTaggedArm);
+          if (ofTaggedArm.length === 0) return reportRules(node, input, path, issues);
+        }
+        arms = tags[3];
+      }
+      for (let i = 0; i < arms.length; i++) {
+        const arm = arms[i];
         const found: any[] = [];
         report(nodes, arm, input, path, found);
         if (found.length === 0) return reportRules(node, input, path, issues);
@@ -400,10 +463,15 @@ function report(nodes: any[], at: number, input: any, path: any[], issues: any[]
           count++;
         }
       }
+      if (ofTaggedArm !== undefined) {
+        ofNearArm = ofTaggedArm;
+        count = 1;
+      }
       if (count === 1) {
         for (let i = 0; i < ofNearArm.length; i++) issues.push(ofNearArm[i]);
         return;
       }
+      if (count === 0 && tags.length !== 0) return add(issues, withKey(path, tags[0]), "invalid_value", tags[4], input[tags[0]], node[4]);
       if (count > 1) code = "invalid_union";
       expected = expectedOf(nodes, at);
     }
@@ -414,8 +482,7 @@ function report(nodes: any[], at: number, input: any, path: any[], issues: any[]
 export function issuesOf(plan: any[], value: any): any[] {
   const issues: any[] = [];
   report(plan[1], plan[0], value, [], issues);
-  if (issues.length === 0)
-    throw new Error("Internal error: a value was refused by its type and no issue was found. This is a bug in Bun.");
+  if (issues.length === 0) add(issues, [], "invalid_type", expectedOf(plan[1], plan[0]), value, undefined);
   return issues;
 }
 
@@ -449,7 +516,9 @@ export function recordFailure(plan: any[], at: number, position: number, value: 
     const members = node[1];
     if (position < members.length) {
       const member = members[position];
-      reportBelow(nodes, member[1], value[member[0]], member[0], found, issues);
+      const given = memberOf(value, member);
+      if (isMissing(value, member, given)) add(issues, [member[0]], "invalid_type", expectedOf(nodes, member[1]), undefined, nodes[member[1]][4]);
+      else reportBelow(nodes, member[1], given, member[0], found, issues);
     }
     reportMembersWith(pending, compiled, nodes, node, position + 1, value, [], issues);
   }
@@ -467,22 +536,42 @@ export function failureWithIssues(plan: any[], value: any): any {
   return { success: false, issues: issuesOf(plan, value) };
 }
 
-export function throwIssues(issues: any[]): never {
+function errorWith(issues: any[]): any {
   const first = issues[0];
   const error: any = new TypeError((first.path.length ? first.path.join(".") + ": " : "") + first.message);
   error.issues = issues;
+  return error;
+}
+
+export function throwIssues(issues: any[]): never {
+  throw errorWith(issues);
+}
+
+let parsedSchemas: Map<string, any[]> | undefined;
+
+export function __validate(value: any, schema: string, isShared?: boolean): any {
+  let plan = (parsedSchemas ??= new Map()).get(schema);
+  if (plan === undefined) {
+    plan = JSON.parse(schema) as any[];
+    plan[3] = plan[1].some((node: any[]) => node[5]);
+    parsedSchemas.set(schema, plan);
+  }
+  const made = build(plan[1], plan[0], value, parsedSchemas, isShared || plan[3]);
+  if (made !== parsedSchemas) return made;
+  const error = errorWith(issuesOf(plan, value));
+  (Error as any).captureStackTrace?.(error, __validate);
   throw error;
 }
 
 export function validateByPlan(plan: any[], value: any): any {
   const refused = {};
-  const made = build(plan[1], plan[0], value, refused);
+  const made = build(plan[1], plan[0], value, refused, true);
   return made === refused ? throwIssues(issuesOf(plan, value)) : made;
 }
 
 export function safeValidateByPlan(plan: any[], value: any): any {
   const refused = {};
-  const made = build(plan[1], plan[0], value, refused);
+  const made = build(plan[1], plan[0], value, refused, true);
   return made === refused ? failureWithIssues(plan, value) : { success: true, data: made };
 }
 
@@ -493,7 +582,7 @@ export function planSchema(plan: any[]): any {
       vendor: "bun",
       validate(value: any): any {
         const refused = {};
-        const made = build(plan[1], plan[0], value, refused);
+        const made = build(plan[1], plan[0], value, refused, true);
         return made === refused ? { issues: issuesOf(plan, value) } : { value: made };
       },
     },

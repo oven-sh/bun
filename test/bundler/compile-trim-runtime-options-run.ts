@@ -33,7 +33,7 @@ export const obeyed: Record<string, string[]> = {
   ...themselves("--if-present --no-install -i --prefer-offline --prefer-latest --experimental-http2-fetch --experimental-http3-fetch"),
   ...themselves("--insecure-http-parser --experimental-stream-iter --expose-gc --no-deprecation --throw-deprecation --no-warnings"),
   ...themselves("--trace-warnings --trace-deprecation --pending-deprecation --zero-fill-buffers --use-system-ca --use-openssl-ca --use-bundled-ca"),
-  ...themselves("--tls-min-v1.0 --tls-min-v1.1 --tls-min-v1.2 --tls-min-v1.3 --tls-max-v1.2 --tls-max-v1.3 --redis-preconnect --no-addons --no-ffi-cc"),
+  ...themselves("--tls-min-v1.0 --tls-min-v1.1 --tls-min-v1.2 --tls-min-v1.3 --tls-max-v1.2 --tls-max-v1.3 --no-addons --no-ffi-cc"),
   ...themselves("--expose-internals --preserve-symlinks --preserve-symlinks-main --no-macros --jsx-side-effects --ignore-dce-annotations --no-env-file"),
   "--elide-lines": ["--elide-lines=3"],
   "--filter": ["--filter=x"],
@@ -61,7 +61,6 @@ export const obeyed: Record<string, string[]> = {
   "--origin": ["--origin=http://localhost"],
   "-u": ["-u=http://localhost"],
   "--conditions": ["--conditions=x"],
-  "--fetch-preconnect": ["--fetch-preconnect=http://127.0.0.1:9"],
   "--max-http-header-size": ["--max-http-header-size=100", "--max-http-header-size=nonsense"],
   "--dns-result-order": ["--dns-result-order=ipv4first", "--dns-result-order=ipv6first", "--dns-result-order=verbatim", "--dns-result-order=nonsense"],
   "--redirect-warnings": ["--redirect-warnings=warnings.txt"],
@@ -117,10 +116,17 @@ export const loadCode: Record<string, string[]> = {
   "--print": ["--print=1"],
   "-p": ["-p=1", "-p 1"],
 };
+export const obeyedWhereTheProgramUsesThePart: Record<string, { forms: string[]; program: string }> = {
+  "--fetch-preconnect": { forms: ["--fetch-preconnect=http://127.0.0.1:9", "--fetch-preconnect http://127.0.0.1:9"], program: "names-fetch.ts" },
+  "--redis-preconnect": { forms: ["--redis-preconnect"], program: "names-redis.ts" },
+};
+
 const loadsCode = "cannot be used with this executable: it was built with --compile-trim-runtime and runs only the code that was compiled into it";
 
 const files = {
   "hello.ts": `console.log("hello world");`,
+  "names-fetch.ts": `console.log("hello world", typeof fetch);`,
+  "names-redis.ts": `console.log("hello world", typeof Bun.RedisClient);`,
   "preloaded.ts": `console.log("preloaded");`,
   "other.env": "FROM_A_FILE=1\n",
   "own.toml": "[console]\ndepth = 1\n",
@@ -157,17 +163,25 @@ async function spawned(cmd: string[], folder: string, env: Record<string, string
   return { stdout: said(stdout), stderr: said(stderr), exitCode: child.signalCode ?? exitCode };
 }
 
-const built = (folder: string, side: Side, flags: string[] = []) =>
-  slot(() => spawned([bunExe(), "build", "--compile", "--aot", ...flagsOf[side], ...flags, "hello.ts", "--outfile", "program"], folder, bunEnv, 90_000));
+const builtInThisTurn = (folder: string, side: Side, flags: string[] = [], program = "hello.ts") =>
+  spawned([bunExe(), "build", "--compile", "--aot", ...flagsOf[side], ...flags, program, "--outfile", "program"], folder, bunEnv, 90_000);
+const built = (...build: Parameters<typeof builtInThisTurn>) => slot(() => builtInThisTurn(...build));
 
-const started = (folder: string, name: string, options?: string, args: string[] = []) =>
-  spawned([join(folder, "program"), ...args], folder, { ...bunEnv, BUN_OPTIONS: options }, neverEnd.includes(name) ? 5_000 : 60_000);
+const eachLineOnce = (text: string) => [...new Set(text.split("\n"))].join("\n");
+
+async function started(folder: string, name: string, options?: string, args: string[] = []) {
+  const cmd = [join(folder, "program"), ...args];
+  if (!neverEnd.includes(name)) return await spawned(cmd, folder, { ...bunEnv, BUN_OPTIONS: options }, 60_000);
+  const killed = await spawned(cmd, folder, { ...bunEnv, BUN_OPTIONS: options }, 5_000);
+  return { ...killed, stdout: eachLineOnce(killed.stdout), stderr: eachLineOnce(killed.stderr) };
+}
 
 const formsOf = (sorted: Record<string, string[]>) => Object.entries(sorted).flatMap(([name, forms]) => forms.map(form => [name, form] as const));
+const formsByUse = Object.entries(obeyedWhereTheProgramUsesThePart).flatMap(([name, { forms, program }]) => forms.map(form => [name, form, program] as const));
 
 export function testTheSorting() {
   test("every option that a compiled executable reads is sorted: obeyed as in the whole executable, or refused", () => {
-    const sorted = [obeyed, leftOut, loadCode].flatMap(Object.keys).sort();
+    const sorted = [obeyed, obeyedWhereTheProgramUsesThePart, leftOut, loadCode].flatMap(Object.keys).sort();
     expect(sorted).toEqual(namesInTheSource);
   });
 }
@@ -179,6 +193,7 @@ export function testBunOptions() {
     const root = realpathSync(String(dir));
     const whole = laidOut(root, "whole");
     const trimmed = laidOut(root, "trimmed");
+    let folders = 0;
 
     beforeAll(async () => {
       expect(await Promise.all([built(whole, "whole"), built(trimmed, "trimmed")])).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
@@ -196,8 +211,19 @@ export function testBunOptions() {
       expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${loadsCode}\n`, exitCode: 1 });
     });
 
+    test.each(formsByUse)("%s is refused where the program does not use what it connects for: %s", async (name, form) => {
+      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${isLeftOut}\n`, exitCode: 1 });
+    });
+
+    test.each(formsByUse)("%s is obeyed where it does: %s, %s", async (name, form, program) => {
+      const folder = join(root, String(folders++));
+      const sides = [laidOut(folder, "whole"), laidOut(folder, "trimmed")];
+      expect(await Promise.all([built(sides[0], "whole", [], program), built(sides[1], "trimmed", [], program)])).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
+      expect(await started(sides[1], name, form)).toEqual(await started(sides[0], name, form));
+    });
+
     test("behind the name of the executable they all belong to the program", async () => {
-      const args = [obeyed, leftOut, loadCode].flatMap(formsOf).flatMap(([, form]) => form.split(" "));
+      const args = [...[obeyed, leftOut, loadCode].flatMap(formsOf), ...formsByUse].flatMap(([, form]) => form.split(" "));
       expect(await started(trimmed, "", undefined, args)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
   });
@@ -212,14 +238,18 @@ export function testExecArgv(part: number, parts: number) {
     const root = realpathSync(String(dir));
     let folders = 0;
 
-    async function builtWith(side: Side, form: string) {
+    async function builtWith(side: Side, form: string, program?: string, build = built) {
       const folder = laidOut(join(root, String(folders++)), side);
-      return { folder, build: await built(folder, side, ["--compile-exec-argv=" + form]), [Symbol.dispose]: () => rmSync(folder, { recursive: true, force: true }) };
+      return { folder, build: await build(folder, side, ["--compile-exec-argv=" + form], program), [Symbol.dispose]: () => rmSync(folder, { recursive: true, force: true }) };
     }
 
+    const builtBothWaysWith = (form: string, program?: string) =>
+      slot(async () => [await builtWith("whole", form, program, builtInThisTurn), await builtWith("trimmed", form, program, builtInThisTurn)] as const);
+
     test.each(inThisPart(formsOf(obeyed)))("%s is obeyed: %s", async (name, form) => {
-      using whole = await builtWith("whole", form);
-      using trimmed = await builtWith("trimmed", form);
+      const both = await builtBothWaysWith(form);
+      using whole = both[0];
+      using trimmed = both[1];
       expect([whole.build, trimmed.build]).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
       expect(await started(trimmed.folder, name)).toEqual(await started(whole.folder, name));
     });
@@ -228,6 +258,21 @@ export function testExecArgv(part: number, parts: number) {
       using trimmed = await builtWith("trimmed", form);
       expect(trimmed.build).toEqual({ stdout: "", stderr: `error: ${name} ${isLeftOut}\n`, exitCode: 1 });
       expect(await Bun.file(join(trimmed.folder, isWindows ? "program.exe" : "program")).exists()).toBe(false);
+    });
+
+    test.each(inThisPart(formsByUse))("%s is refused by the build where the program does not use what it connects for: %s", async (name, form) => {
+      using trimmed = await builtWith("trimmed", form);
+      expect(trimmed.build.stderr).toEndWith(`error: ${name} ${isLeftOut}\n`);
+      expect(trimmed.build.exitCode).toBe(1);
+      expect(await Bun.file(join(trimmed.folder, isWindows ? "program.exe" : "program")).exists()).toBe(false);
+    });
+
+    test.each(inThisPart(formsByUse))("%s is obeyed where it does: %s, %s", async (name, form, program) => {
+      const both = await builtBothWaysWith(form, program);
+      using whole = both[0];
+      using trimmed = both[1];
+      expect([whole.build, trimmed.build]).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
+      expect(await started(trimmed.folder, name)).toEqual(await started(whole.folder, name));
     });
 
     test.each(inThisPart(formsOf(loadCode)))("%s is refused when the executable starts: %s", async (name, form) => {

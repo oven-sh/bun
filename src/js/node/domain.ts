@@ -73,18 +73,24 @@ domain.createDomain = domain.create = function () {
   };
   d.enter = function () {
     stack.push(this);
-    domain.active = process.domain = this;
+    domain.active = setDomainOfProcess(this);
     return this;
   };
   d.exit = function () {
     const index = stack.lastIndexOf(this);
     if (index === -1) return this;
     stack.splice(index, stack.length);
-    domain.active = process.domain = stack.length ? stack[stack.length - 1] : null;
+    domain.active = setDomainOfProcess(stack.length ? stack[stack.length - 1] : null);
     return this;
   };
   return d;
 };
+
+function setDomainOfProcess(active) {
+  if (IS_BUN_AOT) Object.defineProperty(process, "domain", { value: active, writable: true, enumerable: true, configurable: true });
+  else process.domain = active;
+  return active;
+}
 
 // Domains entered via enter()/run() and not yet exited, innermost last.
 // process.domain mirrors the top of the stack like in node so other modules

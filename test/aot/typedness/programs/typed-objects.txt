@@ -42,7 +42,7 @@ computed-and-special-keys: 5 layouts, 1 given, 4 open, places 34 of 52, reads 29
 conditional-types-one-union-several-generics: 11 layouts, 0 given, 0 open, places 41 of 55, reads 6 of 14
 const-literal-proxy-via-object-assign: 4 layouts, 0 given, 1 open, places 6 of 15, reads 5 of 8
 const-proxy-via-object-assign: 3 layouts, 0 given, 1 open, places 6 of 14, reads 5 of 8
-construct-signatures: 6 layouts, 7 given, 6 open, places 66 of 94, reads 34 of 74
+construct-signatures: 5 layouts, 0 given, 6 open, places 65 of 93, reads 34 of 74
 constructor-first-stores-at-creation: 13 layouts, 0 given, 5 open, places 49 of 87, reads 14 of 20
 constructor-function-field-init: 3 layouts, 0 given, 3 open, places 32 of 42, reads 6 of 17
 constructor-functions: 8 layouts, 2 given, 7 open, places 68 of 95, reads 14 of 84
@@ -129,7 +129,7 @@ generic-spread-pushed: 2 layouts, 0 given, 2 open, places 9 of 17, reads 5 of 9
 getter-literal-in-dead-code: 2 layouts, 0 given, 0 open, places 17 of 25, reads 6 of 10
 headers-and-search-params-from-typed: 19 layouts, 0 given, 22 open, places 61 of 115, reads 1 of 17
 hook-stores-before-initializers: 5 layouts, 0 given, 0 open, places 17 of 30, reads 16 of 22
-ill-typed-field-value-paths: 7 layouts, 26 given, 3 open, places 62 of 216, reads 20 of 61
+ill-typed-field-value-paths: 6 layouts, 26 given, 3 open, places 61 of 215, reads 20 of 61
 index-on-array-prototype-object: 2 layouts, 0 given, 1 open, places 24 of 48, reads 6 of 70
 inherited-interface-keys: 2 layouts, 0 given, 0 open, places 4 of 13, reads 0 of 18
 inspect-typed-objects: 16 layouts, 0 given, 6 open, places 75 of 128, reads 4 of 32
@@ -175,7 +175,7 @@ late-function-union-member-differs: 27 layouts, 0 given, 0 open, places 181 of 1
 leaf-constructor-returns-literal: 2 layouts, 0 given, 2 open, places 4 of 12, reads 0 of 2
 literal-accessors: 6 layouts, 0 given, 3 open, places 46 of 57, reads 11 of 49
 literal-cast-missing-required-members: 7 layouts, 0 given, 2 open, places 42 of 79, reads 3 of 31
-literal-types-and-class-chains: 136 layouts, 4 given, 9 open, places 460 of 499, reads 1 of 22
+literal-types-and-class-chains: 129 layouts, 4 given, 9 open, places 432 of 471, reads 1 of 22
 literals-at-fixed-layout-limit: 19 layouts, 0 given, 18 open, places 42 of 50, reads 40 of 50
 literals-with-extra-keys: 5 layouts, 0 given, 5 open, places 49 of 74, reads 2 of 30
 literals-with-several-accessors: 3 layouts, 0 given, 3 open, places 30 of 43, reads 15 of 20
@@ -473,7 +473,7 @@ untyped-holder-into-union-1: 10 layouts, 0 given, 13 open, places 24 of 34, read
 untyped-holder-into-union-2: 10 layouts, 0 given, 13 open, places 25 of 36, reads 3 of 7
 untyped-holder-into-union-3: 10 layouts, 0 given, 12 open, places 24 of 34, reads 3 of 6
 untyped-stores-into-typed-fields: 4 layouts, 0 given, 0 open, places 81 of 98, reads 54 of 83
-untyped-subclass-fields: 2 layouts, 6 given, 2 open, places 30 of 64, reads 0 of 19
+untyped-subclass-fields: 1 layouts, 6 given, 2 open, places 28 of 60, reads 0 of 19
 untyped-subclass-methods: 2 layouts, 2 given, 2 open, places 46 of 84, reads 4 of 43
 untyped-subclass-prototype-changes-later: 1 layouts, 0 given, 2 open, places 40 of 79, reads 4 of 29
 value-into-union-of-twenty: 25 layouts, 0 given, 3 open, places 55 of 63, reads 48 of 52

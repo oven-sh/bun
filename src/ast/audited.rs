@@ -38,8 +38,7 @@ impl AuditedFile {
     }
 
     pub fn validation_at(&self, start: u32, next: u32) -> Option<&AuditedValidation> {
-        let at = self.validations.binary_search_by_key(&(next, start), |it| (it.next, it.start)).ok()?;
-        Some(&self.validations[at])
+        validation_among(&self.validations, start, next)
     }
 
     pub fn ending_before(&self, next: u32) -> &[AuditedExpression] {
@@ -111,6 +110,37 @@ pub fn table_for(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
     let file = TABLE_SOURCE.get()?(path, text);
     set_current(file);
     file
+}
+
+pub const VALIDATE: u8 = 0;
+pub const JSON_PARSE: u8 = 4;
+pub const REFUSED: u8 = 5;
+
+type SchemaSource = fn(&[u8], &[u8]) -> std::sync::Arc<[AuditedValidation]>;
+
+static SCHEMA_SOURCE: std::sync::OnceLock<SchemaSource> = std::sync::OnceLock::new();
+
+pub fn set_schema_source(source: SchemaSource) {
+    let _ = SCHEMA_SOURCE.set(source);
+}
+
+static SCHEMA_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn forget_json_parse_schemas() {
+    SCHEMA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+}
+
+pub fn json_parse_schema_generation() -> u32 {
+    SCHEMA_GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+pub fn json_parse_schemas_of(path: &[u8], text: &[u8]) -> std::sync::Arc<[AuditedValidation]> {
+    SCHEMA_SOURCE.get().map_or_else(|| std::sync::Arc::new([]) as _, |source| source(path, text))
+}
+
+pub fn validation_among(validations: &[AuditedValidation], start: u32, next: u32) -> Option<&AuditedValidation> {
+    let at = validations.binary_search_by_key(&(next, start), |it| (it.next, it.start)).ok()?;
+    Some(&validations[at])
 }
 
 pub struct Finished {

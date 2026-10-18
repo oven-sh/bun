@@ -2445,7 +2445,12 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(contextual) = contextual else {
             return Vec::new();
         };
+        if self.adopting_type_params.contains(&(file, func)) {
+            return Vec::new();
+        }
+        self.adopting_type_params.push((file, func));
         let mut params = self.sig_type_params(contextual).into_vec();
+        self.adopting_type_params.pop();
         params.retain(|&param| {
             self.types()
                 .map(mapper, param)

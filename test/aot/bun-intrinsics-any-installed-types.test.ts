@@ -44,7 +44,7 @@ declare const console: { log(...values: unknown[]): void };
 function half(n: Bun.int32): number { return n / 2; }
 const given: number[] = JSON.parse("[4, 1.5]");
 for (const n of given) console.log(half(n));
-console.log(typeof Bun.inspect, Bun.parse<{ a: number }>('{"a":1}').a);
+console.log(typeof Bun.inspect, JSON.parse<{ a: number & Bun.Schema.Int }>('{"a":1}').a);
 `;
 const typesThatDeclareTheGlobal = {
   "tsconfig.json": options({ typeRoots: ["./types"], types: ["bun"] }),

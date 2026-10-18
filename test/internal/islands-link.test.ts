@@ -55,7 +55,7 @@ async function wrapped(folder: string, plan: string, objects: string[], compileF
     expect(compiled).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   }
   writeFileSync(join(folder, "in.rsp"), objects.map(name => `${name}.o\n`).join(""));
-  const flags = ["-fuse-ld=lld", "-no-pie", "-Wl,--gc-sections", "-Wl,--icf=all", "-Wl,-Map=program.map", ...linkFlags];
+  const flags = [`--ld-path=${tools["ld.lld"]}`, "-no-pie", "-Wl,--gc-sections", "-Wl,--icf=all", "-Wl,-Map=program.map", ...linkFlags];
   return await run(
     [bunExe(), wrapper, "doors", tools["llvm-cxxfilt"]!, "work", plan, "program.plan", "--", tools.clang!, "@in.rsp", ...flags, "-o", "program"],
     folder,
@@ -682,6 +682,93 @@ describe.skipIf(!canLink)("a link with islands", () => {
     const { addressOf, canGo } = await linked(String(dir), "none");
     expect(addressOf.get("table_that_stays")).toBe(addressOf.get("behind_table")!);
     expect(canGo("table_that_stays")).toBe(false);
+  });
+
+  test.each([
+    ["native code", []],
+    ["bitcode", ["-flto=thin"]],
+  ])("the strings and constants of an input that is linked unmerged go, each by itself, with what names them: %s", async (_, flags) => {
+    const sixteen = (text: string) => `(sixteen){ ${[...text].map(character => `'${character}'`).join(", ")} }`;
+    const withStrings = {
+      ...sources,
+      "both.c": `
+        int puts(const char *);
+        typedef char sixteen __attribute__((vector_size(16)));
+        __attribute__((noinline)) int behind_says(int x) { return puts(x ? "a sentence of the library" : "a sentence that both say"); }
+        __attribute__((noinline)) sixteen behind_compares(sixteen x) { return x == ${sixteen("sixteen that go!")}; }
+        __attribute__((noinline)) int stays_says(int x) { return puts(x > 1 ? "a sentence that stays" : "a sentence that both say"); }
+        __attribute__((noinline)) sixteen stays_compares(sixteen x) { return x == ${sixteen("sixteen stay on!")}; }
+      `,
+      "door.c": `
+        typedef char sixteen __attribute__((vector_size(16)));
+        int behind(int);
+        int behind_says(int);
+        sixteen behind_compares(sixteen);
+        __attribute__((noinline)) int the_door(int x) { return behind(x) * 3 + behind_says(x + 1) + behind_compares((sixteen){ x })[0]; }
+      `,
+      "main.c": `
+        typedef char sixteen __attribute__((vector_size(16)));
+        extern const char table_that_stays[62];
+        int the_door(int);
+        int stays_says(int);
+        sixteen stays_compares(sixteen);
+        __attribute__((noinline)) void Bun__trimmedOut(int feature) { __builtin_trap(); }
+        __attribute__((noinline)) int stays(int x) { return table_that_stays[x & 31] + stays_says(x) * 0 + stays_compares((sixteen){ x })[1]; }
+        int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : stays(argc) == '1' ? 0 : 1; }
+      `,
+    };
+    const objects = ["behind", "both", "door", "table", "main"];
+    const texts = ["a sentence of the library", "sixteen that go!", "a sentence that both say", "a sentence that stays", "sixteen stay on!"];
+    const timesIn = (folder: string) => {
+      const trimmed = readFileSync(join(folder, "trimmed")).toString("latin1");
+      return texts.map(text => trimmed.split(text).length - 1);
+    };
+    {
+      using dir = tempDir("islands-link", withStrings);
+      const { ranTrimmed } = await linked(String(dir), "none", objects, { both: flags });
+      expect(timesIn(String(dir))).toEqual([1, 1, 1, 1, 1]);
+      expect(ranTrimmed).toEqual({ stdout: "a sentence that both say\n", stderr: "", exitCode: 0 });
+    }
+    using dir = tempDir("islands-link", { ...withStrings, doors: sources.doors + "unmerged (^|[/.])both\\.o" + "\n" });
+    const { ranTrimmed } = await linked(String(dir), "none", objects, { both: flags });
+    expect(timesIn(String(dir))).toEqual([0, 0, 1, 1, 1]);
+    expect(ranTrimmed).toEqual({ stdout: "a sentence that both say\n", stderr: "", exitCode: 0 });
+  }, 60_000);
+
+  test("what only a feature needs is overwritten wherever it has bytes, however small it is", async () => {
+    using dir = tempDir("islands-link", {
+      ...sources,
+      "both.c": `
+        int puts(const char *);
+        char first_variable_that_stays[] = "the first variable stays";
+        char variable_behind[] = "a variable of the library";
+        char variable_that_stays[] = "a variable that stays";
+        __attribute__((noinline)) int behind_says(int x) { variable_behind[0] += x; return puts(variable_behind); }
+        __attribute__((noinline)) int stays_says(int x) { first_variable_that_stays[0] += x; variable_that_stays[0] += x; return puts(first_variable_that_stays) + puts(variable_that_stays); }
+      `,
+      "door.c": `
+        int behind(int);
+        int behind_says(int);
+        __attribute__((noinline)) int the_door(int x) { return behind(x) * 3 + behind_says(x + 1); }
+      `,
+      "main.c": `
+        extern const char table_that_stays[62];
+        int the_door(int);
+        int stays_says(int);
+        __attribute__((noinline)) void Bun__trimmedOut(int feature) { __builtin_trap(); }
+        __attribute__((noinline)) int stays(int x) { return table_that_stays[x & 31] + stays_says(0) * 0; }
+        int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : stays(argc) == '1' ? 0 : 1; }
+      `,
+    });
+    const { said, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "both", "door", "table", "main"]);
+    expect(said).toMatch(/; [1-9]\d* more stretch(es)?, \d+ bytes, can only be overwritten; /);
+    expect(["variable_behind", "behind_says", "variable_that_stays", "stays_says"].map(canGo)).toEqual([true, true, false, false]);
+    const trimmed = readFileSync(join(String(dir), "trimmed")).toString("latin1");
+    const texts = ["a variable of the library", "the first variable stays", "a variable that stays"];
+    expect(texts.map(text => trimmed.split(text).length - 1)).toEqual([0, 1, 1]);
+    expect(ranTrimmed).toEqual({ stdout: "the first variable stays\na variable that stays\n", stderr: "", exitCode: 0 });
+    const report = readFileSync(join(String(dir), "work", "needed-by.txt"), "utf8");
+    expect(report).toMatch(/^[0-9a-f]+ 26 \S+ \.data \S*variable_behind$/m);
   });
 
   test("by its own plan it links once and lists the same", async () => {

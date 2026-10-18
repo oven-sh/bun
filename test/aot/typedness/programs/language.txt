@@ -29,7 +29,7 @@ error-constructors: 8 layouts, 7 given, 5 open, places 55 of 123, reads 4 of 38
 error-thrown-to-ignoring-handler: 3 layouts, 0 given, 4 open, places 48 of 64, reads 5 of 23
 exceptions-through-finally-to-outer-catch: 4 layouts, 0 given, 3 open, places 94 of 124, reads 3 of 23
 exceptions: 0 layouts, 0 given, 1 open, places 20 of 30, reads 0 of 10
-failing-checks-in-try: 4 layouts, 0 given, 1 open, places 94 of 106, reads 19 of 29
+failing-checks-in-try: 3 layouts, 0 given, 1 open, places 93 of 105, reads 19 of 29
 finalization-registry-outlives-its-creating-job: 2 layouts, 0 given, 0 open, places 23 of 33, reads 2 of 6
 finalization-registry-unused-after-await: 2 layouts, 0 given, 2 open, places 25 of 40, reads 0 of 5
 finally: 0 layouts, 0 given, 1 open, places 29 of 46, reads 0 of 5

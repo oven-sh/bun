@@ -10,7 +10,7 @@ import { findUserId } from "../queries/users";
 import { commentBelongsTo, insertComment, insertIssue, updateIssue } from "../queries/writes";
 import { findBearerSession } from "../sessions";
 import { buildThread, participantsOf } from "../thread";
-import { checkIssueChange, checkNewComment, checkNewIssue } from "../validation";
+import { parseIssueChange, parseNewComment, parseNewIssue } from "../validation";
 import { loadProfile } from "./pages";
 
 export async function apiIssueList(request: BunRequest<"/api/projects/:project/issues">): Promise<Response> {
@@ -65,12 +65,12 @@ function refusal(invalid: string[], malformed: boolean): Response {
   return malformed ? problem(400, "malformed") : json({ error: "invalid", fields: invalid }, 422);
 }
 
-/** The body of a request as JSON. What is not JSON is undefined, which no type admits. */
-async function bodyOf(request: Request): Promise<unknown> {
+/** The body of a request as text. A body that cannot be read is empty, which is no JSON. */
+async function bodyOf(request: Request): Promise<string> {
   try {
-    return await request.json();
+    return await request.text();
   } catch {
-    return undefined;
+    return "";
   }
 }
 
@@ -78,7 +78,7 @@ export async function apiCreateIssue(request: BunRequest<"/api/projects/:project
   const [session, project, input] = await Promise.all([findBearerSession(request), findProject(request.params.project), bodyOf(request)]);
   if (!session) return problem(401, "not signed in");
   if (!project) return problem(404, "no such project");
-  const checked = checkNewIssue(input);
+  const checked = parseNewIssue(input);
   if (checked.invalid) return refusal(checked.invalid, checked.malformed);
   const { title, body, priority, labels, assignee } = checked.value;
   const assigneeId = assignee ? await findUserId(assignee) : null;
@@ -98,7 +98,7 @@ export async function apiUpdateIssue(request: BunRequest<"/api/projects/:project
   if (!found) return problem(404, "no such issue");
   const { project, issue } = found;
   if (session.user.login !== issue.author.login && session.user.role !== "admin") return problem(403, "not your issue");
-  const checked = checkIssueChange(input);
+  const checked = parseIssueChange(input);
   if (checked.invalid) return refusal(checked.invalid, checked.malformed);
   const change = checked.value;
 
@@ -128,7 +128,7 @@ export async function apiCreateComment(request: BunRequest<"/api/projects/:proje
   ]);
   if (!session) return problem(401, "not signed in");
   if (!found) return problem(404, "no such issue");
-  const checked = checkNewComment(input);
+  const checked = parseNewComment(input);
   if (checked.invalid) return refusal(checked.invalid, checked.malformed);
   const parentId = checked.value.parentId ?? null;
   if (parentId !== null && !(await commentBelongsTo(parentId, found.issue.id))) return refusal(["parentId"], false);

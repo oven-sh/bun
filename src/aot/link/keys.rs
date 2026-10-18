@@ -1,12 +1,13 @@
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{StrId, V};
-use crate::ir::{Def, Func, LayoutKind, Op, Operation, Program, Strs, Term, class_flags, func_flags};
-use bun_sema::atom::known;
+use crate::ir::{Def, Func, Op, Operation, Program, Strs, Term, class_flags, func_flags};
+use bun_sema::atom::{Interner, known};
 use bun_sema::bind::{AccessKind, Decl, Parent, PatParent, SymFlags, SymbolId};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, PropKey, PropKind, StmtKind, UnOp, VarKind};
 use bun_sema::program::{FileId, Files, Module};
-use bun_sema::util::{FxHashSet, InParallel, for_each_mut};
+use bun_sema::util::{FxHashMap, FxHashSet, InParallel, for_each_mut};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const FUNCTIONS_PER_TASK: usize = 256;
 
@@ -55,6 +56,7 @@ fn may_be_a_name(program: &Program, func: &Func, key: V, joins_seen: &mut Vec<V>
         Def::Op(Op::PropGet { obj, name }) => !(WELL_KNOWN_SYMBOLS.contains(&program.strs.get(name)) && matches!(func.op(obj), Some(&Op::FreeGet { name, .. }) if program.strs.get(name) == b"Symbol")),
         Def::Op(Op::Coerce { value, .. }) => may_be_a_name(program, func, value, joins_seen),
         Def::Op(Op::Operation { which: Operation::ToLength, .. }) => false,
+        Def::Op(Op::StrConcat(ref pieces)) => !pieces.iter().any(|&piece| matches!(func.op(piece), Some(&Op::Str(text)) if program.strs.get(text).iter().any(|&byte| byte.is_ascii() && !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'$')))),
         Def::Param(block, index) if block != Func::ENTRY && !joins_seen.contains(&key) => {
             joins_seen.push(key);
             let mut handed: Vec<V> = Vec::new();
@@ -94,7 +96,10 @@ fn may_be_a_function(receiver: &Declared, is_own: &[bool]) -> bool {
         })
 }
 
-fn is_only_looked_at(func: &Func, found: V, casts_followed: u32) -> bool {
+const STEPS_OF_A_LOOK: u32 = 4;
+
+fn is_only_looked_at(strs: &Strs, func: &Func, found: V, steps_followed: u32) -> bool {
+    let is_of_runtime = func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE);
     let is_operand = |op: &Op| {
         let mut is_operand = false;
         op.for_each_operand(|operand| is_operand |= operand == found);
@@ -102,10 +107,12 @@ fn is_only_looked_at(func: &Func, found: V, casts_followed: u32) -> bool {
     };
     let by_operations = func.values.iter().enumerate().all(|(index, value)| match &value.def {
         Def::Op(op) if is_operand(op) => match op {
-            Op::StrictEq { .. } | Op::LooseEq { .. } | Op::TypeOf(_) | Op::Truthy(_) | Op::Not(_) | Op::IsNullish(_) | Op::PropHas { .. } | Op::PropGet { .. } => true,
+            Op::StrictEq { .. } | Op::LooseEq { .. } | Op::TypeOf(_) | Op::Truthy(_) | Op::Not(_) | Op::IsNullish(_) | Op::PropHas { .. } => true,
             &Op::InstanceOf { value, .. } => value != found,
-            &Op::ElemGet { obj, key } => obj == found && key != found && matches!(func.op(key), Some(Op::Int(_) | Op::Str(_) | Op::Symbol(_))),
-            Op::Coerce { .. } => casts_followed > 0 && is_only_looked_at(func, V::new(index), casts_followed - 1),
+            &Op::PropGet { name, .. } if is_of_runtime || matches!(strs.get(name), b"name" | b"length" | b"prototype") => true,
+            &Op::ElemGet { obj, key } if obj != found || key == found || !matches!(func.op(key), Some(Op::Int(_) | Op::Str(_) | Op::Symbol(_))) => false,
+            &Op::ElemGet { key, .. } if is_of_runtime || !matches!(func.op(key), Some(Op::Str(_))) => true,
+            Op::PropGet { .. } | Op::ElemGet { .. } | Op::Coerce { .. } => steps_followed > 0 && is_only_looked_at(strs, func, V::new(index), steps_followed - 1),
             _ => false,
         },
         _ => true,
@@ -113,20 +120,25 @@ fn is_only_looked_at(func: &Func, found: V, casts_followed: u32) -> bool {
     by_operations
         && func.blocks.iter().filter_map(|block| block.term.as_ref()).all(|term| {
             let mut is_handed_on = matches!(term, Term::Return(value) | Term::Throw { value, .. } | Term::Switch { value, .. } if *value == found);
-            term.for_each_target(|target| is_handed_on |= target.args.contains(&found));
+            term.for_each_target(|target| {
+                for (index, _) in target.args.iter().enumerate().filter(|argument| *argument.1 == found) {
+                    let joined = func.values.iter().position(|value| matches!(value.def, Def::Param(block, at) if block == target.block && at as usize == index));
+                    is_handed_on |= steps_followed == 0 || !joined.is_some_and(|joined| is_only_looked_at(strs, func, V::new(joined), steps_followed - 1));
+                }
+            });
             !is_handed_on
         })
 }
 
-fn may_find_the_constructor_of_functions(program: &Program, func: &Func, at: V, op: &Op, is_own: &[bool]) -> bool {
+fn may_find_the_constructor_of_functions(program: &Program, func: &Func, at: V, op: &Op) -> bool {
     let is_constructor = |name: StrId| program.strs.get(name) == b"constructor";
-    let of_function = |obj: V| may_be_a_function(program.tys.get(func.ty(obj)), is_own);
-    let of_plain_object = |obj: V| program.tys.get(func.ty(obj)).parts.iter().any(|part| matches!(part, Part::Class(layout) if layout.is_some() && program.layouts[layout.idx()].kind == LayoutKind::Record));
+    let may_inherit_from_a_function = |obj: V| program.tys.get(func.ty(obj)).has_objects();
+    let holds_a_symbol = |obj: V| program.tys.get(func.ty(obj)).prims & prim::SYMBOL != 0;
     let hands_out_descriptors = |name: StrId| matches!(program.strs.get(name), b"getOwnPropertyDescriptor" | b"getOwnPropertyDescriptors");
     let is_sought_in = |obj: V, name: StrId| is_constructor(name) || hands_out_descriptors(name) && !matches!(func.op(obj), Some(Op::FreeGet { .. }));
     match op {
-        &Op::CallMethod { obj, name, .. } => is_sought_in(obj, name) && of_function(obj),
-        &Op::PropGet { obj, name } => is_sought_in(obj, name) && (of_function(obj) || is_constructor(name) && of_plain_object(obj)) && !is_only_looked_at(func, at, 2),
+        &Op::CallMethod { obj, name, .. } => is_sought_in(obj, name) && may_inherit_from_a_function(obj),
+        &Op::PropGet { obj, name } => is_sought_in(obj, name) && (may_inherit_from_a_function(obj) || holds_a_symbol(obj)) && !is_only_looked_at(&program.strs, func, at, STEPS_OF_A_LOOK),
         Op::Operation { which: Operation::SuperGet, args } if matches!(func.op(args[1]), Some(&Op::Str(name)) if is_constructor(name) || hands_out_descriptors(name)) => true,
         _ => match read_by_any_key(op) {
             Some((obj, key)) => {
@@ -135,8 +147,7 @@ fn may_find_the_constructor_of_functions(program: &Program, func: &Func, at: V, 
                     Some(Op::Int(_) | Op::Symbol(_)) => false,
                     _ => may_be_a_name(program, func, key, &mut Vec::new()),
                 };
-                let is_named = matches!(func.op(key), Some(Op::Str(_)));
-                may_say_constructor && (of_function(obj) || !is_named && of_plain_object(obj)) && !is_only_looked_at(func, at, 2)
+                may_say_constructor && (may_inherit_from_a_function(obj) || holds_a_symbol(obj)) && !is_only_looked_at(&program.strs, func, at, STEPS_OF_A_LOOK)
             }
             None => false,
         },
@@ -168,7 +179,7 @@ fn may_find_what_makes_or_loads_code(program: &Program, func: &Func, at: V, op: 
     let is_such = |obj: V, name: StrId| MAKE_OR_LOAD_CODE.contains(&program.strs.get(name)) && !is_refused(program.strs.get(name)) && !matches!(func.op(obj), Some(Op::FreeGet { .. })) && may_be_a_function(program.tys.get(func.ty(obj)), is_own);
     match *op {
         Op::CallMethod { obj, name, .. } => is_such(obj, name),
-        Op::PropGet { obj, name } => is_such(obj, name) && !is_only_looked_at(func, at, 2),
+        Op::PropGet { obj, name } => is_such(obj, name) && !is_only_looked_at(&program.strs, func, at, STEPS_OF_A_LOOK),
         _ => false,
     }
 }
@@ -250,12 +261,81 @@ fn may_be_a_symbol(program: &Program, func: &Func, key: V) -> bool {
     }
 }
 
+pub(super) fn reads_the_constructor_of_a_symbol(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
+    let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
+    program.funcs.iter().filter(is_of_program).any(|func| {
+        let holds_a_symbol = |value: V| {
+            value.is_some() && {
+                let declared = program.tys.get(func.ty(value));
+                declared.prims & prim::SYMBOL != 0 && !declared.any_object && !declared.any_function
+            }
+        };
+        func.values.iter().any(|value| match value.def {
+            Def::Op(Op::PropGet { obj, name } | Op::CallMethod { obj, name, .. }) => program.strs.get(name) == b"constructor" && holds_a_symbol(obj),
+            Def::Op(Op::ElemGet { obj, key }) => {
+                holds_a_symbol(obj)
+                    && match func.op(key) {
+                        Some(&Op::Str(name)) => program.strs.get(name) == b"constructor",
+                        Some(Op::Int(_) | Op::Symbol(_)) => false,
+                        _ => may_be_a_name(program, func, key, &mut Vec::new()),
+                    }
+            }
+            _ => false,
+        })
+    })
+}
+
+const HAND_OUT_MEMBERS: [&[u8]; 3] = [b"values", b"entries", b"assign"];
+
+pub(super) fn takes_members_without_naming_them(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
+    let is_own = layouts_of_own_objects(program);
+    let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
+    program.funcs.iter().filter(is_of_program).any(|func| {
+        let is_global = |value: V, written: &[u8]| value.is_some() && matches!(func.op(value), Some(&Op::FreeGet { name, .. }) if program.strs.get(name) == written);
+        let may_be_of_the_runtime = |value: &V| {
+            let declared = program.tys.get(func.ty(*value));
+            declared.any_object || declared.any_function || declared.parts.iter().any(|part| !matches!(part, Part::Array(_)) && !matches!(part, Part::Class(layout) if layout.is_some() && is_own[layout.idx()]))
+        };
+        let may_be_a_function = |value: V| value.is_some() && (program.tys.get(func.ty(value)).any_object || program.tys.get(func.ty(value)).any_function);
+        let hands_out_members = |holder: V, name: StrId| HAND_OUT_MEMBERS.contains(&program.strs.get(name)) && (is_global(holder, b"Object") || may_be_a_function(holder));
+        let is_stringify = |holder: V, name: StrId| is_global(holder, b"JSON") && program.strs.get(name) == b"stringify";
+        let is_taken_by = |holder: V, name: StrId, args: &[V]| {
+            let targets = usize::from(program.strs.get(name) == b"assign");
+            hands_out_members(holder, name) && args.iter().skip(targets).any(may_be_of_the_runtime) || is_stringify(holder, name) && args.len() > 1 && may_be_of_the_runtime(&args[0]) && may_be_of_the_runtime(&args[1])
+        };
+        let member_at = |value: V| match func.op(value) {
+            Some(&Op::PropGet { obj, name }) if hands_out_members(obj, name) || is_stringify(obj, name) => Some((obj, name)),
+            _ => None,
+        };
+        let by_operations = func.values.iter().any(|value| match &value.def {
+            Def::Op(Op::CallMethod { obj, name, args }) => is_taken_by(*obj, *name, args),
+            Def::Op(Op::Call { callee, args, .. }) if member_at(*callee).is_some() => member_at(*callee).is_some_and(|(holder, name)| is_taken_by(holder, name, args)),
+            Def::Op(Op::Operation { which: Operation::CloneObject | Operation::CloneObjectWith | Operation::CopyDataPropertiesExcluding, args }) => args.first().is_some_and(may_be_of_the_runtime),
+            Def::Op(Op::Operation { which: Operation::CopyDataProperties, args }) => args.get(1).is_some_and(may_be_of_the_runtime),
+            Def::Op(op) => {
+                let mut is_handed_on = false;
+                op.for_each_operand(|operand| is_handed_on |= operand.is_some() && member_at(operand).is_some());
+                is_handed_on
+            }
+            Def::Param(..) => false,
+        });
+        by_operations
+            || func.blocks.iter().filter_map(|block| block.term.as_ref()).any(|term| {
+                let mut is_handed_on = false;
+                term.for_each_operand(|operand| is_handed_on |= operand.is_some() && member_at(operand).is_some());
+                is_handed_on
+            })
+    })
+}
+
 pub(super) fn writes_under_a_key_that_may_be_a_symbol(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>) -> bool {
     let is_of_program = |func: &&Func| func.module.is_some() && !func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) && !files_of_prelude.contains(&modules[func.module.idx()]);
     program.funcs.iter().filter(is_of_program).any(|func| {
+        let may_be_called = |value: V| value.is_none() || program.tys.get(func.ty(value)).has_objects();
         func.values.iter().any(|value| match &value.def {
-            &Def::Op(Op::ElemSet { key, .. }) => may_be_a_symbol(program, func, key),
-            Def::Op(Op::Operation { which: Operation::SuperSet | Operation::DefineField | Operation::DefineGetter | Operation::DefineSetter | Operation::DefineMethod, args }) => args.len() > 1 && may_be_a_symbol(program, func, args[1]),
+            &Def::Op(Op::ElemSet { key, value, .. }) => may_be_a_symbol(program, func, key) && may_be_called(value),
+            Def::Op(Op::Operation { which: Operation::DefineField, args }) => args.len() > 2 && may_be_a_symbol(program, func, args[1]) && may_be_called(args[2]),
+            Def::Op(Op::Operation { which: Operation::SuperSet | Operation::DefineGetter | Operation::DefineSetter | Operation::DefineMethod, args }) => args.len() > 1 && may_be_a_symbol(program, func, args[1]),
             _ => false,
         })
     })
@@ -277,7 +357,47 @@ fn without_assertions(module: &Module<'_>, mut e: ExprId) -> ExprId {
     e
 }
 
-fn member_read_from(module: &Module<'_>, mention: ExprId) -> Option<ExprId> {
+fn members_ignore_the_receiver(module: &Module<'_>, literal: ExprId) -> bool {
+    let hir = &module.hir;
+    let ExprKind::Object(members) = hir[literal].kind else { return false };
+    let are_functions = members.iter().all(|member| matches!(hir[member].kind, PropKind::Init | PropKind::Method) && matches!(hir[hir[member].value].kind, ExprKind::Fn(_)));
+    are_functions && !hir.exprs.iter().any(|e| matches!(e.kind, ExprKind::This | ExprKind::Super) && (hir[literal].pos..hir[literal].end).contains(&e.pos))
+}
+
+fn hands_the_receiver_to_nothing_that_keeps_it(module: &Module<'_>, literal: ExprId, member: ExprId, call_of_member: ExprId) -> bool {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let (ExprKind::Call(call), ExprKind::Object(members)) = (hir[call_of_member].kind, hir[literal].kind) else { return false };
+    if !members_ignore_the_receiver(module, literal) {
+        return false;
+    }
+    if matches!(hir[member].kind, ExprKind::Dot { name, .. } if members.iter().any(|own| hir[own].key == PropKey::Name(name))) {
+        return true;
+    }
+    let mut arguments = hir.ids(hir[call].args);
+    let takes_one_at_most = match (arguments.next(), arguments.next()) {
+        (None, _) => true,
+        (Some(only), None) => {
+            let only: ExprId = only;
+            !matches!(hir[only].kind, ExprKind::Spread(_))
+        }
+        _ => false,
+    };
+    let result = match bound.expr_parent[with_assertions(module, call_of_member).idx()] {
+        Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Await(_)) => around,
+        _ => call_of_member,
+    };
+    takes_one_at_most && is_only_tested_or_called(module, result, false, EXPRESSIONS_FOLLOWED)
+}
+
+fn call_of(module: &Module<'_>, member: ExprId) -> Option<ExprId> {
+    let read = with_assertions(module, member);
+    match module.bound.expr_parent[read.idx()] {
+        Parent::Expr(user) if matches!(module.hir[user].kind, ExprKind::Call(call) if module.hir[call].callee == read) => Some(user),
+        _ => None,
+    }
+}
+
+fn member_read_from(module: &Module<'_>, mention: ExprId, literal: ExprId) -> Option<ExprId> {
     let (hir, bound) = (&module.hir, &module.bound);
     let receiver = with_assertions(module, mention);
     let Parent::Expr(member) = bound.expr_parent[receiver.idx()] else { return None };
@@ -286,6 +406,7 @@ fn member_read_from(module: &Module<'_>, mention: ExprId) -> Option<ExprId> {
     }
     let read = with_assertions(module, member);
     let hands_on_the_receiver = matches!(bound.expr_parent[read.idx()], Parent::Expr(user) if match hir[user].kind {
+        ExprKind::Call(call) if hir[call].callee == read => !hands_the_receiver_to_nothing_that_keeps_it(module, literal, member, user),
         ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => hir[call].callee == read,
         ExprKind::Unary { op: UnOp::Delete, .. } | ExprKind::Instantiation { .. } => true,
         _ => false,
@@ -304,6 +425,9 @@ fn is_only_tested_or_called(module: &Module<'_>, value: ExprId, may_be_held: boo
         Parent::Expr(around) => match hir[around].kind {
             ExprKind::Unary { op: UnOp::Typeof | UnOp::Not, .. } | ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq, .. } => true,
             ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq, left, right } => is_nullish(left) || is_nullish(right),
+            ExprKind::Binary { op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, .. } => true,
+            ExprKind::Unary { op: UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Void, .. } | ExprKind::Template { .. } => true,
+            ExprKind::Assign { op: Some(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor), value: operand, .. } => operand == value,
             ExprKind::Binary { op: BinOp::And, left, .. } if left == value => true,
             ExprKind::Cond { test, .. } if test == value => true,
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } | ExprKind::Cond { .. } => followed > 0 && is_only_tested_or_called(module, around, may_be_held, followed - 1),
@@ -334,7 +458,20 @@ fn is_asked_for_a_key(module: &Module<'_>, mention: ExprId) -> bool {
     matches!(module.bound.expr_parent[receiver.idx()], Parent::Expr(around) if matches!(module.hir[around].kind, ExprKind::Binary { op: BinOp::In, right, .. } if right == receiver))
 }
 
-fn constants_that_hold_an_object_literal(module: &Module<'_>) -> FxHashSet<SymbolId> {
+const ASK_ONLY_FOR_OWN_MEMBERS: [&[u8]; 5] = [b"entries", b"getOwnPropertyNames", b"hasOwn", b"keys", b"values"];
+
+fn is_asked_for_its_own_members(module: &Module<'_>, atoms: &Interner<'_>, mention: ExprId) -> bool {
+    let (hir, bound) = (&module.hir, &module.bound);
+    let receiver = with_assertions(module, mention);
+    let is_asking = |callee: ExprId| matches!(hir[callee].kind, ExprKind::Dot { obj, name, .. } if matches!(hir[obj].kind, ExprKind::Ident(known::Object)) && bound.expr_symbol[obj.idx()].is_none() && ASK_ONLY_FOR_OWN_MEMBERS.contains(&atoms.bytes(name)));
+    match bound.expr_parent[receiver.idx()] {
+        Parent::Expr(around) => matches!(hir[around].kind, ExprKind::Call(call) if hir.ids(hir[call].args).next() == Some(receiver) && is_asking(hir[call].callee)),
+        Parent::Stmt(around) => matches!(hir[around].kind, StmtKind::ForIn { expr, .. } if expr == receiver),
+        _ => false,
+    }
+}
+
+fn constants_that_hold_an_object_literal(module: &Module<'_>) -> FxHashMap<SymbolId, ExprId> {
     let (hir, bound) = (&module.hir, &module.bound);
     let is_plain = |literal: ExprId| {
         matches!(hir[literal].kind, ExprKind::Object(members) if members.iter().all(|member| {
@@ -342,13 +479,13 @@ fn constants_that_hold_an_object_literal(module: &Module<'_>) -> FxHashSet<Symbo
         }))
     };
     let is_exported_by_name = |holder: SymbolId| hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == bound.symbols[holder.idx()].name));
-    let mut holders = FxHashSet::default();
+    let mut holders = FxHashMap::default();
     for declared in hir.var_decls.iter().filter(|declared| declared.kind == VarKind::Const && declared.init.is_some() && !declared.flags.intersects(Flags::EXPORT | Flags::AMBIENT)) {
         let Some(holder) = bound.pat_symbol[declared.pat.idx()].some() else { continue };
         let symbol = &bound.symbols[holder.idx()];
         let is_declared_once = matches!(symbol.decls[..], [Decl::Var(pat)] if pat == declared.pat && matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)));
         if is_declared_once && !symbol.flags.intersects(SymFlags::ASSIGNED | SymFlags::MERGED) && is_plain(without_assertions(module, declared.init)) && !is_exported_by_name(holder) {
-            holders.insert(holder);
+            holders.insert(holder, without_assertions(module, declared.init));
         }
     }
     holders
@@ -360,7 +497,7 @@ struct ReadsOfUnsharedLiterals {
     whose_result_is_only_tested_or_called: FxHashSet<u32>,
 }
 
-fn reads_by_key_of_object_literals_that_nothing_else_holds(module: &Module<'_>) -> ReadsOfUnsharedLiterals {
+fn reads_by_key_of_object_literals_that_nothing_else_holds(module: &Module<'_>, atoms: &Interner<'_>) -> ReadsOfUnsharedLiterals {
     let (hir, bound) = (&module.hir, &module.bound);
     let mut holders = constants_that_hold_an_object_literal(module);
     if holders.is_empty() {
@@ -372,20 +509,27 @@ fn reads_by_key_of_object_literals_that_nothing_else_holds(module: &Module<'_>) 
     };
     for mention in mentions() {
         if let Some(holder) = bound.expr_symbol[mention.idx()].some()
-            && holders.contains(&holder)
-            && member_read_from(module, mention).is_none()
+            && let Some(&literal) = holders.get(&holder)
+            && member_read_from(module, mention, literal).is_none()
             && !is_asked_for_a_key(module, mention)
+            && !is_asked_for_its_own_members(module, atoms, mention)
         {
             holders.remove(&holder);
         }
     }
-    let of_holders = mentions().filter(|mention| bound.expr_symbol[mention.idx()].some().is_some_and(|holder| holders.contains(&holder)));
+    let of_holders = mentions().filter_map(|mention| Some((mention, *holders.get(&bound.expr_symbol[mention.idx()].some()?)?)));
     let mut reads = ReadsOfUnsharedLiterals::default();
-    for mention in of_holders {
-        let Some(member) = member_read_from(module, mention).filter(|&member| matches!(hir[member].kind, ExprKind::Index { .. })) else { continue };
-        reads.all.insert(hir[mention].pos);
-        if is_only_tested_or_called(module, member, true, EXPRESSIONS_FOLLOWED) {
-            reads.whose_result_is_only_tested_or_called.insert(hir[mention].pos);
+    for (mention, literal) in of_holders {
+        let Some(member) = member_read_from(module, mention, literal).filter(|&member| matches!(hir[member].kind, ExprKind::Index { .. })) else { continue };
+        let is_called_in_place = call_of(module, member).is_some();
+        let holds_another_read = |key: ExprId| hir.exprs.iter().any(|other| matches!(other.kind, ExprKind::Index { index, .. } if !matches!(hir[index].kind, ExprKind::Number(_) | ExprKind::String(_))) && (hir[key].pos..hir[key].end).contains(&other.pos));
+        if is_called_in_place && matches!(hir[member].kind, ExprKind::Index { index, .. } if holds_another_read(index)) {
+            continue;
+        }
+        let at = if is_called_in_place { crate::positions::last_pos(hir, member) } else { hir[mention].pos };
+        reads.all.insert(at);
+        if is_called_in_place || is_only_tested_or_called(module, member, true, EXPRESSIONS_FOLLOWED) {
+            reads.whose_result_is_only_tested_or_called.insert(at);
         }
     }
     reads
@@ -393,6 +537,7 @@ fn reads_by_key_of_object_literals_that_nothing_else_holds(module: &Module<'_>) 
 
 pub(super) struct Reads {
     pub(super) of_any_property: Vec<(FileId, u32)>,
+    pub(super) by_a_key_that_may_be_a_name: bool,
     pub(super) that_may_find_the_constructor_of_functions: Vec<(FileId, u32)>,
     pub(super) that_may_find_what_makes_or_loads_code: Vec<(FileId, u32)>,
     pub(super) of_modules_that_are_not_compiled: Vec<(FileId, Vec<u8>)>,
@@ -402,6 +547,7 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
     let is_own = layouts_of_own_objects(program);
     let create_require = program.strs.find(b"createRequire");
     let reads_of_unshared_literals: Vec<OnceLock<ReadsOfUnsharedLiterals>> = modules.iter().map(|_| OnceLock::new()).collect();
+    let reads_by_key = AtomicBool::new(false);
     let mut tasks: Vec<(&[Func], Vec<(FileId, u32)>, Vec<(FileId, u32)>, Vec<(FileId, u32)>, Vec<(FileId, Vec<u8>)>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Vec::new(), Vec::new(), Vec::new(), Vec::new())).collect();
     for_each_mut(&mut tasks, in_parallel, &|(funcs, found, finding_constructor, finding_loaders, loading)| {
         for func in funcs.iter().filter(|func| func.module.is_some()) {
@@ -409,10 +555,10 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
             let is_of_runtime = func.has(func_flags::IS_BUILTIN) || func.has(func_flags::IS_IN_BUILTIN_MODULE);
             let of_unshared_literals = |op: &Op| {
                 let is_of_program = !is_of_runtime && !files_of_prelude.contains(&file);
-                (is_of_program && matches!(op, Op::ElemGet { .. })).then(|| reads_of_unshared_literals[func.module.idx()].get_or_init(|| reads_by_key_of_object_literals_that_nothing_else_holds(files.module(file))))
+                (is_of_program && matches!(op, Op::ElemGet { .. })).then(|| reads_of_unshared_literals[func.module.idx()].get_or_init(|| reads_by_key_of_object_literals_that_nothing_else_holds(files.module(file), &files.atoms)))
             };
             if is_of_runtime || files_of_prelude.contains(&file) || finding_constructor.last().is_none_or(|last| last.0 != file) {
-                let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op, &is_own) && !of_unshared_literals(op).is_some_and(|reads| reads.whose_result_is_only_tested_or_called.contains(&value.pos))));
+                let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op) && !of_unshared_literals(op).is_some_and(|reads| reads.whose_result_is_only_tested_or_called.contains(&value.pos))));
                 finding_constructor.extend(finds.map(|(_, value)| (file, value.pos)));
             }
             if !is_of_runtime && !files_of_prelude.contains(&file) && finding_loaders.last().is_none_or(|last| last.0 != file) {
@@ -434,23 +580,23 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files:
                     loading.extend(asked_of_what_is_made.map(|name| (file, name.to_vec())));
                 }
             }
+            let mut is_counted_here = false;
             for value in &func.values {
                 if let Def::Op(op) = &value.def
                     && let Some((obj, key)) = read_by_key(func, op)
                     && may_be_a_name(program, func, key, &mut Vec::new())
-                    && !is_own_object(program.tys.get(func.ty(obj)), &is_own)
-                    && (is_of_runtime || found.last().is_none_or(|last| last.0 != file))
-                    && !of_unshared_literals(op).is_some_and(|reads| reads.all.contains(&value.pos))
                 {
-                    found.push((file, value.pos));
-                    if is_of_runtime {
-                        break;
+                    reads_by_key.store(true, Ordering::Relaxed);
+                    let is_let_off = is_own_object(program.tys.get(func.ty(obj)), &is_own) || if is_of_runtime { is_counted_here } else { found.last().is_some_and(|last| last.0 == file) };
+                    if !is_let_off && !of_unshared_literals(op).is_some_and(|reads| reads.all.contains(&value.pos)) {
+                        found.push((file, value.pos));
+                        is_counted_here = true;
                     }
                 }
             }
         }
     });
-    let mut reads = Reads { of_any_property: Vec::new(), that_may_find_the_constructor_of_functions: Vec::new(), that_may_find_what_makes_or_loads_code: Vec::new(), of_modules_that_are_not_compiled: Vec::new() };
+    let mut reads = Reads { of_any_property: Vec::new(), by_a_key_that_may_be_a_name: reads_by_key.into_inner(), that_may_find_the_constructor_of_functions: Vec::new(), that_may_find_what_makes_or_loads_code: Vec::new(), of_modules_that_are_not_compiled: Vec::new() };
     for (_, of_any_property, finding_constructor, finding_loaders, loading) in tasks {
         reads.of_any_property.extend(of_any_property);
         reads.that_may_find_the_constructor_of_functions.extend(finding_constructor);

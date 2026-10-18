@@ -1419,6 +1419,53 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     });
   });
 
+  describe("a literal", () => {
+    const vector = "typedef char sixteen __attribute__((vector_size(16)));";
+    const compares = (name: string, text: string) =>
+      `__attribute__((noinline)) sixteen ${name}(sixteen x) { return x == (sixteen){ ${[...text].map(character => `'${character}'`).join(", ")} }; }`;
+    const [onlyBehind, inBoth, onlyStays] = ["sixteen that go!", "sixteen for both", "sixteen stay on!"];
+    const literals = {
+      ...sources,
+      "door.c": doorTo("more"),
+      "more.c": `
+        ${vector} ${compares("behind_compares", onlyBehind)} ${compares("behind_shares", inBoth)}
+        int more(int x) { return behind_compares((sixteen){ x })[0] + behind_shares((sixteen){ x })[1]; }
+      `,
+      "main.c": `
+        ${start} ${vector} ${compares("stays_compares", onlyStays)} ${compares("stays_shares", inBoth)}
+        int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : stays_compares((sixteen){ 's' })[0] == -1 && stays_shares((sixteen){ 's' })[0] == -1 ? 0 : 1; }
+      `,
+    };
+    const objects = ["behind", "door", "more", "main"];
+    const whichCanGo = ({ file, section, canGoAt }: Awaited<ReturnType<typeof linked>>) => {
+      const room = section("__TEXT,__literals")!;
+      const bytes = file.subarray(room.offset, room.offset + room.size);
+      return [onlyBehind, inBoth, onlyStays].map(text => [0, 4, 8, 12].map(offset => canGoAt(room.address + bytes.indexOf(Buffer.from(text, "latin1")) + offset)).join());
+    };
+
+    test("that only the feature reads is overwritten; one that what stays reads, alone or too, stays", async () => {
+      using dir = tempDir("islands-macho-literals", literals);
+      const result = await linked(machine, String(dir), { objects });
+      expect(result.said).toContain("every reference to a literal was followed by its bytes");
+      expect(whichCanGo(result)).toEqual(["true,true,true,true", "false,false,false,false", "false,false,false,false"]);
+      expect(result.exitCodes).toEqual({ whole: 0, trimmed: 0 });
+    });
+
+    test("that data points to stays", async () => {
+      const pointed = "sixteen pointed!";
+      using dir = tempDir("islands-macho-literals", {
+        ...literals,
+        "pointer.S": `.section __TEXT,__literal16,16byte_literals\n.p2align 4\nl_pointed: .ascii ${JSON.stringify(pointed)}\n.section __DATA,__data\n.globl _points\n.p2align 3\n_points: .quad l_pointed\n.no_dead_strip _points\n.subsections_via_symbols\n`,
+      });
+      const result = await linked(machine, String(dir), { objects: [...objects, "pointer"] });
+      expect(result.said).toContain("every reference to a literal was followed by its bytes");
+      expect(whichCanGo(result)).toEqual(["true,true,true,true", "false,false,false,false", "false,false,false,false"]);
+      const room = result.section("__TEXT,__literals")!;
+      expect(result.canGoAt(room.address + result.file.subarray(room.offset, room.offset + room.size).indexOf(Buffer.from(pointed, "latin1")))).toBe(false);
+      expect(result.exitCodes).toEqual({ whole: 0, trimmed: 0 });
+    });
+  });
+
   describe("the layout", () => {
     const word = (index: number) => `words that go with the feature, ${index}`;
     const everyKind = {
@@ -1495,9 +1542,10 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       const image = await linked(machine, String(dir), { objects });
       const { table, stringAt, canGoAt, exitCodes } = image;
       const dead = mergedRanges(table.islands);
-      expect(dead.map(run => describeRange(image, run))).toEqual(threeRuns);
-      expect(canGoAt(stringAt(stays))).toBe(false);
-      expect(stringAt(stays)).toBeLessThan(dead[1]!.start);
+      expect(dead.map(run => describeRange(image, run))).toEqual([threeRuns[0], "__TEXT,__cstring .. __TEXT,__cstring", ...threeRuns.slice(1)]);
+      expect([stays, goes].map(text => canGoAt(stringAt(text)))).toEqual([false, true]);
+      expect(dead[1]).toEqual({ start: stringAt(goes), end: stringAt(goes) + goes.length + 1 });
+      expect(stringAt(stays)).toBeLessThan(dead[2]!.start);
       expect(allWords.filter(text => !canGoAt(stringAt(text)))).toEqual([]);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
@@ -1749,7 +1797,8 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       expect(said).toContain("(laid out by an earlier build's plan)");
       expect(addressOf("stays")).toBeGreaterThan(addressOf("behind_4"));
       expect(addressOf("stays")).toBeLessThan(addressOf("behind_5"));
-      expect(["stays", "main", "behind_4", "behind_5", `behind_${count - 1}`].map(canGo)).toEqual([false, false, false, true, true]);
+      expect(["stays", "main", "behind_4", "behind_5", `behind_${count - 1}`].map(canGo)).toEqual([false, false, true, true, true]);
+      expect(said).toMatch(/; [1-9]\d* more stretches, \d+ bytes, can only be overwritten/);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
   });

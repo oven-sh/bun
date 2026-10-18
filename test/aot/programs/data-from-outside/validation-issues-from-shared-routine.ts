@@ -5,18 +5,18 @@
 // IR= 0 report NewObjectWithShape
 // SIZE< report 14000
 // IR- ^function \d+ "build"
-import type { Default, Int, MaxLength, Message, Min, MinItems, Strict } from "bun";
-interface Address { street: string; zip: string & MaxLength<5> }
+import type { Schema } from "bun";
+interface Address { street: string; zip: string & Schema.MaxLength<5> }
 interface Person {
   name: string;
-  age: number & Int & Min<0> & Message<"age must be a whole number from 0 up">;
+  age: number & Schema.Int & Schema.Min<0> & Schema.Message<"age must be a whole number from 0 up">;
   address: Address;
-  tags: string[] & MinItems<1>;
+  tags: string[] & Schema.MinItems<1>;
   pair: [number, string];
   scores: Record<string, number>;
   role: "admin" | "user" | { custom: string };
   nickname?: string;
-  level: number & Default<1>;
+  level: number & Schema.Default<1>;
 }
 function issuesOf(run: () => unknown): string {
   try {
@@ -37,12 +37,6 @@ const inputs: unknown[] = [
   { ...good, age: 1.5, address: { street: 1, zip: "123456" }, tags: [], pair: [1], scores: { a: "x", b: 2 }, role: "owner", nickname: 5, level: "high" },
   { ...good, address: null, tags: "t", pair: ["1", 2], scores: [], role: { custom: 1 } },
 ];
-for (const input of inputs) {
-  console.log(issuesOf(() => Bun.validate<Person>(input)));
-  const result = Bun.safeValidate<Person>(input);
-  console.log(result.success ? "success" : result.issues.length + " " + result.issues[0].message);
-  console.log(issuesOf(() => Bun.parse<Person>(JSON.stringify(input))));
-}
-console.log(issuesOf(() => Bun.validate<Address & Strict>({ street: "s", zip: "1", city: "c", country: "d" })));
-console.log(JSON.stringify(Bun.schema<Address>()["~standard"].validate({ street: 1 })));
-console.log(issuesOf(() => Bun.parse<Person>("{")), issuesOf(() => Bun.parse<Address[]>('[{"street":"s","zip":"1"},{"street":"s"}]')));
+for (const input of inputs) console.log(issuesOf(() => JSON.parse<Person>(JSON.stringify(input))));
+console.log(issuesOf(() => JSON.parse<Address & Schema.Strict>('{"street":"s","zip":"1","city":"c","country":"d"}')));
+console.log(issuesOf(() => JSON.parse<Person>("{")), issuesOf(() => JSON.parse<Address[]>('[{"street":"s","zip":"1"},{"street":"s"}]')));

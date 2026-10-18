@@ -308,6 +308,7 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
+        bun_ast::audited::forget_json_parse_schemas();
 
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {

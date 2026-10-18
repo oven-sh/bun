@@ -26,7 +26,13 @@ const orderSchema = z.strictObject({
 
 export type Order = z.infer<typeof orderSchema>;
 
-export function parseOrder(body: unknown): Order | undefined {
+export async function readOrder(request: Request): Promise<Order | undefined> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return undefined;
+  }
   const result = orderSchema.safeParse(body);
   return result.success ? result.data : undefined;
 }

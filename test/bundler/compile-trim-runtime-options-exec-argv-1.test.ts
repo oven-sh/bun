@@ -1,3 +1,3 @@
 import { testExecArgv } from "./compile-trim-runtime-options-run";
 
-testExecArgv(1, 3);
+testExecArgv(1, 10);

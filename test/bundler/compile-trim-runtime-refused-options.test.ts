@@ -13,6 +13,7 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 const programs = {
   "hello.ts": `console.log("hello world");`,
   "names-eval.ts": `console.log((0, eval)("1 + 1"));`,
+  "names-fetch.ts": `console.log(typeof fetch);`,
   "tells-its-options.ts": `console.log(JSON.stringify(process.execArgv));`,
 };
 
@@ -97,6 +98,45 @@ describe("--compile-trim-runtime with an option in --compile-exec-argv that need
   });
 });
 
+describe.skipIf(!hasIslands || !!unsupported)("--compile-trim-runtime with an option in --compile-exec-argv that connects for a part that the program does not use", () => {
+  test.each(["--fetch-preconnect=http://127.0.0.1:9", "--smol --redis-preconnect"])("%s: nothing is built", async options => {
+    using dir = tempDir("compile-trim-runtime-exec-argv", { "hello.ts": programs["hello.ts"] });
+    const folder = String(dir);
+    const option = /--\w+-preconnect/.exec(options)![0];
+    const built = await run([bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", "--compile-exec-argv=" + options, "hello.ts", "--outfile", "hello"], folder);
+    expect(built.stderr).toEndWith(`error: ${option} ${isLeftOut}\n`);
+    expect(built.exitCode).toBe(1);
+    expect(readdirSync(folder)).toEqual(["hello.ts"]);
+  });
+
+  test("Bun.build fails with the same words", async () => {
+    using dir = tempDir("compile-trim-runtime-exec-argv", {
+      "hello.ts": programs["hello.ts"],
+      "api.ts": `
+        try {
+          await Bun.build({ entrypoints: ["hello.ts"], compile: { outfile: "hello", aot: true, trimRuntime: true, execArgv: ["--redis-preconnect"] } });
+          console.log("built");
+        } catch (error) {
+          console.log(((error as AggregateError).errors ?? [error]).map(each => each.message).join("\\n"));
+        }
+      `,
+    });
+    const folder = String(dir);
+    const failed = await run([bunExe(), "api.ts"], folder);
+    expect(failed.stdout).toEndWith(`--redis-preconnect ${isLeftOut}\n`);
+    expect(failed.exitCode).toBe(0);
+    expect(readdirSync(folder).sort()).toEqual(["api.ts", "hello.ts"]);
+  });
+
+  test("without --aot everything stays, and they are built in", async () => {
+    using dir = tempDir("compile-trim-runtime-exec-argv", { "hello.ts": programs["hello.ts"] });
+    const folder = String(dir);
+    const build = [bunExe(), "build", "--compile", "--compile-trim-runtime", "--compile-exec-argv=--fetch-preconnect=http://127.0.0.1:9", "hello.ts", "--outfile", "hello"];
+    expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
+    expect(await run([join(folder, "hello")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe.skipIf(!hasIslands)("an executable built with --compile-trim-runtime", () => {
   for (const flags of [[], ["--aot"]]) {
     const how = ["--compile", ...flags].join(" ");
@@ -131,6 +171,23 @@ describe.skipIf(!hasIslands)("an executable built with --compile-trim-runtime", 
         expect({ options, ...(await run([join(folder, "hello")], folder, { ...bunEnv, BUN_OPTIONS: options })) }).toEqual({ options, ...hello });
       }
       expect(await run([join(folder, "hello"), ...leftOut.flatMap(([, options]) => options.split(" "))], folder)).toEqual(hello);
+    });
+
+    test.skipIf(flags.length > 0 && !!unsupported)(`${how}: obeys --fetch-preconnect where it keeps fetch, and refuses it where it does not`, async () => {
+      using dir = tempDir("compile-trim-runtime-options", programs);
+      const folder = String(dir);
+      const env = { ...bunEnv, BUN_OPTIONS: "--fetch-preconnect=http://127.0.0.1:9" };
+      const refusal = { stdout: "", stderr: `error: --fetch-preconnect ${isLeftOut}\n`, exitCode: 1 };
+      for (const [program, prints] of [
+        ["hello", "hello world\n"],
+        ["names-eval", "2\n"],
+        ["names-fetch", "function\n"],
+      ]) {
+        const build = [bunExe(), "build", "--compile", ...flags, "--compile-trim-runtime", `${program}.ts`, "--outfile", program];
+        expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
+        const leavesFetchOut = program === "hello" && flags.length > 0;
+        expect({ program, ...(await run([join(folder, program)], folder, env)) }).toEqual({ program, ...(leavesFetchOut ? refusal : { stdout: prints, stderr: "", exitCode: 0 }) });
+      }
     });
 
     test.skipIf(flags.length > 0 && !!unsupported)(`${how}: reports an option in BUN_OPTIONS that Bun does not accept, without the help of the Bun command line`, async () => {

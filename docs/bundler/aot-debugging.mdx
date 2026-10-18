@@ -24,7 +24,7 @@ new Repo().find(-1);
 ```
 
 ```bash terminal icon="terminal"
-bun build --compile --aot ./app.ts --outfile app && ./app
+bun compile ./app.ts && ./app
 ```
 
 ```txt
@@ -239,10 +239,10 @@ In an executable, as in any bundle, the modules of your program are resolved whe
 The last line of a build, and of `bun check --aot`, says how much of the program is affected:
 
 ```txt
-aot: 75.0% of reads typed, 2 of 3 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-warn=all lists them)
+aot: 66.7% of reads typed, 1 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-explain lists them)
 ```
 
-A read is typed if the compiler knows the type of the value that a property or element access produces.
+The percentage counts the property reads that go through your own classes, interfaces and object types. A read is typed if the compiler knows the layout of the object that it reads from. Reads of what Bun and JavaScript provide, such as `console.log`, are not counted.
 
 ### Rules
 
@@ -250,7 +250,7 @@ A rule reports one kind of loss, where it happens and why. Each rule is off, a w
 
 ```bash terminal icon="terminal"
 bun check --aot ./app.ts --aot-warn=all
-bun build --compile --aot ./app.ts --outfile app --aot-deny=untyped-file,lost-layout
+bun compile ./app.ts --aot-deny=untyped-file,lost-layout
 ```
 
 | Rule              | Reports                                                                                                                        | Default |
@@ -334,7 +334,7 @@ A build reports only what is in the executable. Code that `--define` or a featur
 Put a pattern after the rule. It has the syntax of `exclude` in `tsconfig.json` and is relative to the working directory:
 
 ```bash terminal icon="terminal"
-bun build --compile --aot ./app.ts --outfile app --aot-deny=open-layout:src/server/** --aot-allow=all:node_modules
+bun compile ./app.ts --aot-deny=open-layout:src/server/** --aot-allow=all:node_modules
 ```
 
 ### In the source
@@ -369,14 +369,14 @@ files = ["src/server/**"]
 deny = ["open-layout", "interpreted"]
 ```
 
-`bun build --compile --aot` and `bun check --aot` both read it. Overrides apply in order, after the lists above them. Flags on the command line apply last.
+`bun compile` and `bun check --aot` both read it. Overrides apply in order, after the lists above them. Flags on the command line apply last.
 
 ### Only what got worse
 
 A large program has thousands of findings on the day you turn a rule on. A baseline accepts them and fails the build when there are more:
 
 ```bash terminal icon="terminal"
-bun build --compile --aot ./app.ts --outfile app --aot-deny=all --aot-baseline=aot-baseline.json --aot-update-baseline
+bun compile ./app.ts --aot-deny=all --aot-baseline=aot-baseline.json --aot-update-baseline
 git add aot-baseline.json
 ```
 
@@ -419,7 +419,7 @@ A large program has thousands of findings, and most of them go back to a few lin
 
 ```bash terminal icon="terminal"
 bun check --aot ./config.ts --aot-explain
-bun build --compile --aot ./config.ts --outfile app --aot-explain
+bun compile ./config.ts --outfile app --aot-explain
 ```
 
 ```ts config.ts icon="/icons/typescript.svg"

@@ -8,6 +8,7 @@ pub mod fs_queries;
 pub mod builtins;
 pub mod format;
 pub mod host;
+pub mod json_schemas;
 pub mod outline;
 pub mod snapshot;
 pub mod sound_files;
@@ -469,6 +470,21 @@ impl EarlyRun {
     }
 }
 
+pub fn with_shared_run<R>(then: impl FnOnce(EarlyRun) -> R) -> R {
+    let shared_directory_cache = Arc::new(host::SharedDirectoryCache::default());
+    let result = {
+        let session = Session::new();
+        let run = Run::new(&session, FxHashSet::default());
+        let scanned_files = ScannedFiles::new(FxHashMap::default());
+        then(EarlyRun((&raw const run).cast(), &raw const scanned_files, &raw const shared_directory_cache))
+    };
+    THREADS_STILL_TO_RELEASE.fetch_add(1, Ordering::AcqRel);
+    release_free_pages_of(pool_of_regions());
+    let is_last = THREADS_STILL_TO_RELEASE.fetch_sub(1, Ordering::AcqRel) == 1;
+    bun_core::Global::mimalloc_cleanup(is_last);
+    result
+}
+
 pub fn with_early_run<R>(shared_directory_cache: &Arc<host::SharedDirectoryCache>, then: impl FnOnce(EarlyRun) -> R) -> R {
     let result = {
         let session = Session::new();
@@ -584,6 +600,7 @@ pub struct PlanOptions {
     /// packages are not installed.
     pub only_the_globals: bool,
     pub writes_declaration_files: bool,
+    pub declares_bun_intrinsics: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
     pub memory: usize,
@@ -624,6 +641,7 @@ impl Default for PlanOptions {
             early_scan_only: false,
             only_the_globals: false,
             writes_declaration_files: false,
+            declares_bun_intrinsics: false,
             memory: 0,
         }
     }
@@ -1954,7 +1972,7 @@ fn check_provided_once<R>(
         .or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
     let mut already_read = provided.already_read;
-    if request.is_one_program {
+    if request.is_one_program || request.plan_options.declares_bun_intrinsics {
         already_read.insert(BUN_INTRINSICS.0.to_vec(), BUN_INTRINSICS.1.as_bytes().into());
         already_read.insert(BUN_GLOBAL.0.to_vec(), BUN_GLOBAL.1.as_bytes().into());
     }
@@ -2010,6 +2028,7 @@ fn check_provided_once<R>(
         disk.deferred_imports.entry(host::from_native(&importer)).or_default().push(specifier);
     }
     disk.deferred_paths = paths_of(&disk, provided.deferred_paths.iter().map(Vec::as_slice).collect()).into_iter().collect();
+    disk.loads_what_these_need = provided.loads_what_these_need;
     disk.wait_for_deferred_sources = Guarded::new(provided.deferred_sources);
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
@@ -3241,6 +3260,9 @@ fn check_project_of(
             of_packages.retain(|file| !project.files.contains(file));
             project.files.extend(of_packages);
         }
+    }
+    if disk.loads_what_these_need.is_some() {
+        project.files.retain(|file| is_declaration_file_name(file));
     }
     let named = of.named.map(|(extent, named)| {
         if extent == Extent::Project && !request.plan_options.only_the_globals {
@@ -4994,8 +5016,8 @@ fn check_named_files(
         .filter(|error| error.is_about_options)
         .map(of_configuration)
         .collect();
-    project.options.bun_intrinsics = request.is_one_program.then(|| BUN_INTRINSICS.0.to_vec());
-    project.options.bun_global = request.is_one_program.then(|| BUN_GLOBAL.0.to_vec());
+    project.options.bun_intrinsics = (request.is_one_program || request.plan_options.declares_bun_intrinsics).then(|| BUN_INTRINSICS.0.to_vec());
+    project.options.bun_global = (request.is_one_program || request.plan_options.declares_bun_intrinsics).then(|| BUN_GLOBAL.0.to_vec());
     project.options.lib_dir = match request.libs {
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
         Libs::Directory(dir) => host::from_native(dir),
@@ -5021,6 +5043,13 @@ fn check_named_files(
         && project.options.types.is_none()
     {
         project.options.types = Some(vec![b"bun".to_vec()]);
+    }
+    if host.loads_on_demand() {
+        project.options.types = Some(Vec::new());
+        for lib in &mut project.options.libs {
+            lib.truncate(lib.strip_suffix(b".full").map_or(lib.len(), <[u8]>::len));
+        }
+        project.options.libs.retain(|lib| !lib.starts_with(b"dom") && !lib.starts_with(b"webworker") && lib != b"scripthost");
     }
     let (skip_lib_check, skip_default_lib_check) = (
         project.options.skip_lib_check,

@@ -721,7 +721,8 @@ pub struct Value {
 const _: () = assert!(size_of::<Value>() == 40);
 
 impl Value {
-    const INDEX_BITS: u32 = 26;
+    const INDEX_BITS: u32 = 25;
+    const IS_VALIDATED: u32 = 1 << 28;
     const KEEPS_UNCONVERTIBLE_OBJECTS: u32 = 1 << 29;
     const IS_KNOWN_INITIALIZED: u32 = 1 << 30;
     const IS_IN_TAIL_POSITION: u32 = 1 << 31;
@@ -753,7 +754,7 @@ impl Value {
             Prediction::Field(ty) => (4, ty.0),
         };
         let packed = if index < 1 << Self::INDEX_BITS { kind << Self::INDEX_BITS | index } else { 0 };
-        self.prediction_and_flags = self.prediction_and_flags & (Self::KEEPS_UNCONVERTIBLE_OBJECTS | Self::IS_KNOWN_INITIALIZED | Self::IS_IN_TAIL_POSITION) | packed;
+        self.prediction_and_flags = self.prediction_and_flags & (Self::IS_VALIDATED | Self::KEEPS_UNCONVERTIBLE_OBJECTS | Self::IS_KNOWN_INITIALIZED | Self::IS_IN_TAIL_POSITION) | packed;
     }
 
     #[inline]
@@ -764,6 +765,16 @@ impl Value {
     #[inline]
     pub fn set_is_known_initialized(&mut self, is_known_initialized: bool) {
         self.prediction_and_flags = self.prediction_and_flags & !Self::IS_KNOWN_INITIALIZED | if is_known_initialized { Self::IS_KNOWN_INITIALIZED } else { 0 };
+    }
+
+    #[inline]
+    pub fn is_validated(&self) -> bool {
+        self.prediction_and_flags & Self::IS_VALIDATED != 0
+    }
+
+    #[inline]
+    pub fn set_is_validated(&mut self) {
+        self.prediction_and_flags |= Self::IS_VALIDATED;
     }
 
     #[inline]

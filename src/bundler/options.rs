@@ -1379,8 +1379,6 @@ pub struct SoundFilesRequest<'a> {
 pub struct SoundFile {
     pub path: Box<[u8]>,
     pub text: Box<[u8]>,
-    pub declaration_file: Box<[u8]>,
-    pub mark: Box<[u8]>,
 }
 
 #[derive(Default)]

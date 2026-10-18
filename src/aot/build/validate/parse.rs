@@ -2,10 +2,10 @@ use super::super::coerce::Ty;
 use super::super::{FileBuild, Fx};
 use super::GeneratedFunction;
 use crate::builder::Var;
-use crate::id::{BlockId, FuncId, TyId, V};
+use crate::id::{BlockId, FuncId, StrId, TyId, V};
 use crate::ir::{Args, BinOp, Op, Operation, RelOp, Target, Term, CoerceReason};
 use crate::declared::Declared;
-use bun_sema::check::{Constant, OtherKeys, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationPlan};
+use bun_sema::check::{Constant, OtherKeys, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationPlan, OBJECT_PROTOTYPE_PROPERTIES};
 use bun_sema::types::TypeId;
 use std::rc::Rc;
 
@@ -13,7 +13,7 @@ const MEMBERS_PER_MASK: usize = 30;
 const MAX_KEYS_COMPARED_SEQUENTIALLY: usize = 3;
 const MAX_KEY_BYTE_INSPECTED: usize = 32;
 const MAX_MEMBERS_PARSED_IN_PLACE: usize = 240;
-const OBJECT_PROTOTYPE_PROPERTIES: [&[u8]; 12] = [b"constructor", b"hasOwnProperty", b"isPrototypeOf", b"propertyIsEnumerable", b"toLocaleString", b"toString", b"valueOf", b"__proto__", b"__defineGetter__", b"__defineSetter__", b"__lookupGetter__", b"__lookupSetter__"];
+pub(super) const MIN_ARMS_OF_UNION_WITH_OWN_FUNCTION: usize = 4;
 
 fn needs_no_escaping(text: &[u8]) -> bool {
     text.iter().all(|&byte| (0x20..0x7f).contains(&byte) && byte != b'"' && byte != b'\\')
@@ -153,20 +153,14 @@ fn opening_byte(plan: &ValidationPlan, node: u32) -> Option<u8> {
     }
 }
 
-fn reaches(plan: &ValidationPlan, from: u32, target: u32, seen: &mut Vec<u32>) -> bool {
+fn reaches(plan: &ValidationPlan, from: u32, target: u32, seen: &mut [bool]) -> bool {
     let within: Vec<u32> = match &plan.nodes[from as usize].planned {
         Planned::Array { element: one, .. } | Planned::Dictionary { held: one, .. } => vec![*one],
         Planned::Tuple { elements: several, .. } | Planned::Union { arms: several, .. } => several.clone(),
-        Planned::Object { members, others, .. } => members.iter().map(|member| member.node).chain(if let OtherKeys::Kept(held) = others { Some(*held) } else { None }).collect(),
+        Planned::Object { members, others, .. } => members.iter().map(|member| member.node).chain(if let OtherKeys::Checked(held) = others { Some(*held) } else { None }).collect(),
         _ => Vec::new(),
     };
-    within.into_iter().any(|next| {
-        next == target || {
-            let is_new = !seen.contains(&next);
-            seen.push(next);
-            is_new && reaches(plan, next, target, seen)
-        }
-    })
+    within.into_iter().any(|next| next == target || !std::mem::replace(&mut seen[next as usize], true) && reaches(plan, next, target, seen))
 }
 
 fn discriminating_prefixes(plan: &ValidationPlan, arms: &[u32]) -> Option<Vec<Vec<u8>>> {
@@ -191,27 +185,37 @@ fn discriminating_prefixes(plan: &ValidationPlan, arms: &[u32]) -> Option<Vec<Ve
     })
 }
 
-fn may_accept_undefined(plan: &ValidationPlan, node: u32, depth: u32) -> bool {
-    let described = &plan.nodes[node as usize];
-    described.default.is_some()
-        || match &described.planned {
-            Planned::Anything | Planned::Value(Constant::Undefined) => true,
-            Planned::Union { arms, .. } => depth > 8 || arms.iter().any(|&arm| may_accept_undefined(plan, arm, depth + 1)),
-            _ => false,
-        }
+struct TaggedArms<'a> {
+    name: &'a [u8],
+    tagged: Vec<(&'a [u8], u32)>,
+    untagged: Vec<u32>,
 }
 
-fn may_have_default(plan: &ValidationPlan, node: u32, depth: u32) -> bool {
-    let described = &plan.nodes[node as usize];
-    described.default.is_some()
-        || match &described.planned {
-            Planned::Union { arms, .. } => depth > 8 || arms.iter().any(|&arm| may_have_default(plan, arm, depth + 1)),
-            _ => false,
+fn tagged_arms<'a>(plan: &'a ValidationPlan, arms: &[u32]) -> Option<TaggedArms<'a>> {
+    let members_of = |arm: u32| match &plan.nodes[arm as usize].planned {
+        Planned::Object { members, .. } if is_parsed_in_place(plan, arm) => Some(members),
+        _ => None,
+    };
+    let tag_of = |arm: u32, name: &[u8]| -> Option<&'a [u8]> {
+        let member = members_of(arm)?.iter().find(|member| member.name == name && !member.is_optional)?;
+        match &plan.nodes[member.node as usize] {
+            described if !described.rules.is_empty() || described.default.is_some() => None,
+            described => match &described.planned {
+                Planned::Value(Constant::Text(text)) if needs_no_escaping(text) => Some(&text[..]),
+                _ => None,
+            },
         }
+    };
+    arms.iter().filter_map(|&arm| members_of(arm)).flatten().find_map(|member| {
+        let tagged: Vec<(&[u8], u32)> = arms.iter().filter_map(|&arm| Some((tag_of(arm, &member.name)?, arm))).collect();
+        let are_distinct = tagged.iter().enumerate().all(|(at, one)| !tagged[..at].iter().any(|other| other.0 == one.0));
+        let untagged = arms.iter().copied().filter(|arm| !tagged.iter().any(|one| one.1 == *arm)).collect();
+        (tagged.len() >= 2 && are_distinct).then(|| TaggedArms { name: &member.name, tagged, untagged })
+    })
 }
 
 fn is_always_present(plan: &ValidationPlan, member: &PlannedMember) -> bool {
-    !member.is_optional && !may_accept_undefined(plan, member.node, 0)
+    !member.is_optional && !plan.may_accept_undefined(member.node)
 }
 
 pub(super) fn is_parsed_by_type(plan: &ValidationPlan) -> bool {
@@ -230,8 +234,9 @@ struct ObjectParse {
     held: Vec<Var>,
     seen: Vec<Var>,
     bits: Vec<Option<(usize, i64)>>,
-    kept_keys: Var,
-    kept_values: Var,
+    in_text_order: Var,
+    extra_properties: Var,
+    key_order_mark: Var,
     failed_at: Var,
     failed_name: Var,
     refusal: BlockId,
@@ -379,8 +384,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit_parser_operation(fx, Operation::JSONAbandon, &[], self.known.undefined);
         let text = self.emit_parser_operation(fx, Operation::JSONDecodeSource, &[text], self.out.tys.anything);
         let parsed = self.emit_global_method_call(fx, b"JSON", b"parse", &[text]);
-        let validated = self.emit_root_validation(fx, plan, number, None, parsed, false);
-        let validated = self.coerce_to(fx, validated, created, CoerceReason::Cast);
+        let validated = self.emit_root_validation(fx, plan, number, None, parsed, false, created);
         fx.b.write(result, validated);
         fx.b.jump(done);
         fx.b.seal(done);
@@ -588,6 +592,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         function
     }
 
+    fn emit_parsed_by_engine(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, value_start: V, fails: BlockId) -> (V, V) {
+        let value = self.emit_parser_operation(fx, Operation::JSONValueAt, &[value_start], self.out.tys.anything);
+        let end = self.continue_after_parsed_value(fx, fails);
+        let checked = self.emit_validation(fx, plan, number, node, value, fails);
+        let validated_as = match plan.nodes[node as usize].planned {
+            Planned::Object { ty, .. } | Planned::Array { ty, .. } | Planned::Tuple { ty, .. } | Planned::Dictionary { ty, .. } | Planned::Union { ty, .. } if !plan.is_exact => ty,
+            _ => return (checked, end),
+        };
+        let validated_as = Ty { id: self.ty_of(validated_as), checked: validated_as };
+        (self.convert_validated_graph(fx, checked, validated_as), end)
+    }
+
     fn emit_parsed(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, cursor: V, found: Found, fails: BlockId) -> (V, V) {
         let described = &plan.nodes[node as usize];
         if plan.is_exact && !is_parsed_in_place(plan, node) && matches!(described.planned, Planned::Object { .. }) {
@@ -595,9 +611,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return (self.emit(fx, Op::Undefined), cursor);
         }
         if !is_parsed_in_place(plan, node) {
-            let value = self.emit_parser_operation(fx, Operation::JSONValueAt, &[cursor], self.out.tys.anything);
-            let end = self.continue_after_parsed_value(fx, fails);
-            return (self.emit_validation(fx, plan, number, node, value, fails), end);
+            return self.emit_parsed_by_engine(fx, plan, number, node, cursor, fails);
         }
         let cursor = match opening_byte(plan, node) {
             Some(opener) if found != Found::Opened => self.continue_after_text(fx, cursor, &[opener], found == Found::Expected, fails),
@@ -680,42 +694,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 (created, end)
             }
-            Planned::Union { arms, .. } => {
-                let (held, end) = (self.new_temporary(fx), fx.b.new_var(self.known.counter));
-                let done = fx.b.new_block();
-                if let Some(texts) = discriminating_prefixes(plan, arms) {
-                    let gives_up = self.give_up(fx, fails);
-                    for (&arm, text) in arms.iter().zip(&texts) {
-                        let (is_it, is_other) = (fx.b.new_block(), fx.b.new_block());
-                        self.branch_on_text(fx, cursor, text, false, is_it, is_other);
-                        fx.b.seal(is_it);
-                        fx.b.seal(is_other);
-                        fx.b.switch_to(is_it);
-                        let within = self.advance(fx, cursor, 1);
-                        let (value, after) = self.emit_parsed(fx, plan, number, arm, within, Found::Opened, gives_up);
-                        fx.b.write(held, value);
-                        fx.b.write(end, after);
-                        fx.b.jump(done);
-                        fx.b.switch_to(is_other);
-                    }
-                    fx.b.seal(gives_up);
-                }
-                for (at, &arm) in arms.iter().enumerate() {
-                    let is_last = at + 1 == arms.len();
-                    let next = if is_last { fails } else { fx.b.new_block() };
-                    let (value, after) = self.emit_parsed(fx, plan, number, arm, cursor, Found::OneOfSeveral, next);
-                    fx.b.write(held, value);
-                    fx.b.write(end, after);
-                    fx.b.jump(done);
-                    if !is_last {
-                        fx.b.seal(next);
-                        fx.b.switch_to(next);
-                    }
-                }
-                fx.b.seal(done);
-                fx.b.switch_to(done);
-                (fx.b.read(held), fx.b.read(end))
+            Planned::Union { ty, arms } if !plan.is_exact && arms.len() >= MIN_ARMS_OF_UNION_WITH_OWN_FUNCTION => {
+                let parser = self.parser_for(fx, number, node, *ty);
+                let created = self.emit_throwing(fx, Op::CallDirect { func: parser, args: [cursor].into_iter().collect() });
+                let undefined = self.emit(fx, Op::Undefined);
+                let is_refused = self.emit(fx, Op::StrictEq { a: created, b: undefined });
+                self.continue_unless(fx, is_refused, fails);
+                (created, self.emit_parser_operation(fx, Operation::JSONCursor, &[], self.known.counter))
             }
+            Planned::Union { .. } => self.emit_parsed_union(fx, plan, number, node, cursor, fails),
             _ => {
                 self.jump_to_unreachable(fx, fails);
                 (self.emit(fx, Op::Undefined), cursor)
@@ -725,12 +712,96 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (value, end)
     }
 
+    fn emit_parsed_union(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, cursor: V, fails: BlockId) -> (V, V) {
+        let Planned::Union { arms, .. } = &plan.nodes[node as usize].planned else { return (self.emit(fx, Op::Undefined), cursor) };
+        let (held, end) = (self.new_temporary(fx), fx.b.new_var(self.known.counter));
+        let done = fx.b.new_block();
+        let mut arms = arms.clone();
+        if let Some(texts) = discriminating_prefixes(plan, &arms).filter(|_| plan.is_exact) {
+            let gives_up = self.give_up(fx, fails);
+            for (&arm, text) in arms.iter().zip(&texts) {
+                let (is_it, is_other) = (fx.b.new_block(), fx.b.new_block());
+                self.branch_on_text(fx, cursor, text, false, is_it, is_other);
+                fx.b.seal(is_it);
+                fx.b.seal(is_other);
+                fx.b.switch_to(is_it);
+                let within = self.advance(fx, cursor, 1);
+                let (value, after) = self.emit_parsed(fx, plan, number, arm, within, Found::Opened, gives_up);
+                fx.b.write(held, value);
+                fx.b.write(end, after);
+                fx.b.jump(done);
+                fx.b.switch_to(is_other);
+            }
+            fx.b.seal(gives_up);
+        }
+        if let Some(by_tag) = tagged_arms(plan, &arms).filter(|_| !plan.is_exact) {
+            let (is_first_key, is_elsewhere, has_tag, has_other_tag, otherwise) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+            let tag_start = fx.b.new_var(self.known.counter);
+            let within = self.continue_after_text(fx, cursor, b"{", false, otherwise);
+            let key = [b"\"", by_tag.name, b"\":"].concat();
+            self.branch_on_text(fx, within, &key, false, is_first_key, is_elsewhere);
+            fx.b.seal(is_first_key);
+            fx.b.seal(is_elsewhere);
+            fx.b.switch_to(is_first_key);
+            let after_key = self.advance(fx, within, key.len());
+            let after_key = self.skip_whitespace(fx, after_key);
+            fx.b.write(tag_start, after_key);
+            fx.b.jump(has_tag);
+            fx.b.switch_to(is_elsewhere);
+            let name = self.emit_text(fx, by_tag.name);
+            let found = self.emit_parser_operation(fx, Operation::JSONFindMember, &[within, name], self.known.counter);
+            self.continue_if_parsed(fx, found, otherwise);
+            fx.b.write(tag_start, found);
+            fx.b.jump(has_tag);
+            fx.b.seal(has_tag);
+            fx.b.switch_to(has_tag);
+            let tag = fx.b.read(tag_start);
+            let tags: Vec<&[u8]> = by_tag.tagged.iter().map(|one| one.0).collect();
+            let blocks: Vec<BlockId> = tags.iter().map(|_| fx.b.new_block()).collect();
+            let all: Vec<usize> = (0..tags.len()).collect();
+            self.emit_key_dispatch(fx, &tags, tag, &all, &blocks, has_other_tag);
+            for (&(_, arm), &block) in by_tag.tagged.iter().zip(&blocks) {
+                fx.b.seal(block);
+                fx.b.switch_to(block);
+                let (value, after) = self.emit_parsed(fx, plan, number, arm, within, Found::Opened, otherwise);
+                fx.b.write(held, value);
+                fx.b.write(end, after);
+                fx.b.jump(done);
+            }
+            fx.b.seal(has_other_tag);
+            fx.b.switch_to(has_other_tag);
+            self.emit_parser_operation(fx, Operation::JSONGiveUpIfEscaped, &[tag], self.known.undefined);
+            fx.b.jump(otherwise);
+            fx.b.seal(otherwise);
+            fx.b.switch_to(otherwise);
+            arms = by_tag.untagged;
+            if arms.is_empty() {
+                fx.b.jump(fails);
+            }
+        }
+        for (at, &arm) in arms.iter().enumerate() {
+            let is_last = at + 1 == arms.len();
+            let next = if is_last { fails } else { fx.b.new_block() };
+            let (value, after) = self.emit_parsed(fx, plan, number, arm, cursor, Found::OneOfSeveral, next);
+            fx.b.write(held, value);
+            fx.b.write(end, after);
+            fx.b.jump(done);
+            if !is_last {
+                fx.b.seal(next);
+                fx.b.switch_to(next);
+            }
+        }
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+        (fx.b.read(held), fx.b.read(end))
+    }
+
     pub(super) fn emit_parser(&mut self, fx: &mut Fx, number: u32, node: u32) {
         let plan = Rc::clone(&self.validators.plans[number as usize]);
         let start = self.add_entry_param(fx, Ty::from_id(self.known.counter));
         let fails = fx.b.new_block();
         let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
-        if reaches(&plan, node, node, &mut Vec::new()) {
+        if reaches(&plan, node, node, &mut vec![false; plan.nodes.len()]) {
             let has_stack_space = self.emit_parser_operation(fx, Operation::JSONHasStackSpace, &[], self.known.boolean);
             let has_stack_space = self.emit_parser_operation(fx, Operation::Likely, &[has_stack_space], self.known.boolean);
             let next = fx.b.new_block();
@@ -741,12 +812,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match &plan.nodes[node as usize].planned {
             Planned::Dictionary { held, .. } if plan.is_exact => self.emit_compact_list_parser(fx, &plan, number, *held, true, start, fails),
             Planned::Array { element, .. } if plan.is_exact => self.emit_compact_list_parser(fx, &plan, number, *element, false, start, fails),
-            Planned::Object { .. } if plan.is_exact => self.emit_compact_object_parser(fx, &plan, number, node, start, fails),
             Planned::Tuple { elements, .. } if plan.is_exact => self.emit_compact_tuple_parser(fx, &plan, number, elements, start, fails),
             Planned::Dictionary { held, .. } => self.emit_dictionary_parser(fx, &plan, number, *held, start, fails),
+            Planned::Object { .. } if plan.is_exact => self.emit_compact_object_parser(fx, &plan, number, node, start, fails),
             Planned::Object { .. } => self.emit_object_parser(fx, &plan, number, node, start, fails),
             Planned::Array { ty, element } => self.emit_array_parser(fx, &plan, number, node, *ty, *element, start, fails),
             Planned::Tuple { ty, elements } => self.emit_tuple_parser(fx, &plan, number, *ty, elements, start, fails),
+            Planned::Union { .. } => {
+                let (value, end) = self.emit_parsed_union(fx, &plan, number, node, start, fails);
+                self.return_parsed(fx, value, end);
+            }
             _ => fx.b.jump(fails),
         }
         self.validators.is_speculative = was_speculative;
@@ -867,39 +942,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             count += usize::from(is_always_present);
         }
         let seen = (0..count.div_ceil(MEMBERS_PER_MASK)).map(|_| self.new_selector(fx)).collect();
-        let (kept_keys, kept_values) = (self.new_temporary(fx), self.new_temporary(fx));
-        let undefined = self.emit(fx, Op::Undefined);
-        fx.b.write(kept_keys, undefined);
-        fx.b.write(kept_values, undefined);
+        let (in_text_order, extra_properties, key_order_mark) = (self.new_temporary(fx), self.new_temporary(fx), fx.b.new_var(self.known.counter));
         let (failed_at, failed_name, refusal) = (fx.b.new_var(self.known.counter), fx.b.new_var(self.known.string), fx.b.new_block());
-        ObjectParse { cursor, held, seen, bits, kept_keys, kept_values, failed_at, failed_name, refusal }
-    }
-
-    fn resolve_absent_members(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, members: &[PlannedMember], parsed: &ObjectParse, fails: BlockId) -> Vec<V> {
-        let mut values = Vec::with_capacity(members.len());
-        for (member, &variable) in members.iter().zip(&parsed.held) {
-            let value = fx.b.read(variable);
-            if is_always_present(plan, member) || (member.is_optional && !may_have_default(plan, member.node, 0)) {
-                values.push(value);
-                continue;
-            }
-            let settled = self.new_temporary(fx);
-            fx.b.write(settled, value);
-            let undefined = self.emit(fx, Op::Undefined);
-            let is_absent = self.emit(fx, Op::StrictEq { a: value, b: undefined });
-            let (absent, next) = (fx.b.new_block(), fx.b.new_block());
-            self.branch(fx, is_absent, absent, next);
-            fx.b.seal(absent);
-            fx.b.switch_to(absent);
-            let invalid = if member.is_omitted_when_invalid { next } else { fails };
-            let filled = self.emit_validation(fx, plan, number, member.node, undefined, invalid);
-            fx.b.write(settled, filled);
-            fx.b.jump(next);
-            fx.b.seal(next);
-            fx.b.switch_to(next);
-            values.push(fx.b.read(settled));
-        }
-        values
+        ObjectParse { cursor, held, seen, bits, in_text_order, extra_properties, key_order_mark, failed_at, failed_name, refusal }
     }
 
     fn exit_to_general_path(&mut self, fx: &mut Fx, parsed: &ObjectParse, cursor: V, seen: &[i64], to: BlockId) -> BlockId {
@@ -935,24 +980,66 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         gives_up
     }
 
+    fn is_made_by_layout(&mut self, ty: TypeId, members: &[PlannedMember]) -> bool {
+        if !self.is_record_type(ty) || !members.iter().all(|member| Self::is_field_name(&member.name)) {
+            return false;
+        }
+        let names_of = |build: &mut Self, are_optional: bool| -> Vec<StrId> { members.iter().filter(|member| member.is_optional == are_optional).map(|member| build.out.strs.intern(&member.name)).collect() };
+        let (required, optional) = (names_of(self, false), names_of(self, true));
+        self.record_layout(ty).is_some_and(|layout| self.names_fit_layout(layout, &required) && optional.iter().all(|&name| self.out.layouts[layout.idx()].field(name).is_some()))
+    }
+
+    fn is_absent(&mut self, fx: &mut Fx, parsed: &ObjectParse, at: usize) -> V {
+        match parsed.bits[at] {
+            Some((mask, bit)) => {
+                let (so_far, bit, zero) = (fx.b.read(parsed.seen[mask]), self.emit(fx, Op::Int(bit)), self.emit(fx, Op::Int(0)));
+                let found = self.emit(fx, Op::Binary { op: BinOp::BitAnd, a: so_far, b: bit });
+                fx.b.func.values[found.idx()].ty = self.known.int32;
+                self.emit(fx, Op::StrictEq { a: found, b: zero })
+            }
+            None => {
+                let (value, undefined) = (fx.b.read(parsed.held[at]), self.emit(fx, Op::Undefined));
+                self.emit(fx, Op::StrictEq { a: value, b: undefined })
+            }
+        }
+    }
+
+    fn record_key(&mut self, fx: &mut Fx, at: usize) {
+        let at = self.emit(fx, Op::Int(at as i64));
+        self.emit_parser_operation(fx, Operation::JSONRecordKey, &[at], self.known.undefined);
+    }
+
+    fn start_key_order(&mut self, fx: &mut Fx, parsed: &ObjectParse) {
+        let (mark, undefined) = (self.emit_parser_operation(fx, Operation::JSONKeyOrderMark, &[], self.known.counter), self.emit(fx, Op::Undefined));
+        fx.b.write(parsed.key_order_mark, mark);
+        fx.b.write(parsed.extra_properties, undefined);
+    }
+
     fn emit_object_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, start: V, fails: BlockId) {
-        let Planned::Object { members, others, .. } = &plan.nodes[node as usize].planned else { return };
-        let parsed = self.declare_object_variables(fx, plan, members, start);
+        let Planned::Object { ty, members, others } = &plan.nodes[node as usize].planned else { return };
+        let mut parsed = self.declare_object_variables(fx, plan, members, start);
+        let is_made_by_layout = self.is_made_by_layout(*ty, members);
+        let declared_names: Vec<u8> = members.iter().flat_map(|member| [b"\"", &member.name[..], b"\""].concat()).collect();
+        let (from_brace, from_value) = (fx.b.new_block(), fx.b.new_block());
         let (after_brace, after_value, key, finish) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+        let last_required = members.iter().rposition(|member| !member.is_optional);
 
         let mut cursor = start;
         let mut seen = vec![0i64; parsed.seen.len()];
         let mut has_exited_early = false;
+        let mut has_refusals = false;
         for (at, member) in members.iter().enumerate() {
+            let opener = opening_byte(plan, member.node);
+            let is_listed_out_of_turn = member.is_optional && last_required.is_some_and(|last| at < last);
+            let may_be_absent = member.is_optional && !plan.may_have_default(member.node);
+            let never_leaves = at > 0 && may_be_absent && opener.is_some() && !is_listed_out_of_turn;
+            let leaves = if never_leaves { fails } else { self.exit_to_general_path(fx, &parsed, cursor, &seen, if at == 0 { from_brace } else { from_value }) };
             if at == 0 && member.is_optional {
-                let leaves = self.exit_to_general_path(fx, &parsed, cursor, &seen, after_brace);
                 fx.b.jump(leaves);
                 fx.b.seal(leaves);
                 has_exited_early = true;
                 break;
             }
-            let opener = opening_byte(plan, member.node);
-            let leaves = if member.is_optional && opener.is_some() { fails } else { self.exit_to_general_path(fx, &parsed, cursor, &seen, if at == 0 { after_brace } else { after_value }) };
             let mut prefix = Vec::with_capacity(member.name.len() + 5);
             if at > 0 {
                 prefix.push(b',');
@@ -960,11 +1047,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             prefix.push(b'"');
             prefix.extend_from_slice(&member.name);
             prefix.extend_from_slice(b"\":");
+            if is_listed_out_of_turn {
+                let next = fx.b.new_block();
+                self.branch_on_text(fx, cursor, &prefix, false, leaves, next);
+                fx.b.seal(leaves);
+                fx.b.seal(next);
+                fx.b.switch_to(next);
+                continue;
+            }
             prefix.extend(opener);
             let (absent, next) = (fx.b.new_block(), fx.b.new_block());
-            let within = self.continue_after_text(fx, cursor, &prefix, !member.is_optional, if member.is_optional { absent } else { leaves });
+            let within = self.continue_after_text(fx, cursor, &prefix, !may_be_absent, if may_be_absent { absent } else { leaves });
             let value_start = if opener.is_some() { self.advance(fx, cursor, prefix.len() - 1) } else { within };
-            let invalid = if member.is_omitted_when_invalid { fx.b.new_block() } else { self.reject_member(fx, &parsed, value_start, &member.name) };
+            let invalid = self.reject_member(fx, &parsed, value_start, &member.name);
+            has_refusals = true;
             let unsure = if opener.is_some() { invalid } else { fx.b.new_block() };
             let (value, after) = self.emit_parsed(fx, plan, number, member.node, within, Found::Opened, unsure);
             fx.b.write(parsed.held[at], value);
@@ -978,17 +1074,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let is_whitespace = self.emit(fx, Op::Relational { op: RelOp::Le, a: byte, b: space });
                 fx.b.branch(is_whitespace, leaves, invalid);
             }
-            if leaves != fails {
+            if !never_leaves {
                 fx.b.seal(leaves);
             }
             fx.b.seal(invalid);
-            if member.is_omitted_when_invalid {
-                fx.b.switch_to(invalid);
-                let after = self.emit_parser_operation(fx, Operation::JSONSkipValue, &[value_start], self.known.counter);
-                self.continue_if_parsed(fx, after, fails);
-                fx.b.write(parsed.cursor, after);
-                fx.b.jump(next);
-            }
             fx.b.seal(absent);
             fx.b.switch_to(absent);
             fx.b.write(parsed.cursor, cursor);
@@ -1001,13 +1090,54 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         if !has_exited_early {
-            let leaves = self.exit_to_general_path(fx, &parsed, cursor, &seen, if members.is_empty() { after_brace } else { after_value });
+            let leaves = self.exit_to_general_path(fx, &parsed, cursor, &seen, if members.is_empty() { from_brace } else { from_value });
             let end = self.continue_after_text(fx, cursor, b"}", true, leaves);
             fx.b.seal(leaves);
-            let values = self.resolve_absent_members(fx, plan, number, members, &parsed, fails);
-            let created = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
+            let values: Vec<V> = parsed.held.iter().map(|&held| fx.b.read(held)).collect();
+            let created = self.emit_object_from_parsed_members(fx, plan, node, &values);
             self.return_parsed(fx, created, end);
         }
+
+        if is_made_by_layout && has_refusals {
+            self.emit_refusal(fx, &parsed, fails);
+            parsed.refusal = fx.b.new_block();
+        }
+        let straight_road_fails = fails;
+        let fails = if is_made_by_layout { fx.b.new_block() } else { fails };
+
+        fx.b.seal(from_brace);
+        fx.b.switch_to(from_brace);
+        if is_made_by_layout {
+            self.start_key_order(fx, &parsed);
+        } else {
+            let created = self.emit(fx, Op::NewObject);
+            fx.b.write(parsed.in_text_order, created);
+        }
+        fx.b.jump(after_brace);
+
+        fx.b.seal(from_value);
+        fx.b.switch_to(from_value);
+        if is_made_by_layout {
+            self.start_key_order(fx, &parsed);
+        } else {
+            let created = self.emit(fx, Op::NewObject);
+            fx.b.write(parsed.in_text_order, created);
+        }
+        for (at, member) in members.iter().enumerate() {
+            let is_absent = self.is_absent(fx, &parsed, at);
+            let next = fx.b.new_block();
+            self.continue_unless(fx, is_absent, next);
+            if is_made_by_layout {
+                self.record_key(fx, at);
+            } else {
+                let (created, value, name) = (fx.b.read(parsed.in_text_order), fx.b.read(parsed.held[at]), self.emit_text(fx, &member.name));
+                self.operation(fx, Operation::DefineField, &[created, name, value]);
+            }
+            fx.b.jump(next);
+            fx.b.seal(next);
+            fx.b.switch_to(next);
+        }
+        fx.b.jump(after_value);
 
         fx.b.seal(after_brace);
         fx.b.switch_to(after_brace);
@@ -1032,15 +1162,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let arms: Vec<BlockId> = members.iter().map(|_| fx.b.new_block()).collect();
         let (unknown, after_member) = (fx.b.new_block(), fx.b.new_block());
         let all: Vec<usize> = (0..members.len()).collect();
-        self.emit_key_dispatch(fx, members, at, &all, &arms, unknown);
+        let names: Vec<&[u8]> = members.iter().map(|member| &member.name[..]).collect();
+        self.emit_key_dispatch(fx, &names, at, &all, &arms, unknown);
         for (index, member) in members.iter().enumerate() {
             fx.b.seal(arms[index]);
             fx.b.switch_to(arms[index]);
             let after_key = self.advance(fx, at, member.name.len() + 2);
             let within = self.continue_after_text_and_whitespace(fx, after_key, b":", fails);
-            let invalid = if member.is_omitted_when_invalid { fx.b.new_block() } else { self.reject_member(fx, &parsed, within, &member.name) };
+            let invalid = self.reject_member(fx, &parsed, within, &member.name);
             let (value, after) = self.emit_parsed(fx, plan, number, member.node, within, Found::Expected, invalid);
-            fx.b.write(parsed.held[index], value);
+            if is_made_by_layout {
+                let is_first = self.is_absent(fx, &parsed, index);
+                let next = fx.b.new_block();
+                self.continue_if(fx, is_first, next);
+                self.record_key(fx, index);
+                fx.b.jump(next);
+                fx.b.seal(next);
+                fx.b.switch_to(next);
+            } else {
+                let (created, name) = (fx.b.read(parsed.in_text_order), self.emit_text(fx, &member.name));
+                self.operation(fx, Operation::DefineField, &[created, name, value]);
+            }
             fx.b.write(parsed.cursor, after);
             if let Some((mask, bit)) = parsed.bits[index] {
                 let so_far = fx.b.read(parsed.seen[mask]);
@@ -1049,56 +1191,50 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.func.values[more.idx()].ty = self.known.int32;
                 fx.b.write(parsed.seen[mask], more);
             }
+            if is_made_by_layout || parsed.bits[index].is_none() {
+                fx.b.write(parsed.held[index], value);
+            }
             fx.b.jump(after_member);
             fx.b.seal(invalid);
-            if member.is_omitted_when_invalid {
-                fx.b.switch_to(invalid);
-                let after = self.emit_parser_operation(fx, Operation::JSONSkipValue, &[within], self.known.counter);
-                self.continue_if_parsed(fx, after, fails);
-                let undefined = self.emit(fx, Op::Undefined);
-                fx.b.write(parsed.held[index], undefined);
-                fx.b.write(parsed.cursor, after);
-                fx.b.jump(after_member);
-            }
         }
         fx.b.seal(unknown);
         fx.b.switch_to(unknown);
         match *others {
-            OtherKeys::Omitted => {
-                let after = self.emit_parser_operation(fx, Operation::JSONSkipMember, &[at], self.known.counter);
-                self.continue_if_parsed(fx, after, fails);
-                fx.b.write(parsed.cursor, after);
-                fx.b.jump(after_member);
-            }
             OtherKeys::Refused => {
                 self.emit_parser_operation(fx, Operation::JSONSkipMember, &[at], self.known.counter);
                 fx.b.jump(fails);
             }
-            OtherKeys::Kept(held) => {
-                let gives_up = self.give_up(fx, fails);
-                let (key, value, after) = self.emit_key_and_value(fx, plan, number, held, at, gives_up);
-                fx.b.seal(gives_up);
+            OtherKeys::Untouched if is_made_by_layout => {
+                let (extra_properties, names, mark) = (fx.b.read(parsed.extra_properties), self.emit_text(fx, &declared_names), fx.b.read(parsed.key_order_mark));
+                let extra_properties = self.emit_parser_operation(fx, Operation::JSONExtraMembersAt, &[at, extra_properties, names, mark], self.out.tys.anything);
+                fx.b.write(parsed.extra_properties, extra_properties);
+                let after = self.continue_after_parsed_value(fx, fails);
                 fx.b.write(parsed.cursor, after);
-                let keys = fx.b.read(parsed.kept_keys);
-                let undefined = self.emit(fx, Op::Undefined);
-                let is_first = self.emit(fx, Op::StrictEq { a: keys, b: undefined });
-                let (first, next) = (fx.b.new_block(), fx.b.new_block());
-                self.branch(fx, is_first, first, next);
-                fx.b.seal(first);
-                fx.b.switch_to(first);
-                let keys = self.emit_list(fx, &[]);
-                let values = self.emit_list(fx, &[]);
-                fx.b.write(parsed.kept_keys, keys);
-                fx.b.write(parsed.kept_values, values);
-                fx.b.jump(next);
-                fx.b.seal(next);
-                fx.b.switch_to(next);
-                let push = self.out.strs.intern(b"push");
-                for (list, item) in [(parsed.kept_keys, key), (parsed.kept_values, value)] {
-                    let list = fx.b.read(list);
-                    let list = self.claim_type(fx, list, self.known.array);
-                    self.emit_throwing(fx, Op::CallMethod { obj: list, name: push, args: [item].into_iter().collect() });
+                fx.b.jump(after_member);
+            }
+            OtherKeys::Untouched | OtherKeys::Checked(_) => {
+                let gives_up = self.give_up(fx, fails);
+                let key_start = self.continue_after_text(fx, at, b"\"", true, gives_up);
+                let name = self.emit_parser_operation(fx, Operation::JSONKeyAt, &[key_start], self.known.string);
+                let after_key = self.continue_after_parsed_value(fx, gives_up);
+                let within = self.continue_after_text_and_whitespace(fx, after_key, b":", gives_up);
+                let (value, after) = match *others {
+                    OtherKeys::Checked(held) => self.emit_parsed(fx, plan, number, held, within, Found::Expected, gives_up),
+                    _ => {
+                        let value = self.emit_parser_operation(fx, Operation::JSONValueAt, &[within], self.out.tys.anything);
+                        (value, self.continue_after_parsed_value(fx, gives_up))
+                    }
+                };
+                fx.b.seal(gives_up);
+                if is_made_by_layout {
+                    let (extra_properties, mark) = (fx.b.read(parsed.extra_properties), fx.b.read(parsed.key_order_mark));
+                    let extra_properties = self.emit_parser_operation(fx, Operation::JSONAddExtraMember, &[extra_properties, name, value, mark], self.out.tys.anything);
+                    fx.b.write(parsed.extra_properties, extra_properties);
+                } else {
+                    let created = fx.b.read(parsed.in_text_order);
+                    self.operation(fx, Operation::PutByValDirect, &[created, name, value]);
                 }
+                fx.b.write(parsed.cursor, after);
                 fx.b.jump(after_member);
             }
         }
@@ -1107,11 +1243,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.branch_on_separator(fx, parsed.cursor, b"}", key, finish, fails);
         fx.b.seal(key);
 
-        fx.b.seal(parsed.refusal);
-        fx.b.switch_to(parsed.refusal);
-        let (failed_at, failed_name) = (fx.b.read(parsed.failed_at), fx.b.read(parsed.failed_name));
-        self.emit_parser_operation(fx, Operation::JSONGiveUpIfRepeated, &[failed_at, failed_name], self.known.undefined);
-        fx.b.jump(fails);
+        self.emit_refusal(fx, &parsed, fails);
 
         fx.b.seal(finish);
         fx.b.switch_to(finish);
@@ -1126,34 +1258,60 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.seal(next);
             fx.b.switch_to(next);
         }
-        let values = self.resolve_absent_members(fx, plan, number, members, &parsed, fails);
-        let created = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
-        if matches!(others, OtherKeys::Kept(_)) {
-            let keys = fx.b.read(parsed.kept_keys);
-            let values = fx.b.read(parsed.kept_values);
-            let undefined = self.emit(fx, Op::Undefined);
-            let has_none = self.emit(fx, Op::StrictEq { a: keys, b: undefined });
-            let (some, next) = (fx.b.new_block(), fx.b.new_block());
-            self.branch(fx, has_none, next, some);
-            fx.b.seal(some);
-            fx.b.switch_to(some);
-            let values = self.claim_type(fx, values, self.known.array);
-            self.emit_loop(fx, keys, |build, fx, at, key| {
-                let key = build.claim_type(fx, key, build.known.string);
-                let value = build.emit_throwing(fx, Op::ElemGet { obj: values, key: at });
-                build.operation(fx, Operation::PutByValDirect, &[created, key, value]);
-            });
+        for (at, (member, &held)) in members.iter().zip(&parsed.held).enumerate() {
+            if is_always_present(plan, member) || (member.is_optional && !plan.may_have_default(member.node)) {
+                continue;
+            }
+            let (value, undefined) = (fx.b.read(held), self.emit(fx, Op::Undefined));
+            let is_absent = self.emit(fx, Op::StrictEq { a: value, b: undefined });
+            let next = fx.b.new_block();
+            self.continue_if(fx, is_absent, next);
+            let filled = self.emit_validation(fx, plan, number, member.node, undefined, fails);
+            let stays_absent = self.emit(fx, Op::StrictEq { a: filled, b: undefined });
+            self.continue_unless(fx, stays_absent, if member.is_optional { next } else { fails });
+            if is_made_by_layout {
+                fx.b.write(held, filled);
+                self.record_key(fx, at);
+            } else {
+                let (created, name) = (fx.b.read(parsed.in_text_order), self.emit_text(fx, &member.name));
+                self.operation(fx, Operation::DefineField, &[created, name, filled]);
+            }
             fx.b.jump(next);
             fx.b.seal(next);
             fx.b.switch_to(next);
         }
+        let created = if is_made_by_layout {
+            let values: Vec<V> = parsed.held.iter().map(|&held| fx.b.read(held)).collect();
+            let created = self.emit_object_from_parsed_members(fx, plan, node, &values);
+            let (extra_properties, names, mark) = (fx.b.read(parsed.extra_properties), self.emit_text(fx, &declared_names), fx.b.read(parsed.key_order_mark));
+            self.emit_parser_operation(fx, Operation::JSONApplyKeyOrder, &[created, extra_properties, names, mark], self.known.undefined);
+            created
+        } else {
+            let (created, validated_as) = (fx.b.read(parsed.in_text_order), Ty { id: self.ty_of(*ty), checked: *ty });
+            self.convert_validated(fx, created, validated_as)
+        };
         let end = fx.b.read(parsed.cursor);
         self.return_parsed(fx, created, end);
+        if is_made_by_layout {
+            fx.b.seal(fails);
+            fx.b.switch_to(fails);
+            let mark = fx.b.read(parsed.key_order_mark);
+            self.emit_parser_operation(fx, Operation::JSONResetKeyOrder, &[mark], self.known.undefined);
+            fx.b.jump(straight_road_fails);
+        }
     }
 
-    fn emit_key_dispatch(&mut self, fx: &mut Fx, members: &[PlannedMember], cursor: V, candidates: &[usize], arms: &[BlockId], unknown: BlockId) {
-        let byte_at = |index: usize, place: usize| members[index].name.get(place).copied().unwrap_or(b'"');
-        let shortest = candidates.iter().map(|&index| members[index].name.len()).min().unwrap_or(0);
+    fn emit_refusal(&mut self, fx: &mut Fx, parsed: &ObjectParse, fails: BlockId) {
+        fx.b.seal(parsed.refusal);
+        fx.b.switch_to(parsed.refusal);
+        let (failed_at, failed_name) = (fx.b.read(parsed.failed_at), fx.b.read(parsed.failed_name));
+        self.emit_parser_operation(fx, Operation::JSONGiveUpIfRepeated, &[failed_at, failed_name], self.known.undefined);
+        fx.b.jump(fails);
+    }
+
+    fn emit_key_dispatch(&mut self, fx: &mut Fx, names: &[&[u8]], cursor: V, candidates: &[usize], arms: &[BlockId], unknown: BlockId) {
+        let byte_at = |index: usize, place: usize| names[index].get(place).copied().unwrap_or(b'"');
+        let shortest = candidates.iter().map(|&index| names[index].len()).min().unwrap_or(0);
         let distinct_at = |place: usize| {
             let mut bytes: Vec<u8> = candidates.iter().map(|&index| byte_at(index, place)).collect();
             bytes.sort_unstable();
@@ -1164,7 +1322,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if candidates.len() <= MAX_KEYS_COMPARED_SEQUENTIALLY || distinct_at(best) < 2 {
             for &index in candidates {
                 let next = fx.b.new_block();
-                let quoted = [b"\"", &members[index].name[..], b"\""].concat();
+                let quoted = [b"\"", names[index], b"\""].concat();
                 self.branch_on_text(fx, cursor, &quoted, false, arms[index], next);
                 fx.b.seal(next);
                 fx.b.switch_to(next);
@@ -1188,7 +1346,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for (group, &block) in groups.iter().zip(&blocks) {
             fx.b.seal(block);
             fx.b.switch_to(block);
-            self.emit_key_dispatch(fx, members, cursor, &group.1, arms, unknown);
+            self.emit_key_dispatch(fx, names, cursor, &group.1, arms, unknown);
         }
     }
 }

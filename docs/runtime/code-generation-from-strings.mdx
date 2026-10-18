@@ -169,7 +169,7 @@ A compiled executable does not read its own command line as Bun flags. `./server
 
 ### An executable that has `=strict` without the flag
 
-`bun build --compile --aot --compile-trim-runtime` gives the executable `=strict` by itself when the compiler finds nothing in the program that makes or loads code at run time. A program that could make code in any way, also through `f.constructor`, does not get it, so no program should meet an `EvalError` that it does not meet untrimmed. See [Parts your program does not use](/bundler/executables#parts-your-program-does-not-use). Two things differ from passing the flag:
+`bun compile --trim` gives the executable `=strict` by itself when the compiler finds nothing in the program that makes or loads code at run time. A program that could make code in any way, also through `f.constructor`, does not get it, so no program should meet an `EvalError` that it does not meet untrimmed. See [Parts your program does not use](/bundler/executables#parts-your-program-does-not-use). Two things differ from passing the flag:
 
 - The `EvalError` says that `--compile-trim-runtime` is the reason.
 - `process.execArgv` does not list the flag, so the check in [Checking that the flag is on](#checking-that-the-flag-is-on) fails. If your program depends on `=strict`, embed the flag as above.

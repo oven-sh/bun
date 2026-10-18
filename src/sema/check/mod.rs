@@ -121,6 +121,7 @@ use task::{Open, OrderDependent, Stored, Task};
 
 pub use aot::{AddedMembers, ClassFacts, MethodStore, ReplacedMethods};
 pub use aot::ImportedCode;
+pub use aot::JsonParseSchema;
 pub use aot::{AotCheck, AotCheckKind};
 pub use aot::{CommonJsExports, ExportsKnownByName, ExportsReference};
 pub use aot::Identity;
@@ -131,7 +132,7 @@ pub use aot::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
 pub use aot::{EvaluationTime, FirstStore, Primitive, ReferenceRead, Storage, kind};
 pub use aot::{Claim, is_engine_global, is_typed_array_class};
 pub use aot::{ConstantSymbol, FieldKey};
-pub use aot::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
+pub use aot::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan, OBJECT_PROTOTYPE_PROPERTIES};
 pub use aot::locked_builtins;
 pub use aot::{Callee, SingleFunction};
 pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopiedReason, Receiver, argument_use};
@@ -252,6 +253,9 @@ pub struct Program<'s> {
     pub loads_of_modules_that_are_not_compiled: Guarded<Vec<(FileId, Vec<u8>)>>,
     pub stores_under_a_key_that_is_not_seen: AtomicBool,
     pub writes_under_a_key_that_may_be_a_symbol: AtomicBool,
+    pub reads_the_constructor_of_a_symbol: AtomicBool,
+    pub takes_members_without_naming_them: AtomicBool,
+    pub reads_by_a_key_that_may_be_a_name: AtomicBool,
     pub may_print_an_object: AtomicBool,
     pub releases_roots: AtomicBool,
     /// `autoArrayType`
@@ -542,6 +546,9 @@ impl<'s> Program<'s> {
             loads_of_modules_that_are_not_compiled: Default::default(),
             stores_under_a_key_that_is_not_seen: Default::default(),
             writes_under_a_key_that_may_be_a_symbol: Default::default(),
+            reads_the_constructor_of_a_symbol: Default::default(),
+            takes_members_without_naming_them: Default::default(),
+            reads_by_a_key_that_may_be_a_name: Default::default(),
             may_print_an_object: Default::default(),
             releases_roots: AtomicBool::new(false),
             auto_array_type,
@@ -659,6 +666,9 @@ impl<'s> Program<'s> {
         *self.loads_of_modules_that_are_not_compiled.get_mut() = Default::default();
         *self.stores_under_a_key_that_is_not_seen.get_mut() = false;
         *self.writes_under_a_key_that_may_be_a_symbol.get_mut() = false;
+        *self.reads_the_constructor_of_a_symbol.get_mut() = false;
+        *self.takes_members_without_naming_them.get_mut() = false;
+        *self.reads_by_a_key_that_may_be_a_name.get_mut() = false;
         *self.may_print_an_object.get_mut() = false;
         self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
@@ -723,6 +733,7 @@ impl<'s> Program<'s> {
             last_enter: EnterOutcome::Entered,
             resolution_start: 0,
             eager: Vec::new(),
+            adopting_type_params: Vec::new(),
             loop_values: Vec::new(),
             unmarked_refusals: 0,
             non_circular_returns: Vec::new(),
@@ -755,6 +766,7 @@ impl<'s> Program<'s> {
             flow_type_cache_depth: usize::MAX,
             flow_invocation_count: 0,
             discarded: None,
+            diagnostics_made: 0,
             non_existent_properties: Default::default(),
             signatures_resolved_discarding: Vec::new(),
             expressions_cached_discarding: Vec::new(),
@@ -1348,6 +1360,7 @@ pub struct Checker<'p, 's> {
     flow_invocation_count: u64,
     /// Where `add_diagnostic` stores a diagnostic it discards.
     discarded: Option<sink::Reported>,
+    diagnostics_made: usize,
     /// `NodeCheckFlagsTypeChecked` on the name of a property access: its 2339 has been created.
     /// `true`: and discarded.
     non_existent_properties: FxHashMap<(FileId, ExprId), bool>,
@@ -1380,6 +1393,7 @@ pub struct Checker<'p, 's> {
     /// A cycle through such a point may be an artifact of this resolver: the result is unresolved,
     /// not an error.
     eager: Vec<usize>,
+    adopting_type_params: Vec<(FileId, FnId)>,
     /// The entries of `eager` that represent the value assigned on the back edge of a loop in
     /// progress. TypeScript requests that value there as well: see `is_cycle_of_initializers`.
     loop_values: Vec<usize>,

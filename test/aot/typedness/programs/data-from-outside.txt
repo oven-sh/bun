@@ -211,5 +211,3 @@ untyped-built-object-reduce: 2 layouts, 1 given, 2 open, places 22 of 36, reads 
 untyped-built-object-spread: 2 layouts, 0 given, 2 open, places 21 of 35, reads 9 of 13
 untyped-built-object-structured-clone: 2 layouts, 0 given, 2 open, places 21 of 33, reads 9 of 13
 upcast-to-member-of-union: 0 layouts, 8 given, 0 open, places 9 of 25, reads 0 of 3
-validate-by-declared-types: 63 layouts, 2 given, 28 open, places 502 of 835, reads 63 of 345
-validation-compiled-and-interpreted-agree: 362 layouts, 0 given, 221 open, places 5001 of 7946, reads 255 of 1839

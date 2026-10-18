@@ -1,4 +1,4 @@
-// Bun.parse<T>() scans a copy of its input that is followed by 64 zero bytes, without bounds checks. The copy's capacity is a power of two.
+// JSON.parse<T>() scans a copy of its input that is followed by 64 zero bytes, without bounds checks. The copy's capacity is a power of two.
 // Every input here is a power of two minus 64 characters long, so the zero bytes end where the allocation ends, and a read past them is out of bounds under a sanitizer or a guarded allocator.
 // Each input is parsed as an 8-bit and as a 16-bit string.
 interface Flat { id: number; name: string; ok: boolean }
@@ -18,15 +18,15 @@ function one(parse: (text: string) => unknown, text: string): void {
   parseOnce(parse, ("\u0100" + text).slice(1));
 }
 const parsers: [(text: string) => unknown, string[]][] = [
-  [text => Bun.parse<Flat>(text), ['{"id":1,"name":"ab","ok":true}', '{"ok":false,"zz":[1,{"a":"b"}],"name":"\\u00e9\\n","id":-1.5e2}']],
-  [text => Bun.parse<Long>(text), ['{"k234567890123456789012345678901234567890123456789012345678901234":1,"k2345678901234567890123456789012345678901234567890123456789012345":2,"k23456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789":"z","k234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890":true}']],
-  [text => Bun.parse<Prefixes>(text), ['{"a":1,"ab":2,"abcdefgh":5,"abcdefghi":6,"abcdefgh_1":7,"abcdefghijklmnop":9,"abcdefghijklmnopq":10}']],
-  [text => Bun.parse<Union>(text), ['{"kind":"a","v":1}', '{"kind":"a_very_long_discriminant_that_goes_on_for_more_than_sixty_four_bytes_of_text","w":true}', '{"v":"s","kind":"b"}']],
-  [text => Bun.parse<Nested>(text), ['{"m":[[1,2],[],[3]],"t":[1,"s",true],"o":{"p":{"q":1}}}']],
-  [text => Bun.parse<Dictionary>(text), ['{"a":1,"10":2,"' + "q".repeat(90) + '":3}']],
-  [text => Bun.parse<Text>(text), ['{"s":"' + "a".repeat(100) + '"}', '{"s":"' + "a".repeat(30) + "\\n" + "b".repeat(40) + "\\u00e9" + '"}']],
-  [text => Bun.parse<Num>(text), ['{"n":123456789012345678901234567890.123456789012345678901234567890e-10}', '{"n":-0.000000000000000000000000000000000000000000000000000000000000000000000000001}', '{"n":1e308}']],
-  [text => Bun.parse<Lit>(text), ['{"s":"a_literal_that_goes_on_for_more_than_sixty_four_bytes_of_text_and_then_some_more","n":123456789012345}', '{"s":"b","n":1}']],
+  [text => JSON.parse<Flat>(text), ['{"id":1,"name":"ab","ok":true}', '{"ok":false,"zz":[1,{"a":"b"}],"name":"\\u00e9\\n","id":-1.5e2}']],
+  [text => JSON.parse<Long>(text), ['{"k234567890123456789012345678901234567890123456789012345678901234":1,"k2345678901234567890123456789012345678901234567890123456789012345":2,"k23456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789":"z","k234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890":true}']],
+  [text => JSON.parse<Prefixes>(text), ['{"a":1,"ab":2,"abcdefgh":5,"abcdefghi":6,"abcdefgh_1":7,"abcdefghijklmnop":9,"abcdefghijklmnopq":10}']],
+  [text => JSON.parse<Union>(text), ['{"kind":"a","v":1}', '{"kind":"a_very_long_discriminant_that_goes_on_for_more_than_sixty_four_bytes_of_text","w":true}', '{"v":"s","kind":"b"}']],
+  [text => JSON.parse<Nested>(text), ['{"m":[[1,2],[],[3]],"t":[1,"s",true],"o":{"p":{"q":1}}}']],
+  [text => JSON.parse<Dictionary>(text), ['{"a":1,"10":2,"' + "q".repeat(90) + '":3}']],
+  [text => JSON.parse<Text>(text), ['{"s":"' + "a".repeat(100) + '"}', '{"s":"' + "a".repeat(30) + "\\n" + "b".repeat(40) + "\\u00e9" + '"}']],
+  [text => JSON.parse<Num>(text), ['{"n":123456789012345678901234567890.123456789012345678901234567890e-10}', '{"n":-0.000000000000000000000000000000000000000000000000000000000000000000000000001}', '{"n":1e308}']],
+  [text => JSON.parse<Lit>(text), ['{"s":"a_literal_that_goes_on_for_more_than_sixty_four_bytes_of_text_and_then_some_more","n":123456789012345}', '{"s":"b","n":1}']],
 ];
 for (let bits = 6; bits <= 14; bits++) {
   const length = (1 << bits) - 64;

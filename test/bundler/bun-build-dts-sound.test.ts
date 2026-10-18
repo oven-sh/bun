@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -28,7 +27,10 @@ const withoutTypes = (typescript: string) => new Bun.Transpiler({ loader: "ts" }
 
 async function install(from: string, into: string, name: string) {
   cpSync(join(from, "dist"), join(into, "node_modules", name, "dist"), { recursive: true });
-  cpSync(join(from, "package.json"), join(into, "node_modules", name, "package.json"));
+  const packageJson = await Bun.file(join(from, "package.json")).json();
+  const exports = typeof packageJson.exports === "object" ? packageJson.exports : {};
+  exports["."] = { types: "./dist/index.d.ts", "bun-aot": "./dist/index.aot.ts", default: "./dist/index.js" };
+  await Bun.write(join(into, "node_modules", name, "package.json"), JSON.stringify({ ...packageJson, exports }));
 }
 
 const application = {
@@ -37,12 +39,11 @@ const application = {
 };
 
 describe("bun build --dts: the typed JavaScript", () => {
-  test("writes the bundle with its types kept, and the declaration file points at it", async () => {
+  test("writes the bundle with its types kept", async () => {
     using dir = library("greeter");
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
     const javascript = await text(String(dir), "dist", "index.js");
-    const typed = await text(String(dir), "dist", "index.sound.ts");
-    expect((await text(String(dir), "dist", "index.d.ts")).split("\n")[0]).toBe(`// @sound index.sound.ts ${createHash("sha256").update(javascript).digest("hex")}`);
+    const typed = await text(String(dir), "dist", "index.aot.ts");
     expect(typed).toContain("function serve<S extends Server>(server: S, ...rest: string[]): string {");
     expect(typed).toContain("class Polite implements Greeter {");
     expect(typed).toContain("  private moods?: Options | undefined;");
@@ -50,7 +51,7 @@ describe("bun build --dts: the typed JavaScript", () => {
     expect(typed).toContain("type Options2 = { name: string; loud?: boolean };");
     expect(typed).toContain("export type { Options2 as Options };");
     expect(withoutTypes(typed)).toBe(withoutTypes(javascript));
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
   });
 
   const kept: [string, string[]][] = [
@@ -264,7 +265,7 @@ describe("bun build --dts: the typed JavaScript", () => {
   test.each(kept)("%s: the types are put back, and erasing them gives the JavaScript", async (name, lines) => {
     using dir = library(name);
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
-    const typed = await text(String(dir), "dist", "index.sound.ts");
+    const typed = await text(String(dir), "dist", "index.aot.ts");
     for (const line of lines) expect(typed).toContain(line);
     expect(withoutTypes(typed)).toBe(withoutTypes(await text(String(dir), "dist", "index.js")));
   });
@@ -272,7 +273,7 @@ describe("bun build --dts: the typed JavaScript", () => {
   test("a name that is exported as a namespace and as a type is both in the rolled-up declaration file", async () => {
     using dir = library("merged-exports");
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
     const declarations = await text(String(dir), "dist", "index.d.ts");
     expect(declarations).toContain("export type Kind = Kind2;");
     expect(declarations).toContain("export { exports_kinds_ as Kind, isName };");
@@ -282,7 +283,7 @@ describe("bun build --dts: the typed JavaScript", () => {
     using dir = library("constants");
     expect((await build(String(dir), "--dts")).exitCode).toBe(0);
     const javascript = await text(String(dir), "dist", "index.js");
-    expect(readdirSync(join(String(dir), "dist")).filter(name => !name.endsWith(".d.ts")).sort()).toEqual(["index.js", "index.sound.ts"]);
+    expect(readdirSync(join(String(dir), "dist")).filter(name => !name.endsWith(".d.ts")).sort()).toEqual(["index.aot.ts", "index.js"]);
     expect((await build(String(dir))).exitCode).toBe(0);
     expect(await text(String(dir), "dist", "index.js")).toBe(javascript);
   });
@@ -313,13 +314,12 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     const files = ["index", "mood", "options", "polite"];
     const built = await spawned([bunExe(), "build", ...files.map(name => `src/${name}.ts`), "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(files.flatMap(name => [`${name}.d.ts`, `${name}.js`, `${name}.sound.ts`]).sort());
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(files.flatMap(name => [`${name}.d.ts`, `${name}.js`, `${name}.aot.ts`]).sort());
     for (const name of files) {
-      expect((await text(String(dir), "dist", name + ".d.ts")).split("\n")[0]).toBe(`// @sound ${name}.sound.ts ${createHash("sha256").update(await text(String(dir), "dist", name + ".js")).digest("hex")}`);
-      expect(withoutTypes(await text(String(dir), "dist", name + ".sound.ts"))).toBe(withoutTypes(await text(String(dir), "dist", name + ".js")));
+      expect(withoutTypes(await text(String(dir), "dist", name + ".aot.ts"))).toBe(withoutTypes(await text(String(dir), "dist", name + ".js")));
     }
-    expect(await text(String(dir), "dist", "polite.sound.ts")).toContain('import type { Greeter, Options } from "./options";');
-    expect(await text(String(dir), "dist", "options.sound.ts")).toContain("export type Options = { name: string; loud?: boolean };");
+    expect(await text(String(dir), "dist", "polite.aot.ts")).toContain('import type { Greeter, Options } from "./options";');
+    expect(await text(String(dir), "dist", "options.aot.ts")).toContain("export type Options = { name: string; loud?: boolean };");
     using app = tempDir("build-sound-apart-application", {
       ...application,
       "app.ts": `import { Polite, serve, type Server } from "greeter";
@@ -349,13 +349,13 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     const built = await spawned([bunExe(), "build", "src/index.ts", "src/greet.ts", "src/options.ts", "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     expect(await text(String(dir), "dist", "index.js")).toContain('import { greet } from "./greet.js";');
-    const typed = await text(String(dir), "dist", "index.sound.ts");
+    const typed = await text(String(dir), "dist", "index.aot.ts");
     expect(typed).toContain('import { greet } from "./greet.js";');
     expect(typed).toContain('import type { Error } from "./greet.js";');
     expect(typed).toContain('import type { Options } from "./options.js";');
     expect(typed).toContain('export type { Options } from "./options.js";');
     expect(typed).toContain('export type Loud = import("./options.js").Options & { loud: true };');
-    expect(await text(String(dir), "dist", "greet.sound.ts")).toContain("export type Error = { reason: string };\n");
+    expect(await text(String(dir), "dist", "greet.aot.ts")).toContain("export type Error = { reason: string };\n");
     using app = tempDir("build-sound-rewritten-imports-application", {
       ...application,
       "app.ts": `import { welcome, type Options } from "welcome";\nconst options: Options = { name: "you" };\nconsole.log(welcome(options));\n`,
@@ -404,7 +404,7 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     });
     const built = await spawned([bunExe(), "build", "src/index.ts", "src/issue.ts", "src/named.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.sound.ts")).toContain('import { Issue } from "welcome/issue";');
+    expect(await text(String(dir), "dist", "index.aot.ts")).toContain('import { Issue } from "welcome/issue";');
   });
 
   test("--no-bundle under a tsconfig.json with rootDir: the typed files in --outdir need not be under it", async () => {
@@ -416,7 +416,7 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     });
     const built = await spawned([bunExe(), "build", "src/index.ts", "src/greet.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet.d.ts", "greet.js", "greet.sound.ts", "index.d.ts", "index.js", "index.sound.ts"]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet.aot.ts", "greet.d.ts", "greet.js", "index.aot.ts", "index.d.ts", "index.js"]);
   });
 
   test("--no-bundle: a default-exported function that a type of its file names gets no stand-in", async () => {
@@ -427,7 +427,7 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     });
     const built = await spawned([bunExe(), "build", "src/index.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    const typed = await text(String(dir), "dist", "index.sound.ts");
+    const typed = await text(String(dir), "dist", "index.aot.ts");
     expect(typed).not.toContain("declare function parse");
     expect(typed).toContain("export type Parsed = ReturnType<typeof parse>;");
   });
@@ -444,14 +444,14 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     symlinkSync(join("..", "packages", "outside"), join(String(dir), "node_modules", "outside"), "dir");
     const built = await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--target", "bun", "--packages", "external", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
-    expect(await text(String(dir), "dist", "index.sound.ts")).not.toContain("declare const default");
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
+    expect(await text(String(dir), "dist", "index.aot.ts")).not.toContain("declare const default");
   });
 
   test("require() in a bundle for the browser", async () => {
     using dir = library("odd-names");
     expect(await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--packages", "external", "--dts"], String(dir))).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.sound.ts")).toContain("return (require as any).apply(this, arguments);");
+    expect(await text(String(dir), "dist", "index.aot.ts")).toContain("return (require as any).apply(this, arguments);");
     expect(await text(String(dir), "dist", "index.js")).toContain("return require.apply(this, arguments);");
   });
 
@@ -459,15 +459,14 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     using dir = library("found-on-servers");
     const built = await spawned([bunExe(), "build", "src/index.ts", "src/helper/index.ts", "--outdir", "dist", "--root", "src", "--target", "bun", "--packages", "external", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    const typed = await text(String(dir), "dist", "index.sound.ts");
+    const typed = await text(String(dir), "dist", "index.aot.ts");
     expect(typed).toContain("  async parse(options?: Partial<Input>): Promise<Result<Input>>;\n  async parse(options?: Partial<Input>): Promise<Result<Input>> {");
     expect(typed).toContain("  static async make(count: number): Promise<Request[]>;\n  static async make(count?: number): Promise<Request | Request[]> {");
     expect(typed).toContain("  each(from: number): Generator<number>;\n  *each(from = 0) {");
     expect(typed).toContain("  literal += /* @ts-ignore */`\n");
     expect(withoutTypes(typed)).toBe(withoutTypes(await text(String(dir), "dist", "index.js")));
-    const below = await text(String(dir), "dist", "helper", "index.sound.ts");
+    const below = await text(String(dir), "dist", "helper", "index.aot.ts");
     expect(below).toContain("type Input = { in?: {} };\ninterface Result<T> { value: T; input: Input }");
-    expect(await text(String(dir), "dist", "helper", "index.d.ts")).toStartWith("// @sound index.sound.ts ");
   });
 
   test("a constant of the sources is checked as a constant, though the bundle declares it with var", async () => {
@@ -489,7 +488,7 @@ export function clamp(value: number, limit = LIMIT): number {
 `,
     });
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.sound.ts")).toContain('var ROOT = "root";\nvar KEY = "key";\nvar LIMIT = 4;');
+    expect(await text(String(dir), "dist", "index.aot.ts")).toContain('var ROOT = "root";\nvar KEY = "key";\nvar LIMIT = 4;');
   });
 
   test("is judged as --aot judges it: not by noUnusedLocals, as an ES module and under the tsconfig.json of its sources wherever --outdir is", async () => {
@@ -504,8 +503,8 @@ export function clamp(value: number, limit = LIMIT): number {
     using out = tempDir("build-sound-outside", {});
     const built = await spawned([bunExe(), "build", "src/index.ts", "--outdir", String(out), "--target", "bun", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(readdirSync(String(out)).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
-    expect(await text(String(out), "index.sound.ts")).toContain("interface Unused { name: string }");
+    expect(readdirSync(String(out)).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
+    expect(await text(String(out), "index.aot.ts")).toContain("interface Unused { name: string }");
   });
 
   test("under a tsconfig.json that only references projects, is judged under the project that has its sources", async () => {
@@ -515,13 +514,13 @@ export function clamp(value: number, limit = LIMIT): number {
       "src/index.ts": `export function reply(text: string): Response {\n  return new Response(text);\n}\n`,
     });
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.sound.ts")).toContain("function reply(text: string): Response {");
+    expect(await text(String(dir), "dist", "index.aot.ts")).toContain("function reply(text: string): Response {");
   });
 
   test("needs no package.json", async () => {
     using dir = library("greeter", { "package.json": "{}" });
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
   });
 
   const leftOut = "warn: --dts: the typed JavaScript that --aot compiles a package from is left out: ";
@@ -535,8 +534,7 @@ export function clamp(value: number, limit = LIMIT): number {
     expect(await build(String(dir), "--dts", flag)).toMatchObject({ stderr: `${leftOut}it does not support ${named} yet\n`, exitCode: 0 });
     const names = readdirSync(join(String(dir), "dist"));
     expect(names).toContain("index.d.ts");
-    expect(names.filter(name => name.endsWith(".sound.ts"))).toEqual([]);
-    expect(await text(String(dir), "dist", "index.d.ts")).not.toContain("@sound");
+    expect(names.filter(name => name.endsWith(".aot.ts"))).toEqual([]);
   });
 
   test("a type error that only the typed JavaScript has is a warning", async () => {
@@ -545,7 +543,7 @@ export function clamp(value: number, limit = LIMIT): number {
       "src/other.ts": `declare const injected: string;\nexport const length = injected.length;\n`,
     });
     const { stderr, exitCode } = await build(String(dir), "--dts");
-    expect(stderr).toStartWith(`${leftOut}with its types put back it has type errors, the first at index.sound.ts:`);
+    expect(stderr).toStartWith(`${leftOut}with its types put back it has type errors, the first at index.aot.ts:`);
     expect(stderr.trim().split("\n").length).toBe(1);
     expect(exitCode).toBe(0);
     expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "other.d.ts"]);
@@ -557,7 +555,7 @@ export function clamp(value: number, limit = LIMIT): number {
       "src/vendored.ts": `// @ts-nocheck\nexport function twice(value: number) {\n  const text: number = "a" * value;\n  return [value, text];\n}\n`,
     });
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
-    const typed = await text(String(dir), "dist", "index.sound.ts");
+    const typed = await text(String(dir), "dist", "index.aot.ts");
     expect(typed).toContain('// @ts-ignore\nfunction twice(value) {\n  // @ts-ignore\n  const text = "a" * value;');
     expect(typed).toContain("function four(value: number): number[] {");
     expect(withoutTypes(typed)).toBe(withoutTypes(await text(String(dir), "dist", "index.js")));

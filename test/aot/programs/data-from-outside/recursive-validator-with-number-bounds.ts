@@ -1,12 +1,12 @@
-// A validator that the compiler emits for a recursive type is a function of its own: a chain of early returns with reads by name and double constants between them.
-import type { Max, Min } from "bun";
+// The parser and the validator that the compiler emits for a recursive type are functions of their own: chains of early returns with double constants between them. Text takes the parser; what a reviver returns, and what the parser refuses, takes the validator.
+import type { Schema } from "bun";
 interface Tree {
-  a: number & Min<1.5> & Max<99.5>;
-  b: number & Min<2.5> & Max<98.5>;
-  c: number & Min<3.5> & Max<97.5>;
-  d: number & Min<4.5> & Max<96.5>;
-  e: number & Min<5.5> & Max<95.5>;
-  f: number & Min<6.5> & Max<94.5>;
+  a: number & Schema.Min<1.5> & Schema.Max<99.5>;
+  b: number & Schema.Min<2.5> & Schema.Max<98.5>;
+  c: number & Schema.Min<3.5> & Schema.Max<97.5>;
+  d: number & Schema.Min<4.5> & Schema.Max<96.5>;
+  e: number & Schema.Min<5.5> & Schema.Max<95.5>;
+  f: number & Schema.Min<6.5> & Schema.Max<94.5>;
   g: number;
   h: number;
   i: number;
@@ -21,8 +21,23 @@ function make(depth: number, change?: (tree: Record<string, unknown>) => void): 
   return tree;
 }
 const lines: string[] = [];
+function accepts(parse: () => Tree): boolean {
+  try {
+    parse();
+    return true;
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return false;
+  }
+}
+const roads: ((value: unknown) => Tree)[] = [
+  value => JSON.parse<Tree>(JSON.stringify(value)),
+  value => JSON.parse<Tree>(JSON.stringify(value, null, 2)),
+  value => JSON.parse<Tree>(JSON.stringify(value), (_, held) => held),
+];
 function show(label: string, value: unknown): void {
-  lines.push(label + ": " + Bun.safeValidate<Tree>(JSON.parse(JSON.stringify(value))).success);
+  const [compact, indented, revived] = roads.map(road => accepts(() => road(value)));
+  lines.push(label + ": " + compact + (indented === compact && revived === compact ? "" : ", indented: " + indented + ", revived: " + revived));
 }
 show("as it should be", make(3));
 for (const name of ["a", "b", "c", "d", "e", "f"]) {
@@ -43,7 +58,7 @@ show("a child that is no tree", make(1, tree => { tree.children = [7]; }));
 show("no object", 7);
 show("null", null);
 let accepted = 0;
-const tree = JSON.parse(JSON.stringify(make(3)));
-for (let round = 0; round < 2000; round++) accepted += +Bun.safeValidate<Tree>(tree).success;
+const tree = make(3);
+for (let round = 0; round < 2000; round++) accepted += +accepts(() => roads[round % 3](tree));
 lines.push("accepted " + accepted);
 console.log(lines.join("\n"));

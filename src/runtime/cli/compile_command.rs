@@ -66,7 +66,7 @@ fn find_entry_point(cwd: &[u8]) -> Result<EntryPoint, String> {
         return Err(format!("No entry point, and {shown} could not be parsed"));
     };
     let text_of = |field: &[u8]| json.get(field).and_then(|value| value.as_string(&bump)).filter(|text| !text.is_empty());
-    let package_name = text_of(b"name").map_or(bun_paths::basename(dir), without_scope);
+    let package_name = text_of(b"name").map_or_else(|| bun_paths::basename(dir), without_scope);
     let named_by = |field: &str, path: &[u8], executable_name: &[u8]| match file_in(dir, path) {
         Some(path) => Ok(EntryPoint { path, executable_name: Box::from(executable_name) }),
         None => Err(format!("\"{field}\" in {shown} is \"{}\", which is not a file", BStr::new(path))),
@@ -103,6 +103,9 @@ fn find_entry_point(cwd: &[u8]) -> Result<EntryPoint, String> {
 
 #[cold]
 pub(crate) fn find_entry_point_or_exit(cwd: &[u8], library_outdir: Option<&[u8]>) -> EntryPoint {
+    if let Some(outdir) = library_outdir {
+        refuse_outdir_that_holds_the_project(cwd, outdir);
+    }
     match library_outdir.map_or_else(|| find_entry_point(cwd), |outdir| find_library_entry_point(cwd, outdir)) {
         Ok(entry_point) => entry_point,
         Err(message) => {
@@ -136,15 +139,25 @@ fn fail(message: &str) -> ! {
     Global::exit(1);
 }
 
-#[cold]
-pub(crate) fn configure_library(ctx: &mut ContextData) {
-    let cwd = ctx.args.absolute_working_dir.clone().unwrap_or_default();
-    let outdir = join_abs_string::<Auto>(&cwd, &[&ctx.bundler_options.outdir]).to_vec();
-    let project = nearest_package_json(&cwd);
-    let project_directory = project.as_ref().map_or(bun_core::strings::without_trailing_slash(&cwd), |found| found.0);
+fn refuse_outdir_that_holds_the_project(cwd: &[u8], outdir: &[u8]) {
+    let outdir = join_abs_string::<Auto>(cwd, &[outdir]).to_vec();
+    let project = nearest_package_json(cwd);
+    let project_directory = project.as_ref().map_or_else(|| bun_core::strings::without_trailing_slash(cwd), |found| found.0);
     let holds_the_project = project_directory.strip_prefix(&outdir[..]).is_some_and(|below| below.is_empty() || bun_paths::is_sep_any(below[0]));
     if holds_the_project {
         fail(&format!("--library writes a package.json into --outdir, and {} is the project's own folder. Choose a folder inside it, such as --outdir=dist", BStr::new(&outdir)));
+    }
+}
+
+#[cold]
+pub(crate) fn configure_library(ctx: &mut ContextData) {
+    let cwd = ctx.args.absolute_working_dir.clone().unwrap_or_default();
+    refuse_outdir_that_holds_the_project(&cwd, &ctx.bundler_options.outdir);
+    let outdir = join_abs_string::<Auto>(&cwd, &[&ctx.bundler_options.outdir]).to_vec();
+    let project = nearest_package_json(&cwd);
+    let inside_outdir = [&outdir[..], bun_paths::SEP_STR.as_bytes()].concat();
+    if let Some(entry_point) = ctx.args.entry_points.iter().find(|entry_point| join_abs_string::<Auto>(&cwd, &[&entry_point[..]]).starts_with(&inside_outdir)) {
+        fail(&format!("the entry point {} is inside --outdir, where it would be overwritten. Choose another --outdir", BStr::new(entry_point)));
     }
     let Some((_, path, contents)) = project else { return };
     let Some(package_json) = parse_package_json(&path, &contents) else {
@@ -225,12 +238,12 @@ fn asset(path: &[u8], bytes: Vec<u8>) -> OutputFile {
 }
 
 #[cold]
-pub(crate) fn add_package_files(ctx: &ContextData, output_files: &mut Vec<OutputFile>) {
+pub(crate) fn add_package_files(ctx: &ContextData, log: &mut bun_ast::Log, output_files: &mut Vec<OutputFile>) {
     let arena = crate::cli::cli_arena();
     let cwd = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
     let outdir = join_abs_string::<Auto>(cwd, &[&ctx.bundler_options.outdir]).to_vec();
     let project = nearest_package_json(cwd);
-    let project_directory = project.as_ref().map_or(bun_core::strings::without_trailing_slash(cwd), |found| found.0);
+    let project_directory = project.as_ref().map_or_else(|| bun_core::strings::without_trailing_slash(cwd), |found| found.0);
     let existing = project.as_ref().and_then(|(_, path, contents)| parse_package_json(path, contents));
 
     let text = |value: &[u8]| Expr::init(E::String::init(&*arena.alloc_slice_copy(value)), Loc::EMPTY);
@@ -253,10 +266,13 @@ pub(crate) fn add_package_files(ctx: &ContextData, output_files: &mut Vec<Output
     if !package.has_property(b"version") {
         put(&mut package, b"version", text(b"0.0.0"));
     }
-    put(&mut package, b"type", text(b"module"));
-    if let Some(main) = exported.iter().find(|file| file.subpath == b".").or(exported.first()) {
+    let is_commonjs = ctx.bundler_options.output_format == bun_bundler::options::Format::Cjs;
+    put(&mut package, b"type", text(if is_commonjs { &b"commonjs"[..] } else { &b"module"[..] }));
+    if let Some(main) = exported.iter().find(|file| file.subpath == b".").or_else(|| exported.first()) {
         put(&mut package, b"main", relative(&main.javascript[..]));
-        put(&mut package, b"module", relative(&main.javascript[..]));
+        if !is_commonjs {
+            put(&mut package, b"module", relative(&main.javascript[..]));
+        }
         if let Some(declarations) = &main.declarations {
             put(&mut package, b"types", relative(&declarations[..]));
         }
@@ -274,22 +290,41 @@ pub(crate) fn add_package_files(ctx: &ContextData, output_files: &mut Vec<Output
         put(&mut exports, &file.subpath[..], Expr::init(conditions, Loc::EMPTY));
     }
     put(&mut exports, b"./package.json", text(b"./package.json"));
+    let written_package_json = [&ctx.bundler_options.outdir[..], b"/package.json"].concat();
+    let written_package_json = BStr::new(&written_package_json);
+    if let Some(ExprData::EObject(existing_exports)) = existing.as_ref().and_then(|existing| existing.get(b"exports")).map(|exports| exports.data) {
+        let subpaths = existing_exports.properties.slice().iter().filter_map(|entry| entry.key.as_ref()?.as_utf8_string_literal());
+        for subpath in subpaths.filter(|subpath| subpath.starts_with(b".") && !exports.has_property(subpath)) {
+            log.add_warning_fmt(None, Loc::EMPTY, format_args!("\"{}\" in \"exports\" of package.json is left out of {written_package_json}: no entry point of this build is written there", BStr::new(subpath)));
+        }
+    }
     put(&mut package, b"exports", Expr::init(exports, Loc::EMPTY));
 
+    let mut warn_about_executable = |name: &[u8], path: &[u8]| {
+        log.add_warning_fmt(None, Loc::EMPTY, format_args!("\"{}\" in \"bin\" of package.json is left out of {written_package_json}: {} is not an entry point of this build", BStr::new(name), BStr::new(path)));
+    };
     let emitted_as = |path: &[u8]| {
         let path = join_abs_string::<Auto>(project_directory, &[path]).to_vec();
         let found = exported.iter().find(|file| *file.source == path[..] || join_abs_string::<Auto>(&outdir, &[&file.javascript[..]]) == &path[..])?;
         Some(relative(&found.javascript[..]))
     };
     let existing_bin = existing.as_ref().and_then(|existing| existing.get(b"bin"));
-    if let Some(path) = existing_bin.as_ref().and_then(|bin| emitted_as(bin.as_utf8_string_literal()?)) {
-        put(&mut package, b"bin", path);
+    if let Some(path) = existing_bin.as_ref().and_then(Expr::as_utf8_string_literal) {
+        match emitted_as(path) {
+            Some(path) => put(&mut package, b"bin", path),
+            None => {
+                let name = existing.as_ref().and_then(|existing| existing.get(b"name"));
+                warn_about_executable(name.as_ref().and_then(Expr::as_utf8_string_literal).map_or(&b""[..], without_scope), path);
+            }
+        }
     } else if let Some(ExprData::EObject(executables)) = existing_bin.map(|bin| bin.data) {
         let mut bin = E::Object::default();
         for executable in executables.properties.slice() {
             let (Some(name), Some(path)) = (&executable.key, &executable.value) else { continue };
-            if let (Some(name), Some(path)) = (name.as_utf8_string_literal(), path.as_utf8_string_literal().and_then(|path| emitted_as(path))) {
-                put(&mut bin, name, path);
+            let (Some(name), Some(path)) = (name.as_utf8_string_literal(), path.as_utf8_string_literal()) else { continue };
+            match emitted_as(path) {
+                Some(path) => put(&mut bin, name, path),
+                None => warn_about_executable(name, path),
             }
         }
         if !bin.properties.is_empty() {

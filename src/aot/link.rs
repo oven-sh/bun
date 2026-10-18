@@ -2193,6 +2193,77 @@ fn collect_property_names(func: &Func, layouts: &[Layout], stored: &mut Vec<StrI
     }
 }
 
+fn leave_open_classes_that_are_only_extended_without_instances(program: &mut Program, in_parallel: InParallel<'_>) {
+    let mut is_candidate: Vec<bool> = (program.layouts.iter())
+        .map(|layout| layout.kind == LayoutKind::Instance && layout.class_flags & class_flags::HAS_FIXED_LAYOUT != 0 && layout.constructor.is_some() && layout.is_allocated && layout.accepts_unchecked_objects() && !layout.is_relaxed_for_logging)
+        .collect();
+    for member in program.layouts.iter().filter(|view| !view.accepts_untyped).flat_map(|view| &view.members) {
+        is_candidate[member.idx()] = false;
+    }
+    if !is_candidate.contains(&true) {
+        return;
+    }
+    let class_of_constructor: FxHashMap<FuncId, LayoutId> = (program.layouts.iter().enumerate()).filter(|layout| is_candidate[layout.0]).map(|(index, layout)| (layout.constructor, LayoutId::new(index))).collect();
+    let funcs = &program.funcs;
+    let mut runs: Vec<(usize, Vec<LayoutId>)> = (0..funcs.len()).step_by(FUNCTIONS_PER_SLICE).map(|first| (first, Vec::new())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(first, constructed)| {
+        for func in &funcs[*first..funcs.len().min(*first + FUNCTIONS_PER_SLICE)] {
+            let class_referred_to = |operand: V| match func.values.get(operand.idx())?.def {
+                Def::Op(Op::FuncRef(named)) => class_of_constructor.get(&named).copied(),
+                _ => None,
+            };
+            for value in &func.values {
+                let Def::Op(op) = &value.def else {
+                    if let Prediction::Closure(predicted) = value.prediction() {
+                        constructed.extend(class_of_constructor.get(&predicted));
+                    }
+                    continue;
+                };
+                match op {
+                    Op::New(layout) | Op::NewWith { layout, .. } => constructed.push(*layout),
+                    Op::FuncRef(_) | Op::Operation { which: Operation::MakeClass, .. } => continue,
+                    _ => {}
+                }
+                if let Prediction::Closure(predicted) = value.prediction() {
+                    constructed.extend(class_of_constructor.get(&predicted));
+                }
+                op.for_each_operand(|operand| {
+                    if !matches!(op, Op::InstanceOf { of, .. } if *of == operand) {
+                        constructed.extend(class_referred_to(operand));
+                    }
+                });
+            }
+            for term in func.blocks.iter().filter_map(|block| block.term.as_ref()) {
+                term.for_each_operand(|operand| constructed.extend(class_referred_to(operand)));
+                let targets: Vec<&ir::Target> = match term {
+                    Term::Jump(target) => vec![target],
+                    Term::Branch { then, otherwise, .. } => vec![then, otherwise],
+                    Term::Switch { cases, default, .. } => cases.iter().map(|case| &case.1).chain(Some(default)).collect(),
+                    Term::Throw { unwind, .. } => unwind.iter().collect(),
+                    Term::Invoke { normal, unwind } => vec![normal, unwind],
+                    Term::Return(_) | Term::Unreachable => Vec::new(),
+                };
+                for &operand in targets.iter().flat_map(|target| target.args.iter()) {
+                    constructed.extend(class_referred_to(operand));
+                }
+            }
+        }
+        constructed.sort_unstable();
+        constructed.dedup();
+    });
+    for constructed in runs.iter().flat_map(|run| &run.1) {
+        is_candidate[constructed.idx()] = false;
+    }
+    for layout in &mut program.layouts {
+        for listed in [&mut layout.members, &mut layout.structural_subtypes, &mut layout.specializations] {
+            listed.retain(|other| !is_candidate[other.idx()]);
+        }
+    }
+    for (layout, _) in program.layouts.iter_mut().zip(&is_candidate).filter(|layout| *layout.1) {
+        layout.is_allocated = false;
+    }
+}
+
 fn leave_members_to_the_prototype(program: &mut Program, is_runtime_layout: &[bool], in_parallel: InParallel<'_>) {
     let is_given_a_prototype = |layout: &Layout| layout.kind == LayoutKind::Record && layout.class_flags & class_flags::PROTOTYPE_IS_SET_BY_TYPED_CODE != 0;
     if !program.layouts.iter().any(is_given_a_prototype) {
@@ -2890,7 +2961,12 @@ fn link_with_helper_threads<'scope>(
                     reach.runtime.get_mut().add(i64::from(id), name, file, evaluation);
                 }
                 match loaded_by {
-                    LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName if loader_entries_have_sites => reach.runtime.get_mut().behind_loader_entries.push(evaluation),
+                    LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName if loader_entries_have_sites => {
+                        reach.runtime.get_mut().behind_loader_entries.push(evaluation);
+                        if bun_builtin_syntax::Archive::embedded().manifest().waits_to_be_named(bun_builtin_syntax::MODULE_ROOT | id) {
+                            reach.roots_waiting.insert(bun_builtin_syntax::MODULE_ROOT | id, evaluation);
+                        }
+                    }
                     LoadedBy::NativeCodeOrLiteralName | LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName => reach.add_root(evaluation, true),
                     LoadedBy::RuntimeModulesOnly if bun_builtin_syntax::Archive::embedded().manifest().waits_to_be_named(bun_builtin_syntax::MODULE_ROOT | id) => _ = reach.roots_waiting.insert(bun_builtin_syntax::MODULE_ROOT | id, evaluation),
                     LoadedBy::RuntimeModulesOnly | LoadedBy::RuntimeModulesBehindLoader => {}
@@ -3918,6 +3994,7 @@ fn link_with_helper_threads<'scope>(
             }
         }
     }
+    leave_open_classes_that_are_only_extended_without_instances(&mut program, in_parallel);
     leave_members_to_the_prototype(&mut program, &is_runtime_layout, in_parallel);
     {
         let layout_of_type: FxHashMap<TypeId, LayoutId> = views.iter().map(|&(layout, ty)| (ty, layout)).collect();
@@ -4078,16 +4155,15 @@ fn link_with_helper_threads<'scope>(
         found.append(&mut checked.checker().find_external_types(scopes));
     }
     let is_declared_by_program = |index: usize, layout: &Layout| layout.kind == LayoutKind::Instance && !is_runtime_layout.get(index).copied().unwrap_or(false);
-    let looks_at_classes = checked.rule_scopes.get().is_some_and(|scopes| [Rule::ByName, Rule::LostLayout, Rule::UntypedBase].into_iter().any(|rule| scopes.is_enabled(rule)));
     let declared: Vec<((FileId, ClassId), bool)> = (program.layouts.iter().enumerate())
-        .filter(|&(index, layout)| looks_at_classes && is_declared_by_program(index, layout))
+        .filter(|&(index, layout)| is_declared_by_program(index, layout))
         .filter_map(|(index, layout)| Some((classes[index]?, layout.class_flags & class_flags::HAS_FIXED_LAYOUT != 0)))
         .collect();
     let classes_without_layout: FxHashSet<(FileId, ClassId)> = declared.iter().filter(|class| !class.1).map(|class| class.0).collect();
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::ByName)) {
         let is_wanted_module: Vec<bool> = modules.iter().map(|&file| scopes.may_apply_in(Rule::ByName, file)).collect();
         let sites = by_name::find_sites(&program, &is_wanted_module, in_parallel);
-        chains_by_name = by_name::find_chains(&program, checked, &modules, &sites);
+        chains_by_name = by_name::find_chains(&program, checked, &modules, &sites, in_parallel);
         let accesses: Vec<(FileId, hir::ExprId, u32, Vec<u8>)> = chains_by_name.iter().filter(|chain| !chain.begins_with_a_store).map(|chain| (chain.file, chain.receiver, chain.name_pos, chain.name.clone())).collect();
         let (mut reported, unexplained) = checked.checker().find_accesses_by_name(&accesses, &classes_without_layout, scopes);
         if explain.mutations {
@@ -4284,16 +4360,20 @@ fn link_with_helper_threads<'scope>(
         }
     }
     since = Instant::now();
-    let typedness = typedness::measure(&program, &is_runtime_layout, &modules, checked, in_parallel);
+    let fixable_reads_by_name = by_name::count_fixable_reads(&program, checked, &modules, &classes_without_layout, in_parallel);
+    let typedness = typedness::measure(&program, &is_runtime_layout, fixable_reads_by_name, &modules, checked, in_parallel);
     times.add("typedness", &mut since);
     let files_of_prelude: FxHashSet<FileId> = crate::prelude::FILES.iter().filter_map(|file| checked.files.by_path.get(&crate::prelude::path_of(shown_from, file.0))).collect();
     let reads = keys::reads_without_a_name(&program, &modules, checked.files, &files_of_prelude, in_parallel);
     *checked.reads_of_any_property.lock() = reads.of_any_property;
+    checked.reads_by_a_key_that_may_be_a_name.store(reads.by_a_key_that_may_be_a_name, Ordering::Relaxed);
     *checked.reads_that_may_find_the_constructor_of_functions.lock() = reads.that_may_find_the_constructor_of_functions;
     *checked.reads_that_may_find_what_makes_or_loads_code.lock() = reads.that_may_find_what_makes_or_loads_code;
     *checked.loads_of_modules_that_are_not_compiled.lock() = reads.of_modules_that_are_not_compiled;
     checked.stores_under_a_key_that_is_not_seen.store(keys::stores_under_a_key_that_is_not_seen(&program, &modules, &files_of_prelude), Ordering::Relaxed);
+    checked.takes_members_without_naming_them.store(keys::takes_members_without_naming_them(&program, &modules, &files_of_prelude), Ordering::Relaxed);
     checked.writes_under_a_key_that_may_be_a_symbol.store(keys::writes_under_a_key_that_may_be_a_symbol(&program, &modules, &files_of_prelude), Ordering::Relaxed);
+    checked.reads_the_constructor_of_a_symbol.store(keys::reads_the_constructor_of_a_symbol(&program, &modules, &files_of_prelude), Ordering::Relaxed);
     let failure_check = Some(FailureCheck { setup: setup_of_what_always_fails, modules });
     Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found, typedness, times, failure_check }
 }

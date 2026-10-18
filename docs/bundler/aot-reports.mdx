@@ -18,7 +18,7 @@ A build with [`--aot`](/bundler/aot) never tells you that a line is slow. It com
 | Which checks fail in production?                             | [`--aot-type-errors=log`](#log-in-production)      |
 | How much of my program has types?                            | [the last line of a build](#the-summary-line)      |
 
-Every flag that starts with `--aot-` works with `bun check --aot` and with `bun compile`. `bun check --aot` builds nothing, so it is the faster of the two.
+`--aot-explain`, `--aot-warn`, `--aot-deny`, `--aot-allow` and `--aot-baseline` work with `bun check --aot` and with `bun compile`. `bun check --aot` builds nothing, so it's the faster of the two.
 
 ## The example
 
@@ -74,7 +74,7 @@ bun main.ts
 
 ## The most expensive lines
 
-Start here. `--aot-explain` leads everything that the compiler gives up back to the line that causes it, and prints the most expensive lines first.
+Start here. `--aot-explain` traces everything that the compiler gives up back to the line that causes it, and prints the most expensive lines first.
 
 ```bash terminal icon="terminal"
 bun check --aot ./main.ts --aot-explain
@@ -101,11 +101,11 @@ Both problems are in `main.ts`, and the cost is in `stock.ts`: one `any` makes e
 
 The third place is in Bun's own type declarations. Objects that Bun provides, such as the result of `Bun.file()`, have no layout that the compiler knows. You can't change that, and the report marks it `(in a dependency)`.
 
-[What costs the most](/bundler/aot-debugging#what-costs-the-most) explains each line of a row. `--aot-explain=costs-json` prints the rows as JSON, for a script or a coding agent.
+[What costs the most](/bundler/aot-debugging#what-costs-the-most) explains each line of an entry. `--aot-explain=costs-json` prints the entries as JSON, for a script or a coding agent.
 
 ## Every finding
 
-A rule reports one kind of loss. `--aot-warn=all` turns all of them on, and prints each finding with its reasons under it.
+Each rule reports one kind of problem. `--aot-warn=all` turns all of them on, and prints each finding with its reasons under it.
 
 ```bash terminal icon="terminal"
 bun check --aot ./main.ts --aot-warn=all
@@ -154,7 +154,7 @@ See [Code that loses its types](/bundler/aot-debugging#code-that-loses-its-types
 
 ## Checks that can fail
 
-Where a value without a type reaches a declared type, the executable checks it. [How `--aot` uses your types](/bundler/aot-types#where-untyped-values-meet-typed-code) says what each check does. `--aot-explain=throws` lists the checks that can fail, with where the value comes from.
+Where a value without a type reaches a declared type, the executable checks it. [How `--aot` uses your types](/bundler/aot-types#where-untyped-values-meet-typed-code) says what each check does. `--aot-explain=throws` lists the checks that can fail, and where each value comes from.
 
 ```bash terminal icon="terminal"
 bun check --aot ./main.ts --aot-explain=throws
@@ -186,7 +186,7 @@ The program still prints `40`. The line says that the executable throws at `stoc
 
 ## Lint your source
 
-`bun lint --aot` turns on six rules that find the code `--aot` affects.
+`bun lint --aot` turns on five rules that find the code `--aot` affects.
 
 ```bash terminal icon="terminal"
 bun lint --aot main.ts
@@ -202,7 +202,7 @@ warn: Under `--aot`, this `any` is checked against `Item` here when the program 
 note: It comes from `item`, declared at line 7. Give it a type there, or validate it.
 ```
 
-See [Before you compile with `--aot`](/lint#before-you-compile-with-aot).
+See [Before you compile with `--aot`](/lint#before-you-compile-with---aot).
 
 ## What the executable does
 
@@ -222,7 +222,7 @@ TypeError: expected number, got string "10" (bun --aot: https://bun.com/docs/bun
 
 ## Log in production
 
-Your tests don't see all the data that production sees. `--aot-type-errors=log` builds an executable that writes a line to stderr for each check that fails. Where it can, it then goes on as plain JavaScript does. Here it can't, so it writes the line and throws.
+Your tests don't see all the data that production sees. `--aot-type-errors=log` builds an executable that writes a line to stderr for each check that fails. Where it can, it then keeps going, as plain JavaScript would. Here it can't, so it writes the line and throws.
 
 ```bash terminal icon="terminal"
 bun compile --aot-type-errors=log ./main.ts && ./main
@@ -263,7 +263,7 @@ for (const value of saved) stock.add(toItem(value));
 console.log(stock.value());
 ```
 
-`toItem` returns an object literal, so typed code creates every `Item` in the program. The rules find nothing any more, and no check can fail.
+`toItem` returns an object literal, so typed code creates every `Item` in the program. The rules no longer find anything, and no check can fail.
 
 ```bash terminal icon="terminal"
 bun check --aot ./main.ts --aot-warn=all --aot-explain=throws
@@ -272,7 +272,7 @@ bun check --aot ./main.ts --aot-warn=all --aot-explain=throws
 ```txt
 [aot] type-check summary: 0 checks can fail when the program runs, 0 always fail; 1 more fails only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists it)
 ✓ No type errors in 2 files [44.16ms]
-aot: 54.5% of reads typed, 0 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-warn=all lists them)
+aot: 100.0% of reads typed, 0 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped
 ```
 
 The mistake in `stock.json` is now reported where the data enters, in your own words, with and without `--aot`.
@@ -289,22 +289,24 @@ TypeError: stock.json: price must be a number
 
 ## The summary line
 
-Every build, and every `bun check --aot`, ends with a line about the whole program.
+Every build, and every `bun check --aot`, ends with a line about the whole program. This is the line of the example before the fix.
 
 ```txt
-aot: 54.5% of reads typed, 0 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-warn=all lists them)
+aot: 66.7% of reads typed, 1 of 2 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-explain lists them)
 ```
 
 | Part                            | Counts                                                                                                       |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `54.5% of reads typed`          | Property and element reads where the compiler knows the type of the value that the read produces             |
-| `0 of 2 types open`             | Declared types that can also hold objects that typed code did not create. The rule is `open-layout`          |
+| `66.7% of reads typed`          | Property reads through your own classes, interfaces and object types, where the compiler knows the layout    |
+| `1 of 2 types open`             | Declared types that can also hold objects that typed code did not create. The rule is `open-layout`          |
 | `0 classes without a layout`    | Classes whose instances are accessed by name. The rules are `lost-layout` and `untyped-base`                 |
 | `0 packages and 0 files untyped` | JavaScript dependencies, and files of your own that are compiled without types                               |
 
 Get the last three to zero in the code that has to be fast.
 
-Treat the percentage as a rough guide. It counts reads of what Bun and JavaScript provide as untyped: `console.log`, `Bun.file`, `items.push`. The example read 75.0% before the fix and reads 54.5% after it, because `toItem` adds reads of a `Record<string, unknown>`. The compiler gives up less than before, and `--aot-explain` has nothing left to report in your files.
+The example has six reads through `Stock` and `Item`. The two through `Item`, `item.price` and `item.quantity`, test the object first, because `Item` is open. After the fix the line reads `100.0%`, and the hint at its end is gone.
+
+Reads of what Bun and JavaScript provide, such as `console.log`, `Bun.file` and `items.push`, are not counted, because you cannot change them. A read of a property of an `any`, of data from outside that is cast to a type, or of a class without a layout is counted, and it is never typed. So is every read in a JavaScript file of your own.
 
 ## More reports
 

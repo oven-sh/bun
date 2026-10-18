@@ -589,7 +589,7 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            [include_str!("../runtime.js"), require, using, preload]
+            [include_str!("../runtime.js"), include_str!("../js/internal/validation.ts"), require, using, preload]
                 .concat()
                 .into_bytes()
                 .into_boxed_slice()
@@ -605,7 +605,7 @@ pub mod parse_worker {
             },
             contents_or_fd: ContentsOrFd::Contents(runtime_code),
             source_index: Index::RUNTIME,
-            loader: Some(Loader::Js),
+            loader: Some(Loader::Ts),
             known_target: target,
             // defaults:
             secondary_path_for_commonjs_interop: None,

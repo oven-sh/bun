@@ -1,15 +1,15 @@
-{"who":{"name":"n","nickname":"k"},"home":{"street":"s","zip":"z"}} | {"who":{"name":"n","nickname":"k"},"home":{"street":"s","zip":"z"}}
-TypeError: title: Invalid input: expected string, received undefined | TypeError: title: Invalid input: expected string, received undefined
-TypeError: street: Invalid input: expected string, received undefined | TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
-TypeError: who: Invalid input: expected object, received undefined | TypeError: who: Invalid input: expected object, received undefined
-{"title":"t","office":{"street":"s","zip":"z"},"branches":[{"street":"s","zip":"z"},{"street":"s2","zip":"z2"}],"owner":{"name":"o"}} | {"title":"t","office":{"street":"s","zip":"z"},"branches":[{"street":"s","zip":"z"},{"street":"s2","zip":"z2"}],"owner":{"name":"o"}}
-TypeError: street: Invalid input: expected string, received undefined | TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
-TypeError: who.nickname: Invalid input: expected undefined | string, received number | {"who":{"name":"n"},"home":{"street":"s","zip":"z"}}
-TypeError: title: Invalid input: expected string, received undefined | TypeError: title: Invalid input: expected string, received undefined
-TypeError: street: Invalid input: expected string, received undefined | TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
-TypeError: who: Invalid input: expected object, received undefined | TypeError: who: Invalid input: expected object, received undefined
-TypeError: branches.1.zip: Invalid input: expected string, received undefined | TypeError: branches.1.zip: Invalid input: expected string, received undefined
-TypeError: street: Invalid input: expected string, received undefined | TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
-TypeError: who: Invalid input: expected object, received undefined | TypeError: who: Invalid input: expected object, received undefined
-TypeError: title: Invalid input: expected string, received undefined | TypeError: title: Invalid input: expected string, received undefined
-{"street":"s","zip":"z"} | {"street":"s","zip":"z"} | [{"street":"s","zip":"z"}]
+{"who":{"name":"n","nickname":"k"},"home":{"street":"s","zip":"z"}}
+TypeError: title: Invalid input: expected string, received undefined
+TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
+TypeError: who: Invalid input: expected object, received undefined
+{"title":"t","office":{"street":"s","zip":"z"},"branches":[{"street":"s","zip":"z"},{"street":"s2","zip":"z2"}],"owner":{"name":"o"}}
+TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
+TypeError: who.nickname: Invalid input: expected undefined | string, received number
+TypeError: title: Invalid input: expected string, received undefined
+TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
+TypeError: who: Invalid input: expected object, received undefined
+TypeError: branches.1.zip: Invalid input: expected string, received undefined
+TypeError: street: Invalid input: expected string, received undefined | TypeError: 0.street: Invalid input: expected string, received undefined
+TypeError: who: Invalid input: expected object, received undefined
+TypeError: title: Invalid input: expected string, received undefined
+{"street":"s","zip":"z"} | [{"street":"s","zip":"z"}]

@@ -228,7 +228,7 @@ With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `ts
 
 ## Before you compile with `--aot`
 
-[`bun build --compile --aot`](/bundler/aot-adoption) holds your program to its TypeScript types when it runs, and makes built-in objects immutable. `--aot` turns on the rules that find the code this affects. Each report is something that can throw a `TypeError` in the compiled program, or that takes types away from the compiler.
+[`bun compile`](/bundler/aot) holds your program to its TypeScript types when it runs, and makes built-in objects immutable. `--aot` turns on the rules that find the code this affects. Each report is something that can throw a `TypeError` in the compiled program, or that takes types away from the compiler.
 
 ```bash terminal icon="terminal"
 bun lint --aot
@@ -249,7 +249,6 @@ warn: Under `--aot`, this `any` is checked against `number` here when the progra
 | [`bun/aot-cast-lacks-member`](/lint/rules/bun/aot-cast-lacks-member)       | an object literal cast to a type that it does not match              |
 | [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) | a write to a built-in object, such as `Array.prototype`              |
 | [`bun/aot-spy-on-builtin`](/lint/rules/bun/aot-spy-on-builtin)             | `sinon.stub(Math, "random")`                                         |
-| [`bun/aot-non-null-escapes`](/lint/rules/bun/aot-non-null-escapes)         | `x!` that is stored, passed on or returned. Off until you turn it on |
 
 They are warnings, and most of them need types. To keep them on:
 

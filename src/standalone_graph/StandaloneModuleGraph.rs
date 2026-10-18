@@ -2623,6 +2623,7 @@ pub enum CompileResult {
 
 pub enum CompileError {
     Message(Vec<u8>),
+    Refusal(Vec<u8>),
     Reason(CompileErrorReason),
 }
 
@@ -2650,7 +2651,7 @@ impl CompileError {
 
     pub fn slice(&self) -> &[u8] {
         match self {
-            CompileError::Message(m) => m,
+            CompileError::Message(m) | CompileError::Refusal(m) => m,
             CompileError::Reason(r) => r.message(),
         }
     }
@@ -2744,15 +2745,43 @@ impl std::io::Write for ChangedBlocksWriter<'_> {
     }
 }
 
-static TRIMS_RUNTIME: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+#[derive(Clone, Default)]
+pub struct TrimReport {
+    pub names_left_out: Vec<Vec<u8>>,
+    pub libraries_left_out: Vec<Vec<u8>>,
+    pub libraries_left_in: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Default)]
+pub struct Trim {
+    pub auto: bool,
+    pub remove: Vec<Box<[u8]>>,
+    pub keep: Vec<Box<[u8]>>,
+}
+
+static TRIM: bun_threading::Guarded<Trim> = bun_threading::Guarded::new(Trim { auto: false, remove: Vec::new(), keep: Vec::new() });
+static WHY_NOT_TRIMMED: bun_threading::Guarded<Option<Vec<u8>>> = bun_threading::Guarded::new(None);
+static TRIM_REPORT: bun_threading::Guarded<TrimReport> = bun_threading::Guarded::new(TrimReport { names_left_out: Vec::new(), libraries_left_out: Vec::new(), libraries_left_in: Vec::new() });
+
+pub fn set_trim(trim: Trim) {
+    *TRIM.lock() = trim;
+    *WHY_NOT_TRIMMED.lock() = None;
+    *TRIM_REPORT.lock() = TrimReport::default();
+    BYTES_LEFT_OUT.store(0, core::sync::atomic::Ordering::Relaxed);
+}
 
 pub fn set_trims_runtime(trims_runtime: bool) {
-    TRIMS_RUNTIME.store(trims_runtime, core::sync::atomic::Ordering::Relaxed);
+    set_trim(Trim { auto: trims_runtime, ..Default::default() });
+}
+
+fn trim() -> Trim {
+    let trim = TRIM.lock().clone();
+    Trim { auto: trim.auto || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_TRIM_RUNTIME::get().unwrap_or(false), ..trim }
 }
 
 fn trims_runtime() -> bool {
-    TRIMS_RUNTIME.load(core::sync::atomic::Ordering::Relaxed)
-        || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_TRIM_RUNTIME::get().unwrap_or(false)
+    let trim = trim();
+    trim.auto || !trim.remove.is_empty()
 }
 
 static BYTES_LEFT_OUT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
@@ -2761,12 +2790,31 @@ pub fn bytes_left_out() -> usize {
     BYTES_LEFT_OUT.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+pub fn trim_report() -> TrimReport {
+    TRIM_REPORT.lock().clone()
+}
+
 fn is_closed_world(runtime_use: &[u8]) -> bool {
     runtime_use == b"closed" || runtime_use.starts_with(b"closed\n")
 }
 
 fn name_of_option(option: &[u8]) -> &[u8] {
     &option[..strings::index_of_any(option, b"= \t\n\x0C\r\0").unwrap_or(option.len())]
+}
+
+pub const LEFT_OUT_BY_TRIMMING: &str =
+    "cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out";
+
+fn built_in_option_whose_part_is_left_out(template: &ZStr, options: &[u8], has_aot_image: bool, runtime_use: Option<&[u8]>) -> Option<&'static [u8]> {
+    const PARTS_OF_OPTIONS: [(&[u8], &[u8]); 2] = [(b"--fetch-preconnect", b"fetch"), (b"--redis-preconnect", b"valkey")];
+    let is_built_in = |option: &[u8]| strings::split(options, b"\n").any(|fact| fact.strip_prefix(b"exec-argv ") == Some(option));
+    let built_in: Vec<(&[u8], &[u8])> = PARTS_OF_OPTIONS.into_iter().filter(|(option, _)| is_built_in(option)).collect();
+    if built_in.is_empty() {
+        return None;
+    }
+    let template = bun_sys::File::open(template, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok()?.read_to_end().ok()?;
+    let left_out = features_left_out_of(&template, has_aot_image, runtime_use).ok()?.features;
+    built_in.into_iter().find(|(_, part)| left_out.iter().any(|feature| feature.as_slice() == *part)).map(|(option, _)| option)
 }
 
 fn options_named_in(compile_exec_argv: &[u8], is_declared_option: fn(&[u8]) -> bool) -> Vec<u8> {
@@ -2799,22 +2847,56 @@ pub fn facts_of_build(output_files: &[OutputFile], compile_exec_argv: &[u8], is_
     facts.iter().filter(|fact| fact.1).flat_map(|fact| fact.0).copied().collect()
 }
 
-fn trim_runtime(executable: Vec<u8>, has_aot_image: bool, runtime_use: Option<&[u8]>) -> Result<Vec<u8>, bun_exe_islands::Error> {
-    let unused = match runtime_use.filter(|_| has_aot_image) {
-        Some(facts) => bun_exe_islands::features_unused_by(&executable, facts)?,
+fn features_left_out_of(executable: &[u8], has_aot_image: bool, runtime_use: Option<&[u8]>) -> Result<bun_exe_islands::LeftOut, bun_exe_islands::Refusal> {
+    let trim = trim();
+    let unused_by_program = match runtime_use.filter(|_| trim.auto && has_aot_image) {
+        Some(facts) => bun_exe_islands::features_unused_by(executable, facts)?,
         None => Vec::new(),
     };
-    let mut features: Vec<&[u8]> = vec![&b"tools"[..]];
-    if has_aot_image {
-        features.push(b"jit");
-    }
-    features.extend(unused.iter().map(Vec::as_slice));
+    let never_kept = if trim.auto { bun_exe_islands::features_without_conditions(executable)? } else { Vec::new() };
+    let mut unused: Vec<&[u8]> = never_kept.iter().map(Vec::as_slice).filter(|name| has_aot_image || *name != b"jit").collect();
+    unused.extend(unused_by_program.iter().filter(|name| !never_kept.contains(name)).map(Vec::as_slice));
+    let choice = bun_exe_islands::Choice { unused: &unused, remove: &as_slices(&trim.remove), keep: &as_slices(&trim.keep), is_compiled_ahead_of_time: has_aot_image };
+    bun_exe_islands::features_to_leave_out(executable, &choice)
+}
+
+fn trim_runtime(executable: Vec<u8>, has_aot_image: bool, runtime_use: Option<&[u8]>) -> Result<Vec<u8>, bun_exe_islands::Refusal> {
+    let trim = trim();
+    let left_out = features_left_out_of(&executable, has_aot_image, runtime_use)?;
+    let mut features: Vec<&[u8]> = left_out.features.iter().map(Vec::as_slice).collect();
     let named = bun_core::env_var::BUN_TRIM_RUNTIME_WITHOUT.get().unwrap_or_default();
     features.extend(strings::split(named, b",").filter(|feature| !feature.is_empty()));
     let whole = executable.len();
-    let trimmed = bun_exe_islands::without(executable, &features)?;
+    let removed_by_name: Vec<&[u8]> = left_out.removed_by_name.iter().map(Vec::as_slice).collect();
+    let trimmed = match bun_exe_islands::without_either_way(executable, &features, &removed_by_name) {
+        Err(bun_exe_islands::Error::InvalidExecutable) if !trim.auto => return Err(bun_exe_islands::Refusal::TooSmallAlone),
+        trimmed => trimmed?,
+    };
     BYTES_LEFT_OUT.store(whole - trimmed.len(), core::sync::atomic::Ordering::Relaxed);
+    *TRIM_REPORT.lock() = TrimReport { names_left_out: left_out.names, libraries_left_out: left_out.libraries_left_out, libraries_left_in: left_out.libraries_left_in };
     Ok(trimmed)
+}
+
+fn as_slices(names: &[Box<[u8]>]) -> Vec<&[u8]> {
+    names.iter().map(|name| &**name).collect()
+}
+
+fn quoted(names: &[Vec<u8>]) -> Vec<u8> {
+    let quoted: Vec<Vec<u8>> = names.iter().map(|name| [b"\"", &name[..], b"\""].concat()).collect();
+    quoted.join(&b", "[..])
+}
+
+fn remember_why_not_trimmed(refusal: bun_exe_islands::Refusal) {
+    use bun_exe_islands::Refusal;
+    let why = match refusal {
+        Refusal::Unreadable(error) => format!("--compile-trim-runtime: nothing can be left out of this Bun: {error}").into_bytes(),
+        Refusal::NoSuchName { name, names } => [b"compile.trim: there is no \"", &name[..], b"\". The names are ", &quoted(&names)].concat(),
+        Refusal::TooSmallAlone => b"compile.trim: what is named is too small to be cut out of the executable by itself. Name a larger part too".to_vec(),
+        Refusal::NeedsCompiledProgram { name } => [b"compile.trim: \"", &name[..], b"\" can be removed only with compile.aot: without it the program itself is run from its text"].concat(),
+        Refusal::KeptAndRemoved { name } => [b"compile.trim: \"", &name[..], b"\" is in both remove and keep"].concat(),
+        Refusal::StillNeeded { name, needed_by } => [b"compile.trim: \"", &name[..], b"\" is needed by ", &quoted(&needed_by), b". Remove those too, or keep \"", &name, b"\""].concat(),
+    };
+    *WHY_NOT_TRIMMED.lock() = Some(why);
 }
 
 #[cfg(target_os = "linux")]
@@ -3371,8 +3453,8 @@ pub(crate) fn inject<'a>(
                 let template = mapped_template.as_deref().unwrap_or(&input_bytes).to_vec();
                 match trim_runtime(template, has_aot_image, runtime_use) {
                     Ok(trimmed) => Some(trimmed),
-                    Err(e) => {
-                        bun_core::pretty_errorln!("--compile-trim-runtime: nothing can be left out of this Bun: {}", e);
+                    Err(refusal) => {
+                        remember_why_not_trimmed(refusal);
                         cleanup(zname, cloned_executable_fd);
                         return None;
                     }
@@ -3449,8 +3531,8 @@ pub(crate) fn inject<'a>(
             let input_bytes = if trims_runtime() {
                 match trim_runtime(input_bytes, has_aot_image, runtime_use) {
                     Ok(trimmed) => trimmed,
-                    Err(e) => {
-                        bun_core::pretty_errorln!("--compile-trim-runtime: nothing can be left out of this Bun: {}", e);
+                    Err(refusal) => {
+                        remember_why_not_trimmed(refusal);
                         cleanup(zname, cloned_executable_fd);
                         return None;
                     }
@@ -3573,8 +3655,8 @@ pub(crate) fn inject<'a>(
             let input_bytes = if trims_runtime() {
                 match trim_runtime(input_bytes, has_aot_image, runtime_use) {
                     Ok(trimmed) => trimmed,
-                    Err(e) => {
-                        bun_core::pretty_errorln!("--compile-trim-runtime: nothing can be left out of this Bun: {}", e);
+                    Err(refusal) => {
+                        remember_why_not_trimmed(refusal);
                         cleanup(zname, cloned_executable_fd);
                         return None;
                     }
@@ -4085,7 +4167,7 @@ pub fn to_executable(
         .find(|file| file.output_kind == options::OutputKind::RuntimeUse)
         .map(|facts| facts.value.as_slice());
     let runtime_options = RuntimeOptions {
-        runs_static_code_only: trims_runtime()
+        runs_static_code_only: trim().auto
             && output_files.iter().any(|file| file.output_kind == options::OutputKind::AotImage)
             && runtime_use.is_some_and(is_closed_world),
         ..runtime_options
@@ -4136,6 +4218,11 @@ pub fn to_executable(
         .and_then(operations_called_by)
         .map(|operations| [runtime_use.unwrap_or_default(), b"\n", &operations].concat());
     let runtime_use = with_operations.as_deref().or(runtime_use);
+    let options = options_named_in(compile_exec_argv, is_declared_option);
+    let left_out = if trims_runtime() { built_in_option_whose_part_is_left_out(&self_exe, &options, aot_image.is_some(), runtime_use) } else { None };
+    if let Some(option) = left_out {
+        return Ok(CompileResult::Err(CompileError::Refusal([option, b" ", LEFT_OUT_BY_TRIMMING.as_bytes()].concat())));
+    }
     #[cfg(unix)]
     let list_symbols = || -> Option<(Vec<u8>, usize)> { Some((aot_image_symbols(aot_image?)?, aot_image_at?)) };
     #[cfg(not(unix))]
@@ -4163,6 +4250,9 @@ pub fn to_executable(
     #[cfg(not(unix))]
     let _ = aot_symbols;
     let Some(injected) = injected else {
+        if let Some(why) = WHY_NOT_TRIMMED.lock().take() {
+            return Ok(CompileResult::Err(CompileError::Message(why)));
+        }
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
             "failed to write compiled executable {}",

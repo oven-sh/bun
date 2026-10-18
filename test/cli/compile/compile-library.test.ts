@@ -73,7 +73,7 @@ const packageJson = {
   publishConfig: { access: "public" },
 };
 
-const conditions = (stem: string) => ({ types: `./${stem}.d.ts`, "bun-aot": `./${stem}.sound.ts`, default: `./${stem}.js` });
+const conditions = (stem: string) => ({ types: `./${stem}.d.ts`, "bun-aot": `./${stem}.aot.ts`, default: `./${stem}.js` });
 
 describe.concurrent("bun compile --library", () => {
   test("writes JavaScript, declaration files, the typed JavaScript and a package.json into dist", async () => {
@@ -82,7 +82,7 @@ describe.concurrent("bun compile --library", () => {
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     const dist = join(String(dir), "dist");
-    expect(filesIn(dist)).toEqual(["LICENSE", "README.md", "index.d.ts", "index.js", "index.sound.ts", "package.json"]);
+    expect(filesIn(dist)).toEqual(["LICENSE", "README.md", "index.aot.ts", "index.d.ts", "index.js", "package.json"]);
     expect(json(join(dist, "package.json"))).toEqual({
       name: "@acme/shapes",
       version: "1.2.3",
@@ -96,7 +96,7 @@ describe.concurrent("bun compile --library", () => {
       module: "./index.js",
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
-      files: ["LICENSE", "README.md", "index.d.ts", "index.js", "index.sound.ts"],
+      files: ["LICENSE", "README.md", "index.aot.ts", "index.d.ts", "index.js"],
       sideEffects: false,
       engines: { node: ">=18" },
       dependencies: { "left-pad": "^1.3.0" },
@@ -127,7 +127,7 @@ describe.concurrent("bun compile --library", () => {
       module: "./index.js",
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
-      files: ["index.d.ts", "index.js", "index.sound.ts"],
+      files: ["index.aot.ts", "index.d.ts", "index.js"],
     });
     expect(existsSync(join(project, "package.json"))).toBe(false);
   });
@@ -140,6 +140,16 @@ describe.concurrent("bun compile --library", () => {
     const written = json(join(String(dir), "dist/package.json"));
     expect(written.exports).toEqual({ ".": conditions("index"), "./extra": conditions("extra"), "./tools": conditions("tools/index"), "./package.json": "./package.json" });
     expect({ main: written.main, module: written.module, types: written.types }).toEqual({ main: "./index.js", module: "./index.js", types: "./index.d.ts" });
+  });
+
+  test("--no-bundle: every file is an entry point", async () => {
+    using dir = tempDir("library-no-bundle", { ...sources, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }) });
+    const built = await bun(String(dir), "compile", "--library", "--no-bundle", "src/index.ts", "src/area.ts", "src/extra.ts");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    const written = json(join(String(dir), "dist/package.json"));
+    expect(written.exports).toEqual({ ".": conditions("index"), "./area": conditions("area"), "./extra": conditions("extra"), "./package.json": "./package.json" });
+    expect(written.main).toBe("./index.js");
   });
 
   test("dependencies and peerDependencies stay imports, devDependencies are bundled", async () => {
@@ -191,9 +201,39 @@ describe.concurrent("bun compile --library", () => {
       "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", bin: { shapes: "./src/cli.ts", built: "dist/cli.js", other: "./bin/other.js" } }),
     });
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/cli.ts");
-    expect(built.stderr).toBe("");
+    expect(built.stderr).toBe(`warn: "other" in "bin" of package.json is left out of dist/package.json: ./bin/other.js is not an entry point of this build\n`);
     expect(built.exitCode).toBe(0);
     expect(json(join(String(dir), "dist/package.json")).bin).toEqual({ shapes: "./cli.js", built: "./cli.js" });
+  });
+
+  test("warns about each entry of exports and bin that it leaves out", async () => {
+    using dir = tempDir("library-left-out", {
+      ...sources,
+      "style.css": "a {}\n",
+      "package.json": JSON.stringify({
+        name: "shapes",
+        version: "1.0.0",
+        bin: "./src/cli.ts",
+        exports: { ".": "./src/index.ts", "./extra": "./src/extra.ts", "./style.css": "./style.css", "./package.json": "./package.json" },
+      }),
+    });
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built.stderr.split("\n").filter(line => line !== "")).toEqual([
+      `warn: "./extra" in "exports" of package.json is left out of dist/package.json: no entry point of this build is written there`,
+      `warn: "./style.css" in "exports" of package.json is left out of dist/package.json: no entry point of this build is written there`,
+      `warn: "shapes" in "bin" of package.json is left out of dist/package.json: ./src/cli.ts is not an entry point of this build`,
+    ]);
+    expect(built.exitCode).toBe(0);
+    expect(Object.keys(json(join(String(dir), "dist/package.json")).exports)).toEqual([".", "./package.json"]);
+  });
+
+  test("--outdir . without an entry point is refused for what it is", async () => {
+    using dir = tempDir("library-outdir-is-the-project", { ...sources, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }) });
+    expect(await bun(String(dir), "compile", "--library", "--outdir", ".")).toEqual({
+      stdout: "",
+      stderr: `error: --library writes a package.json into --outdir, and ${String(dir)} is the project's own folder. Choose a folder inside it, such as --outdir=dist\n`,
+      exitCode: 1,
+    });
   });
 
   test.each([
@@ -211,10 +251,11 @@ describe.concurrent("bun compile --library", () => {
 
   test.each([
     [["--outdir", "."], (dir: string) => `error: --library writes a package.json into --outdir, and ${dir} is the project's own folder. Choose a folder inside it, such as --outdir=dist\n`],
+    [["--outdir", "src"], () => "error: the entry point src/index.ts is inside --outdir, where it would be overwritten. Choose another --outdir\n"],
     [["--outfile", "out.js"], () => "error: --library writes a folder. Use --outdir instead of --outfile\n"],
     [["--compile"], () => "error: --library cannot be used with --compile\n"],
     [["--aot"], () => "error: --library cannot be used with --aot\n"],
-    [["--format=cjs"], () => "error: --library only supports --format=esm\n"],
+    [["--format=iife"], () => "error: --library only supports --format=esm and --format=cjs\n"],
   ])("%j is refused", async (flags, stderr) => {
     using dir = tempDir("library-refused", { ...sources, "package.json": JSON.stringify(packageJson) });
     expect(await bun(String(dir), "compile", "--library", "src/index.ts", ...flags)).toEqual({ stdout: "", stderr: stderr(String(dir)), exitCode: 1 });
@@ -314,11 +355,11 @@ console.log(new Canvas().add(square).add(square).total(), double(2));
   test.skipIf(!!unsupported)("is compiled from its JavaScript, with a warning, where the typed JavaScript says something else", async () => {
     using dir = tempDir("library-tampered", project);
     const app = await install(String(dir));
-    const typed = join(app, "node_modules/@acme/shapes/extra.sound.ts");
+    const typed = join(app, "node_modules/@acme/shapes/extra.aot.ts");
     writeFileSync(typed, readFileSync(typed, "utf8").replace("return 2 *", "return 3 *"));
     const compiled = await bun(app, "compile", "app.ts");
     expect({ said: said(compiled), exitCode: compiled.exitCode }).toEqual({
-      said: [`warn: the typed version of "@acme/shapes" in node_modules/@acme/shapes is not used: extra.sound.ts without its types is not extra.js: the package is compiled untyped`],
+      said: [`warn: the typed version of "@acme/shapes" in node_modules/@acme/shapes is not used: extra.aot.ts without its types is not extra.js (was the package patched?): the package is compiled untyped`],
       exitCode: 0,
     });
     expect(await run(app, [program(app)])).toEqual({ stdout: "18 8\n", stderr: "", exitCode: 0 });

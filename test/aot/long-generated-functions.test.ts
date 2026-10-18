@@ -63,3 +63,16 @@ test(
   },
   isDebug || isASAN ? 240_000 : 30_000,
 );
+
+test(
+  "a typed function that a loop calls and that joins strings in a chain as long as a generator writes it is built in time that grows with its length",
+  async () => {
+    const source = `function build(a: string, n: number): string {\n  let s = a;\n${parts(() => "  s = s + n + a;\n")}  return s;\n}\nlet total = 0;\nfor (let i = 0; i < 3; i++) total += build("ab", i).length;\nconsole.log(total);\n`;
+    using dir = tempDir("long-generated-functions", { "main.ts": source });
+    const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
+    const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await run(String(dir), [outfile])).toEqual({ stdout: 3 * (2 + 3 * n) + "\n", stderr: "", exitCode: 0 });
+  },
+  isDebug || isASAN ? 240_000 : 60_000,
+);

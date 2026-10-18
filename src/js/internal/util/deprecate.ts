@@ -26,7 +26,7 @@ function deprecate(fn, msg, code) {
   const emitDeprecationWarning = getDeprecationWarningEmitter(code, msg, deprecated);
 
   function deprecated(...args) {
-    if (!process.noDeprecation) {
+    if (!(IS_BUN_AOT ? $getByIdDirect(process, "noDeprecation") : process.noDeprecation)) {
       emitDeprecationWarning();
     }
     if (new.target) {

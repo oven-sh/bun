@@ -1,5 +1,6 @@
 use bstr::BStr;
 use bun_sema::json::Json;
+use bun_sema::resolve::TYPED_JAVASCRIPT_EXTENSIONS as TYPED_EXTENSIONS;
 use bun_sys::Fd;
 
 pub const SCOPE: &[u8] = b"@sound";
@@ -8,9 +9,7 @@ const MANIFEST: &[u8] = b"sound.json";
 const REPLACEMENTS: &[u8] = b"lay";
 const NODE_MODULES_DIR: &[u8] = b"node_modules";
 const PACKAGE_JSON: &[u8] = b"package.json";
-const MARK: &[u8] = b"// @sound ";
 pub const CONDITION: &[u8] = b"bun-aot";
-const TYPED_EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".js", b".sound.ts"), (b".mjs", b".sound.mts"), (b".cjs", b".sound.cts")];
 const MAX_DEPTH: usize = 8;
 
 pub type Files = Vec<(Box<[u8]>, Box<[u8]>, bool)>;
@@ -95,17 +94,6 @@ fn companion_package_name(name: &[u8]) -> Vec<u8> {
     join(&[SCOPE, &flat])
 }
 
-pub(crate) fn mark(typed: &[u8], sha256_of_the_javascript: &[u8]) -> Vec<u8> {
-    [MARK, typed, b" ", sha256_of_the_javascript, b"\n"].concat()
-}
-
-fn parse_marker(declarations: &[u8]) -> Option<(&[u8], &[u8])> {
-    let line = bun_core::strings::split(declarations, b"\n").next()?;
-    let mut words = bun_core::strings::split(line.strip_suffix(b"\r").unwrap_or(line).strip_prefix(MARK)?, b" ");
-    let found = (words.next()?, words.next()?);
-    words.next().is_none().then_some(found)
-}
-
 fn package_javascript_files(package: &Json) -> Vec<Vec<u8>> {
     fn add(value: &Json, depth: usize, found: &mut Vec<Vec<u8>>) {
         const NAMES: [(&[u8], &[u8]); 4] = [(b".d.ts", b".js"), (b".d.mts", b".mjs"), (b".js", b".js"), (b".mjs", b".mjs")];
@@ -160,16 +148,9 @@ fn javascript_files_with_the_condition(directory: &[u8], package: &Json) -> Vec<
     found
 }
 
-fn read_marker(directory: &[u8], javascript: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    let declarations = read(&join(&[directory, &declarations_path_beside(javascript)?]))?;
-    let (typed, sha256) = parse_marker(&declarations)?;
-    Some((typed.to_vec(), sha256.to_vec()))
-}
-
 fn package_typed_home(directory: &[u8]) -> Option<Vec<u8>> {
     let package = read_json(&join(&[directory, PACKAGE_JSON]))?;
-    let marked = (javascript_files_with_the_condition(directory, &package).into_iter().next())
-        .or_else(|| package_javascript_files(&package).into_iter().find(|javascript| read_marker(directory, javascript).is_some()))?;
+    let marked = javascript_files_with_the_condition(directory, &package).into_iter().next()?;
     Some(match bun_core::strings::last_index_of_char(&marked[..], b'/') {
         Some(slash) => join(&[directory, &marked[..slash]]),
         None => directory.to_vec(),
@@ -179,35 +160,21 @@ fn package_typed_home(directory: &[u8]) -> Option<Vec<u8>> {
 fn shipped_files(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
     let package = read_json(&join(&[directory, PACKAGE_JSON])).ok_or("the installed package.json is not JSON")?;
     let with_the_condition = javascript_files_with_the_condition(directory, &package);
-    let mut waiting = if with_the_condition.is_empty() { package_javascript_files(&package) } else { with_the_condition.clone() };
+    let mut waiting = with_the_condition.clone();
     let mut seen = waiting.clone();
     let mut files = Vec::new();
     while let Some(javascript) = waiting.pop() {
         let folder = bun_core::strings::last_index_of_char(&javascript[..], b'/').map_or(&b""[..], |slash| &javascript[..slash + 1]);
-        let typed = if with_the_condition.is_empty() {
-            let Some((typed, wanted)) = read_marker(directory, &javascript) else { continue };
-            let (Some(beside), true) = (typed_path_beside(&javascript), is_relative_inner_path(&typed)) else {
-                return Err(format!("the declaration file beside {} names no typed file inside the package", BStr::new(&javascript)));
-            };
-            verify_typed_against(directory, &javascript, &wanted)?;
-            let typed = [folder, &typed[..]].concat();
-            if typed != beside {
-                return Err(format!("the typed file of {} is not {}", BStr::new(&javascript), BStr::new(&beside)));
-            }
-            typed
-        } else {
-            let Some(beside) = typed_path_beside(&javascript) else { continue };
-            if !with_the_condition.contains(&javascript) && !crate::fs_queries::exists(&join(&[directory, &beside])) {
-                continue;
-            }
-            beside
-        };
+        let Some(typed) = typed_path_beside(&javascript) else { continue };
+        if !with_the_condition.contains(&javascript) && !crate::fs_queries::exists(&join(&[directory, &typed])) {
+            continue;
+        }
         let Some(text) = read(&join(&[directory, &typed])) else {
             return Err(format!("it has no {}", BStr::new(&typed)));
         };
         let erased = crate::sound_files::erase(&typed, &text).map_err(|why| format!("the types of {} cannot be erased: {why}", BStr::new(&typed)))?;
         if read(&join(&[directory, &javascript])).is_none_or(|installed| installed != erased.javascript) {
-            return Err(format!("{} without its types is not {}", BStr::new(&typed), BStr::new(&javascript)));
+            return Err(format!("{} without its types is not {} (was the package patched?)", BStr::new(&typed), BStr::new(&javascript)));
         }
         for specifier in &erased.relative_imports {
             let mut parts: Vec<&[u8]> = bun_core::strings::split(folder, b"/").filter(|part| !part.is_empty()).collect();
@@ -251,7 +218,7 @@ pub fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
     TYPED_EXTENSIONS.iter().find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
 }
 
-fn javascript_path_beside(typed: &[u8]) -> Option<Vec<u8>> {
+pub fn javascript_path_beside(typed: &[u8]) -> Option<Vec<u8>> {
     TYPED_EXTENSIONS.iter().find_map(|(to, from)| Some([typed.strip_suffix(*from)?, *to].concat()))
 }
 

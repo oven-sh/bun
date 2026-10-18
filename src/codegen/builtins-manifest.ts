@@ -281,52 +281,53 @@ const keysAreSymbolsIndexesOrOfFixedLists = { "finds Function": [] };
 const readsPlainObjectsAndFixedLists = { "finds Function": [] };
 const readsTablesWithoutPrototypeOrByTheirOwnKeys = { "finds Function": [] };
 const neitherCallsNorHandsOutWhatItReads = { "finds Function": [] };
-const givesAnObjectAnotherPrototype = ["program-property setPrototypeOf", "program-property __proto__"];
 const answersForAProxyWhoseKeysAreCountedAtTheCallerOrReadsItsOwnTables = { "finds Function": [] };
 const holdsForEveryProperty = (reason: { "finds Function": string[] }) => ({ ...reason, "property *": reason["finds Function"] });
+const givesAnObjectAnotherPrototype = ["program-property setPrototypeOf", "program-property __proto__"];
 const allOf = (...lists: string[][]) => lists.reduce((all, list) => all.flatMap(one => list.map(other => `${one} & ${other}`)));
 const whereTheProgramMayHaveAnInspectorOfItsOwn = [
   "program-symbol nodejs.util.inspect.custom",
   ...allOf(["program-module node:util", "Bun inspect"], ["program-symbol-key *"]),
 ];
-const whereAnInspectorOfTheProgramMayReplaceTheStyles = allOf(whereTheProgramMayHaveAnInspectorOfItsOwn, [
-  "program-property styles",
-  "program-key styles",
-  ...givesAnObjectAnotherPrototype,
-]);
+const whereAnInspectorOfTheProgramMayReplaceTheStyles = allOf(whereTheProgramMayHaveAnInspectorOfItsOwn, ["program-property styles", "program-key styles"]);
 const whereInspectMayCallGettersOrReadReplacedTables = [
   ...whereTheProgramMayHaveAnInspectorOfItsOwn,
   "program-module node:util",
   "program-module node:console",
   "console Console",
   "program-defined-key *",
-  "module internal:assert/assertion_error",
-  "module node:dgram",
+  "program-module node:assert",
+  "program-module node:assert/strict",
+  "program-module node:test",
+  "program-module node:dgram",
   "module node:repl",
 ];
 const definesAnInspectorAndCallsNone = { "symbol nodejs.util.inspect.custom": [] };
-const readsTheTableOfListeners = { "finds Function": [...whereTheProgramNames("_events"), ...givesAnObjectAnotherPrototype] };
+const whereTheProgramTakes = (holders: string[], ...names: string[]) => [...whereTheProgramNames(...names), ...allOf(holders, ["program-member *"])];
+const readsTheTableOfListeners = {
+  "finds Function": [...whereTheProgramTakes(["module node:events"], "_events", "listeners", "rawListeners", "getEventListeners"), ...givesAnObjectAnotherPrototype],
+};
 const onBehalfOf: Record<string, Record<string, string[]>> = {
   "JSBufferConstructor.ts\tfrom": { ...keysAreIndexesOrSymbols, ...buffers },
   "JSBufferConstructor.ts\tisBuffer": buffers,
   "JSBufferPrototype.ts\toffset": buffers,
   "JSBufferPrototype.ts\tparent": buffers,
   "JSBufferPrototype.ts\ttoJSON": buffers,
-  "UtilInspect.ts\tgetStylizeWithColor": { "property *": whereInspectMayCallGettersOrReadReplacedTables, "finds Function": whereAnInspectorOfTheProgramMayReplaceTheStyles },
-  "Bake.ts\trenderRoutesForProdStatic": neitherCallsNorHandsOutWhatItReads,
-  "BundlerPlugin.ts\trunOnLoadPlugins": readsPlainObjectsAndFixedLists,
-  "BundlerPlugin.ts\trunOnResolvePlugins": readsPlainObjectsAndFixedLists,
+  "Bake.ts\trenderRoutesForProdStatic": { ...neitherCallsNorHandsOutWhatItReads, "property *": ["Bun build"] },
+  "BundlerPlugin.ts\trunOnLoadPlugins": { ...readsPlainObjectsAndFixedLists, "property *": ["Bun build", "Bun plugin", "loader html"] },
+  "BundlerPlugin.ts\trunOnResolvePlugins": { ...readsPlainObjectsAndFixedLists, "property *": ["Bun build", "Bun plugin", "loader html"] },
   "CommonJS.ts\tcreateRequireCache": { ...keysAreCountedAtTheCaller, ...definesAnInspectorAndCallsNone },
   "CommonJS.ts\tgetWrapperArrayProxy": keysAreCountedAtTheCaller,
   "CommonJS.ts\tinternalRequire": { "process dlopen": ["loader napi"] },
   "CommonJS.ts\toverridableRequire": { "Bun jest": ["native bun:test"] },
-  "ConsoleObject.ts\tasyncIterator": keysAreSymbolsIndexesOrOfFixedLists,
-  "ConsoleObject.ts\tcreateConsoleConstructor": keysAreSymbolsIndexesOrOfFixedLists,
-  "Peek.ts\tpeekStatus": keysAreSymbolsIndexesOrOfFixedLists,
+  "ConsoleObject.ts\tasyncIterator": { ...keysAreSymbolsIndexesOrOfFixedLists, "property *": ["console *"] },
+  "ConsoleObject.ts\tcreateConsoleConstructor": { ...keysAreSymbolsIndexesOrOfFixedLists, "property *": ["console Console"] },
+  "Ipc.ts\tserialize": keysAreIndexesOrSymbols,
+  "Peek.ts\tpeekStatus": keysAreIndexesOrSymbols,
   "ProcessObjectInternals.ts\tbuildAllowedNodeEnvironmentFlags": neitherCallsNorHandsOutWhatItReads,
-  "ProcessObjectInternals.ts\tgetNodeWorkerStdioStream": keysAreSymbolsIndexesOrOfFixedLists,
-  "ProcessObjectInternals.ts\tgetStdioWriteStream": keysAreSymbolsIndexesOrOfFixedLists,
-  "ProcessObjectInternals.ts\tloadEnvFile": readsPlainObjectsAndFixedLists,
+  "ProcessObjectInternals.ts\tgetNodeWorkerStdioStream": keysAreIndexesOrSymbols,
+  "ProcessObjectInternals.ts\tgetStdioWriteStream": keysAreIndexesOrSymbols,
+  "ProcessObjectInternals.ts\tloadEnvFile": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
   "ProcessObjectInternals.ts\twindowsEnv": keysAreCountedAtTheCaller,
   "engine/ArrayConstructor.js\tfrom": keysAreIndexesOrSymbols,
   "engine/ArrayConstructor.js\tfromAsync": keysAreIndexesOrSymbols,
@@ -372,7 +373,10 @@ const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
   "internal/fixed_queue": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "internal/fs/cp-sync": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "internal/fs/glob": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/fs/streams": { ...readsTablesWithoutPrototypeOrByTheirOwnKeys, "property *": whereTheProgramNames("createReadStream", "createWriteStream", "ReadStream", "WriteStream", "FileReadStream", "FileWriteStream") },
+  "internal/fs/streams": {
+    ...readsTablesWithoutPrototypeOrByTheirOwnKeys,
+    "property *": whereTheProgramTakes(["program-module node:fs", "program-module node:fs/promises"], "createReadStream", "createWriteStream", "ReadStream", "WriteStream", "FileReadStream", "FileWriteStream"),
+  },
   "internal/http": handsProcessToTheQueueOfTicks,
   "internal/http/FakeSocket": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "internal/http1_server_fallback": holdsForEveryProperty(neitherCallsNorHandsOutWhatItReads),
@@ -412,7 +416,7 @@ const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
   "internal/streams/writable": { ...holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists), ...handsProcessToTheQueueOfTicks },
   "internal/tls": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "internal/trace_events": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "internal/tty": holdsForEveryProperty(neitherCallsNorHandsOutWhatItReads),
+  "internal/tty": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
   "internal/util/inspect": {
     "global Buffer": [],
     "native node:buffer": [],
@@ -421,21 +425,25 @@ const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
     "property *": whereInspectMayCallGettersOrReadReplacedTables,
     "finds Function": whereAnInspectorOfTheProgramMayReplaceTheStyles,
   },
-  "node:_http_agent": neitherCallsNorHandsOutWhatItReads,
+  "node:_http_agent": { ...neitherCallsNorHandsOutWhatItReads, "property *": whereTheProgramNames("getName") },
   "node:_http_client": { "finds Function": whereTheProgramNames("_defaultAgent", "globalAgent"), "property *": [] },
   "node:_http_common": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
-  "node:_http_incoming": { ...neitherCallsNorHandsOutWhatItReads, ...handsProcessToTheQueueOfTicks },
+  "node:_http_incoming": {
+    ...neitherCallsNorHandsOutWhatItReads,
+    ...handsProcessToTheQueueOfTicks,
+    "property *": whereTheProgramTakes(["module node:_http_incoming"], "_addHeaderLine", "_addHeaderLineDistinct", "_events"),
+  },
   "node:_http_outgoing": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
   "node:_http_server": { ...holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys), ...handsProcessToTheQueueOfTicks },
   "node:_tls_common": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
   "node:assert": { "finds Function": whereTheProgramNames("constructor") },
-  "node:child_process": { ...neitherCallsNorHandsOutWhatItReads, "property *": whereTheProgramNames("spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork") },
+  "node:child_process": { ...neitherCallsNorHandsOutWhatItReads, "property *": whereTheProgramTakes(["program-module node:child_process"], "spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork") },
   "node:crypto": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:dgram": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:diagnostics_channel": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:events": { ...readsTheTableOfListeners, "process *": [] },
   "node:http2": holdsForEveryProperty(answersForAProxyWhoseKeysAreCountedAtTheCallerOrReadsItsOwnTables),
-  "node:https": { "finds Function": whereTheProgramNames("_getSession") },
+  "node:https": holdsForEveryProperty({ "finds Function": whereTheProgramTakes(["program-module node:https"], "_getSession", "_sessionCache") }),
   "node:inspector": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:net": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:os": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
@@ -445,7 +453,7 @@ const onBehalfOfInModules: Record<string, Record<string, string[]>> = {
   "node:readline/promises": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:tls": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:url": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
-  "node:util": { ...readsTablesWithoutPrototypeOrByTheirOwnKeys, "property *": whereTheProgramNames("debuglog", "debug") },
+  "node:util": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),
   "node:v8": holdsForEveryProperty(keysAreSymbolsIndexesOrOfFixedLists),
   "node:wasi": holdsForEveryProperty(readsPlainObjectsAndFixedLists),
   "node:worker_threads": holdsForEveryProperty(readsTablesWithoutPrototypeOrByTheirOwnKeys),

@@ -792,6 +792,7 @@ _bun_compile_completion() {
         '--library[Build a package to publish instead of an executable\: JavaScript, .d.ts files and a package.json]' \
         '--outfile[Write the executable to this path]:outfile:_files' \
         '--outdir[With --library\: the folder to write the package to (default\: dist)]:outdir:_files -/' \
+        '--format[With --library\: esm, or cjs for sources that are CommonJS]:format:(esm cjs)' \
         '--target[The platform to build for, such as bun-linux-x64]:target' \
         '--define[Substitute K\:V while parsing]:define' \
         '--env[Inline environment variables\: inline, disable or a prefix*]:env' \

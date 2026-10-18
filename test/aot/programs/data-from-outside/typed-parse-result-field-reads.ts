@@ -1,10 +1,10 @@
-// The result of Bun.parse<T>() and Bun.validate<T>() is allocated as a T by the call, so later code reads its fields directly instead of by name.
+// The result of JSON.parse<T>() is a T when the call returns, with a reviver too, so later code reads its fields directly instead of by name.
 // IR= 1 readsParsed : number = GetById v\d+ "x"
 // IR= 1 readsParsed : number = GetById v\d+ "y"
 // IR= 0 readsParsed ~number = GetById
 // IR= 0 readsParsed ~undefined\|null\|Point
-// IR= 1 readsValidated : number = GetById v\d+ "x"
-// IR= 0 readsValidated ~number = GetById
+// IR= 1 readsRevived : number = GetById v\d+ "x"
+// IR= 0 readsRevived ~number = GetById
 // IR= 1 readsKept : number = GetById v\d+ "y"
 // IR= 0 readsKept ~number = GetById
 // IR= 1 readsGiven object = GetById v\d+ "from"
@@ -16,18 +16,18 @@ interface GivenPoint { x: number; y: number }
 interface GivenLine { from: GivenPoint }
 
 const text = '{"from":{"x":1,"y":2},"to":{"x":3,"y":4},"points":[{"x":5,"y":6},{"x":7,"y":8.5}],"name":"n"}';
-const kept = Bun.parse<Line>(text);
+const kept = JSON.parse<Line>(text);
 
 function readsParsed(from: string): number {
-  const line = Bun.parse<Line>(from);
+  const line = JSON.parse<Line>(from);
   let total = line.from.x;
   for (const point of line.points) total += point.y;
   return total;
 }
-let lastValidated: Line | undefined;
-function readsValidated(from: unknown): number {
-  const line = Bun.validate<Line>(from);
-  lastValidated = line;
+let lastRevived: Line | undefined;
+function readsRevived(from: string): number {
+  const line = JSON.parse<Line>(from, (key, value) => (key === "x" ? value + 10 : value));
+  lastRevived = line;
   return line.to.x;
 }
 function readsKept(): number {
@@ -42,16 +42,16 @@ function readsGiven(from: string): number {
 let attempts = 0;
 function caught(from: string): string {
   try {
-    return String(Bun.parse<Line>(from).to.y);
+    return String(JSON.parse<Line>(from).to.y);
   } catch (error) {
     return (error as Error).constructor.name;
   } finally {
     attempts++;
   }
 }
-console.log(readsParsed(text), readsValidated(JSON.parse(text)), readsKept(), readsGiven(text));
+console.log(readsParsed(text), readsRevived(text), readsKept(), readsGiven(text));
 console.log(caught(text), caught("{"), caught('{"from":1}'), caught('{"\\u0066rom":{"x":1,"y":2},"to":{"x":3,"y":40},"points":[]}'), attempts);
 kept.points.push({ x: 0, y: 100 });
 kept.from = { x: -1, y: -2 };
 console.log(readsKept(), kept.from.x, kept.name, Object.keys(kept).join());
-console.log(Bun.parse<number[]>("[1,2.5]").reduce((sum, item) => sum + item, 0), Bun.parse<string>('"s"').length, Bun.parse<Point | null>("null"), Bun.parse<[number, Point]>('[1,{"x":2,"y":3}]')[1].y);
+console.log(JSON.parse<number[]>("[1,2.5]").reduce((sum, item) => sum + item, 0), JSON.parse<string>('"s"').length, JSON.parse<Point | null>("null"), JSON.parse<[number, Point]>('[1,{"x":2,"y":3}]')[1].y);

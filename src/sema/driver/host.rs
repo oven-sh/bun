@@ -483,6 +483,7 @@ pub struct Disk {
     pub(crate) decodes_like_runtime: bool,
     pub(crate) deferred_imports: FxHashMap<Vec<u8>, Vec<Vec<u8>>>,
     pub(crate) deferred_paths: FxHashSet<Vec<u8>>,
+    pub(crate) loads_what_these_need: Option<Vec<Vec<u8>>>,
     pub(crate) wait_for_deferred_sources: bun_threading::Guarded<Option<WaitForDeferredSources>>,
     deferred: OnceLock<InstalledSources>,
     pub(crate) abandoned: bun_threading::Guarded<Option<Abandoned>>,
@@ -628,6 +629,7 @@ pub struct Provided {
     pub code_kinds: FxHashMap<Vec<u8>, bool>,
     pub deferred_imports: Vec<(Vec<u8>, Vec<u8>)>,
     pub deferred_paths: Vec<Vec<u8>>,
+    pub loads_what_these_need: Option<Vec<Vec<u8>>>,
     pub deferred_sources: Option<WaitForDeferredSources>,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
@@ -1025,6 +1027,7 @@ impl Disk {
             decodes_like_runtime: false,
             deferred_imports: FxHashMap::default(),
             deferred_paths: FxHashSet::default(),
+            loads_what_these_need: None,
             wait_for_deferred_sources: bun_threading::Guarded::new(None),
             deferred: OnceLock::new(),
             abandoned: bun_threading::Guarded::new(None),
@@ -2325,6 +2328,12 @@ impl Host for Disk {
     }
     fn is_deferred_path(&self, path: &[u8]) -> bool {
         !self.deferred_paths.is_empty() && self.deferred.get().is_none() && self.deferred_paths.contains(&*to_path(path, self.case_sensitive))
+    }
+    fn loads_on_demand(&self) -> bool {
+        self.loads_what_these_need.is_some()
+    }
+    fn is_asked_about(&self, path: &[u8]) -> bool {
+        self.loads_what_these_need.iter().flatten().any(|asked| is_same_path(asked, path, self.case_sensitive))
     }
     fn builtin_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Option<Vec<u8>>> {
         if !self.import_constants.is_empty()

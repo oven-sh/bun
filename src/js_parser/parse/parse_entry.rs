@@ -2285,7 +2285,10 @@ impl<'a> Parser<'a> {
                 },
             );
 
-            if i > 0 {
+            if i > 0 && wrap_mode == WrapMode::BunCommonjs {
+                p.generate_runtime_require(&runtime_imports[0..i], &mut before)
+                    .expect("unreachable");
+            } else if i > 0 {
                 // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
                 // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
                 // never touches `self.runtime_imports`, so the clone is purely a

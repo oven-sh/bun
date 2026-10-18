@@ -25,7 +25,7 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 
 `bun run` and `bun build` remove your types and never check them, so a project can carry type errors for years. With `--aot` the compiler depends on the types, and a type error stops the build.
 
-Run [`bun check`](/runtime/check) and fix what it reports. For an error that you can't fix now, put `// @ts-expect-error` above the line. The build accepts it, as `tsc` does.
+Run [`bun check --aot ./port.ts`](/runtime/check) and fix what it reports. It reports every error that the build reports, and builds nothing. For an error that you can't fix now, put `// @ts-expect-error` above the line. The build accepts it, as `tsc` does.
 
 ### Could not find a declaration file for module
 
@@ -60,7 +60,7 @@ warn: TS100009: 'typed-pkg' has 2 type errors, the first at /path/to/node_module
 note: TS2322: Type 'string' is not assignable to type 'number'.
 ```
 
-A dependency ships TypeScript sources, and they don't pass the type checker in your project. The build doesn't stop. It compiles that package like JavaScript, which behaves the same and runs slower.
+A dependency ships TypeScript source files, and they don't pass the type checker in your project. The build doesn't stop. It compiles that package like JavaScript, which behaves the same and runs slower.
 
 The warning shows the first error only. `bun check` lists all of them.
 
@@ -111,7 +111,7 @@ The build names the file and the line. [What is not available](/bundler/aot-comp
 --compile-trim-runtime: nothing can be left out of this Bun: NoIslands
 ```
 
-[`--compile-trim-runtime`](/bundler/aot-size) needs a `bun` that was linked for it. A `bun` that you built yourself may not be.
+[`--trim`](/bundler/aot-size) needs a `bun` that was linked for it. A `bun` that you built yourself may not be.
 
 ## When the program runs
 
@@ -135,9 +135,9 @@ TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.c
       at /$bunfs/root/visits.ts:6:20
 ```
 
-An `any` holds a value that doesn't match the declared type it reaches. The `(bun --aot: ...)` at the end marks a `TypeError` that only `--aot` throws. [An `any` that reaches a declared type](/bundler/aot-types#an-any-that-reaches-a-declared-type) explains the rule.
+An `any` holds a value that doesn't match the declared type it reaches. `number | undefined` is what passes this check: `undefined` passes too, as a missing argument does in JavaScript. The `(bun --aot: ...)` at the end marks a `TypeError` that only `--aot` throws. [An `any` that reaches a declared type](/bundler/aot-types#an-any-that-reaches-a-declared-type) explains the rule.
 
-The stack trace points at the place where the value meets the type. Fix it where the value enters your program: narrow it with `typeof`, or convert it with `Number()`.
+The stack trace points at the place where the value meets the type. Fix it where the value enters your program: narrow it with `typeof`, convert it with `Number()`, or check the whole object with [`Bun.validate`](/bundler/aot-types#check-data-with-bunvalidate).
 
 The `any` isn't always in sight. Here it is the result of a callback.
 
@@ -200,17 +200,17 @@ Your program loads a module by a name that it puts together when it runs. On you
 
 ### Breakpoints never bind
 
-The inspector connects, and its console works. Breakpoints, stepping and `debugger` statements don't. Debug from your sources with `bun --inspect-brk ./app.ts`. To see whether a bug only shows under the rules of `--aot`, compare with `bun run --aot ./app.ts`.
+The inspector connects, and its console works. Breakpoints, stepping and `debugger` statements don't. Debug from your source files with `bun --inspect-brk ./app.ts`. To see whether a bug only shows under the rules of `--aot`, compare with `bun run --aot ./app.ts`.
 
 ### My error tracker shows new groups
 
-Two common messages have other words: `Cannot read properties of null (reading 'c')` and `b is not a function, it is undefined`. See [Error messages](/bundler/aot-compatibility#error-messages).
+Two common messages are worded differently: `Cannot read properties of null (reading 'c')` and `b is not a function, it is undefined`. See [Error messages](/bundler/aot-compatibility#error-messages).
 
 ## When the numbers disappoint
 
 ### The executable is slower than `bun run`
 
-Startup and memory improve for every server in [What to expect](/bundler/aot#what-to-expect). Requests per second don't. Look for these, in this order.
+Startup and memory improve for every server in [What to expect](/bundler/aot#what-to-expect). Requests per second go up for some and down for others. Look for these causes, in this order.
 
 **Most of the hot code is untyped JavaScript.** A build with `--aot-explain` says how much of the program each JavaScript package is.
 
@@ -229,13 +229,13 @@ Startup and memory improve for every server in [What to expect](/bundler/aot#wha
 
 **Files are loaded from disk.** Bun interprets what the executable loads by a computed path. Next.js and Angular load your pages that way. See [Frameworks that load your pages by path](/bundler/aot-adoption#frameworks-that-load-your-pages-by-path).
 
-**One line takes the types away from many.** An `any` that reaches a declared type, or a `JSON.parse` that is cast to one, costs every access through that type. `--aot-explain` prints the most expensive lines first. See [See what the compiler did](/bundler/aot-reports).
+**One line takes the types away from many.** An `any` that reaches a declared type, or a `JSON.parse` that is cast to one, slows down every access through that type. `--aot-explain` prints the most expensive lines first. See [See what the compiler did](/bundler/aot-reports).
 
 ### The executable is larger than with `--compile`
 
 It holds the same copy of Bun, plus the machine code of your program.
 
-- [`--compile-trim-runtime`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach.
+- [`--trim`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach.
 - `--no-compile-function-source` leaves out the text of your functions. `toString()` on a function then returns `[native code]`.
 
 ### A trimmed executable is still large
@@ -244,4 +244,4 @@ The compiler has found a place that could name any part of Bun, so it keeps all 
 
 ## Report a bug
 
-A program that passes `bun check --aot` and behaves differently from `bun run` in a way that these pages don't describe has found a bug in Bun. So has a crash, or exit code `70` from a trimmed executable. [Open an issue](https://github.com/oven-sh/bun/issues) with the smallest program that shows it.
+If a program passes `bun check --aot` and behaves differently from `bun run` in a way that these pages don't describe, that's a bug in Bun. So is a crash, or exit code `70` from a trimmed executable. [Open an issue](https://github.com/oven-sh/bun/issues) with the smallest program that shows it.

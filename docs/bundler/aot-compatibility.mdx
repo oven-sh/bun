@@ -67,6 +67,7 @@ bun compile ./language.ts && ./language
 | [Modules named at run time](#modules-named-at-run-time)    | Loaded from disk                       | Loaded from disk and interpreted, unless you pass them as entry points   |
 | [Some error messages](#error-messages)                     | `null is not an object`                | `Cannot read properties of null`                                         |
 | [Sloppy-mode code](#sloppy-mode-code)                      | `with`, `f.caller`                     | `with` stops the build, `f.caller` is `null`                             |
+| [Five flags on `process`](#flags-on-process)               | A value that `process` inherits counts | Only own properties of `process` count                                   |
 | Objects per thread                                         | Limited by memory                      | 32 GB, or no limit with `--aot-huge-heap`                                |
 
 ## What is not available
@@ -76,7 +77,7 @@ bun compile ./language.ts && ./language
 | `--target` for another platform                | `error: --aot: ahead-of-time compilation makes machine code for the platform it runs on and cannot target another` | Run the build on the target platform, or pass `--no-aot` |
 | [Macros](/bundler/macros)                      | `error: --aot does not support macros`                                              | Generate the value in a build script                 |
 | `JSCallback` from `bun:ffi`                    | `TypeError: bun:ffi requires the JIT`, when the program runs                        | `dlopen` and calls into native code work             |
-| Breakpoints, stepping, `debugger` statements   | A breakpoint never binds                                                            | `bun --inspect-brk ./app.ts`, from your sources      |
+| Breakpoints, stepping, `debugger` statements   | A breakpoint never binds                                                            | `bun --inspect-brk ./app.ts`, from your source files |
 | `Bun.build` with `aot: true`, called by the executable | `TypeError: compile.aot is not available in an executable that was itself compiled with --aot` | Run the build script with `bun`                      |
 | `--bytecode-depth`, `--bytecode-order`         | An error from `bun build`                                                           | Nothing. The executable has no bytecode              |
 
@@ -137,12 +138,12 @@ try {
 }
 
 class Upper extends Response {
-  async upper(): Promise<string> {
-    return (await this.text()).toUpperCase();
+  override async text(): Promise<string> {
+    return (await super.text()).toUpperCase();
   }
 }
 
-console.log(await new Upper("hello").upper());
+console.log(await new Upper("hello").text());
 ```
 
 ```bash terminal icon="terminal"
@@ -154,7 +155,7 @@ TypeError: Cannot change 'text' of Response.prototype: built-ins are locked in a
 HELLO
 ```
 
-A subclass can also override a method that `Response` has. `@types/bun` declares those methods as properties, so TypeScript reports `TS2425` for the override, and `TS2855` for a call of `super.text()`. Either error stops the build. Put a `// @ts-expect-error` comment above the line.
+A subclass can override methods and getters such as `text()` and `ok`, add fields and call `super`.
 
 These also work as they do without `--aot`:
 
@@ -239,7 +240,7 @@ export const name: string = "csv";
 export const name: string = "json";
 ```
 
-On your machine the executable finds `plugins/csv.ts` on disk, and Bun interprets it. Nothing tells you. Remove the folder to see what happens on a machine without your sources.
+On your machine the executable finds `plugins/csv.ts` on disk, and Bun interprets it. Nothing tells you. Remove the folder to see what happens on a machine without your source files.
 
 ```bash terminal icon="terminal"
 bun compile ./app.ts && rm -r plugins && ./app
@@ -350,7 +351,7 @@ A service that groups errors by message, such as Sentry, sees new groups.
 
 ## Sloppy-mode code
 
-These concern CommonJS files without `"use strict"`. ES modules and TypeScript files with `import` or `export` are always strict.
+This section applies to CommonJS files without `"use strict"`. ES modules and TypeScript files with `import` or `export` are always strict.
 
 | You write                                             | With `--aot`                                              |
 | ----------------------------------------------------- | --------------------------------------------------------- |
@@ -358,9 +359,21 @@ These concern CommonJS files without `"use strict"`. ES modules and TypeScript f
 | `eval("var made = 1")` inside a function              | A `SyntaxError` when that line runs. `let` and `const` in the text are fine |
 | `f.caller`, `f.arguments`                             | `null`                                                    |
 
+## Flags on process
+
+Bun itself looks at five properties of `process`: `noDeprecation`, `throwDeprecation`, `traceDeprecation`, `traceProcessWarnings` and `domain`. In an executable built with `--aot`, Bun reads them as own properties of `process` only.
+
+| You write                                                   | With `--aot`                     |
+| ----------------------------------------------------------- | -------------------------------- |
+| `process.noDeprecation = true`                              | Works as before                  |
+| `BUN_OPTIONS="--no-deprecation" ./app`                      | Works as before                  |
+| `EventEmitter.prototype.noDeprecation = true`               | Bun ignores it, and still warns  |
+
+Your own code still sees the inherited value: `process.noDeprecation` is an ordinary read.
+
 ## Debugging and profiling
 
-Stack traces have the files, lines and columns of your sources, with no source map.
+Stack traces have the files, lines and columns of your source code, with no source map.
 
 | Tool                                                       | With `--aot`                                                   |
 | ---------------------------------------------------------- | -------------------------------------------------------------- |

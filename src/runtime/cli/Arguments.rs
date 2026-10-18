@@ -912,8 +912,7 @@ pub(crate) fn is_option_of_a_compiled_executable(name: &[u8]) -> bool {
     }
 }
 
-pub(crate) const LEFT_OUT_BY_TRIMMING: &str =
-    "cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out";
+pub(crate) use bun_standalone_graph::StandaloneModuleGraph::LEFT_OUT_BY_TRIMMING;
 
 #[cold]
 pub(crate) fn refuse_option_left_out_by_trimming(option: &[u8]) -> ! {
@@ -930,14 +929,23 @@ pub(crate) fn is_trimmed_executable() -> bool {
 
 #[cold]
 pub(crate) fn option_left_out_by_trimming(options: &[&[u8]]) -> Option<Vec<u8>> {
+    unsafe extern "C" {
+        safe fn Bun__hasFetch() -> bool;
+        safe fn Bun__hasValkey() -> bool;
+    }
     const LEFT_OUT: [&[u8]; 4] = [b"help", b"aot", b"aot-audit", b"sql-preconnect"];
+    let is_left_out = |long: &[u8]| match long {
+        b"fetch-preconnect" => !Bun__hasFetch(),
+        b"redis-preconnect" => !Bun__hasValkey(),
+        _ => LEFT_OUT.contains(&long),
+    };
     if let Some(option) = options.iter().find(|option| bun_core::is_bootstrap_flag(option)) {
         return strings::split(option, b"=").next().map(<[u8]>::to_vec);
     }
     let given = clap::names_given(AUTO_PARAMS, options, NODE_SHORT_ALIASES);
-    let names = given.iter().find(|names| names.long.is_some_and(|long| LEFT_OUT.contains(&long)))?;
+    let names = given.iter().find(|names| names.long.is_some_and(is_left_out))?;
     let long = [&b"--"[..], names.long?].concat();
-    let is_written_out = options.iter().any(|option| *option == long.as_slice());
+    let is_written_out = options.contains(&long.as_slice());
     Some(names.short.filter(|_| !is_written_out).map_or(long, |short| vec![b'-', short]))
 }
 
@@ -2331,8 +2339,8 @@ fn parse_build_command_options(
             Output::err_generic("--library writes a folder. Use --outdir instead of --outfile", ());
             Global::exit(1);
         }
-        if args.option(b"--format").is_some_and(|format| format != b"esm") {
-            Output::err_generic("--library only supports --format=esm", ());
+        if args.option(b"--format").is_some_and(|format| format != b"esm" && format != b"cjs") {
+            Output::err_generic("--library only supports --format=esm and --format=cjs", ());
             Global::exit(1);
         }
         ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();

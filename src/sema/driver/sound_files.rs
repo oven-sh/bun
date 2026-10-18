@@ -2721,7 +2721,6 @@ pub struct SoundFiles {
     pub modules_of_untyped_values: Vec<Vec<u8>>,
     pub typed: Vec<(Vec<u8>, Vec<u8>)>,
     pub declarations_while_checked: Vec<(Vec<u8>, Vec<u8>)>,
-    pub marks: Vec<(Vec<u8>, Vec<u8>)>,
     pub dropped_casts: usize,
 }
 
@@ -2791,20 +2790,17 @@ pub fn annotate_implicit_any(typed: &mut [(Vec<u8>, Vec<u8>)], diagnostics: &[cr
 }
 
 pub fn sound_files(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[ModuleTypes]>, emitted_declarations: &[ModuleTypes], keeps_modules_apart: bool) -> Result<SoundFiles, String> {
-    use crate::typed_packages::{declarations_path_beside, hex, mark, sha256};
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
-    let mut found = SoundFiles { modules_of_untyped_values: Vec::new(), typed: Vec::new(), declarations_while_checked: Vec::new(), marks: Vec::new(), dropped_casts: 0 };
+    let mut found = SoundFiles { modules_of_untyped_values: Vec::new(), typed: Vec::new(), declarations_while_checked: Vec::new(), dropped_casts: 0 };
     for (output, (typed_path, typed)) in outputs.iter().zip(typed_outputs(outdir, outputs, modules, emitted_declarations, false, keeps_modules_apart)?) {
         let name_of = |path: &[u8]| path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..].to_vec();
-        let Some(declarations) = declarations_path_beside(output.path) else { continue };
-        found.marks.push((declarations, mark(&name_of(&typed_path), &hex(&sha256(output.javascript)))));
         found.dropped_casts += typed.dropped_casts;
         found.modules_of_untyped_values.extend(typed.modules_of_untyped_values);
         if keeps_modules_apart && let Some(stem) = output.path.strip_suffix(b".js") {
-            let name = name_of(stem);
+            let name = name_of(&typed_path);
             let name = BStr::new(&name);
-            let default = if typed.has_default_export { format!("export {{ default }} from \"./{name}.sound.ts\";\n") } else { String::new() };
-            found.declarations_while_checked.push(([stem, b".d.ts"].concat(), format!("export * from \"./{name}.sound.ts\";\n{default}").into_bytes()));
+            let default = if typed.has_default_export { format!("export {{ default }} from \"./{name}\";\n") } else { String::new() };
+            found.declarations_while_checked.push(([stem, b".d.ts"].concat(), format!("export * from \"./{name}\";\n{default}").into_bytes()));
             let folder_of = |path: &[u8]| path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)].to_vec();
             let from_source = typed.source.as_ref().map(|source| bun_sema::resolve::get_relative_path_from_directory(&folder_of(source), &typed_path, true));
             if let (Some(source), Some(from_source)) = (typed.source, from_source.filter(|path| path[..] != typed_path[..])) {

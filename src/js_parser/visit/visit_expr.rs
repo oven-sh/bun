@@ -1874,7 +1874,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
+    #[cold]
+    #[inline(never)]
+    fn validated_call(p: &mut Self, e: &mut Expr, in_: ExprIn) -> bool {
+        let Data::ECall(call) = e.data else { return false };
+        let Some(at) = p.validated_calls.iter().position(|it| it.0 == call.close_paren_loc.start) else { return false };
+        let (_, which, schema) = p.validated_calls.swap_remove(at);
+        let loc = e.loc;
+        let has_one_argument = call.args.len() == 1 && !matches!(call.args[0].data, Data::ESpread(..));
+        let is_json_parse = which == bun_ast::audited::JSON_PARSE;
+        let value = if is_json_parse || !has_one_argument {
+            Self::e_call(p, e, in_);
+            *e
+        } else {
+            let mut value = call.args[0];
+            p.visit_expr(&mut value);
+            value
+        };
+        if !is_json_parse && !has_one_argument {
+            return true;
+        }
+        let schema = p.new_expr(E::String::init(schema), loc);
+        let is_shared = p.new_expr(E::Boolean { value: true }, loc);
+        let arguments = [value, schema, is_shared];
+        let arguments = if is_json_parse && has_one_argument { &arguments[..2] } else { &arguments[..] };
+        *e = p.call_runtime(loc, b"__validate", ExprNodeList::from_arena_slice(arguments));
+        true
+    }
+
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        if !p.validated_calls.is_empty() && Self::validated_call(p, e, in_) {
+            return;
+        }
         if p.options.bun_builtin_syntax && p.expand_builtin_call(e) {
             return p.visit_expr_in_out(e, in_);
         }

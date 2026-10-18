@@ -2,6 +2,7 @@ type Inspect = typeof import("util").inspect;
 
 // This is passed to [util.inspect.custom](..., { stylize }) to help users colorize parts.
 export function getStylizeWithColor(inspect: Inspect) {
+  if (IS_BUN_AOT) return require("internal/util/inspect").stylizeWithColor;
   return function stylizeWithColor(str: string, styleType: string) {
     const style = inspect.styles[styleType];
     if (style !== undefined) {

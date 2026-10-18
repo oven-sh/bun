@@ -592,12 +592,14 @@ export function createOnWarning(process, redirectPath, disabledArr, writeToUntou
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";
-    if (isDeprecation && process.noDeprecation) return;
+    if (isDeprecation && (IS_BUN_AOT ? $getByIdDirect(process, "noDeprecation") : process.noDeprecation)) return;
     const code = warning.code;
     // --disable-warning filters the *print*, not the emit — user listeners
     // still receive the event (Node keeps this check inside onWarning).
     if (disabled && (disabled.has(name) || (code && disabled.has(code)))) return;
-    const trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
+    const trace = IS_BUN_AOT
+      ? $getByIdDirect(process, "traceProcessWarnings") || (isDeprecation && $getByIdDirect(process, "traceDeprecation"))
+      : process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
     let msg = `(node:${process.pid}) `;
     if (code) msg += `[${code}] `;
     // Only touch `.stack` when tracing: it materializes the lazy trace and may run

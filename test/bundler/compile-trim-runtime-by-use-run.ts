@@ -227,7 +227,6 @@ export function testFeatures(part: number) {
       ["inspector", ["--compile-exec-argv=--inspect=127.0.0.1:0"]],
       ["cli_options", []],
       ["profiler", []],
-      ["valkey", []],
       ["worker", []],
       ["file_sink", []],
     ])("%s is kept for an executable built with %j", async (feature, flags) => {
@@ -247,6 +246,9 @@ export function testFeatures(part: number) {
       ["performance_timeline", []],
       ["structured_clone", []],
       ["web_streams", []],
+      ["fetch", []],
+      ["valkey", []],
+      ["tls", []],
     ])("%s is left out of an executable built with %j", async (feature, flags) => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
@@ -385,10 +387,10 @@ export function testPrograms(part: number) {
 
     for (const name of neighborNames.filter(mine)) {
       const files = Object.fromEntries(readdirSync(join(neighbors, name)).map(file => [file, readFileSync(join(neighbors, name, file), "utf8")]));
-      const options: { features: string[]; keptToday?: boolean } = files["features.json"] ? JSON.parse(files["features.json"]) : { features: [name.replaceAll("-", "_")] };
+      const options: { features: string[]; keptToday?: boolean; posix?: boolean } = files["features.json"] ? JSON.parse(files["features.json"]) : { features: [name.replaceAll("-", "_")] };
       const features = options.features.filter(feature => descriptions.has(feature));
 
-      test.skipIf(features.length === 0)(
+      test.skipIf(features.length === 0 || (isWindows && options.posix === true))(
         `${name}: a program that comes near ${features.join(", ")} and names none of it runs as whole without it`,
         () =>
           slot(async () => {

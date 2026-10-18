@@ -4446,7 +4446,7 @@ impl<'p, 's> Checker<'p, 's> {
         let callee = hir[call].callee;
         match hir[callee].kind {
             ExprKind::Dot { obj, name, .. } => match self.atoms().bytes(name) {
-                b"parse" => self.refers_to_global_object(file, obj, b"JSON"),
+                b"parse" => self.refers_to_global_object(file, obj, b"JSON") && self.type_argument_of_json_parse(file, e).is_none(),
                 b"json" => hir.ids(hir[call].args).next().is_none() && self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, ..)| self.hir(of).kind == FileKind::Declaration),
                 _ => false,
             },

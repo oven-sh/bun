@@ -1,4 +1,4 @@
-// The validator and the parser of a type are emitted once per file, however many validated types mention it, and Bun.parse shares a validator with Bun.validate where nothing below it is optional.
+// The validator and the parser of a type are emitted once per file, however many of the types given to JSON.parse<T>() mention it.
 // IR= 1 validate object = GetById v\d+ "street"
 // IR= 1 validate String ",\\x22zip\\x22:\\x22"
 interface Address { street: string; zip: string }
@@ -19,7 +19,7 @@ const badNickname = { who: { name: "n", nickname: 1 }, home: address };
 const badBranch = { ...company, branches: [address, { street: "s2" }] };
 for (const value of [person, company, badNickname, badBranch, address]) {
   const text = JSON.stringify(value);
-  console.log(describe(() => Bun.validate<Person>(value)), "|", describe(() => Bun.parse<Person>(text)));
-  console.log(describe(() => Bun.validate<Company>(value)), "|", describe(() => Bun.parse<Company>(text)));
-  console.log(describe(() => Bun.validate<Address>(value)), "|", describe(() => Bun.parse<Address>(text)), "|", describe(() => Bun.parse<Address[]>("[" + text + "]")));
+  console.log(describe(() => JSON.parse<Person>(text)));
+  console.log(describe(() => JSON.parse<Company>(text)));
+  console.log(describe(() => JSON.parse<Address>(text)), "|", describe(() => JSON.parse<Address[]>("[" + text + "]")));
 }

@@ -646,6 +646,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
+    pub(crate) validating_callee_with_type_arguments: i32,
+    pub(crate) names_imported_from_bun: Vec<&'a [u8]>,
+    pub(crate) json_parse_schemas: Option<std::sync::Arc<[bun_ast::audited::AuditedValidation]>>,
+    pub(crate) validated_calls: Vec<(i32, u8, &'a [u8])>,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -2542,6 +2547,73 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    pub(crate) fn generate_runtime_require(
+        &mut self,
+        imports: &[u8],
+        parts: &mut ListManaged<'a, js_ast::Part>,
+    ) -> Result<(), crate::Error> {
+        let arena = self.arena;
+        let import_record_index =
+            self.add_import_record_by_range(ImportKind::Require, bun_ast::Range::NONE, RuntimeImports::NAME);
+        {
+            let import_record = &mut self.import_records.items_mut()[import_record_index as usize];
+            import_record.path.namespace = b"runtime";
+            import_record.flags.set(bun_ast::ImportRecordFlags::IS_INTERNAL, true);
+        }
+        let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), arena);
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+        declared_symbols.ensure_total_capacity(imports.len())?;
+        for &import in imports {
+            let ref_ = self.runtime_imports.get(usize::from(import)).expect("unreachable");
+            let key = self.new_expr(E::String::init(RuntimeImports::ALL[usize::from(import)]), bun_ast::Loc::EMPTY);
+            let value = self.b(B::Identifier { r#ref: ref_ }, bun_ast::Loc::EMPTY);
+            properties.push(B::Property {
+                flags: Default::default(),
+                key,
+                value,
+                default_value: None,
+            });
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_,
+                is_top_level: true,
+            });
+        }
+        let binding = self.b(
+            B::Object {
+                properties: bun_ast::StoreSlice::from_bump(properties),
+                is_single_line: true,
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let value = self.new_expr(
+            E::RequireString {
+                import_record_index,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let stmt = self.s(
+            S::Local {
+                kind: js_ast::s::Kind::KVar,
+                decls: G::DeclList::from_slice(&[Decl {
+                    binding,
+                    value: Some(value),
+                }]),
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let stmts = arena.alloc_slice_fill_with::<Stmt, _>(1, |_| stmt);
+        parts.push(js_ast::Part {
+            stmts: stmts.into(),
+            declared_symbols,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_index),
+            tag: bun_ast::PartTag::Runtime,
+            ..Default::default()
+        });
+        Ok(())
+    }
+
     pub(crate) fn generate_react_refresh_import(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -4198,6 +4270,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             return Ok(self.s(S::Empty {}, loc));
+        }
+
+        if Self::IS_TYPESCRIPT_ENABLED && path.text == b"bun" {
+            let default_name = stmt.default_name.map(|name| name.ref_);
+            let namespace = stmt.star_name_loc.to_nullable().map(|_| stmt.namespace_ref);
+            for local in default_name.into_iter().chain(namespace).chain(stmt.items.iter().map(|item| item.name.ref_)) {
+                let name = self.load_name_from_ref(local);
+                self.names_imported_from_bun.push(name);
+            }
         }
 
         // Handle `import { feature } from "bun:bundle"` - this is a special import
@@ -9864,6 +9945,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            validating_callee_with_type_arguments: -1,
+            names_imported_from_bun: Vec::new(),
+            json_parse_schemas: None,
+            validated_calls: Vec::new(),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

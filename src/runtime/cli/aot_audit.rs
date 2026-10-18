@@ -243,7 +243,7 @@ impl State {
         }
         for validation in &module.validations {
             audited.validations.push(AuditedValidation {
-                next: start_of_next_token(text, validation.end as usize) as u32,
+                next: if validation.which == bun_ast::audited::JSON_PARSE || validation.which == bun_ast::audited::VALIDATE { validation.end } else { start_of_next_token(text, validation.end as usize) as u32 },
                 start: validation.start,
                 which: validation.which,
                 plan: validation.plan.clone().into_boxed_slice(),

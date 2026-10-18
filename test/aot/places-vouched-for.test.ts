@@ -24,7 +24,7 @@ const places: Record<string, Record<string, number>> = {
   "internal/fs/streams.ts": { "finds Function": 4, "property *": 4 },
   "internal/http/FakeSocket.ts": { "property *": 1 },
   "internal/http1_server_fallback.ts": { "finds Function": 2, "property *": 3 },
-  "internal/primordials.js": { "finds Function": 2, "property *": 3 },
+  "internal/primordials.js": { "finds Function": 2, "property *": 5 },
   "internal/promisify.ts": { "finds Function": 2, "property *": 2 },
   "internal/readline/interface.js": { "finds Function": 5, "property *": 7 },
   "internal/repl/history.js": { "finds Function": 1, "property *": 1 },
@@ -45,11 +45,11 @@ const places: Record<string, Record<string, number>> = {
   "internal/streams/writable.ts": { "property *": 1 },
   "internal/tls.ts": { "finds Function": 1, "property *": 1 },
   "internal/tty.ts": { "finds Function": 1, "property *": 1 },
-  "internal/util/inspect.ts": { "finds Function": 7, "property *": 9 },
-  "node/_http_agent.ts": { "finds Function": 8 },
+  "internal/util/inspect.ts": { "finds Function": 6, "property *": 9 },
+  "node/_http_agent.ts": { "finds Function": 8, "property *": 9 },
   "node/_http_client.ts": { "finds Function": 2, "property *": 2 },
   "node/_http_common.ts": { "finds Function": 1, "property *": 1 },
-  "node/_http_incoming.ts": { "finds Function": 2 },
+  "node/_http_incoming.ts": { "finds Function": 2, "property *": 4 },
   "node/_http_outgoing.ts": { "finds Function": 8, "property *": 13 },
   "node/_http_server.ts": { "finds Function": 6, "property *": 7 },
   "node/child_process.ts": { "finds Function": 6, "property *": 6 },
@@ -57,7 +57,7 @@ const places: Record<string, Record<string, number>> = {
   "node/dgram.ts": { "finds Function": 3, "property *": 4 },
   "node/diagnostics_channel.ts": { "finds Function": 2, "property *": 2 },
   "node/events.ts": { "finds Function": 8 },
-  "node/https.ts": { "finds Function": 1 },
+  "node/https.ts": { "finds Function": 1, "property *": 3 },
   "node/net.ts": { "finds Function": 10, "property *": 14 },
   "node/os.ts": { "finds Function": 2, "property *": 2 },
   "node/readline.js": { "finds Function": 15, "property *": 15 },
@@ -79,7 +79,7 @@ test("every place that a voucher stands for has been read", async () => {
   const found: Record<string, Record<string, number>> = {};
   for (const line of stderr.split("\n").sort()) {
     const [, fact, file, count] = /^aot: runtime use: vouched (.+) \/\$bun\/js\/((?:internal|node)\/\S+) (\d+)$/.exec(line) ?? [];
-    if (file) (found[file] ??= {})[fact] = Number(count);
+    if (file) (found[file.toLowerCase()] ??= {})[fact] = Number(count);
   }
-  expect({ exitCode, found }).toEqual({ exitCode: 0, found: places });
+  expect({ exitCode, found }).toEqual({ exitCode: 0, found: Object.fromEntries(Object.entries(places).map(([file, counts]) => [file.toLowerCase(), counts])) });
 });

@@ -1905,8 +1905,19 @@ mod posix_impl {
         openat(Fd::cwd(), path, flags, mode)
     }
     /// Always `O_CLOEXEC`. A child gets a descriptor only through the spawn path.
+    #[inline]
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        let dir = dir.as_fd();
+        if flags & (O::WRONLY | O::RDWR | O::CREAT | O::TRUNC | O::APPEND) != 0 {
+            return openat_for_writing(dir.as_fd(), path, flags, mode);
+        }
+        openat_with_flags(dir.as_fd(), path, flags, mode)
+    }
+    #[inline(never)]
+    fn openat_for_writing(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        openat_with_flags(dir, path, flags, mode)
+    }
+    #[inline(always)]
+    fn openat_with_flags(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let flags = flags | O::CLOEXEC;
         // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]

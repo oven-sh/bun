@@ -31,7 +31,6 @@ bun_lint::rules! {
     bun_aot_cast_lacks_member::AotCastLacksMember,
     bun_aot_locked_builtin_write::AotLockedBuiltinWrite,
     bun_aot_no_any_to_typed::AotNoAnyToTyped,
-    bun_aot_non_null_escapes::AotNonNullEscapes,
     bun_aot_outside_data::AotOutsideData,
     bun_aot_spy_on_builtin::AotSpyOnBuiltin,
     bun_axios_no_unbounded_requests::AxiosNoUnboundedRequests,

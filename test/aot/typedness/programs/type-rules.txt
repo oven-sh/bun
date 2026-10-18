@@ -68,7 +68,7 @@ language-error-messages: 3 layouts, 7 given, 3 open, places 26 of 60, reads 2 of
 mapped-types: 1 layouts, 0 given, 0 open, places 6 of 14, reads 3 of 7
 method-replaced-by-any-function: 5 layouts, 0 given, 3 open, places 28 of 44, reads 6 of 12
 methods-and-super: 2 layouts, 0 given, 0 open, places 64 of 99, reads 8 of 91
-methods-through-interfaces: 3 layouts, 0 given, 3 open, places 34 of 50, reads 9 of 14
+methods-through-interfaces: 2 layouts, 0 given, 3 open, places 33 of 49, reads 9 of 14
 missing-arguments-through-any: 0 layouts, 0 given, 0 open, places 12 of 20, reads 0 of 1
 missing-property-reads: 0 layouts, 0 given, 0 open, places 24 of 43, reads 13 of 15
 mixed-objects-through-one-interface: 0 layouts, 0 given, 0 open, places 13 of 32, reads 1 of 10
@@ -152,7 +152,7 @@ undefined-bang-placeholders: 3 layouts, 0 given, 0 open, places 19 of 38, reads 
 undefined-into-number-variable: 2 layouts, 0 given, 1 open, places 13 of 25, reads 5 of 7
 undefined-stored-via-untyped-ref: 2 layouts, 0 given, 2 open, places 15 of 26, reads 2 of 10
 under-allocation-pressure: 2 layouts, 0 given, 2 open, places 37 of 46, reads 8 of 9
-undiscriminated-unions: 1 layouts, 0 given, 2 open, places 7 of 16, reads 1 of 14
+undiscriminated-unions: 0 layouts, 0 given, 2 open, places 6 of 15, reads 1 of 14
 uninitialized-fields: 7 layouts, 0 given, 0 open, places 84 of 99, reads 35 of 82
 uninitialized-number-variable: 0 layouts, 0 given, 1 open, places 9 of 19, reads 1 of 6
 uninitialized-variables: 1 layouts, 0 given, 0 open, places 50 of 67, reads 2 of 35
@@ -161,7 +161,7 @@ unknown-values-into-typed-slots-in-try: 1 layouts, 0 given, 1 open, places 38 of
 unknown-values-into-typed-slots: 6 layouts, 0 given, 5 open, places 79 of 113, reads 18 of 34
 untyped-objects-rejected-by-large-unions: 108 layouts, 0 given, 0 open, places 295 of 303, reads 44 of 114
 untyped-stores-into-typed-fields: 6 layouts, 0 given, 3 open, places 53 of 67, reads 11 of 20
-value-kinds-from-any: 4 layouts, 13 given, 3 open, places 20 of 99, reads 3 of 30
+value-kinds-from-any: 3 layouts, 6 given, 3 open, places 19 of 98, reads 3 of 30
 values-into-large-unions: 108 layouts, 0 given, 0 open, places 291 of 299, reads 84 of 154
 values-outside-literal-and-enum-types: 0 layouts, 8 given, 0 open, places 14 of 46, reads 0 of 11
 variables-wider-than-values: 4 layouts, 0 given, 4 open, places 137 of 193, reads 7 of 13

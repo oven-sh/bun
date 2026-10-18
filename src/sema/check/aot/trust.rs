@@ -208,7 +208,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => {
                 let callee = hir[call].callee;
-                if matches!(self.validation_call(file, e), Some((super::ValidationCall::Validate | super::ValidationCall::SafeValidate | super::ValidationCall::Parse, _))) {
+                if matches!(self.validation_call(file, e), Some((super::ValidationCall::Validate | super::ValidationCall::SafeValidate | super::ValidationCall::Parse | super::ValidationCall::JsonParse, _))) {
                     return None;
                 }
                 if self.evaluates_text(file, callee) {

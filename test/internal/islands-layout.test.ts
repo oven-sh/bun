@@ -12,6 +12,7 @@ import {
   pageSize,
   placeKinds,
   rangesThatCanGo,
+  rangesThatCanOnlyBeOverwritten,
   readPlan,
   runsOf,
   roomFor,
@@ -123,6 +124,29 @@ describe("the stretches of an executable that can go", () => {
     const kept = rangesThatCanGo(laidOut(sections), laidOut(sections), isMovable);
     expect(kept.length).toBe(2048);
     expect(Math.min(...kept.map(range => range.end - range.start))).toBe(pageSize + 52 * 16);
+  });
+});
+
+describe("the stretches that can only be overwritten", () => {
+  test("what only features need and no stretch holds is listed, however small, wherever it has bytes", () => {
+    const layout = laidOut([
+      [0x8000, "tools"],
+      [0x40, "stays"],
+      [0x20, "tools"],
+      [0x10, "tools"],
+      [0x10, "jit"],
+      [0x40, "stays"],
+      [0x30, "tools", { output: ".data" }],
+      [0x30, "tools", { output: ".bss" }],
+    ]);
+    const cut = rangesThatCanGo(layout, layout, isMovable);
+    const overwritten = rangesThatCanOnlyBeOverwritten(layout, layout, cut, output => output !== ".bss");
+    expect(overwritten.map(({ start, end, features }) => [start - 0x200000, end - 0x200000, features])).toEqual([
+      [0x8040, 0x8070, "tools"],
+      [0x8070, 0x8080, "jit"],
+      [0x80c0, 0x80f0, "tools"],
+    ]);
+    expect(misplaced(layout, layout, [...cut, ...overwritten])).toBe(0);
   });
 });
 
@@ -464,6 +488,53 @@ describe("the table of islands", () => {
       const unlisted = Buffer.from(written);
       unlisted[unlisted.length - 1] = 2;
       expect(() => decodeTable(unlisted)).toThrow("the table is malformed");
+    });
+  });
+
+  describe("public names", () => {
+    const publicNames = [
+      { name: "cli", features: ["tools"], tolerates: [] },
+      { name: "engine", features: ["jit", "text"], tolerates: ["tools"] },
+    ];
+    const plain = encodeTable(small);
+
+    test("are written behind everything else", () => {
+      const written = encodeTable({ ...small, publicNames });
+      expect(written.subarray(0, plain.length)).toEqual(plain);
+      expect(written.subarray(plain.length).toString("hex")).toBe("00" + "00" + "02" + "03636c69" + "0100" + "00" + "06656e67696e65" + "020102" + "0100");
+      expect(decodeTable(written)).toEqual({ ...small, publicNames });
+      expect(decodeTable(inItsRoom(written))).toEqual({ ...small, publicNames });
+    });
+
+    test("stand beside packages and doors of several features", () => {
+      const table: Table = {
+        ...small,
+        doors: small.doors.map((door, index) => ({ ...door, feature: ["tools,text", "tools,jit,text", "jit,text", "text"][index]! })),
+        packages: [{ start: 0x500000, end: 0x600000, runs: [{ first: 1, count: 2, features: "jit,text" }] }],
+        publicNames,
+      };
+      expect(decodeTable(encodeTable(table))).toEqual(table);
+    });
+
+    test("the libraries stand behind them, each with the features that hold it", () => {
+      const libraries = [
+        { name: "zed 1.2", features: ["tools", "text"] },
+        { name: "core 3", features: [] },
+      ];
+      const written = encodeTable({ ...small, libraries });
+      expect(written.subarray(plain.length).toString("hex")).toBe("00" + "00" + "00" + "02" + "077a656420312e32" + "020002" + "06636f72652033" + "00");
+      expect(decodeTable(written)).toEqual({ ...small, libraries });
+      expect(decodeTable(inItsRoom(encodeTable({ ...small, publicNames, libraries })))).toEqual({ ...small, publicNames, libraries });
+      expect(() => encodeTable({ ...small, libraries: [{ name: "zed 1.2", features: ["other"] }] })).toThrow("the table does not list other");
+      for (let length = plain.length + 4; length < written.length; length++) expect(() => decodeTable(written.subarray(0, length))).toThrow("the table is malformed");
+    });
+
+    test("what cannot be said or read is refused", () => {
+      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: ["other"], tolerates: [] }] })).toThrow("the table does not list other");
+      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: ["tools"], tolerates: ["other"] }] })).toThrow("the table does not list other");
+      expect(() => encodeTable({ ...small, publicNames: [{ name: "cli", features: [], tolerates: [] }] })).toThrow("the public name cli has no feature");
+      const written = encodeTable({ ...small, publicNames });
+      for (let length = plain.length + 3; length < written.length; length++) expect(() => decodeTable(written.subarray(0, length))).toThrow("the table is malformed");
     });
   });
 

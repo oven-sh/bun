@@ -222,6 +222,7 @@ complete -c bun -n "__fish_use_subcommand" -a "compile" -F -d "Compile TypeScrip
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "library" -d "Build a package to publish instead of an executable: JavaScript, .d.ts files and a package.json"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "outfile" -r -F -d "Write the executable to this path"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "outdir" -r -F -d "With --library: the folder to write the package to (default: dist)"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "format" -r -d "With --library: esm, or cjs for sources that are CommonJS"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "target" -r -d "The platform to build for, such as bun-linux-x64"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "define" -r -d "Substitute K:V while parsing"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "env" -r -d "Inline environment variables: inline, disable or a prefix*"

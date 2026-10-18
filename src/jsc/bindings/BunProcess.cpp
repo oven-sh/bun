@@ -2401,6 +2401,20 @@ extern "C" void Bun__Process__emitWarning(Zig::GlobalObject* globalObject, Encod
         JSValue::decode(ctor));
 }
 
+static JSValue flagOfProcess(Zig::GlobalObject* globalObject, JSObject* process, ASCIILiteral name)
+{
+    Identifier identifier = Identifier::fromString(getVM(globalObject), name);
+#if ENABLE(AOT)
+    if (JSC::AOT::hasCode()) {
+        PropertySlot slot(process, PropertySlot::InternalMethodType::GetOwnProperty);
+        if (!process->methodTable()->getOwnPropertySlot(process, globalObject, identifier, slot))
+            return {};
+        return slot.getValue(globalObject, identifier);
+    }
+#endif
+    return process->getIfPropertyExists(globalObject, identifier);
+}
+
 JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -2415,11 +2429,11 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
     if (isDeprecationWarning) {
         // Read the per-Process data properties (per-Worker), not the CLI seed:
         // a Worker's `process.throwDeprecation = true` must not affect other VMs.
-        JSValue noDep = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "noDeprecation"_s));
+        JSValue noDep = flagOfProcess(globalObject, process, "noDeprecation"_s);
         RETURN_IF_EXCEPTION(scope, {});
         if (noDep && noDep.toBoolean(globalObject))
             return jsUndefined();
-        JSValue throwDep = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "throwDeprecation"_s));
+        JSValue throwDep = flagOfProcess(globalObject, process, "throwDeprecation"_s);
         RETURN_IF_EXCEPTION(scope, {});
         if (throwDep && throwDep.toBoolean(globalObject)) {
             // // Delay throwing the error to guarantee that all former warnings were properly logged.
@@ -2449,7 +2463,7 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     bool isDeprecationWarning = isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (isDeprecationWarning) {
-        JSValue noDep = globalObject->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "noDeprecation"_s));
+        JSValue noDep = flagOfProcess(globalObject, globalObject->processObject(), "noDeprecation"_s);
         RETURN_IF_EXCEPTION(scope, {});
         if (noDep && noDep.toBoolean(globalObject))
             return jsUndefined();

@@ -1,41 +1,43 @@
 ---
 title: "Smaller executables"
-description: "Leave the parts of Bun that your program cannot reach out of an executable, with --compile-trim-runtime"
+description: "Build an executable without the parts of Bun that your program can't reach, with bun compile --trim"
 ---
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
 ```bash terminal icon="terminal"
-bun build --compile --aot --compile-trim-runtime ./server.ts --outfile server
+bun compile --trim ./server.ts
 ```
 
-A standalone executable is a copy of `bun` with your program attached. So a ten-line server ships a package manager, a test runner, a type checker, a linter and several JIT compilers. `--compile-trim-runtime` leaves out what your program cannot reach. The `compile` line says how much that is.
+A standalone executable is a copy of `bun` with your program attached. So a ten-line server ships a package manager, a test runner, a type checker, a linter and several JIT compilers. `--trim` leaves out what your program can't reach. The `compile` line says how much that is.
 
 ```txt
- [250ms]  bundle  1 modules
- [125ms] compile  server  84.7 MB of the runtime left out
+ [134ms]  bundle  1 modules
+ [110ms] compile  server  85.7 MB of the runtime left out
 ```
+
+[`bun compile`](/bundler/aot) is short for `bun build --compile --aot`. With `bun build`, the flag is called `--compile-trim-runtime`.
 
 The server from [Ahead-of-time compilation](/bundler/aot#build-an-executable), built four ways on macOS arm64:
 
-| Flags                                        |     Size |
-| -------------------------------------------- | -------: |
-| `--compile`                                  |   104 MB |
-| `--compile --aot`                            |   105 MB |
-| `--compile --compile-trim-runtime`           |    63 MB |
-| `--compile --aot --compile-trim-runtime`     |    20 MB |
+| Command                        |   Size |
+| ------------------------------ | -----: |
+| `bun compile --no-aot`         | 104 MB |
+| `bun compile`                  | 105 MB |
+| `bun compile --no-aot --trim`  |  63 MB |
+| `bun compile --trim`           |  19 MB |
 
-All four answer every route the same way. A trimmed executable behaves like the whole one. If yours does not, that is a bug in Bun.
+All four answer every route the same way. Your program behaves the same trimmed and untrimmed. [What a trimmed executable does not do](#what-a-trimmed-executable-does-not-do) lists the exceptions. Any other difference is a bug in Bun.
 
 ## How Bun decides
 
 Bun leaves out code in two steps.
 
-**What only the `bun` command uses.** The command line with all of its commands (`install`, `run`, `test`, `build` and the rest), `bun check`, `bun lint`, `bun fmt` and the ahead-of-time compiler. With `--aot`, also the JIT compilers, which such an executable never starts. This step needs no knowledge of your program, so it works without `--aot` too.
+**What only the `bun` command uses.** The command line with all of its commands (`install`, `run`, `test`, `build` and the rest), `bun check`, `bun lint`, `bun fmt` and the ahead-of-time compiler. With `--aot`, also the JIT compilers, which an `--aot` executable never starts. This step doesn't depend on your program, so it works with `--no-aot` too.
 
-**What your program never names.** With `--aot`, the compiler has read the whole program, dependencies included. It knows which globals, which members of `Bun` and `process` and which built-in modules the program names. The parts of Bun behind every other name stay behind: the transpiler, the CSS parser, SQLite, the image codecs, WebAssembly, the inspector, `HTMLRewriter` and more. You do not list anything.
+**What your program never names.** With `--aot`, the compiler has read the whole program, dependencies included. It knows which globals, which members of `Bun` and `process` and which built-in modules the program names. Bun leaves out the parts behind every other name: the transpiler, the CSS parser, SQLite, the image codecs, WebAssembly, the inspector, `HTMLRewriter` and more. You don't have to list anything.
 
-The second step is the difference between 63 MB and 20 MB. It only works when the compiler can see every name that the program will ever use.
+With the first step alone, an `--aot` executable is about 58 MB. The second step takes it to 19 MB. It only works when the compiler can see every name that the program will ever use.
 
 ## See what the compiler found
 
@@ -59,9 +61,11 @@ aot: runtime use: Bun serve
 aot: runtime use: console log
 ```
 
-The first line is the one that matters. `closed` means that the compiler has seen every name, and the second step applies. The other lines are the names. Many of them belong to Bun's own built-in modules.
+The first line is the one that matters. `closed` means that the compiler has seen every name, and the second step applies. The other lines are the names. The whole list is longer than this: it also holds the names that Bun's own built-in modules use.
 
 ## Why a program keeps everything
+
+This program tests whether it may call `new Function`, as some libraries do.
 
 ```ts probe.ts icon="/icons/typescript.svg"
 function canGenerateCode(): boolean {
@@ -80,13 +84,13 @@ console.log(canGenerateCode() ? "generated code" : "plain code");
 bun check --aot --aot-explain=runtime-use ./probe.ts
 ```
 
-A string that becomes code could name anything, so the compiler has not seen every name. The first line says `open`, with the reason and the file.
-
 ```txt
 aot: runtime use: open a call of Function in /path/to/probe.ts
 ```
 
-One such place in code that your program can reach, also in a dependency, and the executable keeps everything that a program can import or call. Only the first step applies. This one is 58 MB.
+A string that becomes code could name anything, so the compiler hasn't seen every name. The first line says `open`, with the reason and the file. If there are several reasons, each gets a line.
+
+If your program can reach even one place like this, in its own code or in a dependency, the executable keeps everything that a program can import or call. Only the first step applies. This one is 58 MB.
 
 | The line says                                                                       | Your program                                                              |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -96,18 +100,17 @@ One such place in code that your program can reach, also in a dependency, and th
 | `open require`, `open import() of a name that is computed`                          | loads a module whose name it puts together when it runs                   |
 | `open the global object`, `open Bun`                                                | passes `globalThis` or `Bun` around, or reads it with a computed key      |
 | `open Worker`                                                                       | starts a Worker                                                           |
+| `open a native addon`                                                               | embeds a `.node` file, which can call anything                            |
 
 `globalThis.fetch`, `typeof globalThis.fetch`, `process.env.HOME` and `process.getBuiltinModule("node:fs")` are fine: the compiler sees the name.
-
-A program that embeds a native addon (`.node`) keeps everything too, because an addon can call anything.
 
 [Parts your program does not use](/bundler/executables#parts-your-program-does-not-use) has the whole list.
 
 ## When a dependency calls `new Function`
 
-Most programs that are `open` are so because of a dependency. zod 4, ajv, TypeBox and Elysia call `new Function`, or have a code path that could.
+When a program is `open`, the cause is usually a dependency. zod 4, ajv, TypeBox and Elysia call `new Function`, or have a code path that could.
 
-If your program does not need code from strings, say so when you build. [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings) means what it means in Node.js: `eval()`, `new Function()` and the constructors of async and generator functions throw an `EvalError`. Those calls can then no longer run code that the compiler has not seen, so they no longer keep anything in the executable.
+If your program doesn't need code from strings, say so when you build. [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings) means what it means in Node.js: `eval()`, `new Function()` and the constructors of async and generator functions throw an `EvalError`. Those calls can't run anything now, so the compiler no longer has to keep everything because of them.
 
 ```bash terminal icon="terminal"
 bun check --aot --disallow-code-generation-from-strings --aot-explain=runtime-use ./probe.ts
@@ -118,14 +121,14 @@ aot: runtime use: closed
 ```
 
 ```bash terminal icon="terminal"
-bun build --compile --aot --disallow-code-generation-from-strings ./probe.ts --outfile probe && ./probe
+bun compile --disallow-code-generation-from-strings ./probe.ts && ./probe
 ```
 
 ```txt
 plain code
 ```
 
-With `--compile-trim-runtime`, this executable goes from 58 MB to 18 MB.
+With `--trim`, this executable goes from 58 MB to 17 MB.
 
 The flag changes what your program does, with or without trimming. Run your tests against the executable.
 
@@ -135,22 +138,146 @@ The flag changes what your program does, with or without trimming. Run your test
 | Elysia                                      | Works with `new Elysia({ aot: false })`. Otherwise it throws at startup |
 | Fastify, Koa                                | Throw an `EvalError` at startup: a dependency generates code when it loads |
 
-The flag takes away the first two rows of the table above. The other reasons still keep everything. Express and NestJS stay `open` with the flag.
+The flag removes the first two reasons in the table under [Why a program keeps everything](#why-a-program-keeps-everything). The other reasons still keep everything. Express and NestJS stay `open` with the flag. For a program like that, [remove parts by name](#remove-parts-by-name).
+
+## Remove parts by name
+
+`--trim` only leaves out what the compiler can prove your program never reaches. To remove more, name the parts yourself in `compile.trim` of [`Bun.build`](/bundler). Bun removes a part that you name, whether your program uses it or not. There's no CLI flag for this, so you need a build script.
+
+`probe.ts` from above is `open`, so `--trim` keeps everything that a program can import or call. This build also removes four parts that `probe.ts` has no use for.
+
+```ts build.ts icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./probe.ts"],
+  compile: {
+    outfile: "./probe",
+    aot: true,
+    trim: { remove: ["sqlite", "image", "ffi", "html-rewriter"] },
+  },
+});
+
+for (const log of result.logs) console.log(log.message);
+```
+
+```bash terminal icon="terminal"
+bun build.ts
+```
+
+The build logs what it left out. You didn't name `cli`: it's the `bun` command line, which `--trim` always leaves out.
+
+```txt
+compile.trim: 55.5 MB of the runtime left out: cli, image, sqlite, html-rewriter, ffi
+```
+
+These four parts are small: on macOS arm64, the executable goes from 57.8 MB to 56.6 MB.
+
+| `trim`                               | Bun leaves out                                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `true`                               | What your program can't reach. The same as `--trim`                                         |
+| `{ remove: ["image"] }`              | What `true` leaves out, and `image`                                                         |
+| `{ keep: ["sqlite"] }`               | What `true` leaves out, except `sqlite` and the parts that `sqlite` needs                   |
+| `["image", "sqlite"]`                | These two parts and nothing else. Bun doesn't look at your program, so you don't need `aot` |
+| `{ auto: false, remove: ["image"] }` | The long form of `["image"]`. `auto` is what `true` does, and it's on unless you turn it off |
+
+An array removes nothing that you don't name, not even `cli`. `BUN_BE_BUN=1` still turns such an executable into `bun`, unless you name `"cli"` too.
+
+Every name is in the type [`Bun.Build.TrimFeature`](https://github.com/oven-sh/bun/blob/main/packages/bun-types/trim.d.ts), so your editor completes them. Hover over a name to see what stops working, which native libraries leave with it, which names it can only be removed together with, and roughly how much it saves on Linux and on macOS. A few of the names: `"sqlite"`, `"image"`, `"ffi"`, `"html-rewriter"`, `"bundler"` and `"test"`.
+
+To choose names, look at what the compiler saw. [`--aot-explain=runtime-use`](#see-what-the-compiler-found) lists the globals, `Bun` APIs and built-in modules that your program and its dependencies name, for an `open` program too. Don't remove a part that's on that list.
+
+### When your program reaches a removed part
+
+```ts rewrite.ts icon="/icons/typescript.svg"
+console.log("started");
+console.log(await new HTMLRewriter().transform(new Response("<p>hello</p>")).text());
+```
+
+Built with `aot: true` and `trim: { remove: ["html-rewriter"] }`, this program stops at the second line.
+
+```txt
+started
+error: compile.trim removed HTMLRewriter from this executable, and something has just asked for it.
+```
+
+The message goes to stderr, and the exit code is `70`. The program ends right there: a `try` block doesn't catch it, and `finally` blocks and `process.on("exit")` handlers don't run. If a Worker reaches the part, the whole process ends.
+
+Looking at a part counts as reaching it.
+
+| Your program, or a dependency                                                       | With the part removed                            |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `typeof HTMLRewriter`, `"HTMLRewriter" in globalThis`                               | Ends the program                                 |
+| Reads `Bun.sql` without calling it. `console.log(Bun)`, which reads every property  | Ends the program                                 |
+| `process.getBuiltinModule("node:sqlite")`                                           | Ends the program                                 |
+| `import("bun:sqlite")`, `require("bun:sqlite")`                                     | Works. `new Database()` ends the program         |
+| `Object.keys(Bun)`                                                                  | Works                                            |
+
+So a library that checks `typeof HTMLRewriter` before it falls back to something else ends your program too. The same goes for `"interpreter"`: `try { new Function("") } catch {}` ends the program, unless you also set `disallowCodeGenerationFromStrings`, which throws the `EvalError` first.
+
+A part can serve more than the API that it's named after. The comment on each name lists what else stops working. Read it before you remove the name.
+
+The build doesn't warn you when your program uses a part that you remove. `bun test` runs your source files, where nothing is removed. So start the executable and test it from outside, as you would test a deployed server.
+
+Without `aot`, the program can end earlier. The executable looks up the globals that a function names when it enters the function, not when it gets to the line. For the top level of a module, that's when it loads the module. If either names `HTMLRewriter`, even in a branch that never runs, the program ends before the first statement of that function or module.
+
+### When the build fails
+
+`Bun.build` rejects when there's a mistake in `trim`. The reason is in `error.errors[0].message`. If there are several mistakes, you get the first.
+
+| Message                                                                                                                 | Cause                                                      |
+| ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `compile.trim: there is no "sqlite3". The names are "cli", "interpreter",` and every other name                          | A name that Bun doesn't know                               |
+| `compile.trim: "native-addons" is needed by "ffi". Remove those too, or keep "native-addons"`                            | You remove `"native-addons"`, but `"ffi"` stays and needs it |
+| `compile.trim: "color" is in both remove and keep`                                                                       | The same name on both lists                                |
+| `compile.trim: "interpreter" can be removed only with compile.aot: without it the program itself is run from its text`   | `"interpreter"` without `aot: true`                        |
+
+### Fewer native libraries
+
+Removing a part also removes the native libraries that only that part uses. Several of them are C libraries that parse data: libjpeg-turbo, libspng and libwebp decode images, and TinyCC compiles C for `bun:ffi`. Libraries like these have a history of memory-corruption bugs.
+
+If your server never decodes an image, remove `"image"`. The three decoders are then no longer in the executable, so a bug in one of them can't be used against your server.
+
+The file only gets shorter where at least 128 KB in a row (256 KB on macOS) is removed. Bun overwrites everything else that it removes: code with trap instructions, data with zeros. That's why the log counts more megabytes than the file loses.
+
+To check, search the executable for a text that only the library contains.
+
+```bash terminal icon="terminal"
+strings ./probe | grep -c "libjpeg-turbo"
+```
+
+```txt
+0
+```
+
+Removing `cli` also closes `BUN_BE_BUN=1`, so somebody who controls the environment can't turn your server into `bun`.
+
+A `closed` program needs no names for this: `--trim` already leaves out every library that the program can't reach, and `trim: true` logs the names. Names are for an `open` program, where `--trim` has to keep every part. They're also for a part that your program names on a path that you know never runs.
+
+This isn't a sandbox. There's no name for `Bun.spawn`, `node:child_process` or `node:fs`. An `open` executable still obeys `--preload` in `BUN_OPTIONS`, whatever you remove.
 
 ## What a trimmed executable does not do
 
-| | Without the flag | With the flag |
+| | Without `--trim` | With `--trim` |
 | --- | --- | --- |
 | `BUN_BE_BUN=1 ./server install` | Acts as the `bun` CLI | Prints that the Bun command line was left out, and exits with code `70` |
 | `BUN_BE_BUN=1 ./server --version` | Prints the version | Prints the version |
-| A `bunfig.toml` in the directory the executable runs in | Bun reads it at startup | Bun does not read it, unless you also pass `--compile-autoload-bunfig` |
-| `preload` in a `bunfig.toml` that a `closed` executable reads | Loads the file first | Prints that `preload` cannot be used with this executable, and exits with code `1` |
+| A `bunfig.toml` in the directory the executable runs in | Bun reads it at startup | Bun doesn't read it, unless you also pass `--compile-autoload-bunfig` |
+| `preload` in a `bunfig.toml` that a `closed` executable reads | Loads the file first | Prints that `preload` can't be used with this executable, and exits with code `1` |
 | `Bun.build` with `check`, `dts` or `compile.aot`, called by the executable | Works | Throws a `TypeError` |
 
-[Leave out what the program cannot reach](/bundler/executables#leave-out-what-the-program-cannot-reach) lists the rest.
+A trimmed executable obeys most options in `BUN_OPTIONS`, such as `--smol`. It refuses the few whose code was left out, among them `--stack-trace-limit` and `--help`. It prints why and exits with code `1`.
 
-To debug a program with the inspector, build it without `--compile-trim-runtime`.
+```txt
+error: --stack-trace-limit cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out
+```
+
+`bun compile --trim` refuses the same options in `--compile-exec-argv`, when you build. A `closed` executable also refuses the options that load code, such as `--preload` and `--eval`. [Which options still work](/bundler/executables#which-options-still-work) has the lists.
+
+[Leave out what the program cannot reach](/bundler/executables#leave-out-what-the-program-cannot-reach) has the full table.
+
+To debug a program with the inspector, build it without `--trim`.
 
 ## If a part is missing
 
-Should an executable ever reach a part that was left out, it does not go on. It prints which part and a number, and exits with code `70`. That is a bug in Bun. [Report it](https://github.com/oven-sh/bun/issues) with the number.
+If an executable ever reaches a part that `--trim` left out on its own, it stops. It prints which part and a number, and exits with code `70`. That's a bug in Bun. [Report it](https://github.com/oven-sh/bun/issues) with the number.
+
+If the message starts with `compile.trim removed`, you removed the part by name. See [When your program reaches a removed part](#when-your-program-reaches-a-removed-part).

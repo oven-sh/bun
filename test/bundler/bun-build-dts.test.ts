@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "crypto";
 import { readdirSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -76,12 +75,11 @@ async function build(cwd: string, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-const withoutMark = (declarations: string) => declarations.replace(/^\/\/ @sound \S+ [0-9a-f]{64}\n/, "");
 const leftOut = (why: string) => `warn: --dts: the typed JavaScript that --aot compiles a package from is left out: ${why}\n`;
 
 function written(folder: string) {
   const files = (readdirSync(folder, { recursive: true }) as string[]).filter(name => name.endsWith(".d.ts")).sort();
-  return Promise.all(files.map(async name => [name.replaceAll("\\", "/"), withoutMark(await Bun.file(join(folder, name)).text())])).then(Object.fromEntries);
+  return Promise.all(files.map(async name => [name.replaceAll("\\", "/"), await Bun.file(join(folder, name)).text()])).then(Object.fromEntries);
 }
 
 describe("bun build --dts", () => {
@@ -90,9 +88,7 @@ describe("bun build --dts", () => {
     const { stdout, stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--dts");
     expect(stderr).toBe("");
     expect(await written(join(String(dir), "dist"))).toEqual({ "index.d.ts": rolledUp });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
-    const sha256 = createHash("sha256").update(await Bun.file(join(String(dir), "dist", "index.js")).bytes()).digest("hex");
-    expect(await Bun.file(join(String(dir), "dist", "index.d.ts")).text()).toBe(`// @sound index.sound.ts ${sha256}\n` + rolledUp);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
     expect(stdout).toContain("index.d.ts");
     expect(stdout).toContain("(declaration)");
     expect(await Bun.file(join(String(dir), "dist", "index.js")).exists()).toBe(true);
@@ -200,7 +196,7 @@ declare const fallback = "world";
 export { Counter, fallback, greet };
 `,
     });
-    expect(await Bun.file(join(String(dir), "dist", "index.sound.ts")).text()).not.toContain("Greets somebody.");
+    expect(await Bun.file(join(String(dir), "dist", "index.aot.ts")).text()).not.toContain("Greets somebody.");
     expect(exitCode).toBe(0);
   });
 
@@ -235,7 +231,7 @@ export declare namespace Geo {
 }
 `,
     });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
     expect(exitCode).toBe(0);
   });
 
@@ -252,14 +248,13 @@ export declare namespace Geo {
   test("--sourcemap is written when it is asked for", async () => {
     using dir = tempDir("build-dts-sourcemap", sources);
     expect((await build(String(dir), "src/index.ts", "--outdir", "dist", "--sourcemap=external", "--dts")).exitCode).toBe(0);
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.js.map", "index.sound.ts"]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js", "index.js.map"]);
   });
 
   test("--root: a declaration file for every source file, where it is under the root", async () => {
     using dir = tempDir("build-dts-root", sources);
     expect((await build(String(dir), "src/index.ts", "--outdir", "flat", "--root", "src", "--dts")).exitCode).toBe(0);
     expect(await written(join(String(dir), "flat"))).toEqual(declarations);
-    expect(await Bun.file(join(String(dir), "flat", "index.d.ts")).text()).toStartWith("// @sound index.sound.ts ");
     expect(await Bun.file(join(String(dir), "flat", "greet.d.ts")).text()).toBe(declarations["greet.d.ts"]);
     const { stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--root", ".", "--dts");
     expect(stderr).toBe("");
@@ -279,14 +274,14 @@ export declare namespace Geo {
     const { stderr, exitCode } = await build(String(dir), "src/index.ts", "src/greet.ts", "src/options.ts", "--no-bundle", "--outdir", "dist", "--dts");
     expect(stderr).toBe("");
     expect(await written(join(String(dir), "dist"))).toEqual(declarations);
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet", "index", "options"].flatMap(name => [`${name}.d.ts`, `${name}.js`, `${name}.sound.ts`]));
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet", "index", "options"].flatMap(name => [`${name}.aot.ts`, `${name}.d.ts`, `${name}.js`]));
     expect(exitCode).toBe(0);
   });
 
   test("--no-bundle without a file that the entry points import types from", async () => {
     using dir = tempDir("build-dts-no-bundle-partly", sources);
     const { stderr, exitCode } = await build(String(dir), "src/index.ts", "src/greet.ts", "--no-bundle", "--outdir", "dist", "--dts");
-    expect(stderr).toStartWith(leftOut("").trimEnd() + " with its types put back it has type errors, the first at greet.sound.ts:1:30: TS2307: ");
+    expect(stderr).toStartWith(leftOut("").trimEnd() + " with its types put back it has type errors, the first at greet.aot.ts:1:30: TS2307: ");
     expect(stderr.trim().split("\n").length).toBe(1);
     expect(await written(join(String(dir), "dist"))).toEqual({ "index.d.ts": declarations["index.d.ts"], "greet.d.ts": declarations["greet.d.ts"] });
     expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet.d.ts", "greet.js", "index.d.ts", "index.js"]);
@@ -305,8 +300,8 @@ export declare namespace Geo {
     const { outputs, success } = await Bun.build({ entrypoints: [join(String(dir), "src/index.ts")], dts: true, tsconfig: join(String(dir), "tsconfig.json") });
     expect(success).toBe(true);
     const files = outputs.filter(output => output.kind === "declaration");
-    expect(Object.fromEntries(await Promise.all(files.map(async file => [file.path.replace(/^\.\//, ""), withoutMark(await file.text())])))).toEqual({ "index.d.ts": rolledUp });
-    expect(outputs.filter(output => output.kind === "sound").map(file => file.path.replace(/^\.\//, ""))).toEqual(["index.sound.ts"]);
+    expect(Object.fromEntries(await Promise.all(files.map(async file => [file.path.replace(/^\.\//, ""), await file.text()])))).toEqual({ "index.d.ts": rolledUp });
+    expect(outputs.filter(output => output.kind === "sound").map(file => file.path.replace(/^\.\//, ""))).toEqual(["index.aot.ts"]);
   });
 
   test("Bun.build({ dts: true, outdir })", async () => {

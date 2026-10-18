@@ -11,6 +11,7 @@ pub enum ValidationCall {
     SafeValidate,
     Schema,
     Parse,
+    JsonParse,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -54,9 +55,9 @@ pub enum Rule {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum OtherKeys {
-    Omitted,
+    Untouched,
     Refused,
-    Kept(u32),
+    Checked(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -64,7 +65,6 @@ pub struct PlannedMember {
     pub name: Vec<u8>,
     pub node: u32,
     pub is_optional: bool,
-    pub is_omitted_when_invalid: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +97,10 @@ pub struct ValidationPlan {
     pub unsupported: Vec<String>,
     pub is_strict_everywhere: bool,
     pub is_exact: bool,
+    pub has_unresolved_type: bool,
 }
+
+pub const OBJECT_PROTOTYPE_PROPERTIES: [&[u8]; 12] = [b"constructor", b"hasOwnProperty", b"isPrototypeOf", b"propertyIsEnumerable", b"toLocaleString", b"toString", b"valueOf", b"__proto__", b"__defineGetter__", b"__defineSetter__", b"__lookupGetter__", b"__lookupSetter__"];
 
 fn write_json_text(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'"');
@@ -170,12 +173,12 @@ impl ValidationPlan {
                         }
                         out.push(b'[');
                         write_json_text(&mut out, &member.name);
-                        out.extend_from_slice(format!(",{},{}]", member.node, if member.is_omitted_when_invalid { 2 } else { u8::from(member.is_optional) }).as_bytes());
+                        out.extend_from_slice(format!(",{},{}]", member.node, u8::from(member.is_optional) | u8::from(OBJECT_PROTOTYPE_PROPERTIES.contains(&&member.name[..])) << 1 | u8::from(self.is_required_though_undefined_fits(member)) << 2).as_bytes());
                     }
                     out.extend_from_slice(match others {
-                        OtherKeys::Omitted => "],-1".to_string(),
+                        OtherKeys::Untouched => "],-1".to_string(),
                         OtherKeys::Refused => "],-2".to_string(),
-                        OtherKeys::Kept(held) => format!("],{held}"),
+                        OtherKeys::Checked(held) => format!("],{held}"),
                     }.as_bytes());
                 }
                 Planned::Union { arms, .. } => {
@@ -265,30 +268,38 @@ impl ValidationPlan {
         out
     }
 
-    fn children(&self, node: u32) -> Vec<u32> {
-        match &self.nodes[node as usize].planned {
-            Planned::Array { element: one, .. } | Planned::Dictionary { held: one, .. } => vec![*one],
-            Planned::Tuple { elements: several, .. } | Planned::Union { arms: several, .. } => several.clone(),
-            Planned::Object { members, others, .. } => members.iter().map(|member| member.node).chain(if let OtherKeys::Kept(held) = others { Some(*held) } else { None }).collect(),
-            _ => Vec::new(),
-        }
+    pub fn may_accept_undefined(&self, node: u32) -> bool {
+        self.accepts_undefined_within(node, 0)
     }
 
-    fn omits_members_below(&self, node: u32) -> bool {
-        let (mut seen, mut pending) = (vec![false; self.nodes.len()], vec![node]);
-        while let Some(next) = pending.pop() {
-            if std::mem::replace(&mut seen[next as usize], true) {
-                continue;
+    fn accepts_undefined_within(&self, node: u32, depth: u32) -> bool {
+        let described = &self.nodes[node as usize];
+        described.default.is_some()
+            || match &described.planned {
+                Planned::Anything | Planned::Value(Constant::Undefined) => true,
+                Planned::Union { arms, .. } => depth > 8 || arms.iter().any(|&arm| self.accepts_undefined_within(arm, depth + 1)),
+                _ => false,
             }
-            if matches!(&self.nodes[next as usize].planned, Planned::Object { members, .. } if members.iter().any(|member| member.is_omitted_when_invalid)) {
-                return true;
-            }
-            pending.extend(self.children(next));
-        }
-        false
     }
 
-    pub fn node_identity(&self, node: u32) -> Option<(TypeId, bool, bool)> {
+    pub fn may_have_default(&self, node: u32) -> bool {
+        self.has_default_within(node, 0)
+    }
+
+    fn has_default_within(&self, node: u32, depth: u32) -> bool {
+        let described = &self.nodes[node as usize];
+        described.default.is_some()
+            || match &described.planned {
+                Planned::Union { arms, .. } => depth > 8 || arms.iter().any(|&arm| self.has_default_within(arm, depth + 1)),
+                _ => false,
+            }
+    }
+
+    fn is_required_though_undefined_fits(&self, member: &PlannedMember) -> bool {
+        !member.is_optional && self.may_accept_undefined(member.node) && !self.may_have_default(member.node)
+    }
+
+    pub fn node_identity(&self, node: u32) -> Option<(TypeId, bool)> {
         let described = &self.nodes[node as usize];
         if self.is_strict_everywhere && !self.is_exact || !described.rules.is_empty() || described.message.is_some() || described.default.is_some() {
             return None;
@@ -298,7 +309,7 @@ impl ValidationPlan {
             Planned::Array { ty, .. } | Planned::Tuple { ty, .. } | Planned::Dictionary { ty, .. } | Planned::Union { ty, .. } => (ty, false),
             _ => return None,
         };
-        Some((ty, is_strict, self.omits_members_below(node)))
+        Some((ty, is_strict))
     }
 
     fn replace_types_no_text_satisfies(&mut self) {
@@ -372,7 +383,6 @@ struct Planning {
     plan: ValidationPlan,
     known: FxHashMap<(TypeId, bool), u32>,
     is_strict_everywhere: bool,
-    omits_invalid_optional_members: bool,
     is_exact: bool,
 }
 
@@ -384,8 +394,22 @@ impl Planning {
 }
 
 impl Checker<'_, '_> {
+    pub(super) fn type_argument_of_json_parse(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let ExprKind::Call(call) = hir[e].kind else { return None };
+        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[hir[call].callee].kind else { return None };
+        if hir[call].chain != Chain::No || hir[call].type_args.len != 1 || self.atoms().bytes(name) != b"parse" || !self.refers_to_global_object(file, obj, b"JSON") {
+            return None;
+        }
+        let written = self.type_from_node(file, hir.id_at(hir[call].type_args, 0));
+        (!self.is_uninformative(written)).then_some(written)
+    }
+
     pub fn validation_call(&mut self, file: FileId, e: ExprId) -> Option<(ValidationCall, TypeId)> {
         let ExprKind::Call(_) = self.hir(file)[e].kind else { return None };
+        if let Some(written) = self.type_argument_of_json_parse(file, e) {
+            return Some((ValidationCall::JsonParse, written));
+        }
         let resolved = self.resolved_signature(file, e);
         let (declared_in, func, mapper) = self.sig_decl(resolved.sig?)?;
         let id = self.bound(declared_in).fn_symbol[func.idx()];
@@ -408,8 +432,8 @@ impl Checker<'_, '_> {
         Some((which, self.types().map(mapper, declared)?))
     }
 
-    pub fn validation_plan(&mut self, ty: TypeId, omits_invalid_optional_members: bool) -> ValidationPlan {
-        let mut planning = Planning { omits_invalid_optional_members, ..Planning::default() };
+    pub fn validation_plan(&mut self, ty: TypeId) -> ValidationPlan {
+        let mut planning = Planning::default();
         let shown = bstr::BStr::new(&self.type_to_string(ty)).to_string();
         planning.plan.root = self.plan_type(&mut planning, ty, &shown);
         for node in 0..planning.plan.nodes.len() as u32 {
@@ -716,6 +740,11 @@ impl Checker<'_, '_> {
             planning.plan.unsupported.push(format!("{at}: {}", bstr::BStr::new(&checker.type_to_string(ty))));
             Planned::Anything
         };
+        if self.is_error_type(ty) && !planning.is_exact {
+            planning.plan.has_unresolved_type = true;
+            planning.plan.unsupported.push(format!("{at}: it does not resolve"));
+            return Planned::Anything;
+        }
         match *self.data(ty) {
             TypeData::Intrinsic(Intrinsic::Any | Intrinsic::Unknown) => Planned::Anything,
             TypeData::Intrinsic(Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever | Intrinsic::ImplicitNever) => Planned::Nothing,
@@ -783,12 +812,12 @@ impl Checker<'_, '_> {
                         None => self.plan_type(planning, declared, &format!("{at}.{}", bstr::BStr::new(&name))),
                     };
                     let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
-                    planned.push(PlannedMember { name, node, is_optional, is_omitted_when_invalid: is_optional && planning.omits_invalid_optional_members });
+                    planned.push(PlannedMember { name, node, is_optional });
                 }
                 let others = match retained {
-                    Some(held) => OtherKeys::Kept(self.plan_type(planning, held, &format!("{at}[string]"))),
+                    Some(held) => OtherKeys::Checked(self.plan_type(planning, held, &format!("{at}[string]"))),
                     None if is_strict => OtherKeys::Refused,
-                    None => OtherKeys::Omitted,
+                    None => OtherKeys::Untouched,
                 };
                 Planned::Object { ty, members: planned, others }
             }

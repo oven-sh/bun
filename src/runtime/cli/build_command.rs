@@ -176,6 +176,7 @@ impl BuildCommand {
             Output::err_generic("--dts requires --outdir, and cannot be used with --compile", ());
             Global::exit(1);
         }
+        let has_typescript_entry_point = !this_transpiler.options.entry_points.iter().all(|path| is_javascript_path(path));
         let skips_sound_files_for = {
             let options = &ctx.bundler_options;
             let unsupported = [
@@ -184,9 +185,8 @@ impl BuildCommand {
                 (options.output_format != options::Format::Esm, "--format other than esm"),
                 (ctx.args.source_map == Some(api::SourceMapMode::Inline), "--sourcemap=inline"),
             ];
-            unsupported.iter().find(|(is_set, _)| *is_set && options.dts).map(|(_, option)| *option)
+            unsupported.iter().find(|(is_set, _)| *is_set && options.dts && has_typescript_entry_point).map(|(_, option)| *option)
         };
-        let has_typescript_entry_point = !this_transpiler.options.entry_points.iter().all(|path| is_javascript_path(path));
         let writes_sound_files = ctx.bundler_options.dts && skips_sound_files_for.is_none() && has_typescript_entry_point;
         this_transpiler.options.skips_sound_files_for = skips_sound_files_for;
         let mut declaration_files: options::DeclarationFiles = Vec::new();
@@ -762,10 +762,6 @@ impl BuildCommand {
                     output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
                     let inside_outdir = |path: &[u8]| options::OutputFile::path_inside(&outdir, path);
                     for file in typed.sound_files {
-                        let beside = inside_outdir(&file.declaration_file);
-                        let declarations = output_files.iter_mut().find(|written| written.output_kind == options::OutputKind::Declaration && written.dest_path == beside);
-                        let Some(options::OutputFileValue::Buffer { bytes }) = declarations.map(|written| &mut written.value) else { continue };
-                        *bytes = [&file.mark[..], &bytes[..]].concat().into_boxed_slice();
                         output_files.push(options::OutputFile::sound(&file.path, inside_outdir(&file.path), file.text, false));
                     }
                 }
@@ -914,7 +910,7 @@ impl BuildCommand {
         }
 
         if ctx.bundler_options.library {
-            crate::cli::compile_command::add_package_files(ctx, &mut output_files);
+            crate::cli::compile_command::add_package_files(ctx, log_ref, &mut output_files);
         }
 
         let output_files: &mut [options::OutputFile] = &mut output_files;
@@ -1167,6 +1163,10 @@ impl BuildCommand {
                 if let bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(err) =
                     &result
                 {
+                    if matches!(err, bun_standalone_module_graph::StandaloneModuleGraph::CompileError::Refusal(_)) {
+                        Output::err_generic("{}", format_args!("{}", bstr::BStr::new(err.slice())));
+                        Global::exit(1);
+                    }
                     Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
                     Global::exit(1);
                 }
@@ -1410,7 +1410,7 @@ impl BuildCommand {
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                         options::OutputKind::Declaration => "declaration",
-                        options::OutputKind::Sound => "sound types",
+                        options::OutputKind::Sound => "typed source",
                     }
                 )?;
                 if Output::enable_ansi_colors_stdout() {

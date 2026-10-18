@@ -113,6 +113,7 @@ pub(crate) use arguments as Arguments;
 #[path = "aot.rs"]
 pub(crate) mod aot;
 pub(crate) mod aot_audit;
+pub(crate) mod json_schemas;
 pub(crate) mod builtins_manifest;
 #[path = "run_command.rs"]
 pub(crate) mod run_command;
@@ -370,6 +371,7 @@ pub(crate) mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
+        bun_ast::audited::set_schema_source(super::json_schemas::of_file);
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first

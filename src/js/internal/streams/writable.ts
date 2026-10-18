@@ -83,6 +83,16 @@ function resetBuffer(state: WritableState): void {
 }
 
 function preallocatedEvents(): Record<string | symbol, unknown> {
+  if (IS_BUN_AOT) {
+    return {
+      __proto__: null,
+      close: undefined,
+      error: undefined,
+      prefinish: undefined,
+      finish: undefined,
+      drain: undefined,
+    };
+  }
   return {
       close: undefined,
       error: undefined,

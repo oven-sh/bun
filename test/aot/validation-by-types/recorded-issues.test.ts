@@ -53,7 +53,7 @@ function randomPlan(): any[] {
         node = [7, add(depth + 1), null, []];
         break;
       case 8: {
-        const members = names.slice(0, pick(5)).map(name => [name, add(depth + 1), pick(4) === 0 ? 2 : pick(2)]);
+        const members = names.slice(0, pick(5)).map(name => [name, add(depth + 1), pick(4)]);
         const others = [-1, -1, -2, -3][pick(4)];
         node = [8, members, others === -3 ? add(depth + 1) : others, []];
         break;
@@ -75,6 +75,10 @@ function randomPlan(): any[] {
   const root = add(0);
   for (const node of nodes) {
     if (node[0] !== 8) continue;
+    for (const member of node[1]) {
+      const absent = safeValidateByPlan([member[1], nodes], undefined);
+      if (!(member[2] & 1) && absent.success && absent.data === undefined) member[2] |= 4;
+    }
     node.push(
       node[1].map((member: any) => {
         const child = nodes[member[1]];
@@ -131,7 +135,7 @@ function valueFor(plan: any[], at: number, depth: number): any {
     }
     case 8: {
       const made: any = {};
-      for (const member of node[1]) if (member[2] === 0 || pick(2)) made[member[0]] = valueFor(plan, member[1], depth + 1);
+      for (const member of node[1]) if (!(member[2] & 1) || pick(2)) made[member[0]] = valueFor(plan, member[1], depth + 1);
       if (!pick(5)) made.extra = node[2] >= 0 ? valueFor(plan, node[2], depth + 1) : 1;
       return made;
     }
@@ -162,7 +166,7 @@ function recordingValidatorBelow(plan: any[], at: number): any {
 function validatorsOfMembers(plan: any[], at: number): any {
   const listed: any[] = [];
   plan[1][at][1].forEach((member: any, position: number) => {
-    const validator = member[2] === 2 ? undefined : recordingValidatorBelow(plan, member[1]);
+    const validator = recordingValidatorBelow(plan, member[1]);
     if (validator !== undefined) listed.push(position, validator);
   });
   return listed.length ? listed : undefined;
@@ -191,7 +195,9 @@ function validate(plan: any[], at: number, input: any, isSpeculative: boolean): 
   if (!isPlainObject(input)) return fail(0);
   const members = node[1];
   for (let position = 0; position < members.length; position++) {
-    if (members[position][2] !== 2 && validate(plan, members[position][1], input[members[position][0]], false) === refused) return fail(position);
+    const [name, below, flags] = members[position];
+    if (validate(plan, below, input[name], false) === refused) return fail(position);
+    if (flags & 4 && !Object.hasOwn(input, name)) return fail(position);
   }
   if (node[2] === -1) return true;
   for (const key of Object.keys(input)) {

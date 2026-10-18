@@ -384,6 +384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Continuation::Done);
         }
 
+        let may_validate = Self::IS_TYPESCRIPT_ENABLED && p.validating_callee_with_type_arguments == left.loc.start;
         let list_loc = p.parse_call_args()?;
         let loc = left.loc;
         let target = *left;
@@ -397,8 +398,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        if may_validate {
+            Self::note_call_that_may_validate(p, left);
+        }
         *optional_chain = old_optional_chain;
         Ok(Continuation::Next)
+    }
+
+    fn note_type_arguments_after(p: &mut Self, callee: &Expr) {
+        let may_validate = match callee.data {
+            ExprData::EDot(dot) if dot.optional_chain.is_none() => match (dot.target.data, dot.name.slice()) {
+                (ExprData::EIdentifier(object), b"parse") => p.load_name_from_ref(object.ref_) == b"JSON",
+                (ExprData::EIdentifier(object), b"validate") => {
+                    let object = p.load_name_from_ref(object.ref_);
+                    object == b"Bun" || p.names_imported_from_bun.contains(&object)
+                }
+                _ => false,
+            },
+            ExprData::EIdentifier(function) => !p.names_imported_from_bun.is_empty() && p.names_imported_from_bun.contains(&p.load_name_from_ref(function.ref_)),
+            _ => false,
+        };
+        if may_validate {
+            p.validating_callee_with_type_arguments = callee.loc.start;
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn note_call_that_may_validate(p: &mut Self, left: &Expr) {
+        p.validating_callee_with_type_arguments = -1;
+        let ExprData::ECall(call) = left.data else { return };
+        if SCAN_ONLY || p.options.compiles_ahead_of_time || !p.options.features.allow_runtime || !p.source.path.is_file() {
+            return;
+        }
+        if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+            cache.input_hash = None;
+        }
+        let asked;
+        let validations: &[bun_ast::audited::AuditedValidation] = match p.options.features.audited {
+            Some(audited) => &audited.validations,
+            None => {
+                asked = match &p.json_parse_schemas {
+                    Some(known) => known.clone(),
+                    None => bun_ast::audited::json_parse_schemas_of(p.source.path.text, &p.source.contents),
+                };
+                p.json_parse_schemas = Some(asked.clone());
+                &asked
+            }
+        };
+        let Some(site) = bun_ast::audited::validation_among(validations, left.loc.start as u32, call.close_paren_loc.start as u32 + 1) else { return };
+        match site.which {
+            bun_ast::audited::JSON_PARSE | bun_ast::audited::VALIDATE => {
+                let schema: &'a [u8] = p.arena.alloc_slice_copy(&site.plan);
+                p.validated_calls.push((call.close_paren_loc.start, site.which, schema));
+            }
+            bun_ast::audited::REFUSED => p.log().add_error(Some(p.source), left.loc, site.plan.to_vec()),
+            _ => {}
+        }
     }
 
     fn sfx_t_question(
@@ -881,6 +937,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED
             && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
+            Self::note_type_arguments_after(p, left);
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -973,6 +1030,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED
             && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
+            Self::note_type_arguments_after(p, left);
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -1510,13 +1568,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let Some(site) = audited.validation_at(left.loc.start as u32, p.lexer.loc().start as u32) else { return };
+        let loc = left.loc;
+        let listed = <bun_ast::ExprNodeList as bun_collections::VecExt<Expr>>::from_arena_slice;
+        if site.which == bun_ast::audited::VALIDATE || site.which >= bun_ast::audited::JSON_PARSE {
+            return;
+        }
         let is_schema = site.which == 2;
         if call.args.len() != usize::from(!is_schema) {
             return;
         }
-        let loc = left.loc;
         let plan = p.new_expr(E::String::init(&site.plan), loc);
-        let listed = <bun_ast::ExprNodeList as bun_collections::VecExt<Expr>>::from_arena_slice;
         let args = if is_schema { listed(&[plan]) } else { listed(&[call.args[0], plan]) };
         *left = p.new_expr(
             E::Call {

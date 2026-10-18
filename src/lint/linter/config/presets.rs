@@ -53,8 +53,7 @@ pub(super) fn find(name: &[u8]) -> Option<Vec<Json>> {
     Some(objects)
 }
 
-/// `bun/aot`: what behaves differently in a program that is compiled with `bun build --aot`. `bun/aot-non-null-escapes` is for
-/// whoever asks for it.
+/// `bun/aot`: what behaves differently in a program that is compiled with `bun build --aot`.
 pub(super) const AOT_RULES: [&str; 5] = [
     "aot-cast-lacks-member",
     "aot-locked-builtin-write",

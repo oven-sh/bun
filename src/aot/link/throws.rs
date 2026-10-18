@@ -1423,6 +1423,7 @@ impl<'a> Flow<'a> {
                 let produced = self.joined_result_ty(func, v, &[called]);
                 (self.meet(produced, declared), if self.is_whole { self.origin[(self.results + called.0) as usize] } else { 0 })
             }
+            &Op::Coerce { .. } if func.values[v.idx()].is_validated() => (declared, 0),
             &Op::Coerce { value, to, why } => {
                 let have = self.val(index, func, facts, keys, value, false);
                 let origin = self.origin_of(index, value);
@@ -2385,6 +2386,9 @@ impl<'a> Report<'a, '_> {
                         self.add(func, pos, Kind::Argument, Verdict::Unknown, text_of(program, &wanted, 0), "any".to_owned(), format!("argument {}: a string, a number or another primitive", u32::from(number) + 1), origin);
                     }
                     &Op::Coerce { value, to, why } if !matches!(why, CoerceReason::Upcast | CoerceReason::Forced) => {
+                        if func.values[v.idx()].is_validated() {
+                            break 'checks;
+                        }
                         if !func.has(func_flags::IS_TYPED) && matches!(why, CoerceReason::Flow | CoerceReason::Store | CoerceReason::Claim) {
                             break 'checks;
                         }
@@ -3301,8 +3305,7 @@ impl ReportContext {
             if func.module.is_none() || func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE | func_flags::IS_HIDDEN_IN_STACK_TRACES | func_flags::IS_GENERIC_ENTRYPOINT) {
                 continue;
             }
-            let path = program.strs.get(program.modules[func.module.idx()].display_path);
-            if path.starts_with(b".bun-aot-prelude/") || bun_core::strings::contains(path, b"/.bun-aot-prelude/") {
+            if is_in_prelude(program, func.module.0) {
                 continue;
             }
             let (reached, mut keys) = report.flow.run(index);
@@ -3310,6 +3313,13 @@ impl ReportContext {
             report.analyze(index, &reached, &mut keys);
         }
     }
+}
+
+fn is_in_prelude(program: &Program, module: u32) -> bool {
+    program.modules.get(module as usize).is_some_and(|module| {
+        let path = program.strs.get(module.display_path);
+        path.starts_with(b".bun-aot-prelude/") || bun_core::strings::contains(path, b"/.bun-aot-prelude/")
+    })
 }
 
 fn finalize_sites(mut sites: Vec<Site>, passing_sites: &FxHashSet<(u32, u32, Kind)>, is_sure: bool) -> Vec<Site> {
@@ -3377,7 +3387,8 @@ fn find(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) 
     asked.analyze(&mut report, 0..program.funcs.len());
     report.add_entrypoint_function_parameters(logs_type_errors);
     let is_sure = is_settled && !report.flow.has_given_up;
-    let sites = finalize_sites(report.sites, &report.passing_sites, is_sure);
+    let mut sites = finalize_sites(report.sites, &report.passing_sites, is_sure);
+    sites.retain(|site| !is_in_prelude(program, site.module));
     let fine = Kind::ALL.iter().map(|&kind| (kind, report.fine.get(&kind).copied().unwrap_or(0))).collect();
     (sites, fine, rounds, report.always_throws, [prepared, settled - prepared, begun.elapsed().as_secs_f64() - settled])
 }

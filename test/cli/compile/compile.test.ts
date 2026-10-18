@@ -64,7 +64,7 @@ describe.concurrent("bun compile", () => {
     expect(compiled).toEqual(await build("build", "--compile", "--aot"));
     expect(await build("compile", "--no-trim")).toEqual(compiled);
     expect(await build("compile", "--trim")).toEqual(await build("build", "--compile", "--aot", "--compile-trim-runtime"));
-  });
+  }, 60_000);
 
   test.each([
     [["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"],

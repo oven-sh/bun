@@ -2,6 +2,7 @@
 //! import resolves to, which declarations in different files merge into one symbol, what an alias
 //! resolves to.
 
+mod demand;
 mod explain_files;
 
 use crate::atom::{Atom, Interner, known};
@@ -788,6 +789,7 @@ struct Resolution<'r> {
     path: &'r [u8],
     /// `shouldAddFile`, and there is a file to read.
     should_add_file: bool,
+    is_awaited: bool,
     /// `increaseDepth`
     increases_depth: bool,
     /// `packageId` of the task for `path`. `redirectedParseTask` has none.
@@ -4938,6 +4940,11 @@ impl<'s> Files<'s> {
             }
             return None;
         }
+        if host.loads_on_demand() {
+            demand::load_what_the_written_types_need(&mut ahead, &atoms, &|path| host.is_asked_about(path), &mut |seeds| {
+                Self::load_ahead(session, run, host, &resolver, options, None, false, &atoms, seeds, &mut seen_ahead).0
+            });
+        }
         files_are_found(resolving.allocated_bytes());
         let expected = ahead.len() + roots.len();
         modules.reserve(expected);
@@ -6794,6 +6801,7 @@ impl<'s> Files<'s> {
         let (mut ts_extension_imports, mut project_reference_imports) = (Vec::new(), Vec::new());
         let (mut unbuilt_imports, mut redirected_imports) = (Vec::new(), Vec::new());
         let mut has_deferred_imports = false;
+        let followed_without_demand = (host.loads_on_demand() && hir.kind != FileKind::Declaration).then(|| demand::specifiers_followed_without_demand(hir));
         for (spec, mode, is_import) in module_names {
             let text = atoms.bytes(spec);
             if text.is_empty() {
@@ -6875,6 +6883,7 @@ impl<'s> Files<'s> {
                 let source = atoms.intern(found);
                 unbuilt_imports.push((spec, mode, atoms.intern(output), source));
             }
+            let is_awaited = should_add_file && followed_without_demand.as_ref().is_some_and(|followed| !followed.contains(&spec));
             let unsupported_extension = if should_add_file && redirect.is_none() {
                 unsupported_extension_error(of_program, found, host.is_case_sensitive())
                     .filter(|_| host.script_kind(found).is_none())
@@ -6895,7 +6904,9 @@ impl<'s> Files<'s> {
                 mode,
                 path: redirect.map_or(found, |output| resolver.keep(output)),
                 should_add_file: should_add_file
+                    && !is_awaited
                     && redirect.is_none_or(|output| host.is_file(output)),
+                is_awaited: is_awaited && redirect.is_none_or(|output| host.is_file(output)),
                 increases_depth: resolved.is_external_library_import,
                 package_id: resolved.package_id.filter(|_| redirect.is_none()),
                 is_importable: matches!(diagnostic, None | Some(6142)),

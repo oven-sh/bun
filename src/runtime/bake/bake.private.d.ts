@@ -154,4 +154,5 @@ declare module "bun:wrap" {
   export const __callDispose: unique symbol;
   export const __MEMO_CACHE_SENTINEL: unique symbol;
   export const __EARLY_RETURN_SENTINEL: unique symbol;
+  export const __validate: unique symbol;
 }

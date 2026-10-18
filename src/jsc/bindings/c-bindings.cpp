@@ -1219,8 +1219,9 @@ extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
 extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
 {
     const char* description = Bun__trimmedFeatures;
-    for (uint32_t feature = door & 4095; feature--;)
+    for (uint32_t feature = door & 2047; feature--;)
         description += strlen(description) + 1;
+    const bool wasRemovedByName = door & 2048;
     const auto print = [](const char* text) {
 #if OS(WINDOWS)
         (void)_write(2, text, static_cast<unsigned>(strlen(text)));
@@ -1231,6 +1232,12 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
 #endif
     };
     const char* actsAsBun = getenv("BUN_BE_BUN");
+    if (wasRemovedByName) {
+        print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but compile.trim removed " : "error: compile.trim removed ");
+        print(description);
+        print(actsAsBun && *actsAsBun ? " from this executable.\n" : " from this executable, and something has just asked for it.\n");
+        _exit(70);
+    }
     print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but this executable was built with --compile-trim-runtime, without " : "error: this executable was built with --compile-trim-runtime, without ");
     print(description);
     if (actsAsBun && *actsAsBun) {
@@ -1270,6 +1277,20 @@ extern "C" __attribute__((noinline)) bool Bun__hasWorker()
     uint32_t hasWorker = 6;
     asm volatile("" : "+r"(hasWorker));
     return hasWorker;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasFetch()
+{
+    uint32_t hasFetch = 10;
+    asm volatile("" : "+r"(hasFetch));
+    return hasFetch;
+}
+
+extern "C" __attribute__((noinline)) bool Bun__hasValkey()
+{
+    uint32_t hasValkey = 14;
+    asm volatile("" : "+r"(hasValkey));
+    return hasValkey;
 }
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)

@@ -201,7 +201,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--bun --package --no-install --cwd --env-file --minimum-release-age --trust --verbose --silent --help -p -h" -- "${cur_word}") );
             return;;
         compile)
-            COMPREPLY=( $(compgen -f -W "--library --outfile --outdir --target --define --env --asset --external --minify --sourcemap --tsconfig-override --compile-exec-argv --disallow-code-generation-from-strings --aot-explain --aot-type-errors --aot-deny --aot-warn --aot-allow --aot-huge-heap --no-aot --trim --no-trim --no-script --cwd --help -h" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -f -W "--library --outfile --outdir --target --format --define --env --asset --external --minify --sourcemap --tsconfig-override --compile-exec-argv --disallow-code-generation-from-strings --aot-explain --aot-type-errors --aot-deny --aot-warn --aot-allow --aot-huge-heap --no-aot --trim --no-trim --no-script --cwd --help -h" -- "${cur_word}") );
             return;;
         check)
             COMPREPLY=( $(compgen -f -W "--project --pretty --build --no-pretty --all --threads --timing --cwd --no-script --aot --aot-explain --aot-deny --aot-warn --aot-allow --aot-baseline --aot-update-baseline --disallow-code-generation-from-strings --help -p -b -h" -- "${cur_word}") );

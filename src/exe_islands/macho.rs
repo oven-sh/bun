@@ -893,6 +893,8 @@ mod tests {
             islands: vec![island(IMAGE + 0x4000..IMAGE + 0xc000), island(CONSTANTS + 0x3000..CONSTANTS + 0xd000)],
             doors: Vec::new(),
             packages: Vec::new(),
+            public_names: Vec::new(),
+            libraries: Vec::new(),
         };
         let mut file = executable();
         let dead = crate::shut(&mut file, crate::Container::MachO, true, &table, &[true]).unwrap();

@@ -5,7 +5,7 @@ captures-and-closure-identity: 2 layouts, 0 given, 0 open, places 85 of 98, read
 captures-shared-between-closures: 0 layouts, 0 given, 1 open, places 117 of 131, reads 1 of 12
 class-captures: 4 layouts, 0 given, 0 open, places 37 of 56, reads 17 of 43
 class-deletes-prototype-constructor: 1 layouts, 0 given, 2 open, places 7 of 18, reads 3 of 15
-class-member-lookup-by-name: 22 layouts, 0 given, 6 open, places 88 of 134, reads 15 of 125
+class-member-lookup-by-name: 20 layouts, 0 given, 6 open, places 86 of 132, reads 15 of 125
 class-method-replaced-on-prototype: 3 layouts, 0 given, 2 open, places 44 of 57, reads 12 of 48
 class-modified-through-cast: 21 layouts, 0 given, 1 open, places 22 of 54, reads 0 of 71
 class-modified-through-const: 7 layouts, 0 given, 0 open, places 18 of 33, reads 2 of 17

@@ -129,3 +129,23 @@ export function checkCredentials(input: unknown): Checked<Credentials> {
   if (!check) return noObject;
   return check.result({ login: check.login("login") ?? "", password: check.text("password", 1, 200) ?? "" });
 }
+
+function parsed(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseNewIssue(text: string): Checked<NewIssue> {
+  return checkNewIssue(parsed(text));
+}
+
+export function parseIssueChange(text: string): Checked<IssueChange> {
+  return checkIssueChange(parsed(text));
+}
+
+export function parseNewComment(text: string): Checked<NewComment> {
+  return checkNewComment(parsed(text));
+}

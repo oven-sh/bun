@@ -230,7 +230,7 @@ fn run(args: &[String]) {
             }
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
-            const OWN_FLAGS: [&str; 55] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-baseline", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-update-baseline", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--disallow-code-generation-from-strings", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
+            const OWN_FLAGS: [&str; 57] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-baseline", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-update-baseline", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--disallow-code-generation-from-strings", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--follow-every-import", "--github", "--json-parse-schemas", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
             const EXPLAINED: [&str; 21] = ["mutations", "builtins", "costs", "costs-json", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "rules-json", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
@@ -258,6 +258,38 @@ fn run(args: &[String]) {
                 );
                 std::process::exit(2);
             };
+            if has("--json-parse-schemas") {
+                let absolute: Vec<Vec<u8>> = paths.iter().map(|path| std::path::Path::new(&cwd).join(text(path)).to_string_lossy().into_owned().into_bytes()).collect();
+                let asked = bun_sema_driver::json_schemas::Asked {
+                    cwd: cwd.as_bytes(),
+                    paths: &absolute,
+                    read: &[],
+                    libs: bun_sema_driver::Libs::Directory(lib_dir.as_bytes()),
+                    follows_every_import: has("--follow-every-import"),
+                };
+                let repeats = args.iter().find_map(|a| a.strip_prefix("--repeat=")).and_then(|count| count.parse().ok()).unwrap_or(1usize);
+                let answer = bun_sema_driver::json_schemas::with_shared_parses(|shared| {
+                    let mut answer = bun_sema_driver::json_schemas::json_parse_schemas(&asked, shared);
+                    for _ in 1..repeats {
+                        let (began, before) = (std::time::Instant::now(), bun_sema_standalone::instructions_and_cycles().0);
+                        answer = bun_sema_driver::json_schemas::json_parse_schemas(&asked, shared);
+                        error_line!("again: {:.1} ms, {:.1} M on this thread", began.elapsed().as_secs_f64() * 1e3, (bun_sema_standalone::instructions_and_cycles().0 - before) as f64 / 1e6);
+                    }
+                    answer
+                });
+                output_line!("{} files loaded", answer.files_loaded);
+                let mut by_path: Vec<_> = answer.by_path.iter().collect();
+                by_path.sort_by_key(|it| it.0);
+                for (path, of_file) in by_path {
+                    for it in &of_file.schemas {
+                        match &it.schema {
+                            Ok(schema) => output_line!("{}:{}-{} {}", text(path), it.start, it.end, text(schema)),
+                            Err(why) => output_line!("{}:{}-{} error: {why}", text(path), it.start, it.end),
+                        }
+                    }
+                }
+                return;
+            }
             // `--progress`: as `bun check` displays it on a terminal.
             let shows_progress = args.iter().any(|a| a == "--progress");
             let is_timed = args.iter().any(|a| a == "--timing");
@@ -451,7 +483,8 @@ fn run(args: &[String]) {
                         write_file_to_look_at(path, &text);
                     }
                 }
-                let bun_aot::Typedness { reads, typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = translated.typedness;
+                let bun_aot::Typedness { reads, typed_reads, own_reads, own_typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = translated.typedness;
+                error_line!("aot: reads through the program's own types: {own_typed_reads} of {own_reads} typed");
                 error_line!("aot: typedness: {typed_reads} of {reads} reads typed, {open_layouts} of {layouts} types open, {classes_without_layout} classes without a layout, {untyped_packages} packages and {untyped_files} files untyped");
                 for line in &translated.explained {
                     if line.starts_with('{') {
@@ -583,6 +616,7 @@ fn run(args: &[String]) {
                 early_scan_only: defaults.early_scan_only,
                 only_the_globals: defaults.only_the_globals,
                 writes_declaration_files: defaults.writes_declaration_files,
+                declares_bun_intrinsics: defaults.declares_bun_intrinsics,
                 memory: defaults.memory,
             };
             let request = bun_sema_driver::Request {

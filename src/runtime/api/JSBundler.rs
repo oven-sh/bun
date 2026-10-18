@@ -250,6 +250,7 @@ pub(crate) mod js_bundler {
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
         pub(crate) outfile: OwnedString,
+        pub(crate) trim: bun_standalone_graph::StandaloneModuleGraph::Trim,
         pub(crate) assets: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,
         pub(crate) autoload_bunfig: bool,
@@ -280,6 +281,7 @@ pub(crate) mod js_bundler {
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
                 outfile: OwnedString::default(),
+                trim: Default::default(),
                 assets: Vec::new(),
                 autoload_dotenv: true,
                 autoload_bunfig: true,
@@ -294,6 +296,46 @@ pub(crate) mod js_bundler {
                 bytecode_order: Vec::new(),
             }
         }
+    }
+
+    fn names_from_js(global_this: &JSGlobalObject, names: JSValue) -> JsResult<Vec<Box<[u8]>>> {
+        let mut list = Vec::new();
+        let mut iter = names.array_iterator(global_this)?;
+        while let Some(name) = iter.next()? {
+            if !name.is_string() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("compile.trim: every name must be a string")));
+            }
+            list.push(Box::from(name.to_utf8(global_this)?.slice()));
+        }
+        Ok(list)
+    }
+
+    fn trim_from_js(
+        global_this: &JSGlobalObject,
+        trim: JSValue,
+    ) -> JsResult<bun_standalone_graph::StandaloneModuleGraph::Trim> {
+        use bun_standalone_graph::StandaloneModuleGraph::Trim;
+        if trim.is_undefined_or_null() || trim.is_boolean() {
+            return Ok(Trim { auto: trim.to_boolean(), ..Default::default() });
+        }
+        if trim.is_array() {
+            return Ok(Trim { remove: names_from_js(global_this, trim)?, ..Default::default() });
+        }
+        if !trim.is_object() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "compile.trim must be a boolean, an array of names or an object with auto, remove and keep"
+            )));
+        }
+        let names_of = |property: &str| match trim.get_own_array(global_this, property)? {
+            Some(names) => names_from_js(global_this, names),
+            None => Ok(Vec::new()),
+        };
+        Ok(Trim {
+            auto: trim.get_boolean_loose(global_this, "auto")?.unwrap_or(true),
+            remove: names_of("remove")?,
+            keep: names_of("keep")?,
+        })
     }
 
     impl CompileOptions {
@@ -410,19 +452,21 @@ pub(crate) mod js_bundler {
             if let Some(trim_runtime) =
                 object.get_own(global_this, &BunString::static_("trimRuntime"))?
             {
+                this.trim.auto = trim_runtime.to_boolean();
+            }
+            if let Some(trim) = object.get_own(global_this, &BunString::static_("trim"))? {
+                this.trim = trim_from_js(global_this, trim)?;
+            }
+            if this.trim.auto {
                 use crate::cli::arguments::{LEFT_OUT_BY_TRIMMING, option_of_exec_argv_left_out_by_trimming};
-                let left_out = option_of_exec_argv_left_out_by_trimming(&this.exec_argv.list);
-                if let Some(option) = left_out.filter(|_| trim_runtime.to_boolean()) {
+                if let Some(option) = option_of_exec_argv_left_out_by_trimming(&this.exec_argv.list) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "{} {}",
                         bstr::BStr::new(&option),
                         LEFT_OUT_BY_TRIMMING
                     )));
                 }
-                bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(
-                    trim_runtime.to_boolean(),
-                );
-                this.autoload_bunfig = !trim_runtime.to_boolean();
+                this.autoload_bunfig = false;
             }
 
             if let Some(windows) = object.get_own_truthy(global_this, "windows")? {

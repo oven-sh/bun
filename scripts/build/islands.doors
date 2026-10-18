@@ -1,3 +1,4 @@
+unmerged .
 feature operations_common_data what compiled code calls for JSON.stringify, Response, Headers and URLs
 feature operations_common_objects what compiled code calls for common forms of objects, classes and promises
 feature operations_common_containers what compiled code calls for common array, typed array, Map and Set methods
@@ -11,7 +12,17 @@ feature operations_rare_copies what compiled code calls for copies of typed obje
 feature operations_rare_containers what compiled code calls for rarely used array, typed array, Map and Set methods
 feature operations_rare_casts what compiled code calls for casts between unrelated types
 feature operations_rare_numbers what compiled code calls for rarely used arithmetic
-feature tools the Bun command line, the type checker, the linter, the formatter and the ahead-of-time compiler
+feature tools the Bun command line, the type checker, the formatter and the ahead-of-time compiler
+feature lint bun lint: the linter, its rules and what they say
+feature install bun install, add, remove, update, link, pm, patch, publish, audit, outdated, why, info and bunx
+feature fmt bun fmt: the formatter
+feature check bun check: the type checker at the command line
+feature test_command bun test at the command line
+feature build_command bun build at the command line
+feature aot_compiler the ahead-of-time compiler
+feature repl bun repl
+feature create bun create and bun init
+feature upgrade bun upgrade
 feature jit the just-in-time compilers
 feature testing bun:internal-for-testing
 feature test bun:test: expect, its matchers, mocks and the snapshot printer
@@ -64,9 +75,11 @@ feature dialogs alert, confirm and prompt
 feature node_v8 node:v8's native half
 feature post_message the global postMessage
 feature valkey_calls Bun.redis and Bun.RedisClient in the program's hands
+feature valkey Bun.redis and Bun.RedisClient
 feature worker_calls Worker and node:worker_threads in the program's hands
 feature text what turns text and files into code at run time
 feature bundler Bun.build, HTML imports and the development server
+feature libarchive the C library libarchive, which reads and writes tar archives
 feature package_files reading package.json and tsconfig.json at run time
 feature mux HTTP/2 and HTTP/3 in Bun.serve
 feature segmenter Intl.Segmenter
@@ -89,6 +102,7 @@ feature nodecrypto node:crypto
 feature node_os the native half of node:os
 feature node_fs the native half of node:fs
 feature spawn Bun.spawn and Bun.spawnSync
+feature child_process the native code that starts another program
 feature sockets Bun.listen, Bun.connect and node:net
 feature dns Bun.dns and node:dns
 feature http_parser node:http's own parser (process.binding('http_parser'))
@@ -168,7 +182,11 @@ feature http3 HTTP/3 in Bun.serve and fetch
 feature tls_users a TLS socket or server in the program's hands
 feature x509_users a certificate or a key in the program's hands
 feature x509 X509Certificate and KeyObject
-feature process_control process.kill, chdir, umask, execve, title and the functions for users and groups
+feature tls TLS
+feature fetch fetch and Bun.FetchSession
+feature process_control process.chdir, umask, title and the functions for users and groups
+feature process_execve process.execve
+feature process_kill process.kill
 feature bun_info the /bun:info route of a development server
 feature serve Bun.serve
 feature url URL and URLSearchParams
@@ -182,30 +200,50 @@ feature bodies Blob, File, Request, Response, Bun.file, Bun.write, Bun.stdin, Bu
 feature buffer Buffer
 feature worker Worker and node:worker_threads
 feature profiler the CPU and heap profilers, heap snapshots and code coverage
-feature valkey Bun.redis and Bun.RedisClient
 feature cli_options options given to the executable by --compile-exec-argv or BUN_OPTIONS
+feature hot_reload starting the program again under --watch and --hot
+feature crash_report sending a crash report
 feature bunfig reading bunfig.toml when the executable starts
-feature tls TLS
-feature fetch fetch and Bun.FetchSession
 feature file_sink the native sink that writes to a file, a pipe, a socket or a terminal
-door tools exit ^bun_runtime::cli::command::(exec_\w+|bun_info|bun_create|bun_getcompletes|which|tag_print_help)$
-door tools return ^Bun__AOT__hasCompiler$
-door tools return ^Bun__hasTypeChecker$
-door tools return ^JSC::installImageCompiler\(\)$
+door tools exit ^bun_runtime::cli::command::(exec_(?!(add|audit|build|bunx|check|compile|dedupe|format|init|install|link|lint|outdated|patch|patch_commit|pm|prune|publish|remove|repl|test|unlink|update|update_interactive|upgrade|why)$)\w+|bun_getcompletes|which|tag_print_help)$
+smallest install 500000
+door install exit ^bun_runtime::cli::command::(exec_install|exec_add|exec_remove|exec_update|exec_update_interactive|exec_link|exec_unlink|exec_pm|exec_patch|exec_patch_commit|exec_outdated|exec_publish|exec_audit|exec_why|exec_prune|exec_dedupe|exec_bunx|bun_info)$
+smallest lint 5000000
+door lint exit ^bun_runtime::cli::command::exec_lint$
+smallest fmt 2000000
+door fmt exit ^bun_runtime::cli::command::exec_format$
+smallest check 5000000
+door check exit ^bun_runtime::cli::command::exec_check$
+smallest test_command 300000
+door test_command exit ^bun_runtime::cli::command::exec_test$
+smallest build_command 2000000
+door build_command exit ^bun_runtime::cli::command::exec_build$
+smallest aot_compiler 9000000
+door aot_compiler exit ^bun_runtime::cli::command::exec_compile$
+smallest repl 500000
+door repl exit ^bun_runtime::cli::command::exec_repl$
+smallest create 1000000
+door create exit ^bun_runtime::cli::command::(bun_create|exec_init)$
+smallest upgrade 30000
+door upgrade exit ^bun_runtime::cli::command::exec_upgrade$
+door aot_compiler return ^Bun__AOT__hasCompiler$
+door check return ^Bun__hasTypeChecker$
+door aot_compiler return ^JSC::installImageCompiler\(\)$
 door tools exit ^JSC::Options::overrideOptionsFromEnvironment\(
-door tools exit ^__bun_runtime_start_early_analysis$
-door tools exit ^__bun_runtime_analyze_early_sources$
-door tools exit ^bun_runtime::cli::check_command::(analyze_for_build|check_for_bun_build|declarations_for_bun_build|sound_declarations_for_build|sound_files_for_build)$
-door tools exit ^bun_sema_driver::typed_packages::typed_package$
-door tools exit ^bun_runtime::cli::aot::why_cannot_be_carried$
-door tools exit ^Bun__AOTAudit__installFor$
-door tools exit ^<bun_runtime::cli::run_command::RunCommand>::check_main$
-door tools exit ^bun_runtime::cli::aot_audit::prepare$
-door tools exit ^Bun__BytecodeLinkEncoder__setTypedProgram$
+door aot_compiler exit ^__bun_runtime_start_early_analysis$
+door aot_compiler exit ^__bun_runtime_analyze_early_sources$
+door aot_compiler exit ^bun_runtime::cli::check_command::(analyze_for_build|sound_declarations_for_build|sound_files_for_build)$
+door check exit ^<?bun_runtime::cli::check_command::(CheckCommand>::\w+|check_and_report|check_before|check_project_before|check_for_build|check_for_build_command|check_for_bun_build|declarations_for_build_command|declarations_for_bun_build|report_and_exit)$
+door aot_compiler exit ^bun_sema_driver::typed_packages::typed_package$
+door aot_compiler exit ^bun_runtime::cli::aot::why_cannot_be_carried$
+door aot_compiler exit ^Bun__AOTAudit__installFor$
+door check exit ^<bun_runtime::cli::run_command::RunCommand>::check_main$
+door aot_compiler exit ^bun_runtime::cli::aot_audit::prepare$
+door aot_compiler exit ^Bun__BytecodeLinkEncoder__setTypedProgram$
 operations operations_common_data ^operationAOT(Typed(ScanPlainURL|FindPlainQueryValue|DateNow|NewResponse|NewResponseFromResponse|GetRequestOrResponseHeader|CallHeadersMethod|JSONAppendInteger|JSONAppendNumber|JSONAppendElementsFrom|JSONKeyOrdersOf|JSONPrepare|NewJSONResponse))$
 operations operations_common_objects ^operationAOT(Typed(GetFreeVariableForTypeOf|SetByNameSloppy|ThrowIfReadOnly|DefineByName|GetByKey|MakeModuleNamespace|CreateArguments|ObjectEntriesFlat|OwnPropertyDescriptorsUnlessCopied|CopyOwnPropertyDescriptors|PromiseAll|InstanceOfClass|CopyClosureOutOfFrame|CoerceProperty|DidCreateFieldAt|EnforceTypeOrConvert|GetByNameCheckedAsNumber|StoreCreatesField|GetAbsentField|PrivateGetAtSite|PrivateSetAtSite|PrivateHas|DefineGetterByKey|DefineSetterByKey|TryGetByValWithKeyParts|FailModuleCycle|SloppyThis|ForInKeys|HasEnumerableProperty|ListFieldsBelow|PropertyIsEnumerable|ObjectCreate|PromiseCatch)|PutByValAndCacheSloppy|DeleteByValAndCacheSloppy)$
 operations operations_common_containers ^operationAOT(Typed(ArrayPushNumber|ArrayGet|ArrayElementAtNumberAs|NewTypedArray|NewMapInImage|GrowNewArray|ArrayGrow|ArrayIndexOfDouble|ArrayIndexOfInt32|NewArrayWithIndexingType|FindBufferAccessor|MapClear)|MapSetWithStringKey|SetAddWithStringKey)$
-operations operations_common_text ^operationAOT(Typed(StringEq|ConcatenateWithIntegers|RegExpTest|RegExpTestFound|NewRegExp|RegExpSource|StringReplaceString|StringSplitRegExp|FindSeparators8|FindSeparators16|StringUTF8Length8|StringLastIndexOfLiteral|StringReverseFindLiteral8|CharactersToCompareWithLiterals|StringBuilderFlush))$
+operations operations_common_text ^operationAOT(Typed(StringEq|ConcatenateWithIntegers|RegExpTest|RegExpTestFound|NewRegExp|RegExpSource|StringReplaceString|StringSplitRegExp|FindSeparators8|FindSeparators16|StringUTF8Length8|StringLastIndexOfLiteral|StringReverseFindLiteral8|StringBuilderFlush))$
 operations operations_common_numbers ^operationAOT(Typed(DivNumberAndValueAsNumber|Exp|Neg|BitNot|Pow|PutNumberInNumberBox|BigIntConstant|NewBigInt64)|ValueBitXor|ValueURShift|CompareEqToString)$
 operations operations_rare_classes ^operationAOT(Typed(GetStaticField|SetStaticField|SetByNameInThisStructure|PutLazyClosure|Call|ParkAsyncFunction|SuspendAtFirstAwait|GetExternalModule|ConstructWith|DefineAccessors|InheritsFromClass|InstanceOf|DidCreateField|DidCreateFieldsAt|EnsureStorage|CountClosure|CountPlainAllocation|CountBranch|ThrowStackOverflow|NewObject|NewObjectWithCapacity|FinishObjectLiteral|CreateThis|CreateThisWithCapacity|TryCreateThisWithStores|AssignThisStructure|DidStoreToThis|IterGet|SuspendAsyncFunction|GetIteratorNext))$
 operations operations_rare_properties ^operationAOT(Typed(ValidateGlobalPermanently|SetFreeVariable|SetFreeVariableSloppy|HasName|DeleteByName|SetByKey|GetExtra|HasExtra|PutExtra|TryAddNamedProperties|CachePropertyRun|CachePropertyLocation)|GetByIdWellKnown)$
@@ -371,6 +409,15 @@ door archive exit ^<*bun_runtime::api::archive::
 door archive exit ^BunObject_lazyPropCb_wrap_Archive\(
 door archive exit ^WebCore::JSArchive::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
 door archive exit ^JS2Rust___src_runtime_cli_pack_command_rs__bindings_jsReadTarball$
+smallest libarchive 0
+when libarchive feature archive
+when libarchive feature install
+when libarchive feature create
+when libarchive feature build_command
+when libarchive feature aot_compiler
+when libarchive feature text
+when libarchive feature bundler
+door libarchive exit ^_{0,2}archive_\w+$
 smallest json5 0
 when json5 Bun JSON5
 door json5 exit ^Bun::Bindgen::Generated::JSON5Object::createJSON5\(
@@ -639,6 +686,7 @@ smallest valkey 0
 when valkey feature valkey_calls
 when valkey_calls Bun redis
 when valkey_calls Bun RedisClient
+door valkey return ^Bun__hasValkey$
 door valkey exit ^BunObject_lazyPropCb_wrap_(ValkeyClient|valkey)\(
 door valkey exit ^WebCore::JSRedisClient::create(Prototype|Structure|Constructor)\(
 door valkey exit ^RedisClient(Prototype|Class)__
@@ -741,6 +789,7 @@ door nodecrypto exit ^Bun::createNodeCryptoBinding\(
 door nodecrypto exit ^JS2Rust___src_runtime_node_node_crypto_binding_rs__createNodeCryptoBindingZig_workaround$
 door nodecrypto exit ^Bun::setup(CipherClassStructure|DiffieHellmanClassStructure|DiffieHellmanGroupClassStructure|ECDHClassStructure|JSHashClassStructure|JSHmacClassStructure|JSSignClassStructure|JSVerifyClassStructure)\(
 when fetch feature fetch_calls
+when fetch feature text
 when fetch_calls Bun file
 when fetch_calls Bun write
 smallest fetch 0
@@ -749,6 +798,7 @@ when fetch_calls Bun fetch
 when fetch_calls Bun FetchSession
 when fetch_calls Bun s3
 when fetch_calls Bun S3Client
+door fetch return ^Bun__hasFetch$
 door fetch exit ^Bun__fetch(Preconnect)?$
 door fetch exit ^Bun::constructBunFetchObject\(
 door fetch exit ^BunObject_lazyPropCb_wrap_FetchSession\(
@@ -797,6 +847,7 @@ door x509 exit ^Bun::JS(KeyObject|PublicKeyObject|PrivateKeyObject|SecretKeyObje
 smallest tls_users 0
 smallest tls 0
 when tls feature tls_users
+when tls feature http3
 when tls_users serve-option tls
 when tls_users serve-option passphrase
 when tls_users serve-option dhParamsFile
@@ -881,7 +932,7 @@ door tls exit ^Bun__(get|set)TLSDefaultCiphers$
 door tls exit ^JS2Rust___src_runtime_socket_(Listener_rs__jsAddServerName|Listener_rs__jsSetSecureContext|socket_rs__jsUpgradeDuplexToTLS|socket_rs__jsUpgradeTLSDeferred|socket_rs__jsFirstFlightBeforeFin|socket_rs__jsReleaseHeldFlight|socket_rs__jsCheckServerIdentityInHandshake)$
 door tls exit ^JS2Rust___src_runtime_api_bun_SecureContext_rs__jsLiveCount$
 door tls exit ^us_dispatch_(new_session|server_identity)$
-smallest tools 9000000
+smallest tools 1000000
 smallest jit 600000
 door tools exit ^<*bun_runtime::cli::(filter_run|multi_run)::
 door tools exit ^__bun_dispatch__ProcessExit__(FilterRunHandle|MultiRunHandle)__
@@ -951,6 +1002,26 @@ door spawn exit ^(WebCore::)?(Subprocess|ResourceUsage)(Prototype|Class)__
 door spawn exit ^WebCore::JS(Subprocess|ResourceUsage)::create(Prototype|Structure|Constructor)\(
 door spawn exit ^<*bun_runtime::api::(bun_subprocess|js_bun_spawn_bindings)::
 door spawn exit ^__bun_dispatch__ProcessExit__Subprocess__
+smallest child_process 0
+when child_process feature spawn
+when child_process feature shell
+when child_process feature cron
+when child_process feature webview
+when child_process feature open_in_editor
+when child_process feature testing
+when child_process feature text
+when child_process feature bundler
+when child_process feature tools
+when child_process feature lint
+when child_process feature install
+when child_process feature fmt
+when child_process feature test_command
+when child_process feature aot_compiler
+when child_process feature create
+when child_process feature upgrade
+door child_process exit ^bun_spawn_sys::spawn_process::spawn_process_posix$
+door child_process exit ^bun_spawn::process::spawn_process_body::spawn_process_windows$
+door child_process exit ^bun_core::util::spawn_sync_inherit_impl::
 smallest sockets 0
 when sockets Bun listen
 when sockets Bun connect
@@ -993,6 +1064,13 @@ door cli_options exit ^bun_runtime::cli::command::create_context_data$
 door cli_options exit ^bun_runtime::cli::arguments::disallow_code_generation_from_strings_as_compiled$
 door cli_options exit ^<bun_jsc::hot_reloader::NewHotReloader<bun_jsc::virtual_machine::VirtualMachine, .*>>::enable_hot_module_reloading$
 door cli_options exit ^<bun_watcher::watcher_impl::Watcher>::add_file_by_path_slow$
+smallest hot_reload 0
+when hot_reload feature cli_options
+when hot_reload feature bundler
+door hot_reload exit ^bun_core::util::reload_process$
+smallest crash_report 0
+when crash_report environment BUN_OPTIONS
+door crash_report return ^bun_crash_handler::draft::report$
 smallest package_files 0
 when package_files autoload package-json
 when package_files autoload tsconfig
@@ -1093,7 +1171,7 @@ door text exit ^JSC::Interpreter::executeProgram\(
 door text exit ^JSC::dumpBytecode\(
 door text exit ^JSC::CodeBlock::dumpBytecode\(WTF::PrintStream&\)$
 door text exit ^JSC::ModuleProgramExecutable::getUnlinkedCodeBlock\(
-door tools exit ^Bun::LintHost::create\(
+door lint exit ^Bun::LintHost::create\(
 when webview Bun WebView
 smallest webview 30000
 door webview exit ^Bun::setupJSWebViewClassStructure\(
@@ -1356,13 +1434,9 @@ when node_fs module bun:internal-for-testing
 when node_zlib native node_zlib_binding.rs:crc32
 when zstd feature bundler
 when libdeflate_compressor feature archive
-when fetch environment BUN_OPTIONS
 when profiler environment BUN_OPTIONS
 when profiler environment BUN_JSC
-when valkey environment BUN_OPTIONS
 when worker environment BUN_DESTRUCT_VM_ON_EXIT
-when fetch exec-argv --fetch-preconnect
-when valkey exec-argv --redis-preconnect
 when profiler exec-argv --cpu-prof
 when profiler exec-argv --cpu-prof-md
 when profiler exec-argv --heap-prof
@@ -1549,11 +1623,13 @@ when process_exec_argv process execArgv
 when process_exec_argv feature process_report
 when process_exec_argv feature parse_args
 smallest process_exec_argv 0
-when process_control process kill
-when process_control process _kill
+when process_kill process kill
+when process_kill process _kill
+smallest process_kill 0
 when process_control process chdir
 when process_control process umask
-when process_control process execve
+when process_execve process execve
+smallest process_execve 0
 when process_control process title
 when process_control process getegid
 when process_control process geteuid
@@ -1956,7 +2032,9 @@ door process_binding exit ^Bun::ProcessBinding(Buffer|Fs|HTTPParser|Natives)::cr
 door process_binding exit ^Bun::ProcessBinding(Buffer|UV)::create\(
 door process_exec_argv exit ^Bun::processExecArgv\(
 door process_exec_argv exit ^Bun__Process__createExecArgv$
-door process_control exit ^Bun::Process_function(Kill|ReallyKill|Chdir|Umask|Execve|getegid|geteuid|getgid|getgroups|getuid|setegid|seteuid|setgid|setgroups|initgroups|setuid)\(
+door process_kill exit ^Bun::Process_function(Kill|ReallyKill)\(
+door process_execve exit ^Bun::Process_functionExecve\(
+door process_control exit ^Bun::Process_function(Chdir|Umask|getegid|geteuid|getgid|getgroups|getuid|setegid|seteuid|setgid|setgroups|initgroups|setuid)\(
 door process_control exit ^Bun::(setP|p)rocessTitle\(
 door process_usage exit ^Bun::Process_function(CpuUsage|ThreadCpuUsage|ResourceUsage|Uptime|ConstrainedMemory)\(
 door process_usage exit ^Bun::Process_availableMemory\(
@@ -2308,3 +2386,226 @@ door regexp exit ^JSC::AOT::Image::(codeForRegExp\w*|findRegExp\w*|regExpSource)
 when profiler feature inspector
 when buffer module node:events
 when buffer feature worker_calls
+public cli tools lint fmt check install test_command build_command aot_compiler repl create upgrade
+about cli All of the `bun` command line that every executable carries: the package manager, the test runner, `bun build`, `bun lint`, `bun fmt`, `bun check`, the type checker and the ahead-of-time compiler. Only `BUN_BE_BUN=1` and `--help` reach it.
+saves cli 55.5 42.0
+public lint lint
+about lint `bun lint`: the linter, its rules and what they say. A part of `"cli"`.
+saves lint 12.2 11.9
+public fmt fmt
+about fmt `bun fmt`, the formatter. A part of `"cli"`. It shares most of its code with `"lint"`: the two together save 8 MB more.
+saves fmt 0.2 0.2
+public check check
+about check `bun check`, `--check`, and the type checks and declaration files of `bun build` and `Bun.build()`. A part of `"cli"`. The type checker's engine stays while `"lint"` or the ahead-of-time compiler stays.
+saves check 0.3 1.1
+public install install
+about install The package manager: `bun install`, `add`, `remove`, `update`, `link`, `unlink`, `pm` with all of its subcommands, `patch`, `outdated`, `publish`, `audit`, `why`, `prune`, `dedupe`, `info` and `bunx`. A part of `"cli"`.
+saves install 1.8 1.5
+public aot aot_compiler
+about aot The ahead-of-time compiler: `bun build --compile --aot`, `bun compile` and `bun run --aot`. A part of `"cli"`. An executable that was itself built with `aot` does not need it.
+saves aot 5.3 4.4
+public repl repl
+about repl `bun repl`. A part of `"cli"`.
+saves repl 0.0 0.0
+public create create
+about create `bun create` and `bun init`. A part of `"cli"`.
+saves create 0.1 0.1
+public upgrade upgrade
+about upgrade `bun upgrade`. A part of `"cli"`.
+saves upgrade 0.0 0.0
+public run tools
+about run What is left of the command line: `bun run` with package.json scripts and `--filter`, `bun exec`, the help texts and shell completions. A part of `"cli"`. The executable still runs its own program.
+saves run 0.6 0.5
+public jit jit
+about jit The just-in-time compilers of JavaScript, regular expressions and WebAssembly. Everything still runs, in the interpreters, more slowly. An executable built with `aot` never starts them.
+saves jit 12.3 12.0
+public interpreter text
+about interpreter What turns text into code while the program runs: the JavaScript parser, the bytecode interpreter and the transpiler. `eval()`, `new Function()`, `import()` and `require()` of files that were not compiled into the executable, `Bun.Transpiler` and built-in modules that the program does not import stop working. Only for an executable built with `aot`.
+saves interpreter 4.9 4.4
+public bundler bundler testing build_command
+about bundler `bun build`, `Bun.build()`, HTML imports and the development server of `Bun.serve()`.
+saves bundler 2.3 1.8
+public test test testing test_command
+about test `bun test`, `bun:test` and `node:test`: the test runner, `expect()`, its matchers, mocks and snapshots.
+saves test 0.8 0.6
+public inspector inspector
+about inspector The debugger: `--inspect`, `BUN_INSPECT` and `node:inspector`.
+saves inspector 0.5 0.6
+public profiler profiler
+about profiler The CPU and heap profilers, heap snapshots and code coverage: `--cpu-prof`, `--heap-prof`, `Bun.generateHeapSnapshot()`, `v8.writeHeapSnapshot()` and the profiling functions of `bun:jsc`.
+saves profiler 0.3 0.3
+public source-maps source_maps
+about source-maps Reading source maps: those that `sourcemap` puts into the executable, which stack traces are mapped with, and `SourceMap` and `findSourceMap()` of `node:module`.
+saves source-maps 0.0 0.0
+public image image
+about image `Bun.Image` and `.image()` of a `Blob`.
+saves image 1.3 0.9
+public archive archive libarchive
+about archive `Bun.Archive`, and whatever else reads or writes a tar archive.
+also archive install unpacking a package in `bun install`, and `bun pm pack`
+also archive create unpacking a template in `bun create`
+also archive build_command installing a missing package during `bun build`
+also archive aot_compiler installing a missing package during `bun build --compile --aot`
+also archive text installing a missing package while the program runs
+also archive bundler installing a missing package during `Bun.build()`
+saves archive 0.0 0.0
+public sqlite sqlite
+about sqlite `bun:sqlite`, `node:sqlite` and imports with `type: "sqlite"`. On macOS Bun loads the system's SQLite, so there only the bindings and the loader go.
+saves sqlite 1.9 0.2
+also sqlite sql `Bun.SQL` with a `sqlite:` URL
+public sql sql
+about sql `Bun.sql` and `Bun.SQL` for PostgreSQL and MySQL.
+saves sql 0.3 0.0
+public redis valkey valkey_calls
+about redis `Bun.redis`, `Bun.RedisClient` and `--redis-preconnect`.
+saves redis 0.3 0.3
+public s3 s3 s3client
+about s3 `Bun.s3`, `Bun.S3Client`, and `s3:` URLs in `Bun.file()` and `Bun.write()`.
+saves s3 0.1 0.0
+also s3 fetch_calls `fetch()` of an `s3:` URL
+also s3 image writing a `Bun.Image` to S3
+also s3 outside_bytes an S3 file sent by another process
+public html-rewriter htmlrewriter
+about html-rewriter `HTMLRewriter`.
+saves html-rewriter 0.0 0.0
+public ffi ffi
+about ffi `bun:ffi` and its C compiler.
+saves ffi 0.5 0.4
+public native-addons napi
+about native-addons Native addons: `.node` files, `process.dlopen()`, N-API and the V8 and libuv symbols that addons link against.
+saves native-addons 0.0 0.0
+public webassembly webassembly
+about webassembly `WebAssembly`, `node:wasi` and imports of `.wasm` files.
+saves webassembly 1.0 1.0
+public shell shell
+about shell `Bun.$`, the shell.
+saves shell 0.4 0.4
+public webview webview
+about webview `Bun.WebView`.
+saves webview 0.0 0.0
+public dns dns
+about dns `Bun.dns` and `node:dns`. Host names in `fetch()` and sockets are still resolved.
+saves dns 0.3 0.0
+public http2 nodehttp2 mux
+about http2 `node:http2`, and HTTP/2 and HTTP/3 in `Bun.serve()`.
+saves http2 0.3 0.0
+public http3 http3 nodequic
+about http3 HTTP/3 in `Bun.serve()`, and `node:quic`.
+saves http3 0.4 0.4
+also http3 fetch_calls `fetch()` over HTTP/3
+public websocket websocket
+about websocket The `WebSocket` client. WebSockets of `Bun.serve()` stay.
+saves websocket 0.2 0.0
+public udp udp
+about udp `Bun.udpSocket()` and `node:dgram`.
+saves udp 0.0 0.0
+public worker worker worker_calls
+about worker `Worker` and `node:worker_threads`.
+saves worker 0.0 0.0
+public node-vm node_vm
+about node-vm `node:vm`.
+saves node-vm 0.0 0.0
+public node-crypto nodecrypto
+about node-crypto `node:crypto`.
+saves node-crypto 0.3 0.3
+public web-crypto webcrypto
+about web-crypto `crypto.subtle`, `SubtleCrypto` and `CryptoKey`. `crypto.getRandomValues()` and `crypto.randomUUID()` stay.
+saves web-crypto 0.1 0.0
+also web-crypto outside_bytes a `CryptoKey` sent by another process
+public password password
+about password `Bun.password`.
+saves password 0.0 0.0
+public brotli brotli_encoder
+about brotli Compression with Brotli, in `node:zlib` and `CompressionStream`. Decompression stays: `fetch()` offers `br` to every server it asks.
+saves brotli 0.7 0.6
+public intl segmenter display_names intl collation units date_formatting number_formatting
+about intl All of `Intl`, `localeCompare()`, and `toLocaleString()`, `toLocaleDateString()` and `toLocaleTimeString()`, with the locale data behind them.
+saves intl 22.7 0.0
+public intl-segmenter segmenter
+about intl-segmenter `Intl.Segmenter` and its dictionaries.
+saves intl-segmenter 3.4 0.0
+public temporal temporal
+about temporal `Temporal` and `Date.prototype.toTemporalInstant()`.
+saves temporal 0.4 0.4
+public bun-jsc bun_jsc
+about bun-jsc `bun:jsc`.
+saves bun-jsc 0.0 0.0
+public plugin plugin
+about plugin `Bun.plugin()`.
+saves plugin 0.0 0.0
+public fs-router fsrouter
+about fs-router `Bun.FileSystemRouter`.
+saves fs-router 0.0 0.0
+public terminal terminal
+about terminal `Bun.Terminal` and the `terminal` option of `Bun.spawn()`.
+saves terminal 0.0 0.0
+public cron cron
+about cron `Bun.cron()`.
+saves cron 0.0 0.0
+public secrets secrets
+about secrets `Bun.secrets`.
+saves secrets 0.0 0.0
+public markdown markdown
+about markdown `Bun.markdown`.
+saves markdown 0.0 0.0
+public yaml yaml
+about yaml `Bun.YAML`.
+saves yaml 0.0 0.0
+public toml toml
+about toml `Bun.TOML`.
+saves toml 0.0 0.0
+public json5 json5
+about json5 `Bun.JSON5`.
+saves json5 0.0 0.0
+public jsonc jsonc
+about jsonc `Bun.JSONC`.
+saves jsonc 0.0 0.0
+public jsonl jsonl
+about jsonl `Bun.JSONL`.
+saves jsonl 0.0 0.0
+public xml xml
+about xml `Bun.XML`.
+saves xml 0.0 0.0
+public glob glob
+about glob `Bun.Glob`.
+saves glob 0.0 0.0
+public semver semver
+about semver `Bun.semver`.
+saves semver 0.0 0.0
+public color color
+about color `Bun.color()`.
+saves color 0.0 0.0
+public cookie cookie
+about cookie `Bun.Cookie`, `Bun.CookieMap` and `request.cookies` in `Bun.serve()`.
+saves cookie 0.0 0.0
+public csrf csrf
+about csrf `Bun.CSRF`.
+saves csrf 0.0 0.0
+public hash hash hashers
+about hash `Bun.hash()`, `Bun.sha()` and the classes `Bun.MD4` to `Bun.SHA512_256`. `Bun.CryptoHasher` stays.
+saves hash 0.0 0.0
+public url-pattern urlpattern
+about url-pattern `URLPattern`.
+saves url-pattern 0.0 0.0
+library BoringSSL 41bf9b59
+library Brotli 1.2.0 brotli_encoder brotli_decoder
+library c-ares c7a3138d
+library HdrHistogram_c 18c7a324 histogram structured_clone
+library Highway 2607d3b5
+library libarchive 27cbc782 libarchive
+library libdeflate 92e6a0db
+library libjpeg-turbo 3.2.0 image
+library libspng 0.7.4 image
+library libwebp 1.6.0 image
+library lol-html 725ce499 htmlrewriter bundler
+library ls-hpack cf0f70dd
+library ls-qpack 91567706 http3 nodequic
+library lsquic f812ceb9 http3 nodequic
+library mimalloc 92ef6587
+library picohttpparser f4d94b48 websocket fetch
+library rust-argon2 3.0.0 password nodecrypto
+library SQLite 3.53.4 sqlite
+library TinyCC 05f0fafa ffi
+library zlib-ng 2.3.3
+library zstd f8745da6
+windows-library libuv 80235811

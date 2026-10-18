@@ -1,0 +1,6 @@
+{"id":"u1","balance":250,"level":"low","home":"/u1","note":"","friends":["u2","u3"]}
+{"id":"u1","balance":250,"level":"high","note":"n","friends":[]}
+id invalid_type string; balance invalid_type number; level invalid_type "high" | "low"; home invalid_format `/${string}`; note invalid_type string; friends.1 invalid_type string
+id invalid_type string
+"u9"  invalid_type string 1.5 "high"  invalid_type "high" | "low"
+U12 251 3 u1

@@ -344,7 +344,7 @@ function ClientRequest(input?, options?, cb?): void {
   // node's domain integration attaches every EventEmitter created inside
   // domain.run() to that domain via async context propagation. Capture the
   // active domain here so the response can be bound to it when it arrives.
-  const activeDomain = process.domain;
+  const activeDomain = IS_BUN_AOT ? $getByIdDirect(process, "domain") : process.domain;
   if (activeDomain != null) {
     this.domain = activeDomain;
   }

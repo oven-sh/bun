@@ -31,8 +31,9 @@ use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
-    discard_early_template_copy, start_copying_template, target_base_public_path, to_executable,
+    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions, bytes_left_out,
+    discard_early_template_copy, set_trim, start_copying_template, target_base_public_path,
+    to_executable, trim_report,
 };
 use bun_sys::Dir;
 #[cfg(not(windows))]
@@ -452,6 +453,7 @@ impl JSBundleCompletionTask {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
 
+        set_trim(compile_options.trim.clone());
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
@@ -491,6 +493,33 @@ impl JSBundleCompletionTask {
                 return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(err.name())));
             }
         };
+
+        let report = trim_report();
+        if matches!(result, CompileResult::Success) && !report.names_left_out.is_empty() {
+            let listed = |names: &[Vec<u8>]| bstr::BString::from(names.join(&b", "[..]));
+            let mut note = |text: String| {
+                self.log.add_msg(bun_ast::Msg {
+                    kind: bun_ast::Kind::Note,
+                    data: bun_ast::range_data(None, bun_ast::Range::NONE, text.into_bytes()),
+                    ..Default::default()
+                });
+            };
+            note(format!(
+                "compile.trim: {:.1} MB of the runtime left out: {}",
+                bytes_left_out() as f64 / 1e6,
+                listed(&report.names_left_out),
+            ));
+            if !report.libraries_left_out.is_empty() {
+                note(format!(
+                    "compile.trim: native libraries left out: {}",
+                    listed(&report.libraries_left_out),
+                ));
+            }
+            note(format!(
+                "compile.trim: native libraries in the executable: {}",
+                listed(&report.libraries_left_in),
+            ));
+        }
 
         if matches!(result, CompileResult::Success) {
             let entry = &mut output_files[entry_point_index];
@@ -1126,8 +1155,8 @@ impl CompletionStruct for JSBundleCompletionTask {
             (transpiler.options.source_map == options::SourceMapOption::Inline, "an inline source map"),
         ];
         let emits_declarations = config.dts && config.compile.is_none();
-        transpiler.options.skips_sound_files_for = unsupported.iter().find(|(is_set, _)| *is_set && emits_declarations).map(|(_, option)| *option);
         let has_typescript_entry_point = !config.entry_points.keys().iter().all(|path| crate::cli::build_command::is_javascript_path(path));
+        transpiler.options.skips_sound_files_for = unsupported.iter().find(|(is_set, _)| *is_set && emits_declarations && has_typescript_entry_point).map(|(_, option)| *option);
         if emits_declarations && transpiler.options.skips_sound_files_for.is_none() && has_typescript_entry_point {
             transpiler.options.emit_declarations = Some(crate::cli::check_command::sound_declarations_for_build);
             transpiler.options.write_sound_files = Some(crate::cli::check_command::sound_files_for_build);

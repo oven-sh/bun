@@ -262,6 +262,51 @@ impl<'p, 's> Checker<'p, 's> {
         (!reasons.is_empty() || !is_created_elsewhere).then_some(reasons)
     }
 
+    pub fn find_fixable_untyped_receivers(&mut self, receivers: &[(FileId, ExprId)], classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> Vec<bool> {
+        let mut known: FxHashMap<(FileId, SymbolId), bool> = FxHashMap::default();
+        let mut answers = Vec::with_capacity(receivers.len());
+        for &(file, receiver) in receivers {
+            let symbol = match self.hir(file)[receiver].kind {
+                ExprKind::Ident(_) => self.bound(file).expr_symbol[receiver.idx()],
+                _ => SymbolId::NONE,
+            };
+            let answer = match known.get(&(file, symbol)).filter(|_| symbol.is_some()) {
+                Some(&answer) => answer,
+                None => self.is_fixable_untyped_receiver(file, receiver, classes_without_layout),
+            };
+            if symbol.is_some() {
+                known.insert((file, symbol), answer);
+            }
+            answers.push(answer);
+        }
+        answers
+    }
+
+    fn is_fixable_untyped_receiver(&mut self, file: FileId, receiver: ExprId, classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> bool {
+        self.prepare_enclosing(file, receiver);
+        let ty = self.type_of_expr(file, receiver);
+        let ty = self.reduced(ty);
+        let mut parts = Vec::new();
+        for part in self.parts(ty).to_vec() {
+            match self.data(part) {
+                TypeData::Intersection(constituents) => parts.extend(constituents.iter().copied()),
+                _ => parts.push(part),
+            }
+        }
+        parts.into_iter().any(|part| {
+            if self.is_uninformative(part) {
+                return true;
+            }
+            if !self.may_hold_objects(part) || self.type_declaration_site(part).is_some_and(|declared| self.hir(declared.file).kind == FileKind::Declaration || self.is_untyped_file(declared.file)) {
+                return false;
+            }
+            self.is_tainted(part)
+                || self.class_for_type(part, false).is_some_and(|class| classes_without_layout.contains(&class))
+                || matches!(self.data(part), TypeData::TypeParam(..))
+                || self.members(part).is_some_and(|members| !members.shape().index.is_empty())
+        })
+    }
+
     fn declaration_behind_receiver(&mut self, file: FileId, receiver: ExprId) -> Option<CompilerDiagnostic> {
         let ty = self.type_of_expr(file, receiver);
         let ty = self.reduced(ty);

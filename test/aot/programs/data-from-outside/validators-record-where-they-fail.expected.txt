@@ -1,32 +1,17 @@
 accepted
-parsed
-customer invalid_type object
 customer invalid_type object
 customer.id invalid_type int
-customer.id invalid_type int
 customer.address.zip too_small string to have >=5 characters
-customer.address.zip too_small string to have >=5 characters
-customer.address invalid_type object; total invalid_type number
 customer.address invalid_type object; total invalid_type number
 customer.name invalid_type string; customer.address.street invalid_type string; items.1.quantity invalid_type int; items.1.quantity too_small number to be >=1; coupon invalid_type undefined | string
-customer.name invalid_type string; customer.address.street invalid_type string; items.1.quantity invalid_type int; items.1.quantity too_small number to be >=1
-items.0.quantity invalid_type int; items.0.quantity too_small number to be >=1
 items.0.quantity invalid_type int; items.0.quantity too_small number to be >=1
 items.0.quantity invalid_type int; items.0.quantity too_big number to be <=9; items.2.sku too_small string to have >=2 characters; items.2.quantity invalid_type number
-items.0.quantity invalid_type int; items.0.quantity too_big number to be <=9; items.2.sku too_small string to have >=2 characters; items.2.quantity invalid_type number
-items.2 invalid_type object
 items.2 invalid_type object
 items too_small array to have >=1 items
-items too_small array to have >=1 items
 items too_big array to have <=4 items; items.4 invalid_type object
-items too_big array to have <=4 items; items.4 invalid_type object
-items invalid_type array
 items invalid_type array
 rows.0.0.note invalid_type undefined | string; rows.1.1.sku too_small string to have >=2 characters
-rows.1.1.sku too_small string to have >=2 characters
 rows.0 invalid_type array; rows.1.0.quantity too_big number to be <=9; total invalid_type number
-rows.0 invalid_type array; rows.1.0.quantity too_big number to be <=9; total invalid_type number
-total invalid_type number
 total invalid_type number
 accepted
 inner unrecognized_keys "c"; last invalid_type boolean
@@ -40,7 +25,5 @@ either.sku invalid_type string
 many.0.quantity too_small number to be >=1
 tail invalid_type object
 customer.id invalid_type number
-RangeError: from a getter
+RangeError: from a reviver
 total invalid_type number | accepted
-total: Invalid input: expected number, received string 1
-{"issues":[{"path":["total"],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"}]}

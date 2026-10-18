@@ -99,6 +99,25 @@ export function rangesThatCanGo(graph: Layout, analysis: Needs, isMovable: (outp
   return kept.flat().sort((a, b) => a.start - b.start);
 }
 
+export function rangesThatCanOnlyBeOverwritten(graph: Layout, analysis: Needs, cut: Range[], holdsBytes: (output: string) => boolean): Range[] {
+  const nodes = [...analysis.neededBy.keys()].filter(node => !analysis.core.has(node) && graph.size[node]! > 0 && holdsBytes(graph.output[node]!));
+  nodes.sort((a, b) => graph.address[a]! - graph.address[b]!);
+  const list: Range[] = [];
+  let at = 0;
+  for (const node of nodes) {
+    const start = graph.address[node]!;
+    const end = start + graph.size[node]!;
+    while (at < cut.length && cut[at]!.end <= start) at++;
+    if (at < cut.length && cut[at]!.start < end) continue;
+    const features = analysis.neededBy.get(node)!;
+    const last = list.at(-1);
+    if (last !== undefined && start < last.end) continue;
+    if (last !== undefined && last.end === start && last.features === features) last.end = end;
+    else list.push({ start, end, features });
+  }
+  return list;
+}
+
 export function misplaced(graph: Layout, analysis: Needs, ranges: Range[]): number {
   let faults = 0;
   let at = 0;
@@ -173,6 +192,17 @@ export interface DataPackage {
   runs: ItemRun[];
 }
 
+export interface PublicName {
+  name: string;
+  features: string[];
+  tolerates: string[];
+}
+
+export interface Library {
+  name: string;
+  features: string[];
+}
+
 export interface Table {
   stub: number;
   smallestDoor: { exit: number; return: number };
@@ -181,6 +211,8 @@ export interface Table {
   islands: Range[];
   doors: TableDoor[];
   packages?: DataPackage[];
+  publicNames?: PublicName[];
+  libraries?: Library[];
 }
 
 const firstFeatureOf = (door: TableDoor) => door.feature.split(",", 1)[0]!;
@@ -223,6 +255,8 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
   const kinds = distinct(table.conditions.map(condition => condition.kind));
   const facts = distinct(table.conditions.map(spell));
   const packages = table.packages ?? [];
+  const publicNames = table.publicNames ?? [];
+  const libraries = table.libraries ?? [];
   const shared = table.doors.map((door, index) => ({ index, features: door.feature })).filter(door => door.features.includes(","));
   const sets = distinct([...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs), ...shared].map(({ features }) => features));
   for (const feature of [...table.conditions, ...table.doors].flatMap(({ feature }) => feature.split(","))) {
@@ -285,7 +319,7 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
     lastFirst = places[0]!.address;
     next = index + 1;
   }
-  if (packages.length > 0 || shared.length > 0) {
+  if (packages.length > 0 || shared.length > 0 || publicNames.length > 0 || libraries.length > 0) {
     list(packages, ({ start, end, runs }) => {
       number(start);
       number(end - start);
@@ -298,12 +332,26 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
       });
     });
   }
-  if (shared.length > 0) {
+  if (shared.length > 0 || publicNames.length > 0 || libraries.length > 0) {
     let next = 0;
     list(shared, ({ index, features }) => {
       number(index - next);
       indexIn(sets, features);
       next = index + 1;
+    });
+  }
+  if (publicNames.length > 0 || libraries.length > 0) {
+    list(publicNames, ({ name, features, tolerates }) => {
+      if (features.length === 0) throw new Error(`the public name ${name} has no feature`);
+      text(name);
+      list(features, feature => indexIn(table.features, feature));
+      list(tolerates, feature => indexIn(table.features, feature));
+    });
+  }
+  if (libraries.length > 0) {
+    list(libraries, ({ name, features }) => {
+      text(name);
+      list(features, feature => indexIn(table.features, feature));
     });
   }
   if (bytes.length > room) throw new Error(`the table takes ${bytes.length} bytes and there is room for ${room}`);
@@ -407,8 +455,24 @@ export function decodeTable(bytes: Uint8Array): Table {
       nextShared = index + 1;
     });
   }
+  const publicNames = at === bytes.length ? [] : list(() => {
+    const name = text();
+    const members = list(() => oneOf(features));
+    return { name, features: members.length > 0 ? members : malformed(), tolerates: list(() => oneOf(features)) };
+  });
+  const libraries = at === bytes.length ? [] : list(() => ({ name: text(), features: list(() => oneOf(features)) }));
   if (bytes.subarray(at).some(byte => byte !== 0)) malformed();
-  return { stub, smallestDoor, features, conditions, islands, doors, ...(packages.length > 0 ? { packages } : {}) };
+  return {
+    stub,
+    smallestDoor,
+    features,
+    conditions,
+    islands,
+    doors,
+    ...(packages.length > 0 ? { packages } : {}),
+    ...(publicNames.length > 0 ? { publicNames } : {}),
+    ...(libraries.length > 0 ? { libraries } : {}),
+  };
 }
 
 export interface Item {

@@ -21,6 +21,19 @@ const ObjectDefineProperties = Object.defineProperties;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 function preallocatedEvents(): Record<string | symbol, unknown> {
+  if (IS_BUN_AOT) {
+    return {
+      __proto__: null,
+      close: undefined,
+      error: undefined,
+      prefinish: undefined,
+      finish: undefined,
+      drain: undefined,
+      data: undefined,
+      end: undefined,
+      readable: undefined,
+    };
+  }
   return {
       close: undefined,
       error: undefined,

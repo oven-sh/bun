@@ -1736,17 +1736,17 @@ fn typedness_line(typedness: &bun_aot::Typedness) -> String {
         out
     };
     let counted = |n: usize, one: &str, many: &str| format!("{} {}", with_commas(n), if n == 1 { one } else { many });
-    let bun_aot::Typedness { reads, typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = *typedness;
-    let is_fully_typed = typed_reads == reads && open_layouts + classes_without_layout + untyped_packages + untyped_files == 0;
+    let bun_aot::Typedness { own_reads, own_typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files, .. } = *typedness;
+    let is_fully_typed = own_typed_reads == own_reads && open_layouts + classes_without_layout + untyped_packages + untyped_files == 0;
     format!(
         "aot: {:.1}% of reads typed, {} of {} open, {} without a layout, {} and {} untyped{}\n",
-        100.0 * typed_reads as f64 / reads.max(1) as f64,
+        if own_reads == 0 { 100.0 } else { 100.0 * own_typed_reads as f64 / own_reads as f64 },
         with_commas(open_layouts),
         counted(layouts, "type", "types"),
         counted(classes_without_layout, "class", "classes"),
         counted(untyped_packages, "package", "packages"),
         counted(untyped_files, "file", "files"),
-        if is_fully_typed { "" } else { " (--aot-warn=all lists them)" },
+        if is_fully_typed { "" } else { " (--aot-explain lists them)" },
     )
 }
 
@@ -1848,7 +1848,6 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
             }
         }
     };
-    const NAMES: [(&[u8], &[u8]); 3] = [(b".sound.ts", b".d.ts"), (b".sound.mts", b".d.mts"), (b".sound.cts", b".d.cts")];
     let without_emitted_declarations = sound_files(outdir, &outputs, modules.map(Vec::as_slice), &[], keeps_modules_apart);
     let emitted = emitted_declarations_of(modules.map_or(&[][..], Vec::as_slice), without_emitted_declarations.as_ref().map_or(&[][..], |found| &found.modules_of_untyped_values[..]));
     let emitted_modules: bun_threading::Guarded<Vec<(u32, ModuleTypes)>> = bun_threading::Guarded::new(Vec::new());
@@ -1870,7 +1869,7 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
     let mut emitted_modules = std::mem::take(&mut *emitted_modules.lock());
     emitted_modules.sort_by_key(|module| module.0);
     let emitted_modules: Vec<ModuleTypes> = emitted_modules.into_iter().map(|module| module.1).collect();
-    let mut declaration_files: DeclarationFiles = (rolls_up_declarations.then(|| typed_outputs(outdir, &outputs, modules.map(Vec::as_slice), &emitted_modules, true, false).ok()).flatten())
+    let declaration_files: DeclarationFiles = (rolls_up_declarations.then(|| typed_outputs(outdir, &outputs, modules.map(Vec::as_slice), &emitted_modules, true, false).ok()).flatten())
         .filter(|typed| typed.iter().all(|(_, typed)| typed.untyped_exports.is_empty() && typed.dropped_casts == 0))
         .map(|typed| typed.into_iter().map(|(path, typed)| (path, typed.text)).collect())
         .map(|mut typed: Vec<(Vec<u8>, Vec<u8>)>| check(&mut typed, &[]))
@@ -1879,7 +1878,7 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
             (report.declaration_files.iter())
                 .filter_map(|(source, text)| {
                     let source = bundler_path(source);
-                    let path = NAMES.iter().find_map(|(from, to)| Some([source.strip_suffix(*from)?, *to].concat()))?;
+                    let path = bun_sema_driver::typed_packages::declarations_path_beside(&bun_sema_driver::typed_packages::javascript_path_beside(&source)?)?;
                     Some((path.into_boxed_slice(), text[..].into()))
                 })
                 .collect()
@@ -1904,15 +1903,7 @@ pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun
         log.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{SKIPPED_SOUND_FILES}: with its types put back it could not be type checked"));
         return TypedOutputs { sound_files: Vec::new(), declaration_files };
     }
-    let sound_files = (found.typed.into_iter().zip(found.marks))
-        .map(|((path, text), (declaration_file, mark))| {
-            let (path, declaration_file) = (bundler_path(&path), bundler_path(&declaration_file));
-            let rolled_up = declaration_files.iter_mut().find(|(path, _)| path[..] == declaration_file[..]);
-            let is_marked = rolled_up.map(|(_, text)| *text = [&mark[..], &text[..]].concat().into_boxed_slice()).is_some();
-            let mark = if is_marked { Vec::new() } else { mark };
-            SoundFile { path: path.into_boxed_slice(), text: text.into_boxed_slice(), declaration_file: declaration_file.into_boxed_slice(), mark: mark.into_boxed_slice() }
-        })
-        .collect();
+    let sound_files = found.typed.into_iter().map(|(path, text)| SoundFile { path: bundler_path(&path).into_boxed_slice(), text: text.into_boxed_slice() }).collect();
     TypedOutputs { sound_files, declaration_files }
 }
 

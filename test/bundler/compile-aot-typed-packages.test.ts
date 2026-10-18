@@ -116,9 +116,10 @@ describe("compile/aot/TypedPackages", () => {
     expect(await built(folder)).toEqual({ said: used(".sound/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
   });
 
-  const mark = (typed = "index.sound.ts", javascript = installed["index.js"]) => `// @sound ${typed} ${sha256(javascript)}\n`;
-  function shipped(folder: string, firstLine = mark()) {
-    write(join(folder, "node_modules", "shapes"), { "index.d.ts": firstLine + installed["index.d.ts"], "index.sound.ts": typed["index.sound.ts"] });
+  const withCondition = (typed: string | null = "./index.aot.ts", folder = ".") =>
+    JSON.stringify({ name: "shapes", version: "1.2.3", type: "module", exports: { ".": { types: `${folder}/index.d.ts`, "bun-aot": typed, default: `${folder}/index.js` } } });
+  function shipped(folder: string, packageJson = withCondition()) {
+    write(join(folder, "node_modules", "shapes"), { "package.json": packageJson, "index.aot.ts": typed["index.sound.ts"] });
   }
 
   test("the typed version that the package ships", async () => {
@@ -131,7 +132,7 @@ describe("compile/aot/TypedPackages", () => {
   test("the program takes the types of what the package ships from the typed file, not from the declaration file", async () => {
     const folder = project("aot-typed-shipped-types");
     shipped(folder);
-    write(join(folder, "node_modules", "shapes"), { "index.d.ts": mark() + installed["index.d.ts"].replace("w: number, h: number", "w: string, h: string") });
+    write(join(folder, "node_modules", "shapes"), { "index.d.ts": installed["index.d.ts"].replace("w: number, h: number", "w: string, h: string") });
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.js\n", exitCode: 0 });
   });
 
@@ -139,12 +140,13 @@ describe("compile/aot/TypedPackages", () => {
     const folder = project("aot-typed-shipped-untyped-export");
     const javascript = installed["index.js"] + "var tools = {};\ntools.each = (list, callback) => list.map(callback);\nexport { tools };\n";
     write(join(folder, "node_modules", "shapes"), {
+      "package.json": withCondition(),
       "index.js": javascript,
-      "index.d.ts": mark("index.sound.ts", javascript) + installed["index.d.ts"] + "export declare const tools: { each(list: number[], callback: (n: number) => number): number[] };\n",
-      "index.sound.ts": typed["index.sound.ts"] + "var tools: any = {};\ntools.each = (list: number[], callback: (n: number) => number): number[] => list.map(callback);\nexport { tools };\n",
+      "index.d.ts": installed["index.d.ts"] + "export declare const tools: { each(list: number[], callback: (n: number) => number): number[] };\n",
+      "index.aot.ts": typed["index.sound.ts"] + "var tools: any = {};\ntools.each = (list: number[], callback: (n: number) => number): number[] => list.map(callback);\nexport { tools };\n",
     });
-    write(folder, { "app.ts": `import { area, tools, where } from "shapes";\nconsole.log(tools.each([area(6, 7) - 1], n => n + 1)[0], /index(\\.sound)?\\.[jt]s/.exec(where())![0]);\n` });
-    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
+    write(folder, { "app.ts": `import { area, tools, where } from "shapes";\nconsole.log(tools.each([area(6, 7) - 1], n => n + 1)[0], /index(\\.aot)?\\.[jt]s/.exec(where())![0]);\n` });
+    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.aot.ts\n", exitCode: 0 });
   });
 
   test("the project's own folder wins over what the package ships, which wins over a companion", async () => {
@@ -157,30 +159,26 @@ describe("compile/aot/TypedPackages", () => {
   });
 
   test.each([
-    ["main and types", { main: "dist/index.js", types: "dist/index.d.ts" }],
-    ["main alone", { main: "./dist/index.js" }],
-    ["exports", { exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } } }],
-  ])("what package.json names by %s may lie in a folder", async (_, fields) => {
+    ["its own package.json", { "package.json": withCondition("./dist/index.aot.ts", "./dist") }],
+    ["the package.json beside what main names", { "package.json": JSON.stringify({ name: "shapes", version: "1.2.3", type: "module", main: "dist/index.js", types: "dist/index.d.ts" }), "dist/package.json": withCondition() }],
+    [
+      "the package.json beside what exports names",
+      { "package.json": JSON.stringify({ name: "shapes", version: "1.2.3", type: "module", exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } } }), "dist/package.json": withCondition() },
+    ],
+  ])("the typed file may lie in a folder, and %s names it", async (_, packageJsons) => {
     const folder = project("aot-typed-shipped-folder");
     const at = join(folder, "node_modules", "shapes");
     rmSync(join(at, "index.js"));
     rmSync(join(at, "index.d.ts"));
-    write(at, {
-      "package.json": JSON.stringify({ name: "shapes", version: "1.2.3", type: "module", ...fields }),
-      "dist/index.js": installed["index.js"],
-      "dist/index.d.ts": mark() + installed["index.d.ts"],
-      "dist/index.sound.ts": typed["index.sound.ts"],
-    });
+    write(at, { ...packageJsons, "dist/index.js": installed["index.js"], "dist/index.d.ts": installed["index.d.ts"], "dist/index.aot.ts": typed["index.sound.ts"] });
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes/dist"), stdout: "42 index.js\n", exitCode: 0 });
   });
 
-  test("a declaration file without the comment, or with half of it, says nothing", async () => {
-    const folder = project("aot-typed-shipped-unmarked");
-    shipped(folder, "");
+  test("a typed file that no package.json names says nothing", async () => {
+    const folder = project("aot-typed-shipped-unnamed");
+    shipped(folder, installed["package.json"]);
     expect(await built(folder)).toEqual({ said: [], stdout: "42 index.js\n", exitCode: 0 });
-    shipped(folder, "// @sound index.sound.ts\n");
-    expect(await built(folder)).toEqual({ said: [], stdout: "42 index.js\n", exitCode: 0 });
-    shipped(folder, "\n" + mark());
+    shipped(folder, withCondition(null));
     expect(await built(folder)).toEqual({ said: [], stdout: "42 index.js\n", exitCode: 0 });
   });
 
@@ -188,21 +186,21 @@ describe("compile/aot/TypedPackages", () => {
     const folder = project("aot-typed-shipped-default");
     const javascript = installed["index.js"] + "export default function twice(n) {\n  return n * 2;\n}\n";
     write(join(folder, "node_modules", "shapes"), {
+      "package.json": withCondition(),
       "index.js": javascript,
-      "index.d.ts": mark("index.sound.ts", javascript) + installed["index.d.ts"] + "export default function twice(n: number): number;\n",
-      "index.sound.ts": typed["index.sound.ts"] + "export default function twice(n: number): number {\n  return n * 2;\n}\n",
+      "index.d.ts": installed["index.d.ts"] + "export default function twice(n: number): number;\n",
+      "index.aot.ts": typed["index.sound.ts"] + "export default function twice(n: number): number {\n  return n * 2;\n}\n",
     });
     write(folder, { "app.ts": `import twice, { area, where } from "shapes";\nconsole.log(twice(area(3, 7)), /index(\\.sound)?\\.[jt]s/.exec(where())![0]);\n` });
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.js\n", exitCode: 0 });
   });
 
   const shippedMismatches: [string, (folder: string) => void, string][] = [
-    ["the JavaScript has other bytes", folder => appendFileSync(join(folder, "node_modules", "shapes", "index.js"), "\n"), "the installed index.js differs from the published file that this typed version was made from (was the package patched?)"],
-    ["the typed file holds other code", folder => write(join(folder, "node_modules", "shapes"), { "index.sound.ts": typed["index.sound.ts"].replace("box.w * box.h", "box.w + box.h") }), "index.sound.ts without its types is not index.js"],
-    ["the typed file holds what cannot be erased", folder => write(join(folder, "node_modules", "shapes"), { "index.sound.ts": typed["index.sound.ts"] + "enum Kind { A }\n" }), "the types of index.sound.ts cannot be erased: an enum at offset " + typed["index.sound.ts"].length + " cannot be erased"],
-    ["the typed file is missing", folder => rmSync(join(folder, "node_modules", "shapes", "index.sound.ts")), "it has no index.sound.ts"],
-    ["the typed file is outside the package", folder => shipped(folder, mark("../index.sound.ts")), "the declaration file beside index.js names no typed file inside the package"],
-    ["the typed file has another name", folder => shipped(folder, mark("other.sound.ts")), "the typed file of index.js is not index.sound.ts"],
+    ["the JavaScript has other bytes", folder => appendFileSync(join(folder, "node_modules", "shapes", "index.js"), "\n"), "index.aot.ts without its types is not index.js (was the package patched?)"],
+    ["the typed file holds other code", folder => write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typed["index.sound.ts"].replace("box.w * box.h", "box.w + box.h") }), "index.aot.ts without its types is not index.js (was the package patched?)"],
+    ["the typed file holds what cannot be erased", folder => write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typed["index.sound.ts"] + "enum Kind { A }\n" }), "the types of index.aot.ts cannot be erased: an enum at offset " + typed["index.sound.ts"].length + " cannot be erased"],
+    ["the typed file is missing", folder => rmSync(join(folder, "node_modules", "shapes", "index.aot.ts")), "it has no index.aot.ts"],
+    ["the typed file stands for JavaScript that is missing", folder => shipped(folder, withCondition("./other.aot.ts")), "it has no other.aot.ts"],
   ];
   test.each(shippedMismatches)("what the package ships: %s: one warning, and the package as installed", async (_, change, why) => {
     const folder = project("aot-typed-shipped-mismatch");
@@ -214,7 +212,7 @@ describe("compile/aot/TypedPackages", () => {
   test("a type error in what the package ships is a warning, and the package is compiled untyped", async () => {
     const folder = project("aot-typed-shipped-lie");
     shipped(folder);
-    write(join(folder, "node_modules", "shapes"), { "index.sound.ts": typed["index.sound.ts"].replace("const box: Box = { w, h };", `const box: Box = { w, h: h as unknown as string };`) });
+    write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typed["index.sound.ts"].replace("const box: Box = { w, h };", `const box: Box = { w, h: h as unknown as string };`) });
     const build = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder);
     const said = build.stdout + build.stderr;
     expect(said).toContain("TS100009: 'shapes' has 1 type errors, the first at ");

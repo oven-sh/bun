@@ -92,10 +92,10 @@ const seen: Record<string, string> = {
 
 describe.concurrent("what else the files of a program say about keys", () => {
   test.each([
-    ["a store under a key of any type", `const holder: any = {}; holder[given] = 1; console.log(holder);`],
-    ["a computed key of any type in an object literal", `console.log({ [given]: 1 });`],
+    ["a store of what may be a function under a key of any type", `const holder: any = {}; holder[given] = given; console.log(holder);`],
+    ["a computed key of any type in an object literal", `console.log({ [given]: () => {} });`],
     ["a computed method of a class", `class Holder { [given]() {} } console.log(Holder);`],
-    ["a store under a variable that holds a symbol", `const key: symbol = given; const holder: any = {}; holder[key] = 1; console.log(holder);`],
+    ["a store under a variable that holds a symbol", `const key: symbol = given; const holder: any = {}; holder[key] = () => {}; console.log(holder);`],
     ["Object.defineProperty with such a key", `console.log(Object.defineProperty({}, given, { value: 1 }));`],
     ["Reflect.set with such a key", `console.log(Reflect.set({}, given, 1));`],
     ["Object.fromEntries", `console.log(Object.fromEntries(given));`],
@@ -105,6 +105,7 @@ describe.concurrent("what else the files of a program say about keys", () => {
 
   test.each([
     ["keys that are strings", `function fill(holder: Record<string, number>, key: string) { holder[key] = 1; return { [key]: 2, ["x" + key]: 3, [\`y\${key}\`]: 4 }; } console.log(fill({}, given));`],
+    ["numbers and strings under keys of any type, which nobody can call", `const holder: any = {}; holder[given] = 1; console.log(holder, { [given]: "a" });`],
     ["keys that are numbers", `const list: number[] = []; for (let i = 0; i < 3; i++) list[i] = i; console.log(list);`],
     ["a well-known symbol", `console.log({ [Symbol.iterator]() {} });`],
     ["a constant made by Symbol.for", `const custom = Symbol.for("mine"); const holder: any = {}; holder[custom] = 1; console.log(holder, { [custom]: 1 });`],
@@ -153,6 +154,9 @@ describe.concurrent("what else the files of a program say about keys", () => {
     ["Symbol.for of a text that is not seen", `console.log(Symbol.for(given));`, "program-symbol *"],
     ["Object.getOwnPropertySymbols", `console.log(Object.getOwnPropertySymbols(given));`, "program-symbol *"],
     ["a Proxy, whose traps are handed every key", `console.log(new Proxy({}, {}));`, "program-symbol *"],
+    ["the constructor of a symbol, which is Symbol without its name", `console.log(Symbol("a").constructor);`, "program-symbol *"],
+    ["the constructor of a well-known symbol taken apart", `const { for: make } = Symbol.iterator.constructor as any; console.log(make);`, "program-symbol *"],
+    ["the constructor of a symbol under a written key", `const held: symbol = Symbol("a"); console.log((held as any)["constructor"]);`, "program-symbol *"],
   ])("the symbols a program can hold: %s", async (_, text, fact) => {
     expect((await factsOf(text)).has(fact)).toBe(true);
   });
@@ -161,6 +165,14 @@ describe.concurrent("what else the files of a program say about keys", () => {
     const facts = await factsOf(`const table: any = { "*": 1 }; table["*"] = 2; console.log("" + table["*"] + Symbol.for("*").description);`);
     expect(["property *", "program-key *", "program-symbol *"].filter(fact => facts.has(fact))).toEqual([]);
     expect([`property "*"`, `program-property "*"`, `program-key "*"`, `program-symbol "*"`].filter(fact => !facts.has(fact))).toEqual([]);
+  });
+
+  test.each([
+    ["a key that is not seen, read from a value of any type", `console.log(given[given]);`],
+    ["the constructor of a value of any type", `console.log(given.constructor);`],
+    ["the constructor of a string", `console.log("a".constructor);`],
+  ])("what may be anything is judged where functions are judged, not as a symbol: %s", async (_, text) => {
+    expect((await factsOf(text)).has("program-symbol *")).toBe(false);
   });
 
   test("a program that names no symbol holds none, whatever the built-in modules name", async () => {

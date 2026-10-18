@@ -637,7 +637,7 @@ describe.concurrent("the baseline", () => {
 describe.concurrent("the summary", () => {
   test("a build ends with one line that says how much of the program is typed", async () => {
     const { stdout, exitCode } = await build(openPoint);
-    expect(stdout).toMatch(/^aot: 100\.0% of reads typed, 2 of 3 types open, 0 classes without a layout, 0 packages and 0 files untyped \(--aot-warn=all lists them\)$/m);
+    expect(stdout).toMatch(/^aot: 33\.3% of reads typed, 2 of 3 types open, 0 classes without a layout, 0 packages and 0 files untyped \(--aot-explain lists them\)$/m);
     expect(exitCode).toBe(0);
   }, 120_000);
 

@@ -5439,7 +5439,7 @@ pub mod bv2_impl {
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
                 (*runtime_parse_task).ctx = Some(ctx_mut);
-                (*runtime_parse_task).loader = Some(Loader::Js);
+                (*runtime_parse_task).loader = Some(Loader::Ts);
             }
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
@@ -7680,17 +7680,6 @@ pub mod bv2_impl {
             }
             let inside_outdir = |path: &[u8]| options::OutputFile::path_inside(&outdir, path);
             for file in typed.sound_files {
-                let beside = inside_outdir(&file.declaration_file);
-                let root_dir = &self.transpiler.options.root_dir;
-                let declarations = self.declaration_files.iter_mut().find(|(source, _)| options::OutputFile::declaration_path(root_dir, source).is_some_and(|path| path == beside));
-                match declarations {
-                    Some((_, text)) => *text = [&file.mark[..], &text[..]].concat().into_boxed_slice(),
-                    None if file.mark.is_empty() => {}
-                    None => {
-                        self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: no declaration file is written as {}", options::SKIPPED_SOUND_FILES, bstr::BStr::new(&beside)));
-                        continue;
-                    }
-                }
                 output_files.push(options::OutputFile::sound(&file.path, inside_outdir(&file.path), file.text, false));
             }
             output_files.extend(typed.declaration_files.into_iter().map(|(path, text)| options::OutputFile::declaration(&path, inside_outdir(&path), text, false)));

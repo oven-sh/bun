@@ -924,6 +924,33 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
+    fn json_signatures_with_type_argument(
+        &mut self,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<List<'p, SigId>> {
+        let hir = self.hir(file);
+        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[callee].kind else {
+            return None;
+        };
+        let ExprKind::Ident(written) = hir[obj].kind else { return None };
+        if self.atoms().bytes(name) != b"parse"
+            || self.atoms().bytes(written) != b"JSON"
+            || self.bound(file).expr_symbol[obj.idx()].is_some()
+        {
+            return None;
+        }
+        let global = self.symbol_of_identifier(file, obj, written)?;
+        if self.hir(global.file).kind != FileKind::Declaration {
+            return None;
+        }
+        let holder = self.atoms().lookup(b"JSONWithTypeArgument")?;
+        let holder = self.get_global_type(holder, 0, false)?;
+        let holder = self.declared_type(holder);
+        let method = self.type_of_property(holder, name)?;
+        Some(self.signatures(method, false))
+    }
+
     /// `resolveCallExpression`, `resolveNewExpression`
     fn resolve_call_or_new(
         &mut self,
@@ -977,6 +1004,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let in_place = self.members_in_place_hits;
         let mut sigs = self.signatures(callee, is_new);
+        if !is_new
+            && data.type_args.len == 1
+            && let Some(generic) = self.json_signatures_with_type_argument(file, data.callee)
+        {
+            sigs = generic;
+        }
         // A class that may not be constructed from here is an error.
         if is_new
             && !sigs.is_empty()
@@ -1175,6 +1208,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if hir[c].chain != Chain::No {
             return self.return_type_of_single_non_generic_signature_of_call_chain(file, c);
+        }
+        if hir[c].type_args.len == 1 && self.json_signatures_with_type_argument(file, callee).is_some() {
+            return None;
         }
         let called = self.type_of_expr(file, callee);
         let func_type = self.check_non_null_type(file, callee, called);

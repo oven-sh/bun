@@ -123,7 +123,7 @@ large-parsed-data-updated-twice-in-place: 1 layouts, 7 given, 1 open, places 18 
 large-parsed-data-via-any-into-field: 3 layouts, 0 given, 0 open, places 26 of 37, reads 5 of 12
 let-from-narrowed-number: 0 layouts, 0 given, 0 open, places 2 of 10, reads 0 of 1
 line-continuation-in-tagged-template: 0 layouts, 0 given, 0 open, places 2 of 11, reads 1 of 5
-literal-for-class-type: 2 layouts, 0 given, 1 open, places 10 of 21, reads 2 of 7
+literal-for-class-type: 1 layouts, 0 given, 1 open, places 8 of 19, reads 2 of 7
 literal-function-cast-to-larger-type: 2 layouts, 0 given, 0 open, places 5 of 13, reads 2 of 3
 literal-matches-union-index-signature: 0 layouts, 0 given, 0 open, places 9 of 18, reads 0 of 6
 literal-under-non-null: 2 layouts, 0 given, 0 open, places 9 of 17, reads 3 of 5

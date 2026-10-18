@@ -13,7 +13,6 @@ type Message = { ruleId: string; messageId: string; severity: number; line: numb
 
 const user = `export {};\ninterface User { id: number; name: string }\ndeclare const body: any;\ndeclare function greet(user: User): string;\ndeclare function double(n: number): number;\n`;
 
-const missing = `declare const byName: Map<string, number>;\ndeclare const boxes: Map<string, { size: number }>;\ndeclare const lists: Map<string, number[]>;\ndeclare const list: (number | undefined)[];\ndeclare const words: (string | undefined)[];\ndeclare const rows: ({ size: number } | undefined)[];\ndeclare const options: { port?: number; proxy?: { port?: number; host: string } };\ndeclare function double(n: number): number;\ndeclare const i: number;\nexport {};\n`;
 const entry = `interface Entry { path: string; hasMessages: boolean }\ninterface Output { text: string }\ninterface Config { depth: number; name: string }\ninterface Settings { config: Config; mode: string }\ntype Run = () => void;\ndeclare function open(entry: Entry): void;\nexport {};\n`;
 
 const bunTest = `import { jest, spyOn, vi } from "bun:test";\n`;
@@ -76,171 +75,6 @@ const rules: Record<string, Case[]> = {
     user + `const it = { id: 1, name: "a" } as User;`,
     user + `const it: User = { id: 1, name: "a" };\nconst loose = it as any;\nconst again = loose as User;`,
     user + `const n = 1 as number;`,
-  ],
-  "aot-non-null-escapes": [
-    // Stored, passed, returned.
-    missing + `const size = «byName.get("a")!»;`,
-    missing + `let size: number;\nsize = «byName.get("a")!»;`,
-    missing + `let size = 0;\nsize ||= «byName.get("a")!»;`,
-    missing + `double(«byName.get("a")!»);`,
-    missing + `console.log(«byName.get("a")!»);`,
-    missing + `new Set([«byName.get("a")!»]);`,
-    missing + `function f(): number { return «byName.get("a")!»; }`,
-    missing + `const f = () => «byName.get("a")!»;`,
-    missing + `const it = { size: «byName.get("a")!» };`,
-    missing + `class Box { size = «byName.get("a")!»; }`,
-    missing + `function f(size = «byName.get("a")!») { return size; }`,
-    missing + `function* f() { yield «byName.get("a")!»; }`,
-    missing + `async function f() { await «byName.get("a")!»; }`,
-    missing + `export default «byName.get("a")!»;`,
-    missing + `const port = «options.port!»;`,
-    missing + `const size = «byName.get("a")!!»;`,
-    missing + `declare const node: { next: { id: number } | null };\nconst next = «node.next!»;`,
-    missing + `declare const names: Record<number, string>;\nconst name = names[«byName.get("a")!»];`,
-    missing + `const copy = { ...«boxes.get("a")!» };`,
-    missing + `for (const key in «boxes.get("a")!») console.log(key);`,
-    // Through `?:`, `&&`, `||`, `??` and the comma.
-    missing + `const size = i > 0 ? «byName.get("a")!» : 0;`,
-    missing + `const size = i || «byName.get("a")!»;`,
-    missing + `const size = i && «byName.get("a")!»;`,
-    missing + `const size = (double(1), «byName.get("a")!»);`,
-    missing + `const size = «byName.get("a")!» && 1;`,
-    missing + `const size = «byName.get("a")!» || 1;`,
-    missing + `const size = «byName.get("a")!» ?? 1;`,
-    missing + `const size = «list[i]!» && 1;`,
-    missing + `const size = «list[i]!» ?? 1;`,
-    missing + `if («byName.get("a")!» ?? i) double(1);`,
-    // Only `a[i]!` is left alone under an operator.
-    missing + `const small = «byName.get("a")!» < 5;`,
-    missing + `const next = «byName.get("a")!» + 1;`,
-    missing + `const small = «options.port!» < 5;`,
-    missing + `const negative = -«byName.get("a")!»;`,
-    missing + `let total = 0;\ntotal += «byName.get("a")!»;`,
-    missing + `declare const table: Record<string, number | undefined>;\nconst small = «table.a!» < 5;`,
-    missing + `const same = «byName.get("a")!» == i;`,
-    missing + `switch («byName.get("a")!») {\n  case 1:\n    break;\n}`,
-    missing + `switch (i) {\n  case «byName.get("a")!»:\n    break;\n}`,
-    missing + `const small = («list[i]!» as number) < 5;`,
-    // Not arithmetic on numbers.
-    missing + `const text = «words[i]!» + "x";`,
-    missing + `const text = "x" + «list[i]!»;`,
-    missing + `const text = \`<\${«list[i]!»}>\`;`,
-    // The compiler keeps these elements as integers.
-    missing + `enum Kind { A, B }\ndeclare const kinds: (Kind | undefined)[];\nconst first = «kinds[i]!» < Kind.B;`,
-    missing + `enum Kind { A, B }\ndeclare const kinds: (Kind | undefined)[];\nswitch («kinds[i]!») {\n  case Kind.A:\n    break;\n}`,
-    missing + `declare const few: readonly (1 | 2 | undefined)[];\nconst small = «few[i]!» < 2;`,
-    // `a[i]!` that travels.
-    missing + `const first = «list[0]!»;`,
-    missing + `double(«list[i]!»);`,
-    missing + `function f() { return «list[i]!»; }`,
-    missing + `function f() { const first = «list[i]!»; return first; }`,
-    missing + `function f() { const first = «list[i]!»; return first < 5 ? double(first) : 0; }`,
-    missing + `function f() { const first: number = «list[i]!»; return first < 5; }`,
-    missing + `function f() { let first = «list[i]!»; return first < 5; }`,
-    missing + `function f() { const first = «list[i]!»; return first && 1; }`,
-    missing + `function f() { const first = «list[i]!»; return \`\${first}\`; }`,
-    missing + `const first = «list[i]!»;\nexport const small = first < 5;`,
-    // The test does not stand ahead of every use.
-    missing + `function f() { const box = «rows[i]!»; const kept = [box]; if (!box) return 0; return kept.length; }`,
-    missing + `function f() { const box = «rows[i]!»; if (!box) return [box].length; return box.size; }`,
-    missing + `function f() { const box = «rows[i]!»; if (!box) return 0; return () => box.size; }`,
-    missing + `function f() { const box = «rows[i]!», other = rows[0]!; if (!other) return 0; return box.size + other.size; }`,
-    missing + `function f() { const first = «list[i]!»; if (first === null) return 0; return double(first); }`,
-    // `a?.b!` where `b` itself can be missing.
-    missing + `const port = «options.proxy?.port!»;`,
-    // What is read before it is written.
-    missing + `«list[i]!»++;`,
-    missing + `«list[i]!» += 1;`,
-    missing + `declare let size: number | undefined;\n«size!»++;`,
-    // Nobody sees the value, and it still throws.
-    missing + `void «byName.get("a")!»;`,
-    missing + `«byName.get("a")!»;`,
-    // JavaScript throws there too.
-    missing + `byName.get("a")!.toFixed(1);`,
-    missing + `const size = boxes.get("a")!.size;`,
-    missing + `const size = boxes.get("a")!["size"];`,
-    missing + `boxes.get("a")!.size = 1;`,
-    missing + `options.proxy!.port = 1;`,
-    missing + `declare const run: (() => void) | undefined;\nrun!();`,
-    missing + `declare const Box: (new () => object) | undefined;\nnew Box!();`,
-    missing + `declare const tag: ((strings: TemplateStringsArray) => string) | undefined;\ntag!\`a\`;`,
-    missing + `const { size } = boxes.get("a")!;`,
-    missing + `const [first] = lists.get("a")!;`,
-    missing + `function f({ size } = boxes.get("a")!) { return size; }`,
-    missing + `let size: number;\n({ size } = boxes.get("a")!);`,
-    missing + `let first: number | undefined;\n[first] = lists.get("a")!;`,
-    missing + `const all = [...lists.get("a")!];`,
-    missing + `Math.max(...lists.get("a")!);`,
-    missing + `for (const n of lists.get("a")!) double(n);`,
-    missing + `function* f() { yield* lists.get("a")!; }`,
-    missing + `throw boxes.get("a")!;`,
-    missing + `declare const bases: Map<string, new () => object>;\nclass A extends bases.get("a")! {}`,
-    missing + `const size = (i ? boxes.get("a")! : boxes.get("b")!).size;`,
-    missing + `const size = (boxes.get("a")! as { size: number }).size;`,
-    // A test only asks.
-    missing + `if (byName.get("a")!) double(1);`,
-    missing + `while (byName.get("a")!) double(1);`,
-    missing + `do double(1); while (byName.get("a")!);`,
-    missing + `for (; byName.get("a")!; ) double(1);`,
-    missing + `const missing = !byName.get("a")!;`,
-    missing + `const has = !!byName.get("a")!;`,
-    missing + `const has = Boolean(byName.get("a")!);`,
-    missing + `const size = byName.get("a")! ? 1 : 0;`,
-    missing + `if (byName.get("a")! && i) double(1);`,
-    missing + `if (i || byName.get("a")!) double(1);`,
-    missing + `if (i ? byName.get("a")! : 0) double(1);`,
-    missing + `const size = (byName.get("a")! && 3) || 4;`,
-    missing + `const size = (byName.get("a")! || 3) && 4;`,
-    missing + `const same = byName.get("a")! === i;`,
-    missing + `const other = byName.get("a")! !== i;`,
-    missing + `const same = (byName.get("a")! as number) === i;`,
-    missing + `const missing = byName.get("a")! == null;`,
-    missing + `const missing = byName.get("a")! != undefined;`,
-    missing + `const five = byName.get("a")! == 5;`,
-    missing + `const kind = typeof byName.get("a")!;`,
-    missing + `const has = words[i]! in options;`,
-    missing + `const is = boxes.get("a")! instanceof Object;`,
-    // `a[i]!` under a comparison or arithmetic on numbers.
-    missing + `const small = list[i]! < 5;`,
-    missing + `const small = list[i]! <= 5 || list[i]! > 7 || 9 >= list[i]!;`,
-    missing + `const sorted = list[i]! < list[i + 1]!;`,
-    missing + `const early = words[i]! < "b";`,
-    missing + `const next = list[i]! + 1;`,
-    missing + `const all = [list[i]! - 1, list[i]! * 2, list[i]! / 2, list[i]! % 2, list[i]! ** 2, -list[i]!, +list[i]!, ~list[i]!];`,
-    missing + `const all = [list[i]! | 0, list[i]! & 7, list[i]! ^ 1, list[i]! << 1, list[i]! >> 1, list[i]! >>> 1];`,
-    missing + `let total = 0;\ntotal += list[i]!;\ntotal *= list[i]!;`,
-    missing + `while (list[i]! <= 5) double(1);`,
-    missing + `declare const table: Record<string, number | undefined>;\nconst small = table["a"]! < 5;`,
-    missing + `declare const few: (1 | 2 | undefined)[];\nconst small = few[i]! < 2;`,
-    // On the left of `||`, and what a `switch` is about.
-    missing + `const first = list[i]! || 0;`,
-    missing + `double(list[i]! || 0);`,
-    missing + `const first = list[i]! || list[i + 1]! || 0;`,
-    missing + `switch (list[i]!) {\n  case 1:\n    break;\n}`,
-    missing + `switch (words[i]!) {\n  case "a":\n    break;\n}`,
-    // A constant of a function that is only compared, computed with and tested.
-    missing + `function f() { const first = list[i]!; return first < 5; }`,
-    missing + `function f() { const first = list[i]!; return [first + 1, -first, first === 1, !first, typeof first, first ? 1 : 0, first || 0]; }`,
-    missing + `function f() { const first = list[i]!; if (first && i) return 1; switch (first) { case 1: return 2; } return 0; }`,
-    missing + `function f() { const first = list[i]!; return [1, 2].map(n => (first < 5 ? n : -n)); }`,
-    // Or that is tested first.
-    missing + `function f() { const box = rows[i]!; if (!box) return 0; return box.size; }`,
-    missing + `function f() { const box = rows[i]!; if (box) return box.size; return 0; }`,
-    missing + `function f() { const box = rows[i]!; return box ? box.size : 0; }`,
-    missing + `function f() { const first = list[i]!; if (first === undefined) return 0; return double(first); }`,
-    missing + `function f() { const first = list[i]!; if (first !== undefined) return double(first); return 0; }`,
-    missing + `function f() { const word = words[i]!; if (word == null) return 0; return word.length; }`,
-    missing + `function f() { for (let n = 0; n < 3; n++) { const box = rows[n]!; if (!box) continue; double(box.size); } }`,
-    missing + `function f() { const box = rows[i]!; if (!box) throw new RangeError("no box"); return box; }`,
-    // Nothing is missing, or nothing is asserted.
-    missing + `declare const size: number;\nconst copy = size!;`,
-    missing + `const port = options.proxy?.host!;`,
-    missing + `let box: { size: number } = null!;`,
-    missing + `class A { box: { size: number } = undefined!; }`,
-    missing + `const box: { size: number } = (void 0)!;`,
-    missing + `declare const body: any;\nconst id: number = body.id!;`,
-    missing + `declare const value: unknown;\nconst it = value!;`,
-    missing + `let size: number | undefined;\nsize! = 4;`,
   ],
   "aot-cast-lacks-member": [
     // A member that compiled code keeps as a bare number or boolean.
@@ -865,21 +699,6 @@ const rules: Record<string, Case[]> = {
   ],
 };
 
-/** With `noUncheckedIndexedAccess`. */
-const rulesOfCheckedReads: Record<string, Case[]> = {
-  "aot-non-null-escapes": [
-    missing + `declare const bytes: Uint8Array;\nconst small = «bytes[i]!» < 5;`,
-    missing + `declare const ints: Int32Array;\nconst sum = «ints[i]!» + 1;`,
-    missing + `declare const bytes: Uint8Array;\nfunction f() { const first = «bytes[i]!»; return first < 5; }`,
-    missing + `declare const numbers: number[];\nconst first = «numbers[0]!»;`,
-    missing + `declare const floats: Float64Array;\nconst small = floats[i]! < 5;`,
-    missing + `declare const numbers: number[];\nconst small = numbers[i]! < 5;`,
-    missing + `declare const text: string;\nconst early = text[i]! < "b";`,
-    missing + `declare const bytes: Uint8Array;\nconst first = bytes[i]! || 0;`,
-    missing + `declare const numbers: number[];\nfunction f() { const first = numbers[i]!; if (first === undefined) return 0; return double(first); }`,
-  ],
-};
-
 function marked(code: string, messages: Message[]) {
   const lines = code.split("\n");
   const offset = (line: number, column: number) =>
@@ -922,10 +741,7 @@ async function lint(files: Record<string, string>, args: string[], more: Record<
   return { of, exitCode };
 }
 
-const tables = [
-  ...Object.entries(rules).map(([name, table]) => [name, table, {}] as const),
-  ...Object.entries(rulesOfCheckedReads).map(([name, table]) => [name, table, { noUncheckedIndexedAccess: true }] as const),
-];
+const tables = Object.entries(rules).map(([name, table]) => [name, table, {}] as const);
 describe.concurrent.each(tables)("bun/%s", (name, table, more) => {
   test("reports", async () => {
     const rule = `bun/${name}`;
@@ -1003,9 +819,9 @@ describe.concurrent("the switch", () => {
 
   test("a config file's setting for a rule wins", async () => {
     const code = user + `const it = body as User;\nconst byName = new Map<string, number>();\nconst size = byName.get("a")!;\ndouble(body.id);\n`;
-    const rules = { "bun/aot-outside-data": "off", "bun/aot-non-null-escapes": "warn", "bun/aot-no-any-to-typed": "error" };
+    const rules = { "bun/aot-outside-data": "off", "bun/aot-no-any-to-typed": "error" };
     const { of, exitCode } = await lint({ "a.ts": code, "eslint.config.mjs": flatConfig(rules) }, ["--aot"]);
-    expect(rulesAt(of("a.ts"))).toEqual(["8 bun/aot-non-null-escapes", "9 bun/aot-no-any-to-typed"]);
+    expect(rulesAt(of("a.ts"))).toEqual(["9 bun/aot-no-any-to-typed"]);
     expect(exitCode).toBe(1);
   });
 

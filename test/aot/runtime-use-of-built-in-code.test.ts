@@ -168,7 +168,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["fails an assertion, whose message is made with getters", `require("node:assert").deepStrictEqual(Object.getPrototypeOf(JSON.parse(process.argv[2])), {});`],
     ["takes node:util under its other name", `console.log(require("sys").inspect({}, JSON.parse(process.argv[2])));`],
     ["imports node:util when it runs", `import("node:util").then((util: any) => console.log(util.inspect({}, JSON.parse(process.argv[2]))));`],
-    ["takes a function of node:util by its position", `console.log((Object.values(require("node:util")) as any[])[Number(process.argv[3])]({}, JSON.parse(process.argv[2])));`],
     ["imports Console", `const { Console } = require("node:console"); new Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`],
     ["makes a Console of console under another name", `const output = console; new output.Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`],
     ["defines properties by descriptors that are not seen", `console.log(Object.defineProperties({}, JSON.parse(process.argv[2])));`],
@@ -187,6 +186,10 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["takes the symbol from Bun.inspect by its position", `const custom: symbol = (Object.values(Bun.inspect) as any[])[0]; const holder: any = {}; holder[custom] = function ${replacing} return options.stylize${called} }; console.log(holder);`],
     ["installs such a symbol through Object.fromEntries", `const custom: symbol = (Object.values(Bun.inspect) as any[])[0]; console.log(Object.fromEntries([[custom, function ${replacing} return options.stylize${called} }]]));`],
     ["takes inspect, the symbol and the table of node:util by their positions", `const inspect: any = (Object.values(require("node:util")) as any[])[Number(process.argv[2])]; const custom: any = (Object.values(inspect) as any[])[0]; console.log({ [custom](depth: any, options: any) { Object.setPrototypeOf((Object.values(inspect) as any[])[2], function () {}); return options.stylize${called} } });`],
+    ["takes the table by its position and the setter of prototypes out of a table of its own", `const custom = Symbol.for("nodejs.util.inspect.custom"); const own: any = { a: 1 }; console.log({ [custom](depth: any, options: any, inspect: any) { own[process.argv[2]].call({}, process.argv[3]).call((Object.values(inspect) as any[])[2], function () {}); return options.stylize${called} } });`],
+    ["comes by Symbol without its name and puts the text together", `const unnamed: any = Symbol("a").constructor; console.log({ [unnamed.for("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
+    ["stores such a symbol's inspector under a variable", `const unnamed: any = Symbol("a").constructor; const custom = unnamed.for("nodejs.util.inspect." + process.argv[2]); const holder: any = {}; holder[custom] = function ${replacing} return options.stylize${called} }; console.log(holder);`],
+    ["takes Symbol.for out of the constructor of a well-known symbol", `const { for: make } = Symbol.iterator.constructor as any; console.log({ [make("nodejs.util.inspect." + process.argv[2])]${replacing} return options.stylize${called} } });`],
     ["lists the symbols of a URL", `console.log({ [Object.getOwnPropertySymbols(Object.getPrototypeOf(new URL("http://x/")))[0]]${replacing} return options.stylize${called} } });`],
     ["lists the keys of a URL", `console.log({ [Reflect.ownKeys(Object.getPrototypeOf(new URL("http://x/")))[0]]${replacing} return options.stylize${called} } });`],
     ["answers for the symbol with a Proxy among the ancestors", `console.log(Object.create(new Proxy({}, { get() { return function ${replacing} return options.stylize${called} }; } })));`],
@@ -206,6 +209,60 @@ describe.concurrent("the built-in code that is part of every program", () => {
   test("util.inspect copies a regular expression that exists: it asks for no table of Unicode properties", async () => {
     expect((await factsOf(`console.log({ a: 1 }, /x/);`)).has("regexp computed")).toBe(false);
     expect((await factsOf(`console.log(new RegExp(process.argv[2]));`)).has("regexp computed")).toBe(true);
+  });
+
+  const hostile = `{ toUpperCase() { return "constructor"; } }`;
+  const cache = `{ _sessionCache: { map: function () {} } }`;
+  test.each([
+    ["a function of node:util taken by Object.values", `for (const taken of Object.values(require("node:util")) as any[]) console.log(taken(${hostile}));`],
+    ["a function of node:util taken by Object.entries", `for (const [, taken] of Object.entries(require("node:util")) as any[]) console.log(taken(${hostile}));`],
+    ["a function of node:util taken by a rest", `const { format, ...rest } = require("node:util"); console.log(rest);`],
+    ["a function of node:util taken by a spread", `console.log({ ...require("node:util") });`],
+    ["a function of node:util taken by Object.assign", `console.log(Object.assign({}, require("node:util")));`],
+    ["a function of node:util taken by a replacer", `JSON.stringify(require("node:util"), (key, taken) => console.log(taken));`],
+    ["Object.values handed on beside node:util", `console.log([require("node:util")].map(Object.values));`],
+    ["the session of an agent of node:https by name", `console.log(require("node:https").Agent.prototype._getSession.call(${cache}, "constructor"));`],
+    ["the methods of an agent of node:https by Object.values", `for (const taken of Object.values(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
+    ["the methods of an agent by Object.values that arrives through a merge", `const take = process.argv[2] ? Object.values : Object.keys; for (const taken of take(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
+    ["the methods of an agent by Object.values that is a parameter's default", `((take = Object.values) => { for (const taken of take(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor")); })();`],
+    ["the methods of an agent by Object.entries that a pattern falls back on", `const { take = Object.entries } = {} as any; for (const [, taken] of take(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
+    ["the methods of an agent by Object.values that a function returns", `for (const taken of (() => Object.values)()(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
+    ["the methods of an agent by the values of an Object that has no name", `class Plain { one = 1 } delete (Plain.prototype as any).constructor; const unnamed: any = new Plain().constructor; for (const taken of unnamed.values(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor"));`],
+    ["the methods of an agent by the entries of whatever a function is handed", `((unnamed: any) => { for (const [, taken] of unnamed.entries(require("node:https").Agent.prototype) as any[]) console.log(taken.call(${cache}, "constructor")); })(JSON.parse(process.argv[2]));`],
+    ["the cache of an agent of node:https", `const agent = new (require("node:https").Agent)(); agent._sessionCache.map = function () {}; console.log(agent);`],
+    ["the listeners of a stream by name, which a table out of data could answer for", `console.log(process.stdout.listeners("constructor")[0]);`],
+    ["the raw listeners of a stream", `console.log(new (require("node:stream").Readable)().rawListeners(process.argv[2]));`],
+    ["events.getEventListeners of a stream", `console.log(require("node:events").getEventListeners(process.stdin, "constructor"));`],
+    ["the methods of an emitter by Object.values", `for (const taken of Object.values(require("node:events").prototype) as any[]) console.log(taken.call(process.stdout, "constructor"));`],
+    ["the methods of process.stdout by Object.values", `for (const taken of Object.values(Object.getPrototypeOf(process.stdout)) as any[]) console.log(taken({ TERM: "constructor" }));`],
+  ])("the world is open where a built-in table with a prototype can hand out what it inherits: %s", async (_, text) => {
+    await factsOf(text, openedByTheTableOfListeners);
+  });
+
+  test.each([
+    ["util.debuglog, whose table is read under what the argument answers", `console.log(require("node:util").debuglog(${hostile}));`],
+    ["the depth of colors, whose table is read under TERM", `console.log(process.stdout.getColorDepth({ TERM: "constructor" }));`],
+    ["the listener of removeListener, which is handed what removeAllListeners finds", `const stream = new (require("node:stream").Readable)(); stream.on("removeListener", (type: any, listener: any) => console.log(listener)); stream.removeAllListeners("constructor");`],
+  ])("the tables of streams, of debuglog and of terminals have no prototype: the world stays closed with %s", async (_, text) => {
+    await factsOf(text);
+  });
+
+  test.each([
+    ["its own literal", `const own = { a: 1 }; console.log(require("node:util").format("%s", 1), Object.values(own), Object.entries(own), { ...own });`],
+    ["an array", `const list = [1, 2]; console.log(require("node:util").format("%s", 1), Object.values(list), Object.entries(list));`],
+    ["an instance of its own class", `class Own { a = 1; } console.log(require("node:util").format("%s", 1), Object.values(new Own()));`],
+    ["a map, a list and form data by their own methods", `const given: any = JSON.parse(process.argv[2]); console.log([...given.values()].length, [...given.entries()].length, "" + new Map([[1, 2]]).values().next().value);`],
+  ])("to take the members of %s by position takes nothing of the runtime", async (_, text) => {
+    expect((await factsOf(text)).has("program-member *")).toBe(false);
+  });
+
+  const server = `require("node:http").createServer((request: any, response: any) =>`;
+  test.each([
+    ["node/_http_agent.ts", "gives an agent names of its own", `const agent = new (require("node:http").Agent)(); agent.getName = () => process.argv[2]; console.log(agent);`],
+    ["node/_http_incoming.ts", "adds a header line to an object of its choice", `${server} request._addHeaderLine(process.argv[2], "x", response)).listen(0);`],
+    ["internal/util/inspect.ts", "loads node:dgram, whose errors are printed with getters", `console.log(require("node:dgram").createSocket("udp4"));`],
+  ])("any property may be read by %s where the program %s", async (file, _, text) => {
+    expect((await factsOf(text)).has(`escapes property /$bun/js/${file}`)).toBe(true);
   });
 
   test("node:module's wrapper, a Proxy that stores for its caller, does not open the world", async () => {

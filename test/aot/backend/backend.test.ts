@@ -2,7 +2,7 @@
 // the TechEmpower Framework Benchmarks (plaintext, JSON, one query, several queries, fortunes, updates) and a small shop in several
 // modules (a route with parameters, a session, a body validated with zod, two queries, a request to another HTTP service, and
 // an answer of two kilobytes). It is built with `bun build --compile --aot`, started, and asked. ./answers.ts has what is right.
-// ./by-type holds two modules of the shop once more, with Bun.safeValidate<Order>() and Bun.validate<RatesAnswer>() in place of zod.
+// ./by-type holds two modules of the shop once more, with JSON.parse<Order>() and JSON.parse<RatesAnswer>() in place of zod.
 // Laid over ./app they make a second program, which must answer the same.
 //
 //   AOT_BACKEND=1 bun test test/aot/backend

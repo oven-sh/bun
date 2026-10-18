@@ -12,6 +12,7 @@ const FILES_PER_CHECKER: usize = 32;
 const MODULE_IS_MORE_THAN_ITS_EXPORTS: &str = "`module` is more than module.exports";
 const EXPORTS_A_FUNCTION: &str = "module.exports = a function";
 const IS_AN_ENTRY_POINT: &str = "it is an entry point: the host hands out what it exports";
+const EXPRESSIONS_AROUND_A_TEST: u32 = 8;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CommonJsExports {
@@ -226,6 +227,7 @@ struct Module {
     stars: Vec<ExprId>,
     is_exact_outside_cycles: bool,
     is_entry_point_without_other_obstacles: bool,
+    names_stored_on_exported_function: Vec<Atom>,
 }
 
 impl Module {
@@ -972,7 +974,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(module) = modules.get(&file).filter(|module| module.is_entry_point_without_other_obstacles && module.re_exports.is_none() && module.stars.is_empty() && module.methods.is_empty()).filter(hands_out_only_its_exports) else { continue };
             let written = graph.resolved.iter().chain(&graph.require_resolutions).filter(|import| *import.1 == file).map(|import| import.0.0);
             let importers = written.chain(graph.implicit.iter().filter(|import| import.1 == file).map(|import| import.0)).collect();
-            found.entry_points_known_by_name.insert(file, ExportsKnownByName { names: module.stores.keys().chain(module.getters.keys()).copied().collect(), importers });
+            found.entry_points_known_by_name.insert(file, ExportsKnownByName { names: module.stores.keys().chain(module.getters.keys()).chain(&module.names_stored_on_exported_function).copied().collect(), importers });
         }
         found.obstacles = obstacles.into_iter().collect();
         found.obstacles.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
@@ -1853,9 +1855,49 @@ impl<'p, 's> Checker<'p, 's> {
         (mentions == 1).then_some(literal)
     }
 
+    fn names_stored_on_function_that_only_its_name_reaches(&mut self, file: FileId, name_of_function: ExprId) -> Option<Vec<Atom>> {
+        let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.file_exprs_by_kind(file));
+        let ExprKind::Ident(name) = hir[name_of_function].kind else { return None };
+        let local = bound.expr_symbol[name_of_function.idx()];
+        let symbol = bound.symbols.get(local.idx()).filter(|symbol| !symbol.flags.contains(SymFlags::MERGED))?;
+        let is_function = match symbol.decls[..] {
+            [Decl::Fn(_)] => true,
+            [Decl::Var(pat)] => matches!(bound.pat_parent[pat.idx()], PatParent::Var(declaration) if matches!(hir[pat].kind, PatKind::Ident(_))
+                && hir[declaration].init.is_some()
+                && matches!(hir[hir[declaration].init].kind, ExprKind::Fn(function) if hir[function].name.is_none())
+                && hir[declaration].ty.is_none()
+                && !hir[declaration].flags.intersects(Flags::EXPORT | Flags::AMBIENT)),
+            _ => false,
+        };
+        let reaches_itself_without_its_name = by_kind.of(ExprTag::Ident).iter().any(|&e| matches!(hir[e].kind, ExprKind::Ident(known::arguments)) && bound.is_arguments_object(e));
+        if !is_function || reaches_itself_without_its_name || !bound.assignments_to(local).is_empty() || self.is_stored_through_casts(file, local) {
+            return None;
+        }
+        let holder = self.files().sym(file, local);
+        let mut names = Vec::new();
+        for &mention in by_kind.of(ExprTag::Ident) {
+            let is_mention = matches!(hir[mention].kind, ExprKind::Ident(named) if named == name) && bound.expr_parent[mention.idx()] != Parent::None && self.identifier_binding(file, mention, name) == Some(holder);
+            if !is_mention || mention == name_of_function || bound.is_in_type_query(mention) {
+                continue;
+            }
+            let Parent::Expr(around) = bound.expr_parent[mention.idx()] else { return None };
+            match hir[around].kind {
+                ExprKind::Call(call) if hir[call].callee == mention => {}
+                ExprKind::Unary { op: UnOp::Typeof, .. } => {}
+                ExprKind::Dot { obj, name: member, chain: Chain::No, .. } if obj == mention => match self.member_use(file, around) {
+                    MemberUse::Store(_) | MemberUse::OtherStore => names.push(member),
+                    MemberUse::Read if !matches!(self.atoms().bytes(member), b"prototype" | b"constructor") => {}
+                    _ => return None,
+                },
+                _ => return None,
+            }
+        }
+        Some(names)
+    }
+
     fn find_commonjs_module(&mut self, file: FileId, graph: &Graph) -> Module {
         let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.file_exprs_by_kind(file));
-        let mut module = Module { obstacle: None, module_object_reason: None, values: Vec::new(), unconditional_value_stores: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, name_of_literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), is_exact_outside_cycles: false, is_entry_point_without_other_obstacles: false };
+        let mut module = Module { obstacle: None, module_object_reason: None, values: Vec::new(), unconditional_value_stores: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, name_of_literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), is_exact_outside_cycles: false, is_entry_point_without_other_obstacles: false, names_stored_on_exported_function: Vec::new() };
         if self.has_direct_eval(file) {
             module.obstacle = Some("eval");
             module.module_object_reason = module.obstacle;
@@ -1875,7 +1917,8 @@ impl<'p, 's> Checker<'p, 's> {
             module.obstacle = Some("return at the top level");
         }
         let mut is_module_looked_at = false;
-        let mut is_function_the_first_obstacle = false;
+        let mut function_that_is_the_first_obstacle = None;
+        let mut why_only_tested = None;
         for &e in by_kind.of(ExprTag::Ident) {
             let ExprKind::Ident(name) = hir[e].kind else { continue };
             if name == known::arguments && !bound.is_arguments_object(e) && bound.expr_symbol[e.idx()].is_none() {
@@ -1967,7 +2010,15 @@ impl<'p, 's> Checker<'p, 's> {
                         _ if matches!(hir[e].kind, ExprKind::Ident(_)) => module.obstacle = Some("exports = .."),
                         _ if !is_whole => module.obstacle = Some("module.exports = .. in a function, a branch or an expression"),
                         _ => {
-                            is_function_the_first_obstacle = module.obstacle.is_none() && matches!(hir[value].kind, ExprKind::Fn(_));
+                            let names_stored_on_it = if module.obstacle.is_some() {
+                                None
+                            } else if matches!(hir[value].kind, ExprKind::Fn(_)) {
+                                Some(Vec::new())
+                            } else {
+                                self.names_stored_on_function_that_only_its_name_reaches(file, value)
+                            };
+                            let is_function_the_first_obstacle = names_stored_on_it.is_some();
+                            module.names_stored_on_exported_function = names_stored_on_it.unwrap_or_default();
                             module.obstacle = Some(match hir[value].kind {
                                 ExprKind::Fn(_) => EXPORTS_A_FUNCTION,
                                 ExprKind::Class(_) => "module.exports = a class",
@@ -1996,7 +2047,8 @@ impl<'p, 's> Checker<'p, 's> {
                                 ExprKind::Dot { obj, .. } if required_specifier(hir, obj).is_some() => "module.exports = require(..).name",
                                 ExprKind::Dot { .. } | ExprKind::Index { .. } => "module.exports = a property of something",
                                 _ => "module.exports = another expression",
-                            })
+                            });
+                            function_that_is_the_first_obstacle = module.obstacle.filter(|_| is_function_the_first_obstacle);
                         }
                     }
                 }
@@ -2038,6 +2090,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 Use::Exported => module.obstacle = Some("module.exports or exports is assigned"),
+                Use::Other(why) if self.is_value_only_tested(file, e, EXPRESSIONS_AROUND_A_TEST) => why_only_tested = Some(why),
                 Use::Other(why) => module.obstacle = Some(why),
             }
         }
@@ -2092,9 +2145,10 @@ impl<'p, 's> Checker<'p, 's> {
             module.obstacle = Some(IS_AN_ENTRY_POINT);
             module.is_entry_point_without_other_obstacles = true;
         }
-        if is_function_the_first_obstacle && module.obstacle == Some(EXPORTS_A_FUNCTION) && module.values.len() == 1 && graph.entry_points.contains(&file) {
+        if function_that_is_the_first_obstacle.is_some() && module.obstacle == function_that_is_the_first_obstacle && module.values.len() == 1 && graph.entry_points.contains(&file) {
             module.is_entry_point_without_other_obstacles = true;
         }
+        module.obstacle = module.obstacle.or(why_only_tested);
         if is_module_looked_at {
             if module.obstacle.is_none_or(|why| why == IS_AN_ENTRY_POINT) {
                 module.obstacle = Some(MODULE_IS_MORE_THAN_ITS_EXPORTS);
@@ -2104,26 +2158,31 @@ impl<'p, 's> Checker<'p, 's> {
         module
     }
 
-    fn is_module_only_looked_at(&self, file: FileId, mention: ExprId) -> bool {
+    fn is_value_only_tested(&self, file: FileId, e: ExprId, expressions_left: u32) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_nullish = |e: ExprId| matches!(hir[e].kind, ExprKind::Null | ExprKind::Ident(known::undefined));
-        let is_only_tested = |e: ExprId| match bound.expr_parent[e.idx()] {
+        match bound.expr_parent[e.idx()] {
             Parent::Expr(around) => match hir[around].kind {
                 ExprKind::Unary { op: UnOp::Typeof | UnOp::Not, .. } | ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq, .. } => true,
                 ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq, left, right } => is_nullish(left) || is_nullish(right),
-                ExprKind::Binary { op: BinOp::And, left, .. } => left == e,
-                ExprKind::Cond { test, .. } => test == e,
+                ExprKind::Binary { op: BinOp::And, left, .. } if left == e => true,
+                ExprKind::Cond { test, .. } if test == e => true,
+                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } | ExprKind::Cond { .. } => expressions_left > 0 && self.is_value_only_tested(file, around, expressions_left - 1),
                 _ => false,
             },
             Parent::Stmt(around) => matches!(hir[around].kind, StmtKind::If { test, .. } if test == e),
             _ => false,
-        };
+        }
+    }
+
+    fn is_module_only_looked_at(&self, file: FileId, mention: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let member = match bound.expr_parent[mention.idx()] {
             Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Dot { obj, .. } if obj == mention) => around,
-            _ => return is_only_tested(mention),
+            _ => return self.is_value_only_tested(file, mention, EXPRESSIONS_AROUND_A_TEST),
         };
         let ExprKind::Dot { name, .. } = hir[member].kind else { return false };
-        matches!(self.atoms().bytes(name), b"parent" | b"hot") && is_only_tested(member)
+        matches!(self.atoms().bytes(name), b"parent" | b"hot") && self.is_value_only_tested(file, member, EXPRESSIONS_AROUND_A_TEST)
     }
 
     fn required_by_folded_specifier(&self, file: FileId, graph: &Graph, e: ExprId) -> Vec<FileId> {

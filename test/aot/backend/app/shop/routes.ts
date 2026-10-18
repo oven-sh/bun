@@ -3,7 +3,7 @@ import { shippingRates } from "./carrier-client";
 import { findCustomer, findProduct, findProducts } from "./catalog";
 import { orderLines, priceOrder, totalWeight } from "./pricing";
 import { findSession } from "./sessions";
-import { parseOrder } from "./validation";
+import { readOrder } from "./validation";
 
 function problem(status: number, error: string): Response {
   return Response.json({ error }, { status });
@@ -20,13 +20,7 @@ export async function quoteOrder(request: BunRequest<"/api/shops/:shop/quotes">)
   const session = findSession(request);
   if (!session) return problem(401, "not signed in");
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return problem(400, "invalid order");
-  }
-  const order = parseOrder(body);
+  const order = await readOrder(request);
   if (!order) return problem(400, "invalid order");
 
   const { shop } = request.params;

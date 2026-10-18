@@ -20,10 +20,10 @@ Most programs have a few places where data from outside the type system, such as
 | ---- | ---------------------------------------------------------- | --------------------- | -------------------------------------- |
 | 1    | `bun --aot-audit`, `bun test --aot-audit`                  | development, CI       | runs as usual, and logs                |
 | 2    | `bun check --aot`, `bun check --aot --aot-explain=throws`  | CI, every build       | is not run                             |
-| 3    | `bun build --compile --aot --aot-type-errors=log`          | production            | is compiled, logs, and keeps going where it can |
-| 4    | `bun build --compile --aot`                                | production            | is compiled, and throws                |
+| 3    | `bun compile --aot-type-errors=log`          | production            | is compiled, logs, and keeps going where it can |
+| 4    | `bun compile`                                | production            | is compiled, and throws                |
 
-Before you run anything, [`bun lint --aot`](/lint#before-you-compile-with-aot) reads your source and lists where data without a type enters your program, and where it reaches a type.
+Before you run anything, [`bun lint --aot`](/lint#before-you-compile-with---aot) reads your source and lists where data without a type enters your program, and where it reaches a type.
 
 The examples use this program:
 
@@ -46,7 +46,7 @@ bun app.ts
 31
 ```
 
-`bun run --aot` runs the program from its sources under the rules of `bun build --compile --aot`. It is the shortest way to see what changes:
+`bun run --aot` runs the program from its sources under the rules of `bun compile`. It is the shortest way to see what changes:
 
 ```bash terminal icon="terminal"
 bun run --aot app.ts
@@ -100,7 +100,7 @@ Fix `would-convert` lines first. The audit does not convert, so the value contin
 
 Bun type checks and analyzes the whole program before it starts, so the first start takes longer. After you save a file, Bun analyzes that file alone before it reloads, and the rest in the background.
 
-- Fix type errors first. `bun build --compile --aot` stops at a type error. The audit prints the errors and runs your program, but checks nothing until they are fixed.
+- Fix type errors first. `bun compile` stops at a type error. The audit prints the errors and runs your program, but checks nothing until they are fixed.
 - JavaScript files, such as most packages in `node_modules`, have no types to enforce. What they return is checked where it reaches your TypeScript code, against the declared type.
 - There is no way to silence a line. If the value is right and the type is not, change the type.
 - A file that calls `eval()` directly is not audited. Bun says so.
@@ -117,7 +117,7 @@ BUN_AOT_TYPE_ERROR_LOG=audit.jsonl bun test --aot-audit && test ! -s audit.jsonl
 
 ## 2. Report when you build
 
-`bun check --aot` type checks your entry points and reports what can never work under `--aot`. Every error that `bun build --compile --aot` reports is one that `bun check --aot` reports too, and the build stops at it. The build does not report errors in code that it removes, such as the `process.platform === "win32"` branch in a build for Linux.
+`bun check --aot` type checks your entry points and reports what can never work under `--aot`. Every error that `bun compile` reports is one that `bun check --aot` reports too, and the build stops at it. The build does not report errors in code that it removes, such as the `process.platform === "win32"` branch in a build for Linux.
 
 One group of type errors does not stop the build. When `@types/bun` is not installed, TypeScript does not know the names that Bun provides when your program runs. Errors about those names become warnings, Bun prints the first of them with a note to run `bun add -d @types/bun`, and the compiler treats each such name as `any`. The group is: `TS2580`, `TS2582`, `TS2584`, `TS2591`, `TS2593`, `TS2867` and `TS2868`, which TypeScript reports for names such as `console`, `process`, `require`, `describe` and `Bun`; `TS2304` and `TS2552` for the globals `AbortController`, `AbortSignal`, `Blob`, `BroadcastChannel`, `Buffer`, `Bun`, `ByteLengthQueuingStrategy`, `CloseEvent`, `CompressionStream`, `CountQueuingStrategy`, `Crypto`, `CryptoKey`, `CustomEvent`, `DOMException`, `DecompressionStream`, `ErrorEvent`, `Event`, `EventSource`, `EventTarget`, `File`, `FormData`, `HTMLRewriter`, `Headers`, `MessageChannel`, `MessageEvent`, `MessagePort`, `Performance`, `ReadableStream`, `Request`, `Response`, `SubtleCrypto`, `TextDecoder`, `TextDecoderStream`, `TextEncoder`, `TextEncoderStream`, `TransformStream`, `URL`, `URLSearchParams`, `WebAssembly`, `WebSocket`, `Worker`, `WritableStream`, `__dirname`, `__filename`, `addEventListener`, `alert`, `atob`, `btoa`, `clearImmediate`, `clearInterval`, `clearTimeout`, `confirm`, `console`, `crypto`, `exports`, `fetch`, `global`, `module`, `navigator`, `performance`, `postMessage`, `process`, `prompt`, `queueMicrotask`, `removeEventListener`, `reportError`, `require`, `self`, `setImmediate`, `setInterval`, `setTimeout` and `structuredClone`; `TS2307` for `bun`, any `bun:` or `node:` module, the Node.js modules `assert`, `async_hooks`, `buffer`, `child_process`, `cluster`, `console`, `constants`, `crypto`, `dgram`, `diagnostics_channel`, `dns`, `domain`, `events`, `fs`, `http`, `http2`, `https`, `inspector`, `module`, `net`, `os`, `path`, `perf_hooks`, `process`, `punycode`, `querystring`, `readline`, `repl`, `stream`, `string_decoder`, `timers`, `tls`, `tty`, `url`, `util`, `v8`, `vm`, `wasi`, `worker_threads` and `zlib` with their subpaths, and an import that ends in `.txt`, `.toml`, `.yaml`, `.yml`, `.jsonc`, `.json5`, `.xml`, `.html` or `/bun.lock`; and `TS2339` for a property of `import.meta`. With `@types/bun` installed, all of these are errors again and stop the build.
 
@@ -173,12 +173,11 @@ bun check --aot --aot-explain=throws app.ts
 
 On a large program, `throws` prints at most 200 lines of each category and counts the rest. The other reports are never cut short. To look up the id of a line from the log, use `throws-all-json`.
 
-The last line counts the checks that can fail by what causes them. Start with the causes that you wrote yourself: an `as`, a `!`, an `any`. In the JSON reports, each object has its cause as `cause`:
+The last line counts the checks that can fail by what causes them. Start with the causes that you wrote yourself: an `as`, an `any`. In the JSON reports, each object has its cause as `cause`:
 
 | `cause`             | The check is                                                              |
 | ------------------- | ------------------------------------------------------------------------- |
 | `as`                | at an `as`                                                                |
-| `non-null`          | at a `!`                                                                  |
 | `after-as`          | where a value that an `as` let through is used                            |
 | `declared-only`     | on a value from code that has only a declaration: a package, a global     |
 | `called-as-a-value` | on a parameter of a function that is called as a value or with `any`      |
@@ -191,7 +190,7 @@ The last line counts the checks that can fail by what causes them. Start with th
 | `narrowing`         | where a type is narrowed. Only in `throws-all`                            |
 | `typed-code`        | within typed code. Only in `throws-all`                                   |
 
-A line ends in `warning` if the check can fail, and in `error` if it always fails. `bun build --compile --aot` takes the same flag. `Bun.build` returns the lines in `logs`, at level `"verbose"`:
+A line ends in `warning` if the check can fail, and in `error` if it always fails. `bun compile` takes the same flag. `Bun.build` returns the lines in `logs`, at level `"verbose"`:
 
 ```ts build.ts icon="/icons/typescript.svg"
 const result = await Bun.build({
@@ -233,7 +232,7 @@ To accept an object that does not match, the compiler has to discard what it kno
 <Tabs>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build --compile --aot --aot-type-errors=log app.ts --outfile app
+    bun compile --aot-type-errors=log app.ts
     ./app
     ```
   </Tab>
@@ -278,7 +277,7 @@ A write to a built-in object still throws.
 When the log stays empty, drop `--aot-type-errors=log`. To go back, add it again, or drop `--aot`: your source does not change in any of the four steps.
 
 ```bash terminal icon="terminal"
-bun build --compile --aot app.ts --outfile app
+bun compile app.ts
 ./app
 ```
 
@@ -346,7 +345,7 @@ TypeError: Cannot change 'call$0' of Function.prototype: built-ins are locked in
 | `@colors/colors` 1                  | Its default entry point adds getters such as `"text".red` to `String.prototype`           | `Cannot change 'strip' of String.prototype`, on import                  | `import colors from "@colors/colors/safe"`, then `colors.red("text")`                                                                                                                                      |
 | `sass` 1                            | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype`      | `Cannot change 'call$0' of Function.prototype`, on import               | Compile your stylesheets before you build the executable. Or use `compileStringAsync()` of `sass-embedded`, with `node_modules` next to the executable: it starts a compiler that is a program of its own. Its `compileString()` hangs in any executable, with or without `--aot` |
 | `core-js` 3                         | Every entry point, even `core-js/actual/array/at`, replaces `Function.prototype.toString` | `Cannot change 'toString' of Function.prototype`, on import             | Remove the import: Bun implements what it fills in. With Babel, set `useBuiltIns: false`. Or import one feature at a time from `core-js-pure`, such as `core-js-pure/actual/array/at`. `core-js-pure/stable` throws `Cannot change 'isError' of Error` |
-| `envinfo` 7, `@webpack-cli/info`    | They contain `core-js` 2, which deletes `Function.prototype.toString`                     | `Cannot delete 'toString' of Function.prototype`, on import             | Nothing that we know of                                                                                                                                                                                    |
+| `envinfo` 7, `@webpack-cli/info`    | They contain `core-js` 2, which deletes `Function.prototype.toString`                     | `Cannot delete 'toString' of Function.prototype`, on import             | Nothing known yet                                                                                                                                                                                          |
 
 [`bun --aot-audit`](#1-audit-while-you-develop) reports these writes while your program still runs as usual, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds them in your own code. `Error.prototype` and the prototypes that inherit from it are not locked, and neither is what Bun or your program defines, such as `process`, `console` or `setTimeout`.
 
@@ -370,14 +369,14 @@ Subclasses are not affected. `class NextRequest extends Request`, as in Next.js,
 
 ```bash terminal icon="terminal"
 cd .next/standalone
-bun build --compile --aot --compile-in-place ./server.js --outfile server
+bun compile --compile-in-place ./server.js
 ```
 
 The server starts and every response is correct, because it finds those files on disk and Bun interprets them. Nothing tells you, and a request takes about a quarter more instructions. Name the files as additional entry points:
 
 ```bash terminal icon="terminal"
 # Next.js, in .next/standalone
-bun build --compile --aot --compile-in-place ./server.js $(find .next/server -name '*.js') --asset .next --asset public --outfile server
+bun compile --compile-in-place ./server.js $(find .next/server -name '*.js') --asset .next --asset public --outfile server
 ```
 
 For Angular the files are `$(find dist/site/server -name '*.mjs' -not -name server.mjs)`. Nuxt, SvelteKit, Astro and React Router need no additional entry points.
@@ -404,7 +403,7 @@ The build stops and names the file and the line.
 | Part                       | Meaning                                                                                                   |
 | -------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `81eda900c1a1`             | The id of this location. It is the same in the audit, in the report and in the executable, and from run to run, until the line moves. For an argument of a call, the executable uses the id after `call`. |
-| `read-property`            | What happens there: `enter-argument`, `enter-function`, `enter-variable`, `enter-field`, `enter-return`, `read-property`, `read-element`, `call-result`, `as-convert`, `non-null`, and others. `as-late-use` is the use of a value that `as` could not check, because it is an object. |
+| `read-property`            | What happens there: `enter-argument`, `enter-function`, `enter-variable`, `enter-field`, `enter-return`, `read-property`, `read-element`, `call-result`, `as-convert`, and others. `as-late-use` is the use of a value that `as` could not check, because it is an object. |
 | `app.ts:6:20 (module)`     | File, line, column, and the function. `module` is code outside of any function.                           |
 | `expected ..., got ...`    | What passes this check, and the kind of value that did not. A check can let more pass than the type says: here `undefined` passes too, as a missing argument does in JavaScript. |
 | `count 1`                  | How often this location has failed with this kind of value.                                               |

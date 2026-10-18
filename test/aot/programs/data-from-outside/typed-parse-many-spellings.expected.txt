@@ -3,11 +3,11 @@ product {"id":-0,"name":"","price":1000,"tag":"a\nbé\ud83d\"\\/","active":false
 product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
 product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
 product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
-product {"id":12345,"name":"Widget","price":19.99,"tag":"tools","active":true}
+product {"active":true,"tag":"tools","price":19.99,"name":"Widget","id":12345}
 product {"id":2,"name":"x","price":2.5,"tag":"t","active":true}
 product {"id":2,"name":"x","price":2.5,"tag":"t","active":true}
 product TypeError "id: Invalid input: expected number, received string"
-product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
+product {"id":1,"extra":{"a":[1,2,{"b":null}]},"name":"x","price":2.5,"tag":"t","active":true,"__proto__":{"x":1}}
 product TypeError "active: Invalid input: expected boolean, received undefined"
 product TypeError "id: Invalid input: expected number, received string"
 product SyntaxError "JSON Parse error: Property name must be a string literal"
@@ -48,12 +48,12 @@ product SyntaxError "JSON Parse error: Unexpected token '}'"
 product SyntaxError "JSON Parse error: Expected '}'"
 product SyntaxError "JSON Parse error: Property name must be a string literal"
 product SyntaxError "JSON Parse error: Expected '}'"
-person {"name":"n","address":{"city":"c","zip":"z"},"tags":["x","y"],"kind":"a","note":null,"pair":[1,"one"],"age":3}
+person {"name":"n","age":3,"address":{"city":"c","zip":"z"},"tags":["x","y"],"kind":"a","note":null,"pair":[1,"one"]}
 person {"name":"n","address":{"city":"c","zip":"z"},"tags":[],"kind":"b","note":"said","pair":[1,"one"]}
-person {"name":"n","address":{"city":"c","zip":"z"},"tags":[],"kind":"b","note":"said","pair":[1,"one"]}
-person {"name":"n","address":{"city":"c","zip":"z"},"tags":[],"kind":"b","note":"said","pair":[1,"one"]}
-person {"name":"n","address":{"city":"c","zip":"z"},"tags":["x","y"],"kind":"a","note":"said","pair":[1,"one"],"age":4}
-person {"name":"n","address":{"city":"c","zip":"z"},"tags":[],"kind":"b","note":"said","pair":[1,"one"]}
+person TypeError "age: Invalid input: expected undefined | number, received null"
+person TypeError "age: Invalid input: expected undefined | number, received object"
+person {"name":"n","age":4,"address":{"zip":"z","city":"c","more":1},"tags":["x","y"],"kind":"a","note":"said","pair":[1,"one"]}
+person TypeError "age: Invalid input: expected undefined | number, received string"
 person TypeError "address.zip: Invalid input: expected string, received undefined"
 person TypeError "tags.0: Invalid input: expected string, received number"
 person TypeError "kind: Invalid input: expected \"a\" | \"b\", received string"
@@ -71,7 +71,7 @@ tagged TypeError "count: Invalid input: expected int, received number"
 tagged TypeError "code: Invalid input: expected string to have >=2 characters"
 tagged TypeError "code: Invalid input: expected string to match /^[a-z]+$/"
 tagged TypeError "list: Invalid input: expected array to have <=3 items"
-tagged {"count":1,"code":"ab","list":[]}
+tagged TypeError "size: Invalid input: expected undefined | number, received string"
 whole {"any":0,"least":0}
 whole {"any":-0,"least":-0}
 whole {"any":-5,"least":5}
@@ -88,30 +88,30 @@ whole TypeError "any: Invalid input: expected number, received infinity"
 whole SyntaxError "JSON Parse error: Expected '}'"
 whole TypeError "least: Invalid input: expected number to be >=0"
 whole TypeError "any: Invalid input: expected number, received string"
-whole {"any":1,"least":1}
+whole TypeError "some: Invalid input: expected int, received number"
 whole {"any":1,"least":1,"some":-3}
-whole {"any":-7,"least":7,"some":0}
+whole {"least":7,"any":-7,"some":0}
 whole TypeError "any: Invalid input: expected int, received number"
 whole {"any":2,"least":1}
 drawing {"shapes":[{"kind":"circle","radius":1},{"kind":"square","side":2},{"kind":"none"}]}
-drawing {"shapes":[{"kind":"circle","radius":1},{"kind":"square","side":2}],"first":{"kind":"none"}}
-drawing {"shapes":[{"kind":"none"}]}
+drawing {"shapes":[{"radius":1,"kind":"circle"},{"kind":"square","side":2}],"first":{"kind":"none","more":1}}
+drawing {"shapes":[{"kind":"none","radius":1}]}
 drawing {"shapes":[{"kind":"circle","radius":1}]}
-drawing TypeError "shapes.0: Invalid input: expected object | object | object, received object"
+drawing TypeError "shapes.0.radius: Invalid input: expected number, received undefined"
 drawing {"shapes":[{"kind":"circle","radius":1}]}
-drawing {"shapes":[]}
+drawing TypeError "first.radius: Invalid input: expected number, received undefined"
 drawing {"shapes":[],"first":{"kind":"circle","radius":3}}
-drawing TypeError "shapes.0: Invalid input: expected object | object | object, received object"
+drawing TypeError "shapes.0.kind: Invalid input: expected \"circle\" | \"square\" | \"none\", received string"
 drawing TypeError "shapes.0: Invalid input: expected object | object | object, received null"
 open {"id":1}
-open {"0":"zero","id":1,"b":1,"a":[{"x":null}],"__proto__":{"p":1},"toString":1}
-open {"id":2,"a":2}
+open {"0":"zero","b":1,"id":1,"a":[{"x":null}],"__proto__":{"p":1},"toString":1}
+open {"a":2,"id":2}
 open {"id":3,"z":1}
 open TypeError "id: Invalid input: expected number, received undefined"
 counts {"id":1,"a":2,"b":3}
 counts TypeError "a: Invalid input: expected number, received string"
 counts {"id":1,"a":2}
-counts {"2":3,"10":2,"id":4,"a":1}
+counts {"2":3,"10":2,"a":1,"id":4}
 record {}
 record {"a":[1],"b":[]}
 record {"a":[2]}
@@ -121,16 +121,16 @@ record {"0":[3],"1":[2],"__proto__":[1]}
 record TypeError "Invalid input: expected object, received array"
 closed {"id":1,"inner":{"a":true}}
 closed TypeError "Unrecognized key: \"more\""
-closed {"id":1,"inner":{"a":true}}
-closed {"id":1,"inner":{"a":false}}
+closed {"id":1,"inner":{"a":true,"more":1}}
+closed {"inner":{"a":false},"id":1}
 loose {"anything":{"a":[1,"é"]},"maybe":1,"object":[]}
-loose {"anything":undefined,"maybe":undefined,"object":{}}
-loose {"anything":null,"maybe":undefined,"object":{"__proto__":1}}
+loose TypeError "anything: Invalid input: expected unknown, received undefined"
+loose TypeError "maybe: Invalid input: expected undefined | number, received undefined"
 loose TypeError "maybe: Invalid input: expected undefined | number, received string"
-loose TypeError "object: Invalid input: expected object, received number"
+loose TypeError "maybe: Invalid input: expected undefined | number, received undefined"
 named {"constructor":"c","toString":"s"}
 named {"constructor":"c"}
-named TypeError "constructor: Invalid input: expected string, received function"
+named TypeError "constructor: Invalid input: expected string, received undefined"
 roots []
 roots [1,2.5,-300]
 roots [1,2]
@@ -160,10 +160,10 @@ tree 1 1 1
 tree 2 2 2
 tree 50 50 50
 tree 400 400 400
-tree 30
+tree TypeError "next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next: Invalid input: expected undefined | null | object, received string"
 tree TypeError "children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0.children.0: Invalid input: expected object, received number"
 tree SyntaxError "JSON Parse error: Expected '}'"
 text that ends early 248 0
-a rope {"name":"né","address":{"city":"c\n","zip":"z"},"tags":["x","yy"],"kind":"a","note":null,"pair":[15,"one"],"age":31} 16 bits {"name":"né","address":{"city":"c\n","zip":"z"},"tags":["x","yy"],"kind":"a","note":null,"pair":[15,"one"],"age":31}
+a rope {"name":"né","age":31,"address":{"city":"c\n","zip":"z"},"tags":["x","yy"],"kind":"a","note":null,"pair":[15,"one"]} 16 bits {"name":"né","age":31,"address":{"city":"c\n","zip":"z"},"tags":["x","yy"],"kind":"a","note":null,"pair":[15,"one"]}
 no text 5
 long 100000 70000 x

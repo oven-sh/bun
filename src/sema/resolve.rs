@@ -195,6 +195,12 @@ pub trait Host: Sync {
     fn is_deferred_path(&self, _path: &[u8]) -> bool {
         false
     }
+    fn loads_on_demand(&self) -> bool {
+        false
+    }
+    fn is_asked_about(&self, _path: &[u8]) -> bool {
+        false
+    }
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,
@@ -2664,13 +2670,15 @@ pub(crate) fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
         .find(|&e| file_extension_is(path, e))
 }
 
+pub const TYPED_JAVASCRIPT_EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".js", b".aot.ts"), (b".mjs", b".aot.mts"), (b".cjs", b".aot.cts")];
+
 pub(crate) fn is_typed_bundle(path: &[u8]) -> bool {
-    [&b".sound.ts"[..], b".sound.mts", b".sound.cts"].iter().any(|extension| path.ends_with(extension))
+    TYPED_JAVASCRIPT_EXTENSIONS.iter().any(|(_, extension)| path.ends_with(extension)) || [&b".sound.ts"[..], b".sound.mts", b".sound.cts"].iter().any(|extension| path.ends_with(extension))
 }
 
 /// `GetImpliedNodeFormatForFile`, as far as the extension alone determines it.
 pub(crate) fn format_by_extension(path: &[u8]) -> ResolutionMode {
-    if file_extension_is_one_of(path, &[b".mts", b".mjs", b".sound.ts"]) {
+    if file_extension_is_one_of(path, &[b".mts", b".mjs", b".sound.ts", TYPED_JAVASCRIPT_EXTENSIONS[0].1]) {
         ResolutionMode::Import
     } else if file_extension_is_one_of(path, &[b".cts", b".cjs"]) {
         ResolutionMode::Require

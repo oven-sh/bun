@@ -1,10 +1,9 @@
-// parses an order of ten items with parse<T>() and adds up its items
-import { parse } from "bun";
-import type { Int, Min, Max, MinLength, MaxLength, MinItems, MaxItems, Pattern, DeepStrict } from "bun";
+// parses an order of ten items with JSON.parse<T>() and adds up its items
+import type { Schema } from "bun";
 interface Order {
-  customer: { id: number & Int & Min<1>; name: string & MinLength<1> & MaxLength<100>; email: string & Pattern<"^[^@\\s]+@[^@\\s]+$"> };
-  items: { sku: string & MinLength<1> & MaxLength<32>; quantity: number & Int & Min<1> & Max<1000>; unitCents: number & Int & Min<0> }[] & MinItems<1> & MaxItems<100>;
-  coupon?: string & MaxLength<16>;
+  customer: { id: number & Schema.Int & Schema.Min<1>; name: string & Schema.MinLength<1> & Schema.MaxLength<100>; email: string & Schema.Pattern<"^[^@\\s]+@[^@\\s]+$"> };
+  items: { sku: string & Schema.MinLength<1> & Schema.MaxLength<32>; quantity: number & Schema.Int & Schema.Min<1> & Schema.Max<1000>; unitCents: number & Schema.Int & Schema.Min<0> }[] & Schema.MinItems<1> & Schema.MaxItems<100>;
+  coupon?: string & Schema.MaxLength<16>;
 }
 const operations = 10;
 const text = JSON.stringify({
@@ -16,7 +15,7 @@ let total = 0;
 
 kernel: {
   for (let i = 0; i < operations; i++) {
-    const order = parse<Order>(text);
+    const order = JSON.parse<Order>(text);
     for (const item of order.items) total += item.quantity * item.unitCents;
   }
 }

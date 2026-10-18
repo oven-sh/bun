@@ -31,27 +31,89 @@ declare module "bun" {
    * ```
    */
   type int32 = number;
-  /** One reason why {@link validate}, {@link safeValidate} or {@link parse} refused a value. */
-  interface ValidationIssue {
-    /** Where the value stands in what was handed over: property names and array indices. */
-    path: (string | number)[];
-    /** `"invalid_type"`, `"invalid_value"`, `"invalid_union"`, `"too_small"`, `"too_big"`, `"not_multiple_of"`, `"invalid_format"` or `"unrecognized_keys"`. */
-    code: string;
-    expected: string;
-    received: string;
-    message: string;
-  }
   /**
-   * Checks `value` against the TypeScript type `T` and returns a copy of it that is a `T`.
-   * Throws a `TypeError` whose `issues` property lists every {@link ValidationIssue} otherwise.
+   * Types that say what a plain TypeScript type cannot, for `JSON.parse<T>(text)`. They exist only in types:
+   * to TypeScript, `number & Schema.Min<1>` is a `number`.
    *
-   * Properties that `T` does not declare are left out of the copy, unless `T` has an index signature.
+   * ```ts
+   * import type { Schema } from "bun";
+   * interface Order { id: number & Schema.Int & Schema.Min<1>; note?: string & Schema.MaxLength<100> }
+   * const order = JSON.parse<Order>(text);
+   * ```
+   */
+  namespace Schema {
+    /** One reason why `JSON.parse<T>(text)` threw. The `TypeError` lists them in its `issues` property. */
+    interface Issue {
+      /** Where the value stands in what was parsed: property names and array indices. */
+      path: (string | number)[];
+      /** `"invalid_type"`, `"invalid_value"`, `"invalid_union"`, `"too_small"`, `"too_big"`, `"not_multiple_of"`, `"invalid_format"` or `"unrecognized_keys"`. */
+      code: string;
+      expected: string;
+      received: string;
+      message: string;
+    }
+    /**
+     * The `TypeError` that `JSON.parse<T>(text)` and `Bun.validate<T>(value)` throw when the value is not a `T`.
+     *
+     * ```ts
+     * try {
+     *   return JSON.parse<Order>(text);
+     * } catch (error) {
+     *   if (error instanceof TypeError && "issues" in error) console.log((error as Schema.Error).issues);
+     * }
+     * ```
+     */
+    interface Error extends TypeError {
+      /** What is wrong with the value, and where. */
+      issues: Issue[];
+    }
+    /** `number & Int`: a whole number. */
+    type Int = { readonly "bun.int"?: true };
+    /** `number & Min<1>`: at least 1. */
+    type Min<N extends number> = { readonly "bun.min"?: N };
+    /** `number & Max<100>`: at most 100. */
+    type Max<N extends number> = { readonly "bun.max"?: N };
+    /** `number & Above<0>`: more than 0. */
+    type Above<N extends number> = { readonly "bun.above"?: N };
+    /** `number & Below<1>`: less than 1. */
+    type Below<N extends number> = { readonly "bun.below"?: N };
+    /** `number & MultipleOf<5>` */
+    type MultipleOf<N extends number> = { readonly "bun.multipleOf"?: N };
+    /** `string & MinLength<1>` */
+    type MinLength<N extends number> = { readonly "bun.minLength"?: N };
+    /** `string & MaxLength<100>` */
+    type MaxLength<N extends number> = { readonly "bun.maxLength"?: N };
+    /** `string[] & MinItems<1>` */
+    type MinItems<N extends number> = { readonly "bun.minItems"?: N };
+    /** `string[] & MaxItems<10>` */
+    type MaxItems<N extends number> = { readonly "bun.maxItems"?: N };
+    /** `string & Pattern<"^[a-z]+$">`: the source of a regular expression that the string must match. */
+    type Pattern<S extends string> = { readonly "bun.pattern"?: S };
+    /** `string & Format<"uuid">` */
+    type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = { readonly "bun.format"?: S };
+    /** `number & Min<1> & Message<"Order at least one">`: the message of the issues about this value. */
+    type Message<S extends string> = { readonly "bun.message"?: S };
+    /** `number & Default<8080>`: what stands in for a missing property. */
+    type Default<V extends string | number | boolean | null> = { readonly "bun.default"?: V };
+    /** `{ id: number } & Strict`: a property that the type does not declare is an issue. */
+    type Strict = { readonly "bun.strict"?: true };
+    /** {@link Strict} for the type and for every object type within it. */
+    type DeepStrict = { readonly "bun.strict"?: "deep" };
+  }
+  type ValidationIssue = Schema.Issue;
+  /**
+   * Checks `value` against the TypeScript type `T`, as `JSON.parse<T>(text)` does for text, and returns a copy of it that is a `T`.
+   * Throws a `TypeError` whose `issues` property lists every {@link Schema.Issue} otherwise.
+   *
+   * The objects and arrays that `T` describes are copied, and `value` itself is never changed. The copy has the same
+   * keys in the same order, including properties that `T` does not declare.
    * Available in programs built or run with `--aot`.
    *
    * ```ts
-   * import type { Int, Min, MaxLength } from "bun";
-   * interface Order { id: number & Int & Min<1>; note?: string & MaxLength<100> }
-   * const order = Bun.validate<Order>(await request.json());
+   * import type { Schema } from "bun";
+   * interface Login { name: string & Schema.MinLength<1>; password: string & Schema.MinLength<8> }
+   * const form = await request.formData();
+   * const login = Bun.validate<Login>({ name: form.get("name"), password: form.get("password") });
    * ```
    */
   function validate<T>(value: unknown): T;
@@ -74,38 +136,22 @@ declare module "bun" {
   }
   /** The checks of {@link validate} for the type `T` as an object that libraries which take a Standard Schema accept. */
   function schema<T>(): Schema<T>;
-  /** `number & Int`: a whole number. */
-  type Int = { readonly "bun.int"?: true };
-  /** `number & Min<1>`: at least 1. */
-  type Min<N extends number> = { readonly "bun.min"?: N };
-  /** `number & Max<100>`: at most 100. */
-  type Max<N extends number> = { readonly "bun.max"?: N };
-  /** `number & Above<0>`: more than 0. */
-  type Above<N extends number> = { readonly "bun.above"?: N };
-  /** `number & Below<1>`: less than 1. */
-  type Below<N extends number> = { readonly "bun.below"?: N };
-  /** `number & MultipleOf<5>` */
-  type MultipleOf<N extends number> = { readonly "bun.multipleOf"?: N };
-  /** `string & MinLength<1>` */
-  type MinLength<N extends number> = { readonly "bun.minLength"?: N };
-  /** `string & MaxLength<100>` */
-  type MaxLength<N extends number> = { readonly "bun.maxLength"?: N };
-  /** `string[] & MinItems<1>` */
-  type MinItems<N extends number> = { readonly "bun.minItems"?: N };
-  /** `string[] & MaxItems<10>` */
-  type MaxItems<N extends number> = { readonly "bun.maxItems"?: N };
-  /** `string & Pattern<"^[a-z]+$">`: the source of a regular expression that the string must match. */
-  type Pattern<S extends string> = { readonly "bun.pattern"?: S };
-  /** `string & Format<"uuid">` */
-  type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = { readonly "bun.format"?: S };
-  /** `number & Min<1> & Message<"Order at least one">`: the message of the issues about this value. */
-  type Message<S extends string> = { readonly "bun.message"?: S };
-  /** `number & Default<8080>`: what stands in for `undefined` or a missing property. */
-  type Default<V extends string | number | boolean | null> = { readonly "bun.default"?: V };
-  /** `{ id: number } & Strict`: a property that the type does not declare is an issue. */
-  type Strict = { readonly "bun.strict"?: true };
-  /** {@link Strict} for the type and for every object type within it. */
-  type DeepStrict = { readonly "bun.strict"?: "deep" };
+  type Int = Schema.Int;
+  type Min<N extends number> = Schema.Min<N>;
+  type Max<N extends number> = Schema.Max<N>;
+  type Above<N extends number> = Schema.Above<N>;
+  type Below<N extends number> = Schema.Below<N>;
+  type MultipleOf<N extends number> = Schema.MultipleOf<N>;
+  type MinLength<N extends number> = Schema.MinLength<N>;
+  type MaxLength<N extends number> = Schema.MaxLength<N>;
+  type MinItems<N extends number> = Schema.MinItems<N>;
+  type MaxItems<N extends number> = Schema.MaxItems<N>;
+  type Pattern<S extends string> = Schema.Pattern<S>;
+  type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = Schema.Format<S>;
+  type Message<S extends string> = Schema.Message<S>;
+  type Default<V extends string | number | boolean | null> = Schema.Default<V>;
+  type Strict = Schema.Strict;
+  type DeepStrict = Schema.DeepStrict;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
@@ -3635,9 +3681,9 @@ declare module "bun" {
      * Equivalent to `--dts` in the CLI.
      *
      * Each JavaScript output file is also written once more with its TypeScript types kept
-     * (`index.js` and `index.sound.ts`), and the first line of `index.d.ts` is a comment that names
-     * that file. `bun build --compile --aot` compiles a package from these files, so that it knows
-     * the types inside the package. Every other tool reads `index.d.ts` as before.
+     * (`index.js` and `index.aot.ts`). `bun build --compile --aot` compiles a package from these
+     * files where the `"bun-aot"` condition in the `"exports"` of its `package.json` names them, so
+     * that it knows the types inside the package. Every other tool reads `index.d.ts` as before.
      *
      * @default false
      */
@@ -3845,6 +3891,23 @@ declare module "bun" {
 
   type AotReport = "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json" | "costs" | "costs-json";
 
+  interface TrimOptions {
+    /**
+     * Leave out the parts that the program cannot reach, as `trim: true` does.
+     *
+     * @default true
+     */
+    auto?: boolean;
+    /**
+     * Parts to leave out whether the program uses them or not.
+     */
+    remove?: Bun.Build.TrimFeature[];
+    /**
+     * Parts that stay, with the parts they need, even if nothing in the program was seen to use them.
+     */
+    keep?: Bun.Build.TrimFeature[];
+  }
+
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
@@ -3858,7 +3921,34 @@ declare module "bun" {
     disallowCodeGenerationFromStrings?: boolean | "strict";
     executablePath?: string;
     /**
-     * Leave the parts of Bun that no compiled program can reach out of the executable.
+     * Leave parts of Bun out of the executable.
+     *
+     * - `true`: the parts that the program cannot reach. With `aot` the compiler works them out
+     *   from the program; without it only the command-line tools go.
+     *   Equivalent CLI flag: `--compile-trim-runtime`
+     * - An array of {@link Bun.Build.TrimFeature}: exactly these parts, whether the program uses
+     *   them or not, and nothing else.
+     * - An object: see {@link TrimOptions}.
+     *
+     * A program that reaches a part that was removed by name ends with exit code 70 and a message
+     * that says which part it was.
+     *
+     * The build fails if a name is unknown, or if a part that stays needs a part that is removed.
+     * `BuildOutput.logs` says what was left out and how many bytes that saved.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./server.ts"],
+     *   compile: { outfile: "./server", aot: true, trim: { remove: ["image", "archive", "sqlite"] } },
+     * });
+     * ```
+     *
+     * @default false
+     */
+    trim?: boolean | Bun.Build.TrimFeature[] | TrimOptions;
+    /**
+     * @deprecated Use `trim: true`
      */
     trimRuntime?: boolean;
     outfile?: string;
@@ -3892,7 +3982,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
-     * @default true, or false with `trimRuntime`
+     * @default true, or false where `trim` leaves out what the program cannot reach
      */
     autoloadBunfig?: boolean;
     /**

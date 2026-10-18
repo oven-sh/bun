@@ -410,6 +410,7 @@ impl Checker<'_, '_> {
         code: u32,
         args: &[Arg<'_>],
     ) -> Reported {
+        self.diagnostics_made += 1;
         Reported::new(at, code, self.stringify_args(args))
     }
 

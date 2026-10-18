@@ -5767,6 +5767,41 @@ a.ts(5,1): error TS2322: Type 'T1<1, "x">' is not assignable to type 'T1<1, stri
       },
     );
 
+    // `Q`'s constraint is compared with the same target as `Q`, so from there on more source types than target types are in
+    // progress.
+    test.each([1, 8])(
+      "reports an error between generic types that are compared in both directions below a constraint, on %d threads",
+      async threads => {
+        using dir = project({
+          "a.ts": `type T0<H, P> = (x: { g0: T0<any, P> & { z?: P }; r2: Partial<Record<P & string, boolean>>; }) => void;
+declare let l: T0<1, string>;
+export function g<Q extends T0<1, string | number>>(q: Q) { l = q; }
+`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout).toBe(
+          `
+a.ts(3,61): error TS2322: Type 'Q' is not assignable to type 'T0<1, string>'.
+  Type 'T0<1, string | number>' is not assignable to type 'T0<1, string>'.
+    Types of parameters 'x' and 'x' are incompatible.
+      Type '{ g0: T0<any, string> & { z?: string | undefined; }; r2: Partial<Record<string, boolean>>; }' is not assignable to type '{ g0: T0<any, string | number> & { z?: string | number | undefined; }; r2: Partial<Record<string, boolean>>; }'.
+        Types of property 'g0' are incompatible.
+          Type 'T0<any, string> & { z?: string | undefined; }' is not assignable to type 'T0<any, string | number> & { z?: string | number | undefined; }'.
+            Type 'T0<any, string> & { z?: string | undefined; }' is not assignable to type 'T0<any, string | number>'.
+              Types of parameters 'x' and 'x' are incompatible.
+                Type '{ g0: T0<any, string | number> & { z?: string | number | undefined; }; r2: Partial<Record<string, boolean>>; }' is not assignable to type '{ g0: T0<any, string> & { z?: string | undefined; }; r2: Partial<Record<string, boolean>>; }'.
+                  Types of property 'g0' are incompatible.
+                    Type 'T0<any, string | number> & { z?: string | number | undefined; }' is not assignable to type 'T0<any, string> & { z?: string | undefined; }'.
+                      Type 'T0<any, string | number> & { z?: string | number | undefined; }' is not assignable to type '{ z?: string | undefined; }'.
+                        Types of property 'z' are incompatible.
+                          Type 'string | number | undefined' is not assignable to type 'string | undefined'.
+                            Type 'number' is not assignable to type 'string'.
+`.slice(1, -1),
+        );
+        expect(exitCode).toBe(1);
+      },
+    );
+
     // `G`'s argument alternates between `[1]` and `1`, so one side repeats two types while the other side grows forever.
     // The side that repeats has to count as recursion too, or nothing ends the comparison.
     test.each([

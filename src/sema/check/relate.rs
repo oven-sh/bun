@@ -217,8 +217,9 @@ pub(super) struct Relater {
     /// `maybeKeysSet`: the keys in `maybe_keys`, from when there are many of them until there is none. Empty otherwise:
     /// most comparisons are a few levels deep, and to search the list takes less than to add a key here and remove it.
     maybe_keys_set: FxHashSet<Key>,
-    pub(super) source_stack: Vec<TypeId>,
-    pub(super) target_stack: Vec<TypeId>,
+    /// Each type with its push number. See `is_created_no_earlier`.
+    pub(super) source_stack: Vec<(TypeId, u32)>,
+    pub(super) target_stack: Vec<(TypeId, u32)>,
     /// See `is_last_deeply_nested`.
     source_identities: Vec<(TypeId, RecursionId)>,
     target_identities: Vec<(TypeId, RecursionId)>,
@@ -4265,8 +4266,10 @@ impl<'p, 's> Checker<'p, 's> {
         let cuts = self.comparisons_of_deeply_nested_types;
         r.push_maybe_key(key);
         let save_expanding = r.expanding;
+        // A member of a union or a constraint is pushed on one stack only, so an index doesn't give the push order.
+        let push = 2 * (r.source_stack.len() + r.target_stack.len()) as u32;
         if recursion & REC_SOURCE != 0 {
-            r.source_stack.push(source);
+            r.source_stack.push((source, push + 1));
             if r.expanding & REC_SOURCE == 0
                 && r.source_stack.len() >= 3
                 && self.is_last_deeply_nested(
@@ -4280,7 +4283,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if recursion & REC_TARGET != 0 {
-            r.target_stack.push(target);
+            r.target_stack.push((target, push));
             if r.expanding & REC_TARGET == 0
                 && r.target_stack.len() >= 3
                 && self.is_last_deeply_nested(
@@ -4466,7 +4469,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_deeply_nested_type(
         &mut self,
         t: TypeId,
-        stacks: [&[TypeId]; 2],
+        stacks: [&[(TypeId, u32)]; 2],
         is_source: bool,
         max_depth: usize,
     ) -> bool {
@@ -4485,7 +4488,7 @@ impl<'p, 's> Checker<'p, 's> {
         let identity = self.recursion_identity_as(t, data);
         let mut count = 0;
         let mut last = None;
-        for &on_stack in stack {
+        for &(on_stack, _) in stack {
             if self.has_matching_recursion_identity(on_stack, identity) {
                 if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
                     count += 1;
@@ -4502,16 +4505,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
     /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
     /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
-    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one.
-    fn is_created_no_earlier(&self, t: TypeId, last: TypeId, stacks: [&[TypeId]; 2]) -> bool {
-        let reached = |t: TypeId| {
-            let [source, target] = stacks.map(|stack| stack.iter().position(|&it| it == t));
-            let (source, target) = (source.map(|at| 2 * at + 1), target.map(|at| 2 * at));
-            source.into_iter().chain(target).min()
+    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
+    /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
+    /// so this is a total order: of two different types, exactly one is newer.
+    fn is_created_no_earlier(
+        &self,
+        t: TypeId,
+        last: TypeId,
+        stacks: [&[(TypeId, u32)]; 2],
+    ) -> bool {
+        let pushed = |t: TypeId| {
+            let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
+            stacks.into_iter().filter_map(first).min()
         };
         t == last
             || (self.types().nesting_order(t, last))
-                .then_with(|| reached(t).cmp(&reached(last)))
+                .then_with(|| pushed(t).cmp(&pushed(last)))
                 .is_ge()
     }
 
@@ -4519,7 +4528,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// stack as of the previous call, the type and its `plain_recursion_identity`.
     fn is_last_deeply_nested(
         &mut self,
-        stacks: [&[TypeId]; 2],
+        stacks: [&[(TypeId, u32)]; 2],
         is_source: bool,
         identities: &mut Vec<(TypeId, RecursionId)>,
         max_depth: usize,
@@ -4528,7 +4537,7 @@ impl<'p, 's> Checker<'p, 's> {
         if stack.len() < max_depth {
             return false;
         }
-        for (i, &on_stack) in stack.iter().enumerate() {
+        for (i, &(on_stack, _)) in stack.iter().enumerate() {
             if identities.get(i).is_none_or(|known| known.0 != on_stack) {
                 identities.truncate(i);
                 identities.push((on_stack, self.plain_recursion_identity(on_stack)));

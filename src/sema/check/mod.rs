@@ -1842,9 +1842,10 @@ pub struct Checker<'p, 's> {
         TypeId,
         usize,
     )>,
-    /// The types for which a reverse mapped type inference is in progress.
-    reverse_mapped_source_stack: Vec<TypeId>,
-    reverse_mapped_target_stack: Vec<TypeId>,
+    /// The types for which a reverse mapped type inference is in progress, each with its push number. See
+    /// `is_created_no_earlier`.
+    reverse_mapped_source_stack: Vec<(TypeId, u32)>,
+    reverse_mapped_target_stack: Vec<(TypeId, u32)>,
     reverse_expanding: u8,
     /// Final results of narrowing.
     flow_memo: flow::FlowMemo,

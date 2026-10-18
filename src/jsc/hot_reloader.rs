@@ -1186,27 +1186,32 @@ where
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
-                                                    if prev_entry_id != entry_id {
-                                                        record_changed_path(path_string.as_bytes());
-                                                        current_task.append(hashes[entry_id]);
-                                                        if self.verbose {
-                                                            Self::debug(format_args!(
-                                                                "Removing file: {}",
-                                                                bstr::BStr::new(
-                                                                    path_string.as_bytes()
+                                                    if file_descriptors[entry_id].is_valid() {
+                                                        if prev_entry_id != entry_id {
+                                                            record_changed_path(
+                                                                path_string.as_bytes(),
+                                                            );
+                                                            current_task.append(hashes[entry_id]);
+                                                            if self.verbose {
+                                                                Self::debug(format_args!(
+                                                                    "Removing file: {}",
+                                                                    bstr::BStr::new(
+                                                                        path_string.as_bytes()
+                                                                    )
+                                                                ));
+                                                            }
+                                                            // SAFETY: see the
+                                                            // File-arm call
+                                                            // above.
+                                                            unsafe {
+                                                                (*ctx).remove_at_index::<false>(
+                                                                    bun_watcher::Kind::File,
+                                                                    entry_id as u16,
+                                                                    0,
+                                                                    &[],
                                                                 )
-                                                            ));
+                                                            };
                                                         }
-                                                        // SAFETY: see the
-                                                        // File-arm call above.
-                                                        unsafe {
-                                                            (*ctx).remove_at_index::<false>(
-                                                                bun_watcher::Kind::File,
-                                                                entry_id as u16,
-                                                                0,
-                                                                &[],
-                                                            )
-                                                        };
                                                     }
 
                                                     prev_entry_id = entry_id;

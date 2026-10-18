@@ -898,10 +898,10 @@ impl Watcher {
             let mut ownership = FdOwnership::Caller;
             if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
                 // Upgrade a path-only entry (`add_file_by_path_slow` inserts
-                // fd-less, e.g. the `--hot` entrypoint) with the descriptor
-                // of the read. A valid stored fd is never replaced: the
-                // watchlist owns it until eviction, and the old overwrite
-                // leaked it.
+                // fd-less, e.g. the `--hot` entrypoint) so `hot_reloader`'s
+                // directory-event recovery sees a valid fd. A valid stored fd
+                // is never replaced: the watchlist owns it until eviction,
+                // and the old overwrite leaked it.
                 let fds = self.watchlist.items_fd_mut();
                 if !fds[index as usize].is_valid() {
                     fds[index as usize] = fd;

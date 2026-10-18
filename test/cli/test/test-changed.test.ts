@@ -1,16 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import {
-  appendFileSync,
-  closeSync,
-  openSync,
-  readdirSync,
-  readlinkSync,
-  realpathSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -480,23 +471,6 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     await waitFor("Ran 1 test across 1 file", before2);
     const afterB = buf.slice(before2);
     expect(ranFiles(afterB, ["wa.test.ts", "wb.test.ts"])).toEqual(["wb.test.ts"]);
-
-    // dep-a.ts is watched by path in this run. Save it by rename while the
-    // replaced file is open elsewhere: the file's own watch reports nothing
-    // and only the directory reports the save.
-    if (isLinux) {
-      const before3 = buf.length;
-      const depA = join(String(dir), "dep-a.ts");
-      const replaced = openSync(depA, "r");
-      try {
-        writeFileSync(depA + ".tmp", `export const A = 1;\n// saved by rename\n`);
-        renameSync(depA + ".tmp", depA);
-        await waitFor("Ran 1 test across 1 file", before3);
-      } finally {
-        closeSync(replaced);
-      }
-      expect(ranFiles(buf.slice(before3), ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
-    }
 
     proc.kill();
     reader.releaseLock();

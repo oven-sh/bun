@@ -20,6 +20,7 @@ pub mod easing;
 pub mod gradient;
 pub mod image;
 pub mod length;
+pub(crate) mod math;
 pub mod position;
 pub mod rect;
 pub mod size;

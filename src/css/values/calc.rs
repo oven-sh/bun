@@ -2,6 +2,7 @@ use crate::css_parser as css;
 use crate::css_parser::{CssResult, PrintErr, Printer};
 use crate::values::angle::Angle;
 use crate::values::length::{Length, LengthValue};
+use crate::values::math;
 use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::{DimensionPercentage, Percentage};
 use crate::values::protocol;
@@ -442,15 +443,15 @@ impl<V: CalcValue> Calc<V> {
                 let a = Self::parse_numeric(i, parse_ident)?;
                 i.expect_comma()?;
                 let b = Self::parse_numeric(i, parse_ident)?;
-                Ok(Calc::Number(a.powf(b)))
+                Ok(Calc::Number(math::pow(a, b)))
             }),
             CalcUnit::Log => input.parse_nested_block(|i| {
                 let value = Self::parse_numeric(i, parse_ident)?;
                 if i.try_parse(|p| p.expect_comma()).is_ok() {
                     let base = Self::parse_numeric(i, parse_ident)?;
-                    return Ok(Calc::Number(value.log(base)));
+                    return Ok(Calc::Number(math::log(value, base)));
                 }
-                Ok(Calc::Number(value.ln()))
+                Ok(Calc::Number(math::ln(value)))
             }),
             CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, parse_ident),
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, parse_ident),
@@ -500,7 +501,7 @@ impl<V: CalcValue> Calc<V> {
             let v = Self::parse_numeric(i, parse_ident)?;
             Ok(Calc::Number(match op {
                 NumericFnOp::Sqrt => v.sqrt(),
-                NumericFnOp::Exp => v.exp(),
+                NumericFnOp::Exp => math::exp(v),
             }))
         })
     }
@@ -685,12 +686,12 @@ impl<V: CalcValue> Calc<V> {
     ) -> CssResult<Self> {
         let trig_fn = move |x: f32| -> f32 {
             match trig_fn_kind {
-                TrigFnKind::Sin => x.sin(),
-                TrigFnKind::Cos => x.cos(),
-                TrigFnKind::Tan => x.tan(),
-                TrigFnKind::Asin => x.asin(),
-                TrigFnKind::Acos => x.acos(),
-                TrigFnKind::Atan => x.atan(),
+                TrigFnKind::Sin => math::sin(x),
+                TrigFnKind::Cos => math::cos(x),
+                TrigFnKind::Tan => math::tan(x),
+                TrigFnKind::Asin => math::asin(x),
+                TrigFnKind::Acos => math::acos(x),
+                TrigFnKind::Atan => math::atan(x),
             }
         };
 
@@ -743,17 +744,19 @@ impl<V: CalcValue> Calc<V> {
         let hit_unrecoverable =
             |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
 
-        let reconcile =
-            |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
-                if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
-                    if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
-                        return Ok(v);
-                    }
-                } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
-                    return Ok(Angle::Rad(an.atan2(*bn)));
+        let reconcile = |input: &mut css::Parser,
+                         a: &Calc<Angle>,
+                         b: &Calc<Angle>|
+         -> CssResult<Angle> {
+            if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
+                if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(math::atan2(x, y))) {
+                    return Ok(v);
                 }
-                Err(input.new_custom_error(css::ParserError::invalid_value))
-            };
+            } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
+                return Ok(Angle::Rad(math::atan2(*an, *bn)));
+            }
+            Err(input.new_custom_error(css::ParserError::invalid_value))
+        };
 
         match Calc::<Angle>::parse_sum(input, &angle_ident) {
             Ok(a) => {
@@ -803,11 +806,11 @@ impl<V: CalcValue> Calc<V> {
         let b = Self::parse_sum(input, parse_ident)?;
 
         if let (Calc::Value(av), Calc::Value(bv)) = (&a, &b) {
-            if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
+            if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(math::atan2(x, y))) {
                 return Ok(v);
             }
         } else if let (Calc::Number(an), Calc::Number(bn)) = (&a, &b) {
-            return Ok(Angle::Rad(an.atan2(*bn)));
+            return Ok(Angle::Rad(math::atan2(*an, *bn)));
         } else {
             // doo nothing
         }
@@ -851,7 +854,7 @@ impl<V: CalcValue> Calc<V> {
         let mut errored = false;
         let mut sum = first;
         for arg in &args[i..] {
-            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + b.powf(2.0)) else {
+            let Some(next) = Self::apply_op(&sum, arg, (), |_, a, b| a + b * b) else {
                 errored = true;
                 break;
             };
@@ -1378,11 +1381,11 @@ fn round(_: (), value: f32, to: f32, strategy: RoundingStrategy) -> f32 {
 }
 
 fn hypot(_: (), a: f32, b: f32) -> f32 {
-    a.hypot(b)
+    math::hypot(a, b)
 }
 
 fn powi2(v: f32) -> f32 {
-    v.powf(2.0)
+    v * v
 }
 
 fn sqrtf32(v: f32) -> f32 {

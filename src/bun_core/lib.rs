@@ -321,22 +321,6 @@ pub mod path_sep {
     }
 }
 
-// ─── libm shims ───────────────────────────────────────────────────────────────
-// Canonical extern for libm's `powf`/`pow`.
-// Hot CSS color-space conversion paths (gam_srgb, lab, prophoto) call
-// the safe wrapper below; keep `#[inline]` so cross-crate use stays a direct
-// libm call.
-unsafe extern "C" {
-    // safe: all args by-value; libm `powf` is defined for all f32 inputs.
-    #[link_name = "powf"]
-    safe fn libm_powf(x: f32, y: f32) -> f32;
-}
-
-#[inline]
-pub fn powf(x: f32, y: f32) -> f32 {
-    libm_powf(x, y)
-}
-
 /// Safe `Vec` growth helpers — consolidate the
 /// `reserve(n); spare_capacity_mut(); MaybeUninit::write…; unsafe set_len(n)`
 /// pattern (S025) so the single `unsafe { set_len }` lives here behind a

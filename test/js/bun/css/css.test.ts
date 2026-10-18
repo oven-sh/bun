@@ -223,10 +223,11 @@ describe("css tests", () => {
     minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
-  describe("math functions fold to the same value on every host", () => {
-    // The f32 functions of the host libm do not agree on the last bit. Apple's atan2f(), acosf(),
-    // asinf() and atanf() return pi and pi/2 rounded toward zero. glibc, musl and the Windows CRT
-    // round them to nearest.
+  describe("math functions and color conversions give the same value on every host", () => {
+    // The CSS crate computes these with its own code, `src/css/values/math.rs`. The `f32` functions of the C library
+    // differ in the last bit between hosts. With Apple's libm, atan2f(0, -1) and acosf(-1) are one ulp below the pi
+    // of glibc, and asinf(1) and atanf(infinity) are one ulp below its pi/2. So are acosf(-1) and atanf(infinity)
+    // of musl. These rows printed `3.14159rad` and `1.5708rad` there.
     minify_test(`a { transform: rotate(atan2(0px, -1px)) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(atan2(0, -1)) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(atan2(0deg, -1deg)) }`, `a{transform:rotate(180deg)}`);
@@ -238,78 +239,144 @@ describe("css tests", () => {
     minify_test(`a { transform: rotate(atan2(1px, 0px)) }`, `a{transform:rotate(90deg)}`);
     minify_test(`a { transform: rotate(atan2(1px, -1px)) }`, `a{transform:rotate(135deg)}`);
     minify_test(`a { transform: rotate(atan2(1px, 1px)) }`, `a{transform:rotate(45deg)}`);
+    minify_test(`a { transform: rotate(atan2(1, sign(1px))) }`, `a{transform:rotate(45deg)}`);
 
-    // A difference prints as zero only when every bit of the two f32 values is the same.
-    minify_test(`a { transform: rotate(calc(atan2(0, -1) - 3.1415927rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(acos(-1) - 3.1415927rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(asin(1) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan(infinity) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan2(1, 0) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan2(1, -1) - 2.3561945rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan2(1, 1) - 0.78539816rad)) }`, `a{transform:rotate(0)}`);
+    // A later step reads the bits of a fold. The two angles were `none` with the bits of musl and of Apple's libm.
+    // The logarithm was a division of two `f32` and gave 14 on every host.
+    minify_test(`a { rotate: round(down, acos(-1), 180deg) }`, `a{rotate:180deg}`);
+    minify_test(`a { rotate: round(down, atan(infinity), 90deg) }`, `a{rotate:90deg}`);
+    minify_test(`a { line-height: round(down, log(32768, 2), 1) }`, `a{line-height:15}`);
 
-    // Each fold is the f64 function rounded once to f32.
-    const f32 = Math.fround;
-    const literal = (value: number) => f32(value).toPrecision(9);
-    const difference = {
-      number: (call: string, want: number) =>
-        minify_test_with_options(`a { line-height: calc(${call} - ${literal(want)}) }`, ""),
-      angle: (call: string, want: number) =>
-        minify_test_with_options(`a { transform: rotate(calc(${call} - ${literal(want)}rad)) }`, ""),
-    };
-    const zero = { number: "a{line-height:0}", angle: "a{transform:rotate(0)}" };
-    const inRange = (value: number) => Number.isFinite(value) && Math.abs(value) > 1e-5 && Math.abs(value) < 1e7;
+    // Special values. A NaN prints as 0, and an infinity as the largest `f32`.
+    minify_test(`a { transform: rotate(acos(2)) }`, `a{transform:rotate(acos(2))}`);
+    minify_test(`a { transform: rotate(atan(-infinity)) }`, `a{transform:rotate(-1.5708rad)}`);
+    minify_test(`a { transform: rotate(atan2(infinity, infinity)) }`, `a{transform:rotate(45deg)}`);
+    minify_test(`a { transform: rotate(atan2(-0, -1)) }`, `a{transform:rotate(-3.14159rad)}`);
+    minify_test(`a { transform: rotate(atan2(0, 0)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { line-height: sin(infinity) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: pow(0, 0) }`, `a{line-height:1}`);
+    minify_test(`a { line-height: pow(0, -1) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: pow(infinity, -1) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: pow(-8, 3) }`, `a{line-height:-512}`);
+    minify_test(`a { line-height: pow(2, -2) }`, `a{line-height:.25}`);
+    minify_test(`a { line-height: pow(-2, 0.5) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: log(0) }`, `a{line-height:-3.40282e38}`);
+    minify_test(`a { line-height: log(-1) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: exp(infinity) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: exp(-infinity) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: hypot(infinity, NaN) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: hypot(3, 4) }`, `a{line-height:5}`);
+    minify_test(`a { width: hypot(3px, 4px, 12px) }`, `a{width:13px}`);
+    // The exponent of a number token.
+    minify_test(`a { line-height: 12345e-2 }`, `a{line-height:123.45}`);
+    minify_test(`a { line-height: 1.5e-7 }`, `a{line-height:1.5e-7}`);
+    minify_test(`a { width: 1.5e-3px }`, `a{width:.0015px}`);
+    minify_test(`a { line-height: 1e40 }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: 0e400 }`, `a{line-height:0}`);
 
-    const unary: [name: string, fn: (x: number) => number, kind: "number" | "angle", step: number][] = [
-      ["sin", Math.sin, "number", 0.0137],
-      ["cos", Math.cos, "number", 0.0137],
-      ["tan", Math.tan, "number", 0.0137],
-      ["exp", Math.exp, "number", 0.0137],
-      ["log", Math.log, "number", 0.0137],
-      ["sqrt", Math.sqrt, "number", 0.0137],
-      // asin() and acos() take [-1, 1].
-      ["asin", Math.asin, "angle", 0.0017],
-      ["acos", Math.acos, "angle", 0.0017],
-      ["atan", Math.atan, "angle", 0.0137],
-    ];
-    test.each(unary)("%s()", (name, fn, kind, step) => {
-      const wrong: string[] = [];
-      let count = 0;
-      for (let i = 1; i <= 500; i++) {
-        const x = Number((i * step).toFixed(4));
-        const want = f32(fn(f32(x)));
-        if (!inRange(want)) continue;
-        count++;
-        const call = `${name}(${x})`;
-        const got = difference[kind](call, want);
-        if (got !== zero[kind]) wrong.push(`${call} - ${literal(want)} => ${got}`);
+    // `calc(fold - literal)` is zero only when the fold has every bit of the `f32` that `literal` is. Each literal is
+    // the `f64` function, rounded once. The C library of at least one host that CI has gave another `f32` for each of
+    // these folds.
+    const number = (call: string, literal: string) =>
+      minify_test(`a { line-height: calc(${call} - ${literal}) }`, `a{line-height:0}`);
+    const angle = (call: string, literal: string) =>
+      minify_test(`a { transform: rotate(calc(${call} - ${literal}rad)) }`, `a{transform:rotate(0)}`);
+    angle("atan2(0, -1)", "3.1415927");
+    angle("acos(-1)", "3.1415927");
+    angle("asin(1)", "1.5707964");
+    angle("atan(infinity)", "1.5707964");
+    angle("atan2(1, 0)", "1.5707964");
+    angle("atan2(1, -1)", "2.3561945");
+    angle("atan2(1, 1)", "0.78539816");
+    angle("asin(0.5151)", "0.541124344");
+    angle("asin(0.5032)", "0.527297795");
+    angle("asin(0.0612)", "0.0612382665");
+    angle("asin(0.0459)", "0.0459161326");
+    angle("asin(-0.5151)", "-0.541124344");
+    angle("acos(0.5474)", "0.991542041");
+    angle("acos(0.0374)", "1.53338766");
+    angle("acos(0.1666)", "1.40341580");
+    angle("acos(-0.5474)", "2.15005064");
+    angle("atan(1.3289)", "0.925695837");
+    angle("atan(0.0959)", "0.0956076160");
+    angle("atan(-1.3289)", "-0.925695837");
+    angle("atan2(8.9541, 8.1645)", "0.831490755");
+    angle("atan2(8.9541px, 8.1645px)", "0.831490755");
+    angle("atan2(7.5009, 2.8228)", "1.21086168");
+    angle("atan2(-8.9541, 8.1645)", "-0.831490755");
+    angle("atan2(8.9541, -8.1645)", "2.31010199");
+    // The `f64` atan2 of glibc and of musl round to two `f32` here.
+    angle("atan2(910.131836, -0.0220102575)", "1.57082045");
+    number("sin(2.9044)", "0.234974697");
+    number("sin(3.5346)", "-0.382968217");
+    number("sin(-2.9044)", "-0.234974697");
+    number("sin(123456.7)", "-0.999415934");
+    number("sin(1e22)", "-0.734081507");
+    number("cos(1.1234)", "0.432619631");
+    number("cos(5.019)", "0.301829487");
+    number("cos(-1e15)", "0.105358481");
+    number("tan(0.8768)", "1.20181203");
+    number("tan(0.0959)", "0.0961950794");
+    number("tan(-1.4111)", "-6.20856333");
+    number("tan(1e10)", "-0.558349609");
+    number("exp(1.781)", "5.93578959");
+    number("exp(0.1233)", "1.13122380");
+    number("exp(-3.836)", "0.0215797480");
+    number("log(1.0686)", "0.0663494319");
+    number("log(0.001)", "-6.90775537");
+    number("log(1e30)", "69.0775528");
+    number("log(10.3035, 2.022)", "3.31277680");
+    number("log(9.03, 3.14)", "1.92318511");
+    number("pow(4.7502, 0.293)", "1.57861626");
+    number("pow(17.137, 2.4497)", "1053.82898");
+    number("pow(1.73, 8.21)", "90.0240479");
+    number("pow(1.1, -40.5)", "0.0210666694");
+    number("pow(-2.5, 3)", "-15.625");
+    number("hypot(0.5463, 1.4942)", "1.59093595");
+    number("hypot(-16.445, 1.8946)", "16.5537758");
+
+    // Every bit of a sample of folds. `text` is the six digits that print. The difference from them, in units of
+    // 2**-24, is what is left of the `f32`.
+    test("a sample of folds", () => {
+      const printed = (declaration: string) => {
+        const css = minify_test_with_options(`a { ${declaration} }`, "");
+        return css.slice(css.indexOf(":") + 1, -1);
+      };
+      const rows: string[] = [];
+      const fold = (property: string, call: string) => {
+        const text = printed(`${property}: ${call}`);
+        rows.push(`${call} ${text} ${printed(`${property}: calc((${call} - ${text}) * 16777216)`)}`);
+      };
+      for (let i = 0; i < 48; i++) {
+        const x = (i * 0.1373 - 3.2051).toFixed(4);
+        const positive = (i * 0.4391 + 0.0173).toFixed(4);
+        const unit = (i * 0.0397 - 0.9528).toFixed(4);
+        const other = (((i * 7919) % 97) * 0.0931 - 4.4107).toFixed(4);
+        for (const name of ["sin", "cos", "tan", "exp"]) fold("line-height", `${name}(${x})`);
+        fold("line-height", `log(${positive})`);
+        fold("line-height", `log(${positive}, ${(i * 0.1907 + 1.2069).toFixed(4)})`);
+        fold("line-height", `pow(${positive}, ${other})`);
+        fold("line-height", `pow(${x}, ${(i % 9) - 4})`);
+        fold("line-height", `hypot(${x}, ${other})`);
+        for (const name of ["asin", "acos"]) fold("rotate", `${name}(${unit})`);
+        fold("rotate", `atan(${other})`);
+        fold("rotate", `atan2(${x}, ${other})`);
+        fold("rotate", `atan2(${x}px, ${other}px)`);
       }
-      expect({ count, wrong: wrong.length, examples: wrong.slice(0, 8) }).toEqual({ count, wrong: 0, examples: [] });
+      for (const x of ["7e5", "-123456.789", "1e9", "-3e14", "2.5e21", "1e38"]) {
+        for (const name of ["sin", "cos", "tan"]) fold("line-height", `${name}(${x})`);
+        fold("rotate", `atan(${x})`);
+      }
+      expect(rows.length).toBe(696);
+      const digest = Bun.hash(rows.join("\n")).toString(16);
+      // The digest changes when one fold changes. The rows show which.
+      if (digest !== "fd6a3edc65fd2e7d") console.log(rows.join("\n"));
+      expect(digest).toBe("fd6a3edc65fd2e7d");
     });
 
-    const binary: [name: string, fn: (a: number, b: number) => number, kind: "number" | "angle"][] = [
-      ["atan2", Math.atan2, "angle"],
-      ["pow", Math.pow, "number"],
-      ["hypot", Math.hypot, "number"],
-      ["log", (a, b) => Math.log(a) / Math.log(b), "number"],
-    ];
-    test.each(binary)("%s() with two arguments", (name, fn, kind) => {
-      const wrong: string[] = [];
-      let count = 0;
-      for (let i = 0; i < 500; i++) {
-        const a = Number((((i * 7919) % 1000) * 0.0173 + 0.01).toFixed(4));
-        const b = Number((((i * 104729) % 997) * 0.0091 + 0.02).toFixed(4));
-        const want = f32(fn(f32(a), f32(b)));
-        if (!inRange(want)) continue;
-        count++;
-        const call = `${name}(${a}, ${b})`;
-        const got = difference[kind](call, want);
-        if (got !== zero[kind]) wrong.push(`${call} - ${literal(want)} => ${got}`);
-      }
-      expect({ count, wrong: wrong.length, examples: wrong.slice(0, 8) }).toEqual({ count, wrong: 0, examples: [] });
-    });
-
-    // The color conversions call the host powf(), cbrtf(), atan2f(), sinf() and cosf() too.
+    // The color conversions take powers, cube roots, sines, cosines and arc tangents. With the C library, Linux with
+    // glibc, Linux with musl, macOS on arm64 and on x64, and Windows on x64 and on arm64 printed six different sets
+    // of digits for these 1200 colors.
     test("color conversions", () => {
       const rows: string[] = [];
       const hex = (i: number) =>
@@ -330,6 +397,28 @@ describe("css tests", () => {
       if (digest !== "f9f2f9f94b64c9d1") console.log(rows.join("\n"));
       expect(digest).toBe("f9f2f9f94b64c9d1");
     });
+    // From lch, oklch, lab, oklab, prophoto-rgb and rec2020 to another space.
+    minify_test(`a { color: lab(from lch(50% 30 40) l a b) }`, `a{color:lab(50% 22.9813 19.2836)}`);
+    minify_test(`a { color: oklab(from oklch(60% 0.1 200) l a b) }`, `a{color:oklab(60% -.0939693 -.034202)}`);
+    minify_test(`a { color: lch(from oklch(60% 0.1 200) l c h) }`, `a{color:lch(54.5664% 33.8288 202.321)}`);
+    minify_test(`a { color: color(from lab(50% 20 30) srgb r g b) }`, `a{color:color(srgb .630112 .412544 .2689)}`);
+    minify_test(
+      `a { color: color(from oklab(60% 0.1 0.05) srgb r g b) }`,
+      `a{color:color(srgb .728068 .39152 .359617)}`,
+    );
+    minify_test(
+      `a { color: color(from lab(50% 20 30) xyz-d50 x y z) }`,
+      `a{color:color(xyz-d50 .217765 .184187 .0606797)}`,
+    );
+    minify_test(
+      `a { color: lab(from color(prophoto-rgb 0.2 0.4 0.6) l a b) }`,
+      `a{color:lab(46.0065% -46.944 -40.2967)}`,
+    );
+    minify_test(`a { color: lab(from color(rec2020 0.2 0.4 0.6) l a b) }`, `a{color:lab(45.5096% -21.2836 -36.1829)}`);
+    minify_test(
+      `a { color: color-mix(in lch, lab(50% 20 30), oklch(60% 0.1 200)) }`,
+      `a{color:lch(52.2832% 34.9421 129.315)}`,
+    );
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128

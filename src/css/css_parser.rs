@@ -4460,7 +4460,7 @@ impl<'a> Tokenizer<'a> {
                         break;
                     }
                 }
-                value *= (10.0f64).powf(sign2 * exponent);
+                value = crate::values::math::scale_by_power_of_ten(value, sign2 * exponent);
             }
         }
 

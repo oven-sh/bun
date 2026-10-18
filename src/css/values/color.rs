@@ -11,6 +11,7 @@ use crate::printer::Printer;
 use crate::targets;
 use crate::values::angle::Angle;
 use crate::values::calc::Calc;
+use crate::values::math;
 use crate::values::number::CSSNumberFns;
 use crate::values::percentage::Percentage;
 use bun_alloc::Arena;
@@ -2542,7 +2543,7 @@ struct LchComponents {
 fn rectangular_to_polar(l: f32, a: f32, b: f32) -> LchComponents {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L375
 
-    let mut h = b.atan2(a) * 180.0 / core::f32::consts::PI;
+    let mut h = math::atan2(b, a) * 180.0 / core::f32::consts::PI;
     if h < 0.0 {
         h += 360.0;
     }
@@ -2668,8 +2669,6 @@ pub(crate) fn write_predefined(
     dest.write_char(b')')
 }
 
-use bun_core::powf as bun_powf;
-
 fn gam_srgb_component(c: f32) -> f32 {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L31
     // convert a linear-light sRGB channel in the range 0.0-1.0
@@ -2682,7 +2681,7 @@ fn gam_srgb_component(c: f32) -> f32 {
     let abs = c.abs();
     if abs > 0.0031308 {
         let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-        let x: f32 = bun_powf(abs, 1.0 / 2.4);
+        let x: f32 = math::pow(abs, 1.0 / 2.4);
         let y: f32 = 1.055 * x;
         let z: f32 = y - 0.055;
         return sign * z;
@@ -2706,7 +2705,7 @@ fn lin_srgb_component(c: f32) -> f32 {
     }
 
     let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-    sign * bun_powf((abs + 0.055) / 1.055, 2.4)
+    sign * math::pow((abs + 0.055) / 1.055, 2.4)
 }
 
 /// PERF: SIMD?
@@ -2727,8 +2726,8 @@ struct LabComponents {
 fn polar_to_rectangular(l: f32, c: f32, h: f32) -> LabComponents {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L385
 
-    let a = c * (h * core::f32::consts::PI / 180.0).cos();
-    let b = c * (h * core::f32::consts::PI / 180.0).sin();
+    let a = c * math::cos(h * core::f32::consts::PI / 180.0);
+    let b = c * math::sin(h * core::f32::consts::PI / 180.0);
     LabComponents { l, a, b }
 }
 
@@ -2796,20 +2795,20 @@ impl From<LAB> for XYZd50 {
         let f2: f32 = f1 - b / 200.0;
 
         // compute xyz
-        let x = if bun_powf(f0, 3.0) > E {
-            bun_powf(f0, 3.0)
+        let x = if math::cube(f0) > E {
+            math::cube(f0)
         } else {
             (116.0 * f0 - 16.0) / K
         };
 
         let y = if l > K * E {
-            bun_powf((l + 16.0) / 116.0, 3.0)
+            math::cube((l + 16.0) / 116.0)
         } else {
             l / K
         };
 
-        let z = if bun_powf(f2, 3.0) > E {
-            bun_powf(f2, 3.0)
+        let z = if math::cube(f2) > E {
+            math::cube(f2)
         } else {
             (116.0f32 * f2 - 16.0) / K
         };
@@ -3040,7 +3039,7 @@ impl From<A98> for XYZd65 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L181
         fn lin_a98rgb_component(c: f32) -> f32 {
             let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-            sign * bun_powf(c.abs(), 563.0 / 256.0)
+            sign * math::pow(c.abs(), 563.0 / 256.0)
         }
 
         // convert an array of a98-rgb values in the range 0.0 - 1.0
@@ -3102,7 +3101,7 @@ impl From<ProPhoto> for XYZd50 {
                 return c / 16.0;
             }
             let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-            sign * bun_powf(abs, 1.8)
+            sign * math::pow(abs, 1.8)
         }
 
         let prophoto = prophoto_.resolve_missing();
@@ -3159,7 +3158,7 @@ impl From<Rec2020> for XYZd65 {
             }
 
             let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-            sign * bun_powf((abs + A - 1.0) / A, 1.0 / 0.45)
+            sign * math::pow((abs + A - 1.0) / A, 1.0 / 0.45)
         }
 
         let rec2020 = rec2020_.resolve_missing();
@@ -3215,17 +3214,17 @@ impl From<XYZd50> for LAB {
 
         // now compute f
         let f0 = if x > E {
-            x.cbrt()
+            math::cbrt(x)
         } else {
             (K * x + 16.0) / 116.0
         };
         let f1 = if y > E {
-            y.cbrt()
+            math::cbrt(y)
         } else {
             (K * y + 16.0) / 116.0
         };
         let f2 = if z > E {
-            z.cbrt()
+            math::cbrt(z)
         } else {
             (K * z + 16.0) / 116.0
         };
@@ -3292,7 +3291,7 @@ impl From<XYZd50> for ProPhoto {
             let abs = c.abs();
             if abs >= ET {
                 let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-                return sign * bun_powf(abs, 1.0 / 1.8);
+                return sign * math::pow(abs, 1.0 / 1.8);
             }
             16.0 * c
         }
@@ -3385,7 +3384,7 @@ impl From<XYZd65> for A98 {
             // to gamma corrected form
             // negative values are also now accepted
             let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-            sign * bun_powf(c.abs(), 256.0 / 563.0)
+            sign * math::pow(c.abs(), 256.0 / 563.0)
         }
 
         let xyz = xyz_.resolve_missing();
@@ -3423,7 +3422,7 @@ impl From<XYZd65> for Rec2020 {
             let abs = c.abs();
             if abs > B {
                 let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-                return sign * (A * bun_powf(abs, 0.45) - (A - 1.0));
+                return sign * (A * math::pow(abs, 0.45) - (A - 1.0));
             }
 
             4.5 * c
@@ -3468,7 +3467,12 @@ impl From<XYZd65> for OKLAB {
 
         let xyz = xyz_.resolve_missing();
         let (a1, b1, c1) = multiply_matrix(&XYZ_TO_LMS, xyz.x, xyz.y, xyz.z);
-        let (l, a, b) = multiply_matrix(&LMS_TO_OKLAB, a1.cbrt(), b1.cbrt(), c1.cbrt());
+        let (l, a, b) = multiply_matrix(
+            &LMS_TO_OKLAB,
+            math::cbrt(a1),
+            math::cbrt(b1),
+            math::cbrt(c1),
+        );
 
         OKLAB {
             l,
@@ -3561,12 +3565,7 @@ impl From<OKLAB> for XYZd65 {
 
         let lab = lab_.resolve_missing();
         let (a, b, c) = multiply_matrix(&OKLAB_TO_LMS, lab.l, lab.a, lab.b);
-        let (x, y, z) = multiply_matrix(
-            &LMS_TO_XYZ,
-            bun_powf(a, 3.0),
-            bun_powf(b, 3.0),
-            bun_powf(c, 3.0),
-        );
+        let (x, y, z) = multiply_matrix(&LMS_TO_XYZ, math::cube(a), math::cube(b), math::cube(c));
 
         XYZd65 {
             x,

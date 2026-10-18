@@ -1109,7 +1109,7 @@ fn redo_tarball(
     let Some((url, integrity)) = registry_dist(this, &manifest, package_id) else {
         return Revalidation::Final;
     };
-    set_dist(this, package_id, &url, integrity);
+    set_dist(this, package_id, &url, &integrity);
     if verbose_install() {
         bun_core::pretty_errorln!(
             "Enqueue package for download again, the registry names another tarball: {}",
@@ -1215,13 +1215,13 @@ fn registry_dist(
     is_same.then(|| (url.to_vec(), integrity))
 }
 
-fn set_dist(this: &mut PackageManager, package_id: PackageID, url: &[u8], integrity: Integrity) {
+fn set_dist(this: &mut PackageManager, package_id: PackageID, url: &[u8], integrity: &Integrity) {
     let url = this.lockfile.string_buf().append(url).unwrap_or_oom();
     let packages = &mut this.lockfile.packages;
     packages.items_resolution_mut()[package_id as usize]
         .npm_mut()
         .url = url;
-    packages.items_meta_mut()[package_id as usize].integrity = integrity;
+    packages.items_meta_mut()[package_id as usize].integrity = *integrity;
 }
 
 /// The registry's document is in memory because a download failed. The other packages of that
@@ -1255,7 +1255,7 @@ fn correct_packages_without_download(
             continue;
         }
         if let Some((url, integrity)) = registry_dist(this, manifest, id) {
-            set_dist(this, id, &url, integrity);
+            set_dist(this, id, &url, &integrity);
         }
     }
 }

@@ -2747,6 +2747,34 @@ describe("css tests", () => {
       );
     }
 
+    // A browser needs its prefix for `stretch` until the version that has the keyword. Chrome and Edge have it in 138.
+    for (const [name, targets, prefixed] of [
+      ["firefox-133", { firefox: 133 << 16 }, ["-moz-available"]],
+      ["firefox-140", { firefox: 140 << 16 }, ["-moz-available"]],
+      ["safari-18-1", { safari: (18 << 16) | (1 << 8) }, ["-webkit-fill-available"]],
+      ["safari-26", { safari: 26 << 16 }, ["-webkit-fill-available"]],
+      ["ios-18-1", { ios_saf: (18 << 16) | (1 << 8) }, ["-webkit-fill-available"]],
+      ["ios-26", { ios_saf: 26 << 16 }, ["-webkit-fill-available"]],
+      ["chrome-131", { chrome: 131 << 16 }, ["-webkit-fill-available"]],
+      ["chrome-137", { chrome: 137 << 16 }, ["-webkit-fill-available"]],
+      ["chrome-138", { chrome: 138 << 16 }, []],
+      ["edge-128", { edge: 128 << 16 }, ["-webkit-fill-available"]],
+      ["edge-137", { edge: 137 << 16 }, ["-webkit-fill-available"]],
+      ["edge-138", { edge: 138 << 16 }, []],
+      ["samsung-26", { samsung: 26 << 16 }, ["-webkit-fill-available"]],
+      [
+        "chrome-137-firefox-140-safari-26",
+        { chrome: 137 << 16, firefox: 140 << 16, safari: 26 << 16 },
+        ["-webkit-fill-available", "-moz-available"],
+      ],
+    ] as const) {
+      prefix_test(
+        `.${name} { width: stretch }`,
+        `.${name} { ${[...prefixed, "stretch"].map(value => `width: ${value};`).join(" ")} }`,
+        targets,
+      );
+    }
+
     minify_test(".foo { aspect-ratio: auto }", ".foo{aspect-ratio:auto}");
     minify_test(".foo { aspect-ratio: 2 / 3 }", ".foo{aspect-ratio:2/3}");
     minify_test(".foo { aspect-ratio: auto 2 / 3 }", ".foo{aspect-ratio:auto 2/3}");

@@ -835,7 +835,7 @@ ${
 ${privateFunctions
   .map(
     fn =>
-      `    prototype->putDirect(vm, names.${privateSymbol(fn)}PrivateName(), JSC::JSFunction::create(vm, globalObject, ${fn.length}, ${asciiLiteral(fn.name)}, ${methodHostFunctionName(type, fn)}, JSC::ImplementationVisibility::Private), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);`,
+      `    prototype->putDirectWithoutTransition(vm, names.${privateSymbol(fn)}PrivateName(), JSC::JSFunction::create(vm, globalObject, ${fn.length}, ${asciiLiteral(fn.name)}, ${methodHostFunctionName(type, fn)}, JSC::ImplementationVisibility::Private), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);`,
   )
   .join("\n")}
 `
@@ -1006,13 +1006,14 @@ ${array("WTF::ASCIILiteral", "enumerationValues", tables.enumerationValues.map(a
 
 export function cppClasses(tables: Tables): string {
   return `${banner(null)}#pragma once
+#include "GeneratedBindings+Counts.h"
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 
 namespace Bun::Bindgen::Generated {
 
 ${tables.classes.map(type => `void setup${type.name}ClassStructure(JSC::LazyClassStructure::Initializer&);`).join("\n")}
 
-inline void initializeClasses(JSC::LazyClassStructure* classes)
+inline void initializeClasses(JSC::LazyClassStructure (&classes)[Counts::numberOfClasses])
 {
 ${tables.classes.map(type => `    classes[${type.classIndex}].initLater([](JSC::LazyClassStructure::Initializer& init) { setup${type.name}ClassStructure(init); });`).join("\n")}
 }

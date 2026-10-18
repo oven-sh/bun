@@ -265,7 +265,7 @@ describe("autolinkHeadings option", () => {
 
   test("headings: true is headings: { ids: true } with a link to each heading that has no link", () => {
     let seed = 1;
-    const next = (n: number) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+    const next = (n: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 16) % n;
     const pick = (from: string[]) => from[next(from.length)];
     const links = [
       "[docs](https://example.com/a)",

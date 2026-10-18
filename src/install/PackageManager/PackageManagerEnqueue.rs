@@ -4151,8 +4151,9 @@ fn peer_provided_from_above(
                 {
                     continue;
                 }
-                // A package provides itself to everything below it.
-                if names[parent] == name_hash {
+                // A package provides itself to everything below it. A project doesn't: a plugin in
+                // the repository of its host gets the published host.
+                if names[parent] == name_hash && !is_project(parent) {
                     return Some(parent as PackageID);
                 }
                 if !follows_peers

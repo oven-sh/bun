@@ -2736,6 +2736,23 @@ test.concurrent("a package provides itself to a dependency that has a peer depen
   expect(layout(dir)).toEqual(["app@1.0.0", "host@2.0.0", "host/plugin@2.0.0", "plugin@1.0.0"]);
 });
 
+test.concurrent.each(["hoisted", "isolated"])(
+  "a plugin in the repository of its host gets the published host (%s)",
+  async linker => {
+    using server = await serveGraph({
+      host: { "2.1.0": {}, "3.0.0": {} },
+      plugin: { "1.0.0": { peerDependencies: { host: "^2.0.0" } } },
+    });
+    using tmp = tempDir("hoist-peer-named-like-the-project", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "host", version: "3.0.0", devDependencies: { plugin: "1.0.0" } }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    expect(await lockfileTree(dir)).toEqual({ host: "host@2.1.0", plugin: "plugin@1.0.0" });
+  },
+);
+
 // The project's own peer dependency counts like a regular one, so the project provides compiler@7 to plugin.
 test.concurrent("the project provides its dependencies to a package that it has a peer dependency on", async () => {
   using server = await serveGraph({

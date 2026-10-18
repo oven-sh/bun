@@ -22398,20 +22398,22 @@ describe.concurrent("--check", () => {
     expect({ reported, exitCode }).toEqual({ reported: checked, exitCode: 1 });
   });
 
-  // An error ends the search for pages early. The pages that were found before it are checked.
-  // The superuser can read every directory.
-  test.skipIf(isWindows || isRoot)("bun --check './**/*.html' with a directory that cannot be read", async () => {
+  // An error ends the search for pages early. The pages that were found before it are checked. If their scripts have
+  // no error, the run that follows reports the error of the search. The superuser can read every directory.
+  test.skipIf(isWindows || isRoot).each([
+    [`"1"`, "index.ts(1,14): error TS2322"],
+    [`1`, "EACCES"],
+  ])("bun --check './**/*.html' with a directory that cannot be read, index = %s", async (value, error) => {
     using dir = project({
       "index.html": `<!doctype html>\n<script type="module" src="./index.ts"></script>\n`,
-      "index.ts": `export const index: number = "1";\n`,
+      "index.ts": `export const index: number = ${value};\n`,
       "locked/other.html": "",
     });
     const locked = join(String(dir), "locked");
     chmodSync(locked, 0o000);
     try {
       const { stderr, exitCode } = await run(String(dir), ["--check", "./**/*.html"]);
-      const checked = stderr.includes("index.ts(1,14): error TS2322");
-      expect({ checked, exitCode }).toEqual({ checked: true, exitCode: 1 });
+      expect({ reported: stderr.includes(error), exitCode }).toEqual({ reported: true, exitCode: 1 });
     } finally {
       chmodSync(locked, 0o755);
     }

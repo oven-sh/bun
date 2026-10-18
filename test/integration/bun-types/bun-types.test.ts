@@ -334,6 +334,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "dns.bind.ts": "typeof Bun.dns",
   "dns_internals.bind.ts": null,
   "fmt_jsc.bind.ts": null,
+  "html_pages.bind.ts": null,
   "jest.bind.ts": null,
   "jsc_hooks.bind.ts": null,
   "node_assert_binding.bind.ts": null,

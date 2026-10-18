@@ -816,7 +816,7 @@ pub(crate) type WrappedIteratorW = NewWrappedIterator<true>;
 struct SortedEntry {
     /// Offset into `SortedEntries::names`. A NUL follows each name.
     off: usize,
-    len: u16,
+    len: usize,
     kind: EntryKind,
 }
 
@@ -841,7 +841,7 @@ impl SortedEntries {
                     let name = ent.name.slice();
                     index.push(SortedEntry {
                         off: names.len(),
-                        len: u16::try_from(name.len()).expect("dirent name fits NAME_MAX"),
+                        len: name.len(),
                         kind: ent.kind,
                     });
                     names.extend_from_slice(name);
@@ -851,9 +851,8 @@ impl SortedEntries {
                 Err(err) => break Some(err),
             }
         };
-        index.sort_unstable_by(|a, b| {
-            names[a.off..a.off + a.len as usize].cmp(&names[b.off..b.off + b.len as usize])
-        });
+        index
+            .sort_unstable_by(|a, b| names[a.off..a.off + a.len].cmp(&names[b.off..b.off + b.len]));
         Self {
             names,
             index,
@@ -872,7 +871,7 @@ impl SortedEntries {
         };
         self.pos += 1;
         Ok(Some(IteratorResult {
-            name: RawSlice::new(&self.names[ent.off..ent.off + ent.len as usize]),
+            name: RawSlice::new(&self.names[ent.off..ent.off + ent.len]),
             kind: ent.kind,
         }))
     }

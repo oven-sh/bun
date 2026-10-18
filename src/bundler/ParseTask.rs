@@ -2658,6 +2658,9 @@ pub mod parse_worker {
                 .framework
                 .is_some_and(|f| f.is_client_page_file(task.path.text))
         {
+            // TypeScript trims imports whose bindings went unused; JavaScript does not by default. Turn
+            // it on, so an import that only a deleted data function used goes with it.
+            opts.features.trim_unused_imports = true;
             for name in [
                 &b"getServerSideProps"[..],
                 b"getStaticProps",

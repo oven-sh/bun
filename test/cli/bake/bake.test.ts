@@ -1347,6 +1347,30 @@ test.concurrent("the default framework sends the browser bundle before a slow Su
   expect(html).toContain("late content");
 });
 
+test.concurrent("bun bake leaves the server-only imports of a .jsx page out of its browser bundle", async () => {
+  using dir = tempDir("bake-command-page-data-jsx", {
+    "app/secret.js": `export const secret = "server-only-secret";`,
+    "app/pages/index.jsx": `
+      import { secret } from "../secret.js";
+      export const getServerSideProps = async () => ({ props: { length: secret.length } });
+      export default function Home({ length }) {
+        return <h1>{"length " + length}</h1>;
+      }
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const html = await (await fetch(url)).text();
+  expect(html).toContain("<h1>length 18</h1>");
+  const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("app/pages/index.jsx");
+  expect(bundle).not.toContain("server-only-secret");
+});
+
 test.concurrent("bun bake reports a page that a route of app/server.ts hides", async () => {
   using dir = tempDir("bake-command-hidden-page", {
     "app/pages/index.ts": `export default () => "page-index";`,

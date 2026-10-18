@@ -1576,7 +1576,7 @@ class ChildProcess extends EventEmitter {
 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
   #emitPendingMessages() {
-    if (!this.connected || !this.listenerCount("message")) return;
+    if (!this.channel || !this.listenerCount("message")) return;
     const messages = this.#pendingMessages;
     const { length } = messages;
     if (!length) return;

@@ -9,7 +9,7 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
-use bun_paths::typed::{AbsPath, AbsPathBuf, Storage, Z};
+use bun_paths::typed::{AbsPath, DynPathBuf, Z};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2094,7 +2094,7 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve(&self, path: &mut AbsPathBuf<impl Storage<u8>>) -> bool {
+    pub(crate) fn resolve(&self, path: &mut DynPathBuf<'_, AbsPath>) -> bool {
         let Some(real_path) = AbsPath::from_os(&self.real_path) else {
             return path
                 .get()

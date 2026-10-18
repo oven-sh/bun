@@ -83,7 +83,7 @@ impl Unit for u16 {}
 
 // ── views ────────────────────────────────────────────────────────────────────────────────────────
 
-/// Any of the five views.
+/// Any of the views.
 pub trait Units {
     type Unit: Unit;
     fn units(&self) -> &[Self::Unit];
@@ -108,8 +108,13 @@ pub trait View: Units {
     #[doc(hidden)]
     const WHEN_RELATIVE: AtFence;
     #[doc(hidden)]
-    fn wrap(units: &[Self::Unit]) -> &Self;
+    fn wrap(units: &[Self::Unit], only_here: Sealed) -> &Self;
 }
+/// Only this module makes one, so only this module calls [`View::wrap`].
+#[doc(hidden)]
+pub struct Sealed(());
+/// A view whose kind says what it holds: every one but [`Tail`]. Only these can replace a path.
+pub trait Known: View {}
 /// A view that can hold an absolute path.
 pub trait HoldsAbs: View {}
 /// A view that can be empty.
@@ -191,7 +196,7 @@ macro_rules! buildable {
             const MAY_BE_ABSOLUTE: bool = $abs;
             const WHEN_RELATIVE: AtFence = AtFence::$at;
             #[inline(always)]
-            fn wrap(units: &[C]) -> &Self {
+            fn wrap(units: &[C], _: Sealed) -> &Self {
                 Self::wrap_units(units)
             }
         }
@@ -219,14 +224,20 @@ view!(
     /// One name in a directory.
     Component
 );
+view!(
+    /// A path of a kind that is not known here. Only a [`PathBuf::tail`] builds one.
+    Tail
+);
 derefs_to!(Component => SubPath);
 derefs_to!(SubPath => RelPath);
 derefs_to!(RelPath => Path);
 derefs_to!(AbsPath => Path);
-buildable!(Path, may be absolute: true, when relative: Climb, HoldsAbs, HoldsEmpty);
-buildable!(AbsPath, may be absolute: true, when relative: Fail, HoldsAbs);
-buildable!(RelPath, may be absolute: false, when relative: Climb, HoldsEmpty);
-buildable!(SubPath, may be absolute: false, when relative: Fail, HoldsEmpty);
+derefs_to!(Tail => Path);
+buildable!(Path, may be absolute: true, when relative: Climb, Known, HoldsAbs, HoldsEmpty);
+buildable!(AbsPath, may be absolute: true, when relative: Fail, Known, HoldsAbs);
+buildable!(RelPath, may be absolute: false, when relative: Climb, Known, HoldsEmpty);
+buildable!(SubPath, may be absolute: false, when relative: Fail, Known, HoldsEmpty);
+buildable!(Tail, may be absolute: false, when relative: Fail);
 
 /// A `V` with a terminator after its last unit.
 #[repr(transparent)]
@@ -564,20 +575,18 @@ macro_rules! component {
 
 // ── storage ──────────────────────────────────────────────────────────────────────────────────────
 
-/// Where a [`PathBuf`] writes.
+/// Where a [`PathBuf`] writes. The builder asks where that is once, and again only when it runs out.
 ///
 /// # Safety
-/// `ptr` is valid for writes of `capacity` units, and for reads of every unit written through it,
-/// until the next `reserve`. After `reserve(used, total)` returns true, `capacity() >= total` and
-/// the first `used` units are kept.
+/// What `room` and `grow` return is valid for writes of that many units, and for reads of every
+/// unit written there, until the next `grow` or the drop of the storage, wherever the storage is
+/// moved to in between. After `grow(used, total)` returns `Some`, there is room for `total` units
+/// and the first `used` are kept.
 pub unsafe trait Storage<C> {
-    fn ptr(&self) -> *const C;
-    fn ptr_mut(&mut self) -> *mut C;
-    fn capacity(&self) -> usize;
-    #[inline(always)]
-    fn reserve(&mut self, used: usize, total: usize) -> bool {
-        let _ = used;
-        total <= self.capacity()
+    fn room(&mut self) -> (*mut C, usize);
+    fn grow(&mut self, used: usize, total: usize) -> Option<(*mut C, usize)> {
+        let _ = (used, total);
+        None
     }
 }
 
@@ -586,20 +595,11 @@ macro_rules! storage_by_mut {
         // SAFETY: forwards.
         unsafe impl<C: PathUnit> Storage<C> for &mut $owner {
             #[inline(always)]
-            fn ptr(&self) -> *const C {
-                Storage::ptr(&**self)
+            fn room(&mut self) -> (*mut C, usize) {
+                Storage::room(&mut **self)
             }
-            #[inline(always)]
-            fn ptr_mut(&mut self) -> *mut C {
-                Storage::ptr_mut(&mut **self)
-            }
-            #[inline(always)]
-            fn capacity(&self) -> usize {
-                Storage::capacity(&**self)
-            }
-            #[inline(always)]
-            fn reserve(&mut self, used: usize, total: usize) -> bool {
-                Storage::reserve(&mut **self, used, total)
+            fn grow(&mut self, used: usize, total: usize) -> Option<(*mut C, usize)> {
+                Storage::grow(&mut **self, used, total)
             }
         }
     };
@@ -610,21 +610,13 @@ storage_by_mut!(Vec<C>);
 // SAFETY: a slice is valid for its length.
 unsafe impl<C> Storage<C> for &mut [C] {
     #[inline(always)]
-    fn ptr(&self) -> *const C {
-        self.as_ptr()
-    }
-    #[inline(always)]
-    fn ptr_mut(&mut self) -> *mut C {
-        self.as_mut_ptr()
-    }
-    #[inline(always)]
-    fn capacity(&self) -> usize {
-        self.len()
+    fn room(&mut self) -> (*mut C, usize) {
+        (self.as_mut_ptr(), self.len())
     }
 }
 
-/// One path buffer in place, not initialized. Only `&mut Stack` is storage, so that no move of a
-/// `PathBuf` copies the buffer.
+/// One path buffer in place, not initialized. Only `&mut Stack` is storage: the memory must stay
+/// where it is when the `PathBuf` moves.
 pub struct Stack<C: PathUnit = u8>(MaybeUninit<C::Buffer>);
 impl<C: PathUnit> Stack<C> {
     #[inline(always)]
@@ -635,20 +627,15 @@ impl<C: PathUnit> Stack<C> {
 // SAFETY: `C::Buffer` is an array of `C`.
 unsafe impl<C: PathUnit> Storage<C> for &mut Stack<C> {
     #[inline(always)]
-    fn ptr(&self) -> *const C {
-        self.0.as_ptr().cast()
-    }
-    #[inline(always)]
-    fn ptr_mut(&mut self) -> *mut C {
-        self.0.as_mut_ptr().cast()
-    }
-    #[inline(always)]
-    fn capacity(&self) -> usize {
-        size_of::<C::Buffer>() / size_of::<C>()
+    fn room(&mut self) -> (*mut C, usize) {
+        (
+            self.0.as_mut_ptr().cast(),
+            size_of::<C::Buffer>() / size_of::<C>(),
+        )
     }
 }
 
-/// One path buffer out of this thread's pool. A move copies a pointer.
+/// One path buffer out of this thread's pool.
 pub struct Pooled<C: PathUnit = u8>(ManuallyDrop<Box<C::Buffer>>);
 impl<C: PathUnit> Pooled<C> {
     #[inline]
@@ -663,19 +650,14 @@ impl<C: PathUnit> Drop for Pooled<C> {
         C::pool_put(unsafe { ManuallyDrop::take(&mut self.0) });
     }
 }
-// SAFETY: `C::Buffer` is an array of `C`, and a pooled one is initialized.
+// SAFETY: `C::Buffer` is an array of `C` on the heap.
 unsafe impl<C: PathUnit> Storage<C> for Pooled<C> {
     #[inline(always)]
-    fn ptr(&self) -> *const C {
-        core::ptr::from_ref::<C::Buffer>(&self.0).cast()
-    }
-    #[inline(always)]
-    fn ptr_mut(&mut self) -> *mut C {
-        core::ptr::from_mut::<C::Buffer>(&mut self.0).cast()
-    }
-    #[inline(always)]
-    fn capacity(&self) -> usize {
-        size_of::<C::Buffer>() / size_of::<C>()
+    fn room(&mut self) -> (*mut C, usize) {
+        (
+            core::ptr::from_mut::<C::Buffer>(&mut self.0).cast(),
+            size_of::<C::Buffer>() / size_of::<C>(),
+        )
     }
 }
 
@@ -685,28 +667,17 @@ pub type Scratch<C = u8> = Stack<C>;
 #[cfg(windows)]
 pub type Scratch<C = u8> = Pooled<C>;
 
-// SAFETY: the spare capacity of a `Vec` is valid for writes; `reserve` sets the length it must keep.
+// SAFETY: the spare capacity of a `Vec` is valid for writes; `grow` sets the length it must keep.
 unsafe impl<C> Storage<C> for Vec<C> {
     #[inline(always)]
-    fn ptr(&self) -> *const C {
-        self.as_ptr()
+    fn room(&mut self) -> (*mut C, usize) {
+        (self.as_mut_ptr(), Vec::capacity(self))
     }
-    #[inline(always)]
-    fn ptr_mut(&mut self) -> *mut C {
-        self.as_mut_ptr()
-    }
-    #[inline(always)]
-    fn capacity(&self) -> usize {
-        Vec::capacity(self)
-    }
-    #[inline]
-    fn reserve(&mut self, used: usize, total: usize) -> bool {
-        if total > Vec::capacity(self) {
-            // SAFETY: the `PathBuf` wrote the first `used` units.
-            unsafe { self.set_len(used) };
-            Vec::reserve(self, total - used);
-        }
-        true
+    fn grow(&mut self, used: usize, total: usize) -> Option<(*mut C, usize)> {
+        // SAFETY: the `PathBuf` wrote the first `used` units.
+        unsafe { self.set_len(used) };
+        Vec::reserve(self, total - used);
+        Some(self.room())
     }
 }
 
@@ -717,13 +688,12 @@ pub fn text_from_os<C: PathUnit, S: Storage<C>, E>(
     mem: &mut S,
     fill: impl FnOnce(&mut [MaybeUninit<C>]) -> Result<usize, E>,
 ) -> Result<&[C], E> {
-    let capacity = mem.capacity();
+    let (ptr, capacity) = mem.room();
     // SAFETY: `Storage`'s.
-    let room = unsafe { core::slice::from_raw_parts_mut(mem.ptr_mut().cast(), capacity) };
-    let len = fill(room)?;
+    let len = fill(unsafe { core::slice::from_raw_parts_mut(ptr.cast(), capacity) })?;
     assert!(len <= capacity);
     // SAFETY: `fill` wrote `len` units.
-    Ok(unsafe { core::slice::from_raw_parts(mem.ptr(), len) })
+    Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
 }
 
 // ── the builder ──────────────────────────────────────────────────────────────────────────────────
@@ -756,37 +726,73 @@ struct Saved {
 ///
 /// The first step that fails is remembered, and [`get`](Self::get), the only way to the path,
 /// returns it from then on.
-pub struct PathBuf<V: View + ?Sized, S: Storage<V::Unit>> {
-    mem: S,
+#[repr(C)]
+pub struct PathBuf<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> {
+    /// What `mem` last said.
+    ptr: *mut V::Unit,
+    cap: usize,
     len: usize,
     /// `..` removes nothing below this length, which is never more than `len`.
     fence: usize,
     at_fence: AtFence,
     err: Option<PathError>,
     view: PhantomData<fn(&V)>,
+    /// Last, so that `&mut PathBuf<V, S>` coerces to `&mut DynPathBuf<V>`.
+    mem: S,
 }
+/// A builder in any storage, for a parameter, a field or a closure.
+pub type DynPathBuf<'m, V> = PathBuf<V, dyn Storage<<V as Units>::Unit> + 'm>;
+/// What a function that only appends takes: [`PathBuf::tail`] of any builder.
+pub type TailBuf<'m, C = u8> = DynPathBuf<'m, Tail<C>>;
 pub type AbsPathBuf<S> = PathBuf<AbsPath, S>;
 pub type RelPathBuf<S> = PathBuf<RelPath, S>;
 pub type SubPathBuf<S> = PathBuf<SubPath, S>;
 pub type AnyPathBuf<S> = PathBuf<Path, S>;
 
-impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
+impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     /// Holds no path yet: [`get`](Self::get) fails as `Relative` until one is set.
     #[inline(always)]
-    pub fn unset_in(mem: S) -> Self {
-        Self {
-            mem,
+    pub fn unset_in(mem: S) -> Self
+    where
+        S: Sized,
+    {
+        let mut this = Self {
+            ptr: core::ptr::null_mut(),
+            cap: 0,
             len: 0,
             fence: 0,
             at_fence: V::WHEN_RELATIVE,
             err: Some(PathError::Relative),
             view: PhantomData,
-        }
+            mem,
+        };
+        // Asked once `mem` is where it stays, next to the pointer.
+        (this.ptr, this.cap) = this.mem.room();
+        this
+    }
+
+    #[inline(always)]
+    fn reserve(&mut self, used: usize, total: usize) -> bool {
+        total <= self.cap || self.grow(used, total)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self, used: usize, total: usize) -> bool {
+        let Some((ptr, cap)) = self.mem.grow(used, total) else {
+            return false;
+        };
+        (self.ptr, self.cap) = (ptr, cap);
+        true
     }
 
     /// Holds a copy of `path`.
     #[inline]
-    pub fn from_in(mem: S, path: &V) -> Self {
+    pub fn from_in(mem: S, path: &V) -> Self
+    where
+        S: Sized,
+        V: Known,
+    {
         let mut this = Self::unset_in(mem);
         this.set(path);
         this
@@ -796,6 +802,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     #[inline]
     pub fn from_abs_in<D: PathUnit>(mem: S, path: &AbsPath<D>) -> Self
     where
+        S: Sized,
         V: HoldsAbs,
         V::Unit: FromUnit<D>,
     {
@@ -811,6 +818,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         fill: impl FnOnce(&mut [MaybeUninit<V::Unit>]) -> Result<usize, E>,
     ) -> Result<Self, E>
     where
+        S: Sized,
         V: HoldsAbs,
     {
         let mut this = Self::unset_in(mem);
@@ -822,6 +830,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     #[inline(always)]
     pub fn new_in(mem: S) -> Self
     where
+        S: Sized,
         V: HoldsEmpty,
     {
         let mut this = Self::unset_in(mem);
@@ -832,7 +841,10 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
 
     /// Replaces the whole path, and forgets an earlier failure.
     #[inline]
-    pub fn set(&mut self, path: &V) -> &mut Self {
+    pub fn set(&mut self, path: &V) -> &mut Self
+    where
+        V: Known,
+    {
         self.replace(path.units())
     }
 
@@ -921,10 +933,10 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         self.fence = 0;
         self.at_fence = V::WHEN_RELATIVE;
         // Storage that cannot grow lends what it has, and the OS says whether that is enough.
-        self.mem.reserve(0, V::Unit::MAX_PATH);
-        let capacity = self.mem.capacity();
+        self.reserve(0, V::Unit::MAX_PATH);
+        let capacity = self.cap;
         // SAFETY: `Storage`'s.
-        let room = unsafe { core::slice::from_raw_parts_mut(self.mem.ptr_mut().cast(), capacity) };
+        let room = unsafe { core::slice::from_raw_parts_mut(self.ptr.cast(), capacity) };
         let len = fill(room)?;
         // No room left for the terminator also means the OS may have cut the path short.
         if len >= capacity {
@@ -950,7 +962,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     #[inline(always)]
     fn written(&self) -> &[V::Unit] {
         // SAFETY: the first `len` units were written.
-        unsafe { core::slice::from_raw_parts(self.mem.ptr(), self.len) }
+        unsafe { core::slice::from_raw_parts(self.ptr.cast_const(), self.len) }
     }
 
     #[inline(always)]
@@ -967,14 +979,14 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         V::Unit: FromUnit<D>,
     {
         let start = at + usize::from(sep);
-        if !self.mem.reserve(at, start + V::Unit::bound(units) + 1) {
+        if !self.reserve(at, start + V::Unit::bound(units) + 1) {
             self.poison(PathError::TooLong);
             return;
         }
         // SAFETY: `reserve` made the room, and `units` is not in `mem`, which `self` borrows
         // mutably or owns.
         unsafe {
-            let base = self.mem.ptr_mut();
+            let base = self.ptr;
             // Overwritten by `units` or the terminator when there is no separator to write.
             base.add(at).write(V::Unit::from_u8(SEP));
             self.len = start + V::Unit::transcode(units, base.add(start));
@@ -987,7 +999,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         debug_assert!(len <= self.len);
         self.len = len;
         // SAFETY: every caller passes the fence or more, or a length it took from `len`.
-        unsafe { self.mem.ptr_mut().add(len).write(V::Unit::from_u8(0)) };
+        unsafe { self.ptr.add(len).write(V::Unit::from_u8(0)) };
     }
 
     #[inline(always)]
@@ -1000,7 +1012,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     pub fn get(&self) -> Result<&Z<V>, PathError> {
         match self.err {
             // SAFETY: every write puts a terminator at `len`.
-            None => Ok(unsafe { Z::wrap(V::wrap(self.written())) }),
+            None => Ok(unsafe { Z::wrap(V::wrap(self.written(), Sealed(()))) }),
             Some(err) => Err(err),
         }
     }
@@ -1036,22 +1048,19 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
 
     /// Appends one name written by `args`, in place.
     pub fn push_fmt(&mut self, args: fmt::Arguments<'_>) -> &mut Self {
-        struct Tail<'a, C, S> {
-            mem: &'a mut S,
+        struct Name<'a, V: View + ?Sized, S: Storage<V::Unit> + ?Sized> {
+            buf: &'a mut PathBuf<V, S>,
             len: usize,
-            unit: PhantomData<C>,
         }
-        impl<C: Unit, S: Storage<C>> fmt::Write for Tail<'_, C, S> {
+        impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> fmt::Write for Name<'_, V, S> {
             fn write_str(&mut self, text: &str) -> fmt::Result {
                 let text = text.as_bytes();
-                if !self
-                    .mem
-                    .reserve(self.len, self.len + <C as FromUnit<u8>>::bound(text) + 1)
-                {
+                let bound = <V::Unit as FromUnit<u8>>::bound(text);
+                if !self.buf.reserve(self.len, self.len + bound + 1) {
                     return Err(fmt::Error);
                 }
                 // SAFETY: `reserve` made the room.
-                self.len += unsafe { C::transcode(text, self.mem.ptr_mut().add(self.len)) };
+                self.len += unsafe { V::Unit::transcode(text, self.buf.ptr.add(self.len)) };
                 Ok(())
             }
         }
@@ -1061,15 +1070,15 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
             return self;
         }
         let start = self.len;
-        let mut tail = Tail {
-            mem: &mut self.mem,
+        let mut name = Name {
+            buf: self,
             len: start,
-            unit: PhantomData,
         };
-        let wrote = fmt::Write::write_fmt(&mut tail, args);
-        let end = tail.len;
-        // SAFETY: `Tail` wrote up to `end`.
-        let name = unsafe { core::slice::from_raw_parts(self.mem.ptr().add(start), end - start) };
+        let wrote = fmt::Write::write_fmt(&mut name, args);
+        let end = name.len;
+        // SAFETY: `Name` wrote up to `end`.
+        let name =
+            unsafe { core::slice::from_raw_parts(self.ptr.cast_const().add(start), end - start) };
         let failure = match wrote {
             Err(_) => Some(PathError::TooLong),
             Ok(()) if Component::new(name).is_none() => Some(PathError::BadName),
@@ -1156,13 +1165,11 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         }
         // SAFETY: `len` is at most the written length, where a unit or the terminator is.
         unsafe {
-            let at = self.mem.ptr_mut().add(len);
+            let at = self.ptr.add(len);
             let put_back = PutBack(at, at.read());
             at.write(V::Unit::from_u8(0));
-            let result = f(Z::wrap(V::wrap(core::slice::from_raw_parts(
-                self.mem.ptr(),
-                len,
-            ))));
+            let ancestor = core::slice::from_raw_parts(self.ptr.cast_const(), len);
+            let result = f(Z::wrap(V::wrap(ancestor, Sealed(()))));
             drop(put_back);
             Ok(result)
         }
@@ -1186,7 +1193,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         }
         // SAFETY: every write puts a terminator at `len`.
         Ok(f(unsafe {
-            V::Unit::zslice_from_raw(scope.mem.ptr(), scope.len)
+            V::Unit::zslice_from_raw(scope.ptr.cast_const(), scope.len)
         }))
     }
 
@@ -1285,7 +1292,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         {
             self.write(0, false, root);
             // SAFETY: `write` wrote `len` units.
-            let written = unsafe { core::slice::from_raw_parts_mut(self.mem.ptr_mut(), self.len) };
+            let written = unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) };
             for unit in written {
                 if is_forbidden_in_name(*unit) {
                     *unit = V::Unit::from_u8(SEP);
@@ -1293,19 +1300,14 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
             }
         }
     }
-
-    /// Gives the storage back.
-    #[inline]
-    pub fn into_storage(self) -> S {
-        self.mem
-    }
 }
 
-impl<C: Unit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
+impl<C: Unit, S: Storage<C> + ?Sized> PathBuf<AbsPath<C>, S> {
     /// [`from_abs_in`](Self::from_abs_in). On Windows a path on a drive gets the `\\?\` prefix, with
     /// which the OS takes the path as it is written, however long.
     pub fn long_in<D: PathUnit>(mem: S, path: &AbsPath<D>) -> Self
     where
+        S: Sized,
         C: FromUnit<D>,
     {
         let mut this = Self::unset_in(mem);
@@ -1330,14 +1332,14 @@ impl<C: Unit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
         };
         let below = below.len();
         let start = to.len() + usize::from(below > 0 && !to.is_root());
-        if !self.mem.reserve(self.len, start + below + 1) {
+        if !self.reserve(self.len, start + below + 1) {
             self.poison(PathError::TooLong);
             return true;
         }
         // SAFETY: `reserve` made room for `start + below + 1` units, the last `below` written units
         // may overlap where they go, and `to` is not in `mem`, which `self` borrows mutably or owns.
         unsafe {
-            let base = self.mem.ptr_mut();
+            let base = self.ptr;
             core::ptr::copy(base.add(self.len - below), base.add(start), below);
             base.add(start + below).write(C::from_u8(0));
             // Overwritten by `to` when there is no separator to write.
@@ -1350,36 +1352,56 @@ impl<C: Unit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
     }
 }
 
+macro_rules! tail {
+    () => {
+        /// The same builder for a function that only appends and need not know the kind of path.
+        /// Nothing can set a `Tail`, and being unsized it cannot be swapped or assigned.
+        #[inline(always)]
+        pub fn tail(&mut self) -> &mut TailBuf<'_, V::Unit> {
+            let this: &mut DynPathBuf<'_, V> = self;
+            // SAFETY: `repr(C)`, and `V` is only in a `PhantomData` and in the type of `ptr`,
+            // which has the same unit.
+            unsafe { &mut *(core::ptr::from_mut(this) as *mut TailBuf<'_, V::Unit>) }
+        }
+    };
+}
+impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
+    tail!();
+}
+impl<V: View + ?Sized> DynPathBuf<'_, V> {
+    tail!();
+}
+
 /// A [`PathBuf`] that goes back to what it was, failures included, when this is dropped. Until then
 /// nothing removes or replaces what was there.
-pub struct Scope<'a, V: View + ?Sized, S: Storage<V::Unit>> {
+pub struct Scope<'a, V: View + ?Sized, S: Storage<V::Unit> + ?Sized> {
     buf: &'a mut PathBuf<V, S>,
     saved: Saved,
 }
-impl<V: View + ?Sized, S: Storage<V::Unit>> Scope<'_, V, S> {
+impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> Scope<'_, V, S> {
     /// The path as it was when the scope began, which it still starts with.
     #[inline]
     pub fn base(&self) -> Result<&V, PathError> {
         match self.saved.err {
-            None => Ok(V::wrap(&self.buf.written()[..self.saved.len])),
+            None => Ok(V::wrap(&self.buf.written()[..self.saved.len], Sealed(()))),
             Some(err) => Err(err),
         }
     }
 }
-impl<V: View + ?Sized, S: Storage<V::Unit>> Deref for Scope<'_, V, S> {
+impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> Deref for Scope<'_, V, S> {
     type Target = PathBuf<V, S>;
     #[inline(always)]
     fn deref(&self) -> &PathBuf<V, S> {
         self.buf
     }
 }
-impl<V: View + ?Sized, S: Storage<V::Unit>> DerefMut for Scope<'_, V, S> {
+impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> DerefMut for Scope<'_, V, S> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut PathBuf<V, S> {
         self.buf
     }
 }
-impl<V: View + ?Sized, S: Storage<V::Unit>> Drop for Scope<'_, V, S> {
+impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> Drop for Scope<'_, V, S> {
     #[inline(always)]
     fn drop(&mut self) {
         // Safe code can move another builder in through `DerefMut`.

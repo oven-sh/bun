@@ -9,8 +9,8 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::platform::{Loose, Posix};
 use bun_paths::typed::{
-    AbsPath, AbsPathBuf, HoldsAbs, PathBuf, PathError, Pooled, RelPathBuf, Scratch, Storage,
-    SubPathBuf, View, Z, relative_in, top_level_dir,
+    AbsPath, AbsPathBuf, DynPathBuf, HoldsAbs, PathBuf, PathError, Pooled, RelPathBuf, Scratch,
+    Storage, SubPathBuf, TailBuf, Unit, View, Z, relative_in, top_level_dir,
 };
 use bun_paths::{self as paths, component, sub_path};
 use bun_sys::{self as sys, Fd};
@@ -217,9 +217,9 @@ impl<'a> Installer<'a> {
                 .any(|dep| {
                     let mut mem = Scratch::new();
                     let mut link = AbsPathBuf::from_in(&mut mem, top_level_dir());
-                    self.append_store_node_modules_path(&mut link, dependent);
+                    self.append_store_node_modules_path(link.tail(), dependent);
                     append_dependency_link_name(
-                        &mut link,
+                        link.tail(),
                         lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
                         self.entry_store_node_modules_package_name(dependent),
                     );
@@ -507,7 +507,7 @@ impl<'a> Installer<'a> {
             // A staged link that failed only wrote to the staging directory.
             let mut mem = Scratch::new();
             let mut staging = RelPathBuf::new_in(&mut mem);
-            self.append_local_staging_path(&mut staging, entry_id, lock.mode);
+            self.append_local_staging_path(staging.tail(), entry_id, lock.mode);
             delete_tree(&staging);
         }
 
@@ -741,7 +741,7 @@ impl<'a> Installer<'a> {
             && let Ok(patch_info) = self.package_patch_info(self.store.ids(entry_id).pkg_id)
         {
             let mut marker = path.scope();
-            push_installed_marker(&mut marker, self.resolution(entry_id).tag, &patch_info);
+            push_installed_marker(marker.tail(), self.resolution(entry_id).tag, &patch_info);
             if let Ok(marker) = marker.get() {
                 let _ = sys::unlink(marker.z());
             }
@@ -765,7 +765,7 @@ impl<'a> Installer<'a> {
         let path_error = path_error(sys::Tag::lstat);
         let mut mem = Scratch::new();
         let mut bin = AbsPathBuf::from_in(&mut mem, top_level_dir());
-        self.append_store_node_modules_path(&mut bin, entry_id);
+        self.append_store_node_modules_path(bin.tail(), entry_id);
         let node_modules_len = bin.len();
         let bin = bin.push(component!(".bin")).get().map_err(path_error)?;
         crate::prune::remove_planted_links(bin.as_bytes(), real_len)?;
@@ -1550,7 +1550,7 @@ impl<'a> Installer<'a> {
         // what it no longer has from the old copy, and any symlink that they would write through.
         let mut copy_mem = Scratch::new();
         let mut copy = RelPathBuf::new_in(&mut copy_mem);
-        self.append_local_store_package_path(&mut copy, entry_id);
+        self.append_local_store_package_path(copy.tail(), entry_id);
         let copy = copy.get().map_err(path_error(sys::Tag::open))?.as_bytes();
         if let (Ok(src), Ok(dest)) = (sys::Dir::open(path), sys::Dir::open(copy)) {
             crate::prune::remove_entries_missing_from(&src, &dest);
@@ -1679,7 +1679,7 @@ impl<'a> Installer<'a> {
                 // An entry that lost global-store eligibility is still a link into that store.
                 let mut local_mem = Scratch::new();
                 let mut local = AbsPathBuf::from_in(&mut local_mem, top_level_dir());
-                self.append_local_store_entry_path(&mut local, entry_id);
+                self.append_local_store_entry_path(local.tail(), entry_id);
                 let local = local.get().map_err(path_error)?;
                 let is_stale_link = is_link(local.z());
                 if is_stale_link == Some(true)
@@ -1708,7 +1708,7 @@ impl<'a> Installer<'a> {
                 if uses_global_store || link_in_place {
                     self.append_real_store_path(&mut dest_subpath, entry_id, Which::Staging);
                 } else {
-                    self.append_local_staging_path(&mut dest_subpath, entry_id, staging);
+                    self.append_local_staging_path(dest_subpath.tail(), entry_id, staging);
                 }
                 match backend {
                     InstallMethod::Clonefile => {
@@ -1985,7 +1985,7 @@ impl<'a> Installer<'a> {
             {
                 let mut mem = Scratch::new();
                 let mut node_modules = AbsPathBuf::from_in(&mut mem, top_level_dir());
-                self.append_store_node_modules_path(&mut node_modules, entry_id);
+                self.append_store_node_modules_path(node_modules.tail(), entry_id);
                 let Some(linked) = node_modules.get().ok().and_then(LinkedNodeModules::at) else {
                     return Err(TaskError::SymlinkDependencies(err));
                 };
@@ -2091,7 +2091,7 @@ impl<'a> Installer<'a> {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             let mut dest = dest.scope();
-            append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+            append_dependency_link_name(dest.tail(), dep_name, entry_node_modules_name);
             if real_len > base_len
                 && !(dep_name.starts_with(real_scope)
                     && dep_name.get(real_scope.len()) == Some(&b'/'))
@@ -2170,7 +2170,7 @@ impl<'a> Installer<'a> {
                 }
 
                 let mut dest = dest.scope();
-                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+                append_dependency_link_name(dest.tail(), dep_name, entry_node_modules_name);
                 let (_, written) = (dest.get().map_err(path_error))
                     .and_then(|dest| link(dest, shipped, real_len.min(base_len)))
                     .map_err(TaskError::SymlinkDependencies)?;
@@ -2205,7 +2205,7 @@ impl<'a> Installer<'a> {
                 let mut dest = AbsPathBuf::from_in(&mut mem, top_level_dir());
                 self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Final);
                 append_dependency_link_name(
-                    &mut dest,
+                    dest.tail(),
                     lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
                     self.entry_store_node_modules_package_name(entry_id),
                 );
@@ -2445,11 +2445,12 @@ impl<'a> Installer<'a> {
     /// step renames staging → final.
     pub(crate) fn set_global_store_entry_path<V: HoldsAbs + ?Sized>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut DynPathBuf<'_, V>,
         entry_id: StoreEntryId,
         which: Which,
     ) {
-        self.push_global_store_entry_name(buf.set_abs(self.global_store_dir()), entry_id, which);
+        buf.set_abs(self.global_store_dir());
+        self.push_global_store_entry_name(buf.tail(), entry_id, which);
     }
 
     pub(crate) fn global_store_entry_path_in<S: Storage<u8>>(
@@ -2459,13 +2460,13 @@ impl<'a> Installer<'a> {
         which: Which,
     ) -> AbsPathBuf<S> {
         let mut path = AbsPathBuf::from_in(mem, self.global_store_dir());
-        self.push_global_store_entry_name(&mut path, entry_id, which);
+        self.push_global_store_entry_name(path.tail(), entry_id, which);
         path
     }
 
-    fn push_global_store_entry_name<V: View + ?Sized>(
+    fn push_global_store_entry_name<C: Unit>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut TailBuf<'_, C>,
         entry_id: StoreEntryId,
         which: Which,
     ) {
@@ -2569,9 +2570,9 @@ impl<'a> Installer<'a> {
     /// The `StagingPath` next to a project-local entry's package directory.
     /// `buf` must be relative to the project, like the package's path. An absolute staging path
     /// could exceed the path length limit when the package's relative path does not.
-    fn append_local_staging_path<V: View + ?Sized>(
+    fn append_local_staging_path<C: Unit>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut TailBuf<'_, C>,
         entry_id: StoreEntryId,
         mode: Staging,
     ) {
@@ -2593,10 +2594,10 @@ impl<'a> Installer<'a> {
         let path_error = path_error(sys::Tag::rename);
         let (mut final_mem, mut staging_mem) = (Scratch::new(), Scratch::new());
         let mut final_ = RelPathBuf::new_in(&mut final_mem);
-        self.append_local_store_package_path(&mut final_, entry_id);
+        self.append_local_store_package_path(final_.tail(), entry_id);
         let final_ = final_.get().map_err(path_error)?;
         let mut staging = RelPathBuf::new_in(&mut staging_mem);
-        self.append_local_staging_path(&mut staging, entry_id, mode);
+        self.append_local_staging_path(staging.tail(), entry_id, mode);
         let staging = match staging.get() {
             Ok(staging) => staging,
             Err(err) => {
@@ -2636,9 +2637,9 @@ impl<'a> Installer<'a> {
     fn commit_local_store_package(&self, entry_id: StoreEntryId, mode: Staging) -> bool {
         let (mut staging_mem, mut final_mem) = (Scratch::new(), Scratch::new());
         let mut staging = RelPathBuf::new_in(&mut staging_mem);
-        self.append_local_staging_path(&mut staging, entry_id, mode);
+        self.append_local_staging_path(staging.tail(), entry_id, mode);
         let mut final_ = RelPathBuf::new_in(&mut final_mem);
-        self.append_local_store_package_path(&mut final_, entry_id);
+        self.append_local_store_package_path(final_.tail(), entry_id);
 
         if let (Ok(staging), Ok(final_)) = (staging.get(), final_.get())
             && rename_staging_into_place(Fd::cwd(), staging.z(), final_.z()).is_ok()
@@ -2651,9 +2652,9 @@ impl<'a> Installer<'a> {
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
     /// points at the global virtual-store entry). Relative to top-level dir.
-    pub(crate) fn append_local_store_entry_path<V: View + ?Sized>(
+    pub(crate) fn append_local_store_entry_path<C: Unit>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut TailBuf<'_, C>,
         entry_id: StoreEntryId,
     ) {
         buf.push(sub_path!("node_modules/.bun"))
@@ -2671,7 +2672,7 @@ impl<'a> Installer<'a> {
         let path_error = path_error(sys::Tag::symlink);
         let (mut dest_mem, mut target_mem) = (Scratch::new(), Scratch::new());
         let mut dest = AbsPathBuf::from_in(&mut dest_mem, top_level_dir());
-        self.append_local_store_entry_path(&mut dest, entry_id);
+        self.append_local_store_entry_path(dest.tail(), entry_id);
         let dest = dest.get().map_err(path_error)?;
 
         let target_abs = self.global_store_entry_path_in(&mut target_mem, entry_id, Which::Final);
@@ -2762,9 +2763,9 @@ impl<'a> Installer<'a> {
         }
     }
 
-    pub(crate) fn append_store_node_modules_path<V: View + ?Sized>(
+    pub(crate) fn append_store_node_modules_path<C: Unit>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut TailBuf<'_, C>,
         entry_id: StoreEntryId,
     ) {
         let pkg_res = self.resolution(entry_id);
@@ -2784,7 +2785,7 @@ impl<'a> Installer<'a> {
     /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
     pub(crate) fn append_real_store_node_modules_path<V: HoldsAbs + ?Sized>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut DynPathBuf<'_, V>,
         entry_id: StoreEntryId,
         which: Which,
     ) {
@@ -2793,14 +2794,14 @@ impl<'a> Installer<'a> {
             buf.push(component!("node_modules"));
             return;
         }
-        self.append_store_node_modules_path(buf, entry_id);
+        self.append_store_node_modules_path(buf.tail(), entry_id);
     }
 
     /// `appendStorePath` resolved to the entry's *physical* location. See
     /// `Which` for when to pass `.staging` vs `.final`.
     pub(crate) fn append_real_store_path<V: HoldsAbs + ?Sized>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut DynPathBuf<'_, V>,
         entry_id: StoreEntryId,
         which: Which,
     ) {
@@ -2815,7 +2816,7 @@ impl<'a> Installer<'a> {
 
     pub(crate) fn append_store_path<V: HoldsAbs + ?Sized>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut DynPathBuf<'_, V>,
         entry_id: StoreEntryId,
     ) {
         let pkg_res = self.resolution(entry_id);
@@ -2829,14 +2830,14 @@ impl<'a> Installer<'a> {
             }
             // `buf` is already top_level_dir.
             ResolutionTag::Root => {}
-            _ => self.append_local_store_package_path(buf, entry_id),
+            _ => self.append_local_store_package_path(buf.tail(), entry_id),
         }
     }
 
     /// `append_store_path` for an entry whose package is a copy in the project's store.
-    fn append_local_store_package_path<V: View + ?Sized>(
+    fn append_local_store_package_path<C: Unit>(
         &self,
-        buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+        buf: &mut TailBuf<'_, C>,
         entry_id: StoreEntryId,
     ) {
         self.append_local_store_entry_path(buf, entry_id);
@@ -2847,7 +2848,7 @@ impl<'a> Installer<'a> {
     /// `Ok(false)`: nothing to link (the path leaves the package, or no such directory).
     fn append_nested_folder_path(
         &self,
-        buf: &mut AbsPathBuf<impl Storage<u8>>,
+        buf: &mut DynPathBuf<'_, AbsPath>,
         entry_id: StoreEntryId,
         package_dir_name: &[u8],
         folder: &[u8],
@@ -2909,7 +2910,7 @@ struct BinLinks {
 }
 
 fn append_dependency_link_name(
-    dest: &mut AbsPathBuf<impl Storage<u8>>,
+    dest: &mut TailBuf<'_>,
     dep_name: &[u8],
     entry_node_modules_name: Option<&[u8]>,
 ) {
@@ -2923,7 +2924,7 @@ fn append_dependency_link_name(
 
 /// Where the `link:` dependency `target` points. `check_link_entries` has set `global_link_dir`.
 pub(crate) fn set_link_target<V: HoldsAbs + ?Sized>(
-    buf: &mut PathBuf<V, impl Storage<V::Unit>>,
+    buf: &mut DynPathBuf<'_, V>,
     global_link_dir: &[u8],
     target: &[u8],
 ) {
@@ -2935,8 +2936,8 @@ pub(crate) fn set_link_target<V: HoldsAbs + ?Sized>(
 }
 
 /// The next install skips a project-local package that has this file. A discard deletes it first.
-pub(crate) fn push_installed_marker<V: View + ?Sized>(
-    package: &mut PathBuf<V, impl Storage<V::Unit>>,
+pub(crate) fn push_installed_marker(
+    package: &mut TailBuf<'_>,
     tag: ResolutionTag,
     patch_info: &PatchInfo,
 ) {
@@ -3003,9 +3004,9 @@ fn os_path(path: &[paths::OSPathChar]) -> bun_core::fmt::FormatOSPath<'_> {
     )
 }
 
-fn os_path_of<V: View<Unit = paths::OSPathChar> + ?Sized>(
-    path: &PathBuf<V, impl Storage<paths::OSPathChar>>,
-) -> bun_core::fmt::FormatOSPath<'_> {
+fn os_path_of<'a, V: View<Unit = paths::OSPathChar> + ?Sized>(
+    path: &'a DynPathBuf<'_, V>,
+) -> bun_core::fmt::FormatOSPath<'a> {
     os_path(path.shown())
 }
 

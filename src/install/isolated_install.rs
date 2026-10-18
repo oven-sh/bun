@@ -36,7 +36,7 @@ use bun_collections::{
 use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::platform::{Loose, Posix};
 use bun_paths::typed::{
-    AbsPath, AbsPathBuf, Component, PathError, RelPath, RelPathBuf, Scratch, Storage, Z,
+    AbsPath, AbsPathBuf, Component, DynPathBuf, PathError, RelPath, RelPathBuf, Scratch, Z,
     top_level_dir,
 };
 use bun_paths::{self as paths, component, sub_path};
@@ -1544,7 +1544,7 @@ pub(crate) fn move_node_modules_aside(
 
         move_entries_aside(
             &mut workspace_node_modules,
-            &mut old_modules,
+            &mut *old_modules,
             false,
             log_level,
         );
@@ -1601,8 +1601,8 @@ fn holds_a_tree(node_modules: &RelPath, old_modules_name: &[u8]) -> bool {
 /// Creates `to` and moves every entry that a linker created from `from` into it. `to` may be a
 /// directory inside `from`.
 fn move_entries_aside(
-    from: &mut RelPathBuf<impl Storage<u8>>,
-    to: &mut RelPathBuf<impl Storage<u8>>,
+    from: &mut DynPathBuf<'_, RelPath>,
+    to: &mut DynPathBuf<'_, RelPath>,
     keep_links: bool,
     log_level: LogLevel,
 ) {
@@ -2324,7 +2324,7 @@ pub(crate) fn install_isolated_packages(
                         use bun_sys::FdExt as _;
                         let mut mem = Scratch::new();
                         let mut old_copy = AbsPathBuf::from_in(&mut mem, top_level_dir());
-                        installer.append_local_store_entry_path(&mut old_copy, entry_id);
+                        installer.append_local_store_entry_path(old_copy.tail(), entry_id);
                         if let Ok(old_copy) = old_copy.get() {
                             let _ = Fd::cwd().delete_tree(old_copy.as_bytes());
                         }
@@ -2439,12 +2439,12 @@ pub(crate) fn install_isolated_packages(
                             }
                             // Likewise, the package directory appears here only once fully linked.
                             let mut store_path = AbsPathBuf::from_in(&mut mem, top_level_dir());
-                            installer.append_local_store_entry_path(&mut store_path, entry_id);
+                            installer.append_local_store_entry_path(store_path.tail(), entry_id);
                             let mut package = store_path.scope();
                             package.push(component!("node_modules")).push_names::<Posix>(pkg_name.slice(string_buf));
                             {
                                 let mut marker = package.scope();
-                                installer::push_installed_marker(&mut marker, pkg_res.tag, &patch_info);
+                                installer::push_installed_marker(marker.tail(), pkg_res.tag, &patch_info);
                                 // `exists` follows the link of an entry that left the global store.
                                 if !marker.get().is_ok_and(|marker| sys::exists_z(marker.z())) {
                                     break 'needs_install true;

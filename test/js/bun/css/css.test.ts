@@ -8124,8 +8124,9 @@ describe("css tests", () => {
       const targets = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
       const minified = (source: string) => cssInternals.minifyTest(source, "", targets);
 
-      // lab(50% 20 30) is #a16945 in sRGB.
+      // lab(50% 20 30) is #a16945 in sRGB, and oklch(70% .1 200) is #40b1b7.
       const brown = { p3: "color(display-p3 .598686 .422118 .293048)", lab: "lab(50% 20 30)" };
+      const teal = { p3: "color(display-p3 .381906 .685023 .710512)", lab: "lab(66.1711% -31.3595 -12.905)" };
       /** The two `@supports` rules of the declaration `declare` prints for a color. */
       const copies = (declare: (color: string) => string, selector = ".x", color = brown) =>
         `@supports (color:color(display-p3 0 0 0)){${selector}{${declare(color.p3)}}}` +
@@ -8141,9 +8142,10 @@ describe("css tests", () => {
           [".x{color:var(--c,lab(50% 20 30));color:inherit}", ".x{color:inherit}"],
           [".x{color:var(--c,lab(50% 20 30));color:initial}", ".x{color:initial}"],
           [".x{color:var(--c,lab(50% 20 30));color:UNSET}", ".x{color:UNSET}"],
+          [".x{color:var(--c,lab(50% 20 30));color:revert}", ".x{color:revert}"],
           // The var() is inside a function, a fallback, or a color with an unresolved alpha.
           [".x{color:var(--c,lab(50% 20 30));color:foo(var(--d))}", ".x{color:foo(var(--d))}"],
-          [".x{color:var(--c,lab(50% 20 30));color:env(--d,var(--e))}", ".x{color:env(--d,var(--e))}"],
+          [".x{color:var(--c,lab(50% 20 30));color:var(--d,var(--e))}", ".x{color:var(--d,var(--e))}"],
           [".x{color:var(--c,lab(50% 20 30));color:rgb(0 0 0/var(--a))}", ".x{color:rgb(0 0 0/var(--a))}"],
           [".x{color:var(--c,lab(50% 20 30));color:hsl(0 0% 0%/var(--a))}", ".x{color:hsl(0 0% 0%/var(--a))}"],
           [
@@ -8165,10 +8167,14 @@ describe("css tests", () => {
             ".x{box-shadow:0 2px calc(var(--depth) * 3px) -2px oklch(0% 0 0/.2);box-shadow:0 20px 25px -5px rgb(0 0 0/calc(var(--depth) * .1)), 0 8px 10px -6px rgb(0 0 0/calc(var(--depth) * .1))}",
             ".x{box-shadow:0 2px calc(var(--depth)*3px)-2px #0003;box-shadow:0 20px 25px -5px rgb(0 0 0/calc(var(--depth)*.1)),0 8px 10px -6px rgb(0 0 0/calc(var(--depth)*.1))}",
           ],
-          // A later var() that needs the P3 copy only: the earlier LAB copy goes, the P3 one is shadowed.
+          // A later var() with a wide color of its own: only its copies are printed.
           [
             ".x{color:var(--c,lab(50% 20 30));color:var(--d,color(display-p3 1 0 0))}",
-            ".x{color:var(--d,#ff0f0e)}@supports (color:color(display-p3 0 0 0)){.x{color:var(--c,color(display-p3 .598686 .422118 .293048));color:var(--d,color(display-p3 1 0 0))}}",
+            ".x{color:var(--d,#ff0f0e)}@supports (color:color(display-p3 0 0 0)){.x{color:var(--d,color(display-p3 1 0 0))}}",
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:var(--d,oklch(70% .1 200))}",
+            `.x{color:var(--d,#40b1b7)}${copies(c => `color:var(--d,${c})`, ".x", teal)}`,
           ],
           // Only the copies of that property go, wherever they are among the other copies.
           [
@@ -8178,6 +8184,18 @@ describe("css tests", () => {
           [
             ".x{color:var(--c,lab(50% 20 30));background-color:var(--a,lab(50% 20 30));color:red}",
             `.x{color:red;background-color:var(--a,#a16945)}${backgroundCopies}`,
+          ],
+          [
+            ".x{color:var(--c,color(display-p3 1 0 0));background-color:var(--a,lab(50% 20 30));color:red}",
+            `.x{color:red;background-color:var(--a,#a16945)}${backgroundCopies}`,
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30));background-color:var(--a,lab(50% 20 30));background-color:var(--b);color:red}",
+            ".x{color:red;background-color:var(--a,#a16945);background-color:var(--b)}",
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:red;color:var(--d,lab(50% 20 30));background-color:var(--a,lab(50% 20 30));color:blue}",
+            `.x{color:#00f;background-color:var(--a,#a16945)}${backgroundCopies}`,
           ],
           // Only the copies of the same importance go.
           [
@@ -8203,11 +8221,19 @@ describe("css tests", () => {
           [".x{color:var(--c,lab(50% 20 30))}", `.x{color:var(--c,#a16945)}${colorCopies}`],
           [".x{color:red;color:var(--c,lab(50% 20 30))}", `.x{color:var(--c,#a16945)}${colorCopies}`],
           [".x{color:var(--c,lab(50% 20 30));margin:0}", `.x{color:var(--c,#a16945);margin:0}${colorCopies}`],
-          // env() and an empty var() fallback are newer syntax than color(): a browser can read a copy and reject them.
+          // Safari read color() before env(), an empty var() fallback and revert-layer: it can read a copy and reject these.
           [".x{color:var(--c,lab(50% 20 30));color:env(--d)}", `.x{color:env(--d)}${colorCopies}`],
+          [".x{color:var(--c,lab(50% 20 30));color:env(--d,var(--e))}", `.x{color:env(--d,var(--e))}${colorCopies}`],
+          [".x{color:var(--c,lab(50% 20 30));color:var(--d) env(--e,)}", `.x{color:var(--d)env(--e,)}${colorCopies}`],
           [".x{color:var(--c,lab(50% 20 30));color:var(--d,)}", `.x{color:var(--d,)}${colorCopies}`],
           [".x{color:var(--c,lab(50% 20 30));color:var(--d, )}", `.x{color:var(--d, )}${colorCopies}`],
           [".x{color:var(--c,lab(50% 20 30));color:var(--d,var(--e,))}", `.x{color:var(--d,var(--e,))}${colorCopies}`],
+          [".x{color:var(--c,lab(50% 20 30));color:var(--d) VAR(--e,)}", `.x{color:var(--d)VAR(--e,)}${colorCopies}`],
+          [".x{color:var(--c,lab(50% 20 30));color:revert-layer}", `.x{color:revert-layer}${colorCopies}`],
+          // No browser keeps a var() with `;` or `!` in its fallback, or with the reserved name `--`.
+          [".x{color:var(--c,lab(50% 20 30));color:var(--d,a;b)}", `.x{color:var(--d,a;b)}${colorCopies}`],
+          [".x{color:var(--c,lab(50% 20 30));color:var(--d,!x)}", `.x{color:var(--d,!x)}${colorCopies}`],
+          [".x{color:var(--c,lab(50% 20 30));color:var(--)}", `.x{color:var(--)}${colorCopies}`],
           // !important beats the copies, and copies of an !important declaration beat a normal one.
           [
             ".x{color:var(--c,lab(50% 20 30));color:red !important}",
@@ -8216,13 +8242,6 @@ describe("css tests", () => {
           [
             ".x{color:var(--c,lab(50% 20 30))!important;color:red}",
             `.x{color:red;color:var(--c,#a16945)!important}${copies(c => `color:var(--c,${c})!important`)}`,
-          ],
-          // A later declaration with a copy of its own in the same @supports rule shadows the earlier copy there.
-          [
-            ".x{color:var(--c,lab(50% 20 30));color:var(--d,oklch(70% .1 200))}",
-            ".x{color:var(--d,#40b1b7)}" +
-              "@supports (color:color(display-p3 0 0 0)){.x{color:var(--c,color(display-p3 .598686 .422118 .293048));color:var(--d,color(display-p3 .381906 .685023 .710512))}}" +
-              "@supports (color:lab(0% 0 0)){.x{color:var(--c,lab(50% 20 30));color:var(--d,lab(66.1711% -31.3595 -12.905))}}",
           ],
           // The handlers run again over the previous rule while the copies of `.b` are staged.
           [
@@ -8236,6 +8255,17 @@ describe("css tests", () => {
         ])("%s", (source, expected) => {
           expect(minified(source)).toBe(expected);
         });
+      });
+
+      // With these targets a display-p3 color has a P3 copy only, and a lab() color has a LAB copy only.
+      test("a dropped copy keeps the order of the @supports rules", () => {
+        const source =
+          ".x{color:var(--a,color(display-p3 1 0 0));background-color:var(--b,lab(50% 20 30));color:red;border-top-color:var(--c,color(display-p3 0 1 0))}";
+        expect(cssInternals.minifyTest(source, "", { safari: 14 << 16, chrome: 111 << 16 })).toBe(
+          ".x{color:red;background-color:var(--b,#a16945);border-top-color:var(--c,#00f942)}" +
+            "@supports (color:color(display-p3 0 0 0)){.x{border-top-color:var(--c,color(display-p3 0 1 0))}}" +
+            "@supports (color:lab(0% 0 0)){.x{background-color:var(--b,lab(50% 20 30))}}",
+        );
       });
 
       // Without the copies, a rule with the same selector that follows merges into the rule. That

@@ -4,7 +4,6 @@ use css::css_rules::media::MediaRule;
 
 use css::css_properties::PropertyId;
 use css::css_properties::custom::UnparsedProperty;
-use css::css_values::color::ColorFallbackKind;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
 use bun_alloc::{Arena as Bump, ArenaPtr};
@@ -17,6 +16,14 @@ pub struct SupportsEntry {
 }
 
 // No explicit deinit — all fields own their storage and drop automatically.
+
+/// A property that has a copy in `PropertyHandlerContext::supports`, per importance.
+struct Copied {
+    property_id: PropertyId,
+    important: bool,
+    /// The value of `staged` before the first of those copies.
+    since: u32,
+}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DeclarationContext {
@@ -32,8 +39,9 @@ pub struct PropertyHandlerContext<'a> {
     pub(crate) targets: css::targets::Targets,
     pub(crate) is_important: bool,
     pub(crate) supports: Vec<SupportsEntry>,
-    /// The properties that have a copy in `supports`, so that a declaration of another property does not scan the copies.
-    copied: Vec<PropertyId>,
+    copied: Vec<Copied>,
+    /// The count of declarations of the rule in hand that staged a copy in `supports`.
+    staged: u32,
     pub(crate) ltr: Vec<css::Property>,
     pub(crate) rtl: Vec<css::Property>,
     pub(crate) dark: Vec<css::Property>,
@@ -53,6 +61,7 @@ impl<'a> PropertyHandlerContext<'a> {
             is_important: false,
             supports: Vec::new(),
             copied: Vec::new(),
+            staged: 0,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -68,6 +77,7 @@ impl<'a> PropertyHandlerContext<'a> {
             is_important: false,
             supports: Vec::new(),
             copied: Vec::new(),
+            staged: 0,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -133,6 +143,10 @@ impl<'a> PropertyHandlerContext<'a> {
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
+            // An entry that lost each copy stays in place, so that the order of the rules does not change.
+            if entry.declarations.is_empty() && entry.important_declarations.is_empty() {
+                continue;
+            }
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
@@ -267,6 +281,7 @@ impl<'a> PropertyHandlerContext<'a> {
         // and SupportsEntry / Property own their resources via Drop.
         self.supports.clear();
         self.copied.clear();
+        self.staged = 0;
         self.ltr.clear();
         self.rtl.clear();
         self.dark.clear();
@@ -343,60 +358,66 @@ impl<'a> PropertyHandlerContext<'a> {
             );
             staged = true;
         }
-        if staged
-            && self.context == DeclarationContext::StyleRule
-            && !self.copied.contains(&unparsed.property_id)
-        {
-            self.copied.push(unparsed.property_id);
+        if staged && self.context == DeclarationContext::StyleRule {
+            if self.copied_at(unparsed.property_id).is_none() {
+                self.copied.push(Copied {
+                    property_id: unparsed.property_id,
+                    important: self.is_important,
+                    since: self.staged,
+                });
+            }
+            self.staged += 1;
         }
+    }
+
+    fn copied_at(&self, property_id: PropertyId) -> Option<usize> {
+        self.copied.iter().position(|copied| {
+            copied.property_id == property_id && copied.important == self.is_important
+        })
     }
 
     /// Drops the staged copies that `unparsed` replaces in each browser that reads one. Runs before `unparsed` stages its own copies.
     #[cold]
     #[inline(never)]
     fn retract_replaced(&mut self, unparsed: &UnparsedProperty) {
-        if self.copied.contains(&unparsed.property_id) && unparsed.value.is_valid_at_parse_time() {
-            let mut keep = unparsed.value.get_necessary_fallbacks(&self.targets);
-            keep.remove(keep.lowest());
-            self.retract_conditional(unparsed.property_id, keep);
+        if let Some(at) = self.copied_at(unparsed.property_id)
+            && unparsed.value.is_valid_at_parse_time()
+        {
+            self.retract_at(at);
         }
     }
 
-    /// Drops the staged copies of `property_id`, except in the `@supports` rules of the tiers in `keep`, where the declaration in hand stages a copy of its own behind them.
+    /// Drops the staged copies of `property_id` that have the importance in hand.
     #[cold]
     #[inline(never)]
-    pub(crate) fn retract_conditional(&mut self, property_id: PropertyId, keep: ColorFallbackKind) {
+    pub(crate) fn retract_conditional(&mut self, property_id: PropertyId) {
         // The handlers also run over a merged rule, with no context, while the copies of the next rule are staged.
-        if self.context != DeclarationContext::StyleRule || !self.copied.contains(&property_id) {
-            return;
-        }
-
-        // Departs from lightningcss on purpose: it prints these copies behind the rule, where they beat a later declaration that wins in the source.
-        let important = self.is_important;
-        self.supports.retain_mut(|entry| {
-            let kept = [ColorFallbackKind::P3, ColorFallbackKind::LAB]
-                .into_iter()
-                .any(|kind| keep.contains(kind) && kind.supports_condition().eql(&entry.condition));
-            if !kept {
-                let copies = if important {
-                    &mut entry.important_declarations
-                } else {
-                    &mut entry.declarations
-                };
-                copies.retain(|copy| copy.property_id() != property_id);
-            }
-            !entry.declarations.is_empty() || !entry.important_declarations.is_empty()
-        });
-
-        let has_copy = |copies: &Vec<css::Property>| {
-            copies.iter().any(|copy| copy.property_id() == property_id)
-        };
-        if !self
-            .supports
-            .iter()
-            .any(|entry| has_copy(&entry.declarations) || has_copy(&entry.important_declarations))
+        if self.context == DeclarationContext::StyleRule
+            && let Some(at) = self.copied_at(property_id)
         {
-            self.copied.retain(|copied| *copied != property_id);
+            self.retract_at(at);
+        }
+    }
+
+    fn retract_at(&mut self, at: usize) {
+        // Departs from lightningcss on purpose: it prints these copies behind the rule, where they beat a later declaration that wins in the source.
+        let Copied {
+            property_id,
+            important,
+            since,
+        } = self.copied.swap_remove(at);
+        // A declaration adds at most one copy to a list, so the copies to drop are among the last `recent` of each list.
+        let recent = (self.staged - since) as usize;
+        for entry in &mut self.supports {
+            let copies = if important {
+                &mut entry.important_declarations
+            } else {
+                &mut entry.declarations
+            };
+            let from = copies.len().saturating_sub(recent);
+            copies
+                .extract_if(from.., |copy| copy.property_id() == property_id)
+                .for_each(drop);
         }
     }
 }

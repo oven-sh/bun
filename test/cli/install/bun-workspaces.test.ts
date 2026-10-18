@@ -4335,6 +4335,7 @@ describe("a workspace outside the project", () => {
 
       const { err, exitCode } = await run(project, env, "install", `--linker=${linker}`);
       expect(err).not.toContain("error:");
+      expect(err).not.toContain("failed to");
       expect(err).not.toContain("note:");
       const version = async (...folder: string[]) => (await file(join(...folder, "package.json")).json()).version;
       expect({
@@ -4365,6 +4366,7 @@ describe("a workspace outside the project", () => {
       ]) {
         const { err, exitCode } = await run(project, env, ...args);
         expect(err).not.toContain("error:");
+        expect(err).not.toContain("failed to");
         expect({ args, keptExtra: existsSync(join(packageDir, "app", "node_modules", "extra")) }).toEqual({
           args,
           keptExtra: true,

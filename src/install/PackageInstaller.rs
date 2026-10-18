@@ -1308,7 +1308,8 @@ impl<'a> PackageInstaller<'a> {
                 || (deferred.tree_dirs.iter()).any(|open| open.tree_id == tree_id))
             && !deferred.shared_trees.is_set(tree_id as usize)
             && !may_fold(alias)
-            // Two that are as fast as each other replace each other's packages all the time.
+            // Another install is running in this project. Two installs that both link in batches
+            // would keep replacing each other's packages.
             && !(self.staging_lock.as_ref()).is_some_and(|lock| lock.is_busy)
             // Placing a trusted package and listing its scripts is one step, because a failed
             // install removes the listed packages.

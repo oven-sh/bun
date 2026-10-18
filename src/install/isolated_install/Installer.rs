@@ -2702,7 +2702,9 @@ impl<'a> Installer<'a> {
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
             ResolutionTag::Root => {}
-            ResolutionTag::Workspace => buf.append(self.lockfile().str(pkg_res.workspace())),
+            ResolutionTag::Workspace => {
+                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()));
+            }
             _ => self.append_local_store_entry_path(buf, entry_id),
         }
         buf.append(b"node_modules");
@@ -2763,7 +2765,9 @@ impl<'a> Installer<'a> {
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
-            ResolutionTag::Workspace => buf.append(self.lockfile().str(pkg_res.workspace())),
+            ResolutionTag::Workspace => {
+                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()));
+            }
             ResolutionTag::Symlink => {
                 let mut join_buf = paths::path_buffer_pool::get();
                 buf.clear();
@@ -2849,6 +2853,23 @@ struct BinLinks {
     abs_target_buf: paths::path_buffer_pool::Guard,
     abs_dest_buf: paths::path_buffer_pool::Guard,
     rel_buf: paths::path_buffer_pool::Guard,
+}
+
+/// `buf` is the project's directory. Appends the path of a workspace. On Windows, the path of a
+/// workspace outside the project is normalized, because the `..` in the path of a new link isn't
+/// resolved there. Elsewhere the kernel resolves it, also when the project is behind a symlink.
+fn append_workspace_path(buf: &mut impl paths::PathLike, workspace_path: &[u8]) {
+    if cfg!(not(windows)) || !crate::bin::path_climbs_out(workspace_path) {
+        return buf.append(workspace_path);
+    }
+    let mut join_buf = paths::path_buffer_pool::get();
+    let absolute = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+        bun_fs::FileSystem::instance().top_level_dir(),
+        &mut join_buf[..],
+        &[workspace_path],
+    );
+    buf.clear();
+    buf.append(absolute);
 }
 
 fn append_dependency_link_name(

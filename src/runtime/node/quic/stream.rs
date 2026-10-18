@@ -123,7 +123,8 @@ pub(crate) struct QuicStream {
     headers_received: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
-    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
+    /// (nul-joined pairs, pair count, eos, frameless); see `send_headers`.
+    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
@@ -236,9 +237,9 @@ impl QuicStream {
         // drain_outbound needs a write event, which nothing else requests
         // unless the JS side already started the writer.
         let mut want_write = false;
-        for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
+        for (bytes, count, eos, frameless) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 {
+            if (frameless && self.takes_header_block()) || s.send_headers(&bytes, count, eos) == 0 {
                 if eos {
                     self.with_state(|st| {
                         st.fin_sent = 1;
@@ -285,6 +286,15 @@ impl QuicStream {
         // lsquic gave us; lsquic frees it only after `on_close` returns,
         // where we null it first.
         unsafe { lsquic::Stream::from_raw(self.raw.get()) }
+    }
+
+    /// True on a request stream (bidirectional, on an HTTP/3 session) whose
+    /// send side is open: the one place lsquic is sure to take a header block.
+    /// Anywhere else the call to lsquic decides.
+    fn takes_header_block(&self) -> bool {
+        self.stream_id() & STREAM_ID_UNI_BIT == 0
+            && self.session_ref().is_some_and(QuicSession::is_http)
+            && self.with_state(|s| s.fin_sent == 0 && s.write_ended == 0)
     }
 
     fn state_mut(&self) -> *mut StreamState {
@@ -947,17 +957,23 @@ impl QuicStream {
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing =
-            kind_arg.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
-        let eos = is_trailing
+        let kind = kind_arg.coerce_to_i32(global)? as u32;
+        let eos = kind == QUIC_STREAM_HEADERS_KIND_TRAILING
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
+        // As node's nghttp3 does, hints or trailers with no field lines put no
+        // HEADERS frame on the wire: hints send nothing, trailers only the FIN.
+        let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
         let Some(s) = self.ls() else {
             self.pending_headers
-                .with_mut(|q| q.push((bytes, header_count, eos)));
+                .with_mut(|q| q.push((bytes, header_count, eos, frameless)));
             self.with_state(|s| s.has_outbound = 1);
             return Ok(JSValue::js_boolean(true));
         };
-        let rv = s.send_headers(&bytes, header_count, eos);
+        let rv = if frameless && self.takes_header_block() {
+            0
+        } else {
+            s.send_headers(&bytes, header_count, eos)
+        };
         if rv == 0 {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);

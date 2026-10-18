@@ -628,6 +628,29 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
+    // The install that wrote the lockfile could not resolve them. The registry may have the
+    // version now. A frozen lockfile is what it is, and an error ends the install, so they are
+    // not worth another round of requests then.
+    let mut retried_rows: Vec<DependencyID> = Vec::new();
+    if manager.lockfile.has_unresolved_optional_rows
+        && !needs_new_lockfile
+        && !manager.options.enable.frozen_lockfile()
+        && !manager.log_mut().has_errors()
+        && !manager.update_requests.iter().any(|request| request.failed)
+    {
+        retried_rows = retry_unresolved_optional_rows(manager);
+        if !retried_rows.is_empty()
+            && (manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0)
+        {
+            resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
+        }
+        // A row that now resolves to a package the tree already had changes no placement, and
+        // the lockfile would not be saved. Its "unresolved" entry has to go.
+        let resolutions = manager.lockfile.buffers.resolutions.as_slice();
+        had_any_diffs |=
+            (retried_rows.iter()).any(|&row| resolutions[row as usize] != invalid_package_id);
+    }
+
     if manager.summary.changes_resolutions()
         && !manager.options.enable.frozen_lockfile()
         && reresolve_links_to_dropped_workspaces(manager)
@@ -707,6 +730,16 @@ pub fn install_with_manager(
             // Another package manager's lockfile says nothing about what the scanner has seen.
             let loaded_bun_lockfile = lockfile_before_clean.loaded_package_count > 0
                 && load_result.migrated_from().is_none();
+            // A command that names what it adds scans only that. What a retried row brought is
+            // new to the tree too.
+            let retried: Vec<(DependencyID, PackageID)> = (retried_rows.iter())
+                .map(|&row| (row, invalid_package_id))
+                .collect();
+            moved_by_overrides.extend(moved_targets_after_clean(
+                &lockfile_before_clean,
+                &manager.lockfile,
+                &retried,
+            ));
             run_security_scanner(
                 manager,
                 ctx,
@@ -1774,6 +1807,57 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
         manager.drain_dependency_list();
     }
     any
+}
+
+/// Optional rows of a loaded package that have no package, queued again behind whatever the
+/// command resolved. Rows of a package that is no longer reached are left to `clean`. Returns the
+/// rows queued.
+#[cold]
+#[inline(never)]
+fn retry_unresolved_optional_rows(manager: &mut PackageManager) -> Vec<DependencyID> {
+    let rows: Vec<DependencyID> = {
+        let lockfile: &Lockfile = &manager.lockfile;
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let mut reached: Option<DynamicBitSet> = None;
+        let mut rows = Vec::new();
+        for (owner, owned) in (lockfile.packages.items_dependencies().iter().enumerate())
+            .take(lockfile.loaded_package_count as usize)
+        {
+            for row in owned.begin()..owned.end() {
+                if resolutions[row as usize] == invalid_package_id
+                    && dependencies[row as usize].behavior.is_optional()
+                    && reached
+                        .get_or_insert_with(|| {
+                            reachable::packages(lockfile, resolutions, reachable::Options::all(0))
+                        })
+                        .is_set(owner)
+                {
+                    rows.push(row);
+                }
+            }
+        }
+        rows
+    };
+    if rows.is_empty() {
+        return rows;
+    }
+
+    let _ = manager.get_cache_directory();
+    let _ = manager.get_temporary_directory();
+    // The lane a resolved package's own rows take: one that fails again stays unresolved, and
+    // `verify_resolutions` reports it if it matters.
+    for &row in &rows {
+        (manager.lockfile.scratch.dependency_list_queue)
+            .push(lockfile::QueuedRows {
+                rows: lockfile::DependencySlice::new(row, 1),
+                install_peer: false,
+                from_command: false,
+            })
+            .unwrap_or_oom();
+    }
+    manager.drain_dependency_list();
+    rows
 }
 
 #[derive(Default)]

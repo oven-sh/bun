@@ -2820,25 +2820,36 @@ it("an optional peer is rebound when another version of its package takes the sl
 type Manifests = Record<string, Record<string, Record<string, unknown>>>;
 
 // A registry serving exactly `manifests`, each version as a tarball holding just its package.json.
-async function serveRegistry(manifests: Manifests) {
-  const tarballs = new Map<string, Uint8Array>();
-  for (const [name, versions] of Object.entries(manifests)) {
-    for (const [version, extra] of Object.entries(versions)) {
-      const archive = new Bun.Archive(
-        { "package/package.json": JSON.stringify({ name, version, ...extra }) },
-        { compress: "gzip" },
-      );
-      tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
+// Both objects are read per request: a test publishes a version or a tag by adding it.
+async function serveRegistry(manifests: Manifests, distTags: Record<string, Record<string, string>> = {}) {
+  const tarballs = new Map<string, Promise<Uint8Array>>();
+  const tarball = (pathname: string) => {
+    for (const [name, versions] of Object.entries(manifests)) {
+      for (const [version, extra] of Object.entries(versions)) {
+        if (pathname !== `/${name}-${version}.tgz`) continue;
+        let bytes = tarballs.get(pathname);
+        if (!bytes) {
+          const archive = new Bun.Archive(
+            { "package/package.json": JSON.stringify({ name, version, ...extra }) },
+            { compress: "gzip" },
+          );
+          bytes = archive.bytes();
+          tarballs.set(pathname, bytes);
+        }
+        return bytes;
+      }
     }
-  }
+  };
   const requests: string[] = [];
   const server = Bun.serve({
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const { origin, pathname } = new URL(request.url);
       requests.push(pathname);
-      const tarball = tarballs.get(pathname);
-      if (tarball) return new Response(tarball);
+      if (pathname.endsWith(".tgz")) {
+        const bytes = await tarball(pathname);
+        return bytes ? new Response(bytes) : new Response("not found", { status: 404 });
+      }
       const name = pathname.slice(1);
       const entry = manifests[name];
       if (!entry) return new Response("not found", { status: 404 });
@@ -2847,7 +2858,7 @@ async function serveRegistry(manifests: Manifests) {
         versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
       }
       return Response.json(
-        { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
+        { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1), ...distTags[name] } },
         // Like registry.npmjs.org. Within this window bun resolves from the
         // manifest cache without going back to the registry.
         { headers: { "cache-control": "public, max-age=300" } },
@@ -3588,6 +3599,271 @@ ${await entry("tool-native", "{}")}  }
     await installWithOwnCache(String(dir));
     expect(await file(lockfilePath).text()).not.toContain('"p2@2.1.0"');
     expect(installedIn(String(dir))).not.toContain("node_modules/p2");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/45464
+// The install that wrote bun.lock could not resolve the optional dependency: its version was not
+// published yet. Every later install that may change bun.lock asks the registry again, like npm.
+describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependency is retried (%s linker)", linker => {
+  const installedIn = (cwd: string) =>
+    Array.from(new Bun.Glob("**/node_modules/*").scanSync({ cwd, onlyFiles: false, dot: true }), path =>
+      path.replaceAll("\\", "/"),
+    ).toSorted();
+  const bunfig = (registry: string) => Bun.TOML.stringify({ install: { registry, linker } });
+  // The platform package of a CLI, published a few minutes after the CLI itself.
+  const manifests = (): Manifests => ({
+    cli: { "1.0.0": { optionalDependencies: { "cli-native": "npm:cli@1.0.0-native" } } },
+  });
+  const latest = { cli: { latest: "1.0.0" } };
+  const publishNative = (registry: Manifests) => {
+    registry.cli["1.0.0-native"] = {};
+  };
+  const native = (cwd: string) => installedIn(cwd).filter(path => path.endsWith("/cli-native"));
+
+  it.concurrent("by a plain install, once the version is published", async () => {
+    const published = manifests();
+    using registry = await serveRegistry(published, latest);
+    using dir = tempDir("retry-unresolved-optional-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual(["/cli", "/cli-1.0.0.tgz"]);
+    expect(native(String(dir))).toBeEmpty();
+    expect(await file(lockfilePath).text()).not.toContain('"cli-native": ["cli@1.0.0-native"');
+
+    publishNative(published);
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual(["/cli", "/cli-1.0.0-native.tgz"]);
+    expect(native(String(dir))).not.toBeEmpty();
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).toContain('"cli-native": ["cli@1.0.0-native"');
+
+    // Resolved, it is a row like any other.
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual([]);
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+
+  // The retry asks the registry and changes nothing. A frozen lockfile is not retried.
+  it.concurrent("while the version stays unpublished, nothing changes", async () => {
+    using registry = await serveRegistry(manifests(), latest);
+    using dir = tempDir("retry-unresolved-optional-still-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const incomplete = await file(lockfilePath).text();
+
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual(["/cli"]);
+    expect(await file(lockfilePath).text()).toBe(incomplete);
+    await installWithOwnCache(String(dir), "--lockfile-only");
+    expect(await file(lockfilePath).text()).toBe(incomplete);
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(registry.requests).toEqual([]);
+  });
+
+  // `bun i -g cli@latest` resolves the parent again, to the package bun.lock has.
+  it.concurrent("by an install that asks for the parent again", async () => {
+    const published = manifests();
+    using registry = await serveRegistry(published, latest);
+    using dir = tempDir("retry-unresolved-optional-add-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: {} }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+
+    await installWithOwnCache(String(dir), "cli@latest");
+    expect(registry.requests).toEqual(["/cli", "/cli-1.0.0.tgz"]);
+    expect(native(String(dir))).toBeEmpty();
+
+    publishNative(published);
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir), "cli@latest", "--no-cache");
+    expect(registry.requests).toEqual(["/cli", "/cli-1.0.0-native.tgz"]);
+    expect(native(String(dir))).not.toBeEmpty();
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"cli-native": ["cli@1.0.0-native"');
+  });
+
+  // The rows of a package the command drops are left to the lockfile's clean.
+  it.concurrent("unless the install drops the package that declares it", async () => {
+    const published = manifests();
+    published.wrapper = { "1.0.0": { dependencies: { cli: "1.0.0" } } };
+    published.other = { "1.0.0": {} };
+    using registry = await serveRegistry(published, latest);
+    const root = (dependencies: object) => JSON.stringify({ name: "app", dependencies });
+    using dir = tempDir("retry-unresolved-optional-dropped-", {
+      "package.json": root({ other: "1.0.0", wrapper: "1.0.0" }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    expect(await file(lockfilePath).text()).toContain('"cli": ["cli@1.0.0"');
+
+    publishNative(published);
+    await write(join(String(dir), "package.json"), root({ other: "1.0.0" }));
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual([]);
+    expect(await file(lockfilePath).text()).not.toContain("cli@");
+    expect(native(String(dir))).toBeEmpty();
+  });
+
+  // The command's own request failed: the install ends with that error.
+  it.concurrent("unless the install already failed", async () => {
+    const published = manifests();
+    using registry = await serveRegistry(published, latest);
+    using dir = tempDir("retry-unresolved-optional-failed-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const incomplete = await file(lockfilePath).text();
+
+    publishNative(published);
+    registry.requests.length = 0;
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "does-not-exist"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain("error: GET");
+    expect(err).not.toContain("cli-native");
+    expect(registry.requests).toEqual(["/does-not-exist"]);
+    expect(await file(lockfilePath).text()).toBe(incomplete);
+    expect(exitCode).toBe(1);
+  });
+
+  // `bun add <name>` scans only what it adds. What a retried row brings is new to the tree too.
+  it.concurrent(
+    "and the security scanner sees what the retry brings",
+    async () => {
+      const published = manifests();
+      published.other = { "1.0.0": {} };
+      using registry = await serveRegistry(published, latest);
+      using dir = tempDir("retry-unresolved-optional-scanned-", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
+        "scanner.ts": `export const scanner = {
+        version: "1",
+        scan: async ({ packages }) => {
+          console.log("scanned: " + packages.map(p => p.name + "@" + p.version).join(" "));
+          return packages
+            .filter(p => p.version === "1.0.0-native")
+            .map(p => ({ package: p.name, description: "bad", level: "fatal", url: "https://example.com/" }));
+        },
+      };`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: { registry: registry.url, linker, security: { scanner: "./scanner.ts" } },
+        }),
+      });
+      const lockfilePath = join(String(dir), "bun.lock");
+
+      await installWithOwnCache(String(dir));
+      const incomplete = await file(lockfilePath).text();
+
+      publishNative(published);
+      await using proc = spawn({
+        cmd: [bunExe(), "add", "other"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(out).toContain("scanned: ");
+      expect(out).toContain("cli@1.0.0-native");
+      expect(out).toContain("Installation aborted due to fatal security advisories");
+      expect(native(String(dir))).toBeEmpty();
+      expect(await file(lockfilePath).text()).toBe(incomplete);
+      expect(exitCode).toBe(1);
+      // The scanner is a second bun process inside the install.
+    },
+    20_000,
+  );
+
+  // The row is in bun.lock's "unresolved" list, because the root has a package of its name. Bound to
+  // that package now, it changes no placement, so only the list tells the lockfiles apart.
+  it.concurrent("by a plain install, once a tag names the package the tree already has", async () => {
+    const tags: Record<string, Record<string, string>> = {};
+    using registry = await serveRegistry(
+      {
+        plugin: { "1.0.0": { optionalDependencies: { lib: "stable" } } },
+        lib: { "2.0.0": {} },
+      },
+      tags,
+    );
+    using dir = tempDir("retry-unresolved-optional-tag-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { lib: "2.0.0", plugin: "1.0.0" } }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const fresh = installedIn(String(dir));
+    expect(await file(lockfilePath).text()).toContain('"unresolved": ["lib"]');
+
+    tags.lib = { stable: "2.0.0" };
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual(["/lib"]);
+    // Isolated: plugin's own node_modules links what its row resolves to.
+    expect(installedIn(String(dir))).toEqual(
+      linker === "hoisted" ? fresh : [...fresh, "node_modules/.bun/plugin@1.0.0/node_modules/lib"].toSorted(),
+    );
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).not.toContain('"unresolved"');
+
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual([]);
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+
+  // A workspace's rows are in the "workspaces" section, with their own "unresolved" list.
+  it.concurrent("when a workspace declares it", async () => {
+    const tags: Record<string, Record<string, string>> = {};
+    using registry = await serveRegistry({ lib: { "2.0.0": {} } }, tags);
+    using dir = tempDir("retry-unresolved-optional-workspace-", {
+      "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"], dependencies: { lib: "2.0.0" } }),
+      "packages/a/package.json": JSON.stringify({ name: "a", optionalDependencies: { lib: "stable" } }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const [workspaces] = (await file(lockfilePath).text()).split('"packages": {');
+    expect(workspaces).toContain('"unresolved": [');
+    const fresh = installedIn(String(dir));
+
+    tags.lib = { stable: "2.0.0" };
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual(["/lib"]);
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).not.toContain('"unresolved"');
+    expect(installedIn(String(dir))).toEqual(
+      linker === "hoisted" ? fresh : [...fresh, "packages/a/node_modules/lib"].toSorted(),
+    );
+
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual([]);
+    expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 });
 

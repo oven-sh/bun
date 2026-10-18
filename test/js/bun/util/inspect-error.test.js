@@ -511,53 +511,52 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
   });
 });
 
-test("lines of the message that look like stack frames are not printed as stack frames", () => {
-  const message = "my message\n    at fake (/nonexistent/fake.js:1:5)";
-  const print = (err, name = "error") => {
-    const printed = Bun.inspect(err);
-    return printed
-      .slice(printed.lastIndexOf(name + ": "))
+describe("lines of the name and the message that look like stack frames are not printed as stack frames", () => {
+  const fake = "\n    at fake (/nonexistent/fake.js:1:5)";
+  const printedFrames = err =>
+    Bun.inspect(err)
       .replaceAll("\\", "/")
-      .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
-      .replaceAll(/\[dir\]\/inspect-error\.test\.js:\d+:\d+/g, "this file");
-  };
-
-  const err = new Error(message);
-  // Once the stack is a string, the frames to print are parsed out of it.
-  err.stack;
-  expect(print(err)).toBe(`error: ${message}\n      at this file\n`);
-
-  const unnamed = new Error(message);
-  unnamed.name = "";
-  unnamed.stack;
-  expect(print(unnamed)).toBe(`error: ${message}\n      at this file\n`);
-
-  const renamed = new Error(message);
-  renamed.stack;
-  renamed.name = "Renamed";
-  expect(print(renamed, "Renamed")).toBe(`Renamed: ${message}\n      at this file\n`);
-
-  const named = new Error("my message");
-  named.name = message;
-  named.stack;
-  expect(print(named, message)).toBe(`${message}: my message\n      at this file\n`);
-
+      .replaceAll(import.meta.dir.replaceAll("\\", "/") + "/", "")
+      .split("\n")
+      .filter(line => line.startsWith("      at "))
+      .map(line => line.trim().replace(/inspect-error\.test\.js:\d+:\d+/, "this file"));
   // Two frames: a single lost frame would be made up again from `line` and `column`.
-  function reword() {
-    const err = new Error("my message");
+  function make(message, { beforeRead, afterRead }) {
+    const err = new Error(message);
+    beforeRead?.(err);
+    // Once the stack is a string, the frames to print are parsed out of it.
     err.stack;
-    err.message = "inspect-error.test.js";
+    afterRead?.(err);
     return err;
   }
-  expect(print(reword())).toBe("error: inspect-error.test.js\n      at reword (this file)\n      at this file\n");
 
-  const origLimit = Error.stackTraceLimit;
-  let withoutFrames;
-  try {
-    Error.stackTraceLimit = 0;
-    withoutFrames = new Error(message);
-  } finally {
-    Error.stackTraceLimit = origLimit;
-  }
-  expect(print(withoutFrames)).toBe(`error: ${message}\n`);
+  test.each([
+    ["in the message", "m" + fake, {}],
+    ["in the message, without a name", "m" + fake, { beforeRead: e => (e.name = "") }],
+    ["in the message, with the name changed since", "m" + fake, { afterRead: e => (e.name = "Renamed") }],
+    ["in the name", "m", { beforeRead: e => (e.name = "N" + fake) }],
+    ["in both", "m" + fake, { beforeRead: e => (e.name = "m" + fake) }],
+    ["none, the message is now a part of a frame", "m", { afterRead: e => (e.message = "inspect-error.test.js") }],
+    [
+      "none, the message now ends in the line break before the first frame",
+      "m",
+      { afterRead: e => (e.message += "\n") },
+    ],
+    ["none, the name now ends in the line break before the first frame", "", { afterRead: e => (e.name += "\n") }],
+    ["none, the name now ends in the first frame", "", { afterRead: e => (e.name += "\n    at make") }],
+  ])("%s", (_, message, changes) => {
+    expect(printedFrames(make(message, changes))).toEqual(["at make (this file)", "at this file"]);
+  });
+
+  test("in the message of an error without frames", () => {
+    const origLimit = Error.stackTraceLimit;
+    let withoutFrames;
+    try {
+      Error.stackTraceLimit = 0;
+      withoutFrames = new Error("m" + fake);
+    } finally {
+      Error.stackTraceLimit = origLimit;
+    }
+    expect(printedFrames(withoutFrames)).toEqual([]);
+  });
 });

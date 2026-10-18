@@ -91,26 +91,12 @@ pub fn copy_file_with_state(
     let _ = copy_file_state;
     #[cfg(target_os = "macos")]
     {
-        unsafe extern "C" {
-            // safe: by-value `c_int` fds + `u32` flags; bad fd → `EBADF`/
-            // `EOPNOTSUPP`, never UB. `state` is `Option<NonNull<c_void>>`
-            // (FFI-safe via the null-pointer niche → ABI-identical to a
-            // nullable `copyfile_state_t`); we never allocate a state.
-            safe fn fcopyfile(
-                from: libc::c_int,
-                to: libc::c_int,
-                state: Option<core::ptr::NonNull<core::ffi::c_void>>,
-                flags: u32,
-            ) -> libc::c_int;
-        }
-        let rc = fcopyfile(in_.native(), out.native(), None, libc::COPYFILE_DATA);
-
-        match crate::get_errno(rc) {
-            E::SUCCESS => return Ok(()),
+        match crate::fcopyfile(in_, out, libc::COPYFILE_DATA) {
+            Ok(()) => return Ok(()),
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
-            E::EOPNOTSUPP => {}
-            e => return Err(crate::Error::from_code(e, Tag::copyfile)),
+            Err(err) if err.get_errno() == E::EOPNOTSUPP => {}
+            Err(err) => return Err(crate::Error::from_code(err.get_errno(), Tag::copyfile)),
         }
     }
 
@@ -388,33 +374,32 @@ pub(crate) fn copy_file_range(
         }
     }
 
-    while !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
-        // SAFETY: raw syscall; fds valid, offset ptr null
-        let rc = unsafe { crate::linux::sendfile(out, in_, core::ptr::null_mut(), len) };
-        crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);
-        match crate::get_errno(rc) {
-            E::SUCCESS => return Ok(rc as usize),
-            E::EINTR => continue,
-            // these may not be regular files, try fallback
-            E::EINVAL => {
-                copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
-            }
-            // This shouldn't happen?
-            E::EXDEV => {
-                copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
-                copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
-            }
-            // they might not support it
-            // On Linux EOPNOTSUPP == ENOTSUP.
-            E::ENOTSUP | E::ENOSYS => {
-                copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
-            }
-            _ => {
-                // failed for some other reason, fallback to read-write loop
-                copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
-            }
+    if !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
+        let result = crate::sendfile(Fd::from_native(in_), Fd::from_native(out), None, len);
+        crate::syslog!("sendfile({}, {}, {}) = {:?}", in_, out, len, result);
+        match result {
+            Ok(written) => return Ok(written),
+            Err(err) => match err.get_errno() {
+                // these may not be regular files, try fallback
+                E::EINVAL => {
+                    copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
+                }
+                // This shouldn't happen?
+                E::EXDEV => {
+                    copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
+                    copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
+                }
+                // they might not support it
+                // On Linux EOPNOTSUPP == ENOTSUP.
+                E::ENOTSUP | E::ENOSYS => {
+                    copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
+                }
+                _ => {
+                    // failed for some other reason, fallback to read-write loop
+                    copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
+                }
+            },
         }
-        break;
     }
 
     if !copy_file_state.contains(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL) {

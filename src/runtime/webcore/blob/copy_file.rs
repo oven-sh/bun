@@ -379,7 +379,7 @@ impl CopyFile {
                 TryWith::CopyFileRange => {
                     bun_sys::copy_file_range(src_fd, None, dest_fd, None, remain, 0)
                 }
-                TryWith::Sendfile => bun_sys::sendfile(src_fd, dest_fd, remain),
+                TryWith::Sendfile => bun_sys::sendfile(src_fd, dest_fd, None, remain),
                 TryWith::Splice => bun_sys::splice(src_fd, dest_fd, remain, 0),
             };
             let (written, errno) = match result {

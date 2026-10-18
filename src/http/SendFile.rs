@@ -29,27 +29,21 @@ impl SendFile {
         let adjusted_count_temporary: u64 = (self.remain as u64).min(i64::MAX as u64);
         let adjusted_count: u64 = adjusted_count_temporary;
 
-        // Android: same kernel `sendfile(2)` ABI, dispatched via `bun_sys::linux`'s
-        // raw-syscall thunk (no libc difference matters here).
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = adjusted_count; // unused on Linux path
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
-            // this does the syscall directly, without libc
-            // SAFETY: fds are valid open descriptors owned by `self`/caller; offset ptr is a
-            // live stack local.
-            let val = unsafe {
-                bun_sys::linux::sendfile(
-                    socket_fd.native(),
-                    self.fd.native(),
-                    &raw mut signed_offset,
-                    self.remain,
-                )
+            let (val, errcode) = match bun_sys::sendfile(
+                self.fd,
+                socket_fd,
+                Some(&mut signed_offset),
+                self.remain,
+            ) {
+                Ok(sent) => (sent, bun_sys::E::SUCCESS),
+                Err(err) => (0, err.get_errno()),
             };
             self.offset = u64::try_from(signed_offset).expect("int cast") as usize;
-
-            let errcode = bun_sys::get_errno(val);
 
             self.remain = (self.remain as u64)
                 .saturating_sub((self.offset as u64).saturating_sub(begin as u64))

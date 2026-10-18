@@ -4795,7 +4795,7 @@ impl NodeFS {
         wrote: &mut u64,
     ) -> Maybe<ret::CopyFile> {
         loop {
-            let amt = match sys::sendfile(src_fd, dest_fd, i32::MAX as usize - 1) {
+            let amt = match sys::sendfile(src_fd, dest_fd, None, i32::MAX as usize - 1) {
                 Err(_) => {
                     return Self::copy_file_using_read_write_loop(
                         src, dest, src_fd, dest_fd, stat_size, wrote,

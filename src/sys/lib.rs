@@ -867,39 +867,9 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
 
 pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     let fd = fd.as_fd();
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(unix)]
     {
-        let dirfd = if fd.is_valid() {
-            fd.native()
-        } else {
-            libc::AT_FDCWD
-        };
-        linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
-            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
-    }
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    {
-        let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
-        let dirfd = if fd.is_valid() {
-            fd.native()
-        } else {
-            libc::AT_FDCWD
-        };
-        // SAFETY: path is NUL-terminated; st is written on success.
-        let rc = unsafe {
-            libc::fstatat(
-                dirfd,
-                path.as_ptr().cast(),
-                st.as_mut_ptr(),
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        };
-        if rc == 0 {
-            // SAFETY: rc == 0 ⇒ kernel populated `st`.
-            Ok(unsafe { st.assume_init() })
-        } else {
-            Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
-        }
+        posix_impl::fstatat_with_flags(fd, path, libc::AT_SYMLINK_NOFOLLOW)
     }
     #[cfg(windows)]
     {
@@ -1289,11 +1259,6 @@ pub fn to_posix_path(
 #[cfg(not(windows))]
 fn err_with(tag: Tag) -> Error {
     Error::from_code_int(last_errno(), tag)
-}
-#[inline]
-#[cfg(not(windows))]
-fn err_with_path(tag: Tag, path: &ZStr) -> Error {
-    err_with(tag).with_path(path.as_bytes())
 }
 
 // Syscall tags — discriminants are FFI-observable. Do not reorder; append-only.
@@ -3043,7 +3008,9 @@ mod posix_impl {
         Ok(())
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
-        let fd = fd.as_fd();
+        fstatat_with_flags(fd.as_fd(), path, 0)
+    }
+    pub(crate) fn fstatat_with_flags(fd: Fd, path: &ZStr, flags: i32) -> Maybe<Stat> {
         let dirfd = if fd.is_valid() {
             fd.native()
         } else {
@@ -3051,7 +3018,7 @@ mod posix_impl {
         };
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return super::linux_syscall::fstatat(dirfd, path, 0)
+            return super::linux_syscall::fstatat(dirfd, path, flags)
                 .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -3060,7 +3027,7 @@ mod posix_impl {
             check_p!(
                 // SAFETY: `dirfd` is a live fd (or AT_FDCWD); `path` is
                 // NUL-terminated; `st` is a valid out-param.
-                unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) },
+                unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), flags) },
                 Tag::fstatat,
                 path
             );
@@ -3170,15 +3137,20 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         use libc::realpath as _realpath;
-        // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
-        // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
-        let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
-        if p.is_null() {
-            return Err(err_with_path(Tag::realpath, path));
-        }
-        // SAFETY: on success `realpath` returned `buf`'s pointer with a
-        // NUL-terminated absolute path written into it.
-        let len = unsafe { libc::strlen(p) };
+        let len = loop {
+            // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
+            // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
+            let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
+            if !p.is_null() {
+                // SAFETY: on success `realpath` returned `buf`'s pointer with a
+                // NUL-terminated absolute path written into it.
+                break unsafe { libc::strlen(p) };
+            }
+            match last_errno() {
+                libc::EINTR => continue,
+                e => return Err(Error::from_code_int(e, Tag::realpath).with_path(path.as_bytes())),
+            }
+        };
         Ok(&buf.0[..len])
     }
 
@@ -3503,12 +3475,22 @@ mod posix_impl {
             );
             Ok(())
         }
+        /// `fcopyfile(3)` copies from the file positions and then truncates
+        /// `to` to the bytes of that one call. A second call is the same copy
+        /// only if the first moved neither position, so EINTR is retried only
+        /// while both are at 0.
         pub fn fcopyfile_(from: Fd, to: Fd, flags: u32) -> Maybe<()> {
-            check!(
-                fcopyfile(from.native(), to.native(), None, flags),
-                Tag::fcopyfile
-            );
-            Ok(())
+            let at_start = |fd: Fd| matches!(lseek(fd, 0, libc::SEEK_CUR), Ok(0));
+            loop {
+                if fcopyfile(from.native(), to.native(), None, flags) == 0 {
+                    return Ok(());
+                }
+                let e = last_errno();
+                if e == libc::EINTR && at_start(from) && at_start(to) {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::fcopyfile));
+            }
         }
     }
     #[cfg(target_os = "macos")]
@@ -3676,16 +3658,25 @@ mod posix_impl {
         }
     }
 
-    /// `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
+    /// `sendfile(2)` from `src` to `dest`. An `offset` of `None` uses the
+    /// file position of `src` and advances it. Clamps `len` (avoid EINVAL on
     /// >2GB), EINTR-retries, and attaches the *source* fd to the error.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
+    pub fn sendfile(src: Fd, dest: Fd, mut offset: Option<&mut i64>, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
         loop {
-            // SAFETY: `src`/`dest` are live fds; null `offset` tells the
-            // kernel to use and update `src`'s file offset.
-            let rc =
-                unsafe { libc::sendfile(dest.native(), src.native(), core::ptr::null_mut(), len) };
+            // SAFETY: `src`/`dest` are live fds; the offset pointer is null
+            // or an exclusive borrow that outlives the call.
+            let rc = unsafe {
+                libc::sendfile(
+                    dest.native(),
+                    src.native(),
+                    offset
+                        .as_deref_mut()
+                        .map_or(core::ptr::null_mut(), core::ptr::from_mut),
+                    len,
+                )
+            };
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR {
@@ -5689,13 +5680,6 @@ pub mod linux {
         // SAFETY: caller contract — `buf` points to `count` writable bytes.
         unsafe { super::linux_syscall::read_raw(fd, buf, count) }
     }
-    /// Raw `sendfile(out, in, *offset, count)`.
-    #[inline]
-    pub unsafe fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize {
-        // SAFETY: caller contract — `offset` is null or points to a live `i64`
-        // the kernel may read and update.
-        unsafe { super::linux_syscall::sendfile(out_fd, in_fd, offset, count) }
-    }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.
     #[inline]
     pub unsafe fn ppoll(
@@ -5754,9 +5738,6 @@ pub mod linux {
         // SAFETY: raw `copy_file_range(2)`; caller owns fds, offset ptrs may be null.
         unsafe { super::linux_syscall::copy_file_range(in_, off_in, out, off_out, len, flags) }
     }
-
-    // sendfile — use the existing `linux::sendfile` (libc
-    // wrapper, isize return) defined above; `get_errno::<isize>` decodes it.
 
     /// `bun.linux.RWFFlagSupport` — runtime probe for `RWF_NOWAIT` (kernel ≥ 4.14).
     pub struct RWFFlagSupport;

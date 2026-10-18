@@ -432,21 +432,19 @@ impl FileResponseStream {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        loop {
+        {
             let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
                 let adjusted = sf.remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
-                // SAFETY: both fds are valid open file descriptors owned by `self`;
-                // `off` is a stack local.
-                let rc = unsafe {
-                    sys::linux::sendfile(
-                        sf.socket_fd.native(),
-                        self.fd.get().native(),
-                        &raw mut off,
-                        adjusted as usize,
-                    )
+                let errno = match sys::sendfile(
+                    self.fd.get(),
+                    sf.socket_fd,
+                    Some(&mut off),
+                    adjusted as usize,
+                ) {
+                    Ok(_) => sys::E::SUCCESS,
+                    Err(err) => err.get_errno(),
                 };
-                let errno = sys::get_errno(rc);
                 let sent: u64 =
                     u64::try_from((off - i64::try_from(sf.offset).expect("int cast")).max(0))
                         .unwrap();
@@ -463,7 +461,6 @@ impl FileResponseStream {
                     }
                     return self.arm_sendfile_writable();
                 }
-                sys::E::EINTR => continue,
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
                 _ => {
                     self.fail_with(

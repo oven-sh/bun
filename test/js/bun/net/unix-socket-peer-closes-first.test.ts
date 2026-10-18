@@ -10,6 +10,9 @@ import { mysqlRawPacket } from "../../sql/wire-frames";
 // The peer runs on a worker thread, so it can act while this thread is blocked and cannot poll.
 // The first event this thread then sees for the connection is the peer's hangup.
 // Not concurrent: the tests share one peer and its state.
+// Skipped on Windows: not run there, and the branch under test is not reached. The libuv backend
+// takes the error and eof flags of an event from the poll status, and the peer's close is an
+// event with status 0, so it sets neither flag on the first event of a connect.
 describe.skipIf(isWindows)("a unix socket peer that closes before the connecting thread polls", () => {
   // state[0]: the peer sets it when its part is done (1: as asked, 2: not as asked).
   // state[1]: this thread sets it when its connect call has returned.

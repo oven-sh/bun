@@ -1758,6 +1758,30 @@ test.concurrent("the factories that one import calls run one at a time, in the o
   );
 });
 
+test.concurrent(
+  "a factory isn't called before that of a module that is imported earlier but fetched later",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "deep.ts": ``,
+        "shallow.ts": ``,
+        "inner.ts": `import "./deep";`,
+        "outer.ts": `import "./inner";`,
+        "page.ts": `import "./outer"; import "./shallow";`,
+        "depth.test.ts": `
+        import { expect, test, vi } from "vitest";
+        const log = vi.hoisted(() => []);
+        vi.mock("./shallow", async () => (log.push("shallow"), {}));
+        vi.mock("./deep", async () => (log.push("deep"), {}));
+        import "./page";
+        test("order", () => expect(log).toEqual(["deep", "shallow"]));
+      `,
+      },
+      1,
+    );
+  },
+);
+
 test.concurrent("two import() calls that share a module don't wait for each other's factories", async () => {
   await expectFixturesToPass(
     {
@@ -1774,6 +1798,27 @@ test.concurrent("two import() calls that share a module don't wait for each othe
         test("names", async () => {
           const [a, b] = await Promise.all([import("./uses-a"), import("./uses-b")]);
           expect([a.name, b.name]).toEqual(["mock a", "mock b"]);
+        });
+      `,
+    },
+    1,
+  );
+});
+
+test.concurrent("a factory that import() called doesn't hold up another load that imports its module", async () => {
+  await expectFixturesToPass(
+    {
+      "a.ts": ``,
+      "b.ts": ``,
+      "uses-both.ts": `import { name as b } from "./b"; import { name as a } from "./a"; export const names = [a, b];`,
+      "held.test.ts": `
+        import { expect, test, vi } from "vitest";
+        const second = vi.hoisted(() => Promise.withResolvers());
+        vi.mock("./a", async () => (await second.promise, { name: "mock a" }));
+        vi.mock("./b", async () => (second.resolve(), { name: "mock b" }));
+        test("names", async () => {
+          const [a, both] = await Promise.all([import("./a"), import("./uses-both")]);
+          expect([a.name, both.names]).toEqual(["mock a", ["mock a", "mock b"]]);
         });
       `,
     },

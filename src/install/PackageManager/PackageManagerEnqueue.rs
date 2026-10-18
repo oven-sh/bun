@@ -4151,6 +4151,10 @@ fn peer_provided_from_above(
                 {
                     continue;
                 }
+                // A package provides itself to everything below it.
+                if names[parent] == name_hash {
+                    return Some(parent as PackageID);
+                }
                 if !follows_peers
                     && let Some(provided) = named(parent, false).or_else(|| named(parent, true))
                 {

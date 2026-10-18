@@ -2714,6 +2714,28 @@ test.concurrent("a package that's installed for a peer dependency uses the versi
   expect(layout(dir)).toEqual(["client@1.0.0", "compiler@7.0.2", "server@1.0.0"]);
 });
 
+// host@2 is only installed for app's peer dependency. Its own plugin@2 needs host@1, and host@1 depends on plugin@1,
+// which uses host@2. Installing host@1 for plugin@2 would make a cycle that can't be laid out in node_modules.
+test.concurrent("a package provides itself to a dependency that has a peer dependency on it", async () => {
+  using server = await serveGraph({
+    app: { "1.0.0": { dependencies: { plugin: "^1.0.0 || ^2.0.0" }, peerDependencies: { host: "2.0.0" } } },
+    host: { "1.0.0": { dependencies: { plugin: "^1.0.0" } }, "2.0.0": { dependencies: { plugin: "^2.0.0" } } },
+    plugin: { "1.0.0": { peerDependencies: { host: "1.0.5" } }, "2.0.0": { peerDependencies: { host: "1.0.0" } } },
+  });
+  const packageJson = (more: object) => JSON.stringify({ name: "root", dependencies: { app: "1.0.0" }, ...more });
+  using tmp = tempDir("hoist-peer-on-own-parent", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": packageJson({ overrides: { plugin: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["app@1.0.0", "host@2.0.0", "plugin@1.0.0"]);
+
+  await write(join(dir, "package.json"), packageJson({}));
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["app@1.0.0", "host@2.0.0", "host/plugin@2.0.0", "plugin@1.0.0"]);
+});
+
 // The project's own peer dependency counts like a regular one, so the project provides compiler@7 to plugin.
 test.concurrent("the project provides its dependencies to a package that it has a peer dependency on", async () => {
   using server = await serveGraph({

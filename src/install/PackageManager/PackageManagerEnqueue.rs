@@ -97,9 +97,12 @@ fn kept_tarball_task(
 pub(crate) fn download_kept(this: &mut PackageManager, rows: &[DependencyID]) {
     for &row in rows {
         let package_id = this.lockfile.buffers.resolutions[row as usize];
-        // A download that cannot start is in the log.
-        if let Ok(Some(task)) = kept_tarball_task(this, row, package_id) {
-            enqueue_resolved_task(this, package_id, task);
+        match kept_tarball_task(this, row, package_id) {
+            Ok(Some(task)) => enqueue_resolved_task(this, package_id, task),
+            Ok(None) => {}
+            Err(crate::Error::Alloc(_)) => bun_core::out_of_memory(),
+            // Why the download cannot start is in the log.
+            Err(_) => {}
         }
     }
 }
@@ -1179,9 +1182,10 @@ fn request_ahead(this: &mut PackageManager) {
 /// Requests what the row `id` of `item` will need when its turn comes, and looks ahead from it.
 fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile::QueuedRows) {
     let row = queued_row(this, id, item);
-    // Most names come up many times, and one request serves all of them.
     if row.behavior.is_optional_peer()
+        // The import that needs the peer resolves it.
         || (row.behavior.is_peer() && this.options.runtime_auto_install)
+        // Most names come up many times, and one request serves all of them.
         || (row.version.tag == dependency::version::Tag::Npm
             && !row.version.npm().is_alias
             && this.look_ahead.seen.contains_key(&row.name_hash))
@@ -1261,6 +1265,7 @@ fn request_remote_package_ahead(
         );
     if resolution != invalid_package_id
         || this.options.runtime_auto_install
+        // Nothing is fetched for a package that may still be dropped.
         || (this.lockfile.get_parent_pkg_of_dependency(id))
             .is_some_and(|owner| this.lockfile.is_only_for_peers(owner))
         // Whether another package may name a tarball in the project is decided, and reported, once.
@@ -4050,14 +4055,18 @@ fn can_share_out_of_range_peer(
             .is_set(peer_owner as usize)
 }
 
-/// `package_index` lists the highest version first.
+/// The highest version that a dependency resolves to: a changed override can take all of them off
+/// a version of `bun.lock`. One that waits for `settle_only_peers` does not count, because whether
+/// it is there yet depends on the order. `package_index` lists the highest version first.
 fn highest_peer_candidate(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
     version: &dependency::Version,
 ) -> Option<PackageID> {
     let named = lockfile.packages_named(name_hash).iter();
-    let highest = named.copied().find(|&id| !lockfile.is_only_for_peers(id))?;
+    let highest = named.copied().find(|&id| {
+        !lockfile.is_only_for_peers(id) && lockfile.buffers.resolutions.contains(&id)
+    })?;
     let resolution = lockfile.packages.items_resolution().get(highest as usize)?;
     let same_kind = matches!(
         (resolution.tag, version.tag),
@@ -4171,7 +4180,8 @@ impl PackageManager {
     /// the log until `log_held` knows whether `row` is still in the tree.
     #[cold]
     pub(crate) fn hold_log_since(&mut self, mark: usize, row: DependencyID) {
-        // Dedupe never drops what a package.json of the project asks for. A peer waits anyway.
+        // Dedupe never drops what a package.json of the project asks for. The message about a peer
+        // is still dropped if a dependency installs the package.
         let is_peer = self.lockfile.buffers.dependencies[row as usize]
             .behavior
             .is_peer();
@@ -4184,7 +4194,7 @@ impl PackageManager {
         if let Some(held) = &mut self.held_messages
             && !msgs.is_empty()
             && !(held.iter())
-                .any(|(about, _)| matches!(*about, HeldAbout::Row(held) if held == row))
+                .any(|(about, _)| matches!(*about, HeldAbout::Row(other) if other == row))
         {
             held.push((HeldAbout::Row(row), msgs));
         }
@@ -4268,7 +4278,7 @@ impl PackageManager {
                             }
                             let behavior = lockfile.buffers.dependencies[row as usize].behavior;
                             if behavior.is_peer() {
-                                is_needed_by_peer |= behavior.is_required();
+                                is_needed_by_peer = true;
                             } else {
                                 all_are_peers = false;
                                 is_needed |= behavior.is_required();

@@ -616,15 +616,19 @@ pub fn install_with_manager(
     }
 
     let mut progress = ResolveProgress::new(log_level);
-    if manager.pending_task_count() > 0 || !named.latest_rows.is_empty() {
-        resolve_pending_tasks(manager, &root, &mut progress, &mut named)?;
+    let mut kept_for_peers: Vec<DependencyID> = Vec::new();
+    if !named.latest_rows.is_empty() {
+        resolve_pending_tasks(manager, &root, &mut progress)?;
+        // The children are refreshed from the versions that their peers end up with.
+        kept_for_peers = settle_only_peers(manager, &root, &mut progress, |_| {})?;
+        wait_for_pending_tasks(manager)?;
+        let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
+        named.moved.extend(child_moves);
     }
+    resolve_queued(manager, &root, &mut progress)?;
 
-    if manager.summary.changes_resolutions()
-        && !manager.options.enable.frozen_lockfile()
-        && reresolve_links_to_dropped_workspaces(manager)
-    {
-        resolve_queued(manager, &root, &mut progress)?;
+    if manager.summary.changes_resolutions() && !manager.options.enable.frozen_lockfile() {
+        reresolve_links_to_dropped_workspaces(manager);
     }
 
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
@@ -634,8 +638,7 @@ pub fn install_with_manager(
         transitive.redirect_dependents(lockfile);
         redirect_moved_edges(lockfile, &named.moved, direct_only);
     };
-    let peer_moves = settle_only_peers(manager, &root, &mut progress, redirect)?;
-    named.moved.extend(peer_moves);
+    kept_for_peers.extend(settle_only_peers(manager, &root, &mut progress, redirect)?);
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
@@ -643,6 +646,10 @@ pub fn install_with_manager(
         crate::dedupe::collapse_appended(manager);
     }
     manager.log_held();
+    if manager.subcommand == Subcommand::Update {
+        let replaced = register_replaced_by(manager, &kept_for_peers)?;
+        named.moved.extend(replaced);
+    }
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 
@@ -1705,7 +1712,7 @@ fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
 /// Runs when all else is resolved: a row that `clean` discards must not ask the registry.
 #[cold]
 #[inline(never)]
-fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
+fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) {
     let rows: Vec<DependencyID> = {
         let lockfile: &Lockfile = &manager.lockfile;
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -1751,12 +1758,11 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     if any {
         manager.drain_dependency_list();
     }
-    any
 }
 
 /// Runs when the queue is empty, for the peers whose turn came too early:
-/// - One has left itself to an optional tarball or repository (`Lockfile::peer_provider`) that
-///   has failed since. It is resolved like any other.
+/// - One has left itself to a tarball or repository (`Lockfile::peer_provider`) that did not
+///   arrive. It is resolved like any other, once its package stays.
 /// - The registry had no answer for one, or no version. What has been resolved since may let it
 ///   share an installed version.
 #[cold]
@@ -1810,7 +1816,7 @@ fn resolve_unbound_peers(manager: &mut PackageManager) {
         }
         _ => None,
     }));
-    rows.sort_unstable();
+    index_sort::sort_indices_unstable(&mut rows, &mut |a, b| a.cmp(&b));
     rows.dedup();
     for &row in &rows {
         enqueue_row(manager, row);
@@ -1826,42 +1832,40 @@ fn resolve_queued(
     progress: &mut ResolveProgress,
 ) -> crate::Result<()> {
     if manager.pending_task_count() > 0 {
-        resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(manager, root, progress)?;
     }
     Ok(())
 }
 
 /// Decides which `Lockfile::only_peers` packages stay, and resolves what those depend on. That can
 /// add more of them. `redirect` takes what was resolved off the packages that the command has moved
-/// a dependency away from. Returns what belongs in `NamedUpdates::moved`.
+/// a dependency away from. Returns a dependency on each package that stays.
 fn settle_only_peers(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     progress: &mut ResolveProgress,
     redirect: impl Fn(&mut Lockfile),
-) -> crate::Result<Vec<(DependencyID, PackageID)>> {
-    let mut moved = Vec::new();
+) -> crate::Result<Vec<DependencyID>> {
+    let mut all_kept = Vec::new();
     loop {
+        resolve_queued(manager, root, progress)?;
         resolve_unbound_peers(manager);
         resolve_queued(manager, root, progress)?;
         redirect(&mut manager.lockfile);
         crate::dedupe::collapse_appended_peers(manager);
         let kept = manager.lockfile.unmark_reachable_only_peers()?;
         if kept.is_empty() {
-            return Ok(moved);
-        }
-        if manager.subcommand == Subcommand::Update {
-            moved.extend(register_replaced_by(manager, &kept)?);
+            return Ok(all_kept);
         }
         download_kept(manager, &kept);
         manager.drain_dependency_list();
-        resolve_queued(manager, root, progress)?;
+        all_kept.extend(kept);
     }
 }
 
 #[derive(Default)]
 struct NamedUpdates {
-    /// Invalidated rows paired with the package they resolved to, for redirect_moved_edges.
+    /// Rows paired with the package that theirs replaces, for redirect_moved_edges and print_plan.
     moved: Vec<(DependencyID, PackageID)>,
     /// `--latest` only: every in-scope row naming a requested package, for refresh_children_of_named.
     latest_rows: Vec<DependencyID>,
@@ -2293,7 +2297,6 @@ fn resolve_pending_tasks(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     progress: &mut ResolveProgress,
-    named: &mut NamedUpdates,
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -2306,16 +2309,7 @@ fn resolve_pending_tasks(
         wait_for_calcing_patch_hashes(manager)?;
     }
 
-    if named.latest_rows.is_empty() {
-        return wait_until_ready_for_only_peers(manager);
-    }
-    wait_for_pending_tasks(manager)?;
-    // The children are refreshed from the versions that their peers end up with.
-    let peer_moves = settle_only_peers(manager, root, progress, |_| {})?;
-    named.moved.extend(peer_moves);
-    let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
-    named.moved.extend(child_moves);
-    wait_for_pending_tasks(manager)
+    wait_until_ready_for_only_peers(manager)
 }
 
 /// What is shown from the first `resolve_pending_tasks` to the last.
@@ -2344,8 +2338,8 @@ impl ResolveProgress {
         }
     }
 
-    fn close(&mut self, manager: &mut PackageManager) {
-        if !core::mem::replace(&mut self.is_open, false) {
+    fn close(self, manager: &mut PackageManager) {
+        if !self.is_open {
             return;
         }
         if self.log_level.show_progress() {
@@ -2422,6 +2416,12 @@ fn clean_lockfile(
     // For what `reresolve_rows_outside_overrides` resolves: the copy has only what is saved.
     manager.lockfile.package_extensions.rules =
         core::mem::take(&mut before_clean.package_extensions.rules);
+    // `report_manifest_failure` listed dependencies of the old lockfile.
+    for task_id in manager.manifest_failures.keys() {
+        if let Some(waiters) = manager.task_queue.get_mut(task_id) {
+            waiters.clear();
+        }
+    }
     // The log had no error before: the tree builder refused a name. Stop before the linker.
     if manager.log_mut().has_errors() {
         manager.crash();
@@ -2576,6 +2576,7 @@ fn reresolve_rows_outside_overrides(
     }
 
     manager.lockfile.mark_loaded_packages()?;
+    manager.held_messages = Some(Vec::new());
     let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     for (row, package_id) in outside {
@@ -2593,12 +2594,11 @@ fn reresolve_rows_outside_overrides(
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     manager.drain_dependency_list();
     let mut progress = ResolveProgress::new(log_level);
-    resolve_queued(manager, root, &mut progress)?;
     let redirect = |lockfile: &mut Lockfile| redirect_moved_edges(lockfile, &moved, false);
-    let peer_moves = settle_only_peers(manager, root, &mut progress, redirect)?;
-    moved.extend(peer_moves);
+    settle_only_peers(manager, root, &mut progress, redirect)?;
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
+    manager.log_held();
     if manager.log_mut().has_errors() {
         manager.crash();
     }

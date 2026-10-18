@@ -5066,14 +5066,19 @@ it.concurrent.each([
   expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")["z"]).toBe(z);
 });
 
-it.concurrent("a peer that no version suits is warned about if only another peer installs the package", async () => {
-  using registry = await serveRegistry({ a: { "1.0.0": { peerDependencies: { z: "2.0.0" } } }, z: { "2.0.0": {} } });
-  using dir = projectOn(registry, {
-    "package.json": { name: "foo", dependencies: { a: "1.0.0" }, peerDependencies: { z: "~1.1.0" } },
-  });
-  const { err } = await installWithOwnCache(String(dir));
-  expect(err).toContain('warn: No version matching "~1.1.0" found for peer dependency "z" (but package exists)');
-});
+it.concurrent(
+  "a peer of the project that no version suits is warned about if only a peer installs the package",
+  async () => {
+    using registry = await serveRegistry({ a: { "1.0.0": { peerDependencies: { z: "2.0.0" } } }, z: { "2.0.0": {} } });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0" }, peerDependencies: { z: "~1.1.0" } },
+    });
+    const { err } = await installWithOwnCache(String(dir));
+    expect(err.split("\n").filter(line => line.includes("No version matching"))).toEqual([
+      'warn: No version matching "~1.1.0" found for peer dependency "z" (but package exists)',
+    ]);
+  },
+);
 
 // a loads w's z, whatever the registry says about z.
 it.concurrent.each(["the registry no longer has the package", "--offline has no manifest of the package"])(
@@ -5405,17 +5410,62 @@ it.concurrent("a peer of the version that an edited override asks for shares the
   const cwd = String(dir);
   await installWithOwnCache(cwd);
 
-  // bun.lock has the new override and the old version, as after a merge.
-  for (const name of ["bun.lock", "package.json"]) {
-    const text = await file(join(cwd, name)).text();
-    const edited = text.replace(/("overrides":\s*\{\s*"p":\s*)"1.0.0"/, '$1"1.0.1"');
-    expect(edited).not.toBe(text);
-    await write(join(cwd, name), edited);
-  }
+  await editOverride(cwd, "p", "1.0.0", "1.0.1");
   await installWithOwnCache(cwd);
   const lock = await file(join(cwd, "bun.lock")).text();
   expect({ ...instancesOf(lock, "p"), ...instancesOf(lock, "z") }).toEqual({ "p": "p@1.0.1", "z": "z@1.0.0" });
 });
+
+async function editOverride(cwd: string, name: string, from: string, to: string) {
+  // bun.lock has the new override and the old version, as after a merge.
+  for (const path of ["bun.lock", "package.json"]) {
+    const text = await file(join(cwd, path)).text();
+    const edited = text.replace(new RegExp(`("overrides":\\s*\\{\\s*"${name}":\\s*)"${from}"`), `$1"${to}"`);
+    expect(edited).not.toBe(text);
+    await write(join(cwd, path), edited);
+  }
+}
+
+it.concurrent("an edited override is applied after a manifest has failed and bun.lock has shrunk", async () => {
+  const many = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`d${i}`, "1.0.0"]));
+  using registry = await serveRegistry({
+    a: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+    big: { "1.0.0": { dependencies: many } },
+    n: { "1.0.0": { optionalDependencies: { gone: "1.0.0" } } },
+    z: { "1.0.0": {}, "2.0.0": {} },
+    ...Object.fromEntries(Object.keys(many).map(name => [name, { "1.0.0": {} }])),
+  });
+  const project = { name: "foo", dependencies: { a: "1.0.0", big: "1.0.0" }, overrides: { z: "1.0.0" } };
+  using dir = projectOn(registry, { "package.json": project });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  await write(join(cwd, "package.json"), JSON.stringify({ ...project, dependencies: { a: "1.0.0", n: "1.0.0" } }));
+  await editOverride(cwd, "z", "1.0.0", "2.0.0");
+  await installWithOwnCache(cwd);
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@2.0.0" });
+});
+
+it.concurrent(
+  "a deprecated version that is dropped below the version of an edited override is not warned about",
+  async () => {
+    using registry = await serveRegistry({
+      a: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+      p: { "1.0.0": { deprecated: "old" }, "1.1.0": { deprecated: "old" } },
+      q: { "1.0.0": { peerDependencies: { p: "1.0.0" } } },
+      z: { "1.0.0": {}, "2.0.0": { dependencies: { q: "1.0.0" }, peerDependencies: { p: "^1.0.0" } } },
+    });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0" }, overrides: { z: "1.0.0" } },
+    });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd);
+
+    await editOverride(cwd, "z", "1.0.0", "2.0.0");
+    const { err } = await installWithOwnCache(cwd, "--verbose");
+    expect(err.split("\n").filter(line => line.includes("deprecated p@"))).toEqual(["warn: deprecated p@1.0.0: old"]);
+  },
+);
 
 it.concurrent(
   "a peer is resolved from the cached manifest if --offline does not have the optional tarball that provides it",
@@ -5530,29 +5580,105 @@ it.concurrent(
   },
 );
 
-it.concurrent.each(["--latest", "--latest --dry-run", "--latest --lockfile-only"])(
-  "`bun update <name> %s` lists the version that the peer of the new version gets",
-  async flags => {
-    const manifests: Manifests = {
-      a: { "1.0.0": { peerDependencies: { b: "^1.0.0" } } },
-      b: { "1.0.0": { peerDependencies: { c: "^1.0.0" } }, "1.1.0": { peerDependencies: { c: "^1.1.0" } } },
-      c: { "1.0.0": {}, "1.1.0": {} },
-    };
-    using registry = await serveRegistry(manifests);
-    const published = { b: manifests.b, c: manifests.c };
-    manifests.b = { "1.0.0": published.b["1.0.0"] };
-    manifests.c = { "1.0.0": {} };
-    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
-    const cwd = String(dir);
-    await installWithOwnCache(cwd);
+it.concurrent.each(
+  ["", " --latest"].flatMap(latest => ["", " --dry-run", " --lockfile-only"].map(mode => `update b${latest}${mode}`)),
+)("`bun %s` lists the version that the peer of the new version gets", async command => {
+  const manifests: Manifests = {
+    a: { "1.0.0": { peerDependencies: { b: "^1.0.0" } } },
+    b: { "1.0.0": { peerDependencies: { c: "^1.0.0" } }, "1.1.0": { peerDependencies: { c: "^1.1.0" } } },
+    c: { "1.0.0": {}, "1.1.0": {} },
+  };
+  using registry = await serveRegistry(manifests);
+  const published = { b: manifests.b, c: manifests.c };
+  manifests.b = { "1.0.0": published.b["1.0.0"] };
+  manifests.c = { "1.0.0": {} };
+  using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
 
-    Object.assign(manifests, published);
-    await rm(join(cwd, ".bun-cache"), { recursive: true });
-    const { out, code } = await runWithOwnCache(cwd, "update", "b", ...flags.split(" "));
-    expect(out.split("\n").filter(line => line.includes(" -> "))).toEqual(["^ b 1.0.0 -> 1.1.0", "^ c 1.0.0 -> 1.1.0"]);
-    expect(code).toBe(0);
+  Object.assign(manifests, published);
+  await rm(join(cwd, ".bun-cache"), { recursive: true });
+  const { out, code } = await runWithOwnCache(cwd, ...command.split(" "));
+  expect(out.split("\n").filter(line => line.includes(" -> "))).toEqual(["^ b 1.0.0 -> 1.1.0", "^ c 1.0.0 -> 1.1.0"]);
+  expect(code).toBe(0);
+});
+
+it.concurrent.each<{
+  title: string;
+  command: string;
+  dependencies: Record<string, string>;
+  before: Manifests;
+  published: Manifests;
+  rows: string[];
+  lock: Record<string, string>;
+}>([
+  {
+    title: "lists the version that is gone, not the one that another version of the package depends on",
+    command: "update b",
+    dependencies: { b: "^1.0.0", k: "1.0.0" },
+    before: {
+      b: { "1.0.0": { peerDependencies: { c: "^1.0.0" } }, "2.0.0": { dependencies: { c: "^2.0.0" } } },
+      c: { "1.0.0": {}, "2.0.0": {} },
+      k: { "1.0.0": { dependencies: { b: "2.0.0" } } },
+    },
+    published: { b: { "1.1.0": { peerDependencies: { c: "^1.1.0" } } }, c: { "1.1.0": {} } },
+    rows: ["^ b 1.0.0 -> 1.1.0 (v2.0.0 available)", "^ c 1.0.0 -> 1.1.0 (v2.0.0 available)"],
+    lock: { "c": "c@1.1.0", "k/b/c": "c@2.0.0" },
   },
-);
+  {
+    title: "leaves the package alone that the old version had under the name of the peer",
+    command: "update b --latest",
+    dependencies: { b: "^1.0.0", other: "^1.0.0" },
+    before: { b: { "1.0.0": { dependencies: { c: "npm:other@^1.0.0" } } }, c: { "1.0.0": {} }, other: { "1.0.0": {} } },
+    published: { b: { "1.1.0": { peerDependencies: { c: "^1.1.0" } } }, c: { "1.1.0": {} } },
+    rows: ["^ b 1.0.0 -> 1.1.0"],
+    lock: { "c": "c@1.1.0", "other": "other@1.0.0" },
+  },
+  {
+    title: "does not list a version that is installed next to the one in bun.lock",
+    command: "update z",
+    dependencies: { a: "1.0.0", r: "1.0.0" },
+    before: {
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      q: { "1.0.0": {} },
+      r: { "1.0.0": { dependencies: { q: "1.0.0" } } },
+      z: { "1.1.0": {} },
+    },
+    published: { q: { "2.0.0": {} }, z: { "1.2.0": { peerDependencies: { q: "^2.0.0" } } } },
+    rows: ["^ z 1.1.0 -> 1.2.0"],
+    lock: { "q": "q@1.0.0", "z/q": "q@2.0.0" },
+  },
+  ...["update b", "update b --lockfile-only"].map(command => ({
+    title: "lists an older version that the peer of the new version asks for",
+    command,
+    dependencies: { b: "^1.0.0" },
+    before: { b: { "1.0.0": { peerDependencies: { c: "^2.0.0" } } }, c: { "1.0.0": {}, "2.0.0": {} } },
+    published: { b: { "1.1.0": { peerDependencies: { c: "^1.0.0" } } } },
+    rows: ["^ b 1.0.0 -> 1.1.0", "^ c 2.0.0 -> 1.0.0 (v2.0.0 available)"],
+    lock: { "c": "c@1.0.0" },
+  })),
+])("`bun $command` $title", async ({ command, dependencies, before, published, rows, lock }) => {
+  const manifests: Manifests = { ...before };
+  for (const [name, versions] of Object.entries(published)) {
+    manifests[name] = Object.fromEntries(Object.entries({ ...before[name], ...versions }).sort());
+  }
+  using registry = await serveRegistry(manifests);
+  const all = { ...manifests };
+  Object.assign(manifests, before);
+  using dir = projectOn(registry, { "package.json": { name: "foo", dependencies } });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  Object.assign(manifests, all);
+  await rm(join(cwd, ".bun-cache"), { recursive: true });
+  const { out, err, code } = await runWithOwnCache(cwd, ...command.split(" "));
+  expect(err).not.toContain("error:");
+  expect(out.split("\n").filter(line => line.includes(" -> "))).toEqual(rows);
+  const text = await file(join(cwd, "bun.lock")).text();
+  const names = new Set(Object.values(lock).map(id => id.slice(0, id.lastIndexOf("@"))));
+  expect(Object.assign({}, ...[...names].map(name => instancesOf(text, name)))).toEqual(lock);
+  expect(code).toBe(0);
+});
 
 // c@1.0.0 suits y, so b@1.1.0 would share it, out of its range. The update moves what b depends on, and y goes along.
 it.concurrent("`bun update <name> --latest` moves the peer of the new version that shares an older one", async () => {

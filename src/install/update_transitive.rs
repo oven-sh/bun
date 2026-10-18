@@ -11,7 +11,7 @@ use crate::audit_fix;
 use crate::dedupe;
 use crate::dependency::{self, Behavior};
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{Lockfile, PackageIndexEntry};
+use crate::lockfile::{Lockfile, PackageIndexEntry, reachable};
 use crate::npm::PackageManifest;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
@@ -546,30 +546,33 @@ struct Row {
     later: Box<[u8]>,
 }
 
-/// `rows` resolve to versions that `bun update` added for a peer. Pairs each with what the same peer
-/// resolved to below the version of its package in `bun.lock`, and registers that for its update row.
+/// `rows` resolve to versions that `bun update` added for a peer. Pairs each with the version of
+/// that package in `bun.lock` that nothing depends on any more, and registers that one for its
+/// update row. Runs when all is resolved: the pairs are for `print_plan`, no other dependency
+/// follows them.
 pub(crate) fn register_replaced_by(
     manager: &mut PackageManager,
     rows: &[DependencyID],
 ) -> crate::Result<Vec<(DependencyID, PackageID)>> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
     let lockfile: &Lockfile = &manager.lockfile;
-    let name_hashes = lockfile.packages.items_name_hash();
-    let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
+    let tree = reachable::packages(lockfile, resolutions, reachable::Options::all(0));
     let moved: Vec<(DependencyID, PackageID)> = (rows.iter())
         .filter_map(|&row| {
-            let owner = lockfile.get_parent_pkg_of_dependency(row)?;
-            let versions_of_owner = lockfile.packages_named(name_hashes[owner as usize]).iter();
-            let before = versions_of_owner
-                .copied()
-                .find(|&id| id < lockfile.loaded_package_count)?;
-            let rows_before = lockfile.packages.items_dependencies()[before as usize];
-            let from = (rows_before.begin() as usize..rows_before.end() as usize)
-                .find(|&other| {
-                    dependencies[other].name_hash == dependencies[row as usize].name_hash
-                })
-                .map(|other| resolutions[other])?;
-            (from != invalid_package_id && from != resolutions[row as usize]).then_some((row, from))
+            let added = resolutions[row as usize];
+            if added < lockfile.loaded_package_count
+                || !tree.is_set_allow_out_of_bound(added as usize, false)
+            {
+                return None;
+            }
+            let name_hash = lockfile.packages.items_name_hash()[added as usize];
+            let mut versions = lockfile.packages_named(name_hash).iter().copied();
+            let replaced = versions
+                .find(|&id| id < lockfile.loaded_package_count && !tree.is_set(id as usize))?;
+            Some((row, replaced))
         })
         .collect();
     let replaced: Vec<PackageID> = moved.iter().map(|&(_, from)| from).collect();

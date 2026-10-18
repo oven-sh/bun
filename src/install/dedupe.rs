@@ -486,8 +486,8 @@ impl<'a> Pass<'a> {
             self.candidates.clear();
             self.candidates
                 .extend(group.iter().copied().filter(|&id| live.is_set(id as usize)));
-            // Nothing would install what only such a peer holds. The root's copy takes the peer,
-            // unless it is not from the registry.
+            // Nothing would install what only a peer that the hoister binds to the root's copy
+            // holds. It goes if a version is left for the vote to move the peer to.
             if (self.candidates.iter()).any(|&id| !self.closed.is_set(id as usize)) {
                 for &id in group.iter().filter(|&&id| lockfile.is_only_for_peers(id)) {
                     if was_live.is_set(id as usize) && !live.is_set(id as usize) {

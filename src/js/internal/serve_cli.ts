@@ -90,8 +90,8 @@ function serveOnFreePort(
   // Sets `id` on the options object itself: a copy would drop what it inherits, as `bun bake` does
   // from the export of `app/server.ts`.
   const withId = (port: number | undefined) => {
-    const opts = options(port) as Serve.Options<undefined> & { id?: string };
-    opts.id = id;
+    const opts = options(port);
+    Object.defineProperty(opts, "id", { value: id, writable: true, enumerable: true, configurable: true });
     return opts;
   };
   try {

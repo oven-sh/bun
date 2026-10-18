@@ -463,3 +463,31 @@ test.concurrent("bun bake uses Bun.serve options from the export, and its flags 
   expect(new URL(url).hostname).toBe("127.0.0.1");
   expect(await get(url, "/")).toBe("500 from the error option");
 });
+
+test.concurrent("bun bake accepts a frozen export of app/server.ts", async () => {
+  using dir = tempDir("bake-command-frozen", {
+    "app/server.ts": `export default Object.freeze({ fetch: () => new Response("frozen") });`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await get(url, "/")).toBe("200 frozen");
+});
+
+// Bun.serve's `unix` option takes a socket path, which this test only makes on POSIX.
+test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export of app/server.ts", async () => {
+  using dir = tempDir("bake-command-unix", {});
+  const socket = join(String(dir), "s.sock");
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `export default { unix: ${JSON.stringify(socket)}, fetch: () => new Response("via unix") };`,
+  );
+
+  await using proc = spawnBake(String(dir), ["bake"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: unix:/);
+
+  const res = await fetch("http://localhost/", { unix: socket });
+  expect(await res.text()).toBe("via unix");
+});

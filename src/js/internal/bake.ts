@@ -16,6 +16,7 @@ const {
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
 const ObjectCreate = Object.create;
+const ObjectDefineProperty = Object.defineProperty;
 
 const help = `
 Bun v${Bun.version} (bake)
@@ -125,7 +126,8 @@ async function loadAppServer(
     throw $ERR_INVALID_ARG_TYPE("fetch", "function", fetch);
   }
   // As in `Bun.serve()`, a `routes` array is not a route table: a Hono app has one.
-  let routes = server.routes !== undefined ? server.routes : server.static;
+  let routes = server.routes;
+  if (routes === undefined) routes = server.static;
   if ($isArray(routes)) routes = undefined;
   if (routes !== undefined && (routes === null || typeof routes !== "object")) {
     throw $ERR_INVALID_ARG_TYPE("routes", "object", routes);
@@ -183,19 +185,33 @@ async function start() {
   // Like `export default` in `bun app.ts`, every option of `Bun.serve()` in the export counts. These
   // are Bake's, and the flags come before the export's own `port` and `hostname`.
   const exported = app?.server;
+  // Each is read once: a getter may return a new value on each read.
+  const exportedHostname = exported?.hostname;
+  const exportedPort = exported?.port;
+  // A `unix` socket in the export is kept unless a flag asks for a TCP address.
+  const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;
   const server = serveOnFreePort(
     "bun bake",
     port => {
       const options = ObjectCreate(exported ?? null);
-      options.routes = routes;
-      options.fetch = fetch;
-      options.development = { console: flags.console, hmr: undefined };
-      options.hostname = flags.hostname ?? exported?.hostname ?? "localhost";
-      // `undefined` uses the default port via existing port detection code.
-      options.port = port;
+      // Own properties, defined rather than assigned: the export may be frozen, or have getters.
+      const own = (key: string, value: unknown) =>
+        ObjectDefineProperty(options, key, { value, writable: true, enumerable: true, configurable: true });
+      own("routes", routes);
+      own("fetch", fetch);
+      own("development", { console: flags.console, hmr: undefined });
+      if (useUnix) {
+        own("hostname", undefined);
+        own("port", undefined);
+      } else {
+        own("unix", undefined);
+        own("hostname", flags.hostname ?? exportedHostname ?? "localhost");
+        // `undefined` uses the default port via existing port detection code.
+        own("port", port);
+      }
       return options as Serve.Options<undefined>;
     },
-    flags.port ?? exported?.port,
+    useUnix ? undefined : (flags.port ?? exportedPort),
   );
   const elapsed = (performance.now() - initial).toFixed(2);
 

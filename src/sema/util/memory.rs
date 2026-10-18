@@ -386,7 +386,10 @@ mod os {
     #[cfg(bun_asan)]
     unsafe extern "C" {
         pub(super) safe fn __lsan_register_root_region(start: *const std::ffi::c_void, len: usize);
-        pub(super) safe fn __lsan_unregister_root_region(start: *const std::ffi::c_void, len: usize);
+        pub(super) safe fn __lsan_unregister_root_region(
+            start: *const std::ffi::c_void,
+            len: usize,
+        );
     }
 
     /// Null: the addresses are not to be had.
@@ -579,8 +582,11 @@ mod aside {
     /// ranges are smaller in proportion. `None`: there is none to be had.
     pub(super) fn claim(len: usize) -> Option<(NonNull<u8>, usize)> {
         let (mut start, end) = quarter()?;
-        let len = (len >> (end - start).leading_zeros().saturating_sub(LARGEST.leading_zeros()))
-            .next_multiple_of(STEP);
+        let len = (len
+            >> (end - start)
+                .leading_zeros()
+                .saturating_sub(LARGEST.leading_zeros()))
+        .next_multiple_of(STEP);
         let mut ranges = RANGES.lock();
         // Before the first range that leaves room enough after the one before it.
         let at = ranges.iter().position(|&range| {
@@ -622,7 +628,9 @@ mod aside {
     pub(super) unsafe fn release(at: *mut u8, len: usize) {
         #[cfg(bun_asan)]
         super::os::__lsan_unregister_root_region(at.cast(), len);
-        RANGES.lock().retain(|&range| range != (at.addr(), at.addr() + len));
+        RANGES
+            .lock()
+            .retain(|&range| range != (at.addr(), at.addr() + len));
     }
 }
 

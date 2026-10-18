@@ -42,6 +42,7 @@ const GeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;
 const AsyncGeneratorFunction = Object.getPrototypeOf(async function* () {}).constructor;
 const reproto = (fn, proto) => Object.setPrototypeOf(fn, proto);
 const bare = () => ({ __proto__: null });
+const define = Object.defineProperty;
 const indirectEval = eval;
 const arrows = { arrow: () => {}, asyncArrow: async () => {} };
 
@@ -144,7 +145,8 @@ test.each(functionLabels)("util.inspect labels a function by its kind: %s", (_, 
 });
 
 // A function in a prototype chain that has no constructor, with the output of Node.js v26.3.0 again. Node.js
-// prints the kind only for the inspected function, not for a function that is the prototype of another value.
+// prints the kind only for the inspected function. A function that is the prototype of another value gets a name
+// from the own data properties of its chain, and no getter runs for it.
 // prettier-ignore
 const constructorlessChains = [
   ["an object whose prototype is an async function", () => util.inspect(Object.create(reproto(async function h() {}, bare()))), "Object <Function <[Object: null prototype] {}>> {}"],
@@ -152,6 +154,12 @@ const constructorlessChains = [
   ["an object two levels above an async function", () => util.inspect(Object.create(Object.create(reproto(async function h() {}, bare())))), "Object <Object <Function <[Object: null prototype] {}>>> {}"],
   ["a function whose prototype is an async function", () => util.inspect(reproto(function f() {}, reproto(async function h() {}, bare()))), "[Function: f] Function <Function <[Object: null prototype] {}>>"],
   ["an object whose prototype is an async function on a tagged prototype", () => util.inspect(Object.create(reproto(async function h() {}, { __proto__: null, [Symbol.toStringTag]: "Tagged" }))), "Tagged <Tagged <[Tagged: null prototype]>> [Tagged] {}"],
+  ["a function whose prototype is a function with a constructor getter", () => util.inspect(reproto(function f() {}, define(reproto(async function h() {}, bare()), "constructor", { get() { throw new Error("the getter ran"); } }))), "[Function: f] Function <Function <[Object: null prototype] {}>>"],
+  ["a function whose prototype is a function with a constructor that is not a function", () => util.inspect(reproto(function f() {}, define(reproto(async function h() {}, bare()), "constructor", { value: { name: "Fake" } }))), "[Function: f] Function <Function <[Object: null prototype] {}>>"],
+  ["a function whose prototype is a function with a Symbol.toStringTag getter", () => util.inspect(reproto(function f() {}, define(reproto(async function h() {}, bare()), Symbol.toStringTag, { get() { return "Got"; } }))), "[Function: f] Function <Function <[Object: null prototype] {}>> [Got]"],
+  ["a function whose prototype is a function with a Symbol.toStringTag value", () => util.inspect(reproto(function f() {}, define(reproto(async function h() {}, bare()), Symbol.toStringTag, { value: "Own" }))), "[Function: f] Function <Own <[Object: null prototype] {}>> [Own]"],
+  ["a named constructor on a function below the prototype", () => util.inspect(reproto(function f() {}, reproto(async function h1() {}, define(reproto(function h2() {}, bare()), "constructor", { value: function Foo() {} })))), "[Function: f] Function <Foo <Function <[Object: null prototype] {}>>>"],
+  ["a constructor named Object on a function below the prototype", () => util.inspect(reproto(function f() {}, reproto(async function h1() {}, define(reproto(function h2() {}, bare()), "constructor", { value: function Object() {} })))), "[Function: f] Function <Function <Function <[Object: null prototype] {}>>>"],
   ["a function past the depth limit of util.format", () => util.format("%s", { a: reproto(function f() {}, bare()) }), "{ a: [Function: f] Function <Complex prototype> }"],
   ["an async function past the depth limit of util.format", () => util.format("%s", { a: reproto(async function h() {}, bare()) }), "{ a: [AsyncFunction: h] AsyncFunction <Complex prototype> }"],
   ["a function with a null prototype and a property, past the depth limit", () => util.inspect({ a: { b: { c: Object.assign(reproto(function f() {}, null), { x: 1 }) } } }), "{ a: { b: { c: [Function: null prototype] } } }"],

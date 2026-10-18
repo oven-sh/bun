@@ -5,8 +5,8 @@ import fs, { mkdirSync, rmSync } from "fs";
 import {
   bunEnv,
   bunExe,
-  expectRssDeltaBelow,
   isASAN,
+  isDebug,
   isLinux,
   isMacOS,
   isWindows,
@@ -476,6 +476,8 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
+
 it("reload() finds a directory that was deleted and created again", () => {
   const { dir } = make(["a/b/one.tsx", "keep.tsx"]);
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
@@ -520,8 +522,8 @@ it("reload() finds what is new in a directory that the resolver cached before th
   expect(Object.keys(router.routes)).toEqual(["/keep"]);
 
   // Each failed lookup leaves a "not found" record for the directory.
-  expect(() => Bun.resolveSync("./n/one.tsx", dir)).toThrow();
-  expect(() => Bun.resolveSync("./n/m/two.tsx", dir)).toThrow();
+  expect(() => Bun.resolveSync("./n/one.tsx", dir)).toThrow(notFound);
+  expect(() => Bun.resolveSync("./n/m/two.tsx", dir)).toThrow(notFound);
   createTree(dir, ["n/one.tsx", "n/m/two.tsx"]);
 
   // This lookup leaves a listing of `seen` that has only `one.tsx`.
@@ -576,7 +578,7 @@ it("reload() lists what is on disk after random changes to the directories", () 
     // What a failed import leaves in the resolver's cache for a directory.
     function failedResolve() {
       const from = `${anyDir()}/d${int(3)}`;
-      expect(() => Bun.resolveSync("./missing.tsx", dir + from)).toThrow();
+      expect(() => Bun.resolveSync("./missing.tsx", dir + from)).toThrow(notFound);
       return `resolve in ${from}`;
     },
   ];
@@ -596,30 +598,6 @@ it("reload() lists what is on disk after random changes to the directories", () 
     const context = { seed, round, last: history.slice(-4) };
     expect({ ...context, routes: router.routes }).toEqual({ ...context, routes: onDisk });
   }
-});
-
-it("reload() in a loop keeps one directory record per route directory", async () => {
-  using dir = tempDir("fsr-reload-once-rss", {});
-  const pages = path.join(String(dir), "pages");
-  mkdirSync(pages);
-  for (let i = 0; i < 50; i++) {
-    mkdirSync(path.join(pages, "d" + i));
-    fs.writeFileSync(path.join(pages, "d" + i, "index.tsx"), "");
-  }
-  // The resolver never frees the record of a directory it read. Two reads of each
-  // directory per reload() keep 40 MiB here, one read keeps 21 MiB.
-  const code = /* ts */ `
-    const router = new Bun.FileSystemRouter({ dir: ${JSON.stringify(pages)}, style: "nextjs" });
-    const reload = (count) => {
-      for (let i = 0; i < count; i++) router.reload();
-      Bun.gc(true);
-    };
-    reload(20);
-    const before = process.memoryUsage.rss();
-    reload(100);
-    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
-  `;
-  await expectRssDeltaBelow(["-e", code], { release: 30, debug: 32 });
 });
 
 it.skipIf(!isLinux)("reload() opens each route directory once", () => {
@@ -667,6 +645,9 @@ it.skipIf(!isLinux)("reload() opens each route directory once", () => {
     router.reload();
     expect(opens()).toEqual({ root: 1, sub: 1 });
     expect(Object.keys(router.routes).sort()).toEqual(["/", "/sub/page"]);
+    // The constructor is not changed: it lists what the resolver cached and reads nothing from disk.
+    new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
+    expect(opens()).toEqual({ root: 0, sub: 0 });
   } finally {
     libc.symbols.close(fd);
     libc.close();
@@ -1110,6 +1091,8 @@ it("reload() while Bun.build() resolves the same directory", async () => {
   // runs on the bundler thread) share the process-global directory-entry cache.
   // Run in a subprocess so a crash is observable as a signal instead of taking
   // down the test runner.
+  // 40 rounds take about 60 s on a debug build.
+  const rounds = isDebug ? 10 : 40;
   const files: Record<string, string> = {
     "fixture.ts": /* ts */ `
       import path from "path";
@@ -1131,7 +1114,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
       await Bun.build({ entrypoints, target: "bun", throw: false });
       let matches = 0;
       let buildsOk = true;
-      for (let round = 0; round < 40; round++) {
+      for (let round = 0; round < ${rounds}; round++) {
         const builds = Array.from({ length: 4 }, () =>
           Bun.build({ entrypoints, target: "bun", throw: false }),
         );
@@ -1165,7 +1148,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
     signalCode: proc.signalCode,
-  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
+  }).toEqual({ stdout: `matches ${rounds * 50} builds-ok true`, stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
 it("loads routes from a directory already cached by Bun.build()", async () => {

@@ -1,9 +1,9 @@
-//! Counts of what is done for the members of unions and intersections, for `--timing`.
+//! Counters for the work done on union and intersection members. `--timing` prints them.
 
 use super::super::*;
 use smallvec::SmallVec;
 
-/// The names of `Checker::member_counts`.
+/// Labels for the counters that `Checker::member_counts` returns.
 pub const MEMBER_COUNTS: [&str; 11] = [
     "intersections reduced",
     "with a shared name",
@@ -21,11 +21,11 @@ pub const MEMBER_COUNTS: [&str; 11] = [
 /// An index into `MEMBER_COUNTS`.
 #[derive(Copy, Clone)]
 pub(in super::super) enum MemberCount {
-    /// `never_intersections` did not have the intersection.
+    /// Cache misses in `never_intersections`.
     Reduced,
-    /// `may_have_never_reduced_property` was asked, for whatever reason.
+    /// Calls to `may_have_never_reduced_property`, from any caller.
     WithSharedName,
-    /// `union_objects` did not have the union.
+    /// Cache misses in `union_objects`.
     UnionsMadeObjects,
     UnionPropertiesCreated,
     MembersVisited,
@@ -33,15 +33,15 @@ pub(in super::super) enum MemberCount {
     IntersectionsListed,
     PropertiesListed,
     IntersectionsLeftUnlisted,
-    /// `property_of_unlisted_intersection` was called.
+    /// Calls to `property_of_unlisted_intersection`.
     AskedOfUnlisted,
-    /// .. so often that it has listed the properties.
+    /// The subset of those calls that listed the properties because the intersection had been queried often.
     ListedAfterBeingAsked,
 }
 
 #[derive(Default)]
 pub(in super::super) struct Reductions {
-    /// The mapped types whose members are being resolved. See `has_base_type_in_progress`.
+    /// Mapped types whose members are being resolved. See `has_base_type_in_progress`.
     pub(super) mapped_types_in_progress: SmallVec<[TypeId; 4]>,
     counts: [u64; MEMBER_COUNTS.len()],
 }
@@ -52,7 +52,7 @@ impl Checker<'_, '_> {
         self.reductions.counts[what as usize] += more as u64;
     }
 
-    /// In the order of `MEMBER_COUNTS`. A function of the program and of how it is cut into tasks.
+    /// Returns the counters in `MEMBER_COUNTS` order. They depend only on the program and how it is split into tasks.
     pub fn member_counts(&self) -> [u64; MEMBER_COUNTS.len()] {
         self.reductions.counts
     }

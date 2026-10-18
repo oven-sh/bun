@@ -195,13 +195,13 @@ fn type_declared_in_declare_module<'a>(
     })
 }
 
-/// Whether `symbol` has a declaration in a `declare module "name" {}`.
+/// True if `symbol` has a declaration in a `declare module "name" {}`.
 pub fn is_declared_in_ambient_module(symbol: TsSymbol<'_>, name: &[u8]) -> bool {
     type_declared_in_declare_module(name, symbol.declarations(), false)
 }
 
-/// Whether every file sees what `declaration` declares: it's at the top level of a declaration file that is a script, or of a
-/// `declare global {}` in a declaration file.
+/// True if `declaration` is visible to every file. It has to be at the top level of a declaration file that is a
+/// script, or of a `declare global {}` in a declaration file.
 fn is_global_declaration(declaration: TsNode<'_>) -> bool {
     let file = declaration.get_source_file();
     if !file.is_declaration_file() {
@@ -220,8 +220,8 @@ fn is_global_declaration(declaration: TsNode<'_>) -> bool {
     false
 }
 
-/// Whether `ty` is the global class or interface with one of `names`, whichever declaration file it's in: a `lib.*.d.ts`, or
-/// one of `@types/node` or `bun-types`. A class of that name in a module isn't the global.
+/// True if `ty` is a global class or interface whose name is in `names`. Any declaration file can declare it: a
+/// `lib.*.d.ts`, or one from `@types/node` or `bun-types`. A class with that name in a module isn't the global.
 pub fn is_global_type(ty: Type, names: impl Names) -> bool {
     ty.get_symbol().is_some_and(|symbol| {
         names.includes(symbol.name()) && symbol.declarations().any(is_global_declaration)

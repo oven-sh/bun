@@ -75,7 +75,8 @@ impl<'a> Spread<'a> {
     }
 }
 
-/// `fix`, unless it loses a comment. The printer writes none, and what is between the brackets and the elements goes too.
+/// Returns `fix` unless it drops a comment. The printer doesn't emit comments, and the text between the brackets and
+/// the elements is removed too.
 fn keeping_comments(fixer: Fixer, fix: Fix) -> Option<Fix> {
     fixer.keeps_comments(&fix).then_some(fix)
 }

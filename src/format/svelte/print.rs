@@ -1607,8 +1607,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                     && !self.is_empty_text(child)
                     && !self.text_starts_with_linebreak(child, 1)
                 {
-                    // The plugin leaves the last text alone: `<p>a</p> b` is `<p>a</p>`, a line break and ` b`, and the
-                    // next time the blank goes. Here it goes at once.
+                    // The plugin doesn't trim the last text: `<p>a</p> b` becomes `<p>a</p>`, a line break and ` b`.
+                    // Formatting that output again removes the space. Here it's removed on the first pass.
                     self.trim_text_left(child);
                 }
                 docs.push(self.print(child, place));

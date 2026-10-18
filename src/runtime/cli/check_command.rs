@@ -459,7 +459,7 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            // The only place that says so: this function does not return.
+            // Only set here, because this function never returns.
             Provided {
                 ends_the_process: true,
                 ..Default::default()

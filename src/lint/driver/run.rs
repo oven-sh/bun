@@ -395,7 +395,7 @@ impl Run<'_> {
         }
     }
 
-    /// Says that both tools have a config for the same files, and which one counts.
+    /// Prints a note that ESLint and oxlint both have a config for the same files, and which one is used.
     fn note_ignored_config(&mut self, of_eslint: &[u8], of_oxlint: &[u8]) {
         pretty!(
             &mut self.out.stderr,

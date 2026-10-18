@@ -2220,8 +2220,8 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     previous.is_some_and(|it| needs_semicolon_after(file, it, false))
 }
 
-/// Whether `next`, which starts a statement on a later line than `previous`, the end of another statement, goes on with that one
-/// once only white space and comments are between the two: `a()` and `[b].map(c)`.
+/// True if `next` would continue the statement that ends at `previous` once only whitespace and comments separate them,
+/// like `a()` and `[b].map(c)`. `next` starts a statement on a later line than `previous`.
 pub fn continues_statement<'a>(file: &'a File<'a>, previous: Token<'a>, next: Token<'a>) -> bool {
     let is_operator = match next.text().first() {
         Some(b'(' | b'[' | b'`') => false,
@@ -2231,8 +2231,8 @@ pub fn continues_statement<'a>(file: &'a File<'a>, previous: Token<'a>, next: To
     !next.is("++") && !next.is("--") && needs_semicolon_after(file, previous, is_operator)
 }
 
-/// [`needs_preceding_semicolon`] for what comes after `previous`. ESLint has no `is_before_operator`: `a++` and `a as T` don't go on
-/// with a `(` on the next line, but with a `+`, a `-`, a `/` or a `<`.
+/// [`needs_preceding_semicolon`] for the token after `previous`. ESLint has no `is_before_operator`. A `(` on the next
+/// line doesn't continue `a++` or `a as T`, but a `+`, `-`, `/` or `<` does.
 fn needs_semicolon_after<'a>(
     file: &'a File<'a>,
     previous: Token<'a>,

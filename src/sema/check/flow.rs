@@ -147,7 +147,8 @@ impl PartialEq for Reference {
 
 impl Eq for Reference {}
 
-/// `false`: `flow_type_of` asks `is_never_narrowed`, which fills what the walks read of `FlowMemo`, and walks all the same.
+/// Set to `false` to walk even if `is_never_narrowed` returns true. `flow_type_of` still calls it,
+/// because it fills the `FlowMemo` fields that the walks read.
 const LEAVES_OUT_WALKS_THAT_NARROW_NOTHING: bool = true;
 
 /// Memo tables of flow analysis that are not keyed by a node alone. They belong to the checker, so
@@ -204,8 +205,8 @@ pub(super) struct FlowMemo {
     tests_of: Option<FileId>,
     /// The same for the tests of other files.
     other_tests: FxHashMap<(FileId, FlowId), About>,
-    /// `getTypeWithFacts`, keyed by the type and the facts, and `getAdjustedTypeWithFacts`, by the
-    /// type and the facts with `ADJUSTED`.
+    /// `getTypeWithFacts`, keyed by the type and the facts, and `getAdjustedTypeWithFacts`, keyed
+    /// by the type and the facts with `ADJUSTED` set.
     types_with_facts: instantiate::Recent,
     /// `getAssignmentReducedType`, keyed by declared and assigned type.
     assignment_reduced_types: FxHashMap<(TypeId, TypeId), TypeId>,
@@ -380,14 +381,15 @@ impl SharedFlows {
     }
 }
 
-/// How `getUnionOrEvolvingArrayType` puts types together.
+/// The union reduction that `getUnionOrEvolvingArrayType` uses.
 #[derive(Copy, Clone)]
 enum Join<'a> {
     /// `UnionReductionLiteral`
     Literal,
     /// `UnionReductionSubtype`
     Subtype,
-    /// `UnionReductionLiteral`, of parts of this union, which are at these positions in it.
+    /// `UnionReductionLiteral`. Every joined type is made of members of this union, which are at
+    /// these positions in it.
     Parts(TypeId, &'a PositionSet),
 }
 
@@ -619,15 +621,15 @@ impl About {
 /// See `first_unsettled_call`.
 const NEVER_RETURNS: u32 = u32::MAX - 1;
 
-/// See `Checker::kept_type_with_facts`. `false`: every answer is computed.
+/// See `Checker::kept_type_with_facts`. Set to `false` to compute every answer.
 const KEEPS_TYPES_WITH_FACTS: bool = true;
-/// For debugging: an answer that is kept is computed as well. A difference, or a trace that
-/// computing it leaves, is a panic that has the file, the types and the `Traces` before and after.
+/// For debugging. Recomputes the answer on every cache hit. Panics with the file, the types and
+/// both `Traces` if the answer differs or the recomputation changes `Traces`.
 const CHECKS_TYPES_WITH_FACTS: bool = false;
-/// Not one of `facts`.
+/// Key bit for `getAdjustedTypeWithFacts`. No constant in `facts` uses it.
 const ADJUSTED: u32 = 1 << 31;
-/// In `FlowMemo::types_with_facts`, in place of a type: the answer is not kept, and no attempt is made
-/// to keep it.
+/// Sentinel in `FlowMemo::types_with_facts`. The answer can't be cached, so later calls compute it
+/// without trying to cache it.
 const COUNTS_EACH_TIME: u32 = u32::MAX;
 
 /// What `checkNonNullTypeWithReporter` reports.
@@ -1115,15 +1117,16 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// FOR SPEED: what `compute` makes of `ty`, from `FlowMemo::types_with_facts` if it is there
-    /// under `key`. The tests for truthiness, for `undefined` and for `null` in a file are about few
-    /// types, and so is every `x!` and `x?.y`.
+    /// FOR SPEED: returns the result of `compute` for `ty`, cached in `FlowMemo::types_with_facts`
+    /// under `ty` and `key`. A file's tests for truthiness, `undefined` and `null` involve only a
+    /// few types, and so do its `x!` and `x?.y` expressions.
     ///
-    /// The computation that is kept has left no trace (`Traces`): it made no query, created no type,
-    /// reported nothing and instantiated nothing. So it found all it asked for in tables, which
-    /// keep what they have, and the next one would do the same. That leaves out the first one for
-    /// a type whose members it resolves. And it leaves out every one that makes `NonNullable<T>` of
-    /// a member: `type_alias_instantiation` adds to `instantiation_count` each time.
+    /// A result is cached only if computing it didn't change `Traces`. It didn't run a query,
+    /// create a type, report an error or instantiate anything. So every lookup it made was a hit in
+    /// a table that never drops entries, and the next computation would do the same. That excludes
+    /// the first computation for a type whose members it resolves. It also excludes every
+    /// computation that makes `NonNullable<T>` for a member, because `type_alias_instantiation`
+    /// increments `instantiation_count` every time.
     fn kept_type_with_facts(
         &mut self,
         ty: TypeId,
@@ -1154,25 +1157,26 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = |c: &Self| (c.work, c.types().first_new_type_id());
         let (before, resolved_before) = (traces(self), resolved(self));
         let (narrowed, stored) = self.run_memoizable(&compute);
-        // No table keeps the answer: see `Checker::scopes_begun`.
+        // `types_with_facts` can evict the answer, so this scope isn't counted. See
+        // `Checker::scopes_begun`.
         self.scopes_begun -= 1;
         if stored.is_some() && traces(self) == before {
             let kept = &mut self.flow_memo.types_with_facts;
             kept.put(ty.0, key, narrowed.0);
         } else if stored.is_some() && resolved(self) == resolved_before {
-            // Nothing was left to resolve, so the next one leaves the same trace.
+            // Nothing was resolved, so the next computation would change `Traces` the same way.
             let kept = &mut self.flow_memo.types_with_facts;
             kept.put(ty.0, key, COUNTS_EACH_TIME);
         }
         narrowed
     }
 
-    /// Whether nothing is in progress that changes what `kept_type_with_facts` computes, or what
-    /// that leaves behind, without a trace.
-    /// - An instantiation. While a mapper is active, an `instantiate` with it counts once for each
-    ///   type. And `instantiate` and `members` look at `index_infos_in_instantiation` and
-    ///   `unresolved_members` before they look into a table.
-    /// - Nothing at all: then every comparison begins with `instantiation_count` at 0.
+    /// True if the checker's current state can't change the result or the side effects of a
+    /// `kept_type_with_facts` computation in a way that `Traces` doesn't show. False in two states:
+    /// - An instantiation is in progress. While a mapper is active, `instantiate` with that mapper
+    ///   counts only once per type. Also, `instantiate` and `members` check
+    ///   `index_infos_in_instantiation` and `unresolved_members` before they look in a table.
+    /// - The checker is idle. Every comparison then starts with `instantiation_count` at 0.
     fn is_at_rest_for_type_facts(&self) -> bool {
         let is_idle = self.stack.is_empty()
             && self.current_source_element.is_none()
@@ -6218,7 +6222,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_visiting = self.task.file == Some(file);
                 let mut walked = self.task.assignments_walked.borrow_mut();
                 walked.push((file, parent, is_visiting));
-                // No other task walks in a file that nothing imports.
+                // Nothing imports a leaf file, so no other task walks it.
                 if is_visiting && !self.files().module(file).is_leaf {
                     self.task.stop_writing_at_once();
                 }
@@ -6458,7 +6462,7 @@ impl<'p, 's> Checker<'p, 's> {
                 false => self.union_or_evolving_with(types, Join::Subtype),
             };
         }
-        // FOR SPEED: to see that they are parts of the initial type is to find where they are in it.
+        // FOR SPEED: the subset test against the initial type also finds the members' positions.
         let parts = self.parts_of_union(initial, types);
         if CHECKS_JOINS_BY_POSITION {
             let are_parts = types.iter().all(|&t| is_subset(self, t));
@@ -7049,7 +7053,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         // Most types have neither fact, which their kind alone determines.
         let kinds = tf::UNKNOWN | tf::NULLABLE | tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX;
-        // `may_be_reduced`: it is an intersection, or one of its members is.
+        // `may_be_reduced` is true if `ty` is an intersection or has one as a member.
         if !self.may_be_reduced(ty) && !self.is_some_type_of_kind(ty, kinds) {
             return ty;
         }
@@ -8477,8 +8481,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return kept;
         }
-        // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`: a condition
-        // evaluated along the way may call the function.
+        // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`. A condition
+        // evaluated below may call this function.
         if (self.flow_memo.type_predicates_in_progress).contains(&(file, func)) {
             return None;
         }
@@ -8495,7 +8499,8 @@ impl<'p, 's> Checker<'p, 's> {
         predicate
     }
 
-    /// Whether `inferred_predicate` gives the same for `func` from now on, and computes nothing.
+    /// True if every later `inferred_predicate` call for `func` returns the same result without
+    /// computing anything.
     pub(super) fn is_inferred_predicate_settled(&self, file: FileId, func: FnId) -> bool {
         self.returned_expression_of_type_guard(file, func).is_none()
             || (self.p.type_predicates_from_body)
@@ -8504,8 +8509,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && !(self.flow_memo.type_predicates_in_progress).contains(&(file, func))
     }
 
-    /// The start of `getTypePredicateFromBody`: the single returned expression of `func`, and the flow node at that point.
-    /// `NONE`: the start of the function. `None`: the syntax rules a type predicate out.
+    /// Runs the syntax checks at the start of `getTypePredicateFromBody`. Returns the only
+    /// expression that `func` returns and the flow node at that point, which is `NONE` for the
+    /// start of the function. Returns `None` if the syntax rules out a type predicate.
     fn returned_expression_of_type_guard(
         &self,
         file: FileId,

@@ -623,7 +623,8 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
                 "\nSee https://github.com/oxc-project/tsgolint/issues/351 for more information.",
             );
         }
-        // `stylish`, `unix` and `json` have no place for a help.
+        // The `stylish`, `unix` and `json` formats don't show help text, so outside oxlint mode the message includes
+        // it.
         let is_oxlint = context.of_oxlint.is_some();
         let message = LintMessage {
             rule_id: Some(RuleId::Unknown(b"typescript/tsconfig-error"[..].into())),
@@ -755,7 +756,7 @@ pub(crate) fn lint(
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
     let mut staged = (context.only).map_or_else(AlreadyRead::default, |it| it.already_read(true));
-    // Under the name that the file is linted by, which can lead through a link.
+    // Also add each staged text under the path the file is linted as, which may contain a symlink.
     staged.extend(files.iter().filter_map(|file| {
         let text = context.only?.staged_text(file.path)?.to_vec();
         Some((from_native(file.path), as_read(file.path, text, true)))

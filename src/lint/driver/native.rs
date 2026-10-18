@@ -106,7 +106,7 @@ pub(crate) enum NamedBy {
 /// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
 pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) -> Vec<u8> {
     let prefix = parse_rule_id(id).0;
-    // A rule for JSON or Markdown. `--rules` lists it, and only an ESLint config can say which files are in its language.
+    // A rule for JSON or Markdown. `--rules` lists it, but only an ESLint config can assign its language to files.
     if let Some(language) = registry.find(id).and_then(|it| it.meta.languages.first()) {
         return [
             b"\"",

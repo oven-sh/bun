@@ -1,8 +1,8 @@
 //! The strongly connected components of the import graph, and their levels. Computed once, at the
 //! end of loading.
 //!
-//! The link step resolves exports and aliases component by component, each after what it imports.
-//! Everything here is a function of the graph and of program order alone.
+//! The link step resolves exports and aliases one component at a time, each after the components
+//! it imports. Everything here depends only on the graph and on program order.
 
 use crate::program::FileId;
 use crate::session::Arena;
@@ -12,7 +12,7 @@ pub struct Component<'s> {
     pub files: &'s [FileId],
     /// 0 if it imports nothing outside itself. Otherwise one more than the highest level of a component it imports.
     pub level: u32,
-    /// The other components that its files import, each once: their indices in `Components::all`.
+    /// Indices in `Components::all` of the other components that its files import, without duplicates.
     pub imports: &'s [u32],
 }
 
@@ -56,7 +56,7 @@ impl<'s> Components<'s> {
         let (number_of, numbered) = strongly_connected_components(&edges);
         let mut levels = vec![0u32; numbered.len()];
         let mut imports: Vec<Vec<usize>> = vec![Vec::new(); numbered.len()];
-        // The last component that was found to import each one.
+        // For each component, the last component found to import it. Used to skip duplicates in `imports`.
         let mut last_importer = vec![usize::MAX; numbered.len()];
         for (number, nodes) in numbered.iter().enumerate() {
             for &imported in nodes.iter().flat_map(|&node| &edges[node]) {

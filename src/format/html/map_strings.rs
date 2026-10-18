@@ -46,7 +46,7 @@ pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut 
     }
 }
 
-/// Whether a comment in `content`, which has been captured, still waits for the end of its line where `content` ends.
+/// True if a line-suffix comment in the captured `content` is still pending where `content` ends.
 pub(crate) fn ends_with_line_suffix(content: Interned, f: &Formatter<'_>) -> bool {
     let (mut depth, mut is_waiting) = (0u32, false);
     for element in f.storage.interned(content) {

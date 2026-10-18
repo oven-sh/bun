@@ -444,12 +444,12 @@ fn transform<'a>(
     out.pop();
 }
 
-/// [`is_comment_about_the_file`]. `// eslint-disable-next-line`, `// @ts-ignore` and `// @ts-expect-error` are about the statement
-/// after them.
+/// Wraps [`is_comment_about_the_file`]. `// eslint-disable-next-line`, `// @ts-ignore` and `// @ts-expect-error` apply
+/// to the next statement, so they don't count.
 fn is_about_the_file(comment: Comment<'_>) -> bool {
     let text = comment.text();
     is_comment_about_the_file(text, comment.content())
-        // These decide how Prettier reads the file, and it takes more for them: `// @flow.`
+        // These pragmas decide how Prettier parses the file. It matches them loosely: `// @flow.` counts too.
         || (strings::contains_char(text, b'@')
             && (goes_to_flow(text, b"") || has_pragma(text) || has_ignore_pragma(text)))
 }
@@ -577,8 +577,9 @@ impl<'a> ImportRun<'a> {
         if !is_sortable {
             return;
         }
-        // `// @ts-nocheck⏎import b from "b";⏎import a from "a";`: oxfmt takes the comment along with `b`, where TypeScript no
-        // longer reads it. It stays on top, with all comments above it: they are written before the run starts.
+        // In `// @ts-nocheck⏎import b from "b";⏎import a from "a";` oxfmt moves the comment along with `b`, and
+        // TypeScript no longer reads it there. Here it stays at the top, along with every comment above it. They're
+        // printed before the run starts.
         let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
         if is_first_of_file {
             let count = comments.iter().rposition(is_about_the_file);

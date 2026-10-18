@@ -184,7 +184,7 @@ struct Reader<'t, 'c> {
     line_separators: u32,
     /// The comments from this index on do not know what follows them yet.
     unresolved: usize,
-    /// Set when the reader stops in front of a token that may be fine in itself, because it needs another one first.
+    /// Set when the reader stops at a token that may be valid on its own, because a different token must come first.
     expected: Option<Message>,
 }
 

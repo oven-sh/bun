@@ -1,80 +1,86 @@
-//! The parts of a signature that tsgo keeps in fields of the signature: `Signature.resolvedReturnType` and
-//! `resolvedTypePredicate`, which it assigns when they are first asked for, and `parameters`, `typeParameters` and
-//! `thisParameter`, which it has from the start.
+//! Caches the parts of a signature that tsgo stores in fields of the signature: `Signature.resolvedReturnType` and
+//! `resolvedTypePredicate`, which it assigns on first use, and `parameters`, `typeParameters` and `thisParameter`,
+//! which it sets when it creates the signature.
 //!
-//! Here a signature is a declaration and a mapper, and a part is derived from them each time: the record of the signature,
-//! the function in its file, an entry of a table by node, an instantiation. `SignatureLinks` keeps what was derived, by
-//! signature, so that the next read is a load.
+//! Here a signature is a declaration plus a mapper, and each part is derived from them on every read. Deriving a part
+//! reads the signature's record, finds the function in its file, looks up an entry in a per-node table, and
+//! instantiates the result. `SignatureLinks` caches the derived part per signature, so the next read is a single load.
 //!
-//! The rule is that of `links`: a part is kept once deriving it again computes nothing and gives the same, for as long as
-//! the task runs.
-//! - All of this belongs to one checker, and so to one task. Nothing of it goes to a barrier, and no id in it outlives the
-//!   task.
-//! - A return type is kept if it is in `Program::resolved_return_types`, or if it is `instantiate(declared, mapper)` with
-//!   `declared` in `Program::fn_return_types`, and nothing in progress is going to store another one: the query that writes
-//!   the entry is not on the stack, and `is_mapper_idle`. The derivation has gone through `derive_settled`.
-//! - A type predicate likewise: its type is `instantiate(declared, mapper)`, with `declared` the type of a type node that
-//!   `is_type_node_settled`, or of an entry of `Program::type_predicates_from_body` whose function is not being looked at,
-//!   and no mapper is active.
-//! - The parameters are kept once they are in the record of the signature or in `Program::sig_params`, which keeps the
-//!   first list that it is given: `cached_sig_params`. The type parameters once they are in `Program::sig_type_params`.
-//! - A fact (`fact`) is a function of the interning key of the signature and of the program, and finding it resolves
-//!   nothing.
-//! - A return type or a type predicate is not read while `index_infos_in_instantiation` is not empty.
+//! The rule is the same as in `links`: a part is cached once deriving it again would compute nothing and return the
+//! same value for the rest of the task.
+//! - All of this belongs to one checker, and therefore to one task. None of it is passed to a barrier, and no id in it
+//!   outlives the task.
+//! - A return type is cached if it's in `Program::resolved_return_types`, or if it's `instantiate(declared, mapper)`
+//!   with `declared` in `Program::fn_return_types`. Nothing in progress may be about to overwrite the entry: the query
+//!   that writes it isn't on the stack, and the mapper passes `is_mapper_idle`. The derivation runs under
+//!   `derive_settled`.
+//! - A type predicate follows the same rule. Its type is `instantiate(declared, mapper)`, where `declared` is the type
+//!   of a type node that passes `is_type_node_settled`, or the type in a `Program::type_predicates_from_body` entry
+//!   whose function isn't being analyzed. No mapper may be active.
+//! - Parameters are cached once they're in the signature's record or in `Program::sig_params`, which never replaces the
+//!   first list stored for a signature (`cached_sig_params`). Type parameters are cached once they're in
+//!   `Program::sig_type_params`.
+//! - A fact (`fact`) is a function of the signature's interning key and the program, and computing it resolves nothing.
+//! - Return types and type predicates aren't read while `index_infos_in_instantiation` is non-empty.
 //!
-//! What a read of a kept part leaves out is what `instantiate` does before it looks anything up: see `links`.
+//! A cache hit skips the work that `instantiate` does before it looks anything up. See `links`.
 
 use super::decl::Predicate;
 use super::*;
 use crate::table::{Id, Packed};
 
-/// `false`: `sig_return` and `non_circular_return_type_of_signature` derive the return type each time, as before.
+/// If false, `sig_return` and `non_circular_return_type_of_signature` derive the return type on every call.
 pub(super) const KEEPS_RETURN_TYPES: bool = true;
-/// The same for `sig_predicate`.
+/// If false, `sig_predicate` derives the type predicate on every call.
 pub(super) const KEEPS_TYPE_PREDICATES: bool = true;
-/// The same for `sig_type_params`, and for `sig_this_parameter` of a signature that has none.
+/// If false, `sig_type_params` skips this cache, and so does `sig_this_parameter` for a signature without a `this`
+/// parameter.
 pub(super) const KEEPS_FACTS: bool = true;
-/// `false`: `sig_params` looks a list up that it has not returned recently, as before.
+/// If false, `sig_params` looks up every list that it hasn't returned recently.
 pub(super) const KEEPS_PARAMETERS: bool = true;
 
-/// Every part that is read from here is derived as well. It is a panic that names the signature and the file if that gives
-/// another one, or if it computes anything. For debugging.
+/// For debugging. Every part read from the cache is also derived. Panics with the signature and the file if the derived
+/// value differs, or if deriving it computed anything.
 pub(super) const CHECKS_RETURN_TYPES: bool = false;
 pub(super) const CHECKS_TYPE_PREDICATES: bool = false;
 pub(super) const CHECKS_FACTS: bool = false;
 pub(super) const CHECKS_PARAMETERS: bool = false;
 
-/// The lowest bits of the cell `FACTS`.
+/// Flags in the low bits of the `FACTS` cell.
 pub(super) mod fact {
-    /// `len(signature.typeParameters) == 0`, of the signature of a function that adopts none from a contextual signature.
+    /// `len(signature.typeParameters) == 0`. Only set for a function that doesn't adopt type parameters from a
+    /// contextual signature.
     pub(in super::super) const HAS_NO_TYPE_PARAMETERS: u32 = 1;
-    /// `signature.thisParameter == nil`, likewise.
+    /// `signature.thisParameter == nil`. Only set for a function that doesn't adopt a `this` parameter from a
+    /// contextual signature.
     pub(in super::super) const HAS_NO_THIS_PARAMETER: u32 = 1 << 1;
-    /// How many there are.
+    /// Number of flags.
     pub(super) const BITS: u32 = 2;
 }
 
-/// A `Packed` type, 0 for none.
+/// A `Packed` type, or 0 if the return type isn't cached.
 const RETURN_TYPE: usize = 0;
-/// 0: it is not kept. 1: the signature has none. Otherwise 2 + the index in `SignatureLinks::type_predicates`.
+/// 0 if the type predicate isn't cached, 1 if the signature doesn't have one, otherwise 2 + its index in
+/// `SignatureLinks::type_predicates`.
 const TYPE_PREDICATE: usize = 1;
-/// The bits of `fact`. Above them, 0: the type parameters are not kept. Otherwise 1 + the index in
-/// `SignatureLinks::type_parameters`.
+/// The `fact` flags in the low bits. The bits above them are 0 if the type parameters aren't cached, otherwise 1 +
+/// their index in `SignatureLinks::type_parameters`.
 const FACTS: usize = 2;
-/// 0: they are not kept. Otherwise 1 + the index in `SignatureLinks::parameters`.
+/// 0 if the parameters aren't cached, otherwise 1 + their index in `SignatureLinks::parameters`.
 const PARAMETERS: usize = 3;
 
 type Row = [u32; 4];
 
-/// How many published signatures share a page.
+/// Number of published signatures per page.
 const PAGE: usize = 64;
 
-/// See the top of the file.
+/// See the module docs.
 #[derive(Default)]
 pub(super) struct SignatureLinks<'p> {
-    /// By the index of a signature of the task.
+    /// Rows of task-local signatures, indexed by `local_number`.
     own: Vec<Row>,
-    /// By the number of a published signature divided by `PAGE`: 1 + the index of its page. 0: nothing of the page is kept.
+    /// Indexed by a published signature's number divided by `PAGE`. Each entry is 1 + the page's index in `published`,
+    /// or 0 if nothing on that page is cached.
     pages: Vec<u32>,
     published: Vec<[Row; PAGE]>,
     type_predicates: Vec<Predicate>,
@@ -159,7 +165,7 @@ impl<'p> SignatureLinks<'p> {
         *self.cell_mut(sig, RETURN_TYPE) = ty.pack();
     }
 
-    /// `None`: it is not kept.
+    /// Returns `None` if the type predicate isn't cached.
     #[inline]
     fn type_predicate(&self, sig: SigId) -> Option<Option<Predicate>> {
         match self.cell(sig, TYPE_PREDICATE) {
@@ -181,18 +187,18 @@ impl<'p> SignatureLinks<'p> {
     }
 }
 
-/// Where `derive_return_type` has the return type of a signature from.
+/// Tells where `derive_return_type` reads a signature's return type from.
 enum ReturnTypeSource {
     /// `Program::resolved_return_types`
     Signature,
-    /// `Program::fn_return_types`, instantiated with the mapper, which maps no type parameter to another type.
+    /// `Program::fn_return_types`, instantiated with the mapper, which maps every type parameter to itself.
     Declaration(FileId, FnId, MapperId),
-    /// It is in the record of the signature, or it is the declared type of a class: it is not kept.
+    /// The signature's record, or a class's declared type. Not cached.
     Other,
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `signature.resolvedReturnType`, if it is kept and may be read now.
+    /// Returns `signature.resolvedReturnType` if it's cached and safe to read now.
     #[inline]
     pub(super) fn kept_return_type(&mut self, sig: SigId) -> Option<TypeId> {
         if !KEEPS_RETURN_TYPES {
@@ -232,7 +238,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `sig_return` for a signature whose return type is not kept.
+    /// `sig_return` on a cache miss.
     #[inline(never)]
     pub(super) fn derive_and_keep_return_type(&mut self, sig: SigId) -> TypeId {
         let source = self.return_type_source(sig);
@@ -261,7 +267,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// `signature.resolvedTypePredicate`, if it is kept and may be read now.
+    /// Returns `signature.resolvedTypePredicate` if it's cached and safe to read now.
     #[inline]
     pub(super) fn kept_type_predicate(&mut self, sig: SigId) -> Option<Option<Predicate>> {
         let kept = self.signature_links.type_predicate(sig)?;
@@ -276,10 +282,11 @@ impl<'p, 's> Checker<'p, 's> {
         Some(kept)
     }
 
-    /// `sig_predicate` for a signature whose type predicate is not kept.
+    /// `sig_predicate` on a cache miss.
     #[inline(never)]
     pub(super) fn derive_and_keep_type_predicate(&mut self, sig: SigId) -> Option<Predicate> {
-        // Any other has that of a signature of a declaration, or none, or combines those of several.
+        // Every other kind of signature forwards to another signature, doesn't have a predicate, or combines several
+        // predicates.
         let SigData::Decl { file, func, .. } = *self.types().sig(sig) else {
             return self.derive_type_predicate(sig);
         };
@@ -293,8 +300,9 @@ impl<'p, 's> Checker<'p, 's> {
         predicate
     }
 
-    /// Whether the entries that `derive_type_predicate` reads for a signature of `func` stay. It creates nothing: which
-    /// mappers `instantiate_result_of_sig` has used is not asked, so none may be active.
+    /// True if the entries that `derive_type_predicate` reads for a signature of `func` won't be overwritten. This
+    /// check must not create anything, so it can't recompute which mappers `instantiate_result_of_sig` used. It
+    /// requires that no mapper is active instead.
     fn is_type_predicate_settled(&self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let annotation = hir[func].ret;
@@ -311,7 +319,8 @@ impl<'p, 's> Checker<'p, 's> {
         is_declared_type_settled && self.active_mappers.is_empty()
     }
 
-    /// Under a `CHECKS_*` switch: `kept` was read as the part `name` of `sig`, and `derive` is the long way.
+    /// Runs under a `CHECKS_*` switch. `kept` was read from the cache as the part `name` of `sig`, and `derive`
+    /// computes it without the cache.
     #[cold]
     #[inline(never)]
     pub(super) fn check_kept_signature_part<V: PartialEq + std::fmt::Debug>(
@@ -321,7 +330,7 @@ impl<'p, 's> Checker<'p, 's> {
         kept: &V,
         derive: impl FnOnce(&mut Self) -> V,
     ) {
-        // There, or a few levels further in, the long way fails and reports it.
+        // This close to the instantiation limits, `derive` can fail and report an error.
         if self.instantiation_depth >= 90 || self.instantiation_count >= 4_900_000 {
             return;
         }
@@ -389,7 +398,7 @@ mod tests {
             links.keep_type_predicate(sig, kept, Stored::new());
             links.add_fact(sig, fact::HAS_NO_THIS_PARAMETER);
             links.keep_parameters(sig, &parameters[..at % 2]);
-            // The first list stays.
+            // A second call doesn't replace the first list.
             links.keep_parameters(sig, &parameters[..]);
             if at % 3 == 0 {
                 links.keep_type_parameters(sig, &type_parameters[..at % 2]);
@@ -413,7 +422,7 @@ mod tests {
             assert_eq!(links.parameters(other), None);
             assert_eq!(links.type_parameters(other), None);
         }
-        // Only the pages that have a row.
+        // Only pages with a cached row are allocated.
         assert_eq!(links.published.len(), 3);
     }
 }

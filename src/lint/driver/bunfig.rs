@@ -949,7 +949,7 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal>
 #[derive(Clone, Debug)]
 pub struct RuleOfBunfig {
     pub key_at: usize,
-    /// `None`: `--rule` has set the rule since, so what the file has no longer counts.
+    /// `None` if `--rule` has overridden this entry.
     pub setting: Option<Json>,
     pub place: Place,
 }

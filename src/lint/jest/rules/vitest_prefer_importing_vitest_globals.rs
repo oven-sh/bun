@@ -201,6 +201,6 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
         import_source,
         b"';".as_slice(),
     ];
-    // oxlint puts it in the first line, above `// @ts-nocheck` and `"use strict"`.
+    // oxlint inserts it on the first line, above `// @ts-nocheck` and `"use strict"`.
     fixer.insert_first_statement(&text.concat())
 }

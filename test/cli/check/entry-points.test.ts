@@ -322,7 +322,7 @@ test("an error far into a long line has its place in a build, and no line of tex
   expect(exitCode).toBe(0);
 });
 
-test("a process checks as often as it likes, one after the other and at the same time", async () => {
+test("one process can run several checks, sequentially and concurrently", async () => {
   using dir = tempDir("bun-check", {
     "tsconfig.json": config({ noEmit: true }),
     "right.ts": `export const n: number = 1;\n`,

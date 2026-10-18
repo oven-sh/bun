@@ -364,7 +364,7 @@ impl<'t> Parser<'t> {
             let value = &string[operator_end..];
             if !value.is_empty() {
                 // `parts[2].split(/(\s+i\s*?)$/)`
-                // The parser takes the `i` of `x\31 i`, which is `x1i`, and of `x\ i` for the flag.
+                // The parser mistakes the `i` of `x\31 i`, which means `x1i`, and of `x\ i` for the flag.
                 let trimmed = bun_core::strings::trim_js_whitespace_end(value);
                 let before_flag = trimmed.strip_suffix(b"i").filter(|rest| {
                     let unflagged = bun_core::strings::trim_js_whitespace_end(rest);

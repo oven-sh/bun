@@ -802,7 +802,7 @@ describe.concurrent("react/jsx-newline", () => {
   const component = (children: string) => `export const C = ({ time, now }) => (\n  <div>\n${children}\n  </div>\n);\n`;
   const onOneLine = component("    took {time} at {now}");
 
-  test("only has a fix where there's a line break to double", async () => {
+  test("only offers a fix when there's a line break to double", async () => {
     const files = { "a.jsx": onOneLine, "b.jsx": component("    {time}\n    {now}"), ...bunfig({ [id]: "error" }) };
     const { stdout } = await lint(files, ["-f", "json", "a.jsx", "b.jsx"]);
     const results = JSON.parse(stdout) as { messages: { ruleId: string; line: number; fix?: { text: string } }[] }[];
@@ -812,7 +812,7 @@ describe.concurrent("react/jsx-newline", () => {
     ]);
   });
 
-  test("--fix doesn't say it fixed two expressions on one line", async () => {
+  test("--fix doesn't claim to have fixed two expressions on one line", async () => {
     const { stdout, stderr, exitCode } = await lint({ "a.jsx": onOneLine, ...bunfig({ [id]: "error" }) }, [
       "--fix",
       "-f",
@@ -826,12 +826,12 @@ describe.concurrent("react/jsx-newline", () => {
   });
 });
 
-// oxlint renames in all of these, and the two variables become one.
-describe.concurrent("unicorn/catch-error-name only renames when `error` is free", () => {
+// oxlint renames in all of these cases, which merges two different variables into one.
+describe.concurrent("unicorn/catch-error-name only renames when `error` isn't already in use", () => {
   const id = "unicorn/catch-error-name";
   type Fix = { range: [number, number]; text: string };
 
-  /** For each report, `code` with its fix applied, or `null` if it has no fix. */
+  /** Returns, for each report, `code` with its fix applied, or `null` if it has no fix. */
   async function renamed(code: string) {
     const { stdout } = await lint({ "a.mjs": code, ...bunfig({ [id]: "error" }) }, ["-f", "json", "a.mjs"]);
     const [{ messages }] = JSON.parse(stdout) as { messages: { ruleId: string; fix?: Fix }[] }[];
@@ -846,22 +846,22 @@ describe.concurrent("unicorn/catch-error-name only renames when `error` is free"
       "a function in the block does",
       "let error;\ntry {\n  f();\n} catch (e) {\n  g(() => (error = e));\n}\ng(error);\n",
     ],
-    ["the function given to .catch() does", "let error;\np.catch(e => {\n  error = e;\n});\ng(error);\n"],
-    ["the second function given to .then() reads it", "let error;\np.then(undefined, e => g(e, error));\n"],
+    ["the function passed to .catch() does", "let error;\np.catch(e => {\n  error = e;\n});\ng(error);\n"],
+    ["the second function passed to .then() reads it", "let error;\np.then(undefined, e => g(e, error));\n"],
     [
-      "the block reads a parameter of the function around it",
+      "the block reads the enclosing function's `error` parameter",
       "function f(error) {\n  try {\n    g();\n  } catch (e) {\n    h(error, e);\n  }\n}\nf();\n",
     ],
     ["the block reads a global", "try {\n  f();\n} catch (e) {\n  g(e, error);\n}\n"],
     [
-      "an inner block declares `error` around a use",
+      "an inner block that uses the caught error declares `error`",
       "try {\n  f();\n} catch (e) {\n  {\n    const error = 1;\n    g(e, error);\n  }\n}\n",
     ],
     [
-      "an inner function has a parameter `error` around a use",
+      "an inner function that uses the caught error has an `error` parameter",
       "try {\n  f();\n} catch (e) {\n  g(error => h(e, error));\n}\n",
     ],
-    ["the block of the catch declares `error`", "try {\n  f();\n} catch (e) {\n  const error = 1;\n  g(error);\n}\n"],
+    ["the catch block declares `error`", "try {\n  f();\n} catch (e) {\n  const error = 1;\n  g(error);\n}\n"],
     ["the function itself declares `error`", "p.catch(e => {\n  const error = g(e);\n  return error;\n});\n"],
   ])("no fix: %s", async (_, code) => {
     expect(await renamed(code)).toEqual([null]);
@@ -869,7 +869,7 @@ describe.concurrent("unicorn/catch-error-name only renames when `error` is free"
 
   test.each([
     [
-      "nothing else is called `error`",
+      "nothing else is named `error`",
       "try {\n  f();\n} catch (e) {\n  g(e);\n}\n",
       "try {\n  f();\n} catch (error) {\n  g(error);\n}\n",
     ],
@@ -879,7 +879,7 @@ describe.concurrent("unicorn/catch-error-name only renames when `error` is free"
       "function f(error) {\n  try {\n    g(error);\n  } catch (error) {\n    h(error);\n  }\n}\nf();\n",
     ],
     [
-      "an inner `error` isn't around a use",
+      "an inner `error` doesn't enclose a use of the caught error",
       "try {\n  f();\n} catch (e) {\n  g(e);\n  h(error => error);\n}\n",
       "try {\n  f();\n} catch (error) {\n  g(error);\n  h(error => error);\n}\n",
     ],
@@ -1658,7 +1658,7 @@ describe.concurrent("unknown rules", () => {
       "vue/no-dupe-keys",
       `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules. To run eslint-plugin-vue, add it to plugins in [lint]`,
     ],
-    // --rules lists these, but only an ESLint config can say which files are JSON or Markdown.
+    // --rules lists these, but only an ESLint config can specify which files are JSON or Markdown.
     [
       "json/no-duplicate-keys",
       `"json/no-duplicate-keys" needs an ESLint config\n  Set language: "json/json" for the files in an eslint.config.js`,
@@ -1816,7 +1816,7 @@ describe.concurrent("invalid rule settings", () => {
     },
   );
 
-  test("a bad --rule isn't blamed on the line of bunfig.toml that sets the same rule", async () => {
+  test("the error for a bad --rule doesn't point at the bunfig.toml line that sets the same rule", async () => {
     expect(await lint({ ...source, ...bunfig({ eqeqeq: "warn" }) }, ["--rule", "eqeqeq: null"])).toEqual({
       stdout: "",
       stderr: `error: null is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"\n`,
@@ -1859,7 +1859,7 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     expect(problems(inLegacy.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
   });
 
-  test("to an ESLint config, eslint/no-var in a comment isn't no-var", async () => {
+  test("with an ESLint config, eslint/no-var in a disable comment isn't treated as no-var", async () => {
     const code =
       "var a = 1; // eslint-disable-line eslint/no-var\nvar b = 2; // eslint-disable-line no-var\nexport { a, b };\n";
     const { stdout } = await lint({ "a.js": code, ...flat({ "no-var": "error" }) }, ["-f", "json"]);

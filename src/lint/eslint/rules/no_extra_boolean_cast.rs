@@ -89,7 +89,8 @@ fn prefix<'a>(replaced: Expr<'a>, replacement: ast_utils::TokenOrText<'a>) -> &'
     }
 }
 
-/// The function that `callee` always is: one that is declared, or a variable that is declared with one and never assigned again.
+/// Returns the function that `callee` always refers to: a function declaration, or a variable that is initialized with
+/// a function and never reassigned.
 fn visible_function(callee: Expr<'_>) -> Option<Func<'_>> {
     match callee.symbol()?.declarations().next()? {
         Declaration::Fn(func) => Some(func),
@@ -97,7 +98,7 @@ fn visible_function(callee: Expr<'_>) -> Option<Func<'_>> {
     }
 }
 
-/// `new Promise(..)`, or a call of an `async` function.
+/// True for `new Promise(..)` or a call to an `async` function.
 fn is_visibly_promise(e: Expr) -> bool {
     match e.kind() {
         ExprKind::New(call) => is_global(call.callee(), "Promise"),
@@ -106,9 +107,10 @@ fn is_visibly_promise(e: Expr) -> bool {
     }
 }
 
-/// Whether TypeScript rejects `argument` where `cast` is, which is `!!argument` or `Boolean(argument)`. It reports `if (a)`,
-/// `a ? b : c` and `a && b` where `a` is always a function (TS2774), a promise (TS2801) or a member of an enum (TS2845), and a cast
-/// is how people tell it that they mean it. Only types know what `a` is: this is `true` for what the file shows to be one of these.
+/// True if TypeScript would reject `argument` in place of `cast`, which is `!!argument` or `Boolean(argument)`.
+/// TypeScript reports `if (a)`, `a ? b : c` and `a && b` when `a` is always a function (TS2774), a promise (TS2801) or
+/// an enum member (TS2845), and a cast is how people silence that. Deciding what `a` is needs type information, so this
+/// only returns `true` when the file's syntax shows that it's one of these.
 fn is_rejected_by_typescript<'a>(cast: Expr<'a>, argument: Expr<'a>) -> bool {
     let is_checked = match utils::estree_parent(Node::Expr(cast)) {
         Node::Stmt(parent) => parent.tag() == StmtTag::If,

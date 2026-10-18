@@ -248,7 +248,7 @@ struct Context<'c, 'a> {
     pending: Vec<Id>,
     /// There is a tag or an anchor.
     has_properties: bool,
-    /// The message and its position, for an `Unexpected` that has them.
+    /// Message and position of an `Unexpected` error, if it has them.
     refusal: Option<SyntaxError>,
     stack: &'c Stack,
 }
@@ -629,7 +629,7 @@ impl<'a> Context<'_, 'a> {
     ) -> Result<Id> {
         let rest = self.text.get(token.start as usize..).unwrap_or_default();
         let header = &rest[..strings::index_of_any(rest, b" \t\n").unwrap_or(rest.len())];
-        // Bun's parser reads `| 2` and `|2 -` as `|2` and `|2-`. In YAML only a comment can follow the blanks.
+        // Bun's parser reads `| 2` and `|2 -` as `|2` and `|2-`. In YAML only a comment can follow the whitespace.
         let after_header = &rest[header.len()..];
         let blanks = after_header
             .iter()
@@ -1032,7 +1032,7 @@ impl<'a> Context<'_, 'a> {
             _ => content.position.end.offset,
         };
         let last_line = self.point(end.saturating_sub(1)).line;
-        // A comment that is not indented further than the items is in none of them.
+        // A comment that isn't indented more than the items doesn't belong to any of them.
         let column_of_items = (content.children.first())
             .map_or(1, |item| self.nodes[item.index()].position.start.column);
         while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {

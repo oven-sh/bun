@@ -802,7 +802,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         join_words(lines, self.prose_wrap == ProseWrap::Never)
     }
 
-    /// `getBlockValueLineContents`. `column_of_item`: how many columns are before the item that `node` is in, if any.
+    /// `getBlockValueLineContents`. `column_of_item` is the zero-based column of the item that contains `node`, if any.
     fn block_value_line_contents(
         &self,
         node: &Node<'a>,
@@ -834,7 +834,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 None => (indent as usize).saturating_sub(1),
             },
         };
-        // Only blanks are cut off. Prettier cuts as many characters off a line that has fewer, whatever they are.
+        // Only strip spaces. Prettier strips `leading_space_count` characters from every line, spaces or not.
         let raw_lines: Vec<&'a [u8]> = strings::split(content, b"\n")
             .map(|line| {
                 let spaces = line.iter().take(leading_space_count);
@@ -923,7 +923,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             return lines;
         }
-        // Blanks past the indentation are part of the value. Prettier takes a line of them for an empty one.
+        // Spaces past the indentation are part of the value. Prettier treats a line of only spaces as empty.
         let has_no_text = |words: &Words<'a>| match words {
             Words::None => true,
             Words::One(word) => word.is_empty(),
@@ -984,8 +984,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.start_indent(IndentCommand::Dedent);
                 self.start_align(self.tab_width);
             }
-            // The indicator counts from the item. Prettier leaves the lines in the columns that they are in, so where
-            // the item moves, the value changes or what is printed isn't YAML.
+            // The indentation indicator is relative to the item. Prettier keeps the lines in their original columns, so
+            // if the item moves, the value changes or the output isn't valid YAML.
             Some(indent) if column_of_item.is_some() => {
                 self.out.start_indent(IndentCommand::Dedent);
                 self.start_align(indent);
@@ -1005,8 +1005,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 out.hard_line();
             }
             words.write_fill(out);
-            // They are part of the value. Prettier loses those of the last line: the hard line after the scalar
-            // trims them (prettier#19764).
+            // Trailing spaces and tabs are part of the value. Prettier drops them from the last line, because the hard
+            // line after the scalar trims them (prettier#19764).
             if words.ends_with_blank() {
                 out.keep_blanks();
             }

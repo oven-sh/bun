@@ -37,16 +37,16 @@ pub(crate) enum Kind {
     Directory,
 }
 
-/// What tells a file from every other: its device and its inode. On Windows, its volume and its file index.
+/// Uniquely identifies a file: device and inode, or volume and file index on Windows.
 pub(crate) type Identity = (u64, u64);
 
-/// The identity of a file that has more names than the one it was found by: hard links.
+/// Returns the file's identity if it has more than one hard link.
 fn identity_if_linked(found: &bun_sys::Stat) -> Option<Identity> {
     (found.st_nlink > 1).then_some((found.st_dev as _, found.st_ino as _))
 }
 
-/// What is at `path`, following links, its size, and [`identity_if_linked`]. `None`: nothing, or neither a file nor a
-/// directory.
+/// Returns the kind and size of the file at `path`, following symlinks, plus [`identity_if_linked`]. Returns `None` if
+/// nothing exists there, or if it's neither a file nor a directory.
 pub(crate) fn stat(path: &[u8]) -> Option<(Kind, u64, Option<Identity>)> {
     let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
@@ -68,7 +68,7 @@ pub(crate) enum LinkKind {
     Link,
 }
 
-/// What is at `path`, which can be a link, its size, and [`identity_if_linked`].
+/// Like [`stat`], but doesn't follow a symlink at `path`.
 pub(crate) fn lstat(path: &[u8]) -> Option<(LinkKind, u64, Option<Identity>)> {
     let found = bun_sys::lstat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
@@ -106,15 +106,15 @@ fn too_large() -> bun_sys::Error {
     bun_sys::Error::from_code(bun_sys::E::EFBIG, bun_sys::Tag::read)
 }
 
-/// Otherwise, opening a named pipe waits until someone opens it for writing, which may never happen.
+/// Opens `path` for reading without blocking. A blocking open of a named pipe waits for a writer that may never come.
 fn open_without_waiting(path: &[u8]) -> bun_sys::Result<File> {
     let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
     File::openat(Fd::cwd(), path, O::RDONLY | without_waiting, 0)
 }
 
-/// Everything in `file`, which [`open_without_waiting`] opened and which isn't a regular file.
+/// Reads `file` to the end. `file` isn't a regular file and was opened by [`open_without_waiting`].
 fn read_stream(file: &File) -> bun_sys::Result<Vec<u8>> {
-    // Reading does wait, for a writer that is there: `--config <(..)`.
+    // Reads do block while a writer is connected, e.g. `--config <(..)`.
     bun_sys::update_nonblocking(file.handle(), false)?;
     let (mut text, mut part) = (Vec::new(), vec![0; 64 << 10]);
     loop {
@@ -128,9 +128,9 @@ fn read_stream(file: &File) -> bun_sys::Result<Vec<u8>> {
     }
 }
 
-/// `EFBIG` for a file that JavaScript could not hold as a string, as Node has an error for it, and for more than 64 MB of what is
-/// no file: `/dev/null` and a pipe are read, and a link in a repository can lead to `/dev/zero`. A named pipe that nobody has
-/// open for writing is empty.
+/// Reads the file at `path`. Fails with `EFBIG` if a regular file is too long for a JavaScript string, which is an
+/// error in Node too, or after 64 MB of anything else. `/dev/null` and pipes have to be readable, but a symlink in a
+/// repository can also point to `/dev/zero`. A named pipe with no writer reads as empty.
 pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     let file = open_without_waiting(path)?;
     let found = file.stat()?;
@@ -147,21 +147,23 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     read_stream(&file)
 }
 
-/// The text of the pipes that flags name. A pipe gives its text once, and a run reads some of these files more than once.
+/// Contents of the named pipes passed to flags, keyed by path. A pipe can only be read once, but a run reads some of
+/// these files more than once.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NamedPipes(Vec<(Vec<u8>, Vec<u8>)>);
 
 impl NamedPipes {
-    /// Reads those of `named` that are pipes. `named`: paths from `cwd`, as they are written. `Err`: what to tell the user.
-    /// A pipe that nobody has open for writing is an error. Taken for empty, `--ignore-path` would ignore nothing. Waited for,
-    /// a pipe in a checkout would hang the CI job that names its path.
+    /// Reads and caches every path in `named` that is a pipe. The paths are as the user typed them, relative to `cwd`.
+    /// `Err` is the message to show the user. A pipe with no writer is an error. Treating it as empty would make
+    /// `--ignore-path` ignore nothing. Waiting for a writer would let a pipe in a checkout hang any CI job that passes
+    /// its path.
     pub(crate) fn load(&mut self, cwd: &[u8], named: &[Vec<u8>]) -> Result<(), Vec<u8>> {
         for written in named.iter().filter(|_| cfg!(unix)) {
             let path = paths::resolve(cwd, &paths::from_native(written));
             if self.0.iter().any(|it| it.0 == path) {
                 continue;
             }
-            // Whoever reads the file later reports what is wrong with it.
+            // The code that reads the file later reports the error.
             let Ok(file) = open_without_waiting(&path) else {
                 continue;
             };
@@ -172,7 +174,7 @@ impl NamedPipes {
                 continue;
             }
             let cannot_read = |why: &[u8]| [b"cannot read ", &written[..], b": ", why].concat();
-            // A pipe that has had a writer hangs up at its end: `<(true)` is an empty file.
+            // A pipe whose writer has closed it polls as hung up, so `<(true)` is an empty file and not an error.
             let had_writer = || bun_core::is_readable(file.handle()) == bun_core::Pollable::Hup;
             match read_stream(&file) {
                 Ok(text) if text.is_empty() && !had_writer() => {
@@ -185,7 +187,7 @@ impl NamedPipes {
         Ok(())
     }
 
-    /// [`read`], or what the pipe at `path` had.
+    /// Returns the cached contents if `path` is a pipe that [`NamedPipes::load`] read. Otherwise calls [`read`].
     pub(crate) fn read(&self, path: &[u8]) -> bun_sys::Result<Vec<u8>> {
         match self.0.iter().find(|it| it.0 == path) {
             Some((_, text)) => Ok(text.clone()),
@@ -226,7 +228,7 @@ impl Listing {
         self.size_and_identity_of(name).map(|it| it.0)
     }
 
-    /// The same, and [`identity_if_linked`].
+    /// Like [`Listing::size_of`], plus [`identity_if_linked`].
     pub(crate) fn size_and_identity_of(&self, name: &[u8]) -> Option<(u64, Option<Identity>)> {
         let found = bun_sys::fstatat(self.directory.fd(), z(name, &mut path_buffer_pool::get()));
         let Ok(found) = found else {
@@ -284,9 +286,9 @@ pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     Some(paths::from_native(real.ok()?))
 }
 
-/// The name of a temporary file. It's short and has nothing of the name of the file that it stands for, which can be as long as
-/// a name can be. No two are called the same in a run: two threads have the same random numbers, and can write the same file,
-/// which they have reached by two paths.
+/// Returns a name for a temporary file. It's short and doesn't reuse any of the target file's name, which may already
+/// be at the maximum length. The counter makes names unique within a run. The random number doesn't: every thread
+/// generates the same sequence, and two threads can write the same file if they reached it by different paths.
 fn temporary_name() -> String {
     static COUNT: AtomicU32 = AtomicU32::new(0);
     let count = COUNT.fetch_add(1, Ordering::Relaxed);
@@ -374,7 +376,7 @@ fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
     written.map(|_| is_replaced)
 }
 
-/// Writes `text` over the start of `file`. `Err`: why it stopped, and how many bytes it had written by then.
+/// Writes `text` at offset 0 of `file`. On failure, returns the error and the number of bytes already written.
 fn write_at_start(file: &File, text: &[u8]) -> Result<(), (bun_sys::Error, usize)> {
     let mut written = 0;
     while written < text.len() {
@@ -390,8 +392,8 @@ fn write_at_start(file: &File, text: &[u8]) -> Result<(), (bun_sys::Error, usize
     Ok(())
 }
 
-/// Writes `text` into the file at `real`. The file is only cut to its new length once all of `text` is in it. If that fails
-/// partway (disk full, quota, file size limit), the old text is put back.
+/// Overwrites the file at `real` with `text`. Truncates it to the new length only after all of `text` is written. If
+/// the write fails partway (disk full, quota, file size limit), restores the old text.
 fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     let flags = O::RDWR | O::CLOEXEC | O::NOFOLLOW;
     let (file, old) = File::openat(Fd::cwd(), real, flags, 0)
@@ -405,8 +407,8 @@ fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
         },
         Err(failed) => failed,
     };
-    // Only what was overwritten: a file size limit also refuses to write bytes past it that are already there, and on macOS
-    // to set a length past it that the file already has.
+    // Restore only the overwritten bytes. A file size limit also rejects rewriting existing bytes past the limit, and
+    // on macOS it rejects truncating to the file's current length if that is past the limit.
     let restored = write_at_start(&file, &old[..written.min(old.len())])
         .map_err(|(error, _)| error)
         .and_then(|()| match written > old.len() {
@@ -431,9 +433,9 @@ fn write_through(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
             #[cfg(unix)]
             attributes: attributes(&file),
         };
-        // On Windows nothing takes the name of a file that is open.
+        // Windows can't rename over an open file.
         drop(file);
-        // A file with two names would be two files afterwards.
+        // Renaming over one hard link would detach it from the others.
         Ok(before.stat.st_nlink <= 1 && replace(real, text, &before)?)
     };
     match is_replaced() {
@@ -443,7 +445,8 @@ fn write_through(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     }
 }
 
-/// The nearest directory from `directory` upward that has a `.git` or a `.jj`, as for the ignore files.
+/// Returns the nearest directory, starting at `directory` and walking up, that contains `.git` or `.jj`. Ignore files
+/// use the same rule.
 fn root_above(directory: &[u8]) -> Option<&[u8]> {
     let is_root = |it: &&[u8]| {
         [&b".git"[..], b".jj"]
@@ -453,7 +456,7 @@ fn root_above(directory: &[u8]) -> Option<&[u8]> {
     paths::ancestors(directory).find(is_root)
 }
 
-/// [`root_above`] `cwd`, or else `cwd`. Without links.
+/// Returns the real path of the repository that contains `cwd`, or of `cwd` if it isn't in a repository.
 fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     let cwd = real_path(cwd)?;
     let found = root_above(&cwd).map(<[u8]>::to_vec);
@@ -462,18 +465,18 @@ fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
 
 const LEADS_OUT: &[u8] = b"it is a symlink to a file outside the repository";
 
-/// Whether `path`, which is below `cwd`, gets to `real`, its path without links, by a link that leads out of the repository.
+/// True if `path` is inside `cwd` but its symlinks lead outside the repository. `real` is the real path of `path`.
 fn leads_out(cwd: &[u8], path: &[u8], real: &[u8]) -> bool {
-    // `bun lint` has the path as the system writes it.
+    // `bun lint` passes native paths.
     let (portable, real) = (paths::from_native(path), paths::from_native(real));
     real != portable
         && paths::inside(cwd, &portable).is_some()
         && !repository(cwd).is_some_and(|it| paths::inside(&it, &real).is_some())
 }
 
-/// The real paths of the files that a run has written. Two paths can lead to one file (a link, a letter in the other case), and
-/// two threads that replace the same file at the same time fail now and then on Windows. Two hard links have a real path each:
-/// `bun fmt` knows them by [`Identity`].
+/// Real paths of the files that a run has written. Two paths can lead to one file (a symlink, different letter case),
+/// and two threads replacing the same file at the same time sometimes fail on Windows. Hard links each have their own
+/// real path, so `bun fmt` detects those by [`Identity`].
 #[derive(Default)]
 pub(crate) struct Written(Guarded<FxHashSet<Vec<u8>>>);
 
@@ -507,8 +510,8 @@ pub(crate) fn write_atomically(
     write_through(&real, text)
 }
 
-/// `path` without links, where the file and some of the directories that it is in need not exist. A link to nothing is followed to
-/// where the file would be made.
+/// Returns the real path of `path`, where the file and some of its parent directories may not exist yet. A dangling
+/// symlink is followed to where the file would be created.
 fn real_path_of_new(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     let mut path = path.to_vec();
     let (mut missing, mut followed): (Vec<Vec<u8>>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
@@ -537,17 +540,17 @@ fn real_path_of_new(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     }
 }
 
-/// The identity of what keeps nothing that is written to it: a pipe, a socket, a terminal, `/dev/null`.
+/// Returns the identity of anything that doesn't store writes: a pipe, a socket, a terminal, `/dev/null`.
 fn identity_if_stream(found: &bun_sys::Stat) -> Option<Identity> {
     let kind = bun_sys::kind_from_mode(found.st_mode as _);
     (!matches!(kind, EntryKind::File | EntryKind::Directory))
         .then_some((found.st_dev as _, found.st_ino as _))
 }
 
-/// Writes `text` to `stream`, which `path` leads to. Nothing is made, replaced or cut.
+/// Writes `text` to `stream`, which is what `path` resolved to. Doesn't create, replace or truncate anything.
 fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Result<(), Vec<u8>> {
-    // `/dev/stdout` that is a pipe has no path without links, and nothing in a repository is without one. In `/` and in `/dev`,
-    // which are in no repository, it is below `cwd` as well.
+    // `/dev/stdout` has no real path when it's a pipe, but everything in a repository has one. So a path inside `cwd`
+    // with no real path is refused only if `cwd` is in a repository. `/dev/stdout` still works from `/` and `/dev`.
     let real = real_path(path);
     let is_refused = match &real {
         Some(real) => leads_out(cwd, path, real),
@@ -566,7 +569,8 @@ fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Re
     let file = File::openat(Fd::cwd(), checked, O::WRONLY | O::CLOEXEC | last_link, 0)
         .map_err(|error| describe(&error))?;
     let opened = file.stat().map_err(|error| describe(&error))?;
-    // Something else can be there by now, and a file would keep the rest of its text. The links of `path` can lead elsewhere too.
+    // Something else may be at that path by now. A regular file isn't truncated here, so it would keep the tail of its
+    // old text. If `path` itself was opened, its symlinks may point elsewhere too, so the identity has to match.
     let is_as_checked = |opened: Identity| real.is_some() || opened == stream;
     match identity_if_stream(&opened).is_some_and(is_as_checked) {
         true => file.write_all(text).map_err(|error| describe(&error)),
@@ -574,8 +578,9 @@ fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Re
     }
 }
 
-/// Writes a file that need not exist, and makes the directories that it is in. `Err`: why it is not written. As for
-/// [`write_atomically`], a link below `cwd` is not followed out of the repository. A pipe or a device gets `text`: `/dev/stdout`.
+/// Writes a file that may not exist yet, and creates its parent directories. `Err` is the reason it wasn't written.
+/// Like [`write_atomically`], doesn't follow a symlink inside `cwd` out of the repository. A pipe or a device, such as
+/// `/dev/stdout`, is written to directly.
 pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     if cfg!(unix)
         && let Ok(found) = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))
@@ -587,7 +592,7 @@ pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<
     if leads_out(cwd, path, &real) {
         return Err(LEADS_OUT.to_vec());
     }
-    // Open the path that was checked, not `path`, and follow no link that has appeared there since.
+    // Open the path that was checked, not `path`, and don't follow a symlink that was created there since the check.
     let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW;
     File::make_open(&real, flags, 0o666)
         .and_then(|file| file.write_all(text))

@@ -5981,7 +5981,7 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
   });
 
   // oxlint 1.87 also reports a name that's imported from another package, and its fix imports the name a second time.
-  describe("vitest/prefer-importing-vitest-globals is only about globals", () => {
+  describe("vitest/prefer-importing-vitest-globals only reports globals", () => {
     const config = {
       categories: { correctness: "off" },
       plugins: ["vitest"],
@@ -6026,7 +6026,7 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
       );
     });
 
-    test("--fix imports the globals and nothing else", async () => {
+    test("--fix only imports the globals", async () => {
       const files = {
         "bound.test.ts": `import { expect, test } from "./harness";\n${body}\n`,
         "mixed.test.ts": `import { test } from "@playwright/test";\n${body}\n`,

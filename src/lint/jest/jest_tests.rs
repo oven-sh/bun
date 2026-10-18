@@ -1364,7 +1364,7 @@ pub(crate) mod prefer_todo {
                 ],
                 false => vec![fix],
             };
-            // An empty callback often holds the test itself, commented out. oxlint deletes it.
+            // An empty callback often contains the real test, commented out. oxlint deletes it.
             let has_comment = |it: &Fix| fixer.file().comments_in(it.span).next().is_some();
             let loses_comment = fixes.iter().any(has_comment);
             (!loses_comment).then_some(fixes)

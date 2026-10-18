@@ -33,7 +33,7 @@ impl CatchErrorName {
         is_qualified || self.ignore.iter().any(|it| it.test(name))
     }
 
-    /// oxlint doesn't check this.
+    /// True if renaming `symbol` can't collide with another binding. oxlint doesn't check this.
     fn can_rename(&self, symbol: Symbol<'_>) -> bool {
         utils::names::is_free(self.name.as_bytes(), symbol.scope(), symbol.references().map(Reference::scope))
     }
@@ -61,7 +61,7 @@ impl CatchErrorName {
             })
             .fix(|fixer| {
                 let uses = references().map(|it| match it.expr().map(Expr::parent) {
-                    // `{ e }` keeps its key.
+                    // `{ e }` becomes `{ e: error }`, so the key stays the same.
                     Some(Node::Prop(prop)) if prop.kind() == PropKind::Shorthand => {
                         fixer.replace(it, format!("{caught}: {}", self.name))
                     }

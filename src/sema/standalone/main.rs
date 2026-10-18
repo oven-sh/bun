@@ -308,9 +308,9 @@ fn run(args: &[String]) {
                     holds_everything_back: has("--hold-everything-back"),
                     compares_lost: has("--compare-lost"),
                 },
-                // `--jitter=<seed>`: threads wait where what the others see changes. `--jitter-places=<bits>`: only at
-                // those of `Place::NAMES`. `--jitter-stretch=<microseconds>`: one commit in four sleeps that long between
-                // its parts, or one in `--jitter-stretch-commits=<n>`.
+                // `--jitter=<seed>` makes threads pause around changes to shared state. `--jitter-places=<bits>` limits
+                // the pauses to those entries of `Place::NAMES`. `--jitter-stretch=<microseconds>` makes one commit in
+                // four, or one in `--jitter-stretch-commits=<n>`, sleep that long between its phases.
                 jitter: bun_sema::jitter::Jitter {
                     seed: number("--jitter=", 0) as u64,
                     places: number("--jitter-places=", u32::MAX as usize) as u32,
@@ -493,7 +493,7 @@ fn run(args: &[String]) {
                     let count = |of: fn(&bun_sema_driver::StepReport) -> u64| {
                         report.steps.iter().map(of).sum::<u64>()
                     };
-                    // To compare between runs: the counts are deterministic for a given program.
+                    // Printed so that runs can be compared. The counts are deterministic for a given program.
                     error_line!(
                         "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
                         plan_options.step_growth,

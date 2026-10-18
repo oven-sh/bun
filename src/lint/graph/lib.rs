@@ -90,7 +90,8 @@ impl Store {
         }
     }
 
-    /// Files that are read as `already_read` has them, not as they are on the disk. Before a rule asks for anything.
+    /// Makes the store read the files in `already_read` from memory instead of from disk. Call it before any rule
+    /// queries the store.
     pub fn provide(&self, already_read: AlreadyRead) {
         let _ = self.already_read.set(already_read);
     }

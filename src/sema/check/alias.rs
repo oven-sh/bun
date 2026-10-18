@@ -143,7 +143,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some((alias, type_arguments))
     }
 
-    /// `alias_of_type` for a type that stores no alias.
+    /// Computes `alias_of_type` for a type that doesn't store its alias.
     fn derive_alias_of_node_type(&self, ty: TypeId) -> Option<(Sym, AliasArguments)> {
         let (file, node, mapper) = self.alias_node_of_type(ty)?;
         let (alias, type_arguments) = self.alias_of_node_under(file, node, mapper)?;
@@ -297,7 +297,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some((alias, sources, targets, has_type_arguments))
     }
 
-    /// `fillMissingTypeArguments`, which has nothing to add to a list that is complete.
+    /// `fillMissingTypeArguments`. Returns a complete list unchanged.
     fn fill_alias_arguments(
         &mut self,
         params: &[TypeId],
@@ -375,7 +375,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().instantiation_class(ty) == InstantiationClass::Unchanged {
             return ty;
         }
-        // For any other type the worker calls `instantiate`, which is the level.
+        // For any other type the worker calls `instantiate`, which counts the instantiation level itself.
         let is_instantiated_here = self.types().deferred(ty).is_some()
             || match self.data(ty) {
                 TypeData::Union(_)

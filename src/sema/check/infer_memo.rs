@@ -1,56 +1,59 @@
-//! A memo of the walks of `inferTypes`.
+//! Memoizes `inferTypes` walks.
 //!
-//! The same walk from a source type to a target type is made again and again: in every pass of `chooseOverload`, and for
-//! every call of a generic function with arguments of the same types or in the same context. What a walk wrote into the
-//! inference infos is kept here, and written again in place of the next walk.
+//! The checker repeats the same walk from a source type to a target type many times: once per `chooseOverload` pass,
+//! and once per call of a generic function whose arguments have the same types or the same context. The memo records a
+//! walk's writes to the inference infos and replays them instead of running the next identical walk.
 //!
-//! The rule that makes that exact. tsgo makes every walk, so a walk that is left out must be one that nothing could tell
-//! from what is written in its place:
+//! tsgo runs every walk, so skipping one must not be observable. These rules guarantee that:
 //!
-//! - The key (`key_of_walk`) holds all that a walk reads from the `Inference`. A hit compares every number of it.
-//! - The walk that is stored left no trace (`traces_of_inference`): it made no query, began no computation whose result a
-//!   table keeps, computed no instantiation, created no record and reported nothing. So it found all it asked for in the
-//!   type store and in tables.
-//! - What it found there stays (`is_settled_for_inference`). An evaluation begins with a miss, so an entry is replaced only
-//!   by an evaluation of its key that began before the entry was stored and ends after it was read. When the walk was
-//!   made, no such evaluation was in progress.
-//! - A cache that forgets is in front of a table, or makes again from tables what it has forgotten. A walk gets the same
-//!   from it with the entry and without, and what such a cache holds shows nowhere else. So making it again isn't a trace,
-//!   or the same walk would leave one or not by what was asked in between (`Checker::scopes_begun`).
-//! - What it did not find there, and did not evaluate, says the same once it is there. `type_of_mapped_prop` and the tables
-//!   of what is circular are asked in that way. An entry says what its absence did not only if it comes from a cycle or a
-//!   limit, so what is kept here lasts until the next one (`inference_disturbances`): of this task, or in what another
-//!   task commits (`Checker::state_of_commits`).
-//! - So the same walk made later finds the same, takes the same path and fills no table either, and the task creates,
-//!   stores and publishes what it does without the memo. Unless something is in progress that a function looks at before
-//!   it looks into a table: then the walk is made (`obstacle_to_leaving_out`).
-//! - What a walk does every time it is made is stored and done again: see the fields of `Entry`.
+//! - The key (`key_of_walk`) contains everything a walk reads from the `Inference`. A hit compares the whole key.
+//! - A stored walk had no other side effects, called traces here (`traces_of_inference`). It didn't make a query, start
+//!   a computation whose result is cached in a table, compute an instantiation, create a record, or report anything. So
+//!   every lookup it made hit the type store or a table.
+//! - The entries it hit are final (`is_settled_for_inference`). An evaluation starts with a miss, so an entry can only
+//!   be overwritten by an evaluation of the same key that started before the entry was stored and finishes after it was
+//!   read. No evaluation like that was in progress when the walk ran.
+//! - A cache that evicts either sits in front of a table or can rebuild an evicted entry from tables. A walk gets the
+//!   same answer from it on a hit and on a miss, and the cache's contents aren't visible anywhere else. So rebuilding
+//!   an entry doesn't count as a trace. If it did, whether a walk left a trace would depend on which lookups ran before
+//!   it (`Checker::scopes_begun`).
+//! - Some lookups miss without starting an evaluation. `type_of_mapped_prop` and the `circular_*` tables are read this
+//!   way. If the entry is added later, it changes the answer only when it was produced by a cycle or a limit. So memo
+//!   entries are valid until the next cycle or limit (`inference_disturbances`), either in this task or in a commit
+//!   from another task (`Checker::state_of_commits`).
+//! - It follows that the same walk, run later, would hit the same entries and follow the same path without filling any
+//!   table. The task creates, stores, and publishes exactly what it would without the memo. The exception is
+//!   in-progress state that a function checks before it looks in a table. The walk runs in that case
+//!   (`obstacle_to_leaving_out`).
+//! - Effects that a walk has every time it runs are stored and replayed. See the fields of `Entry`.
 //!
-//! The thresholds and the bounds decide which walks are stored and for how long. They change the time, never a result.
+//! The thresholds and size limits only decide which walks are stored and for how long. They never change a result.
 //!
-//! The memo belongs to a `Checker`, which runs one task. Nothing of it goes to a barrier.
+//! The memo belongs to a `Checker`, which runs one task. It's never merged at a barrier.
 
 use super::super::*;
 use super::Inference;
 use crate::util::fx_hash;
 use smallvec::SmallVec;
 
-/// `false`: every walk is made.
+/// Set to `false` to run every walk.
 pub(super) const ENABLED: bool = true;
 
-/// Every walk that the memo would leave out is made, and compared with what would have been written in its place. A
-/// difference is a panic that names the types, the file and each trace that the walk has left. For debugging.
+/// Debug mode. Runs every walk that the memo would skip and compares the outcome with the stored entry. On a mismatch
+/// it panics with the types, the file, and every trace the walk left.
 const SHADOW: bool = false;
 
-/// An entry lasts from one file of the task to the next. Of what `check_file` clears, a walk without a trace asks only for
-/// what is in `obstacle_to_leaving_out`, for what depends on syntax alone, and after a miss. Off: it ends with the file.
+/// Keeps entries when the task moves on to its next file. `check_file` clears some state between files, but a walk
+/// without a trace reads that state only if `obstacle_to_leaving_out` covers it, if it depends only on syntax, or after
+/// a miss. If `false`, entries expire at the end of the file.
 const LASTS_ACROSS_FILES: bool = true;
 
-/// An entry outlasts a read of the incomplete type of a loop. `taint_from` writes to counters and to the frames in
-/// progress, which then store nothing, or for the first time. Off: it ends there, as at a cycle.
+/// Keeps entries when the incomplete type of a flow loop is read. `taint_from` only writes to counters and to the
+/// frames in progress, and those frames then store nothing or store an entry that didn't exist before. If `false`, the
+/// read invalidates entries the way a cycle does.
 const OUTLASTS_FLOW_LOOPS: bool = true;
 
-/// The names of `Checker::inference_walk_counts`.
+/// Labels for `Checker::inference_walk_counts`.
 pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
     "walks",
     "long",
@@ -70,64 +73,65 @@ pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
     "disturbances",
 ];
 
-/// An index into `INFERENCE_WALK_COUNTS`.
+/// Index into `INFERENCE_WALK_COUNTS`.
 #[derive(Copy, Clone)]
 pub(in super::super) enum Count {
-    /// `infer_ex` got past its first test.
+    /// Walks that got past the fast path in `infer_ex`.
     Walks,
-    /// Made, with `LONG_WALK` calls or more.
+    /// Walks that ran and made at least `LONG_WALK` calls.
     Long,
     ToLongTarget,
-    /// The three answers of `obstacle_to_leaving_out`.
+    /// This and the next two are the obstacles that `obstacle_to_leaving_out` can return.
     InInstantiation,
     InVarianceComputation,
     NotAtRest,
     Keyed,
     LeftOut,
-    /// `Entry::calls` of those.
+    /// Sum of `Entry::calls` over the skipped walks.
     CallsLeftOut,
-    /// There is an entry from before the last disturbance.
+    /// The matching entry is older than the last disturbance.
     Disturbed,
-    /// There is one for which `InferenceMemo::store` waits for a second walk.
+    /// The matching entry still needs a second walk to confirm it. See `InferenceMemo::store`.
     NotConfirmed,
-    /// There is one, and the walk would come to the limit of `instantiation_count` or of the native stack.
+    /// The walk behind the matching entry would hit the `instantiation_count` limit or run out of native stack.
     WithoutRoom,
-    /// There is none to write again, and `is_settled_for_inference` does not hold.
+    /// No entry could be replayed, and `is_settled_for_inference` returned `false`.
     NotSettled,
-    /// Long, and not stored for what it did.
+    /// Long walks that weren't stored because they left a trace.
     LeftTrace,
     Stored,
-    /// How often a generation ended.
+    /// Number of generations that ended.
     Disturbances,
 }
 
-/// A walk of this many calls of `infer_types` is long. The first long walk to a target marks the target, and only a walk
-/// to a marked target has a key. The key, two readings of the counters and a look at the frames in progress cost about as
-/// much as three calls, which every walk to a marked target pays and only a hit gets back.
+/// A walk is long if it makes at least this many `infer_types` calls. The first long walk to a target marks the target,
+/// and only walks to a marked target get a key. Building the key, reading the counters twice, and scanning the frames
+/// in progress cost about as much as three calls. Every walk to a marked target pays that. Only a hit earns it back.
 pub(super) const LONG_WALK: u32 = 16;
 
-/// The numbers of a key, or of a key and an outcome.
+/// A key, or a key followed by the state after the walk.
 type Words = SmallVec<[u32; 48]>;
 
-/// A walk that was made.
+/// A recorded walk.
 #[derive(Clone, Debug, Default)]
 struct Entry {
-    /// `key_of_walk`, then `push_state` after the walk, unless that is the state in the key. The key has the state before
-    /// the walk, so the state after it is where the writes of the walk lead, one after the other.
+    /// The `key_of_walk` output, then the `push_state` output after the walk, which is omitted if the walk didn't
+    /// change the state. The key includes the state before the walk, so restoring the state after it has the same
+    /// effect as repeating the walk's writes in order.
     words: Box<[u32]>,
     key_len: u32,
-    /// How often `infer_types` was called.
+    /// Number of `infer_types` calls.
     calls: u32,
-    /// What it added to `Checker::instantiation_count`. With no mapper active, every `instantiate` that has something to do
-    /// adds one, whatever the count is, unless it finds the count at its limit.
+    /// Amount the walk added to `Checker::instantiation_count`. With no mapper active, every `instantiate` call that
+    /// isn't a no-op adds one regardless of the current count, unless the count is already at its limit.
     instantiations: u32,
-    /// What it set in `Checker::reliability`: a comparison in progress stores that with its result.
+    /// Bits the walk set in `Checker::reliability`. A comparison in progress stores them with its result.
     reliability: u8,
     /// See `InferenceMemo::store`.
     is_confirmed: bool,
-    /// How many bytes of native stack it took.
+    /// Bytes of native stack the walk used.
     stack: u32,
-    /// `InferenceMemo::generation` when it was made.
+    /// `InferenceMemo::generation` when the walk ran.
     generation: u64,
 }
 
@@ -136,12 +140,12 @@ impl Entry {
         &self.words[..self.key_len as usize]
     }
 
-    /// Empty: the walk wrote nothing.
+    /// Returns the state after the walk. It's empty if the walk wrote nothing.
     fn state_after(&self) -> &[u32] {
         &self.words[self.key_len as usize..]
     }
 
-    /// Of two walks with one key.
+    /// True if two walks with the same key had the same outcome.
     fn did_the_same_as(&self, other: &Entry) -> bool {
         self.words == other.words
             && self.calls == other.calls
@@ -150,7 +154,7 @@ impl Entry {
     }
 }
 
-/// The names of `Checker::traces_of_inference`: the field of the checker, or the kind of record.
+/// Labels for `Checker::traces_of_inference`. Each one is a `Checker` field or a kind of record.
 const TRACES: [&str; 14] = [
     "work",
     "scopes_begun",
@@ -168,7 +172,7 @@ const TRACES: [&str; 14] = [
     "unresolved_renamed_params",
 ];
 
-/// The names of `Checker::inference_disturbances`.
+/// Labels for `Checker::inference_disturbances`.
 const DISTURBANCES: [&str; 10] = [
     "file",
     "cycles",
@@ -182,15 +186,15 @@ const DISTURBANCES: [&str; 10] = [
     "times_forgotten",
 ];
 
-/// All that says whether a walk has left a trace, before the walk or after it.
+/// Snapshot of every value that a trace would change. One is recorded before the walk and one after it.
 struct Readings {
     traces: [u64; TRACES.len()],
     disturbances: [u64; DISTURBANCES.len()],
-    /// `usize::MAX` before the walk.
+    /// Always `usize::MAX` before the walk.
     lowest_taint: usize,
-    /// `false` before the walk.
+    /// Always `false` before the walk.
     has_met_contextual_function: bool,
-    /// It goes down where it is reset. What it goes up by is `Entry::instantiations`.
+    /// Decreases only when it's reset, which is a trace. An increase is recorded in `Entry::instantiations`.
     instantiation_count: u32,
 }
 
@@ -203,7 +207,7 @@ impl Readings {
             && self.instantiation_count >= before.instantiation_count
     }
 
-    /// Under `SHADOW`: each number that is another one than in `before`, with its name and both values.
+    /// Lists every value that differs from `before`, with its name and both values. Used by `SHADOW`.
     #[cold]
     fn moved_since(&self, before: &Readings) -> String {
         let others = [
@@ -231,26 +235,28 @@ impl Readings {
 
 #[derive(Default)]
 pub(in super::super) struct InferenceMemo {
-    /// A bit for each target of a long walk, at a hash of the target. Two targets can share one. Empty until the first.
+    /// Bit set of long-walk targets, indexed by a hash of the target. Two targets can share a bit. Empty until the
+    /// first long walk.
     long_targets: Vec<u64>,
-    /// Each at a hash of its key: a new entry overwrites whatever is in its place. Empty, then a power of two.
+    /// Indexed by a hash of the key. A new entry overwrites the old one in its slot. The length is 0 at first, then a
+    /// power of two.
     entries: Vec<Entry>,
-    /// A hash shifted right by this amount is an index into `entries`.
+    /// Shifting a hash right by this amount yields an index into `entries`.
     shift: u32,
-    /// How many entries were stored since `entries` last grew.
+    /// Number of entries stored since `entries` last grew.
     stored: usize,
-    /// Only the entries of this generation count.
+    /// Entries from an earlier generation are stale.
     generation: u64,
-    /// `Checker::inference_disturbances` when the generation began.
+    /// `Checker::inference_disturbances` at the start of this generation.
     disturbances: [u64; DISTURBANCES.len()],
     counts: [u64; INFERENCE_WALK_COUNTS.len()],
 }
 
 impl InferenceMemo {
-    /// 4 KB.
+    /// 2^15 bits, or 4 KB.
     const LONG_TARGET_BITS: u32 = 15;
     const MOST_ENTRIES: usize = 1 << 10;
-    /// The longest `Entry::words` that is stored: with `MOST_ENTRIES`, no task keeps more than 4 MB.
+    /// Longest `Entry::words` that gets stored. Together with `MOST_ENTRIES`, it caps the memo at 4 MB per task.
     const MOST_WORDS: usize = 1 << 10;
 
     #[inline]
@@ -278,7 +284,7 @@ impl InferenceMemo {
         self.counts[what as usize] += 1;
     }
 
-    /// `now`: `Checker::inference_disturbances`.
+    /// `now` is the current `Checker::inference_disturbances`.
     fn begin_generation_if_disturbed(&mut self, now: &[u64; DISTURBANCES.len()]) {
         if self.disturbances != *now {
             self.disturbances = *now;
@@ -287,15 +293,15 @@ impl InferenceMemo {
         }
     }
 
-    /// Where the entry with `key` is, of whatever generation.
+    /// Returns the slot of the entry with `key`, whatever its generation.
     fn place(&self, hash: u64, key: &[u32]) -> Option<usize> {
         let place = (hash >> self.shift) as usize;
         (self.entries.get(place)?.key() == key).then_some(place)
     }
 
-    /// `instantiate` counts its calls. A walk that is the first to compute what the checker keeps outside the tables, as
-    /// `simplified` does, counts the calls which that takes, and the next walk does not. So a count other than 0 is
-    /// written again only after a second walk has done the same as the first.
+    /// Stores `walked`. `instantiate` counts its calls, and the checker caches some results outside the tables, such as
+    /// those of `simplified`. The first walk to compute one of them counts the `instantiate` calls it needs, and the
+    /// next walk doesn't. So an entry with a nonzero count is replayed only after a second walk has matched the first.
     fn store(&mut self, hash: u64, mut walked: Entry) {
         self.count(Count::Stored);
         walked.is_confirmed = walked.instantiations == 0;
@@ -331,8 +337,8 @@ impl InferenceMemo {
     }
 }
 
-/// All that a walk from `source` to `target` reads from `n`, which `infer_ex` has prepared for it, and where the part
-/// begins that a walk writes. It never reads `Candidate::inferred`.
+/// Returns everything a walk from `source` to `target` reads from `n`, and the offset of the part that a walk also
+/// writes. `infer_ex` must have prepared `n` for the walk. A walk never reads `Candidate::inferred`.
 fn key_of_walk(n: &Inference, source: TypeId, target: TypeId) -> (Words, usize) {
     debug_assert!(n.propagated.is_none());
     let mut key = Words::new();
@@ -348,9 +354,9 @@ fn key_of_walk(n: &Inference, source: TypeId, target: TypeId) -> (Words, usize) 
     (key, state_at)
 }
 
-/// What a walk writes into the infos of `n`, except that it empties every `Candidate::inferred` with its first write. No
-/// write takes an info back to an earlier state: the priority gets better, or the lists and the depths grow, or
-/// `top_level` is cleared. So a walk has written something exactly if the state is another one after it.
+/// Appends everything a walk writes in `n`'s infos, except `Candidate::inferred`, which its first write clears in every
+/// info. No write returns an info to an earlier state: the priority improves, the lists and the depths grow, or
+/// `top_level` is cleared. So a walk has written something if and only if the state differs afterward.
 fn push_state(words: &mut Words, n: &Inference) {
     for c in &n.candidates {
         let (covariant, contravariant) = (c.covariant.len() as u32, c.contravariant.len() as u32);
@@ -361,7 +367,7 @@ fn push_state(words: &mut Words, n: &Inference) {
     }
 }
 
-/// Puts the infos of `n` into the state that `push_state` wrote to `words`.
+/// Restores `n`'s infos to the state that `push_state` wrote to `words`.
 fn write_state(mut words: &[u32], n: &mut Inference) {
     for c in &mut n.candidates {
         let Some((&[priority, top_level, covariant, contravariant], rest)) =
@@ -384,7 +390,7 @@ fn write_state(mut words: &[u32], n: &mut Inference) {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `infer_types(n, source, target)` for `infer_ex`, to a target of a long walk.
+    /// Runs `infer_types(n, source, target)` or replays a stored walk. `infer_ex` calls it for marked targets.
     #[inline(never)]
     pub(super) fn infer_types_with_memo(
         &mut self,
@@ -407,7 +413,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(place) = self.inference_memo.place(hash, &key) {
             let entry = &self.inference_memo.entries[place];
             let is_disturbed = entry.generation != self.inference_memo.generation;
-            // No `instantiate` of the walk would find the count at its limit, and no `is_stack_low` too little stack.
+            // Neither the count limit in `instantiate` nor an `is_stack_low` check would have stopped the walk.
             let count = (self.instantiation_count).saturating_add(entry.instantiations);
             let has_room = count < 5_000_000
                 && in_use.saturating_add(entry.stack as usize) <= self.stack_limit;
@@ -440,7 +446,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.inference_memo.count(Count::NotSettled);
             return self.infer_types(n, source, target);
         }
-        // As `begin_scope` does, which would leave a trace in a walk around this one.
+        // Same as `begin_scope`, which isn't called here because it would leave a trace in an enclosing walk.
         let outer_taint = std::mem::replace(&mut self.lowest_taint, usize::MAX);
         let outer_reliability = std::mem::take(&mut self.reliability);
         let outer_deepest = self.deepest_stack.replace(0);
@@ -488,24 +494,29 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// In the order of `INFERENCE_WALK_COUNTS`. A function of the program and of how it is cut into tasks.
+    /// Returns the counts in `INFERENCE_WALK_COUNTS` order. They depend only on the program and its split into tasks.
     pub fn inference_walk_counts(&self) -> [u64; INFERENCE_WALK_COUNTS.len()] {
         self.inference_memo.counts
     }
 
-    /// What is in progress that a walk looks at before it looks into a table, or changes, without a trace. `None`: nothing,
-    /// so a walk that found all it asked for in tables finds it there now.
-    /// - An instantiation. While a mapper is active, an `instantiate` with it counts once for each type and marks the type
-    ///   for the next one, also where `type_of_instantiated_symbol` takes the count back. The depth has a limit. And
-    ///   `instantiate` and `members` look at `index_infos_in_instantiation` and `unresolved_members` first.
-    /// - A variance computation.
-    /// - A check that neither reads nor stores the types of expressions, or that takes them from `rechecked_members`.
-    /// - An overflow that a caller has yet to read: a comparison assigns one flag and sets the other.
-    /// - What `infer_reverse_mapped_type` has on its stacks. The reduction of an intersection, in which looking up a
-    ///   property creates it once more. A default or an equivalent base type.
-    /// - A comparison or a mapped type that was cut short in this file: it is not evaluated again.
-    /// - The declared type of an alias: `same_alias` looks for it in `stack`.
-    /// - Nothing at all: then every comparison begins with `instantiation_count` at 0.
+    /// Returns the reason no walk can be skipped right now: in-progress state that a walk would read before it looks in
+    /// a table, or would change without leaving a trace. Returns `None` if there isn't any, so a walk whose lookups all
+    /// hit tables would hit them again now. The obstacles are:
+    /// - An instantiation is in progress. While a mapper is active, `instantiate` with that mapper counts each type
+    ///   once and marks the type so that the next call doesn't count it, even where `type_of_instantiated_symbol`
+    ///   restores the count. The depth is also limited. And `instantiate` and `members` check
+    ///   `index_infos_in_instantiation` and `unresolved_members` first.
+    /// - A variance computation is in progress.
+    /// - A check is in progress that neither reads nor stores expression types, or that reads them from
+    ///   `rechecked_members`.
+    /// - A caller hasn't read an overflow flag yet. A comparison overwrites `relation_too_deep` and can set
+    ///   `relation_too_complex`.
+    /// - `infer_reverse_mapped_type` is in progress.
+    /// - An intersection is being reduced. Looking up a property during the reduction creates the property again.
+    /// - A type parameter default or an identical base type is being resolved.
+    /// - A comparison or a mapped type was cut short in this file. It isn't evaluated again.
+    /// - The declared type of an alias is being resolved. `same_alias` searches `stack` for it.
+    /// - No query is in progress at all. Every comparison then starts by resetting `instantiation_count` to 0.
     pub(in super::super) fn obstacle_to_leaving_out(&self) -> Option<Count> {
         if self.instantiation_depth != 0
             || !self.index_infos_in_instantiation.is_empty()
@@ -531,11 +542,14 @@ impl<'p, 's> Checker<'p, 's> {
         (!is_at_rest).then_some(Count::NotAtRest)
     }
 
-    /// Whether what a walk finds in tables now stays there, where `obstacle_to_leaving_out` finds nothing.
-    /// - No frame stores over what a visit inside it has stored. A type node and a conditional type do, and nothing says
-    ///   whether there was such a visit. Of the other queries that do, the frame says so.
-    /// - No frame is tainted: under one, a part of a type is derived each time, and counted, that is kept otherwise.
-    /// - Nothing is kept for as long as a frame is in progress, or until the type of an accessor is assigned.
+    /// True if the table entries that a walk hits now are final. Call it only after `obstacle_to_leaving_out` has
+    /// returned `None`. It requires that:
+    /// - No frame will overwrite an entry that a nested visit of the same query has stored. Type node and conditional
+    ///   type queries do that without recording the nested visit, so a frame for one of them always fails the test. The
+    ///   other queries that do it record the visit in the frame.
+    /// - No frame is tainted. Under a tainted frame, a part of a type that is normally cached is derived, and counted,
+    ///   on every read.
+    /// - No result is cached only while a frame is in progress, or only until the type of an accessor is assigned.
     pub(in super::super) fn is_settled_for_inference(&self) -> bool {
         self.provisional.is_empty()
             && self.instantiated_symbol_links.is_empty()
@@ -548,7 +562,7 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// Around a walk with `n`, between the two assignments to `lowest_taint`.
+    /// Builds the snapshot before or after a walk with `n`. Call it only between the two assignments to `lowest_taint`.
     fn readings_for_inference(&self, n: &Inference) -> Readings {
         Readings {
             traces: self.traces_of_inference(),
@@ -559,9 +573,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Changes with everything that a walk can do and that is not stored in its `Entry`, together with the rest of
-    /// `Readings`. A computation whose result a table keeps begins with `enter` or with `begin_scope`. In the order of
-    /// `TRACES`.
+    /// Returns the counters in `TRACES` order. Together with the other fields of `Readings`, they change whenever a
+    /// walk does anything that isn't recorded in its `Entry`. Every computation whose result is cached in a table
+    /// starts with `enter` or `begin_scope`, which `work` and `scopes_begun` count.
     fn traces_of_inference(&self) -> [u64; TRACES.len()] {
         let [atoms, components, mappers, signatures, types] = self.task.own.created();
         [
@@ -582,12 +596,12 @@ impl<'p, 's> Checker<'p, 's> {
         ]
     }
 
-    /// Grows whenever something is found in progress, is cut short or ceases to be valid for every caller. A walk that
-    /// changes it has left a trace. In the order of `DISTURBANCES`.
+    /// Returns the counters in `DISTURBANCES` order. One of them changes whenever a computation hits a cycle or is cut
+    /// short, or a result stops being valid for every caller. A walk that changes one of them has left a trace.
     ///
-    /// The last one: `getUniqueTypeParameters` has put type parameters into `unresolved_renamed_params`. Whatever asks for
-    /// the constraint of one takes it out, which is a trace. So a walk that is stored asks for none that is in there, until
-    /// more are put in.
+    /// The last counter changes when `getUniqueTypeParameters` adds type parameters to `unresolved_renamed_params`.
+    /// Asking for the constraint of one removes it from the set, which is a trace. So a stored walk doesn't ask for the
+    /// constraint of any type parameter in the set, and that stays true until more are added.
     fn inference_disturbances(&self) -> [u64; DISTURBANCES.len()] {
         let file = self.task.file.filter(|_| !LASTS_ACROSS_FILES);
         let from_loops = match OUTLASTS_FLOW_LOOPS {
@@ -608,7 +622,7 @@ impl<'p, 's> Checker<'p, 's> {
         ]
     }
 
-    /// Under `SHADOW`. `moved`: `Readings::moved_since`.
+    /// Panics because `SHADOW` found a mismatch. `moved` is the output of `Readings::moved_since`.
     #[cold]
     #[inline(never)]
     fn walk_differs(
@@ -634,7 +648,7 @@ impl<'p, 's> Checker<'p, 's> {
 mod tests {
     use super::*;
 
-    /// A long walk with `key` that left the infos in the state `after`.
+    /// Builds the entry for a long walk with `key` that ended in the state `after`.
     fn walk(memo: &InferenceMemo, key: &[u32], after: &[u32], instantiations: u32) -> Entry {
         Entry {
             words: key.iter().chain(after).copied().collect(),

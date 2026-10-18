@@ -1,17 +1,17 @@
 //! Finds and loads config files. This is ESLint's `ConfigLoader`.
 //!
 //! A file uses the closest config: walk up from the file's directory and stop at the first directory that has a file
-//! named in [`NAMES`]. If a directory has several of one tool, the one that comes first in [`NAMES`] wins. Configs are never
-//! merged.
+//! named in [`NAMES`]. If a directory has several config files for the same tool, the one listed first in [`NAMES`]
+//! wins. Configs are never merged.
 //!
 //! ESLint 8's files ([`eslintrc::NAMES`]) are only used if no directory on the way up has a file from [`NAMES`], because
 //! neither ESLint nor oxlint reads them next to a config of its own. These are merged with the ones in parent directories.
 //!
-//! A tool never reads another tool's config files. The config that applies to the working directory picks the tool, and only
-//! that tool's files count further down, because templates, fixtures and examples contain all sorts. If both an ESLint and an
-//! oxlint config apply there, oxlint's wins: a project with both is moving to oxlint. If no config applies there, each
-//! directory further down is asked the same way ([`Loader::tool_in`]), so a package gets the config that it gets in a run
-//! that starts in it.
+//! A tool never reads another tool's config files. The config that applies to the working directory picks the tool, and
+//! only that tool's files count further down, because templates, fixtures and examples contain all sorts. If both an
+//! ESLint and an oxlint config apply there, oxlint's wins, because a project with both is migrating to oxlint. If no
+//! config applies there, each subdirectory picks its tool the same way ([`Loader::tool_in`]), so a package gets the
+//! same config as in a run started inside it.
 //!
 //! Only a config file, a dependency in package.json, `--config` or `--flavor` pick the tool. Other flags never do, with one
 //! exception: `--no-eslintrc`, `--env` and `--rulesdir` only exist in ESLint 8, so without a config file they mean an ESLint 8 run.
@@ -57,8 +57,9 @@ pub(crate) fn installed_package(directory: &[u8], specifier: &[u8]) -> Option<Js
     bun_lint::json::parse(&json)
 }
 
-/// The nearest `package.json`, from `directory` up, that has one of `tools` in `dependencies` or `devDependencies`: its path,
-/// and which of them it has. One that has none says nothing, because a monorepo lists its tools in the root's.
+/// Returns the nearest `package.json`, walking up from `directory`, that lists one of `tools` in `dependencies` or
+/// `devDependencies`. The result is its path and one flag per tool. A `package.json` that lists none of them is
+/// skipped, because a monorepo lists its tools in the root `package.json`.
 pub(crate) fn package_that_depends_on<const N: usize>(
     directory: &[u8],
     tools: [&[u8]; N],
@@ -116,9 +117,11 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 ];
 
 /// The config used when there's no config file: which files are linted, and with which rules. For `$severityByKind` see
-/// `Reader::grade_by_kind`, for `$framework` and `$packageType` see `Config::get_with_frameworks`, for `$withoutWarnings` see
-/// `Reader::without_warnings`, for `$sourceTypeBySyntax` and `$packageIsModule` see `LanguageOptions::follow_the_runtime`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
-/// and the `basePath` `"PROJECT"` with the project's directory, so that a project in `~/test/app` isn't all tests.
+/// `Reader::grade_by_kind`, for `$framework` and `$packageType` see `Config::get_with_frameworks`, for
+/// `$withoutWarnings` see `Reader::without_warnings`, for `$sourceTypeBySyntax` and `$packageIsModule` see
+/// `LanguageOptions::follow_the_runtime`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the
+/// constants of that name, and the `basePath` `"PROJECT"` with the project's directory, so that a project in
+/// `~/test/app` isn't all tests.
 ///
 /// The first `rules` only sets options. With `$defaultOptions` they're the rules' default options in a project with no config file:
 /// a later setting that's just a severity keeps them, and one with options is merged over them key by key, as ESLint does with a
@@ -338,19 +341,19 @@ fn is_written_for_oxlint(path: &[u8], pipes: &fs::NamedPipes) -> bool {
         || schema.is_some_and(|it| strings::contains(it, b"oxlint"))
 }
 
-/// What [`read_frameworks`] finds in a package.json.
+/// Result of [`read_frameworks`] for one package.json.
 #[derive(Copy, Clone)]
 pub(crate) struct OfPackage {
-    /// The [`Frameworks`] it lists in `dependencies`, `devDependencies` or `peerDependencies`. `None` when this file can't
-    /// decide and the caller should use the next one up: it has none of the three fields (a nested `{ "type": "module" }`,
-    /// for example). An empty `"dependencies": {}` still counts as a decision.
+    /// The [`Frameworks`] listed in `dependencies`, `devDependencies` or `peerDependencies`. `None` if the file has
+    /// none of the three fields (a nested `{ "type": "module" }`, for example), so the caller should use the next
+    /// package.json up. An empty `"dependencies": {}` is `Some`.
     listed: Option<Frameworks>,
-    /// [`Frameworks::TYPE_MODULE`] or nothing. The nearest package.json always decides this, as it does for Node and for
-    /// Bun's resolver.
+    /// [`Frameworks::TYPE_MODULE`] or empty. The nearest package.json always decides this, as in Node and Bun's
+    /// resolver.
     module_type: Frameworks,
 }
 
-/// Reads `directory/package.json`. `None`: it doesn't exist or isn't a JSON object.
+/// Reads `directory/package.json`. Returns `None` if it doesn't exist or isn't a JSON object.
 pub(crate) fn read_frameworks(directory: &[u8]) -> Option<OfPackage> {
     let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
     let package = bun_lint::json::parse(&package).filter(|it| it.as_object().is_some())?;
@@ -2102,8 +2105,8 @@ impl<'l> Loader<'l> {
         })
     }
 
-    /// The oxlint config nearest to `directory`, from there up, and the ESLint config that applies there too and loses to it,
-    /// if there is one. Both relative to the working directory.
+    /// Returns the nearest oxlint config, walking up from `directory`, and the ESLint config that also applies there
+    /// and is ignored, if any. Both paths are relative to the working directory.
     fn config_of_oxlint_for(&self, directory: &[u8]) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
         let nearest = |names: &mut dyn Iterator<Item = &'static [u8]>| {
             let names: Vec<&[u8]> = names.collect();
@@ -2120,7 +2123,7 @@ impl<'l> Loader<'l> {
         Some((of_oxlint, of_eslint))
     }
 
-    /// Whether `directory` or one above it has an oxlint config. Only asked where [`Loader::tool`] is `None`.
+    /// True if `directory` or one of its ancestors has an oxlint config. Only called when [`Loader::tool`] is `None`.
     fn has_config_of_oxlint(&self, directory: &[u8]) -> bool {
         if let Some(known) = self.has_config_of_oxlint.lock().get(directory) {
             return *known;
@@ -2137,8 +2140,9 @@ impl<'l> Loader<'l> {
         has_one
     }
 
-    /// The tool whose config files count for the files in `directory`: [`Loader::tool`], or what that would be in a run that
-    /// starts in `directory`, as far as config files decide it. `None`: ESLint's and ESLint 8's count, and there are none of oxlint.
+    /// Returns the tool whose config files apply to files in `directory`. That's [`Loader::tool`], or else the tool
+    /// that config files would pick in a run started in `directory`. `None` means there's no oxlint config, so ESLint
+    /// and ESLint 8 configs apply.
     fn tool_in(&self, directory: &[u8]) -> Option<Flavor> {
         let of_oxlint = || (self.has_config_of_oxlint(directory)).then_some(Flavor::Oxlint);
         self.tool().or_else(of_oxlint)
@@ -2290,8 +2294,8 @@ impl<'l> Loader<'l> {
         self.passed_over.get()
     }
 
-    /// The same pairs for the directories below a working directory that no config applies to, as far as the run got to them.
-    /// Sorted.
+    /// Returns the pairs described at [`Loader::passed_over`] for subdirectories, sorted. Only filled when no config
+    /// applies to the working directory, and only for directories the run has visited.
     pub(crate) fn passed_over_below(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut all = self.passed_over_below.lock().clone();
         bun_lint::utils::sort::sort_unstable(&mut all);
@@ -2303,7 +2307,7 @@ impl<'l> Loader<'l> {
         self.names_of(self.tool())
     }
 
-    /// Those of [`NAMES`] that count where `tool` is the one whose files count. With `None`, oxlint's come first.
+    /// Returns the [`NAMES`] that `tool` reads. With `None` that's all of them, oxlint's first.
     fn names_of(&self, tool: Option<Flavor>) -> impl Iterator<Item = &'static [u8]> {
         let reads_flat = self.flat_config != Some(false);
         let is_of_vite = tool == Some(Flavor::Oxlint) && self.is_of_vite.get() == Some(&true);
@@ -2713,7 +2717,7 @@ impl<'l> Loader<'l> {
             return self.for_directory(directory);
         }
         let picked = match self.pick(directory, names) {
-            // It's below an oxlint config, which wins.
+            // The directory is below an oxlint config, which wins.
             (Some(name), _)
                 if self.tool().is_none()
                     && self.tool_in(directory) == Some(Flavor::Oxlint)

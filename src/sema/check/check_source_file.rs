@@ -125,7 +125,9 @@ impl<'s> Program<'s> {
         *self.listings_are_not_compared.lock() = false;
     }
 
-    /// `walked`: `Finished::assignments_walked` of a task. `earlier`: those of the valid tasks before it.
+    /// True if a walk that the task made while visiting the file contains an earlier walk or is
+    /// nested in one. `walked` is the task's `Finished::assignments_walked`. `earlier` lists the
+    /// walks of the valid tasks before it.
     pub(super) fn has_walked_across_earlier_walk(
         &self,
         walked: &[(FileId, Node, bool)],

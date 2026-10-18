@@ -1,71 +1,74 @@
-//! Answers that hold for good, kept where they are read instead of in a hash table, and early answers that spare a long
-//! way. This file has their switches.
+//! Switches for the checker's fast paths. Some cache a permanent answer on the type instead of in a hash table. Others
+//! return early and skip a slow path.
 //!
-//! The rule for what is kept with a type (`Types::facts`, `Types::member_flags`): it is a function of the interning key of
-//! the type and of the program, and computing it resolves nothing. It creates no type, signature, mapper or symbol, makes
-//! no query and moves no counter. So reading it and computing it again cannot be told apart, and any task may write it into
-//! any record at any time, a published one too.
+//! An answer can be cached on the type (`Types::facts`, `Types::member_flags`) only if it is a pure function of the
+//! type's interning key and the program, and computing it resolves nothing. That means it doesn't create a type,
+//! signature, mapper or symbol, doesn't run a query and doesn't bump a counter. A task then can't tell a cache hit from
+//! a recomputation, so any task can write the answer into any record at any time, including a published record.
 //!
-//! An answer whose first evaluation resolves something is not kept there: a task that found it would skip the resolution
-//! because another task was faster, and the order in which it creates its types would depend on timing. It stays with the
-//! checker that found it, and so with one task, in an array by type instead of a hash table (`TypeNumbers`, `TypeMap`,
-//! `TaskFacts`): what is stored, and when, is what it was.
+//! An answer whose first evaluation resolves something can't be cached there. A task that hit the cache would skip the
+//! resolution only because another task got there first, so the order in which it creates types would depend on timing.
+//! These answers stay in the checker that computed them, which belongs to one task. They are stored in arrays indexed
+//! by type (`TypeNumbers`, `TypeMap`, `TaskFacts`) instead of hash tables. That changes only the lookup, not what is
+//! stored or when.
 
 use super::*;
 use crate::table::Packed;
 use std::sync::atomic::AtomicU32;
 
-/// `false`: every one of them is off, and the long way is taken as before.
+/// Set to `false` to turn off every switch below and use only the slow paths.
 const ALL: bool = true;
 
-/// `couldContainTypeVariables` is kept with the type. Off: in `Checker::could_contain_type_variables`.
+/// Caches `couldContainTypeVariables` on the type. Off: caches it in `Checker::could_contain_type_variables`.
 pub(super) const COULD_CONTAIN_TYPE_VARIABLES: bool = ALL;
-/// `getGenericObjectFlags` of a union or an intersection without a mapped type is kept with the type. Off: all of them are
-/// in `Checker::task_facts`.
+/// Caches `getGenericObjectFlags` on the type for a union or an intersection that contains no mapped type. Off: caches
+/// it in `Checker::task_facts` for every union and intersection.
 pub(super) const GENERIC_OBJECT_FLAGS: bool = ALL;
-/// `isTypeReferenceWithGenericArguments` is kept with the type. Off: the type arguments are visited each time.
+/// Caches `isTypeReferenceWithGenericArguments` on the type. Off: walks the type arguments every time.
 pub(super) const GENERIC_ARGUMENTS: bool = ALL;
-/// `maybeTypeOfKind` and the like read `Types::member_flags`. Off: they visit the constituents.
+/// `maybeTypeOfKind` and similar checks read `Types::member_flags`. Off: they walk the constituents.
 pub(super) const MEMBER_FLAGS: bool = ALL;
-/// `isWeakType` of an object type reads `Resolved::is_weak`. Off: it visits the properties.
+/// `isWeakType` reads `Resolved::is_weak` for an object type. Off: it walks the properties.
 pub(super) const WEAK_TYPES: bool = ALL;
-/// `shouldNormalizeIntersection` does not look for an empty object type in an intersection without an instantiable type.
+/// Skips `shouldNormalizeIntersection` for an intersection that contains no instantiable type. Off: it tests the
+/// members for an empty object type and then returns false.
 pub(super) const NORMALIZED_INTERSECTIONS: bool = ALL;
-/// Two different literal types of one kind are unrelated, without going through the rules of `isSimpleTypeRelatedTo`.
+/// Treats two different literal types of the same kind as unrelated without running the `isSimpleTypeRelatedTo` rules.
 pub(super) const DISTINCT_LITERALS: bool = ALL;
-/// `Relater::maybe_keys` is searched as a list up to this length, and has a hash set beside it from then on. 0: always.
+/// `Relater::maybe_keys` is searched linearly up to this length. A longer list is mirrored in a hash set. 0 means the
+/// hash set is always used.
 pub(super) const MAYBE_KEYS_SEARCHED_AS_A_LIST: usize = if ALL { 32 } else { 0 };
-/// `getTypeOfPropertyOfContextualType` passes over the members of a union that `union_property` knows not to have the name.
+/// `getTypeOfPropertyOfContextualType` skips union members that `union_property` has recorded as lacking the property.
 pub(super) const CONTEXTUAL_UNIONS: bool = ALL;
-/// `isLiteralOfContextualType` reads `Types::member_flags` of a contextual type without a type variable. Off: it visits
+/// `isLiteralOfContextualType` reads `Types::member_flags` if the contextual type has no type variable. Off: it walks
 /// the constituents.
 pub(super) const LITERAL_CONTEXTS: bool = ALL;
-/// `is_every_type_of_kind` and `is_some_type_of_kind` read `Types::member_flags`. Off: they visit the members.
+/// `is_every_type_of_kind` and `is_some_type_of_kind` read `Types::member_flags`. Off: they walk the members.
 pub(super) const KINDS_OF_MEMBERS: bool = ALL;
-/// `is_kind` reads `Type.flags`, which are 4 bytes in a column. Off: the record of the type, as the questions that look at
-/// the variant of `TypeData` do.
+/// `is_kind` reads `Type.flags`, a 4-byte column. Off: it reads the type's record, like the checks that match on the
+/// `TypeData` variant.
 pub(super) const KINDS_FROM_FLAGS: bool = ALL;
-/// A type without a fresh literal type in it is its own regular and its own widened literal type, which
-/// `Types::has_fresh_literal` says. Off: the type and the members of a union are visited.
+/// A type that contains no fresh literal type is its own regular type and its own widened literal type.
+/// `Types::has_fresh_literal` detects that. Off: walks the type and, for a union, its members.
 pub(super) const FRESH_LITERALS: bool = ALL;
-/// `LiteralType.freshType` and `regularType`: the fresh and the regular type of a literal are kept with each other once one
-/// was made from the other, by type, for the task. An id stands for one interning key as long as the task runs, so to intern
-/// the key again finds the same. Off: it is interned each time.
+/// `LiteralType.freshType` and `regularType`. Once a literal's fresh type has been made from its regular type, or the
+/// reverse, the task caches each id under the other id. An id maps to the same interning key for the task's lifetime,
+/// so interning the key again would return the cached id. Off: interns the key every time.
 pub(super) const COUNTERPARTS_OF_LITERALS: bool = ALL;
-/// `isConstEnumObjectType` reads the record of an object type only. Off: of every type.
+/// `isConstEnumObjectType` reads the record only for an object type. Off: it reads the record of every type.
 pub(super) const CONST_ENUM_OBJECTS: bool = ALL;
-/// `isTupleLikeType` has the name `"0"` from `number_name`, which keeps it. Off: it is interned each time.
+/// `isTupleLikeType` gets the name `"0"` from `number_name`, which caches it. Off: it interns the name every time.
 pub(super) const NAME_OF_ZERO: bool = ALL;
-/// `TypeNumbers` has an array. Off: a hash table, as before.
+/// `TypeNumbers` uses an array. Off: it uses a hash table.
 pub(super) const DENSE_TYPE_MAPS: bool = ALL;
-/// `forget_nodes_of_leaf` goes through the memos once they have doubled. Off: after every file.
+/// `forget_nodes_of_leaf` sweeps the memos only once they have doubled in size. Off: it sweeps them after every file.
 pub(super) const FORGETS_LEAVES_TOGETHER: bool = ALL;
 
-/// Every answer that comes from one of the above is computed the long way as well, and a difference is a panic that names
-/// the types and the file. For debugging.
+/// For debugging. Also runs the slow path for every fast-path answer, and panics with the types and the file if the
+/// answers differ.
 pub(super) const SHADOW: bool = false;
 
-/// What a computation that resolves nothing leaves as it was.
+/// Snapshot of the checker's counters. A computation that resolves nothing doesn't change them.
 #[derive(PartialEq, Eq, Debug)]
 pub(super) struct Traces {
     work: u64,
@@ -75,12 +78,12 @@ pub(super) struct Traces {
     reported: usize,
 }
 
-/// A number for each type, 0 until one is set. It belongs to one checker, as a `FxHashMap<TypeId, u32>` of the checker
-/// would, and holds what that would hold: only the way to an entry is another one.
+/// Maps each type to a `u32`, which is 0 until set. It belongs to one checker and stores the same entries as a
+/// `FxHashMap<TypeId, u32>` field would. Only the lookup is different.
 #[derive(Default)]
 pub(super) struct TypeNumbers {
     dense: links::ByType,
-    /// In place of `dense` without `DENSE_TYPE_MAPS`, and beside it under `SHADOW`.
+    /// Replaces `dense` if `DENSE_TYPE_MAPS` is off. Mirrors it under `SHADOW`.
     hashed: FxHashMap<TypeId, u32>,
 }
 
@@ -108,7 +111,7 @@ impl TypeNumbers {
     }
 }
 
-/// `FxHashMap<TypeId, V>`, over `TypeNumbers`.
+/// Works like `FxHashMap<TypeId, V>`, backed by `TypeNumbers`.
 pub(super) struct TypeMap<V>(TypeNumbers, std::marker::PhantomData<V>);
 
 impl<V> Default for TypeMap<V> {
@@ -137,25 +140,27 @@ impl<V: Packed<Cell = AtomicU32>> TypeMap<V> {
     }
 }
 
-/// The bits of `Checker::task_facts`: what this task has found out about a type, or done with it. The first evaluation of
-/// each resolves something or depends on what is in progress, so none of them is for `Types::add_facts`.
+/// Bits of `Checker::task_facts`. They record what this task has learned about a type or has already done with it. The
+/// first evaluation of each one resolves something or depends on what is in progress, so none of them can be stored
+/// with `Types::add_facts`.
 pub(super) mod task_fact {
     /// `ObjectFlagsIsUnknownLikeUnionComputed`, `ObjectFlagsIsUnknownLikeUnion`
     pub(in super::super) const KNOWS_UNKNOWN_LIKE_UNION: u32 = 1;
     pub(in super::super) const IS_UNKNOWN_LIKE_UNION: u32 = 1 << 1;
-    /// `ObjectFlagsIsGenericTypeComputed` and the two flags, of a union or an intersection in which there is a mapped type.
-    /// The others have them in `Types::generic_object_flags`.
+    /// `ObjectFlagsIsGenericTypeComputed` and its two flags, for a union or an intersection that contains a mapped
+    /// type. Other unions and intersections store them in `Types::generic_object_flags`.
     pub(in super::super) const KNOWS_GENERIC_OBJECT_FLAGS: u32 = 1 << 2;
     pub(in super::super) const IS_GENERIC_OBJECT_TYPE: u32 = 1 << 3;
     pub(in super::super) const IS_GENERIC_INDEX_TYPE: u32 = 1 << 4;
-    /// The extends type of a conditional type that was related to an instantiation of the same declaration with the same
-    /// extends type: the inference between the two has been made.
+    /// Set on a conditional type's extends type. Two instantiations of one declaration that both have this extends type
+    /// have been related, so the inference between their extends types has already run.
     pub(in super::super) const HAS_INFERRED_BETWEEN_SAME_EXTENDS: u32 = 1 << 5;
-    /// See `union_property`: all the members of the union were visited for a property. Facts and summaries are kept from
-    /// the second time on: to keep them costs about as much as to visit the members once, and many unions are asked for one
-    /// property and no more.
+    /// See `union_property`. Every member of the union has been visited for a property. Facts and summaries are stored
+    /// starting with the second walk. Storing them costs about as much as one walk, and many unions are only ever asked
+    /// for one property.
     pub(in super::super) const IS_WALKED_UNION: u32 = 1 << 6;
-    /// See `union_property`: an intersection among `MemberFacts::apparent_type` and `MemberFacts::reduced_apparent_type`.
+    /// See `union_property`. Set on an intersection that is stored as a `MemberFacts::apparent_type` or a
+    /// `MemberFacts::reduced_apparent_type`.
     pub(in super::super) const IS_IN_MEMBER_FACTS: u32 = 1 << 7;
 }
 
@@ -174,7 +179,7 @@ impl TaskFacts {
         self.0.get(ty) & fact != 0
     }
 
-    /// Returns whether one of `facts` is new.
+    /// Returns true if any bit of `facts` wasn't set yet.
     pub(super) fn add(&mut self, ty: TypeId, facts: u32) -> bool {
         let known = self.0.get(ty);
         if known | facts == known {
@@ -184,7 +189,7 @@ impl TaskFacts {
         true
     }
 
-    /// Of the bits `all`, `ty` has `facts` from now on and no other.
+    /// Clears the bits in `all`, then sets `facts`.
     pub(super) fn replace(&mut self, ty: TypeId, all: u32, facts: u32) {
         let known = self.0.get(ty);
         self.0.set(ty, known & !all | facts);
@@ -202,8 +207,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether `ty` has one of the flags `kind`. For a question about the variant of `TypeData` where a flag says the
-    /// same (`Types::flags_of`): the flags of sixteen types are in one cache line, a record fills one.
+    /// True if `ty` has any of the flags in `kind`. Use it instead of matching on the `TypeData` variant where a flag
+    /// is equivalent (`Types::flags_of`). Sixteen types' flags share a cache line, while one record fills a whole line.
     #[inline]
     pub(super) fn is_kind(&self, ty: TypeId, kind: u32) -> bool {
         if !KINDS_FROM_FLAGS {
@@ -216,7 +221,7 @@ impl<'p, 's> Checker<'p, 's> {
         flags & kind != 0
     }
 
-    /// `shape::is_plain_object`, likewise.
+    /// `shape::is_plain_object`, read from a column instead of the type's record.
     #[inline]
     pub(super) fn is_plain_object_type(&self, ty: TypeId) -> bool {
         if !KINDS_FROM_FLAGS {
@@ -229,7 +234,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_plain_object
     }
 
-    /// Whether `mapped_origin` is `Some`, likewise.
+    /// True if `mapped_origin` is `Some`, read from a column instead of the type's record.
     #[inline]
     pub(super) fn is_mapped_type(&self, ty: TypeId) -> bool {
         if !KINDS_FROM_FLAGS {
@@ -242,13 +247,13 @@ impl<'p, 's> Checker<'p, 's> {
         is_mapped_type
     }
 
-    /// `every_type(ty, |c, member| c.flags(member) & kind != 0)`
+    /// Equivalent to `every_type(ty, |c, member| c.flags(member) & kind != 0)`.
     #[inline]
     pub(super) fn is_every_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         debug_assert!(kind & tf::INTERSECTION == 0);
         let is_each = || self.every_type(ty, |c, member| c.flags(member) & kind != 0);
-        // A type that is neither a union nor an intersection has one flag, so each is of the kind if none has another flag.
-        // But a member of an enum has `ENUM_LITERAL` beside the flag of its value.
+        // A type that is neither a union nor an intersection has exactly one flag, so every member matches `kind` if no
+        // member has a flag outside `kind`. The exception is an enum member, which also has `ENUM_LITERAL`.
         let values = tf::STRING_LITERAL | tf::NUMBER_LITERAL;
         if !KINDS_OF_MEMBERS || kind & tf::ENUM_LITERAL != 0 && kind & values != values {
             return is_each();
@@ -257,7 +262,7 @@ impl<'p, 's> Checker<'p, 's> {
             0 => 0,
             _ => tf::ENUM_LITERAL,
         };
-        // An intersection has none of the flags, whatever it consists of.
+        // An intersection never matches `kind`, but `member_flags` reports its constituents' flags instead of its own.
         let others = self.types().member_flags(ty) & !(kind | beside);
         let is_every = others == 0 && !self.may_be_reduced(ty);
         if SHADOW && is_every != is_each() {
@@ -266,7 +271,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_every
     }
 
-    /// `some_type(ty, |c, member| c.flags(member) & kind != 0)`
+    /// Equivalent to `some_type(ty, |c, member| c.flags(member) & kind != 0)`.
     #[inline]
     pub(super) fn is_some_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         debug_assert!(kind & tf::INTERSECTION == 0);
@@ -274,7 +279,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !KINDS_OF_MEMBERS {
             return is_one();
         }
-        // `member_flags` has what is in an intersection too, which is not a member.
+        // `member_flags` also includes the flags of an intersection's constituents, which aren't members.
         let is_some =
             self.types().member_flags(ty) & kind != 0 && (!self.may_be_reduced(ty) || is_one());
         if SHADOW && is_some != is_one() {
@@ -283,7 +288,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_some
     }
 
-    /// Whether `ty` is known to be no fresh literal type and to have none among its members.
+    /// True if `ty` is known not to be a fresh literal type and not to contain one.
     #[inline]
     pub(super) fn is_without_fresh_literal(&self, ty: TypeId) -> bool {
         if !FRESH_LITERALS {
@@ -296,7 +301,7 @@ impl<'p, 's> Checker<'p, 's> {
         !has_fresh_literal
     }
 
-    /// `Types::has_fresh_literal`, constituent by constituent.
+    /// Computes `Types::has_fresh_literal` by walking the constituents.
     fn finds_fresh_literal(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
@@ -306,7 +311,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Under `SHADOW`: the long way does not give what `fact` says about `types`.
+    /// Panics. Called under `SHADOW` when the slow path contradicts the fast-path answer `fact` for `types`.
     #[cold]
     #[inline(never)]
     pub(super) fn fact_differs(&self, fact: &str, types: &[TypeId]) -> ! {
@@ -316,7 +321,7 @@ impl<'p, 's> Checker<'p, 's> {
         panic!("{fact}: the long way gives another answer, while checking {file:?}, for {types:#?}")
     }
 
-    /// `fact_differs`, with the types printed as in a diagnostic.
+    /// Like `fact_differs`, but also prints the types the way a diagnostic does.
     #[cold]
     #[inline(never)]
     pub(super) fn fact_differs_for(&mut self, fact: &str, types: &[TypeId]) -> ! {

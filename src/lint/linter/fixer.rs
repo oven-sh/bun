@@ -21,9 +21,9 @@ pub struct Fixed {
 /// The byte order mark.
 const MARK: &[u8] = b"\xEF\xBB\xBF";
 
-/// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches one that is applied before
-/// it is left for the next pass. `should_fix`: ESLint's `fix` option as a function. Unlike ESLint, it
-/// does not take a fix that changes nothing for one.
+/// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches an already applied fix
+/// waits for the next pass. `should_fix` is ESLint's `fix` option as a function. Unlike ESLint,
+/// this doesn't count a no-op fix as a fix.
 pub fn apply_fixes(
     text: &[u8],
     messages: Vec<LintMessage>,
@@ -54,7 +54,7 @@ pub fn apply_fixes(
             continue;
         };
         let (start, end) = (fix.span.start as usize, fix.span.end as usize);
-        // It writes what is there, so the next run would say the same again.
+        // The fix is a no-op, so the next run would report the same message again.
         if text.get(start..end) == Some(&fix.text[..]) {
             remaining.push(message);
             continue;
@@ -101,7 +101,8 @@ pub struct FixReport {
     pub result: LintResult,
     /// The fixes undo each other, so fixing was given up. ESLint warns about it.
     pub is_circular: bool,
-    /// The rules whose fixes, all in one pass, [broke the syntax](breaks_syntax). `output` is the text before that pass.
+    /// Rules whose fixes were applied in the pass that [broke the syntax](breaks_syntax). `output` is the text before
+    /// that pass.
     pub broken_by: Option<Vec<RuleId>>,
 }
 
@@ -114,9 +115,10 @@ pub fn is_parse_error(message: &LintMessage) -> bool {
     message.is_fatal && message.message.starts_with(b"Parsing error: ")
 }
 
-/// Whether the fixes that made the text that `result` is about have to be taken back. Either the text cannot be parsed, or it
-/// has more [errors that the parser lets pass](LintResult::tolerated_errors) than the text before the fixes, which had
-/// `tolerated_before`. The next pass would work on broken code, and taking that pass back would leave the broken code there.
+/// True if the fixes that produced the text that `result` describes must be rolled back. Either the text doesn't parse,
+/// or it has more [errors that the parser tolerates](LintResult::tolerated_errors) than the text before the fixes,
+/// which had `tolerated_before`. Otherwise the next pass would run on broken code, and rolling back only that pass
+/// would keep the broken code.
 pub fn breaks_syntax(result: &LintResult, tolerated_before: usize) -> bool {
     is_fatal(result) && result.messages.iter().all(is_parse_error)
         || result.tolerated_errors > tolerated_before
@@ -146,8 +148,8 @@ fn without_the_last_pass(
 }
 
 /// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, ten times at most.
-/// `lint` parses and lints the text that it is given, and is told whether fixes have just made that text. Unlike ESLint, it takes
-/// back the fixes of a pass that [breaks the syntax](breaks_syntax).
+/// `lint` parses and lints the given text. Its second argument is `true` if fixes have just produced that text. Unlike
+/// ESLint, this rolls back a pass whose fixes [break the syntax](breaks_syntax).
 pub fn verify_and_fix(
     text: &[u8],
     should_fix: &dyn Fn(&LintMessage) -> bool,
@@ -158,7 +160,7 @@ pub fn verify_and_fix(
     let (mut is_fixed, mut is_circular, mut fixes) = (false, false, 0);
     // About the previous pass: the rules whose fixes it applied, then `is_fixed` and `fixes` as they were before it.
     let mut last_pass: Option<(Vec<RuleId>, bool, usize)> = None;
-    // [`LintResult::tolerated_errors`] of `previous`.
+    // [`LintResult::tolerated_errors`] for `previous`.
     let mut tolerated_before = 0;
     let mut passes = 0;
     loop {

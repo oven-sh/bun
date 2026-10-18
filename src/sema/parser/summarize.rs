@@ -107,9 +107,9 @@ fn place_of_refusal(text: &[u8], (why, at, after): (Refusal, u32, u32), of_recov
     }
 }
 
-/// Whether `text` has something that a script may read differently from a module.
+/// True if `text` contains something that a script may parse differently from a module.
 fn differs_in_a_script(text: &[u8]) -> bool {
-    // The last: `await` with an escape is a name in a script.
+    // `\u` is listed because an `await` written with an escape is a name in a script.
     let words: [&[u8]; 4] = [b"await", b"<!--", b"-->", b"\\u"];
     words.iter().any(|it| bun_core::strings::contains(text, it))
 }

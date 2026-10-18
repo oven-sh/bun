@@ -84,8 +84,9 @@ fn is_invalid_promise_aggregator_input<'a>(node: Expr<'a>, ty: Type<'a>) -> bool
     is_iterable(ty) && union_constituents(ty).iter().any(|part| has_non_awaitable_value_type(part, node))
 }
 
-/// `expect(promise).resolves.toBe(1)` and `expect(promise).rejects.not.toThrow()` of `bun:test`. In bun-types these matchers
-/// return `void`, like the ones for a plain value, but the `await` is how everybody writes such a test.
+/// True for `expect(promise).resolves.toBe(1)` and `expect(promise).rejects.not.toThrow()` from `bun:test`. In
+/// bun-types these matchers return `void`, like the matchers for a plain value, but tests are conventionally written
+/// with `await`.
 fn is_promise_matcher_of_bun_test(node: Expr) -> bool {
     let Some(call) = node.as_call() else {
         return false;

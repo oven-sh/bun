@@ -354,7 +354,7 @@ pub fn required_specifier(hir: &File, e: ExprId) -> Option<Atom> {
     Some(require_call_argument(hir, e)?.1)
 }
 
-/// A symbol of a file.
+/// Read-only view of one symbol of a file.
 #[derive(Copy, Clone)]
 pub struct Symbol<'a> {
     pub name: Atom,
@@ -375,7 +375,7 @@ pub struct Symbol<'a> {
     pub export_symbol: SymbolId,
 }
 
-/// A `Symbol` while the file is bound.
+/// A symbol while the binder is still adding to it.
 pub struct GrowingSymbol {
     pub name: Atom,
     pub flags: SymFlags,
@@ -387,7 +387,7 @@ pub struct GrowingSymbol {
     pub export_symbol: SymbolId,
 }
 
-/// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
+/// A symbol's declarations. Almost every symbol has exactly one, so that case is stored inline.
 #[derive(Default)]
 pub enum GrowingDecls {
     #[default]
@@ -418,7 +418,7 @@ impl std::ops::Deref for GrowingDecls {
     }
 }
 
-/// See [`Storage::Symbols`].
+/// Read access to a file's symbols in either storage. See [`Storage::Symbols`].
 pub trait SymbolList {
     fn get(&self, index: usize) -> Option<Symbol<'_>>;
 }
@@ -446,34 +446,33 @@ impl GrowingSymbol {
     }
 }
 
-/// What every symbol has.
+/// The fields every symbol needs. The rarely set ones are in [`RestOfSymbol`].
 #[derive(Copy, Clone)]
 struct StoredSymbol {
     name: Atom,
     flags: SymFlags,
     decls: StoredDecls,
     parent: SymbolId,
-    /// Where the rest is in `Symbols::rest`, or one of the two below.
+    /// Index into `Symbols::rest`, or `FIRST_IS_VALUE` / `NO_VALUE` if the symbol has no entry there.
     rest: u32,
 }
 
-/// `StoredSymbol::rest` of a symbol without tables and without an `export_symbol`, whose `value_declaration` is its first
-/// declaration.
+/// `StoredSymbol::rest` for a symbol with no tables and no `export_symbol` whose `value_declaration` is 0.
 const FIRST_IS_VALUE: u32 = u32::MAX;
-/// The same without a `value_declaration`.
+/// Like `FIRST_IS_VALUE`, but the symbol has no `value_declaration`.
 const NO_VALUE: u32 = u32::MAX - 1;
 
 #[derive(Copy, Clone)]
 enum StoredDecls {
     None,
     One(Decl),
-    /// Where they are in `Symbols::many`.
+    /// Index into `Symbols::many`.
     Many(u32),
 }
 
 const _: () = assert!(size_of::<StoredSymbol>() == 24);
 
-/// What few symbols have.
+/// Fields that most symbols leave at their defaults.
 #[derive(Copy, Clone)]
 struct RestOfSymbol {
     value_declaration: u32,
@@ -482,7 +481,7 @@ struct RestOfSymbol {
     export_symbol: SymbolId,
 }
 
-/// The symbols of a file that has been loaded. The program adds to them.
+/// A loaded file's symbols, stored compactly. Merging and linking append transient symbols.
 pub struct Symbols<'s> {
     list: ArenaVec<'s, StoredSymbol>,
     rest: ArenaVec<'s, RestOfSymbol>,
@@ -502,11 +501,12 @@ impl<'s> Symbols<'s> {
         self.list.len()
     }
 
-    /// Nothing in here can fail but the first step, so what a caller does not read is not computed.
+    /// Returns the symbol at `index`. Only the first lookup can fail and nothing here can panic, so once this is inlined
+    /// the compiler drops the work for fields the caller never reads.
     #[inline]
     pub fn get(&self, index: usize) -> Option<Symbol<'_>> {
         let symbol = self.list.get(index)?;
-        // `FIRST_IS_VALUE` and `NO_VALUE` are the index of nothing.
+        // `FIRST_IS_VALUE` and `NO_VALUE` are always out of range, so they fall back to the defaults.
         let rest = self.rest.get(symbol.rest as usize).copied();
         let rest = rest.unwrap_or(RestOfSymbol {
             value_declaration: if symbol.rest == NO_VALUE { u32::MAX } else { 0 },
@@ -530,7 +530,7 @@ impl<'s> Symbols<'s> {
         })
     }
 
-    /// Those of `symbols`, each list at its final size.
+    /// Converts the binder's symbols. Each list is allocated at its exact final size.
     fn of(symbols: &[GrowingSymbol], arena: &'s Arena) -> Symbols<'s> {
         let is_plain = |it: &&GrowingSymbol| {
             it.exports.is_none()
@@ -567,7 +567,7 @@ impl<'s> Symbols<'s> {
         self.list.reserve_exact(additional);
     }
 
-    /// `arena`: for several declarations.
+    /// Appends `symbol`. Two or more declarations are copied into `arena`.
     pub fn push(&mut self, symbol: Symbol<'_>, arena: &'s Arena) {
         let decls = match *symbol.decls {
             [] => StoredDecls::None,
@@ -630,14 +630,14 @@ impl<'s> Symbols<'s> {
         self.set_rest(id.idx(), rest);
     }
 
-    /// From now on the thread that `arena` is of adds to them.
+    /// Moves the lists to `arena` so that the thread that owns it can append to them.
     pub fn transfer_to(&mut self, arena: &'s Arena) {
         transfer_arena(&mut self.list, arena);
         transfer_arena(&mut self.rest, arena);
         transfer_arena(&mut self.many, arena);
     }
 
-    /// A copy in `arena`, for a program that has the file in common with others.
+    /// Copies the lists into `arena`, for a program that shares the file with other programs.
     fn copy_in<'a>(&'a self, arena: &'a Arena) -> Symbols<'a> {
         Symbols {
             list: vec_from_iter_in(self.list.iter().copied(), arena),
@@ -761,9 +761,10 @@ pub enum AssignmentKind {
     Compound,
 }
 
-/// Declares an enum whose variants have one id or nothing, and the same in 32 bits. The first variant is all zeros.
+/// Declares an enum whose variants carry one id or nothing, plus a 32-bit packed form of it. The first variant packs to 0.
 ///
-/// An id has 27 of the bits. A file has fewer than 2^26 nodes (`File::node_bases`), and `NONE` stays `NONE`.
+/// The tag uses 5 bits and the id 27. That's enough because a file has fewer than 2^26 nodes (`File::node_bases`).
+/// `NONE` survives the round trip.
 macro_rules! packed {
     (
         $(#[$doc:meta])* $name:ident, $(#[$packed_doc:meta])* $packed:ident {
@@ -806,7 +807,7 @@ macro_rules! packed {
                 #[inline]
                 pub fn get(self) -> $name {
                     let tag = self.0 & ((1 << TAG_BITS) - 1);
-                    // The sign is copied into the upper bits.
+                    // The arithmetic shift sign-extends, so a packed `NONE` unpacks to `u32::MAX`.
                     let id = (self.0.cast_signed() >> TAG_BITS).cast_unsigned();
                     $(if tag == Tag::$variant as u32 {
                         return $name::$variant($id(id));
@@ -830,7 +831,7 @@ macro_rules! packed {
 packed! {
     /// The direct parent of an expression or a statement.
     Parent,
-    /// A `Parent` in a list.
+    /// A `Parent` packed into 32 bits, which is how the lists store it.
     PackedParent {
         None,
         File,
@@ -841,31 +842,31 @@ packed! {
         ParamDefault(ParamId),
         PatPropDefault(PatPropId),
         PatElemDefault(PatElemId),
-        /// The value of a property of an object literal or of a JSX attribute.
+        /// The value of an object literal property or a JSX attribute.
         Prop(PropId),
-        /// The computed name of a property of an object literal that is neither a method nor an
-        /// accessor.
+        /// The computed name of an object literal property that isn't a method or an accessor.
         PropKey(PropId),
         /// The computed name of a binding element.
         PatKey(PatPropId),
-        /// The computed name of a member of a class, an interface or a type literal: for control flow,
-        /// it is inside the member.
+        /// The computed name of a class, interface or type literal member. Control flow treats it as
+        /// part of the member.
         MemberKey(MemberId),
-        /// The computed name of a method or an accessor of an object literal: the same.
+        /// The computed name of an object literal method or accessor. Control flow treats it as part of
+        /// the method.
         MethodKey(PropId),
-        /// The initializer of a member. Also the operand of a `typeof` in the type or the initializer of a property of a class, if
-        /// there is no function in between.
+        /// A member's initializer. Also the operand of a `typeof` in a class property's type or initializer, unless a
+        /// function is in between.
         MemberInit(MemberId),
-        /// The expression body of an arrow function, or a statement of a body.
+        /// An arrow function's expression body, or a statement in a function body.
         FnBody(FnId),
         EnumInit(EnumMemberId),
         Case(CaseId),
         ClassExtends(ClassId),
-        /// A decorator of the class: evaluated at the position of the class, as are the next two.
+        /// A class decorator. This and the next two are evaluated at the class's position.
         ClassDecorator(ClassId),
-        /// A decorator of a member of a class.
+        /// A class member's decorator.
         MemberDecorator(MemberId),
-        /// A decorator of a parameter of a member of a class.
+        /// A decorator on a parameter of a class member.
         ParamDecorator(ParamId),
         Module(ModuleId),
     }
@@ -1684,45 +1685,45 @@ impl<S: Storage> BoundIn<S> {
         symbol.expect("the symbol is of this file")
     }
 
-    /// `Parent::None` for what is not an expression of the file.
+    /// Returns the parent of `e`, or `Parent::None` if `e` isn't an expression of this file.
     #[inline]
     pub fn parent_of_expr(&self, e: ExprId) -> Parent {
         let parent = self.expr_parent.get(e.idx()).copied();
         parent.unwrap_or_default().get()
     }
 
-    /// The same for a statement.
+    /// Returns the parent of `s`, or `Parent::None` if `s` isn't a statement of this file.
     #[inline]
     pub fn parent_of_stmt(&self, s: StmtId) -> Parent {
         let parent = self.stmt_parent.get(s.idx()).copied();
         parent.unwrap_or_default().get()
     }
 
-    /// See `expr_symbol`. `NONE` for what is not an expression of the file.
+    /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.
     #[inline]
     pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
         self.expr_symbol.id_at(e.idx()).unwrap_or_default()
     }
 
-    /// See `expr_flow`. `UNREACHABLE` for what is not an expression of the file.
+    /// Returns `expr_flow` for `e`, or `UNREACHABLE` if `e` isn't an expression of this file.
     #[inline]
     pub fn flow_of_expr(&self, e: ExprId) -> FlowId {
         self.expr_flow.id_at(e.idx()).unwrap_or(UNREACHABLE)
     }
 
-    /// See `stmt_flow`. `UNREACHABLE` for what is not a statement of the file.
+    /// Returns `stmt_flow` for `s`, or `UNREACHABLE` if `s` isn't a statement of this file.
     #[inline]
     pub fn flow_of_stmt(&self, s: StmtId) -> FlowId {
         self.stmt_flow.id_at(s.idx()).unwrap_or(UNREACHABLE)
     }
 
-    /// The enclosing scope of a statement. `NONE` for what is not a statement of the file.
+    /// Returns the scope that encloses `s`, or `NONE` if `s` isn't a statement of this file.
     #[inline]
     pub fn scope_of_stmt(&self, s: StmtId) -> ScopeId {
         self.stmt_scope.id_at(s.idx()).unwrap_or_default()
     }
 
-    /// The class at whose position the decorator with this parent is evaluated.
+    /// Returns the class at whose position a decorator with this `parent` is evaluated.
     pub fn class_of_decorator(&self, parent: Parent) -> ClassId {
         let member = match parent {
             Parent::ClassDecorator(class) => return class,
@@ -1940,8 +1941,8 @@ impl<S: Storage> BoundIn<S> {
     }
 }
 
-/// The end of `GetAssignmentTarget`: `s`, an expression statement in `parent`, is what the head of a
-/// `for`-`in` or a `for`-`of` assigns to.
+/// The last step of `GetAssignmentTarget`. Returns `ForInOrOf` if `s`, an expression statement whose parent is
+/// `parent`, is the assignment target in the head of a `for`-`in` or `for`-`of`.
 fn target_of_for_in_or_of(hir: &File, parent: Parent, s: StmtId) -> Option<AssignmentTarget> {
     matches!(parent, Parent::Stmt(l) if l.is_some()
         && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s))

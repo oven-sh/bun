@@ -5,9 +5,10 @@
 //! `items.sort_by_key(f)` is `sort::sort_by_key(&mut items, f)`, and so on. What is stable there is stable here. A list of
 //! indices into something else is sorted as it is, by [`sort_indices`].
 //!
-//! The standard library may panic if what it sorts by isn't a total order, which ends the whole run. A key is `Ord`, so it is one. A
-//! comparison of a rule, which is often a port, may go in a circle for some text. So [`sort_by`] is a merge sort that takes
-//! every comparison, and so is [`merge_sort_indices`]: [`sort_indices`] is for comparing two keys.
+//! The standard library's sorts may panic if the comparison isn't a total order, and a panic ends the whole run.
+//! Sorting by an `Ord` key is always safe. A rule's own comparison function, often ported from JavaScript, can be
+//! cyclic for some inputs. So [`sort_by`] and [`merge_sort_indices`] are merge sorts that accept any comparison. Only
+//! use [`sort_indices`] to compare two keys.
 
 pub use bun_collections::index_sort::{
     apply_permutation_in_place, merge_sort_indices, merge_sort_slice_by as sort_by, sort_indices,

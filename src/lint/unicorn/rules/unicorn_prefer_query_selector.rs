@@ -62,7 +62,7 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
         Some(ExprKind::String(value)) => Some(strings::trim_unicode_whitespace(value.bytes())),
         Some(ExprKind::Template(literal)) => literal.as_static().map(|it| strings::trim_unicode_whitespace(it.bytes())),
         // `getElementById(id)` is `` querySelector(`#${id}`) ``.
-        // An id like `user.name` or `1st` is another selector, or none.
+        // An id like `user.name` or `1st` makes a different selector or an invalid one.
         Some(ExprKind::Ident(_)) if property_name == b"getElementById" => {
             report.fix_dangerously(|fixer| {
                 let replacement = [preferred_selector.as_bytes(), b"(`#${", argument_expr.text(), b"}`"].concat();
@@ -75,7 +75,7 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
     let Some(literal_value) = literal_value else {
         return;
     };
-    // `getElementsBy..` gives a list that follows the document, `querySelectorAll` one that doesn't.
+    // `getElementsBy..` returns a live list that tracks the document. `querySelectorAll` returns a static one.
     let is_safe = || {
         let is_name = matches!(literal_value, [b'A'..=b'Z' | b'a'..=b'z' | b'_', rest @ ..]
             if rest.iter().all(|it| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'-')));

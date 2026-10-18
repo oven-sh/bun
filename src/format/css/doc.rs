@@ -77,7 +77,7 @@ pub(crate) enum Doc<'a> {
     LineSuffixBoundary,
     BreakParent,
     Line(Line),
-    /// Keeps the blanks at the end of what has been written so far, whatever follows. Prettier has no equivalent.
+    /// Stops later line breaks from trimming the spaces and tabs printed before it. Prettier has no equivalent.
     KeepBlanks,
 }
 

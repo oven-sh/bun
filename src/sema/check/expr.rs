@@ -815,7 +815,8 @@ impl<'p, 's> Checker<'p, 's> {
         if depth >= 5 || !self.has_type_variables(ty) {
             return false;
         }
-        // The constraint of a conditional type is often a union of conditional types, five levels deep.
+        // Cached for these kinds because a conditional type's constraint is often a union of conditional types, nested
+        // five levels deep.
         let is_kept = matches!(
             self.data(ty),
             TypeData::Union(_) | TypeData::Intersection(_) | TypeData::Cond { .. }
@@ -1121,8 +1122,8 @@ impl<'p, 's> Checker<'p, 's> {
                 .map(|ty| (ty, Found::Property)),
             found => found,
         };
-        // `getPropertyOfType(apparentType, ..)` reduces the apparent type, and nothing reduces `leftType`. To reduce
-        // `U & { id: string }` lists the properties of the constraint of `U`, which creates them.
+        // `getPropertyOfType(apparentType, ..)` reduces the apparent type, but nothing reduces `leftType`. Reducing
+        // `U & { id: string }` lists the properties of `U`'s constraint, which creates them.
         if !self.never_in_progress.is_empty() {
             self.reduce_apparent_type_of_intersection_in_progress(access.apparent);
         }
@@ -1961,8 +1962,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `maybeTypeOfKind`: whether `ty` has one of the flags `kind`, or a member of it if it is a union or an intersection.
-    /// The flags of a union itself, such as `boolean`, do not count.
+    /// `maybeTypeOfKind`: true if `ty` has one of the flags in `kind`. For a union or an intersection, true if any
+    /// member does. The flags of the union itself, such as `boolean`, don't count.
     #[inline]
     pub(super) fn maybe_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         if !shortcuts::MEMBER_FLAGS {
@@ -1975,7 +1976,7 @@ impl<'p, 's> Checker<'p, 's> {
         maybe
     }
 
-    /// `maybe_type_of_kind`, member by member.
+    /// `maybe_type_of_kind`, computed by walking the members.
     fn has_member_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {

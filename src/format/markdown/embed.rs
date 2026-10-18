@@ -164,7 +164,7 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
             Op::Line(Line::Space) => f.write_element(FormatElement::Line(LineMode::SoftOrSpace)),
             Op::Line(Line::Soft) => f.write_element(FormatElement::Line(LineMode::Soft)),
             Op::Line(first @ (Line::Literal | Line::Hard)) => {
-                // Written as it is, so that the blanks before it stay.
+                // A literal line break is written as text so that the whitespace before it isn't trimmed.
                 let is_literal = *first == Line::Literal;
                 // Several in a row, with nothing written between them, are empty lines. The last says how far the
                 // next line is indented.
@@ -184,8 +184,8 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                 };
                 let rest = &ops[index..index + last];
                 let count = 2 + rest.iter().filter(|op| matches!(op, Op::Line(_))).count();
-                // The printer writes no more than one empty line for line breaks. After a line break that is written as it is
-                // it writes none at all, since the line is empty.
+                // The printer collapses consecutive line breaks into at most one empty line. After a line break written
+                // as text it doesn't even print that one, because the current line is empty.
                 let is_one_empty_line = count == 2 && !is_literal;
                 match is_one_empty_line {
                     true => f.write_element(FormatElement::Line(LineMode::Hard)),

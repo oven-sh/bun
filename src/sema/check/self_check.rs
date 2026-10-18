@@ -1,10 +1,10 @@
-//! Two evaluations of one key have to agree: a check that a check without steps makes of itself.
+//! Self-check for a run without steps: two evaluations of the same key must agree.
 //!
-//! An entry is written at once (`Task::may_write_at_once`) on the strength of a rule: nothing that its evaluation has
-//! read depends on more than the program. Then two tasks that evaluate one key get one value. A task that finds that
-//! another one was first has both values at hand and compares them. A difference is a hole in the rule: it is counted, by
-//! table, and the first few are kept to be printed. On request the same is done for what has waited for a commit and
-//! lost (`View::compares_lost`), where a difference need not be a mistake: a result of a cycle depends on where
+//! An entry may be written immediately (`Task::may_write_at_once`) only if its evaluation read nothing that depends on
+//! more than the program. Two tasks that evaluate the same key then get the same value. A task that loses the race to
+//! store an entry has both values and compares them. A difference means the rule has a hole. Differences are counted
+//! per table, and the first few are kept for printing. With `View::compares_lost`, entries that waited for a commit and
+//! lost are compared too. A difference there isn't necessarily a bug, because the result of a cycle depends on where
 //! the cycle was entered.
 
 use super::Checker;
@@ -17,7 +17,7 @@ use crate::util::FxHasher;
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 
-/// Something that a key or a value mentions.
+/// One item that a key or a value references.
 #[derive(Copy, Clone)]
 pub(crate) enum Mention {
     Atom(Atom),
@@ -26,29 +26,29 @@ pub(crate) enum Mention {
     Sig(SigId),
     Type(TypeId),
     File(FileId),
-    /// A key of a table keyed by node: the file, and the number of the node among those of its kind.
+    /// A key of a table keyed by node: the file, and the node's index among the nodes of its kind.
     Node(FileId, u32),
-    /// The hash of anything else.
+    /// Hash of any other data.
     Plain(u64),
 }
 
-/// An entry for which another task was first, with another value. Every id in it is published.
+/// An entry that another task stored first, with a different value. Every id in it is published.
 pub struct Differing {
-    /// Of the table: an index in `table_names`.
+    /// The table's index in `table_names`.
     slot: u32,
     key: Vec<Mention>,
-    /// The value that is stored, and the one that was computed in vain: the first `Mentions::KEPT` mentions of each.
+    /// The stored value, then the computed value that lost. Only the first `Mentions::KEPT` mentions of each are kept.
     stored: Vec<Mention>,
     computed: Vec<Mention>,
-    /// The file that the task that has computed the latter was visiting.
+    /// The file that the task was visiting when it computed `computed`.
     computed_in: Option<FileId>,
 }
 
 #[derive(Default)]
 pub struct DifferingEntries {
-    /// How many there were, by slot. No longer than it has to be.
+    /// Number of differing entries, indexed by slot. Ends at the highest slot that has one.
     pub by_table: Vec<u64>,
-    /// The first `KEPT` of them.
+    /// The first `KEPT` differing entries.
     pub first: Vec<Differing>,
 }
 
@@ -65,7 +65,7 @@ impl DifferingEntries {
         self.first.extend(more.first.into_iter().take(room));
     }
 
-    /// `entry`: called if there is room for one more.
+    /// Counts a differing entry of the table `slot`. Calls `entry` only if there is room to keep it.
     fn count(&mut self, slot: u32, entry: impl FnOnce() -> Differing) {
         if self.by_table.len() <= slot as usize {
             self.by_table.resize(slot as usize + 1, 0);
@@ -123,8 +123,8 @@ impl Visitor for Mentions {
     fn handle(&mut self, _: u32) {}
 }
 
-/// Whether two values of one table are equal. Every id in them is published. By a hash, since a value need not be
-/// comparable.
+/// True if two values of the same table are equal. Every id in them must be published. Compares hashes, because a value
+/// doesn't have to implement `Eq`.
 pub(crate) fn is_same_value<T: Follow>(a: &T, b: &T) -> bool {
     let hash_of = |value: &T| {
         let mut hash = HashOfValue(FxHasher::default());
@@ -159,11 +159,11 @@ impl Visitor for HashOfValue {
     fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
         value.hash(&mut self.0);
     }
-    /// Two tasks that build one shape have two copies of it.
+    /// Ignored. Two tasks that build the same shape get separate copies with different handles.
     fn handle(&mut self, _: u32) {}
 }
 
-/// See `Differing`. `slot`: of the table.
+/// Records a `Differing` entry for the table `slot`.
 #[cold]
 #[inline(never)]
 pub(crate) fn note_differing(
@@ -183,7 +183,8 @@ pub(crate) fn note_differing(
 }
 
 impl Checker<'_, '_> {
-    /// One line about `entry`. For a checker outside the plan, when no task runs: to print a type is to ask about it.
+    /// Returns a one-line description of `entry`. Call it on a checker outside the plan while no task is running,
+    /// because printing a type runs checker queries.
     pub fn describe_entry_that_differs(&mut self, entry: &Differing) -> String {
         let table = table_names().get(entry.slot as usize).copied();
         let mut line = format!("{}[", table.unwrap_or("?"));
@@ -200,11 +201,11 @@ impl Checker<'_, '_> {
         line
     }
 
-    /// The path of `file`, and the line and the column of `position`, both from 1.
+    /// Appends `file`'s path, then the 1-based line and column of `position`.
     fn describe_place(&self, file: FileId, position: Option<u32>, line: &mut String) {
         let path = self.files().module(file).file_name();
         _ = write!(line, "{}", bstr::BStr::new(path));
-        // The tree of a file that nothing imports is freed by now. No key is a node of such a file.
+        // The tree of an unimported file is already freed, but a key is never a node of an unimported file.
         let before = position.and_then(|position| self.hir(file).text.get(..position as usize));
         if let Some(before) = before {
             let row = bun_core::strings::count_char(before, b'\n') + 1;
@@ -216,7 +217,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Where the node with `index` among those of its kind in `file` begins, for a key of the table with `slot`.
+    /// Returns the start offset of a node that is a key of the table `slot`. `index` is the node's index among the
+    /// nodes of its kind in `file`.
     fn position_of_key(&self, slot: u32, file: FileId, index: u32) -> Option<u32> {
         let (hir, at) = (self.hir(file), index as usize);
         match *table_names().get(slot as usize)? {

@@ -14,13 +14,13 @@ pub struct Outcome {
     pub messages: Vec<Reported>,
     pub output: Option<Vec<u8>>,
     pub has_parse_errors: bool,
-    /// Some message has a [held back](held_back) fix.
+    /// True if any message has a [held-back](held_back) fix.
     pub holds_back_a_fix: bool,
 }
 
-/// The fix of a message that `--fix` doesn't apply here, because it can change what the program does, and that only
-/// `--fix-dangerously` does. The original applies it with `--fix`. It is compared as the fix that it is there, so that its text
-/// is still checked, and the case is [counted](Counts::holding_back_a_fix).
+/// Returns the fix that upstream applies with `--fix` but that needs `--fix-dangerously` here, because it can change
+/// what the program does. It's compared as a regular fix, so its text is still checked, and the case is
+/// [counted](Counts::holding_back_a_fix).
 fn held_back(message: &LintMessage) -> Option<&Suggestion> {
     let is_fix = |it: &&Suggestion| it.kind == SuggestionKind::DangerousFix;
     match message.fix {
@@ -29,7 +29,7 @@ fn held_back(message: &LintMessage) -> Option<&Suggestion> {
     }
 }
 
-/// What the original's `--fix` does about `message`.
+/// Returns the fix that upstream's `--fix` applies for `message`.
 fn fix_of(message: &LintMessage) -> Option<&Fix> {
     let held_back = || held_back(message).map(|it| &it.fix);
     message.fix.as_ref().or_else(held_back)
@@ -204,7 +204,7 @@ pub struct Counts {
     pub in_another_order: AtomicUsize,
     /// `--in-order`: such a case fails.
     pub fails_on_order: bool,
-    /// Cases that pass and in which `--fix` applies less than the original's: the rest takes `--fix-suggestions` or
+    /// Passing cases where `--fix` applies fewer fixes than upstream's `--fix`. The rest need `--fix-suggestions` or
     /// `--fix-dangerously`.
     pub holding_back_a_fix: AtomicUsize,
 }
@@ -301,7 +301,7 @@ pub(crate) fn problem_of_oxlint(
     let (mut before, mut holds_back_a_fix) = (code.to_vec(), false);
     for (step, (key, _)) in steps.iter().enumerate() {
         let expected = string_of(case, key).unwrap_or(&before).to_vec();
-        // What oxlint writes with these flags may take more flags here, never fewer.
+        // Output that oxlint produces with these flags may need more flags here, but never fewer.
         match outputs.iter().skip(step).position(|it| *it == expected) {
             Some(0) => {}
             Some(_) => holds_back_a_fix = true,

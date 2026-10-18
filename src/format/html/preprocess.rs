@@ -18,8 +18,8 @@ struct Preprocessor<'t, 'a, 'o> {
     is_nested_too_deeply: bool,
 }
 
-/// Of a `<text>` of SVG and of an element in one: whether white space at its start and at its end is shown. It is not
-/// where it meets other white space, or an end of the `<text>`.
+/// Tracks whether whitespace at the start and at the end of an SVG `<text>`, or of an element inside one, would be
+/// rendered. It's collapsed next to other whitespace and at either end of the `<text>`.
 #[derive(Copy, Clone)]
 struct SvgTextEdges {
     start: bool,
@@ -143,7 +143,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         node.kind == Kind::Element && node.namespace == b"svg" && &node.name[..] == b"foreignObject"
     }
 
-    /// `around`: those of the parent.
+    /// Returns the edges of `id`. `around` is the parent's edges, or `None` if the parent isn't in a `<text>`.
     fn svg_text_edges(&self, id: Id, around: Option<SvgTextEdges>) -> Option<SvgTextEdges> {
         let node = &self.tree[id];
         if node.kind != Kind::Element || node.namespace != b"svg" {
@@ -263,7 +263,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         if self.options.parser == Parser::Html || is_script_like_tag(&self.tree[id], self.options) {
             return;
         }
-        // Vue does not compile it, so `{{a+b}}` is the text that is shown. Prettier prints `{{ a + b }}`.
+        // Vue doesn't compile anything under `v-pre`, so `{{a+b}}` is rendered as text. Prettier prints `{{ a + b }}`.
         if self.tree[id].has(Flags::IS_IN_V_PRE) {
             return;
         }
@@ -433,9 +433,9 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             next = self.tree.next(child);
             let mut is_leading = self.tree.is_leading_space_sensitive(child, self.options);
             let mut is_trailing = self.tree.is_trailing_space_sensitive(child, self.options);
-            // To Prettier every element of SVG is a block, with a line of its own. In a `<text>` they are parts of one
-            // text: `H<tspan>2</tspan>O` would be shown as "H 2 O". What has white space next to it stays as Prettier
-            // has it.
+            // Prettier treats every SVG element as a block and puts it on its own line. Inside a `<text>` the elements
+            // are one run of text, so `H<tspan>2</tspan>O` would render as "H 2 O". Nodes that already have whitespace
+            // next to them keep Prettier's behavior.
             if let Some(edges) = svg_text_edges {
                 let node = &self.tree[child];
                 is_leading |= match self.tree.prev(child) {
@@ -477,7 +477,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         }
     }
 
-    /// An element that takes no room in the line that it is in, and that is a block to Prettier.
+    /// True for an element that renders nothing inline but that Prettier treats as a block.
     fn is_hidden_block(&self, id: Id) -> bool {
         let node = &self.tree[id];
         node.kind == Kind::Element
@@ -489,9 +489,10 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             )
     }
 
-    /// Prettier gives such an element a line of its own, so `a<script></script>b` is shown as "a b". Where what is
-    /// before it and what is after it are parts of one line, with no white space in between, none is added.
-    /// `first`: the first of the siblings, which know what Prettier takes to be sensitive.
+    /// Prettier puts a hidden block on its own line, so `a<script></script>b` renders as "a b". If the content before
+    /// and after it is inline and there's no whitespace in between, this marks all of it as whitespace-sensitive so
+    /// that none is added. `first` is the first sibling. The siblings must already have the sensitivity flags that
+    /// Prettier computes.
     fn keep_what_touches_through_hidden_elements(&mut self, first: Id) {
         let is_other = |node: &Node<'_>| {
             !matches!(node.kind, Kind::FrontMatter | Kind::AngularControlFlowBlock)

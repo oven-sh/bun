@@ -205,10 +205,10 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     }
   });
 
-  describe.skipIf(isWindows)("a bunfig.toml that is a link", () => {
+  describe.skipIf(isWindows)("a bunfig.toml that is a symlink", () => {
     const project = { "project/.git/HEAD": "ref: refs/heads/main\n", "project/a.js": "a;\n" };
 
-    test("is not written through if it leads out of the repository", async () => {
+    test("isn't written if it points outside the repository", async () => {
       using dir = tempDir("bun-init-section", { ...project, "outside/existing.toml": "a = 1\n" });
       const link = join(String(dir), "project", "bunfig.toml");
       for (const target of ["existing.toml", "new.toml", "new/directory/new.toml"]) {
@@ -226,7 +226,7 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
       expect(readFileSync(join(String(dir), "outside", "existing.toml"), "utf8")).toBe("a = 1\n");
     });
 
-    test("is written through if it stays in the repository", async () => {
+    test("is written through the symlink if it points inside the repository", async () => {
       using dir = tempDir("bun-init-section", { ...project, "project/config/a.js": "a;\n" });
       symlinkSync(join("config", "bunfig.toml"), join(String(dir), "project", "bunfig.toml"));
       expect(await run(join(String(dir), "project"), command, "--init")).toEqual({

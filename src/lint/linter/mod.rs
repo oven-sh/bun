@@ -189,8 +189,8 @@ pub struct LintResult {
     /// With a configuration of oxlint that has a rule for which the file may be linted again: where in the run of oxlint each of
     /// the messages of the rules is, by [`LintMessage::reported`], from 1.
     pub run_keys: Vec<(u64, u128)>,
-    /// How many syntax errors the file has that didn't keep it from being linted. [`verify_and_fix`] takes back fixes that add one.
-    /// The code that applies fixes adds the [`redeclarations`].
+    /// Number of syntax errors in the file that didn't prevent linting. [`verify_and_fix`] reverts fixes that add one.
+    /// The code that applies fixes adds the [`redeclarations`] to it.
     pub tolerated_errors: usize,
 }
 
@@ -1418,7 +1418,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             return Some(Named::Instance(rule, name));
         }
         let js = config.find_js_rule(id);
-        // ESLint has one name for a rule. `eslint/no-var` is what oxlint calls `no-var`.
+        // ESLint only accepts a rule's own name. `eslint/no-var` is oxlint's name for `no-var`.
         let is_of_eslint = !config.has_every_rule && !config.prefers_typescript_rules;
         let prefix = registry::parse_rule_id(id).0;
         let native = || {

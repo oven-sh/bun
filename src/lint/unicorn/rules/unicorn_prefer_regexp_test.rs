@@ -70,10 +70,10 @@ impl Rule for PreferRegexpTest {
         if is_other_literal(obj) || is_match && is_other_literal(argument) || !is_in_boolean_position(e) {
             return;
         }
-        // oxlint takes every `.exec` for `RegExp#exec` and every `.match` for `String#match`. `database.exec(sql)` is another one, and
-        // `text.match("a")` takes a string.
+        // oxlint assumes every `.exec` is `RegExp#exec` and every `.match` is `String#match`. But `database.exec(sql)`
+        // is a different method, and `text.match("a")` passes a string, which has no `test`.
         let is_safe = || match is_match {
-            // A `g` expression goes on from its `lastIndex` in `test`, and starts at 0 in `match`.
+            // With the `g` flag, `test` resumes from `lastIndex` but `match` always starts at 0.
             true => visible_regexp(argument) == Some(VisibleRegExp::NotGlobal) && is_visibly_string(obj),
             false => visible_regexp(obj).is_some(),
         };

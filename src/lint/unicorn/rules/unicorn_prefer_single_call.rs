@@ -49,13 +49,15 @@ impl Rule for PreferSingleCall {
         if prev_info.description != curr_info.description || prev_info.receiver_text != curr_info.receiver_text {
             return;
         }
-        // oxlint takes every `.push` for `Array#push`. `Readable#push(chunk, encoding)` is another one. An argument that moves
-        // before the first call must not depend on that call: `rows.push(nextId()); rows.push(nextId())`.
+        // oxlint treats every `.push` as `Array#push`, but `Readable#push(chunk, encoding)` is a different method.
+        // Merging also evaluates the second call's arguments before the first call runs, so they must not depend on it:
+        // `rows.push(nextId()); rows.push(nextId())`.
         let is_plain = |call: Call<'a>| !call.args().iter().any(may_have_side_effects);
         let is_safe = || match curr_info.description {
             "Array#push()" => is_visibly_array(curr_info.receiver) && is_plain(curr_call.1),
             "Array#unshift()" => is_visibly_array(curr_info.receiver) && is_plain(curr_call.1) && is_plain(prev_call.1),
-            // The first script can define what the second argument reads.
+            // The first script can define a variable that the second call's argument reads, so only string literals are
+            // safe.
             "importScripts()" => {
                 is_global(curr_info.receiver, "importScripts") && curr_call.1.args().iter().all(|it| it.tag() == ExprTag::String)
             }

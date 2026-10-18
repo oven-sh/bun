@@ -302,7 +302,7 @@ pub struct Options {
     modes: Vec<&'static [u8]>,
     pub stdin_filepath: Option<Vec<u8>>,
     pub config: Option<Vec<u8>>,
-    /// [`Options::config`] comes from bunfig.toml.
+    /// True if [`Options::config`] comes from bunfig.toml.
     is_config_of_bunfig: bool,
     /// `false`: `--no-config`.
     pub config_lookup: bool,
@@ -311,9 +311,9 @@ pub struct Options {
     pub config_precedence: Precedence,
     /// `None`: `.gitignore` and `.prettierignore`.
     pub ignore_path: Option<Vec<Vec<u8>>>,
-    /// How many of them, counted from the start, come from bunfig.toml.
+    /// Number of leading `ignore_path` entries that come from bunfig.toml.
     ignore_paths_of_bunfig: usize,
-    /// [`Options::load_pipes`]
+    /// Filled by [`Options::load_pipes`].
     pub(crate) pipes: fs::NamedPipes,
     /// Lines of an ignore file that is in the working directory.
     pub ignore_pattern: Vec<Vec<u8>>,
@@ -654,7 +654,7 @@ impl Options {
         self
     }
 
-    /// Reads the pipes that `--config` and `--ignore-path` name: [`fs::NamedPipes::load`].
+    /// Reads any named pipes passed to `--config` and `--ignore-path`. See [`fs::NamedPipes::load`].
     pub(crate) fn load_pipes(&mut self, cwd: &[u8]) -> Result<(), Vec<u8>> {
         let mut named = Vec::new();
         if !self.is_config_of_bunfig {

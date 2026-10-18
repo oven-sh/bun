@@ -358,7 +358,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let empty_list = less_than.filter(|_| type_params.is_empty());
         let empty_list = empty_list.map(|less_than| (less_than, self.prev_end()));
-        // From here on an exported class is in the await context in the first parse already.
+        // TypeScript parses the rest of an exported class in the await context even on the first parse.
         let in_names = self.names_are_in_await_context;
         self.names_are_in_await_context |=
             flags.contains(Flags::EXPORT) && !self.options.dialect.oxc;
@@ -501,7 +501,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             .declared_private_names
             .get_mut(declared..)
             .unwrap_or_default();
-        // Sorted only to look names up: a generated class can declare tens of thousands.
+        // Sorted so that lookups can binary search. A generated class can declare tens of thousands of private names.
         own.shared_sort_unstable_by_key(|it| it.0);
         if own.array_windows().any(|[a, b]| a == b) {
             self.f.rare_syntax |= rare::NOTABLE_CLASS_MEMBER;
@@ -779,7 +779,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     || before.iter().any(|it| it.kind == MemberKind::Constructor)
             }
             (_, PropKey::Private(name)) => {
-                // `resolve_private_names` finds the ones that are declared twice.
+                // `resolve_private_names` detects duplicates.
                 self.declared_private_names.push(name);
                 self.lx.text_of(name) == b"#constructor"
             }

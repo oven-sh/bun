@@ -362,9 +362,9 @@ impl Rule for NoVar {
             return;
         }
         let span = statement.span_without_export();
-        // `declare var`, or a `var` in `declare global`, says that a global exists. Only a `var` is a property of `globalThis`, and
-        // only a `var` can be declared in two files, so with `let` the project no longer type checks. ESLint and oxlint leave
-        // only `declare global` alone.
+        // `declare var`, or a `var` in `declare global`, declares that a global exists. Only a `var` becomes a property
+        // of `globalThis`, and only a `var` can be declared in two files, so with `let` the project would stop type
+        // checking. ESLint and oxlint only skip `declare global`.
         if statement.flags().contains(Flags::AMBIENT)
             || cx
                 .state
@@ -373,7 +373,7 @@ impl Rule for NoVar {
         {
             return;
         }
-        // oxlint points at the keyword.
+        // oxlint reports only the `var` keyword.
         let is_oxlint = cx.language().is_oxlint;
         let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
         cx.report(place, UNEXPECTED_VAR)

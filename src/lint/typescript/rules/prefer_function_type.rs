@@ -88,11 +88,11 @@ fn fix<'a>(
     let file = fixer.file();
     let is_terminated = matches!(member.text().last(), Some(b';' | b','));
     let mut suggestion = function_type(member, return_type)?;
-    // oxlint's help text has it.
+    // `function_type` keeps a trailing comma because oxlint's help text includes it.
     if suggestion.ends_with(b",") {
         suggestion.pop();
     }
-    // What is replaced, the name with its type parameters, and the `export` before it.
+    // The span to replace, the name with its type parameters, and the statement's span starting at `export`.
     let (replaced, name, export) = match owner {
         Owner::TypeLiteral(literal) => {
             if binding_needed_in_place_of(literal) > 0 {
@@ -115,7 +115,7 @@ fn fix<'a>(
     };
     let is_copied = |it: &Token| member.span().contains(it.span()) || name.is_some_and(|name| name.contains(it.span()));
     let line = file.line_of(member.span().start);
-    // The comments that aren't copied with the member or the name go first: before the `export`, not after it.
+    // Comments that aren't copied along with the member or the name move to the front, before any `export`.
     let mut comments = Vec::new();
     for comment in file.comments_in(replaced).filter(|it| !is_copied(it)) {
         comments.extend_from_slice(comment.text());
@@ -123,7 +123,7 @@ fn fix<'a>(
             comment.kind() == TokenKind::Block && export.is_none() && file.line_of(comment.start()) == line;
         comments.push(if can_share_the_line { b' ' } else { b'\n' });
     }
-    // A comment like `// @ts-expect-error` is about the line after it, so no other comment may come between the two.
+    // A comment like `// @ts-expect-error` applies to the next line, so don't put another comment between them.
     if !comments.is_empty() && fixer.has_directive_before(export.unwrap_or(replaced))
         || fixer.has_directive_before(member) && file.comments_after(member).next().is_some()
     {

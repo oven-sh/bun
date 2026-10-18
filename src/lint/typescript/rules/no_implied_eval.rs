@@ -44,7 +44,7 @@ fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
 fn is_function_type(node: Expr) -> bool {
     let ty = node.ty();
     ty.is_unresolved()
-        // Nobody knows what an `any` is. Upstream takes it for a string.
+        // An `any` could be anything. Upstream treats it as a string.
         || node.file().language().stands_alone && ty.has_flags(TypeFlags::ANY)
         || ty.get_symbol().is_some_and(|symbol| symbol.has_flags(SymbolFlags::FUNCTION | SymbolFlags::METHOD))
         || is_builtin_symbol_like(ty, FUNCTION_CONSTRUCTOR)

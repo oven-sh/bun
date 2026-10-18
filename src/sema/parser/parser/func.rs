@@ -896,9 +896,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `isIdentifier`, after the `(` that may start an arrow function. TypeScript first parses a statement at the top level
-    /// of a module outside the await context, where `(await) => {}` is an arrow function, and the name of a parameter
-    /// is no reason to parse the statement again: see `top_level_statement`.
+    /// `isIdentifier`, after the `(` that may start an arrow function. TypeScript first parses a top-level statement of
+    /// a module outside the await context, where `(await) => {}` is an arrow function. A parameter name doesn't trigger
+    /// a reparse of the statement. See `top_level_statement`.
     fn is_name_of_first_parameter(&mut self) -> bool {
         if self.token() == T::Await
             && self.has_context(ctx::AWAIT)

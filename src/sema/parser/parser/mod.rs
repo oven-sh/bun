@@ -241,8 +241,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) has_plain_top_level_await: bool,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
-    /// A computed name in the top-level statement that is being parsed has an `await`, or an arrow function has it as its
-    /// first parameter, which was read outside the await context.
+    /// True if the current top-level statement has an `await` that was parsed outside the await context, either in a
+    /// computed name or as the first parameter of an arrow function.
     pub(crate) has_await_in_name: bool,
     /// `statementHasAwaitIdentifier`: an `await` at the top level is a name unless the context makes it a keyword.
     pub(crate) has_await_identifier: bool,

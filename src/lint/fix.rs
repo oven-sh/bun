@@ -125,7 +125,8 @@ impl<'t> Around<'t> {
 /// The longest string that JavaScript has, in V8: `" ".repeat(n)` throws beyond it.
 pub const MAX_STRING_LENGTH: u64 = (1 << 29) - 24;
 
-/// Whether `content` has an `@name` that says something about a file, as a word of its own: not `@bun/types`.
+/// True if `content` has a file-level `@tag` such as `@ts-nocheck` or `@license`. The tag must be a whole word, so
+/// `@bun/types` doesn't match.
 fn has_tag_about_the_file(content: &[u8]) -> bool {
     const TAGS: [&[u8]; 17] = [
         b"ts-nocheck",
@@ -171,7 +172,7 @@ fn has_tag_about_the_file(content: &[u8]) -> bool {
     false
 }
 
-/// Whether a license starts in `content`, the text of a comment.
+/// True if `content`, a comment's text, begins a license header.
 fn starts_license(content: &[u8]) -> bool {
     let is_star = |byte: &&u8| matches!(byte, b'*') || byte.is_ascii_whitespace();
     let stars = content.iter().take_while(is_star).count();
@@ -180,7 +181,8 @@ fn starts_license(content: &[u8]) -> bool {
         || strings::contains(content, b"SPDX-License-Identifier")
 }
 
-/// Each starts with a word that is about the next line.
+/// Directives that ignore the whole file. Each one has a next-line directive as a prefix: `biome-ignore-all` starts
+/// with `biome-ignore`.
 const IGNORES_IN_THE_WHOLE_FILE: [&[u8]; 4] = [
     b"biome-ignore-all",
     b"deno-lint-ignore-file",
@@ -188,10 +190,10 @@ const IGNORES_IN_THE_WHOLE_FILE: [&[u8]; 4] = [
     b"dprint-ignore-file",
 ];
 
-/// Whether a comment is about the file, going by its text: the `#!` line, a pragma, which counts only before all code
-/// (`// @ts-nocheck`, `/// <reference path="a" />`, `/** @jsx h */`), a directive for a linter, which counts from where it stands
-/// (`/* eslint-disable */`), a license, or what documents the file (`/** @module */`). `bun fmt` keeps such comments above the
-/// imports that it sorts. `text`: all of the comment. `content`: what is between its delimiters.
+/// True if a comment applies to the whole file, judging by its text. That covers the `#!` line, pragmas that only work
+/// above all code (`// @ts-nocheck`, `/// <reference path="a" />`, `/** @jsx h */`), linter directives that apply from
+/// their position on (`/* eslint-disable */`), licenses, and file docs (`/** @module */`). `bun fmt` keeps these
+/// comments above the imports it sorts. `text` is the whole comment and `content` is the part between its delimiters.
 pub fn is_comment_about_the_file(text: &[u8], content: &[u8]) -> bool {
     let content = strings::trim_js_whitespace(content);
     let starts_with_word = |word: &[u8]| {
@@ -202,7 +204,7 @@ pub fn is_comment_about_the_file(text: &[u8], content: &[u8]) -> bool {
         (text.strip_prefix(b"///")).is_some_and(|rest| rest.trim_ascii_start().starts_with(b"<"));
     text.starts_with(b"#!")
         || is_triple_slash_directive
-        // What the bundler keeps: `//!`, `/*!`
+        // The bundler preserves `//!` and `/*!` comments.
         || text.get(2) == Some(&b'!')
         || match_directives_pattern(content)
             .is_some_and(|it| it.starts_with("eslint") && !it.ends_with("line"))
@@ -216,7 +218,7 @@ fn is_about_the_file(comment: &Token) -> bool {
     is_comment_about_the_file(comment.text(), comment.value())
 }
 
-/// Whether `comment` is about the line, the statement or the expression after it, for a tool that reads it: a compiler, a linter,
+/// True if `comment` is a directive for the next line, statement or expression. The reader can be a compiler, a linter,
 /// a formatter, a coverage tool or a bundler.
 fn is_about_the_next_line(comment: &Token) -> bool {
     const DIRECTIVES: [&[u8]; 22] = [
@@ -250,12 +252,13 @@ fn is_about_the_next_line(comment: &Token) -> bool {
     let text = comment.text();
     let start = text.iter().take_while(is_before_content).count();
     let content = text.get(start..).unwrap_or_default();
-    // TypeScript goes by the prefix: `@ts-ignore-next-line`.
+    // TypeScript matches by prefix, so `@ts-ignore-next-line` works too.
     let is_at_start = |word: &&[u8]| content.starts_with(word);
     DIRECTIVES.iter().any(is_at_start) && !IGNORES_IN_THE_WHOLE_FILE.iter().any(is_at_start)
 }
 
-/// Whether tools take `comment` to be about the code after it: the line after it, or what a `/** @type {A} */` documents.
+/// True if tools attach `comment` to the code after it. It's either a next-line directive or a doc comment like
+/// `/** @type {A} */`.
 fn is_about_what_follows(comment: &Token) -> bool {
     comment.text().starts_with(b"/**") || is_about_the_next_line(comment)
 }
@@ -284,14 +287,15 @@ impl<'a> Fixer<'a> {
         (count <= MAX_STRING_LENGTH).then(|| vec![byte; count as usize])
     }
 
-    /// Whether every comment in the text that `fix` replaces is in the new text too. A fix that loses a comment isn't offered.
+    /// True if every comment in the span that `fix` replaces also appears in the new text. Rules don't offer a fix that
+    /// drops a comment.
     pub fn keeps_comments(self, fix: &Fix) -> bool {
         let mut comments = self.file.comments_in(fix.span);
         comments.all(|it| strings::contains(&fix.text, it.text()))
     }
 
-    /// Where the comments end that are beside `at`, the end of a statement: they follow it on its line. `at` if code follows them
-    /// there, or if one of them is about what follows.
+    /// Returns the end of the trailing comments on the same line as `at`, which is the end of a statement. Returns `at`
+    /// if code follows them on that line, or if one of them applies to the code after it.
     pub fn end_with_comments_beside(self, at: u32) -> u32 {
         let mut end = at;
         for comment in self.file.comments_after(Span::empty(at)) {
@@ -309,24 +313,25 @@ impl<'a> Fixer<'a> {
         }
     }
 
-    /// Where what has to stay first in the file ends: the `#!` line, directives like `"use strict"` with the comments beside them,
-    /// the comments about the file like `// @ts-nocheck` or a license, and the comments that an empty line separates from the
-    /// first statement, which TypeScript calls detached. Each with all comments above it. Only the comments that touch the first
-    /// statement are about that. `None` if the file has none of these.
+    /// Returns the end of the part that must stay at the top of the file. That part is the `#!` line, directives like
+    /// `"use strict"` with their trailing comments, file-level comments like `// @ts-nocheck` or a license, and
+    /// comments separated from the first statement by an empty line (TypeScript calls these detached). Every comment
+    /// above one of these is included. Comments directly above the first statement belong to that statement and aren't
+    /// included. Returns `None` if the file has none of these.
     fn end_of_head(self) -> Option<u32> {
         let file = self.file;
         let directives = (file.body().iter()).take_while(|it| it.directive().is_some());
         let mut end = (directives.last()).map(|it| self.end_with_comments_beside(it.span().end));
         let start_of_text = if file.has_bom() { 3 } else { 0 };
-        // A license in `//` lines goes on to the last line of its paragraph.
+        // A license written as `//` lines continues through the last consecutive `//` line.
         let mut end_of_license = None;
         let mut comments = file
             .comments_after(Span::empty(end.unwrap_or(start_of_text)))
             .peekable();
         while let Some(comment) = comments.next() {
             if is_about_the_next_line(&comment) {
-                // `// eslint-disable-next-line` above `/// <reference path="a" />` is about that line. The other words are about
-                // the next code: `// @ts-ignore`, `// prettier-ignore`.
+                // `// eslint-disable-next-line` above `/// <reference path="a" />` applies to that comment's line.
+                // Other directives, like `// @ts-ignore` and `// prettier-ignore`, apply to the next line of code.
                 let is_about_any_line = [&b"disable-next-line"[..], b"deno-lint-ignore"]
                     .iter()
                     .any(|it| strings::contains(comment.text(), it));
@@ -349,8 +354,8 @@ impl<'a> Fixer<'a> {
         end
     }
 
-    /// Where a statement goes that is to be the first of the file: after what has to stay first, and before the first statement
-    /// and the comments above it, which are about it.
+    /// Returns the offset for a new first statement. It's after the part that must stay at the top, and before the
+    /// first statement and the comments attached to it.
     pub fn start_of_first_statement(self) -> u32 {
         self.skip_white_space(self.end_of_head().unwrap_or(0))
     }
@@ -360,8 +365,8 @@ impl<'a> Fixer<'a> {
         at + (rest.len() - strings::trim_js_whitespace_start(rest).len()) as u32
     }
 
-    /// Puts `statement`, which is a whole line without its line break, [before the other statements](Self::start_of_first_statement)
-    /// of the file.
+    /// Inserts `statement` [before the file's other statements](Self::start_of_first_statement). `statement` is a whole
+    /// line without its line break.
     pub fn insert_first_statement(self, statement: &[u8]) -> Fix {
         let text = self.file.text();
         let first_line = strings::index_of_char_usize(text, b'\n').and_then(|at| text.get(..at));
@@ -375,7 +380,8 @@ impl<'a> Fixer<'a> {
         };
         let blank = Span::new(after, self.skip_white_space(after));
         match strings::last_index_of_char(self.file.slice(blank), b'\n') {
-            // The same text either way. This is the edit that oxlint makes, and its help quotes it.
+            // Both arms produce the same text here. This one makes the same edit as oxlint, and the help message quotes
+            // the edit.
             Some(0) | None => {
                 self.insert_after(Span::empty(after), [line_break, statement].concat())
             }
@@ -386,14 +392,15 @@ impl<'a> Fixer<'a> {
         }
     }
 
-    /// Whether a comment directly before `at` is about the line after it: `// @ts-expect-error`, `// eslint-disable-next-line`, ..
-    /// A fix that moves `at` away from it, or puts something between the two, makes it be about other code.
+    /// True if a comment directly before `at` is a next-line directive like `// @ts-expect-error` or
+    /// `// eslint-disable-next-line`. A fix that moves `at` away from it, or inserts something in between, makes the
+    /// directive apply to other code.
     pub fn has_directive_before(self, at: impl Spanned) -> bool {
         let mut comments = self.file.comments_before(at);
         comments.any(|it| is_about_the_next_line(&it))
     }
 
-    /// [`Fixer::has_directive_before`], or a `/** .. */`, which documents `at`.
+    /// True if [`Fixer::has_directive_before`] is true, or a `/** .. */` doc comment precedes `at`.
     pub fn has_directive_or_doc_before(self, at: impl Spanned) -> bool {
         let mut comments = self.file.comments_before(at);
         comments.any(|it| is_about_what_follows(&it))

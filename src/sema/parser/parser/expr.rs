@@ -192,7 +192,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_expr(kind, pos, end)
     }
 
-    /// `obj.name`, which ends with the previous token.
+    /// Adds `obj.name`, which ends at the end of the previous token.
     #[inline(always)]
     pub(crate) fn finish_dot(
         &mut self,
@@ -223,8 +223,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `newIdentifier` of an `await`, which sets `statementHasAwaitIdentifier`. A function body restores it, so this also
-    /// counts in a parameter's default, in a type and in an arrow function's expression body: see `top_level_statement`.
+    /// `newIdentifier` for an `await`, which sets `statementHasAwaitIdentifier`. A function body restores the flag. A
+    /// parameter default, a type and an arrow function's expression body don't, so an `await` there counts too. See
+    /// `top_level_statement`.
     #[cold]
     #[inline(never)]
     pub(crate) fn note_await_as_a_name(&mut self) {

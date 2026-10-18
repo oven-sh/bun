@@ -68,7 +68,7 @@ fn verbatim_line<'a>() -> Doc<'a> {
     Doc::DedentToRoot(Box::new(hardline()))
 }
 
-/// Whether `doc` takes more than one line however long lines can be.
+/// True if `doc` prints on more than one line at any line width.
 fn has_line_break(doc: &Doc<'_>) -> bool {
     let mut rest = vec![doc];
     while let Some(doc) = rest.pop() {
@@ -94,7 +94,8 @@ fn has_line_break(doc: &Doc<'_>) -> bool {
     false
 }
 
-/// The line break behind `line`, which is written as it is: blanks at its end stay.
+/// Returns the line break to print after `line`, which is printed verbatim. A `hardline` would trim trailing spaces and
+/// tabs, so a line that ends with one gets a literal line break.
 fn line_break_after<'a>(line: &[u8]) -> Doc<'a> {
     match line.last() {
         Some(b' ' | b'\t') => mark_as_root(literalline()),
@@ -122,7 +123,8 @@ fn replace_end_of_line<'a>(text: &'a [u8], separator: impl Fn() -> Doc<'a>) -> D
 }
 
 /// Code that has been formatted, line by line. A line break in a text, which is marked by a `\r`, is a literal
-/// line: see `FormatOptions::is_in_markdown`. So is one behind blanks, which are only there if they have to stay.
+/// line: see `FormatOptions::is_in_markdown`. So is a line break after a space or a tab, because a formatter only
+/// prints trailing whitespace that must be kept.
 fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
     let mut parts = Vec::new();
     let mut is_after_literal_line_break = false;
@@ -994,9 +996,10 @@ impl<'a> Printer<'a, '_> {
         parts.finish()
     }
 
-    /// Whether what follows the white space before `tokens[index]` is no longer a part of the paragraph if wrapping puts
-    /// it at the start of a line. Prettier breaks the line there: `=` before a long URL is alone on its line then, which
-    /// makes a heading of the lines above it, and a fence makes code of what follows.
+    /// True if `tokens[index]`, or the HTML after `sentence` when `index` is past the end, would stop being part of the
+    /// paragraph if wrapping put it at the start of a line. Prettier breaks the line there anyway. A `=` before a long
+    /// URL then ends up alone on its line, which turns the lines above it into a heading. A fence turns everything
+    /// after it into code.
     fn must_not_start_line(&self, sentence: &Node, tokens: &[Token], index: usize) -> bool {
         let word = match (tokens.get(index), self.node(sentence.next)) {
             (Some(word), _) => self.str(word.value),
@@ -1021,7 +1024,7 @@ impl<'a> Printer<'a, '_> {
         if leaves_paragraph(None, &[word, b" a"].concat(), syntax) {
             return true;
         }
-        // It has to be alone on its line, which it is if what follows it does not fit behind it.
+        // `word` only ends the paragraph if it's alone on its line, which happens if the next word doesn't fit.
         let mut width = self.indentation + word.len();
         let mut at = index + 1;
         while let (Some(_), Some(next)) = (tokens.get(at), tokens.get(at + 1)) {
@@ -1030,7 +1033,7 @@ impl<'a> Printer<'a, '_> {
             if width > self.options.line_width.value() as usize {
                 return true;
             }
-            // Whatever comes next is on the same line anyway.
+            // Keep measuring if the word after `next` can't be wrapped onto a new line.
             let goes_on = match (tokens.get(at + 2), tokens.get(at + 3)) {
                 (Some(_), Some(then)) => Self::may_start_block(self.str(then.value)),
                 (Some(_), None) => false,
@@ -1504,9 +1507,9 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// Whether a `*` of `node`, an emphasis, is written in a run with a `*` that is text, and the text around `node` has
-    /// another run that it could pair with. In `**a*(*)` the first and the last are text because the run of two and the
-    /// run of one add up to three. In `*_a_(*)` nothing keeps them apart.
+    /// True if a `*` delimiter of `node`, an emphasis, touches a literal `*`, and the text around `node` has another
+    /// `*` run that the literal one could pair with. In `**a*(*)` the first and last `*` are literal because the run of
+    /// two and the run of one add up to three. Printed as `*_a_(*)`, they would pair up.
     fn is_cut_from_longer_run(&self, node: &Node) -> bool {
         let byte_at = |at: usize| self.original.get(at).copied();
         let is_text = |id: NodeId| matches!(self.kind(id), Some(Kind::Sentence | Kind::Text));
@@ -1648,9 +1651,9 @@ impl<'a> Printer<'a, '_> {
             }
             Kind::Heading => {
                 let children = self.print_children(id);
-                // In MDX a heading becomes `## text`, which ends at the first line break, so text that still has one
-                // keeps its underline. Prettier never gets here: remark-parse 8 reads two lines of text above `---` as
-                // a paragraph and a rule.
+                // In MDX a setext heading is printed as `## text`. That form ends at the first line break, so a heading
+                // that still has one keeps its underline. Prettier never gets here: remark-parse 8 reads two lines of
+                // text above `---` as a paragraph and a thematic break.
                 if self.is_setext_heading(node) && (!self.is_mdx || has_line_break(&children)) {
                     let last_line = &self.original[self.tree.line_start(node.end.saturating_sub(1))
                         as usize
@@ -1938,7 +1941,7 @@ impl<'a> Printer<'a, '_> {
 
     /// What the fence of the block of code `node` is made of.
     fn fence_unit(&self, node: &Node) -> u8 {
-        // A backtick fence can't have a backtick in its info string. Prettier writes one anyway, and it's no longer a fence.
+        // A backtick fence can't have a backtick in its info string. Prettier prints one anyway and breaks the fence.
         let has_backtick = |text: Str| bun_core::strings::contains_char(self.str(text), b'`');
         let is_backtick_in_info = has_backtick(node.second) || has_backtick(node.third);
         if self.is_in_template || is_backtick_in_info {
@@ -1948,8 +1951,8 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// Code that stays as it is written. Blanks at the end of a line are part of it: Prettier and oxfmt put a `hardline`
-    /// behind every line, which takes them away.
+    /// Prints `code` verbatim. Trailing spaces and tabs are part of the code. Prettier and oxfmt put a `hardline` after
+    /// every line, which trims them.
     fn code_as_written(&self, code: &'a [u8], is_indented: bool) -> Doc<'a> {
         if !is_indented
             && self.indentation == 0
@@ -1970,12 +1973,13 @@ impl<'a> Printer<'a, '_> {
         Doc::Array(parts)
     }
 
-    /// `formatted`: the code with the line break after it, if it has been formatted, and the longest run in it of what
-    /// the fence is made of.
+    /// `formatted` is set if the code was formatted. It's the code, including the line break after it, and the length
+    /// of the longest run of the fence character in it.
     fn print_code(&self, id: NodeId, node: &Node, formatted: Option<(Doc<'a>, usize)>) -> Doc<'a> {
         let value = self.str(node.value);
         if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
-            // What follows the code starts with a `hardline`. A last line of nothing but blanks is not part of the code.
+            // Whatever is printed next starts with a `hardline`, which would trim the last line. A last line that is
+            // only whitespace isn't part of the code, so trimming it is fine.
             let end = match &value[value.trim_ascii_end().len()..] {
                 b"" => Doc::EMPTY,
                 blanks if bun_core::strings::contains_char(blanks, b'\n') => Doc::EMPTY,
@@ -2055,7 +2059,7 @@ impl<'a> Printer<'a, '_> {
         })?;
         let formatted = super::front_matter::trim_end_to_last_line(&formatted);
         let end = line_break_after(formatted);
-        // Prettier only looks at the code as it was. Markdown that had `~~~` in it has backticks now.
+        // Prettier only measures the original code. Embedded Markdown that had `~~~` fences has backtick fences now.
         let unit = self.fence_unit(node);
         let run = match is_oxfmt {
             true => max_continuous_count(formatted, unit),

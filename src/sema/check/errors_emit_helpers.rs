@@ -9,9 +9,9 @@
 //! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So
 //! the requesting positions are collected and sorted in the order it visits them: source order,
 //! except for nodes that `checkNodeDeferred` defers until everything else is checked. An expression
-//! that is checked early, because a type is requested, is placed where that happens
-//! (`emit_helpers_checked_out_of_order`). If that is in the check of an earlier file, the task of
-//! that file reports (`check_external_emit_helpers_of_later_files`).
+//! that is checked early because something requests its type is sorted at the point of that request
+//! (`emit_helpers_checked_out_of_order`). If an earlier file's check makes the request, that file's
+//! task reports the error (`check_external_emit_helpers_of_later_files`).
 
 use super::sink::held;
 use super::*;
@@ -81,8 +81,8 @@ struct Request {
     start: u32,
     end: u32,
     helpers: u32,
-    /// The expression whose check makes it (`emit_helpers_checked_out_of_order`). `NONE`: the check
-    /// of something else, which only `checkSourceFile` of the file comes to.
+    /// The expression whose check makes the request (`emit_helpers_checked_out_of_order`). `NONE`
+    /// if checking something else makes it, which only the file's own `checkSourceFile` reaches.
     expression: ExprId,
 }
 
@@ -96,8 +96,9 @@ pub(super) struct EarlierEmitHelperError {
     pub(super) start: u32,
 }
 
-/// `Request::order` of the request that the check of `expression` makes. `regular`: the number of
-/// deferrals on the way to it, and its position. `checked`: `emit_helpers_checked_out_of_order`.
+/// Returns `Request::order` for the request that checking `expression` makes. `regular` is the
+/// number of deferrals on the way to it and its position. `checked` is the first list from
+/// `emit_helpers_checked_out_of_order`.
 fn order_of_expression(
     expression: (FileId, ExprId),
     regular: (u32, u32),
@@ -122,7 +123,8 @@ struct AllAccessorDeclarations {
 
 impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
-        // FOR SPEED: a file whose `tslib` has every helper is not walked, not even for a later file with another `tslib`.
+        // FOR SPEED: skips the walk if this file's `tslib` has every helper, even though a later
+        // file may resolve to a different `tslib`.
         if !self.files().options.import_helpers || self.emit_helpers_lacks_none(file) {
             return;
         }
@@ -327,7 +329,7 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── who asks ─────────────────────────────
 
-    /// `checked`, here and below: `emit_helpers_checked_out_of_order`
+    /// `checked`, here and below, is the first list from `emit_helpers_checked_out_of_order`.
     fn emit_helpers_requests(
         &mut self,
         file: FileId,
@@ -1037,10 +1039,11 @@ impl Checker<'_, '_> {
         None
     }
 
-    /// The expressions whose check calls `checkExternalEmitHelpers` and that the check of `file` comes to because
-    /// something asks for a type, in that order. Those of `file` that it comes to before their regular order, each with
-    /// `emit_helpers_order_of_early_check`, and those of files that are checked later. `emit_helpers_requests` has the
-    /// conditions, and makes the requests.
+    /// Returns the expressions whose check calls `checkExternalEmitHelpers` and that the check of
+    /// `file` reaches because something requests a type, in the order it reaches them. The first
+    /// list is the expressions of `file` that are reached before their regular position, each with
+    /// its `emit_helpers_order_of_early_check`. The second list is the expressions of files that
+    /// are checked later. `emit_helpers_requests` tests the conditions and makes the requests.
     fn emit_helpers_checked_out_of_order(
         &mut self,
         file: FileId,
@@ -1069,10 +1072,9 @@ impl Checker<'_, '_> {
         (early, elsewhere)
     }
 
-    /// `Request::order` of what is checked while `c.currentNode` is `node`, as
-    /// `checkSourceElement` or `checkDeferredNode` has set it, because something asks for its type.
-    /// `None`: `node` is the innermost such node around `e`, so `e` is checked in its regular
-    /// order.
+    /// Returns `Request::order` for `e` when something requests its type while `c.currentNode`, as
+    /// set by `checkSourceElement` or `checkDeferredNode`, is `node`. Returns `None` if `node` is
+    /// the innermost source element around `e`, because `e` is then checked in its regular order.
     fn emit_helpers_order_of_early_check(
         &self,
         file: FileId,

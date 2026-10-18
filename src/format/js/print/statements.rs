@@ -130,8 +130,9 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
     })
 }
 
-/// [`expression_statement_needs_semicolon`] for a statement that is copied from the source, from `start` on. The text can start
-/// with a parenthesis that would not be written: `a = b⏎// prettier-ignore⏎(c).d()`, as Prettier prints it, calls `b`.
+/// Like [`expression_statement_needs_semicolon`], for a statement that is copied verbatim from the source starting at
+/// `start`. The copied text can start with a parenthesis that the printer would have dropped. Prettier's output for
+/// `a = b⏎// prettier-ignore⏎(c).d()` calls `b`.
 pub(crate) fn ignored_statement_needs_semicolon<'a>(
     statement: Stmt<'a>,
     start: u32,

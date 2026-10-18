@@ -503,11 +503,11 @@ impl<'t> Builder<'t, '_, '_> {
                     .unwrap_or_default(),
             });
 
-        // A comment that waits for the end of the line would be written in the string, as Prettier does.
+        // Flush pending line-suffix comments. Otherwise they'd be printed inside the string, as in Prettier.
         self.push(FormatElement::LineSuffixBoundary);
         self.token("\"\"\"");
-        // `""" a """` stays as it is: the blanks are part of the value, and Prettier drops them. On a line of its own,
-        // those at the start would be indentation, and nobody would see those at the end.
+        // `""" a """` is printed as is. The padding is part of the value, and Prettier drops it. On its own line, the
+        // leading whitespace would turn into indentation and the trailing whitespace would be invisible.
         let ends_with_blank = |line: &[u8]| matches!(line.last(), Some(b' ' | b'\t'));
         let is_padded = leading_blanks(content) > 0 || ends_with_blank(content);
         if count == 1 && is_padded && bun_core::strings::index_of_any(content, b"\r\n").is_none() {
@@ -526,8 +526,8 @@ impl<'t> Builder<'t, '_, '_> {
             }
             empty_lines = 0;
             self.text(line);
-            // Blanks at the end of a line are part of the value too. A `hardline` trims them, as in Prettier. A line
-            // break that is text does not, and the `hardline` that follows it only indents.
+            // Trailing spaces and tabs are part of the value too. A `hardline` trims them, as in Prettier. A line break
+            // printed as text doesn't, and the `hardline` after it then only indents.
             is_line_ended = ends_with_blank(line);
             if is_line_ended {
                 self.f.write_text(b"\n", Some(TextWidth::multiline(0)));
@@ -537,7 +537,8 @@ impl<'t> Builder<'t, '_, '_> {
         self.token("\"\"\"");
     }
 
-    /// A line break after so many empty lines. `is_line_ended`: the line break at the end of the line is written.
+    /// Ends the current line and prints `empty_lines` empty lines. `is_line_ended` is true if the current line's line
+    /// break is already printed.
     fn line_breaks(&mut self, empty_lines: usize, is_line_ended: bool) {
         match empty_lines {
             0 => {}

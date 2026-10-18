@@ -792,8 +792,9 @@ fn of_prettier(directory: &[u8], at: usize) -> Option<Vec<u8>> {
     has_it.then(|| [b"prettier in ", name].concat())
 }
 
-/// Whether the configuration file nearest to `directory`, from there upwards, is one of oxfmt. `None`: there is none. The names
-/// tell, and what a `package.json` has: nothing is loaded, so a configuration that is a program does not run.
+/// Returns `Some(true)` if the nearest config file, walking up from `directory`, is an oxfmt config, and `None` if
+/// there's no config file. Only file names and the contents of `package.json` are checked. Nothing is loaded, so a
+/// config that is a program doesn't run.
 fn nearest_is_of_oxfmt(directory: &[u8]) -> Option<bool> {
     paths::ancestors(directory).find_map(|directory| {
         let at = (0..NAMES.len()).find(|&at| {
@@ -815,7 +816,8 @@ struct Formatters {
 }
 
 impl Formatters {
-    /// Those in the `package.json` nearest to `directory` that has one of them.
+    /// Returns the formatters listed in the nearest `package.json`, walking up from `directory`, that lists at least
+    /// one.
     fn depended_on(directory: &[u8]) -> Formatters {
         let found = package_that_depends_on(directory, [b"oxfmt", b"vite-plus", b"prettier"]);
         let [oxfmt, vite_plus, prettier] = found.map_or([false; 3], |it| it.1);
@@ -1097,7 +1099,7 @@ impl<'c> Configs<'c> {
             classes: Arc::default(),
         };
         let mut formatters = Formatters::default();
-        // With `--config` the files of the project are not loaded.
+        // With `--config`, the project's config files aren't loaded.
         let of_project = match &named {
             Some(_) => Ok(is_like_oxfmt.or_else(|| nearest_is_of_oxfmt(&environment.cwd))),
             None => (configs.for_directory(&environment.cwd))
@@ -1480,7 +1482,7 @@ impl<'c> Configs<'c> {
 
     /// One-time note for the user about which of two config files was picked.
     pub(crate) fn note(&self) -> Option<&[u8]> {
-        // What package.json depends on is also asked for a file that `--config` names.
+        // package.json's dependencies are also checked when `--config` is passed, but the note doesn't apply then.
         let is_looked_for = self.named.is_none() && self.options.config_lookup;
         self.note.get().filter(|_| is_looked_for).map(|it| &it[..])
     }

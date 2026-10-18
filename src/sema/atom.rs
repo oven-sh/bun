@@ -1,7 +1,7 @@
 //! Interned names. One table for the whole program, filled from every parser thread, and frozen
 //! while the program is checked: a text first seen during checking becomes a task-local atom of the
 //! task that encounters it (`OwnStore`), and the merge at the barrier publishes it. A task with
-//! `Sharing::Publishes` adds it to the table at once, as a parser thread does.
+//! `Sharing::Publishes` adds it to the table immediately, like a parser thread.
 
 use crate::local::LOCAL;
 use crate::session::Session;
@@ -149,8 +149,9 @@ pub struct Interner<'s> {
     /// The atoms below `first`: see `over`. Other programs may add to this table concurrently.
     below: &'s Tables,
     first: u32,
-    /// Sequence number of `tables` among all that have been created. Every `intern` reads it, so it
-    /// is not in `Tables`, next to the length of `texts`, which every new atom of any thread writes.
+    /// Sequence number of `tables` among all tables ever created. Every `intern` call reads it. In
+    /// `Tables` it would be next to the length of `texts`, which every thread writes when it adds
+    /// an atom, and that would cause false sharing.
     number: u64,
 }
 
@@ -160,7 +161,7 @@ pub struct Interner<'s> {
 struct Tables {
     places: Box<GrowingPlaces<Global, SHARDS>>,
     texts: Texts,
-    /// `class_of` each text, `class::BITS` bits for each.
+    /// Class of each text (`class_of`), packed at `class::BITS` bits per text.
     classes: Cells<AtomicU32>,
     /// `Interner::in_common`
     is_in_common: bool,
@@ -176,8 +177,8 @@ impl Tables {
         }
     }
 
-    /// `text` is about to be the text at `index` of `texts`. Whoever adds a text calls it before another thread can
-    /// learn of the atom. Nearly all texts have the class 0, and nothing is written for them.
+    /// Stores the class of `text`, the text at `index` of `texts`. The thread that adds a text must call this before
+    /// any other thread can see the atom. Nearly all texts have class 0, which needs no write.
     fn set_class(&self, index: u32, text: &[u8]) {
         let class = class_of(text);
         if class != 0 {
@@ -194,14 +195,14 @@ impl Tables {
     }
 }
 
-/// What the checker asks about a name without wanting its text. The texts of a large program do not fit in the cache of
-/// the processor, and these do.
+/// Facts about a name that the checker can query without reading its text. A large program's texts don't fit in the CPU
+/// cache, but these bits do.
 mod class {
-    /// It starts with `SYMBOL_NAME_PREFIX`.
+    /// The name starts with `SYMBOL_NAME_PREFIX`.
     pub(super) const IS_SYMBOL_NAME: u32 = 1;
-    /// It starts with `PRIVATE_NAME_PREFIX`.
+    /// The name starts with `PRIVATE_NAME_PREFIX`.
     pub(super) const IS_PRIVATE_SYMBOL_NAME: u32 = 1 << 1;
-    /// It starts with `#`.
+    /// The name starts with `#`.
     pub(super) const STARTS_WITH_HASH: u32 = 1 << 2;
     /// `is_numeric_literal_name`
     pub(super) const IS_NUMERIC: u32 = 1 << 3;
@@ -209,13 +210,13 @@ mod class {
     pub(super) const PER_CELL: u32 = u32::BITS / BITS;
 }
 
-/// `false`: the class of a name is worked out from its text every time.
+/// If `false`, a name's class is recomputed from its text on every query.
 const KEEPS_CLASSES: bool = true;
 
-/// `true`: a class that is read is also worked out from the text, and the two must be the same.
+/// If `true`, every stored class that is read is also recomputed from the text, and both must match.
 const CHECKS_CLASSES: bool = false;
 
-/// The bits of `class` for a text.
+/// Returns the `class` bits for `text`.
 fn class_of(text: &[u8]) -> u32 {
     match text {
         [0xFE, b'@', ..] => class::IS_SYMBOL_NAME,
@@ -226,12 +227,12 @@ fn class_of(text: &[u8]) -> u32 {
     }
 }
 
-/// `isNumericLiteralName`: the name round-trips through a number and back to a string.
+/// `isNumericLiteralName`: true if the name round-trips through a number and back to a string.
 fn is_numeric_literal_name(text: &[u8]) -> bool {
-    // The string form of a number begins with a digit or a `-`, or is one of two words.
+    // A number's string form starts with a digit or `-`, or is `Infinity` or `NaN`.
     match text.first().copied() {
         Some(b'0'..=b'9') => {
-            // An integer that a number represents exactly prints as its digits.
+            // An `f64` represents an integer this short exactly, so it prints as the same digits.
             if text.len() <= 15 && text.iter().all(u8::is_ascii_digit) {
                 return text[0] != b'0' || text.len() == 1;
             }
@@ -810,12 +811,12 @@ impl<'s> Interner<'s> {
         Atom(places.find_or_add(spread, is_it, add))
     }
 
-    /// For the merge at the barrier, which is about to add `text` as the text of `atom`.
+    /// Stores the class of `text`. The merge at the barrier calls this right before it adds `text` as `atom`'s text.
     pub(crate) fn set_class(&self, atom: Atom, text: &[u8]) {
         self.tables.set_class(atom.0 - self.first, text);
     }
 
-    /// `class_of` the text of `atom`.
+    /// Returns the stored class of `atom`'s text.
     #[inline]
     fn class(&self, atom: Atom) -> u32 {
         match atom.0.checked_sub(self.first) {
@@ -890,7 +891,7 @@ impl<'p, 's> Atoms<'p, 's> {
         let is_it = |i: u32| &**tables.texts.get(i - first) == text;
         let own = || match self.own.sharing() {
             Sharing::Off => tables.places.find_frozen(spread, is_it),
-            // Tasks add atoms meanwhile.
+            // Other tasks may be adding atoms concurrently.
             Sharing::Finds | Sharing::Publishes => tables.places.find(spread, is_it),
         };
         let below = self.published.find_below(spread, text);
@@ -932,7 +933,7 @@ impl<'p, 's> Atoms<'p, 's> {
         self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
     }
 
-    /// `class_of` the text of `atom`.
+    /// Returns `class_of` for `atom`'s text.
     #[inline]
     fn class(&self, atom: Atom) -> u32 {
         if !KEEPS_CLASSES || atom.is_own() {
@@ -953,13 +954,13 @@ impl<'p, 's> Atoms<'p, 's> {
         atom.is_some() && self.class(atom) & class::IS_SYMBOL_NAME != 0
     }
 
-    /// `IsPrivateIdentifierSymbol`: it starts with `PRIVATE_NAME_PREFIX`.
+    /// `IsPrivateIdentifierSymbol`: true if the name starts with `PRIVATE_NAME_PREFIX`.
     #[inline]
     pub fn is_private_symbol_name(&self, atom: Atom) -> bool {
         self.class(atom) & class::IS_PRIVATE_SYMBOL_NAME != 0
     }
 
-    /// It starts with `PRIVATE_NAME_PREFIX` or with `#`.
+    /// True if the name starts with `PRIVATE_NAME_PREFIX` or `#`.
     #[inline]
     pub fn is_private_name(&self, atom: Atom) -> bool {
         self.class(atom) & (class::IS_PRIVATE_SYMBOL_NAME | class::STARTS_WITH_HASH) != 0

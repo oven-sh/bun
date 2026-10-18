@@ -570,7 +570,7 @@ pub struct Options {
     pub ignore_path: Option<Vec<u8>>,
     /// `ignorePath` of bunfig.toml as it is written there: to oxlint it is a name, for every directory.
     pub ignore_file_name_of_bunfig: Option<Vec<u8>>,
-    /// [`Options::load_pipes`]
+    /// Filled by [`Options::load_pipes`].
     pub(crate) pipes: fs::NamedPipes,
     pub disable_nested_config: bool,
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
@@ -1036,7 +1036,7 @@ impl Options {
         self
     }
 
-    /// Reads the pipes that `--config` and `--ignore-path` name: [`fs::NamedPipes::load`].
+    /// Reads any named pipes passed to `--config` and `--ignore-path`. See [`fs::NamedPipes::load`].
     pub(crate) fn load_pipes(&mut self, cwd: &[u8]) -> Result<(), Vec<u8>> {
         let mut named = Vec::new();
         if !self.is_config_of_bunfig {

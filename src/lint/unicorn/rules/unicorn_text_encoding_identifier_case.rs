@@ -62,8 +62,9 @@ impl TextEncodingIdentifierCase {
     }
 }
 
-/// Where both spellings do the same: `fs.readFile(path, "utf-8")`, `new TextDecoder("utf8")`. Anywhere else the string can be
-/// compared with `decoder.encoding`, which is always `"utf-8"`, or be sent as a `charset`. oxlint rewrites it everywhere.
+/// True where both spellings behave the same: `fs.readFile(path, "utf-8")`, `new TextDecoder("utf8")`. Anywhere else
+/// the string could be compared with `decoder.encoding`, which is always `"utf-8"`, or sent as a `charset`. oxlint
+/// rewrites it everywhere.
 fn is_read_as_label(node: Node) -> bool {
     const METHODS: [&str; 2] = ["readFile", "readFileSync"];
     const MODULES: [&str; 4] = ["fs", "node:fs", "fs/promises", "node:fs/promises"];

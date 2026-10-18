@@ -1,8 +1,8 @@
 //! `.gitignore` and other files in its format. ESLint doesn't read them. oxlint does, so they apply
 //! when the config is an `.oxlintrc.json` and when there's no config. Prettier only reads the ones in
-//! the working directory. With a Prettier config `bun fmt` reads those, and the `info/exclude` of the
-//! repository that the working directory is in. With no config of another tool it reads every
-//! `.gitignore`, as Git does.
+//! the working directory. With a Prettier config, `bun fmt` reads those plus the `info/exclude` of
+//! the repository that contains the working directory. Without another tool's config, it reads
+//! every `.gitignore`, like Git.
 //!
 //! This module finds the files and tracks which directory each file's lines belong to.
 //! [`bun_lint::ignore`] decides what a line matches.
@@ -237,7 +237,7 @@ pub(crate) struct OfGit {
     stops_at_roots: bool,
     /// `info/exclude` is found as the crate does: [`common_directory`].
     is_for_oxc: bool,
-    /// The lines are read as Prettier reads them: [`OF_PRETTIER`].
+    /// Parse the lines the way Prettier does. See [`OF_PRETTIER`].
     reads_like_prettier: bool,
 }
 
@@ -269,8 +269,9 @@ impl OfGit {
         .with_all_above_and_in(directory, None)
     }
 
-    /// The same for `bun fmt` with no config of another tool. It reads the lines the way it reads those of `.prettierignore`.
-    /// Outside of a repository Git ignores nothing, and Prettier reads the file in `cwd`: none above `cwd` counts.
+    /// Like [`OfGit::above_and_in`], for `bun fmt` without another tool's config. Lines are parsed the same way as in
+    /// `.prettierignore`. Outside a repository, Git ignores nothing and Prettier only reads the file in `cwd`, so files
+    /// above `cwd` are skipped.
     pub(crate) fn above_and_in_for_fmt(directory: &[u8], cwd: &[u8]) -> Self {
         Self {
             stops_at_roots: true,
@@ -280,7 +281,7 @@ impl OfGit {
         .with_all_above_and_in(directory, Some(cwd))
     }
 
-    /// `top`: where the way up ends outside of a repository. From a directory that isn't in it, there is no way up.
+    /// Outside a repository, the walk up stops at `top`. If `directory` isn't inside `top`, only `directory` is read.
     fn with_all_above_and_in(mut self, directory: &[u8], top: Option<&[u8]>) -> Self {
         let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
         let nearest = directories.iter().position(|it| is_root(it));
@@ -339,7 +340,7 @@ impl OfGit {
         paths::ancestors(path).any(|directory| self.is_ignored(directory, true))
     }
 
-    /// Whether the file at `path` is ignored, or a directory that it is in.
+    /// True if the file at `path` or any directory above it is ignored.
     pub(crate) fn is_file_ignored_anywhere(&self, path: &[u8]) -> bool {
         self.is_directory_ignored_anywhere(paths::dirname(path)) || self.is_ignored(path, false)
     }
@@ -401,9 +402,10 @@ impl Files {
     }
 }
 
-/// Whether `file`, which has `text`, has a line for `argument`, a file that oxlint is to lint. It asks the crate `ignore` with
-/// both as they are spelled, `Gitignore::new(file).matched(argument, false)`: where `argument` does not start with the
-/// directory in `file`, the lines are compared with all of it.
+/// True if the ignore file `file`, whose contents are `text`, ignores `argument`, a file passed to oxlint on the
+/// command line. oxlint calls the `ignore` crate with both paths as typed:
+/// `Gitignore::new(file).matched(argument, false)`. If `argument` doesn't start with `file`'s directory, the lines are
+/// matched against all of `argument`.
 pub(crate) fn has_argument(text: &[u8], file: &[u8], argument: &[u8]) -> bool {
     let mut root = &file[..strings::last_index_of_char(file, b'/').unwrap_or(0)];
     while let [rest @ .., b'/'] = root {

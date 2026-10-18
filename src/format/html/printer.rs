@@ -330,7 +330,8 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             start += tags.len_of(|tags, out| tags.opening_tag_start_marker(child, out));
         }
         let mut end = self.end_location(child) as usize;
-        // Prettier only asks what follows. The parent of the last child writes it once more: `<a><b></b>></a>`.
+        // Prettier only checks whether the next sibling borrows the marker. The parent borrows it from its last child,
+        // so Prettier prints it twice: `<a><b></b>></a>`.
         if tags.lends_closing_tag_end_marker(child) {
             end = end
                 .saturating_sub(tags.len_of(|tags, out| tags.closing_tag_end_marker(child, out)));
@@ -519,8 +520,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         let (tags, tree, options) = (self.tags(), self.tree, self.options);
         let node = &tree[id];
         if node.has(Flags::PRESERVES_CONTENT) {
-            // The tags come with what they borrow. Prettier writes that once more around them: `<b>a</b>><pre>` where
-            // all white space counts, `<span>><!--[if a]><p>b<![endif]--></span</span>`.
+            // The tags already include the markers they borrow. Prettier prints those markers again around them:
+            // `<b>a</b>><pre>` with strict whitespace sensitivity, and
+            // `<span>><!--[if a]><p>b<![endif]--></span</span>`.
             self.out.start_group();
             self.print_opening_tag(id);
             self.out.end_group();

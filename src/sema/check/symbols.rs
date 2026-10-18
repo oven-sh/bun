@@ -3845,7 +3845,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// for `on_reentry` to find. Neither does it where the return type needs no query.
     #[inline]
     pub(super) fn non_circular_return_type_of_signature(&mut self, sig: SigId) -> TypeId {
-        // What is kept is resolved, and nothing enters its resolution again.
+        // A cached return type is already resolved, so its resolution is never re-entered.
         if let Some(kept) = self.kept_return_type(sig) {
             return kept;
         }
@@ -4821,8 +4821,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isLiteralOfContextualType`: whether `contextual` accepts the literal type `candidate`, as
     /// opposed to its base type only.
     pub fn is_literal_context(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
-        // Without a type variable in `contextual` no constraint is asked for, and all that counts of each constituent is
-        // its kind.
+        // If `contextual` has no type variable, no constraint is needed and only the kind of each constituent matters.
         let kinds = self.types().member_flags(contextual);
         if !shortcuts::LITERAL_CONTEXTS || kinds & tf::INSTANTIABLE_NON_PRIMITIVE != 0 {
             return self.is_literal_context_of_each(candidate, contextual);
@@ -4842,7 +4841,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_literal_context
     }
 
-    /// `is_literal_context`, constituent by constituent.
+    /// `is_literal_context`, computed by walking the constituents.
     fn is_literal_context_of_each(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
         if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(contextual) {
             return parts.iter().any(|&p| self.is_literal_context(candidate, p));

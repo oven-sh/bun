@@ -292,8 +292,9 @@ fn natural_sort_units<T: Unit>(x: &[T], y: &[T]) -> Ordering {
     let (x, y) = (&x[x_start..x_end], &y[y_start..y_end]);
 
     // Dates, which `Date.parse` is asked about, are not recognized.
-    // The package compares the two as numbers if `y` is one, whatever `x` is. So it says that `12a` is less than `0x10B` and `0x10B`
-    // less than `12a`, and the two change places each time they are sorted. Here both have to be one.
+    // The package compares `x` and `y` as numbers if `y` is hexadecimal, whatever `x` is. So it reports that `12a` is
+    // less than `0x10B` and that `0x10B` is less than `12a`, and they swap places on every sort. Here both must be
+    // hexadecimal.
     if let (Some(x_value), Some(y_value)) = (hexadecimal(x), hexadecimal(y)) {
         match x_value.total_cmp(&y_value) {
             Ordering::Equal => {}

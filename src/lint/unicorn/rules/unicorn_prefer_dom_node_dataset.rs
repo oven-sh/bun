@@ -57,8 +57,9 @@ impl Rule for PreferDomNodeDataset {
         };
         let is_removal = method.name().is("removeAttribute");
         let place = if is_removal { string_lit.span() } else { method.span() };
-        // The elements of `HTMLRewriter` and of XML libraries have these methods and no `dataset`. Where there is no such attribute,
-        // `getAttribute` gives `null` and `dataset` gives `undefined`. `data-a-1` is `dataset["a-1"]`, not what oxlint writes.
+        // `HTMLRewriter` elements and XML libraries' elements have these methods but no `dataset`. For a missing
+        // attribute, `getAttribute` returns `null` and `dataset` returns `undefined`. `data-a-1` is `dataset["a-1"]`,
+        // which oxlint gets wrong.
         let is_plain_name = || {
             let name = dataset_property_name;
             let mut pairs = name.iter().zip(name.iter().skip(1));

@@ -117,7 +117,7 @@ impl MethodSignatureStyle {
         let (Some(func), Some(key)) = (member.func(), MethodKey::of(member)) else {
             return;
         };
-        // Another declaration of the interface can have an overload of the method. Two properties of one name are an error.
+        // Another declaration of the interface may overload this method, and two properties with one name are an error.
         let is_safe = || match member.parent() {
             Node::Stmt(statement) => match statement.kind() {
                 StmtKind::Interface(interface) => is_only_declaration(interface),
@@ -156,7 +156,8 @@ impl MethodSignatureStyle {
                 }
             }
             text.extend_from_slice(get_delimiter(member));
-            // The comments of the overloads, and those between them. One that stayed where it is would be about the next member.
+            // Don't fix if there are comments in or between the overloads. A comment that stayed behind would look like
+            // it describes the next member.
             let end = fixes.iter().map(|it| it.span.end).fold(overloads.last()?.span().end, u32::max);
             let all = Span::new(overloads.first()?.span().start, end);
             if !fixer.keeps_comments(&fixer.replace(all, &text[..])) {

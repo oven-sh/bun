@@ -86,7 +86,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         (
             &b"sourceType"[..],
             text(match language.source_type {
-                // What Babel and oxc call it when the syntax of the file decides.
+                // Babel's and oxc's name for a source type that's decided by the file's syntax.
                 _ if language.without_module_syntax.is_some() => b"unambiguous",
                 SourceType::Module => b"module",
                 SourceType::Script => b"script",

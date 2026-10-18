@@ -97,10 +97,10 @@ mod fake_mimalloc {
         heap.used += total;
         if heap.end - heap.at < total {
             let chunk = total.max(CHUNK);
-            // Allocated separately, so that the rest of the current chunk stays usable.
+            // A large request gets its own allocation, so the rest of the current chunk stays usable.
             let is_separate = total > CHUNK / 4;
-            // As with mimalloc, a long zeroed block comes from the operating system, and a page of it that is never
-            // touched is never resident. The tables of `bun_sema::table` count on that.
+            // Like mimalloc, get a large zeroed allocation straight from the operating system, so a page that is never
+            // touched is never resident. The tables in `bun_sema::table` rely on that.
             // SAFETY: plain libc allocation.
             let base = unsafe {
                 if zero && is_separate {

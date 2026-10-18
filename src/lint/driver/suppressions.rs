@@ -68,8 +68,8 @@ fn entry<'e, T: Default>(entries: &'e mut Vec<(Vec<u8>, T)>, key: &[u8]) -> &'e 
 
 impl Suppressions {
     /// `load`. A file that does not exist has nothing in it. One that cannot be read is as one that cannot be parsed.
-    /// ESLint takes any object, and `save` then writes it back without what it didn't understand. Here a file with anything but
-    /// `{ file: { rule: { count } } }` in it is some other file, like a `package.json`, and is refused.
+    /// ESLint accepts any object, and its `save` then drops whatever it didn't understand. Here, anything not shaped
+    /// like `{ file: { rule: { count } } }` is assumed to be some other file, like a `package.json`, and is rejected.
     pub(crate) fn load(path: &[u8]) -> Result<Suppressions, Fatal> {
         let text = match fs::read(path) {
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
@@ -99,7 +99,8 @@ impl Suppressions {
             .ok_or_else(|| Fatal([b"Not a suppressions file: ", path].concat()))
     }
 
-    /// `save`: `stringify(suppressions, { space: 2 })` of `json-stable-stringify`. `cwd`: see [`fs::write_new`].
+    /// `save`. The output matches `stringify(suppressions, { space: 2 })` from `json-stable-stringify`. See
+    /// [`fs::write_new`] for `cwd`.
     #[optimize(size)]
     pub(crate) fn save(&mut self, cwd: &[u8], path: &[u8]) -> Result<(), Fatal> {
         bun_lint::utils::sort::sort_by(&mut self.0, |a, b| a.0.cmp(&b.0));

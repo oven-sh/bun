@@ -74,10 +74,10 @@ impl<'s, 'a> Statement<'s, 'a> {
         })
     }
 
-    /// A script gets the value of a custom property as it is written, and `style()` compares it that way. So what it is made
-    /// of stays as it is, nothing gets a blank next to it that has none, and no line ends after a comma that touches what
-    /// follows it. Prettier and oxfmt format it like any other value: `#FFF` is `#fff`, `.50` is `0.5`, `'a'` is `"a"`, `1,000`
-    /// is `1, 000`, and for Prettier `16:9` is `16: 9`.
+    /// True for a custom property. Scripts read its value exactly as written, and `style()` queries compare it that
+    /// way. So its tokens are printed unchanged, spaces aren't added where there were none, and lines don't break after
+    /// a comma that touches the next token. Prettier and oxfmt format it like any other value: `#FFF` becomes `#fff`,
+    /// `.50` becomes `0.5`, `'a'` becomes `"a"`, `1,000` becomes `1, 000`, and in Prettier `16:9` becomes `16: 9`.
     pub(crate) fn is_custom_property(&self) -> bool {
         self.node().kind == Kind::Decl && self.node().prop.starts_with(b"--")
     }
@@ -806,7 +806,7 @@ impl<'a> Printer<'a, '_> {
                 Value::Parsed(_)
                     if printer.is_oxfmt
                         && node.prop.starts_with(b"--")
-                        // They are in the text too, and are printed after the value.
+                        // The raw text includes `!default` and `!global`, which are also printed after the value.
                         && !(node.scss_default || node.scss_global)
                         && is_more_than_values(printer.context.of(raw.value), printer.syntax()) =>
                 {
@@ -888,8 +888,8 @@ impl<'a> Printer<'a, '_> {
         let is_in_less_variable = statement
             .parent()
             .is_some_and(|parent| parent.kind == Kind::AtRule && parent.variable);
-        // The options of a plugin of Tailwind are the keys of an object of JavaScript, and what is in `@font-feature-values` is
-        // named by the author. Prettier prints `classname` for `className`.
+        // Tailwind `@plugin` options are JavaScript object keys, and the names in `@font-feature-values` blocks are
+        // chosen by the author. Both are case-sensitive. Prettier prints `className` as `classname`.
         let is_name_of_the_author = statement.inside_at_rule(&[
             b"plugin",
             b"stylistic",
@@ -1217,7 +1217,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// `CssNode::line_comment`, after a `;`.
+    /// Prints `CssNode::line_comment` after a `;`.
     fn print_line_comment(&mut self, node: &CssNode<'a>) {
         if !node.line_comment.is_empty() {
             self.sink.token(" ");
@@ -1514,8 +1514,8 @@ impl<'a> Printer<'a, '_> {
                         self.sink.line();
                     }
                     self.sink.text(value);
-                    // `:nth-child(+n+3)` and the keyframe `+50%`: with a blank after the sign, which Prettier prints, they
-                    // aren't selectors.
+                    // `:nth-child(+n+3)` and the keyframe selector `+50%`. Prettier prints a space after the sign,
+                    // which makes them invalid.
                     let is_sign = is_first
                         && value == b"+"
                         && (selectors.text((node.value.1, node.value.1 + 1)).first())
@@ -1535,7 +1535,8 @@ impl<'a> Printer<'a, '_> {
                     return;
                 }
                 if value.iter().all(u8::is_ascii_whitespace) {
-                    // The first blank of `.\31  .b` ends the escape. Prettier prints `.\31 .b`, which is one element.
+                    // The first space of `.\31  .b` ends the escape and the second is the combinator. Prettier prints
+                    // `.\31 .b`, which is a compound selector.
                     if value.len() > 1
                         && previous.is_some_and(|it| {
                             let name = (selectors.node(it).value.0, node.value.0);

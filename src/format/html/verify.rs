@@ -4,8 +4,8 @@
 //!
 //! - The elements, comments, blocks and declarations are the same, in the same order and in each other the same way, and the
 //!   elements have the same attributes in the same order. Upper and lower case do not count.
-//! - Where there is text in HTML that is more than white space, there still is, and nowhere else: a `>` between two elements
-//!   is new text.
+//! - HTML text that isn't just whitespace shows up in the same positions as before and nowhere else. A stray `>`
+//!   between two elements counts as new text.
 //! - All that is text has the same letters as often, whatever becomes of white space, punctuation, numbers and upper and
 //!   lower case: text, comments, scripts, style sheets, the values of attributes, expressions. So nothing with a letter in
 //!   it is lost or there twice, in whatever language it is. That letters have changed places is not noticed.
@@ -198,7 +198,7 @@ impl Reader {
     }
 }
 
-/// Whether what is in `id` is in another language. Formatting that can leave nothing: `<script>;</script>`.
+/// True if `id` contains code in another language. Formatting can remove all of it, as in `<script>;</script>`.
 #[optimize(size)]
 fn has_other_language(tree: &Tree<'_>, id: Id, parser: Parser) -> bool {
     matches!(&tree[id].name[..], b"script" | b"style" | b"mj-style")
@@ -214,7 +214,7 @@ fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
     // What is in a node comes behind it.
     let root = tree.root;
     let mut next = tree.first_child(root);
-    // Texts next to each other are one.
+    // Adjacent text nodes count as one.
     let mut is_after_text = false;
     while let Some(id) = next {
         if !matches!(tree[id].kind, Kind::Text | Kind::Cdata) {

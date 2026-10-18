@@ -418,18 +418,19 @@ impl<'v> ValueRef<'v> {
         self.values.value(self.id)
     }
 
-    /// A number with its unit, as the text has them. `None`: the two have been changed since.
+    /// Returns a number with its unit as written in the source, or `None` if either was changed after parsing.
     pub(crate) fn number_as_written(self) -> Option<&'v [u8]> {
         let (number, unit) = (self.node().value, self.node().unit);
         (number.1 == unit.0).then(|| self.values.text((number.0, unit.1)))
     }
 
-    /// Whether the `@` of `at_word` is right after this number in the text. The `loc` of a number with a sign does not tell.
+    /// True if the `@` of `at_word` immediately follows this number in the source. A signed number's `loc` can't be
+    /// used to check this.
     pub(crate) fn is_number_right_before(self, at_word: ValueRef<'v>) -> bool {
         self.kind() == ValueKind::Number && self.node().unit.1 + 1 == at_word.node().value.0
     }
 
-    /// How many blanks follow its `value`, or the unit of a number, in the text.
+    /// Returns the number of whitespace bytes after its `value` in the source, or after its unit if it's a number.
     pub(crate) fn blanks_behind(self) -> usize {
         let end = match self.kind() {
             ValueKind::Number => self.node().unit.1,
@@ -447,7 +448,7 @@ impl<'v> ValueRef<'v> {
         !rest.unwrap_or_default().trim_ascii_start().is_empty()
     }
 
-    /// Another node of the same values.
+    /// Returns a reference to another node in the same `Values`.
     pub(crate) fn at(self, id: ValueId) -> ValueRef<'v> {
         ValueRef { id, ..self }
     }

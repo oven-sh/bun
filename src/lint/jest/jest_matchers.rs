@@ -959,8 +959,8 @@ pub(crate) mod no_unneeded_async_expect_function {
         let Some(parsed_expect_call) = parse_expect_jest_fn_call(ctx.file, jest_node) else {
             return;
         };
-        // In `bun test`, `expect(asyncFunction).toThrow()` passes and `expect(promise).toThrow()` fails. Only `.rejects` and
-        // `.resolves` take a promise.
+        // In `bun test`, `expect(asyncFunction).toThrow()` passes and `expect(promise).toThrow()` fails. Only
+        // `.rejects` and `.resolves` accept a promise.
         let takes_promise = ctx.runner != Runner::Bun
             || parsed_expect_call
                 .modifiers()
@@ -992,7 +992,7 @@ pub(crate) mod no_unneeded_async_expect_function {
         {
             ctx.report(first_arg, NO_UNNEEDED_ASYNC_EXPECT_FUNCTION)
                 .fix(|fixer| {
-                    // Only the call is kept, so a comment anywhere else in the function would be lost.
+                    // The fix keeps only the call, so a comment anywhere else in the function would be dropped.
                     let mut comments = fixer.file().comments_in(first_arg);
                     let keeps_comments = comments.all(|it| inner_call.span().contains(it.span()));
                     keeps_comments.then(|| fixer.replace(first_arg, inner_call.text()))

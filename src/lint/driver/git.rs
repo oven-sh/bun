@@ -1,5 +1,5 @@
-//! `--staged` and `--changed` for `bun lint` and `bun fmt`. Both get their list of files from git. `--staged` also gets the
-//! text of a file from git if the index has something else than the disk.
+//! `--staged` and `--changed` for `bun lint` and `bun fmt`. Both get their list of files from git. `--staged` also
+//! reads a file's text from git if the index and the disk differ.
 //!
 //! Git runs in the working directory and inherits this process's environment. In a hook, that environment tells git
 //! where the index is. These calls start no program that `git diff --name-only` wouldn't start itself: no pager, no
@@ -124,9 +124,10 @@ fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
     Fatal(text)
 }
 
-/// `stored`, a blob, with the line endings that a checkout gives it. Git can store LF for a file that it checks out with
-/// CRLF (`eol=crlf`, `core.autocrlf`). Every other file of the run is read as it's checked out, so this one has to match.
-/// Git only says what it converts in one more call, and the file at `path` on disk shows it too: every line of it ends in CRLF.
+/// Returns the blob `stored`, converted to the line endings a checkout would write. Git can store LF for a file that it
+/// checks out with CRLF (`eol=crlf`, `core.autocrlf`). Every other file in the run is read as checked out, so this one
+/// has to match. Asking git whether it converts the file costs another call, so this looks at the file at `path` on
+/// disk instead: it's converted if every line there ends in CRLF.
 fn with_line_endings_of(path: &[u8], stored: &[u8]) -> Vec<u8> {
     let is_converted = !strings::contains_char(stored, b'\r')
         && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
@@ -156,10 +157,11 @@ pub(crate) struct Files<'e> {
     top: Vec<u8>,
     /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
-    /// For `--staged`: what the index has of a file that is different on disk, or gone from it. It has the files in `named`,
-    /// and for a run that follows imports, those that one of them can import.
+    /// For `--staged`: index contents of files that differ on disk or were deleted there, keyed by absolute path.
+    /// Covers the files in `named` and, in a run that follows imports, every file they could import.
     in_the_index: FxHashMap<Vec<u8>, Vec<u8>>,
-    /// The files in `named` that a search of the disk can't find: deleted since they were staged, or not a regular file now.
+    /// Files in `named` that a disk search can't find, because they were deleted after staging or are no longer regular
+    /// files.
     not_on_disk: Vec<Vec<u8>>,
 }
 
@@ -260,13 +262,13 @@ impl<'e> Files<'e> {
         in_the_words_of_git(&first, finished)
     }
 
-    /// Fills in `in_the_index`. What the index has as a symlink doesn't count as a file, whatever it is on disk.
+    /// Fills in `in_the_index`. An index entry that's a symlink doesn't count as a file, whatever it is on disk.
     fn read_the_index(&mut self, top: &[u8], follows_imports: bool) -> Result<(), Fatal> {
         let finished = self.git(&[&DIFF[..], &[b"--raw", b"--no-abbrev"]].concat(), b"")?;
         if !finished.is_ok {
             return Err(self.unreadable(&finished));
         }
-        // `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
+        // Each entry is `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
         let mut parts = strings::split(&finished.stdout, b"\0");
         let (mut is_no_file, mut wanted) = (FxHashSet::default(), Vec::new());
         while let Some(entry) = parts.next().filter(|it| !it.is_empty()) {
@@ -277,7 +279,7 @@ impl<'e> Files<'e> {
                 return Err(self.unreadable(&finished));
             };
             let path = paths::join(top, name);
-            // A conflict has no mode, and a second entry with "our" side of it.
+            // A conflicted file has one entry with a zero mode and a second entry for "our" side. Skip both.
             if !mode.starts_with(b":100") || is_no_file.contains(&path) {
                 self.named.remove(&path);
                 is_no_file.insert(path);
@@ -303,7 +305,8 @@ impl<'e> Files<'e> {
         let read = self.git(&[b"cat-file", b"--batch"], &input)?;
         let mut rest = &read.stdout[..];
         for (path, id) in wanted {
-            // `<ID> blob <size>`, a line break, the content, a line break. Or `<ID> missing`, in a partial clone.
+            // The output is `<ID> blob <size>`, a line break, the content, a line break. In a partial clone it can be
+            // `<ID> missing`.
             let content = strings::split_once_char(rest, b'\n').and_then(|(first, after)| {
                 let size = strings::rsplit_once_char(first, b' ')?.1;
                 after.split_at_checked(bun_core::fmt::parse_decimal::<usize>(size)?)
@@ -374,7 +377,8 @@ impl<'e> Files<'e> {
             && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
     }
 
-    /// The staged files that aren't on disk, so only the index has them: absolute paths, each with the size of its text.
+    /// Returns the staged files that exist only in the index, not on disk: absolute paths, each with the size of its
+    /// text.
     pub(crate) fn not_on_disk(&self) -> impl Iterator<Item = (&[u8], u64)> {
         (self.not_on_disk.iter())
             .filter_map(|path| Some((&path[..], self.in_the_index.get(path)?.len() as u64)))
@@ -385,7 +389,8 @@ impl<'e> Files<'e> {
         self.staged_text(path).is_some()
     }
 
-    /// What will be committed of a [partly staged](Files::is_partly_staged) file. The file on disk has something else.
+    /// Returns the text that will be committed for a [partly staged](Files::is_partly_staged) file. The file on disk
+    /// differs.
     pub(crate) fn staged_text(&self, path: &[u8]) -> Option<&[u8]> {
         if self.in_the_index.is_empty() {
             return None;
@@ -393,7 +398,8 @@ impl<'e> Files<'e> {
         (self.in_the_index.get(&*self.as_listed(path))).map(Vec::as_slice)
     }
 
-    /// `in_the_index`, for whatever follows imports: it finds what the commit has, staged or not.
+    /// Converts `in_the_index` for code that follows imports, so an imported file is read as it will be committed, even
+    /// if it isn't staged itself.
     pub(crate) fn already_read(&self, keeps_byte_order_marks: bool) -> AlreadyRead {
         (self.in_the_index.iter())
             .map(|(path, text)| {
@@ -474,7 +480,8 @@ impl<'e> Files<'e> {
     }
 }
 
-/// The text that a run reads for the file at `path` (absolute).
+/// Returns the text a run reads for the file at `path` (absolute): the staged text if there is one, otherwise the file
+/// on disk.
 pub(crate) fn read(only: Option<&Files>, path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     match only.and_then(|it| it.staged_text(path)) {
         Some(text) if text.len() as u64 > bun_lint::fix::MAX_STRING_LENGTH => Err(

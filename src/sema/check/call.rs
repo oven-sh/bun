@@ -126,8 +126,9 @@ pub(super) struct CallState<'a> {
     pub(super) candidate_for_type_argument_error: Option<SigId>,
 }
 
-/// `hasCorrectArity` asks whether the `)` of a call is missing once that decides, which is where an argument is missing. The
-/// answer is in the text of the file, which nothing else reads at a call. `false`: it asks first, as before.
+/// `hasCorrectArity` tests for a missing `)` only when the result depends on it, which is when an
+/// argument is missing. The test reads the file's source text, which nothing else reads while
+/// resolving a call. Set to `false` to run the test up front.
 const ASKS_LATE_WHETHER_A_CALL_IS_INCOMPLETE: bool = true;
 
 /// What `push_inference_context` replaces in the checker, and `pop_inference_context` puts back.
@@ -401,8 +402,9 @@ impl<'p, 's> Checker<'p, 's> {
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
         // There is no re-entrancy guard. A call that a back edge of a loop reaches while it is
-        // being resolved is resolved again, any number of times: see `recheck_in_flow_loop`. So is one that is reached
-        // through a resolution: that one is the guard.
+        // being resolved is resolved again, any number of times. See `recheck_in_flow_loop`. A call
+        // that is re-entered through a resolution is also resolved again, because that resolution
+        // is the guard.
         if in_progress_at.is_some_and(|at| {
             self.flow_loop_pushed_since(at).is_some()
                 || self.stack[at..].iter().any(|&q| self.is_resolution(q))
@@ -720,7 +722,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `hasCorrectArity` for a call with `actual` arguments. `spread`: the first spread argument.
     /// `is_open`: `sig_params` could not store `params`, so a cycle through the type of a parameter
-    /// is found where tsgo asks for that type. `is_incomplete`: `callIsIncomplete`.
+    /// is found where tsgo asks for that type. `is_incomplete` computes `callIsIncomplete`.
     fn has_correct_arity_for_count(
         &mut self,
         sig: SigId,
@@ -2923,7 +2925,7 @@ impl<'p, 's> Checker<'p, 's> {
         let lent = self.inference_contexts.pop().and_then(|info| info.context);
         if let (Some(inference), Some(mut lent)) = (inference_context, lent) {
             lent.intra_expression_inference_sites.clear();
-            // Nothing has seen what was in its place.
+            // The placeholder was never used, so it's still empty and can be reused.
             self.spare_inferences
                 .push(std::mem::replace(inference, lent));
         }

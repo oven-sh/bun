@@ -1,38 +1,41 @@
-//! The order in which `checkSourceFile` comes to the expressions of a file.
+//! Replays the order in which `checkSourceFile` reaches a file's expressions.
 //!
-//! TypeScript reports some errors once per file, at the node where its checker first asks: for the fragment factory of
-//! JSX, for `tslib`, for each helper in it. It asks when it evaluates the node, and that is
-//! before the walk of the file arrives there if something needs a type from it. Here an evaluation stops at an entry that
-//! another task has stored, and which entries are there depends on timing. So such a place is not noted during
-//! evaluation. `follow_check` walks the syntax where `checkSourceFile` goes in a checker that has evaluated nothing of
-//! the file. It reads the syntax and the results of queries, so what it finds is a function of the program.
+//! TypeScript reports some errors once per file, at the node where its checker first needs the JSX fragment factory,
+//! `tslib`, or a given `tslib` helper. That is the node it evaluates first, and it evaluates a node before the file
+//! walk reaches it if something else needs a type from that node. In this checker an evaluation stops at an entry that
+//! another task has stored, and which entries exist depends on timing, so the first node can't be recorded during
+//! evaluation. Instead, `follow_check` walks the syntax in the order of `checkSourceFile` in a checker that hasn't
+//! evaluated any of the file yet. It reads only syntax and query results, so its result depends only on the program.
 //!
-//! It follows `checkNodeDeferred` and `checkDeferredNodes`, and the requests that lead from one place to another:
-//! `getReturnTypeFromBody`, where `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`,
-//! `checkFunctionExpressionOrObjectLiteralMethodDeferred`, `checkAccessorDeclaration`, `checkReturnStatement` and
-//! `checkCallExpression` ask for it, `getTypeOfSymbol` of a variable, and `checkIndexConstraints` of a class.
+//! It follows `checkNodeDeferred` and `checkDeferredNodes`, plus the requests that jump from one node to another:
+//! - `getReturnTypeFromBody`, called from `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`,
+//!   `checkFunctionExpressionOrObjectLiteralMethodDeferred`, `checkAccessorDeclaration`, `checkReturnStatement` and
+//!   `checkCallExpression`
+//! - `getTypeOfSymbol` for a variable
+//! - `checkIndexConstraints` for a class
 
 use super::*;
 use crate::bind::{Decl, FnOwner, PatParent};
 use crate::util::FxHashSet;
 
 struct CheckOrder {
-    /// The file that is checked.
+    /// The file being checked.
     file: FileId,
     follows_later_files: bool,
     /// `links.deferredNodes`
     deferred_nodes: std::collections::VecDeque<Node>,
     is_deferred: FxHashSet<(FileId, Node)>,
-    /// The functions whose returned expressions were visited, and the variables and properties whose initializers were.
+    /// Functions whose returned expressions have been visited, and variables and properties whose initializers have.
     is_resolved: FxHashSet<(FileId, Node)>,
-    /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it.
+    /// `c.currentNode`, as set by `checkSourceElement` and `checkDeferredNode`.
     current_node: Node,
 }
 
 impl Checker<'_, '_> {
-    /// Calls `visit` with each expression in the order in which `checkSourceFile` of `file` comes to them, with the file
-    /// of the expression and `c.currentNode`, until it returns true. `follows_later_files`: also where a request leads
-    /// into a file that is checked later. What such a file defers is left to its own check.
+    /// Calls `visit` on each expression in the order in which `checkSourceFile` of `file` reaches them, until `visit`
+    /// returns true. `visit` also receives the expression's file and `c.currentNode`. With `follows_later_files`,
+    /// requests are also followed into files that are checked later. Nodes deferred in a later file are skipped,
+    /// because that file's own check handles them.
     pub(super) fn follow_check(
         &mut self,
         file: FileId,
@@ -178,7 +181,7 @@ impl Checker<'_, '_> {
         if expression.is_some() && visit(self, file, expression, order.current_node) {
             return true;
         }
-        // `checkNodeDeferred`. Returns whether it is the first time.
+        // `checkNodeDeferred`. Returns true the first time the node is deferred.
         let defer = |order: &mut CheckOrder| {
             let is_first = order.is_deferred.insert((file, node));
             if is_first && file == order.file {
@@ -207,8 +210,8 @@ impl Checker<'_, '_> {
                 if !defer(order) {
                     return false;
                 }
-                // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`: `assignContextualParameterTypes` or
-                // `assignNonContextualParameterTypes`, `getReturnTypeFromBody`, `checkSignatureDeclaration`.
+                // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` calls `assignContextualParameterTypes` or
+                // `assignNonContextualParameterTypes`, then `getReturnTypeFromBody`, then `checkSignatureDeclaration`.
                 let is_context_sensitive = self.is_context_sensitive(file, owner);
                 return is_context_sensitive && self.follow_parameters(file, func, order, visit)
                     || hir[func].ret.is_none()
@@ -216,8 +219,8 @@ impl Checker<'_, '_> {
                         && self.follow_returned(file, func, order, visit)
                     || !is_context_sensitive && self.follow_parameters(file, func, order, visit);
             }
-            // `checkClassLikeDeclaration`: `checkIndexConstraints` asks for the type of a property whose name declares an
-            // index signature.
+            // `checkClassLikeDeclaration`. `checkIndexConstraints` requests the type of each property whose name
+            // declares an index signature.
             ClassDeclaration | ClassExpression => {
                 for m in hir[hir.class_of(node)].members.iter() {
                     let member = &hir[m];
@@ -279,7 +282,7 @@ impl Checker<'_, '_> {
         if self.follow_children(file, node, order, visit) {
             return true;
         }
-        // `checkCallExpression`: `getReturnTypeOfSignature`
+        // `checkCallExpression` calls `getReturnTypeOfSignature`.
         kind == CallExpression
             && (self.resolved_signature(file, expression).sig)
                 .and_then(|signature| self.sig_decl(signature))

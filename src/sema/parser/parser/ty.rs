@@ -1505,7 +1505,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let mut expr = ExprId::NONE;
         for index in base..self.s.names.len() {
             let (name, pos) = self.s.names[index];
-            // The name ends where its text ends: no name here has an escape.
+            // No name here has an escape, so its length in the source is the length of its text.
             let end = pos + self.lx.text_of(name).len() as u32;
             let kind = match expr.is_none() {
                 true if name == known::this => ExprKind::This,
@@ -2320,7 +2320,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
             } else {
                 member.ty = self.type_annotation();
-                // The checker reports it. `scanTypeMemberStart`: no member starts with `a =`, but `[a] =` and `get =` do.
+                // The checker reports the initializer. In `scanTypeMemberStart`, `a =` doesn't start a member, but
+                // `[a] =` and `get =` do.
                 let starts_before_equals = match name_token {
                     T::OpenBracket => true,
                     T::Get | T::Set => member.modifiers.is_empty(),

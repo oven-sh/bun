@@ -21,8 +21,8 @@ pub(crate) fn has_indented_delimiter(raw: &[u8]) -> bool {
         })
 }
 
-/// `text.trimEnd()`, but for the blanks at the end of the last line. In YAML they can be the end of a block scalar, and
-/// so part of a value. Prettier cuts them off.
+/// `text.trimEnd()`, except that it keeps spaces and tabs at the end of the last line. In YAML they can be the end of a
+/// block scalar, and so part of a value. Prettier trims them.
 pub(crate) fn trim_end_to_last_line(text: &[u8]) -> &[u8] {
     let end = bun_core::strings::trim_js_whitespace_end(text).len();
     let blanks = text[end..]
@@ -32,8 +32,9 @@ pub(crate) fn trim_end_to_last_line(text: &[u8]) -> &[u8] {
     &text[..end + blanks]
 }
 
-/// A delimiter is three characters and no more: `----` is a rule in Markdown. Prettier and oxfmt take the first three for
-/// the delimiter, so the fourth dash of a closing line starts what comes after the front matter.
+/// A delimiter is exactly three characters: `----` is a thematic break in Markdown. Prettier and oxfmt treat its first
+/// three characters as the delimiter, so the fourth dash of a closing line becomes the start of the content after the
+/// front matter.
 pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
     let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
     if text.get(3) == Some(&delimiter[0]) {

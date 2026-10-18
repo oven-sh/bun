@@ -54,9 +54,10 @@ impl NoUselessUndefined {
         let state = &mut cx.state;
         let end = undefined_literal.span().end;
         let is_it = |e: Option<Expr<'a>>| e == Some(undefined_literal);
-        // For TypeScript a function that ends in `return;` returns `void`, not `undefined`, and `let a;` has no type.
+        // In TypeScript, a function that ends in `return;` returns `void`, not `undefined`, and `let a;` has no type.
         let is_untyped = undefined_literal.file().is_javascript();
-        // What is replaced, by what, and whether the program does the same and type checks afterwards.
+        // The span to replace, the replacement, and whether the program still behaves the same and type checks
+        // afterwards.
         let (replaced, replacement, is_safe) = match undefined_literal.parent() {
             // `return undefined`
             Node::Stmt(ret_stmt) if ret_stmt.tag() == StmtTag::Return => {
@@ -86,7 +87,7 @@ impl NoUselessUndefined {
             Node::VarDecl(declarator)
                 if is_it(declarator.init()) && declarator.var_kind() != VarKind::Const =>
             {
-                // A `var` without a value keeps the one it has, from the last round of a loop.
+                // A `var` without an initializer keeps its value from the previous loop iteration.
                 (
                     Replaced::Span(Span::new(declarator.pat().span().end, end)),
                     "",
@@ -129,7 +130,8 @@ impl NoUselessUndefined {
                 let left = parameter
                     .ty()
                     .map_or_else(|| parameter.pat().span().end, |it| it.annotation_span().end);
-                // The `length` of the function counts the parameters before the first default.
+                // A function's `length` counts the parameters before the first default, so removing a default can
+                // change it.
                 (Replaced::Span(Span::new(left, end)), "", false)
             }
             _ => return,
@@ -266,7 +268,7 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
         .iter()
         .skip(remaining_count + 1)
         .fold(report, |report, it| report.label(it, ""));
-    // `String(undefined)` is not `String()`, and a function can count its `arguments`.
+    // `String(undefined)` isn't `String()`, and a function can check `arguments.length`.
     report.fix_dangerously(|fixer| {
         fixer.remove(
             match remaining_count

@@ -26,7 +26,7 @@ pub(crate) struct Target {
     pub(crate) ignores_unknown: bool,
     /// It is an argument itself, so nothing has been asked yet about the directories that it is in.
     pub(crate) is_named: bool,
-    /// `Some` if the file has other names (hard links), which can be targets too.
+    /// `Some` if the file has hard links. The other links can be targets too.
     pub(crate) linked: Option<fs::Identity>,
 }
 
@@ -418,19 +418,19 @@ fn collation_key(path: &[u8]) -> Vec<u8> {
     key
 }
 
-/// The arguments that start with `!`, as Prettier reads them: what they match is left out of what the other arguments select.
-/// `bun lint` reads them the same way.
+/// The arguments that start with `!`, read the way Prettier reads them: files they match are excluded from the files
+/// the other arguments select. `bun lint` reads them the same way.
 #[derive(Default)]
 pub(crate) struct Negative(Vec<bun_glob::Pattern>);
 
 impl Negative {
-    /// `pattern`: an argument without its `!`.
+    /// `pattern` is an argument without its `!`.
     pub(crate) fn push(&mut self, pattern: &[u8]) {
         let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
         self.0.push(glob_of_prettier(pattern, Picomatch::FastGlob));
     }
 
-    /// `path`: of a file or a directory. The patterns start in `cwd`.
+    /// `path` is a file or a directory. Patterns are relative to `cwd`.
     pub(crate) fn matches(&self, cwd: &[u8], path: &[u8]) -> bool {
         !self.0.is_empty() && {
             let relative = paths::relative(cwd, path);
@@ -446,16 +446,16 @@ pub(crate) struct Ignored {
     negative: Negative,
     /// `.gitignore`, `.prettierignore`: a file is ignored if one of them says so.
     files: Vec<Chain>,
-    /// `Some`: every `.gitignore` counts, as for Git, and none of them is in `files`. It holds what has been read so far, by
-    /// directory.
+    /// `Some` if every `.gitignore` applies, as in Git. Then none of them is in `files`. Caches the ones already read,
+    /// keyed by directory.
     of_git: Option<Guarded<FxHashMap<Vec<u8>, OfGit>>>,
     cwd: Vec<u8>,
-    /// A search came to a file that it looks for, or a directory that it enters, which an ignore file has.
+    /// Set when a search skips a matching file, or a directory it would enter, because of an ignore file.
     has_left_out: AtomicBool,
 }
 
 impl Ignored {
-    /// `is_native`: [`Configs::is_native`].
+    /// `is_native` is [`Configs::is_native`].
     pub(crate) fn new(
         options: &Options,
         cwd: &[u8],
@@ -466,7 +466,8 @@ impl Ignored {
         if !options.with_node_modules {
             directories.push(b"node_modules");
         }
-        // Prettier only reads the `.gitignore` of the working directory, so that is all a project with its config gets.
+        // Prettier only reads the working directory's `.gitignore`, so a project with a Prettier config gets only that
+        // one.
         let follows_git = is_native && options.ignore_path.is_none();
         // oxfmt reads every `.gitignore` on its way, as Git does.
         let default: &[Vec<u8>] = match flavor {
@@ -487,7 +488,7 @@ impl Ignored {
                 .map_err(|(file, error)| cannot_read(&file, &error))?,
         };
         if follows_git {
-            // `OfGit` reads both. It passes over a file that it can't read, which is an error here.
+            // `OfGit` reads both files. It skips a file it can't read, but that's an error here.
             excludes = None;
             let file = paths::join(cwd, b".gitignore");
             if let Err(error) = fs::read(&file)
@@ -569,7 +570,7 @@ impl Ignored {
             .any(|chain| gitignore::is_ignored_in_search(chain, path, is_directory))
     }
 
-    /// The files of Git that count in `directory`. `None`: they are not read.
+    /// Returns Git's ignore files that apply in `directory`, or `None` if they aren't read.
     fn of_git_in(&self, directory: &[u8]) -> Option<OfGit> {
         let known = self.of_git.as_ref()?;
         if let Some(found) = known.lock().get(directory) {
@@ -619,7 +620,7 @@ fn search(
     base: &[u8],
     matches: &(dyn Fn(&[u8]) -> bool + Sync),
     enters: &(dyn Fn(&[u8]) -> bool + Sync),
-    // The files of Git that count in `base`. `None`: they are not read.
+    // Git's ignore files that apply in `base`, or `None` if they aren't read.
     git: Option<OfGit>,
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));

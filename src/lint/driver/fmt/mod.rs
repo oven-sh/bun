@@ -598,8 +598,8 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
     });
 }
 
-/// Whether the two texts are the same value. What cannot be read as a value is not looked at: TOML with a key twice,
-/// YAML with an alias to what it is in.
+/// True if both texts parse to the same value. Also true if `before` can't be read as a value, so there's nothing to
+/// compare: TOML with a duplicate key, YAML with an alias to a node that contains it.
 fn is_same_value(notation: Notation, before: &[u8], after: &[u8]) -> bool {
     match parse_as(notation, before) {
         Ok(before) => parse_as(notation, after).is_ok_and(|after| after == before),
@@ -1790,9 +1790,9 @@ impl Run<'_> {
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
         let once = fs::Written::default();
-        // A file with several names (hard links) is written in place. A thread that read it under another name meanwhile would
-        // get a part of the text, and could write that part back. So the names of one file take turns, from the read to the
-        // write. Files share a lock by their inode, which only costs a wait now and then.
+        // A file with several hard links is overwritten in place. A thread reading it through another link at the same
+        // time could see partial text and write that back. So each link is locked from its read to its write. The lock
+        // is picked by inode modulo 32, so unrelated files occasionally wait for each other.
         let turns: [Guarded<()>; 32] = Default::default();
         let turn_of = |target: &Target| {
             let linked = target.linked.filter(|_| !only_looks);
@@ -1916,7 +1916,8 @@ impl Run<'_> {
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
         let mut warnings = warnings.into_iter().peekable();
         let mut results = std::mem::take(results.get_mut());
-        // Which name of a file came first, and so was the one to be written, is chance. The file has changed under all of them.
+        // It's a race which hard link gets formatted first and does the write, so report every link to a rewritten file
+        // as changed.
         let linked = |it: &Expanded| match it {
             Expanded::File(target) if !only_looks => target.linked,
             _ => None,

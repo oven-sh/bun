@@ -1,6 +1,6 @@
-//! For a fix that is only right for a value of some kind, in a rule without types: what the code itself shows about a value.
-//! Everything here answers `false` when in doubt. It asks about scopes, so call it from [`Report::fix_where_safe`] or from the
-//! function that makes the fix.
+//! Syntax-only checks of what kind of value an expression is, for rules that run without type information and have a
+//! fix that is only correct for some kinds of values. Every function here returns `false` or `None` when in doubt. They
+//! need scope analysis, so only call them from [`Report::fix_where_safe`] or from the function that builds the fix.
 //!
 //! [`Report::fix_where_safe`]: crate::context::Report::fix_where_safe
 
@@ -10,13 +10,14 @@ use crate::ast::{
 };
 use crate::semantic::{Declaration, Symbol};
 
-/// `export let a` directly in a `namespace`. Any file can write `Namespace.a = 1`, which is no reference to `a`.
+/// True for `export let a` directly inside a `namespace`. Any file can write `Namespace.a = 1`, which doesn't count as
+/// a reference to `a`.
 pub fn is_exported_from_namespace(statement: Stmt<'_>) -> bool {
     statement.is_exported()
         && matches!(statement.parent(), Node::Stmt(parent) if parent.as_module().is_some())
 }
 
-/// An `import` or an `export`, which makes a module of the file.
+/// True for an `import` or an `export`. Either one makes the file a module.
 fn makes_a_module(statement: Stmt<'_>) -> bool {
     statement.is_exported()
         || matches!(
@@ -29,24 +30,26 @@ fn makes_a_module(statement: Stmt<'_>) -> bool {
         )
 }
 
-/// Whether the file stays a module when every `export {}` is removed.
+/// True if the file is still a module after every `export {}` is removed.
 pub fn is_module_without_empty_exports<'a>(file: &'a File<'a>) -> bool {
     let is_empty = |it: Stmt<'a>| matches!(it.kind(), StmtKind::ExportNamed(export) if !export.has_from() && export.items().is_empty());
     let mut statements = file.body().iter();
     statements.any(|it| makes_a_module(it) && !is_empty(it))
 }
 
-/// Whether the file declares the name of `interface` a second time. A type alias in its place would be a duplicate declaration.
+/// True if the file declares `interface`'s name more than once. Replacing the interface with a type alias would then be
+/// a duplicate declaration.
 pub fn is_declared_again(interface: Interface<'_>) -> bool {
     let scope = Node::Stmt(interface.stmt()).scope();
     let symbol = scope.resolve_name(interface.name().name());
     symbol.is_some_and(|it| it.declaration_count() > 1)
 }
 
-/// Whether the file shows nothing that merges with `interface`: no other interface, class or namespace of that name, and it isn't
-/// where other files usually add to it, which is a declaration file, a `namespace` and a `declare module`. A type alias doesn't
-/// merge, and neither does a property with a method. Another file can still add to an interface at the top of a script. That can't
-/// be seen from here, and the type checker says so at once.
+/// True if nothing in the file merges with `interface`. No other interface, class or namespace has its name, and it
+/// isn't somewhere other files usually extend it: a declaration file, a `namespace` or a `declare module`. Callers need
+/// this because a type alias doesn't merge, and a property doesn't merge with a method. Another file can still extend
+/// an interface at the top level of a script. That isn't visible from this file, but the type checker reports the
+/// conflict as soon as the fix is applied.
 pub fn is_only_declaration(interface: Interface<'_>) -> bool {
     let statement = interface.stmt();
     let is_in_namespace = || {
@@ -56,7 +59,8 @@ pub fn is_only_declaration(interface: Interface<'_>) -> bool {
     !is_declared_again(interface) && !statement.file().is_declaration_file() && !is_in_namespace()
 }
 
-/// `e` without `as T` and the like. For a variable that is declared once, with a value, and never assigned again: that value.
+/// Returns `e` without type wrappers like `as T`. If `e` is a variable that is declared once with an initializer and
+/// never reassigned, returns the initializer instead.
 pub fn visible_value(e: Expr<'_>) -> Expr<'_> {
     let e = e.skip_type_wrappers();
     let is_constant = |it: &Symbol| it.declaration_count() == 1 && !it.has_modifying_references();
@@ -67,7 +71,7 @@ pub fn visible_value(e: Expr<'_>) -> Expr<'_> {
     let Some(Declaration::Var(pat)) = declaration else {
         return e;
     };
-    // Not a name in a destructuring pattern.
+    // Skip names bound by a destructuring pattern.
     let Node::VarDecl(declarator) = pat.parent() else {
         return e;
     };
@@ -78,7 +82,7 @@ pub fn visible_value(e: Expr<'_>) -> Expr<'_> {
     declarator.init().map_or(e, Expr::skip_type_wrappers)
 }
 
-/// The `string` of `a: string`, for a variable or a parameter that is declared once, with a keyword as its type.
+/// Returns the keyword type of a variable or parameter that is declared once, e.g. `string` for `a: string`.
 fn declared_keyword(e: Expr<'_>) -> Option<Keyword> {
     let symbol = e.symbol().filter(|it| it.declaration_count() == 1)?;
     let ty = match symbol.declarations().next()? {
@@ -98,7 +102,8 @@ fn declared_keyword(e: Expr<'_>) -> Option<Keyword> {
     }
 }
 
-/// The module that `e` is: `fs` after `import fs from "fs"`, `import * as fs from "fs"` or `const fs = require("fs")`.
+/// Returns the specifier of the module that `e` refers to: `"fs"` for `fs` after `import fs from "fs"`,
+/// `import * as fs from "fs"` or `const fs = require("fs")`.
 pub fn visible_module(e: Expr<'_>) -> Option<Name<'_>> {
     let declaration = e.symbol().and_then(|it| it.declarations().next());
     if let Some(Declaration::ImportDefault(import) | Declaration::ImportNamespace(import)) =
@@ -115,12 +120,13 @@ pub fn visible_module(e: Expr<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// The global `name`, which nothing in the file declares.
+/// True if `e` is the identifier `name` and nothing in the file declares it, so it refers to the global.
 pub fn is_global(e: Expr<'_>, name: &str) -> bool {
     e.is_ident(name) && e.symbol().is_none()
 }
 
-/// An array literal, `new Array(..)`, `Array(..)`, `Array.from(..)`, `Array.of(..)`, or a variable that is always one of these.
+/// True for an array literal, `new Array(..)`, `Array(..)`, `Array.from(..)`, `Array.of(..)`, or a variable that is
+/// always one of these.
 pub fn is_visibly_array(e: Expr<'_>) -> bool {
     let value = visible_value(e);
     match value.kind() {
@@ -136,8 +142,8 @@ pub fn is_visibly_array(e: Expr<'_>) -> bool {
     }
 }
 
-/// An [array](is_visibly_array), a [string](is_visibly_string), `new Set(..)`, `new Map(..)`, or a variable that is always one of
-/// these.
+/// True for an [array](is_visibly_array), a [string](is_visibly_string), `new Set(..)`, `new Map(..)`, or a variable
+/// that is always one of these.
 pub fn is_visibly_iterable(e: Expr<'_>) -> bool {
     let is_collection = |callee: Expr| is_global(callee, "Set") || is_global(callee, "Map");
     is_visibly_array(e)
@@ -145,8 +151,8 @@ pub fn is_visibly_iterable(e: Expr<'_>) -> bool {
         || matches!(visible_value(e).kind(), ExprKind::New(call) if is_collection(call.callee()))
 }
 
-/// A string literal, a template, `String(..)`, a `+` with one of these, a variable that is always one of these, or one that is
-/// declared as `string`.
+/// True for a string literal, a template literal, `String(..)`, a `+` with either kind of literal as an operand, a
+/// variable that is always one of these, or a variable or parameter declared as `string`.
 pub fn is_visibly_string(e: Expr<'_>) -> bool {
     if declared_keyword(e) == Some(Keyword::String) {
         return true;
@@ -168,8 +174,9 @@ pub fn is_visibly_string(e: Expr<'_>) -> bool {
     }
 }
 
-/// `document`, `document.body`, `document.createElement(..)`, `document.querySelector(..)` and the like, or a variable that is always
-/// one of these. By the name: a file that declares its own `document` has it from a DOM library.
+/// True for `document`, `document.body`, `document.createElement(..)`, `document.querySelector(..)` and the like, or a
+/// variable that is always one of these. `document` is matched by name only, because a file that declares its own
+/// `document` gets it from a DOM library.
 pub fn is_visibly_dom_node(e: Expr<'_>) -> bool {
     const PROPERTIES: [&str; 3] = ["body", "documentElement", "head"];
     const METHODS: [&str; 5] = [
@@ -190,16 +197,17 @@ pub fn is_visibly_dom_node(e: Expr<'_>) -> bool {
     }
 }
 
-/// What is known about a regular expression.
+/// Result of [`visible_regexp`].
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum VisibleRegExp {
     /// A literal without the `g` flag.
     NotGlobal,
-    /// A literal with the `g` flag, or `new RegExp(..)`, whose flags aren't looked at.
+    /// A literal with the `g` flag, or `new RegExp(..)`, whose flags aren't checked.
     MaybeGlobal,
 }
 
-/// A regular expression literal, `new RegExp(..)`, `RegExp(..)`, or a variable that is always one of these.
+/// Returns `Some` for a regular expression literal, `new RegExp(..)`, `RegExp(..)`, or a variable that is always one
+/// of these.
 pub fn visible_regexp(e: Expr<'_>) -> Option<VisibleRegExp> {
     match visible_value(e).kind() {
         ExprKind::Regex(regex) => Some(

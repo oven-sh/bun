@@ -87,8 +87,8 @@ struct Binder<'a> {
     file: &'a File<'a>,
     is_typescript: bool,
     is_module: bool,
-    /// In TypeScript too, an import that isn't `import type` clashes with a variable, a function or a class. oxc leaves that to
-    /// the type checker, which knows whether a type was imported.
+    /// Even in TypeScript, report an import that isn't `import type` and clashes with a variable, a function or a
+    /// class. oxc leaves that to the type checker, which can tell whether the import is a type.
     imports_are_values: bool,
     /// The scope of the file.
     top: u32,
@@ -542,7 +542,7 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     replay(file, false)
 }
 
-/// How many there are, under any configuration. See [`Binder::imports_are_values`].
+/// Returns the number of redeclarations, regardless of the config. See [`Binder::imports_are_values`].
 pub(super) fn count_of_redeclarations<'a>(file: &'a File<'a>) -> usize {
     replay(file, true).len()
 }

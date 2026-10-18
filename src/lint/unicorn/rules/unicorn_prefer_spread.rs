@@ -71,8 +71,8 @@ impl Rule for PreferSpread {
         };
         let report = cx.report(e, PREFER_SPREAD).data("bad_method", bad_method);
         if let Some(expr_to_spread) = spread {
-            // `Array.from` also takes `{ length: 2 }`, which can't be spread. A buffer, a string and a blob have a `slice` too, and the
-            // copy of an array with holes has holes. The printer writes no comments.
+            // `Array.from` also accepts `{ length: 2 }`, which can't be spread. Buffers, strings and blobs have a
+            // `slice` too, and `slice` keeps an array's holes, which a spread doesn't. The printer drops comments.
             let is_safe = || {
                 name.is("from")
                     && is_global(object, "Array")

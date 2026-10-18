@@ -116,8 +116,9 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
     }
 }
 
-/// Where `import` ends with the comments beside it, and whether nothing can follow there on the line: it has no `;`, or the last
-/// comment is a `//`. A `;` on a later line isn't the import's. It keeps that line apart from the one before: `;[a].map(b)`.
+/// Returns the end of `import` including its trailing comments, and true if nothing may follow on that line, because
+/// the import has no `;` or its last comment is a `//`. A `;` on a later line isn't part of the import. It's there to
+/// keep that line from continuing the previous one, as in `;[a].map(b)`.
 fn end_with_comments<'a>(import: Stmt<'a>, fixer: Fixer<'a>) -> (u32, bool) {
     let file = fixer.file();
     let mut tokens = file.tokens_in(import).rev();
@@ -137,14 +138,14 @@ fn is_end_of_line_comment<'a>(file: &'a File<'a>, at: u32) -> bool {
     comment.is_some_and(|it| it.kind() == TokenKind::Line)
 }
 
-/// Whether a line break comes before everything else in `text`.
+/// True if `text` starts with whitespace that contains a line break.
 fn starts_on_a_new_line(text: &[u8]) -> bool {
     let blank = text.len() - strings::trim_js_whitespace_start(text).len();
     strings::contains_js_line_break(text.get(..blank).unwrap_or_default())
 }
 
-/// Whether the statement after `removed`, which starts with an import, goes on with what is before `removed` once that is gone:
-/// with the statement there, or with a `//` comment.
+/// True if deleting `removed`, whose first token is an `import`, would make the next statement continue the statement
+/// before `removed`, or become part of a `//` comment there.
 fn joins_statements<'a>(file: &'a File<'a>, removed: Span) -> bool {
     let (Some(before), Some(import), Some(after)) =
         (file.token_before(removed), file.first_token(removed), file.token_after(removed))
@@ -159,7 +160,8 @@ fn joins_statements<'a>(file: &'a File<'a>, removed: Span) -> bool {
         return false;
     }
     match follows_on_the_line && ast_utils::is_on_one_line(file, before.span().between(removed)) {
-        // Code followed by an import on the same line ends without a `;` or a line break.
+        // If an import follows `before` on the same line, `before` ends its statement without a `;` or a line break, so
+        // another statement can follow it too.
         true => !ast_utils::is_token_on_same_line(file, before, import),
         false => ast_utils::continues_statement(file, before, after),
     }
@@ -177,13 +179,15 @@ impl<'a> ErrorInfo<'a> {
         error_infos.iter().take_while(|it| !it.is_used_before()).count().saturating_sub(1)
     }
 
-    /// Moves all of `sort_nodes` after the last import that is already in place, or to where the file's first statement goes.
-    /// The comments above and beside an import move with it. `None` if that would change what the program does.
+    /// Moves all of `sort_nodes` after the last import that's already in place, or to the start of the file's first
+    /// statement if there is none. Comments above and beside an import move with it. Returns `None` if the move would
+    /// change the program's behavior.
     #[cold]
     #[inline(never)]
     fn sort(sort_nodes: &[ErrorInfo<'a>], last_legal_imp: Option<Stmt<'a>>, fixer: Fixer<'a>) -> Option<Fix> {
         let file = fixer.file();
-        // The plugin takes the end of the import, or the start of the first statement, which can be `"use client"`.
+        // The plugin inserts at the end of the import itself, or before the first statement, which can be
+        // `"use client"`.
         let (insert_at, mut is_open) = match last_legal_imp {
             Some(import) => end_with_comments(import, fixer),
             None => (fixer.start_of_first_statement(), false),
@@ -209,7 +213,8 @@ impl<'a> ErrorInfo<'a> {
             }
         }
         let (first, last) = (removed.first()?, removed.last()?);
-        // The modules run in the order in which they are named.
+        // Modules are evaluated in source order, and `export .. from` loads a module too, so an import can't move past
+        // one.
         let names_module = |it: Stmt| {
             matches!(it.tag(), StmtTag::ExportNamed | StmtTag::ExportStar) && it.module_specifier_span().is_some()
         };

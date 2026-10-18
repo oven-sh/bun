@@ -124,8 +124,8 @@ fn has_variable<'a>(file: &'a File<'a>, scope: Scope<'a>, name: &[u8]) -> bool {
         }
 }
 
-/// The members that are used of the namespaces that are imported before `declaration`. Their fixes can be applied in the same pass
-/// as its own, and import a member under its own name if they can.
+/// Returns the members used from every namespace that is imported before `declaration`. Those imports' fixes can be
+/// applied in the same pass as this one, and each imports a member under its own name when it can.
 fn members_of_namespaces_before<'a>(declaration: Stmt<'a>, scope: Scope<'a>) -> Vec<Cow<'a, [u8]>> {
     let imports = declaration.file().stmts_of_kind(StmtTag::Import);
     let before = imports.filter(|it| it.span().start < declaration.span().start);
@@ -195,8 +195,8 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
 
     let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
     let mut named_import_specifiers = Vec::new();
-    // Upstream looks at the two scopes only, so a name of the module is free for it from two functions down. Nor does it know
-    // what else this pass declares.
+    // Upstream only checks those two scopes, so it misses a module-level name when the member is two or more functions
+    // deep. It also doesn't track the names that other fixes in this pass declare.
     let mut handed_out = members_of_namespaces_before(declaration, declared_in);
     for import_name in import_names {
         let conflicts = import_name_conflicts.get(import_name)?;

@@ -71,7 +71,7 @@ impl Rule for PreferStringRaw {
         cx.report(string_literal, PREFER_STRING_RAW)
             .called_with_the_name()
             .fix(|fixer| {
-                // Bun's runtime gives a tag `\u00E9` as the raw text of `é`, so the string would change its value.
+                // Bun's runtime passes `\u00E9` to a tag as the raw text of `é`, so the string's value would change.
                 if !unescaped.is_ascii() {
                     return None;
                 }

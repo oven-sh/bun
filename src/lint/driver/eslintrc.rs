@@ -70,7 +70,7 @@ pub(crate) struct Modules<'m> {
     pub(crate) command_line: (Vec<u8>, Json),
     /// What the script has printed, by the file that it was run for.
     pub(crate) printed: Vec<(Vec<u8>, Json)>,
-    /// `--config` can name one.
+    /// `--config` can point to a named pipe.
     pub(crate) pipes: &'m fs::NamedPipes,
 }
 

@@ -1546,9 +1546,9 @@ impl<'p> Checker<'p, '_> {
                 enclosing_class = Some(target);
             }
         }
-        // For `a.b` the caller passes `getApparentType`, for a pattern the type that is destructured. The apparent type of an
-        // intersection whose members take a `this` argument is another intersection, which has no alias, and
-        // `apparent_type` leaves it as it is.
+        // For `a.b` the caller passes `getApparentType`. For a pattern it passes the destructured
+        // type. If an intersection has members with a `this` type, its apparent type is a new
+        // intersection without an alias, but `apparent_type` returns the original intersection.
         let is_apparent_type =
             matches!(at, Parent::Expr(e) if e.is_some() && hir.node(e) == location);
         let Some(enclosing_class) = enclosing_class else {
@@ -1564,9 +1564,9 @@ impl<'p> Checker<'p, '_> {
         if is_static {
             return true;
         }
-        // And only through an instance of that class, which a union is not (`hasBaseType`). Of
-        // `this & X`, which `this is X` narrows `this` to, the apparent type is the intersection of
-        // the class and `X`.
+        // Access is also allowed only through an instance of that class, and a union isn't one
+        // (`hasBaseType`). `this is X` narrows `this` to `this & X`, whose apparent type is the
+        // intersection of the class and `X`.
         let through = if self.is_deferred(containing) {
             self.base_constraint(containing)
         } else if is_apparent_type {

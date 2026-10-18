@@ -266,7 +266,8 @@ fn is_for_left(statement: Stmt<'_>) -> bool {
 
 /// What [`join_declarations`] joins `statement` with.
 fn joined_with(statement: Stmt<'_>, kind: VarKind) -> Option<Stmt<'_>> {
-    // Nothing with a `declare` is joined, as in oxlint. ESLint's fix takes `declare` for the keyword and breaks the code.
+    // Declarations with `declare` are never joined, as in oxlint. ESLint's fix mistakes `declare` for the keyword and
+    // breaks the code.
     let (previous, _) = previous_declaration(statement, kind)?;
     (statement.modifiers().is_empty() && previous.modifiers().is_empty()).then_some(previous)
 }
@@ -305,7 +306,7 @@ fn split_declarations<'a>(
     }
     let file = fixer.file();
     let export_placement = if statement.is_exported() { "export " } else { "" };
-    // ESLint leaves the `declare` out, which makes the rest real variables.
+    // ESLint drops the `declare`, which turns the remaining declarations into real variables.
     let declare = if statement.flags().contains(Flags::AMBIENT) { "declare " } else { "" };
     let kind = format!("{declare}{}", kind_text(kind));
     let mut fixes = Vec::new();

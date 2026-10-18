@@ -270,8 +270,8 @@ impl<'a> Tree<'a> {
         {
             return true;
         }
-        // White space that is all of a `<pre>` is shown, and in a `<textarea>` it is the value. Prettier makes one
-        // blank of it, or nothing.
+        // Whitespace-only content of a `<pre>` is rendered, and in a `<textarea>` it's the value. Prettier collapses it
+        // to one space or removes it.
         if is_pre_like(node) && node.has(Flags::HAS_DANGLING_SPACES | Flags::HAS_END_SPAN) {
             return true;
         }

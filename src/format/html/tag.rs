@@ -115,8 +115,8 @@ impl<'o> Tags<'_, '_, 'o> {
         });
     }
 
-    /// Whether `id` is `<br>` and stays as it is written, so that `>` is what it lends. Prettier takes `/>` from it:
-    /// `<img a=b>c` becomes `<img a=/>c`.
+    /// True if `id` is a void element written without a slash, like `<br>`, and is printed verbatim. The marker it
+    /// lends is then `>`. Prettier assumes `/>`, so `<img a=b>c` becomes `<img a=/>c`.
     fn stays_without_slash(self, id: Id) -> bool {
         let end = self.tree[id].span.end as usize;
         self.tree.has_prettier_ignore(id)

@@ -135,7 +135,7 @@ struct How<'h> {
     /// Set if the file isn't JavaScript: the arguments of [`File::in_language`].
     in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
-    /// The text is the output of a fix pass.
+    /// True if the text is the output of a fix pass.
     is_fixed: bool,
 }
 
@@ -307,7 +307,8 @@ impl Context<'_, '_> {
         self.verify_as(path, text, config, &How::default())
     }
 
-    /// The same for one pass of `--fix`. `is_fixed`: the pass before it has made `text`.
+    /// Lints `text` for one pass of `--fix`, like [`Self::verify`]. `is_fixed` is true if the previous pass produced
+    /// `text`.
     pub(crate) fn verify_pass(
         &self,
         path: &[u8],
@@ -322,15 +323,16 @@ impl Context<'_, '_> {
         self.verify_as(path, text, config, &how)
     }
 
-    /// Adds the [`redeclarations`] of `file` to [`LintResult::tolerated_errors`], so that fixes that declare a name twice are taken
-    /// back. Only where two texts will be compared: fixes have made this one (`is_fixed`), or it has a fix that will be applied.
+    /// Adds `file`'s [`redeclarations`] to [`LintResult::tolerated_errors`], so that fixes that declare a name twice
+    /// are reverted. Only counts them when two texts will be compared: fixes produced this one (`is_fixed`), or it has
+    /// a fix that will be applied.
     pub(crate) fn count_redeclarations<'f>(
         &self,
         file: &'f File<'f>,
         result: &mut LintResult,
         is_fixed: bool,
     ) {
-        // oxlint fixes once, and writes `const a = 1; const a = 2;` for two `var`.
+        // oxlint only runs one fix pass, and it does write `const a = 1; const a = 2;` for two `var`s.
         let is_compared = self.fixes() && !file.language().is_oxlint;
         if !is_compared || result.messages.iter().any(|it| it.is_fatal) {
             return;
@@ -728,8 +730,9 @@ impl Context<'_, '_> {
         )
     }
 
-    /// The same. `verify`: lints a text, and is told whether the fixes that are tried now have made it. `was_fixed`: `text` is not
-    /// what is in the file, but what fixes have made of it: it is to be written, whatever becomes of the fixes that are tried now.
+    /// Like [`Self::verify_text`], but the caller supplies `verify`, which lints a text and is told whether the fixes
+    /// being tried now produced that text. `was_fixed` is true if `text` isn't the file's content but the output of
+    /// earlier fixes. It then has to be written even if the fixes tried now are reverted.
     pub(crate) fn verify_text_by(
         &self,
         path: Vec<u8>,

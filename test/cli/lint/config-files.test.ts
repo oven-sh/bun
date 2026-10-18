@@ -4805,7 +4805,7 @@ describe.concurrent("whose configuration files count", () => {
     expect((await lint(both, ["--nonsense"])).exitCode).toBe(1);
   });
 
-  describe("a package with both configs, in a repository whose root has none", () => {
+  describe("a package with both configs in a repository without a root config", () => {
     const files = {
       "package.json": `{ "workspaces": ["packages/*"] }`,
       "packages/app/.oxlintrc.json": oxlintrc({ eqeqeq: "error" }),
@@ -4814,7 +4814,7 @@ describe.concurrent("whose configuration files count", () => {
     };
     const absolute = (dir: string) => [join(dir, "packages", "app", "src", "a.js")];
 
-    // A row that is shorter than the parameter list gets `done` for the next parameter.
+    // Rows are padded with `undefined` because a row shorter than the parameter list gets `done` as the next argument.
     test.each<[cwd: string, args: string[], up: string, more: Options["args"]]>([
       [".", ["."], "packages/app/", undefined],
       [".", ["packages/app"], "packages/app/", undefined],
@@ -4840,7 +4840,7 @@ describe.concurrent("whose configuration files count", () => {
       expect(fromRoot.raw).toBe(fromPackage.raw);
     });
 
-    test("every such package gets a note", async () => {
+    test("prints a note for each package with both configs", async () => {
       const copy = Object.entries(files).map(([name, text]) => [name.replace("/app/", "/web/"), text]);
       const { problems, stderr } = await lint({ ...files, ...Object.fromEntries(copy) });
       expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq", "packages/web/src/a.js:2:7 eqeqeq"]);
@@ -4854,7 +4854,7 @@ describe.concurrent("whose configuration files count", () => {
       [".", ["."]],
       [".", ["packages/app/fixtures/b.js"]],
       ["packages/app", ["."]],
-    ])("no ESLint config below the oxlint config counts in %s with %j", async (cwd, args) => {
+    ])("ignores ESLint configs below the oxlint config in %s with %j", async (cwd, args) => {
       const { "packages/app/eslint.config.js": _, ...rest } = files;
       const below = {
         ...rest,
@@ -4869,7 +4869,7 @@ describe.concurrent("whose configuration files count", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("a package next to it that only has an ESLint config keeps it", async () => {
+    test("a sibling package with only an ESLint config still uses it", async () => {
       const { problems } = await lint({
         ...files,
         "packages/old/eslint.config.js": files["packages/app/eslint.config.js"],
@@ -5724,8 +5724,8 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);
   });
 
-  // Windows has no such file names.
-  test.skipIf(isWindows)("a file name can't color the terminal or start a new line", async () => {
+  // Windows doesn't allow these file names.
+  test.skipIf(isWindows)("escapes control characters in printed file names", async () => {
     const files = {
       "eslint.config.mjs": `export default [
         { files: ["**/*.one"], plugins: { p: { languages: { l: {} } } }, language: "p/l" },
@@ -5734,7 +5734,7 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
       "c\nd.one": "",
     };
     const { stderr, exitCode } = await lint(files);
-    // `lint` turns every backslash into a slash.
+    // The `lint` helper normalizes stderr, which turns every backslash into a slash.
     expect(stderr).toContain(
       "2 files were not linted because they need eslint, which is not installed (2 *.one): b/x1b[31m.one, c/nd.one\n  Run bun add -d eslint",
     );

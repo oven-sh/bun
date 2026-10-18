@@ -297,11 +297,14 @@ describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
 });
 
 describe.concurrent("rules that sort", () => {
-  /** `bun lint -f json` with an oxlint config: `file rule` for each report. That format shows the fix of a report, so it is made. */
+  /**
+   * Runs `bun lint -f json` with an oxlint config and returns `file rule` for each report. That format includes each
+   * report's fix, so every fix is computed.
+   */
   async function reports(cwd: string, args: string[], exitCode = 0) {
     const cmd = [bunExe(), "lint", "-f", "json", ...args];
     await using proc = spawn({
-      // A crash leaves no core file.
+      // Don't write a core file if it crashes.
       cmd: isWindows ? cmd : ["sh", "-c", 'ulimit -c 0; exec "$0" "$@"', ...cmd],
       env,
       cwd,
@@ -314,19 +317,19 @@ describe.concurrent("rules that sort", () => {
     return { found: diagnostics.map(it => `${it.filename} ${it.code}`).sort(), stderr };
   }
 
-  /** Eight of each kind, told apart by a digit, dealt out by `stride`. */
+  /** Returns eight items of each kind, numbered 0 to 7, reordered by stepping through them with `stride`. */
   function deal<T>(kinds: ((digit: number) => T)[], stride: number) {
     const all = kinds.flatMap(kind => Array.from({ length: 8 }, (_, digit) => kind(digit)));
     return all.map((_, i) => all[(i * stride) % all.length]);
   }
 
-  // oxlint's comparison for `natural` is no order: a10 < a1b < a2 < a10.
-  describe("sort-keys with `natural` and an oxlint config, where keys compare in a circle", () => {
+  // oxlint's `natural` comparison isn't a total order: a10 < a1b < a2 < a10.
+  describe("sort-keys with `natural` and an oxlint config, when key comparisons form a cycle", () => {
     const oxlintrc = JSON.stringify({ rules: { "sort-keys": ["warn", "asc", { natural: true }] } });
 
     test.each<[string, string[]]>([
       [
-        "a table by code points in hexadecimal",
+        "a table keyed by hexadecimal code points",
         "1f600 2764 1f44d 263a 231a 1f525 25b6 2b50 23e9 1f602 2049 26a1 203c 1f308 2600 25c0 1f004 231b 270c 23f0 1f923 2744 2601 1f0cf 1f4a7 2614 260e 1f91e 2328 23cf 24c2 25aa 2611 1f609".split(
           " ",
         ),
@@ -360,15 +363,15 @@ describe.concurrent("rules that sort", () => {
       expect((await reports(String(dir), ["--fix", "table.js"])).found).toEqual([]);
       const fixed = read();
       expect(fixed).not.toBe(before);
-      // Each key has its value and its comment.
+      // Each key keeps its value and its comment.
       expect(fixed.split("\n").sort()).toEqual(before.split("\n").sort());
       expect((await reports(String(dir), ["table.js"])).found).toEqual([]);
       expect((await reports(String(dir), ["--fix", "table.js"])).found).toEqual([]);
       expect(read()).toBe(fixed);
     });
 
-    // What oxlint 1.87 writes. Above 20 keys it writes one thing or another, or panics.
-    test("up to 20 keys the fix is oxlint's", async () => {
+    // Same output as oxlint 1.87. With more than 20 keys, oxlint's output varies, or it panics.
+    test("with up to 20 keys, the fix matches oxlint's", async () => {
       using dir = tempDir("bun-lint-rules", {
         ".oxlintrc.json": oxlintrc,
         "a.js": `export const versions = { a20: 1, v1beta1: 2, a12: 3, v2: 4, v10: 5 };
@@ -387,8 +390,8 @@ export const numbers = { "1e": 2, "2a": 1, 15: 3 };
     });
   });
 
-  // A character that is cut off is one U+FFFD for JavaScript, which has read the file before it compares anything.
-  test("sort-type-constituents has one order for text that is not UTF-8", async () => {
+  // JavaScript decodes the file before comparing anything, and a truncated character decodes to a single U+FFFD.
+  test("sort-type-constituents sorts text that isn't valid UTF-8 consistently", async () => {
     const kinds: ((digit: number) => [written: string, read: string])[] = [
       digit => [`\xF0\x9F\x98b${digit}`, `\uFFFDb${digit}`],
       digit => [`\xEF\xBF\xBDc${digit}`, `\uFFFDc${digit}`],
@@ -410,9 +413,9 @@ export const numbers = { "1e": 2, "2a": 1, 15: 3 };
     }
   });
 
-  // eslint-plugin-react checks the names in lower case by their code units, where `1` is before `_`, and its fix sorts them with
-  // `localeCompare`, where `_` is before `1`. So the fix writes what is there.
-  test("a fix that changes nothing fixes nothing", async () => {
+  // eslint-plugin-react compares the lowercased names by code unit, where `1` sorts before `_`, but its fix sorts them
+  // with `localeCompare`, where `_` sorts before `1`. So the fix writes the text that's already there.
+  test("still reports a problem whose fix doesn't change the text", async () => {
     const text = `import PropTypes from "prop-types";
 export function C() {
   return null;

@@ -2268,8 +2268,9 @@ impl<'a> Checks<'a, '_> {
                 _ => None,
             })
             .collect();
-        // Walking up from each of `a: b: c: ..` to look for its name takes quadratic time. This goes from the outside in and
-        // keeps the open labels by name. Labels of one function that are in each other have the same outermost label.
+        // Walking up from each label of `a: b: c: ..` to look for a duplicate name is quadratic. Instead, visit the
+        // labels from the outermost in and track the open ones by name. Nested labels in the same function share an
+        // outermost label, which is part of the key.
         let mut from_outside: Vec<usize> = (0..labeled.len()).collect();
         from_outside.sort_unstable_by_key(|&index| labeled[index].0.span().start);
         let mut label_around: AncestorMemo<'a, Option<Stmt<'a>>> = AncestorMemo::default();

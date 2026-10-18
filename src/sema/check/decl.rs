@@ -27,10 +27,10 @@ impl Predicate {
 /// `signature.thisParameter` in `Checker::resolved_parameter_types`.
 const THIS_PARAMETER: u32 = u32::MAX;
 
-/// `identity_mapper_with_adopted` keeps its last answers that are the same from then on. Every object literal and every
-/// function expression asks, and those of one scope come one after the other. `false`: it looks each one up, as before.
+/// Makes `identity_mapper_with_adopted` cache its most recent final results. Every object literal and every function
+/// expression calls it, and calls for the same scope come back to back. If `false`, every call does the full lookup.
 const KEEPS_RECENT_IDENTITY_MAPPERS: bool = true;
-/// Every answer that is kept is looked up as well, and a difference is a panic. For debugging.
+/// For debugging. Does the full lookup on every cache hit too, and panics if the results differ.
 const CHECKS_RECENT_IDENTITY_MAPPERS: bool = false;
 pub(super) const RECENT_SCOPES: usize = 64;
 
@@ -915,7 +915,8 @@ impl<'p, 's> Checker<'p, 's> {
         mapper
     }
 
-    /// Also returns whether it is the same from now on: it is in a table, or nothing is adopted in `scope`.
+    /// The uncached `identity_mapper_with_adopted`. The flag is true if the result is final, which means that it is
+    /// stored in a table or that nothing is adopted in `scope`.
     fn look_up_identity_mapper_with_adopted(
         &mut self,
         file: FileId,
@@ -4119,7 +4120,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.type_reference_type(sym, args, None)
     }
 
-    /// `getTypeFromClassOrInterfaceReference`. `first_request`: see `Types::as_first_request`.
+    /// `getTypeFromClassOrInterfaceReference`. See `Types::as_first_request` for `first_request`.
     fn class_or_interface_reference(
         &mut self,
         sym: Sym,
@@ -4415,7 +4416,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.look_up_sig_type_params(sig)
     }
 
-    /// `kept` is the stored result of `sig_type_params(sig)`.
+    /// Caches `kept`, the stored result of `sig_type_params(sig)`, in `signature_links` and returns it.
     fn kept_sig_type_params(&mut self, sig: SigId, kept: &'p [TypeId]) -> List<'p, TypeId> {
         if signature_links::KEEPS_FACTS {
             self.signature_links.keep_type_parameters(sig, kept);
@@ -4437,7 +4438,8 @@ impl<'p, 's> Checker<'p, 's> {
                         List::Own(self.adopted_type_params(sig))
                     }
                     _ => {
-                        // Where the stack was low `is_context_sensitive` has the answer of who asked.
+                        // If the stack ran low, the result of `is_context_sensitive` depends on the caller's stack
+                        // depth, so the fact isn't cached.
                         if self.times_cut_short.get() == times_cut_short {
                             let fact = signature_links::fact::HAS_NO_TYPE_PARAMETERS;
                             self.signature_links.add_fact(sig, fact);
@@ -5244,8 +5246,8 @@ impl<'p, 's> Checker<'p, 's> {
             let declared_by = self.sig_of_fn(of, other);
             return Some((self.instantiate(declared, mapper), declared_by));
         }
-        // Of an accessor it depends on the other one. Where the stack was low `is_context_sensitive` has the answer of who
-        // asked.
+        // The fact isn't cached for an accessor, where it depends on the sibling accessor. It isn't cached either if
+        // the stack ran low, because the result of `is_context_sensitive` then depends on the caller's stack depth.
         let times_cut_short = self.times_cut_short.get();
         let takes_one_from_context = match self.bound(file).fns[func.idx()].owner {
             crate::bind::FnOwner::Expr(owner) => self.is_context_sensitive(file, owner),

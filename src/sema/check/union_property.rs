@@ -1,28 +1,29 @@
-//! The properties of a union type: `createUnionOrIntersectionProperty` where `isUnion`. `build_intersection_shape` has the
-//! other half.
+//! Properties of union types: the `isUnion` half of `createUnionOrIntersectionProperty`. `build_intersection_shape` is
+//! the intersection half.
 //!
-//! `createUnionOrIntersectionProperty` asks every member of the union for the name. In a union of a hundred object types most
-//! names are in a few members. In each of the others it works out where to look, looks the name up in vain, and then looks
-//! for an index signature that applies. To spare that, three things are kept, each once it has been earned:
-//! - `MemberFacts`: what does not depend on the name, if the name is an ordinary one. With them, a member that does not
-//!   have the name takes a lookup and little else.
-//! - `UnionMembers::holders`: for a name, the members that have it.
-//! - `UnionSummary`: what the members of a long union add where they do not have a name, taken together. With the holders
-//!   of the name, it says which members to visit, and the others are not even looked at.
+//! `createUnionOrIntersectionProperty` looks the name up in every member of the union. In a union of a hundred object
+//! types, most names exist in only a few members. For each of the other members it still computes which type to search,
+//! misses the lookup, and then searches for an applicable index signature. Three caches avoid most of that work. Each
+//! one is filled only after enough lookups to pay for it:
+//! - `MemberFacts`: everything about a member that doesn't depend on the name, provided the name is ordinary
+//!   (`is_ordinary_name`). With facts, a member that doesn't have the property costs little more than one lookup.
+//! - `UnionMembers::holders`: maps a name to the members that have a property with that name.
+//! - `UnionSummary`: the combined contribution of a long union's members to a property they don't have. Together with
+//!   the name's holders, it determines which members to visit. The rest are skipped entirely.
 //!
-//! The first two are kept for the member, not for the union: whatever narrows or filters a union makes another union of the
-//! same members. The third is a few bits for each member of the union.
+//! The first two are keyed by member rather than by union, because narrowing or filtering a union creates another union
+//! of the same members. The third is a few bits per member of the union.
 //!
-//! `getTypeOfPropertyOfContextualType` asks every member of a union for a name too, and reads what is kept here
-//! (`members_to_ask_as_context`). It adds nothing to it.
+//! `getTypeOfPropertyOfContextualType` also looks a name up in every member of a union. It reads these caches
+//! (`members_to_ask_as_context`) but never fills them.
 //!
-//! Asking a member can resolve types, report errors and close cycles, so none of this may change what is resolved, nor in
-//! which order:
-//! - The facts are a by-product of asking the member. Nothing is resolved for their sake.
-//! - They are only what is final: what a type says about itself, and what a table or a memo has stored. Asking for that again
-//!   computes nothing, so not asking is not observable.
-//! - A member about which more than that is needed has no facts, and is asked each time.
-//! - The members that are visited are visited in the order of the union.
+//! A lookup in a member can resolve types, report errors and hit cycles, so the caches must not change what is resolved
+//! or in which order:
+//! - Facts are a by-product of a full lookup. Nothing is resolved just to compute them.
+//! - Facts only contain final data: the type's own flags, and entries already stored in a table or a memo. Reading
+//!   those again computes nothing, so skipping the read isn't observable.
+//! - A member that needs more than that never gets facts. It gets a full lookup every time.
+//! - Members are always visited in union order.
 
 use super::shape::{LONG_PROP_LIST, MemberCount, PropertyHolder, is_plain_object};
 use super::shortcuts::{TypeNumbers, task_fact};
@@ -30,92 +31,97 @@ use super::*;
 use crate::util::{FxHashSet, PositionSet};
 use smallvec::SmallVec;
 
-/// The members of a shorter union are asked each time. Most unions are short, and there is little to save in them.
+/// Shorter unions don't use `MemberFacts`. Most unions are short, and there's little to save in them.
 const MIN_MEMBERS_FOR_FACTS: usize = 8;
 
-/// The length of `UnionMembers::recent`: more than the members of all but a few unions. `task_fact::IS_WALKED_UNION` is for
-/// those.
+/// Length of `UnionMembers::recent`. Only a few unions have more members than this, and `task_fact::IS_WALKED_UNION`
+/// covers those.
 const RECENT_UNION_MEMBERS: usize = 512;
 
-/// A shorter union has no summary: to go through its members with their facts takes no longer than the rest of what it
-/// takes to make a property, so there is little left to save.
+/// Shorter unions don't get a `UnionSummary`. Walking their members with facts costs no more than the rest of building
+/// the property, so a summary would save little.
 const MIN_MEMBERS_FOR_SUMMARY: usize = 128;
 
-/// A name with more holders than this is looked up in every member. The holders are those in any union: to find one among
-/// the members takes about 2 instructions a member, to visit a member that has facts and not the name about 50.
+/// A name with more holders than this is looked up in every member instead. `holders` lists members of all unions, so
+/// each holder has to be searched for among this union's members. That search costs about 2 instructions per member.
+/// Visiting a member that has facts but not the property costs about 50.
 const MOST_HOLDERS_TO_FIND: usize = 16;
 
-/// The flags that say which accessors a property has, besides `READONLY`.
+/// Flags that, together with `READONLY`, record which accessors a property has.
 const ACCESSOR_KIND: PropFlags = PropFlags::ACCESSOR.union(PropFlags::WRITE_ONLY);
 
-/// What a member that does not have the property adds to the property of the union.
+/// A member's contribution to a union property that the member doesn't have.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Missing {
-    /// `getApplicableIndexInfoForName` finds an index signature. `value`: its type, or for a tuple the type of the elements
-    /// after the fixed ones.
+    /// `getApplicableIndexInfoForName` found an index signature. `value` is its type, or for a tuple, the type of the
+    /// elements after the fixed ones.
     IndexSignature { value: TypeId, is_readonly: bool },
-    /// The member is the type of an object literal without spreads, which has no other properties: `undefined`.
+    /// The member is the type of an object literal without spreads, so it can't have other properties. It contributes
+    /// `undefined`.
     ClosedObjectLiteral,
     /// `CheckFlagsReadPartial`
     ReadPartial,
 }
 
-/// `Missing` for a member and every ordinary name that it does not have.
+/// A member's `Missing` value for any ordinary name it doesn't have.
 #[derive(Copy, Clone)]
 enum WhenMissing {
-    /// Not found out yet. It takes the index signatures of the member, and resolving those of an intersection compares the
-    /// signatures of its constituents: that waits for a name that is missing.
+    /// Not computed yet. Computing it needs the member's index signatures, and resolving an intersection's index
+    /// signatures compares its constituents' signatures. That work is deferred until a lookup misses.
     Unknown,
-    /// The member is a tuple, or has an index signature whose key type is not `string`, or one whose type is instantiated
-    /// each time.
+    /// The member is a tuple, has an index signature whose key type isn't `string`, or has one whose type is
+    /// instantiated on every read.
     DependsOnName,
     Adds(Missing),
 }
 
-/// What the first loop of `createUnionOrIntersectionProperty` works out about a member of a union before it uses the name.
-/// The member has the properties in `members`, and no other that has an ordinary name.
+/// Everything the first loop of `createUnionOrIntersectionProperty` computes about a union member before it uses the
+/// name. Every property of the member that has an ordinary name is in `members`.
 #[derive(Copy, Clone)]
 struct MemberFacts<'p> {
     /// `getApparentType` of the member.
     apparent_type: TypeId,
-    /// `getReducedApparentType` of that, which `members` are the members of.
+    /// `getReducedApparentType(apparent_type)`. `members` are this type's members.
     reduced_apparent_type: TypeId,
     members: Members<'p>,
     when_missing: WhenMissing,
-    /// How many times it was `Adds` for a name in a union that may get a summary. Not counted once `is_listed`.
+    /// Number of misses answered from `WhenMissing::Adds` in unions long enough for a summary. Stops counting once
+    /// `is_listed` is set.
     asked_in_vain: u32,
-    /// The member is in `UnionMembers::holders` under the name of each of its properties. Then `when_missing` is `Adds`.
+    /// True if the member is in `UnionMembers::holders` under each of its property names. Implies that `when_missing`
+    /// is `Adds`.
     is_listed: bool,
 }
 
-/// What a long union needs besides the holders of a name to make the property of that name.
+/// Per-union data that, together with a name's holders, is enough to build a long union's property with that name.
 struct UnionSummary {
-    /// The members that were not listed when this was made.
+    /// Members that weren't listed when the summary was built.
     always_visited: PositionSet,
-    /// What the other members add where they do not have the name, and which of them add it.
+    /// Each distinct `Missing` value among the listed members, with the members that contribute it.
     missing: SmallVec<[(Missing, PositionSet); 2]>,
-    /// `always_visited`, and the other members for which `has_only_its_properties` does not hold.
+    /// `always_visited`, plus the listed members that fail `has_only_its_properties`.
     always_asked_as_context: PositionSet,
 }
 
-/// A type id can be the task's own, so none of this is shared with other tasks.
+/// Type ids can be task-local, so none of this is shared between tasks.
 #[derive(Default)]
 pub(super) struct UnionMembers<'p> {
     facts: Vec<MemberFacts<'p>>,
-    /// For a member, 1 + the index of its facts in `facts`. 0: it has none.
+    /// Maps a member to 1 + the index of its facts in `facts`, or to 0 if it doesn't have facts.
     facts_of: TypeNumbers,
-    /// The members without facts that were visited last, each at its id modulo the length. One that is visited again gets
-    /// its facts as well: a union that is narrowed in many ways makes many unions that are each asked once.
+    /// Recently visited members without facts, each stored at its id modulo the length. A member that is found here on
+    /// its next visit gets facts even if its union is being walked for the first time. Narrowing one union in many ways
+    /// creates many unions that are each walked only once.
     recent: Vec<TypeId>,
-    /// For each name, the members with `is_listed` that have it.
+    /// Maps a name to the `is_listed` members that have a property with that name.
     holders: FxHashMap<Atom, SmallVec<[TypeId; 4]>>,
     summaries: FxHashMap<TypeId, UnionSummary>,
-    /// A union is being asked for every name that its members have. See `property_holder_of_member`.
+    /// True while a caller looks up every name that a union's members have. See `property_holder_of_member`.
     is_listing: bool,
 }
 
 impl<'p> UnionMembers<'p> {
-    /// Sets `is_listing`, and returns what it was.
+    /// Sets `is_listing` and returns the previous value.
     pub(super) fn set_listing(&mut self, is_listing: bool) -> bool {
         std::mem::replace(&mut self.is_listing, is_listing)
     }
@@ -141,53 +147,56 @@ impl<'p> UnionMembers<'p> {
     }
 }
 
-/// What `add_member` has found out about a member.
+/// Result of `add_member`.
 #[derive(Copy, Clone)]
 struct MemberLookup<'p> {
     holder: PropertyHolder<'p>,
-    /// Nothing made the computation in progress invalid for the next caller while `holder` was worked out.
+    /// True if `non_cacheable_mark` didn't change while `holder` was computed, so `holder` is safe to cache.
     is_holder_final: bool,
-    /// If the member does not have the name: what it adds, and whether the same holds for that.
+    /// `Some` if the member doesn't have the property. The pair is the member's contribution and a flag that is true if
+    /// the contribution is safe to cache too.
     missing: Option<(Missing, bool)>,
 }
 
-/// What stays the same, or is found out once, while the members of a union are visited for a property.
+/// State shared by every member visit while one union property is built.
 struct Walk {
     name: Atom,
     /// `skipObjectFunctionPropertyAugment`
     skips: bool,
     is_late_bound: bool,
     uses_facts: bool,
-    /// All the members of the union were visited before, with `uses_facts`.
+    /// True if every member of the union has been visited before with `uses_facts` set.
     is_walked_again: bool,
-    /// The union is long enough for a summary.
+    /// True if the union is long enough for a summary.
     is_long: bool,
-    /// `Checker::is_ordinary_name`, once a member did not have the name.
+    /// Memo for `Checker::is_ordinary_name`, filled on first use.
     is_ordinary_name: Option<bool>,
-    /// The literal type of the name exists.
+    /// True once the name's literal type has been created.
     has_literal_type: bool,
-    /// How many of the members visited so far a summary would have in `always_visited`.
+    /// Number of visited members that a summary would put in `UnionSummary::always_visited`.
     always_visited: usize,
 }
 
-/// What the first loop of `createUnionOrIntersectionProperty` gathers from the members of a union.
+/// Accumulates the results of the first loop of `createUnionOrIntersectionProperty` for a union.
 struct UnionPropertyBuilder<'p, 's> {
-    /// `singleProp` is the first.
+    /// The first entry is `singleProp`.
     prop_set: SmallVec<[Prop<'s>; 4]>,
-    /// `Prop::fx_hash_without_lists` of what is in `prop_set`, once that is long.
+    /// `Prop::fx_hash_without_lists` of every entry in `prop_set`. Empty until `prop_set` reaches `LONG_PROP_LIST`.
     prop_hashes: FxHashSet<u64>,
-    /// `prop != singleProp`, `propSet.Add(prop)`: a symbol that many members inherit is considered once.
+    /// Symbols seen in earlier members. Mirrors `prop != singleProp` and `propSet.Add(prop)`, so a symbol that many
+    /// members inherit is processed only once.
     symbols: SmallVec<[(*const Prop<'p>, MapperId); LONG_PROP_LIST]>,
-    /// `symbols`, and the ones that came when that was full.
+    /// Everything in `symbols`, plus the symbols added after it filled up.
     more_symbols: FxHashSet<(*const Prop<'p>, MapperId)>,
-    /// `indexTypes`, each with the position of the first member that adds it, in the order of the members.
+    /// `indexTypes`. Each type is paired with the position of the first member that contributes it, and the list is
+    /// sorted by that position.
     index_types: SmallVec<[(usize, TypeId); 4]>,
     merged_instantiations: bool,
     flags: PropFlags,
     is_public: bool,
-    /// The apparent type of the member that has `singleProp`.
+    /// Apparent type of the member that has `singleProp`.
     first_owner: TypeId,
-    /// The position of that member.
+    /// Position of that member in the union.
     first_at: Option<usize>,
 }
 
@@ -207,7 +216,7 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
         }
     }
 
-    /// `false`: an earlier member had the symbol.
+    /// Returns false if an earlier member already had the symbol.
     fn insert_symbol(&mut self, symbol: (*const Prop<'p>, MapperId)) -> bool {
         if self.symbols.len() < LONG_PROP_LIST {
             if self.symbols.contains(&symbol) {
@@ -222,7 +231,7 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
         self.more_symbols.insert(symbol)
     }
 
-    /// Whether `prop` is not in `prop_set`. The caller adds it then.
+    /// True if `prop` isn't in `prop_set` yet. The caller must then push it.
     fn is_new_prop(&mut self, prop: &Prop<'s>) -> bool {
         if self.prop_set.len() < LONG_PROP_LIST {
             return !self.prop_set.contains(prop);
@@ -231,15 +240,16 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
             let hashes = self.prop_set.iter().map(Prop::fx_hash_without_lists);
             self.prop_hashes.extend(hashes);
         }
-        // A new hash says that the property is new. Otherwise the list says.
+        // An unseen hash proves that the property is new. On a hash hit, search the list.
         self.prop_hashes.insert(prop.fx_hash_without_lists()) || !self.prop_set.contains(prop)
     }
 
-    /// The member at `at` does not have the property. A member may be added out of turn once `first_at` is final.
+    /// Records that the member at `at` doesn't have the property. Members can be added out of order once `first_at` is
+    /// final.
     fn add_missing(&mut self, at: usize, missing: Missing) {
         match missing {
             Missing::IndexSignature { value, is_readonly } => {
-                // Only `singleProp` sets these flags, so a member before it has nothing to remove.
+                // Only `singleProp` sets these flags, so a member before it has nothing to clear.
                 if self.first_at.is_some_and(|first| first < at) {
                     self.flags.remove(ACCESSOR_KIND);
                 }
@@ -257,8 +267,8 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
         }
     }
 
-    /// `indexTypes` only feeds `getUnionType`, so a type is kept once. Properties are compared by value, so the order has to
-    /// be the same however many of the members were visited.
+    /// `indexTypes` is only passed to `getUnionType`, so duplicates are dropped. Properties are compared by value, so
+    /// the order must not depend on how many members were visited.
     fn add_index_type(&mut self, at: usize, ty: TypeId) {
         if let Some(same) = self.index_types.iter().position(|it| it.1 == ty) {
             if self.index_types[same].0 <= at {
@@ -278,9 +288,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.union_property_ex(union, name, false)
     }
 
-    /// `skips`: `skipObjectFunctionPropertyAugment`. `union_properties` is `propertyCache`. There is
-    /// no `propertyCacheWithoutFunctionPropertyAugment`: only the import of a name from a module
-    /// with `export =` looks a property of a union up that way.
+    /// `skips` is `skipObjectFunctionPropertyAugment`, and `union_properties` is `propertyCache`. There's no
+    /// `propertyCacheWithoutFunctionPropertyAugment` because only importing a name from a module with `export =` looks
+    /// up a union property that way.
     pub(super) fn union_property_ex(
         &mut self,
         union: TypeId,
@@ -317,9 +327,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `CheckFlagsHasNonUniformType` and `CheckFlagsHasLiteralType` of the property that
-    /// `createUnionOrIntersectionProperty` makes of `props`. That of a union has them among its
-    /// flags. That of an intersection has not: its type is resolved lazily.
+    /// Returns `CheckFlagsHasNonUniformType` and `CheckFlagsHasLiteralType` for the property that
+    /// `createUnionOrIntersectionProperty` builds from `props`. A union property stores them in its flags. An
+    /// intersection property doesn't, because its type is resolved lazily.
     fn non_uniform_and_literal(&mut self, props: &[Prop<'_>]) -> PropFlags {
         let mut flags = PropFlags::empty();
         let first_type = self.type_of_prop(&props[0], MapperId::IDENTITY);
@@ -339,7 +349,7 @@ impl<'p, 's> Checker<'p, 's> {
         flags
     }
 
-    /// `createUnionOrIntersectionProperty`, where `isUnion`.
+    /// The `isUnion` half of `createUnionOrIntersectionProperty`.
     fn create_union_property(
         &mut self,
         containing_type: TypeId,
@@ -372,7 +382,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (at, &current) in parts.iter().enumerate() {
             self.visit_member(&mut walk, &mut builder, at, current);
         }
-        // With more to visit whatever the name, there is little that a summary would save.
+        // A summary saves little if more than 1/8 of the members have to be visited for every name.
         if walk.is_walked_again
             && walk.is_long
             && walk.always_visited * 8 <= parts.len()
@@ -383,19 +393,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.finish_union_property(builder, containing_type, name)
     }
 
-    /// Whether asking a member gives what its facts say, as things are in progress now.
+    /// True if a full lookup would match the cached facts, given the computations currently in progress.
     fn do_member_facts_hold(&self) -> bool {
-        // Looking a name up in an intersection that is being reduced creates its properties once more: see
+        // Looking a name up in an intersection that is being reduced creates its properties a second time. See
         // `reduce_apparent_type_of_intersection_in_progress`.
         let mut being_reduced = self.never_in_progress.iter();
-        // `members` leaves out what a type reference inherits.
+        // While `unresolved_members` is non-empty, `members` omits a type reference's inherited members.
         self.unresolved_members.is_empty()
             && !being_reduced.any(|&ty| self.task_facts.has(ty, task_fact::IS_IN_MEMBER_FACTS))
     }
 
-    /// Whether what a member adds where it does not have the name can be the same as for other names: no object type
-    /// inherits the name from `Object` or `Function`, and it is neither late-bound nor numeric, where it depends on the key
-    /// type of an index signature whether that applies.
+    /// True if a member's `Missing` value for this name can be reused for other names. Object types must never inherit
+    /// the name from `Object` or `Function`, and the name must not be late-bound or numeric, because then an index
+    /// signature's key type decides if the signature applies.
     fn is_ordinary_name(&self, walk: &mut Walk) -> bool {
         let (name, is_late_bound) = (walk.name, walk.is_late_bound);
         *walk
@@ -403,7 +413,7 @@ impl<'p, 's> Checker<'p, 's> {
             .get_or_insert_with(|| self.is_ordinary(name, is_late_bound))
     }
 
-    /// `is_late_bound`: `Atoms::is_symbol_name`.
+    /// `is_late_bound` must be `Atoms::is_symbol_name(name)`.
     fn is_ordinary(&self, name: Atom, is_late_bound: bool) -> bool {
         name.is_some()
             && !is_late_bound
@@ -411,8 +421,8 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_never_inherited(name)
     }
 
-    /// Whether all there is to find in the member `current`, which has `facts`, are the properties in `facts.members`: it
-    /// is an object type, so it is its own apparent type, and it has no index signature.
+    /// True if a lookup in the member `current`, whose facts are `facts`, can only find the properties in
+    /// `facts.members`. The member must be an object type, which is its own apparent type, without index signatures.
     fn has_only_its_properties(&self, current: TypeId, facts: &MemberFacts<'p>) -> bool {
         let shape = facts.members.shape();
         self.flags(current) & tf::OBJECT != 0
@@ -422,19 +432,21 @@ impl<'p, 's> Checker<'p, 's> {
             && shape.index.is_empty()
     }
 
-    /// For `getTypeOfPropertyOfContextualType`: the members of `union` to ask for the property `name`. `None`: all.
+    /// For `getTypeOfPropertyOfContextualType`. Returns the members of `union` to search for the property `name`, or
+    /// `None` to search all of them.
     ///
-    /// A member that is left out `has_only_its_properties`, and `name`, which is ordinary, is not among them. So it has no
-    /// such property, inherits none and has no index signature that applies. To find that out takes its members, which are
-    /// stored: nothing is resolved, so not asking is not observable.
+    /// A skipped member passes `has_only_its_properties`, and `name`, which is ordinary, isn't one of those properties.
+    /// So the member doesn't have the property, doesn't inherit it, and doesn't have an applicable index signature.
+    /// Checking that only reads the member's stored members and resolves nothing, so skipping the member isn't
+    /// observable.
     pub(super) fn members_to_ask_as_context(
         &self,
         union: TypeId,
         name: Atom,
     ) -> Option<PositionSet> {
         let parts = self.parts(union);
-        // Members get their facts where the properties of a union are made. Those of a union that has not been there are not
-        // worth a lookup each.
+        // Members only get facts while a union property is built. If that never happened for this union, looking up
+        // each member's facts isn't worth it.
         if parts.len() < MIN_MEMBERS_FOR_FACTS
             || !self.task_facts.has(union, task_fact::IS_WALKED_UNION)
             || !self.do_member_facts_hold()
@@ -469,7 +481,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(asked)
     }
 
-    /// The members of `union` to visit for the property, if its summary and the holders of the name say. `None`: all.
+    /// Returns the members of `union` to visit for the property, based on the union's summary and the name's holders,
+    /// or `None` to visit all of them.
     fn members_to_visit(&self, union: TypeId, walk: &mut Walk) -> Option<PositionSet> {
         if !(walk.uses_facts && walk.is_long) {
             return None;
@@ -493,8 +506,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(visited)
     }
 
-    /// The first loop of `createUnionOrIntersectionProperty` for `union`, which has a summary. `visited`: what
-    /// `members_to_visit` has returned.
+    /// The first loop of `createUnionOrIntersectionProperty` for a `union` that has a summary. `visited` is the result
+    /// of `members_to_visit`.
     fn visit_some_members(
         &mut self,
         union: TypeId,
@@ -503,8 +516,9 @@ impl<'p, 's> Checker<'p, 's> {
         builder: &mut UnionPropertyBuilder<'p, 's>,
     ) {
         let parts = self.parts(union);
-        // `getApplicableIndexInfoForName` creates the literal type of the name for the first member that does not have the
-        // name and has an index signature. If that member is not visited, the type is created in its turn all the same.
+        // `getApplicableIndexInfoForName` creates the name's literal type for the first member that has an index
+        // signature but not the property. If that member is skipped, the type is still created at the same point in the
+        // walk.
         let has_index_signature =
             |it: &&(Missing, PositionSet)| matches!(it.0, Missing::IndexSignature { .. });
         let creates_literal_type_at = (self.union_members.summaries.get(&union))
@@ -529,7 +543,8 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         for (missing, members) in &summary.missing {
-            // The first says where the index type goes, the last whether a member after `singleProp` adds it.
+            // The first member determines the index type's position. The last member determines whether a member after
+            // `singleProp` contributes it.
             let ends = [members.first_except(visited), members.last_except(visited)];
             for at in ends.into_iter().flatten() {
                 builder.add_missing(at, *missing);
@@ -537,7 +552,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// One turn of the first loop of `createUnionOrIntersectionProperty`: for `current`, the member at `at`.
+    /// One iteration of the first loop of `createUnionOrIntersectionProperty`, for the member `current` at position
+    /// `at`.
     fn visit_member(
         &mut self,
         walk: &mut Walk,
@@ -546,7 +562,7 @@ impl<'p, 's> Checker<'p, 's> {
         current: TypeId,
     ) {
         self.tally(MemberCount::MembersVisited, 1);
-        // No other kind of type has facts.
+        // Only object types and intersections can have facts.
         let may_have_facts =
             walk.uses_facts && self.flags(current) & (tf::OBJECT | tf::INTERSECTION) != 0;
         let facts = match may_have_facts {
@@ -582,7 +598,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.string_literal(walk.name, false);
                     walk.has_literal_type = true;
                 }
-                // The list is of use to a union that has a summary.
+                // Only a union with a summary reads `holders`.
                 if walk.is_long && walk.is_walked_again && !facts.is_listed {
                     self.count_asked_in_vain(current);
                 }
@@ -604,7 +620,7 @@ impl<'p, 's> Checker<'p, 's> {
         builder.add_missing(at, missing);
     }
 
-    /// Whether `current` is in `UnionMembers::recent`, where it is from now on.
+    /// True if `current` was already in `UnionMembers::recent`. Inserts it either way.
     fn is_visited_again(&mut self, current: TypeId) -> bool {
         let recent = &mut self.union_members.recent;
         if recent.is_empty() {
@@ -614,7 +630,7 @@ impl<'p, 's> Checker<'p, 's> {
         std::mem::replace(place, current) == current
     }
 
-    /// `lookup`: what `add_member` has just returned for `current`.
+    /// `lookup` must be the value that `add_member` just returned for `current`.
     fn keep_member_facts(&mut self, walk: &mut Walk, current: TypeId, lookup: MemberLookup<'p>) {
         let Some(mut facts) = self.facts_of_member(current, lookup) else {
             return;
@@ -632,9 +648,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.union_members.keep_facts(current, facts);
     }
 
-    /// The member `current`, which has facts and is not listed, did not have a name. It is listed once that has happened a
-    /// quarter as many times as it has properties: to list a property takes about 60 instructions, and the facts have saved
-    /// about 250 each time, so they have paid for it.
+    /// Called when a lookup misses in the member `current`, which has facts but isn't listed. The member is listed once
+    /// that has happened a quarter as many times as it has properties. Listing costs about 60 instructions per property
+    /// and the facts saved about 250 per miss, so the savings have already paid for it.
     fn count_asked_in_vain(&mut self, current: TypeId) {
         let UnionMembers {
             facts,
@@ -692,8 +708,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.union_members.summaries.insert(union, summary);
     }
 
-    /// `apparent_type(ty)` for an intersection or an object type that is not a mapped type, if asking again computes
-    /// nothing: the type says it, or a memo has it.
+    /// Returns `apparent_type(ty)` for an intersection or a non-mapped object type, if the answer is already in the
+    /// type's flags or in a memo, so that reading it computes nothing.
     fn known_apparent_type(&self, ty: TypeId) -> Option<TypeId> {
         if !self.is_intersection(ty) || self.has_only_own_apparent_types(ty) {
             return Some(ty);
@@ -701,7 +717,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.apparent_types_of_intersections.get(ty)
     }
 
-    /// `reduced(ty)` for the same types, on the same condition.
+    /// Returns `reduced(ty)` for the same kinds of types, under the same condition.
     fn known_reduced_type(&self, ty: TypeId) -> Option<TypeId> {
         if !self.may_be_reduced(ty) || !self.is_intersection(ty) {
             return Some(ty);
@@ -710,8 +726,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(if is_never { TypeId::NEVER } else { ty })
     }
 
-    /// The facts about the member `current` of a union, without `when_missing`. `None`: it is of a kind about which more
-    /// has to be asked each time, or something about it is not final.
+    /// Returns the facts for the union member `current`, with `when_missing` still `Unknown`. Returns `None` if this
+    /// kind of type needs more work on every lookup, or if some of its data isn't final.
     fn facts_of_member(
         &self,
         current: TypeId,
@@ -720,8 +736,8 @@ impl<'p, 's> Checker<'p, 's> {
         let PropertyHolder::Members(apparent, members) = lookup.holder else {
             return None;
         };
-        // The kinds that `known_apparent_type` and `known_reduced_type` are for. The apparent type of any other is computed
-        // each time: from a base constraint, by instantiating a mapped type, by resolving a global type.
+        // The kinds that `known_apparent_type` and `known_reduced_type` support. Any other kind's apparent type is
+        // recomputed every time, from a base constraint, by instantiating a mapped type, or by resolving a global type.
         let is_covered = |ty: TypeId| {
             let data = self.data(ty);
             is_plain_object(data) || matches!(data, TypeData::Intersection(_))
@@ -730,7 +746,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let t = self.known_apparent_type(current)?;
-        // `is_apparent_type_of_intersection_never` makes the intersection once more.
+        // `is_apparent_type_of_intersection_never` rebuilds this kind of intersection on every call.
         let is_made_again = matches!(self.data(t), TypeData::Intersection(parts)
             if parts.iter().any(|&part| self.intersection_member_has_other_apparent_type(part)));
         if !is_covered(t) || is_made_again || self.known_reduced_type(t)? != t {
@@ -742,7 +758,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        // `is_type_only_member`: a property that is listed and not found.
+        // `is_type_only_member`: a module's object type can list a property that a lookup must not find.
         if matches!(
             self.data(apparent),
             TypeData::Anon {
@@ -752,7 +768,7 @@ impl<'p, 's> Checker<'p, 's> {
         ) {
             return None;
         }
-        // Members that are not stored are replaced later, and do not outlive the file.
+        // Members that aren't stored are replaced later and don't outlive the file.
         let stored = self.resolved_members(apparent)?;
         if !std::ptr::eq(stored.resolved, members.resolved)
             || stored.mapper != members.mapper
@@ -771,9 +787,9 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `MemberFacts::when_missing` of a member with the given `reduced_apparent_type`, for which `missing_from_member` has
-    /// just returned `missing` for an ordinary name. It is `missing` if that returns the same for every ordinary name, and
-    /// computes nothing when it is asked again.
+    /// Returns `MemberFacts::when_missing` for a member whose `reduced_apparent_type` is `apparent`. `missing` is the
+    /// value that `missing_from_member` just returned for an ordinary name. The result is `Adds(missing)` if
+    /// `missing_from_member` would return that value for every ordinary name without computing anything.
     fn when_missing(&self, apparent: TypeId, missing: Missing) -> WhenMissing {
         let object = match self.data(apparent) {
             TypeData::Intersection(_) => self.p.intersection_objects.get(&self.task, &apparent),
@@ -783,7 +799,7 @@ impl<'p, 's> Checker<'p, 's> {
             return WhenMissing::Unknown;
         };
         let shape = members.shape();
-        // `instantiate` counts its calls, and fails from a limit on.
+        // `instantiate` counts its calls and fails past a limit, so skipping a call is observable.
         let is_unchanged = |ty: TypeId| {
             members.mapper == MapperId::IDENTITY
                 || self.types().instantiation_class(ty) == InstantiationClass::Unchanged
@@ -798,7 +814,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `visit_member` without facts. `None`: the member takes no part in the property.
+    /// The slow path of `visit_member`, which doesn't use facts. Returns `None` if the member doesn't contribute to the
+    /// property.
     fn add_member(
         &mut self,
         walk: &Walk,
@@ -809,8 +826,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.tally(MemberCount::MembersVisitedWithoutFacts, 1);
         let before = self.non_cacheable_mark();
         let t = self.apparent_type(current);
-        // An intersection with a member whose apparent type is `never`, such as a conditional
-        // type with that constraint, has the apparent type `never`.
+        // An intersection's apparent type is `never` if a member's apparent type is `never`, e.g. a conditional type
+        // with that constraint.
         if self.is_error_type(t) || t.is_never() || self.is_apparent_type_of_intersection_never(t) {
             return None;
         }
@@ -837,7 +854,8 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// The member at `at`, whose apparent type is `t`, has `prop`. `symbol`: `identity_of_own_property`.
+    /// Records that the member at `at`, whose apparent type is `t`, has `prop`. `symbol` is the result of
+    /// `identity_of_own_property`.
     fn add_member_property(
         &mut self,
         builder: &mut UnionPropertyBuilder<'p, 's>,
@@ -852,8 +870,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut prop = prop.clone_in(self.arena);
         self.instantiate_prop(&mut prop, mapper);
-        // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
-        // not considered.
+        // `prop.Flags&SymbolFlagsClassMember`: variables of a module or of `globalThis` are ignored.
         if !matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) {
             builder.flags |= prop.flags & PropFlags::OPTIONAL;
         }
@@ -867,7 +884,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let single = &builder.prop_set[0];
-        // `prop.Flags&SymbolFlagsAccessor`: a getter alone is read-only.
+        // `prop.Flags&SymbolFlagsAccessor`: a property with only a getter is read-only.
         let accessors = |p: &Prop| match p.flags.contains(PropFlags::ACCESSOR) {
             true => p.flags & (ACCESSOR_KIND | PropFlags::READONLY),
             false => PropFlags::empty(),
@@ -875,8 +892,8 @@ impl<'p, 's> Checker<'p, 's> {
         if accessors(&prop) != accessors(single) {
             builder.flags.remove(ACCESSOR_KIND);
         }
-        // `isInstantiation`: instantiations of one property that
-        // `compareProperties` finds equal are one property.
+        // `isInstantiation`: instantiations of the same property that `compareProperties` considers equal count as one
+        // property.
         let is_same = single.source == prop.source && self.compare_properties(single, &prop);
         if is_same {
             builder.merged_instantiations = matches!(single.source, PropSource::Symbol(symbol)
@@ -888,7 +905,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What a member whose apparent type is `t` adds to the property `name` of the union, which it does not have.
+    /// Returns the contribution of a member with apparent type `t` to the union's property `name`, which the member
+    /// doesn't have.
     fn missing_from_member(&mut self, t: TypeId, name: Atom, is_late_bound: bool) -> Missing {
         let index_info = match self.members_for_index_infos(t) {
             Some(members) if !is_late_bound => self.applicable_index_info_for_name(&members, name),
@@ -906,7 +924,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `createUnionOrIntersectionProperty`, from the end of its first loop.
+    /// The rest of `createUnionOrIntersectionProperty`, after its first loop.
     fn finish_union_property(
         &mut self,
         builder: UnionPropertyBuilder<'p, 's>,
@@ -934,15 +952,15 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         if prop_set.len() == 1 && !is_partial {
-            // The property of the only member that has one is that of the union. That of an
-            // intersection gets its two flags here: see `non_uniform_and_literal`.
+            // There's only one distinct property, so the union reuses it. An intersection property gets its two flags
+            // here. See `non_uniform_and_literal`.
             let mut single = prop_set.pop()?;
             if let PropSource::Intersected(of, props) = &single.source
                 && self.is_intersection(*of)
             {
                 single.flags |= self.non_uniform_and_literal(props);
             }
-            // `links.writeType` of the clone of `singleProp`.
+            // `links.writeType` of `singleProp`'s clone.
             if merged_instantiations {
                 self.write_type_of_prop(&single, MapperId::IDENTITY);
             }
@@ -960,7 +978,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             flags |= PropFlags::STRING_NAME;
         }
-        // `getDeclarationModifierFlagsFromSymbol`: private if one is, else public if one is, else protected.
+        // `getDeclarationModifierFlagsFromSymbol`: private if any is private, else public if any is public, else
+        // protected.
         if flags.contains(PropFlags::PRIVATE) || is_public {
             flags.remove(PropFlags::PROTECTED);
         }

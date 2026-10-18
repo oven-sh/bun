@@ -49,8 +49,8 @@ impl Rule for PreferStringStartsEndsWith {
         let Some((is_start, characters)) = check_regex(literal.pattern(), literal.flags()) else {
             return;
         };
-        // `test` makes a string of `undefined`, a number or a `URL`. `startsWith` is not a method of these. A call whose result
-        // isn't used is there for what it does to `RegExp.$_`.
+        // `test` converts `undefined`, a number or a `URL` to a string, but those values have no `startsWith` method. A
+        // call whose result is unused is only there for its side effect on `RegExp.$_`.
         let is_unused = || matches!(e.parent(), Node::Stmt(it) if it.tag() == StmtTag::Expr);
         let is_safe = || can_replace(call).is_some_and(is_visibly_string) && !is_unused();
         cx.report(member, if is_start { STARTS_WITH } else { ENDS_WITH }).unless_claimed(e).fix_where_safe(is_safe, |fixer| {

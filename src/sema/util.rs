@@ -42,8 +42,9 @@ impl<T> SharedSort<T> for [T] {
         index_sort::sort_slice_by(self, T::cmp);
     }
 
-    /// Some of TypeScript's comparisons aren't total orders, and the sorts of the standard library may panic on those. The checker
-    /// follows the Go version of TypeScript, and for such a comparison only Go's own stable sort gives what it gives.
+    /// Some of TypeScript's comparisons aren't total orders, and the standard library's sorts may panic on those. The
+    /// checker follows the Go version of TypeScript, and with a comparison like that only Go's own stable sort
+    /// algorithm produces the same order.
     fn shared_sort_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
         index_sort::go_stable_sort_slice_by(self, compare);
     }
@@ -104,12 +105,12 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
-/// A set of positions in a list, one bit for each. Two sets that are compared are about lists of the same length. Up to
-/// 128 positions take no allocation.
+/// A bit set of positions in a list. Methods that combine two sets expect both to be for lists of the same length. Sets
+/// of up to 128 positions are stored inline.
 #[derive(Clone, Default)]
 pub(crate) struct PositionSet(SmallVec<[u64; 2]>);
 
-/// The positions of the bits that are set in a word, lowest first.
+/// Iterates over the positions of the set bits in a word, lowest first.
 struct BitsOfWord(u64);
 
 impl Iterator for BitsOfWord {
@@ -127,12 +128,12 @@ impl Iterator for BitsOfWord {
 }
 
 impl PositionSet {
-    /// The empty set of positions in a list of `len` items.
+    /// Returns an empty set for a list of `len` items.
     pub(crate) fn new(len: usize) -> PositionSet {
         PositionSet(smallvec![0; len.div_ceil(64)])
     }
 
-    /// Makes it `new(len)`, and keeps the allocation.
+    /// Resets the set to `new(len)` and reuses the allocation.
     pub(crate) fn reset(&mut self, len: usize) {
         self.0.clear();
         self.0.resize(len.div_ceil(64), 0);
@@ -148,7 +149,7 @@ impl PositionSet {
         self.0[position / 64] >> (position % 64) & 1 != 0
     }
 
-    /// The words of the set without what is in `excluded`, each with its index.
+    /// Yields each word of the set with the bits in `excluded` cleared, paired with the word's index.
     #[inline]
     fn words_except(
         &self,
@@ -158,19 +159,19 @@ impl PositionSet {
         words.map(|(at, (word, excluded))| (at, word & !excluded))
     }
 
-    /// The lowest position that is not in `excluded`.
+    /// Returns the lowest position in the set that isn't in `excluded`.
     pub(crate) fn first_except(&self, excluded: &PositionSet) -> Option<usize> {
         let (at, word) = self.words_except(excluded).find(|it| it.1 != 0)?;
         Some(at * 64 + word.trailing_zeros() as usize)
     }
 
-    /// The highest position that is not in `excluded`.
+    /// Returns the highest position in the set that isn't in `excluded`.
     pub(crate) fn last_except(&self, excluded: &PositionSet) -> Option<usize> {
         let (at, word) = self.words_except(excluded).rev().find(|it| it.1 != 0)?;
         Some(at * 64 + 63 - word.leading_zeros() as usize)
     }
 
-    /// In ascending order.
+    /// Iterates over the positions in ascending order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = usize> {
         let words = self.0.iter().enumerate();
         words.flat_map(|(at, &word)| BitsOfWord(word).map(move |bit| at * 64 + bit))
@@ -328,16 +329,17 @@ pub(crate) trait Placement {
     fn start(tag: u32) -> usize;
 }
 
-/// What a slot of an open-addressed table holds for the entry `index` with the hash `spread`: the
-/// tag of the hash in its upper half and the index plus one in its lower half. A free slot holds 0.
+/// Returns the slot value for entry `index` with hash `spread` in an open-addressed table: the
+/// hash's tag in the upper 32 bits and `index + 1` in the lower 32. A free slot is 0.
 #[inline]
 pub(crate) fn place_of(spread: u64, index: u32) -> u64 {
     u64::from(spread as u32) << 32 | u64::from(index + 1)
 }
 
-/// Searches a table of `len` slots, a power of two, which `slot` reads. `Ok`: the index of the entry
-/// that `is_it` accepts among those with the hash `spread`. `Err`: there is none, and this is the
-/// free slot that has ended the search, which is where such an entry goes.
+/// Searches a table of `len` slots, read through `slot`. `len` must be a power of two. Returns `Ok`
+/// with the index of the entry that `is_it` accepts among those with hash `spread`. If there isn't
+/// one, returns `Err` with the free slot that ended the search, which is where that entry would be
+/// inserted.
 #[inline]
 pub(crate) fn search<P: Placement>(
     len: usize,
@@ -345,7 +347,7 @@ pub(crate) fn search<P: Placement>(
     slot: impl Fn(usize) -> u64,
     mut is_it: impl FnMut(u32) -> bool,
 ) -> Result<u32, usize> {
-    // Computed from the length, so that the compiler sees that `at` is in bounds.
+    // The mask is computed from `len` here so the compiler can prove that `at` is in bounds.
     let (tag, mask) = (spread as u32, len - 1);
     let mut at = P::start(tag) & mask;
     loop {
@@ -360,8 +362,9 @@ pub(crate) fn search<P: Placement>(
     }
 }
 
-/// The slot for an entry with `tag` that is not in the table. The content of a slot determines its
-/// position, so a table grows without reading the entries it indexes.
+/// Returns the free slot for a new entry with `tag`. The entry must not be in the table yet. A
+/// slot's position depends only on its value, so growing a table doesn't read the entries it
+/// indexes.
 #[inline]
 pub(crate) fn free_slot<P: Placement>(len: usize, tag: u32, slot: impl Fn(usize) -> u64) -> usize {
     let mask = len - 1;
@@ -372,22 +375,22 @@ pub(crate) fn free_slot<P: Placement>(len: usize, tag: u32, slot: impl Fn(usize)
     at
 }
 
-/// Whether `slots` slots are too few for `len` entries: the load factor is at most three quarters.
+/// True if `len` entries are too many for `slots` slots. The maximum load factor is 3/4.
 #[inline]
 pub(crate) fn is_too_full(len: usize, slots: usize) -> bool {
     len * 4 > slots * 3
 }
 
-/// The number of slots of the table that replaces one of `old` slots, for `len` entries.
+/// Returns the new slot count when a table of `old` slots grows to store `len` entries.
 pub(crate) fn slots_for<P: Placement>(len: usize, old: usize) -> usize {
     let needed = (len * 4).div_ceil(3).next_power_of_two();
     needed.max(old * 2).max(P::LEAST)
 }
 
-/// The slots of an open-addressed table that only grows and that threads share: see `place_of`. It has `N` shards, each
-/// with the slots for the hashes that `shard_among` gives it. A read takes no lock: when the slots of a shard fill up,
-/// bigger ones replace them, and the old ones stay allocated for those who read them. So the table is never moved as a
-/// whole: what is moved at a time, and what an insert may have to wait for, is one `N`th of it.
+/// The slots of a grow-only open-addressed table that threads share. See `place_of` for the slot format. The table has
+/// `N` shards, and `shard_among` maps a hash to its shard. Reads are lock-free: when a shard's slots fill up, a bigger
+/// array replaces them, and the old array stays allocated for threads that are still reading it. Shards grow
+/// independently, so a resize moves only 1/`N` of the table, and that's the most an insert may have to wait for.
 pub(crate) struct Places<P, A: Allocator + Clone = Global, const N: usize = 1> {
     /// Their number is a power of two.
     slots: Newest<AtomicU64, A, N>,
@@ -425,8 +428,8 @@ impl<P: Placement, A: Allocator + Clone, const N: usize> Places<P, A, N> {
         slots[at].store(place, Ordering::Release);
     }
 
-    /// The slots of `shard`, of which `more` can be filled. `len`: the number of its entries. One thread at a time for
-    /// a shard, here and in `add`.
+    /// Returns the slots of `shard`, grown if needed so that `more` entries can be added. `len` is the shard's current
+    /// entry count. Only one thread at a time may call this or `add` for a given shard.
     #[inline]
     fn reserve(&self, shard: usize, len: usize, more: usize) -> &[AtomicU64] {
         let old = self.slots.get(shard, Ordering::Relaxed);
@@ -449,8 +452,8 @@ impl<P: Placement, A: Allocator + Clone, const N: usize> Places<P, A, N> {
         })
     }
 
-    /// Adds entries of `shard` that are not present yet: pairs of a hash and an index. `len`: the number of its entries
-    /// before. At most one resize for all of them.
+    /// Adds `more` entries to `shard`, as (hash, index) pairs. None of them may be present already. `len` is the
+    /// shard's entry count before the call. Resizes at most once for the whole batch.
     #[inline]
     fn add(&self, shard: usize, len: usize, more: usize, added: impl Iterator<Item = (u64, u32)>) {
         let slots = self.reserve(shard, len, more);
@@ -474,13 +477,13 @@ impl Placement for Shared {
     }
 }
 
-/// A table that only grows and that threads share. Only an insert takes a lock, that of its shard.
+/// A grow-only table that threads share. Only an insert locks, and it locks only its own shard.
 ///
-/// A lookup loads one word for its shard, which has the address and the number of its slots, and then the slot. The words
-/// of all shards are next to each other, apart from the locks. So many shards cost a lookup nothing.
+/// A lookup loads one word with the address and length of its shard's slots, then the slot itself. The words of all
+/// shards are adjacent and separate from the locks, so having many shards doesn't slow a lookup down.
 pub(crate) struct GrowingPlaces<A: Allocator + Clone = Global, const N: usize = 1> {
     places: Places<Shared, A, N>,
-    /// The number of entries of each shard. A thread that inserts there holds the lock.
+    /// Entry count of each shard. Inserting into a shard requires its lock.
     lens: [Guarded<usize>; N],
 }
 
@@ -503,8 +506,8 @@ impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
         self.places.find(spread, Ordering::Acquire, is_it)
     }
 
-    /// Calls `read` while no thread inserts. The locks are taken in the order of the shards, and who holds one of them
-    /// otherwise waits for no other.
+    /// Calls `read` with every shard locked, so no thread can insert while it runs. This can't deadlock: the locks are
+    /// acquired in shard order, and no other code waits for a second shard lock while holding one.
     pub(crate) fn while_none_grows<R>(&self, read: impl FnOnce() -> R) -> R {
         let _held: Vec<_> = self.lens.iter().map(Guarded::lock).collect();
         read()
@@ -517,9 +520,9 @@ impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
         self.places.find(spread, Ordering::Relaxed, is_it)
     }
 
-    /// Runs at a barrier, on the one thread that fills `shard`: adds `count` pairs of a hash and
-    /// an index, none of which is present yet. One lock acquisition, and at most one resize, for
-    /// all of them.
+    /// Adds `count` (hash, index) pairs, none of which may be present already. Runs at a barrier,
+    /// on the one thread that fills `shard`. Locks once and resizes at most once for the whole
+    /// batch.
     pub(crate) fn extend(
         &self,
         shard: usize,
@@ -534,8 +537,8 @@ impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
         *len += count;
     }
 
-    /// Runs at a barrier, on the one thread that fills `shard`: room for `more` entries, with at
-    /// most one resize. Slots that bigger ones replace stay allocated.
+    /// Makes room for `more` entries in `shard`, with at most one resize. Runs at a barrier, on the
+    /// one thread that fills `shard`. The replaced slots stay allocated.
     pub(crate) fn reserve(&self, shard: usize, more: usize) {
         let len = self.lens[shard].lock();
         self.places.reserve(shard, *len, more);
@@ -561,8 +564,8 @@ impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
     }
 }
 
-/// The shard of a hash in a table of `shards` shards, a power of two that is at most 256: the top
-/// bits of the hash.
+/// Returns the shard for a hash in a table of `shards` shards, from the hash's top bits. `shards`
+/// must be a power of two and at most 256.
 #[inline]
 pub(crate) fn shard_among(spread: u64, shards: usize) -> usize {
     ((spread >> 56) as usize * shards) >> 8
@@ -575,14 +578,15 @@ pub(crate) fn spread_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
 
 pub(crate) const SHARDS: usize = MAP_SHARDS;
 
-/// The entries of a `ShardedMap` are in this many lists, by the top bits of their hashes: a thread that adds one writes to
-/// the length of its list. A lookup goes through the head of the list, so they are few.
+/// Number of lists that a `ShardedMap` splits its entries into, by the top bits of their hashes. Every insert writes to
+/// its list's length, so several lists spread out that contention. Every lookup reads its list's header, so the count
+/// is small.
 const LISTS: usize = 8;
 
 /// A concurrent memo table. Two threads may compute the same entry; they compute the same value. A
-/// lookup is lock-free and writes to no shared memory. Only an insert takes the lock of one of `N` shards.
+/// lookup is lock-free and doesn't write to shared memory. An insert locks one of the `N` shards.
 pub struct ShardedMap<K, V, A: Allocator + Clone = Global, const N: usize = MAP_SHARDS> {
-    /// The index of an entry in its list.
+    /// Maps a hash to an entry's index in its list.
     places: Box<GrowingPlaces<A, N>, A>,
     entries: Box<[AppendVec<(K, V), A>; LISTS], A>,
 }
@@ -636,7 +640,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
             .map(|i| &list.get(i).1)
     }
 
-    /// `get_ref` with the hash at hand: `spread_hash(key)`.
+    /// Like `get_ref`, for a caller that already has `spread`, which must be `spread_hash(key)`.
     #[inline]
     pub(crate) fn get_by_now(&self, spread: u64, key: &K) -> Option<&V> {
         let list = self.list(spread);
@@ -652,9 +656,9 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
         }
     }
 
-    /// Runs at a barrier, on the one thread that fills the shard of `spread`, which is
-    /// `spread_hash(key)`, or in a commit. Does not overwrite an existing value.
-    /// Returns whether `value` was inserted.
+    /// Inserts `value` unless `key` already has a value. Returns true if `value` was inserted.
+    /// `spread` must be `spread_hash(key)`. Runs in a commit, or at a barrier on the one thread
+    /// that fills the shard of `spread`.
     pub(crate) fn add_if_absent(&self, spread: u64, key: &K, value: V) -> bool
     where
         K: Clone,

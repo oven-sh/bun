@@ -81,7 +81,7 @@ fn has_empty_raw_before(node: ValueRef<'_>) -> bool {
     node.node().before == Before::Empty
 }
 
-/// Whether there is no white space before `node` in the text.
+/// True if there's no whitespace before `node` in the source.
 fn touches_what_is_before(mut node: ValueRef<'_>) -> bool {
     loop {
         let first = match node.kind() {
@@ -359,8 +359,8 @@ impl<'a> Printer<'a, '_> {
                 self.sink.start_line_suffix();
                 self.sink.token(" ");
             }
-            // `100${unit}`, `0.${n}` in a template of JavaScript: one number, or a number and its unit, once the template is
-            // put together. Prettier prints `100 ${unit}` and `0 ${n}`.
+            // `100${unit}` and `0.${n}` in a JavaScript template literal become one number, or a number with its unit,
+            // once the template is evaluated. Prettier prints `100 ${unit}` and `0 ${n}`.
             let number_before_placeholder = next_node
                 .filter(|next| {
                     is_at_word_placeholder(*next) && i_node.is_number_right_before(*next)
@@ -502,8 +502,9 @@ impl<'a> Printer<'a, '_> {
                     | ValueKind::Func
                     | ValueKind::AtWord
             );
-            // The first blank after `\31` ends the escape: `\31 x` is one word and `\31  x` is two. Prettier breaks the line
-            // there, which makes two of the one. To the parser `\31` is the unit of a number without digits.
+            // The first space after `\31` ends the escape, so `\31 x` is one word and `\31  x` is two. Prettier can
+            // break the line there, which splits that word in two. The parser reads `\31` as the unit of a number
+            // without digits.
             if i_node.kind() == ValueKind::Number
                 && is_next_word
                 && i_node.blanks_behind() > 0
@@ -1149,7 +1150,7 @@ impl<'a> Printer<'a, '_> {
         self.sink.soft_line();
         for (index, child) in node.groups().enumerate() {
             let is_last = index + 1 == count;
-            // Prettier prints `f(⏎a,⏎b⏎)` for `f(a,b)`.
+            // Prettier turns `f(a,b)` into `f(⏎a,⏎b⏎)`.
             if index > 0 && !(is_custom_property && touches_what_is_before(child)) {
                 self.sink.line();
             }

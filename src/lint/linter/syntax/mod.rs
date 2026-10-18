@@ -268,8 +268,9 @@ fn in_words_of_oxc<'a>(
     (all, None)
 }
 
-/// How many syntax errors are in a file that is linted all the same. TypeScript's parser leaves them to the checker, and
-/// typescript-estree says nothing about them: `var a,` at the end of a line, `class A extends B, {}`. A fix must not add one.
+/// Counts the syntax errors in a file that is linted anyway. TypeScript's parser defers them to the checker, and
+/// typescript-estree doesn't report them: `var a,` at the end of a line, `class A extends B, {}`. A fix must not add
+/// one.
 pub(super) fn tolerated_errors<'a>(file: &'a File<'a>) -> usize {
     let is_syntax = |it: &&Diagnostic| {
         matches!(
@@ -281,7 +282,7 @@ pub(super) fn tolerated_errors<'a>(file: &'a File<'a>) -> usize {
     if !file.has_rare_syntax(rare::ODD_DECLARATION) {
         return found;
     }
-    // The parser has no diagnostic for a list of declarations that ends with a comma.
+    // The parser has no diagnostic for a declaration list that ends with a comma.
     let text = file.text();
     let ends_with_comma = |it: &Stmt| {
         let Some(StmtKind::Var(list)) = it.try_raw().map(|it| it.kind) else {
@@ -295,10 +296,11 @@ pub(super) fn tolerated_errors<'a>(file: &'a File<'a>) -> usize {
     found + lists.filter(ends_with_comma).count()
 }
 
-/// How many times the file declares a name again in a scope that already has it, where that's an error: two imports, an import
-/// and a `const`, two `let`. In JavaScript espree refuses such a file. In TypeScript only the type checker reports it (TS2300,
-/// TS2451, TS2440). What TypeScript merges doesn't count: overloads, an interface and a class, a namespace and a function, a type
-/// and a value. It makes the scopes of the file, so it's only for a text whose fixes are applied, or that fixes have made.
+/// Counts the illegal redeclarations in the file: a name declared again in the same scope, such as two imports, an
+/// import and a `const`, or two `let`. In JavaScript espree rejects a file like that. In TypeScript only the type
+/// checker reports it (TS2300, TS2451, TS2440). Declarations that TypeScript merges don't count: overloads, an
+/// interface and a class, a namespace and a function, a type and a value. This builds the file's scopes, so only call
+/// it on text whose fixes will be applied or that fixes produced.
 pub fn redeclarations<'a>(file: &'a File<'a>) -> usize {
     oxc::count_of_redeclarations(file)
 }

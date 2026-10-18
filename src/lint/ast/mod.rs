@@ -164,12 +164,12 @@ slices! {
 }
 
 impl Hir<'_> {
-    /// `node.Modifiers()` of the statement `s`.
+    /// Returns the modifiers of statement `s`, like `node.Modifiers()`.
     pub(crate) fn stmt_modifiers(&self, s: hir::StmtId) -> hir::Span<hir::ModifierId> {
         hir::stmt_modifiers_in(self.modifiers_of_stmts, s)
     }
 
-    /// Where the name of the `Dot` `e` starts.
+    /// Returns the offset where the property name of the `Dot` expression `e` starts.
     #[inline]
     pub(crate) fn name_pos(&self, e: hir::ExprId) -> u32 {
         hir::name_pos_in(self.exprs, self.far_names, e)
@@ -187,14 +187,14 @@ impl Hir<'_> {
 }
 
 impl Bound<'_> {
-    /// `Parent::None` for what is not an expression of the file.
+    /// Returns `Parent::None` if `e` isn't an expression in this file.
     #[inline]
     pub(crate) fn parent_of_expr(&self, e: hir::ExprId) -> bind::Parent {
         let parent = self.expr_parent.get(e.idx()).copied();
         parent.unwrap_or_default().get()
     }
 
-    /// The same for a statement.
+    /// Returns `Parent::None` if `s` isn't a statement in this file.
     #[inline]
     pub(crate) fn parent_of_stmt(&self, s: hir::StmtId) -> bind::Parent {
         let parent = self.stmt_parent.get(s.idx()).copied();
@@ -284,8 +284,8 @@ pub struct File<'a> {
 
 impl<'a> File<'a> {
     /// `path`: as it is reported. `types`: the type checker, if the file is part of a program that
-    /// has been checked. `language`: what the configuration has for the file. [`File::language`] can be
-    /// [another](LanguageOptions::without_module_syntax).
+    /// has been checked. `language` is the file's configured options. [`File::language`] can
+    /// [differ](LanguageOptions::without_module_syntax).
     pub fn new<H: hir::Storage, B: hir::Storage>(
         path: &'a [u8],
         hir: &'a hir::FileIn<H>,
@@ -429,8 +429,8 @@ impl<'a> File<'a> {
         self.language
     }
 
-    /// What [`File::new`] was given. For reading another file with the options of this one: unlike [`File::language`] it
-    /// doesn't say that the other file is CommonJS because this one is.
+    /// Returns the options passed to [`File::new`]. Use them to read another file with this file's options. Unlike
+    /// [`File::language`], they don't make the other file CommonJS just because this one is.
     #[inline]
     pub fn configured_language(&self) -> &'a LanguageOptions {
         self.configured_language

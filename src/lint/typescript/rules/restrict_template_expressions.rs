@@ -9,7 +9,7 @@ use bun_lint::types::{IdMap, IdSet, Type, TypeFlags};
 /// Enforce template literal expressions to be of `string` type.
 pub struct RestrictTemplateExpressions {
     allow: Vec<TypeOrValueSpecifier>,
-    /// `allow` isn't configured.
+    /// True if `allow` isn't configured.
     allows_the_default: bool,
     /// `string`, and what `allowAny`, `allowBoolean`, `allowNullish`, `allowNumber` and `allowNever`
     /// add to it.
@@ -23,8 +23,9 @@ const INVALID_TYPE: Message =
 
 const ALLOWED_BY_DEFAULT: [&str; 3] = ["Error", "URL", "URLSearchParams"];
 
-/// Upstream's default allows these names `from: "lib"`. Without the `DOM` lib, which `bun init` leaves out, `URL` is declared by
-/// `@types/node`: `interface URL extends url.URL {}`, where `searchParams` is the `URLSearchParams` of `node:url`.
+/// Upstream's default only allows these names `from: "lib"`. Without the `DOM` lib, which `bun init` doesn't enable,
+/// `URL` comes from `@types/node` as `interface URL extends url.URL {}`, and its `searchParams` is `node:url`'s
+/// `URLSearchParams`.
 fn is_allowed_global(ty: Type) -> bool {
     is_global_type(ty, &ALLOWED_BY_DEFAULT)
         || ty.get_symbol().is_some_and(|symbol| {

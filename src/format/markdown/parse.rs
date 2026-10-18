@@ -530,17 +530,17 @@ struct Builder<'t> {
     can_start_with_check: &'t Cell<bool>,
     /// The paragraph that is open starts with one.
     starts_with_check: bool,
-    /// What `leaves_paragraph` reads two lines as. `None`: nothing is done about lines that are text only because they
-    /// are indented.
+    /// The syntax `leaves_paragraph` parses two lines with. If `None`, lines that are paragraph text only because
+    /// they're indented aren't handled specially.
     two_lines: Option<Syntax>,
-    /// A line break that depends on what follows it.
+    /// A pending line break. How it's printed depends on the node after it.
     guarded_break: Option<GuardedBreak>,
     /// For oxfmt: the line is one that it prints as it is written.
     is_on_line_as_written: bool,
 }
 
-/// A line break before a line that is text only because it is indented. Prettier takes the indentation away whatever
-/// the line starts with, so a fence in it starts code, `***` is a rule, and `<div>` starts HTML.
+/// A line break before a line that is paragraph text only because it's indented. Prettier always strips the
+/// indentation, so a fence starts a code block, `***` becomes a thematic break, and `<div>` starts HTML.
 #[derive(Copy, Clone)]
 struct GuardedBreak {
     place: (u32, u32),
@@ -1565,7 +1565,7 @@ impl Builder<'_> {
                     || line.starts_with(b"~~~")
                     || line.starts_with(b"$$")));
         let is_hard = matches!(it.kind, LineBreak::Hard);
-        // Only oxfmt has lines that it prints as they are written.
+        // Only oxfmt prints some lines verbatim.
         let stays =
             is_hard || (self.is_for_oxfmt && (self.is_on_line_as_written || is_line_as_written));
         self.is_on_line_as_written = is_line_as_written;

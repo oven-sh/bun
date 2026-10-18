@@ -107,8 +107,8 @@ pub(crate) fn write_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// Whether the word that is written before the name of `member` has to be on the line of the name, or it is a name itself. A
-/// line break is fine after `static`, `get`, `set` and `*`.
+/// True if the last modifier printed before `member`'s name must be on the same line as the name. With a line break
+/// after it, it would be parsed as a member name. A line break is fine after `static`, `get`, `set` and `*`.
 fn last_modifier_allows_no_line_break(member: Member<'_>) -> bool {
     let function = member.func();
     if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
@@ -120,7 +120,7 @@ fn last_modifier_allows_no_line_break(member: Member<'_>) -> bool {
         return true;
     }
     let written = (member.modifiers().iter()).fold(Flags::empty(), |all, it| all | it.flag());
-    // From the last that is written to the first. `IN` and `OUT` are Flow's `+` and `-`.
+    // Checked from the last modifier printed to the first. `IN` and `OUT` are Flow's `+` and `-`.
     if written.intersects(Flags::IN | Flags::OUT) {
         return false;
     }
@@ -131,9 +131,10 @@ fn last_modifier_allows_no_line_break(member: Member<'_>) -> bool {
         && written.intersects(Flags::AMBIENT | Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE)
 }
 
-/// `static // comment⏎async a() {}`: the modifiers are not nodes, so the comment leads the name. Prettier and oxfmt print
-/// `static async // comment⏎a() {}`, which is a field `async` and a method that is neither static nor async. Such comments are
-/// written before the first modifier, and the code that writes the name sees that they're already printed.
+/// In `static // comment⏎async a() {}` the modifiers aren't nodes, so the comment is attached to the name as a leading
+/// comment. Prettier and oxfmt print `static async // comment⏎a() {}`, which declares a field `async` and a method that
+/// is neither static nor async. This prints those comments before the first modifier instead. The code that prints the
+/// name skips them because they're already marked as printed.
 pub(crate) fn write_comments_between_modifiers<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if f.is_quiet() {
         return;

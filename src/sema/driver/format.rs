@@ -276,7 +276,7 @@ const GROUP_THRESHOLD: usize = 50;
 const MAX_GROUPS: usize = 12;
 
 /// `WriteFormatDiagnostic`
-/// `path`: `relative_path` of the file.
+/// `path` is the file's `relative_path`.
 fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, path: &BStr) {
     if !d.path.is_empty() {
         let _ = write!(out, "{path}({},{}): ", d.line, d.column);
@@ -473,7 +473,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
         let diagnostics = take(&mut diagnostics, task.diagnostics);
         // `QuietDiagnosticReporter`
         let diagnostics: &[Diagnostic] = if report.is_quiet { &[] } else { diagnostics };
-        // The file of the diagnostic before, and its `relative_path`.
+        // Caches the previous diagnostic's file and its `relative_path`.
         let mut last: (&[u8], BString) = Default::default();
         if is_grouped {
             write_grouped(out, report, style);

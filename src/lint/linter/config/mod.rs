@@ -336,7 +336,7 @@ struct ConfigObject {
     /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
     changes_linter: bool,
     /// `$framework`: skip this object unless the project uses this framework. Empty means it always applies.
-    /// `$packageType`: the same for [`Frameworks::TYPE_MODULE`].
+    /// `$packageType` does the same with [`Frameworks::TYPE_MODULE`].
     /// Only Bun's built-in config sets them. See [`Config::get_with_frameworks`].
     required_framework: Frameworks,
     /// Of an override of oxlint that has `plugins`: those, and those of the files, as sets. The settings at the start of its

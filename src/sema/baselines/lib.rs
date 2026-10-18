@@ -1363,13 +1363,13 @@ pub struct Setup<'a> {
     pub declarations: bool,
     /// Whether the `.trace.json` baselines are compared.
     pub traces: bool,
-    /// `PlanOptions::orders_types_by_content`
+    /// See `PlanOptions::orders_types_by_content`.
     pub orders_types_by_content: bool,
-    /// `PlanOptions::shares_at_once`
+    /// See `PlanOptions::shares_at_once`.
     pub shares_at_once: bool,
-    /// `PlanOptions::has_no_steps`
+    /// See `PlanOptions::has_no_steps`.
     pub has_no_steps: bool,
-    /// `CommitPolicy::entries`
+    /// See `CommitPolicy::entries`.
     pub commit_entries: usize,
     pub threads: usize,
     /// Only every n-th test, in the order of their paths. 1: all of them.

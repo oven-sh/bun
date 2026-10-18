@@ -159,18 +159,19 @@ macro_rules! impl_run {
 impl_run!(IdList);
 impl_run!(Span);
 
-/// Where the two branches of a `Cond` are in [`File::ids`], next to each other: [`FileIn::branches`].
+/// Index into [`File::ids`] of a `Cond`'s two branches, which are adjacent. Read them with [`FileIn::branches`].
 #[derive(Copy, Clone, Debug)]
 pub struct BranchesAt(u32);
 
-/// The `yes` and the `no` of `test ? yes : no`.
+/// The two branches of `test ? yes : no`.
 #[derive(Copy, Clone, Debug)]
 pub struct Branches {
     pub yes: ExprId,
     pub no: ExprId,
 }
 
-/// An `IdList` whose start and length are in [`File::ids`], unless it is empty: [`FileIn::list_at`].
+/// A 4-byte handle to an `IdList`. The list's start and length are stored in [`File::ids`], except for an empty list,
+/// which has a sentinel. Read it with [`FileIn::list_at`].
 pub struct ListAt<T> {
     at: u32,
     _of: PhantomData<T>,
@@ -195,7 +196,7 @@ macro_rules! impl_place {
 impl_place!(ListAt);
 
 impl BranchesAt {
-    /// `ids`: [`File::ids`].
+    /// `ids` must be the file's [`File::ids`].
     #[inline]
     pub fn of(self, ids: &[u32]) -> Branches {
         let at = self.0 as usize;
@@ -217,7 +218,7 @@ impl<T> ListAt<T> {
         self.at == u32::MAX
     }
 
-    /// `ids`: [`File::ids`].
+    /// `ids` must be the file's [`File::ids`].
     #[inline]
     pub fn of(self, ids: &[u32]) -> IdList<T> {
         if self.is_empty() {
@@ -309,8 +310,8 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
     }
 }
 
-/// A map that is empty in most files: its entries in the order of their keys, at their final size in an arena. One word, not
-/// the five of a hash map.
+/// A map for tables that are empty in most files. Entries are sorted by key in an exact-size arena allocation and
+/// found by binary search. It's one word, where a hash map is five.
 pub struct ArenaFewMap<'s, K, V>(ArenaFew<'s, (K, V)>);
 
 impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
@@ -329,7 +330,7 @@ impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
         self.get(key).is_some()
     }
 
-    /// For a set.
+    /// `contains_key`, under the name a set uses.
     pub fn contains(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
@@ -346,7 +347,7 @@ pub trait Storage {
     type Symbols: crate::bind::SymbolList;
     /// A list of nodes of a `FileIn`.
     type Nodes<T: 'static>: DerefMut<Target = [T]>;
-    /// A list of ids of a `BoundIn`, read one at a time.
+    /// A `BoundIn` list of ids that is only read by index.
     type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
@@ -475,14 +476,14 @@ impl<'a, T> IntoIterator for &'a Fixed<'_, T> {
     }
 }
 
-/// What `define_id` declares.
+/// Implemented by every id type that `define_id` declares.
 pub trait Id: Copy + From<u32> + Into<u32> + 'static {}
 
 impl<T: Copy + From<u32> + Into<u32> + 'static> Id for T {}
 
-/// See [`Storage::Ids`].
+/// Indexed read access to a list of ids. See [`Storage::Ids`].
 pub trait Ids<T> {
-    /// `None`: the list is shorter.
+    /// Returns `None` if `index` is out of range.
     fn id_at(&self, index: usize) -> Option<T>;
 }
 
@@ -493,11 +494,12 @@ impl<T: Copy> Ids<T> for Vec<T> {
     }
 }
 
-/// A list of ids that neither grows nor shrinks. An id takes two bytes if all of them fit, as in nearly every file.
+/// A fixed-size list of ids. Ids are stored as `u16` if all of them fit, which is the case in nearly every file, and as
+/// `u32` otherwise.
 pub struct Narrow<'s, T> {
-    /// Each id plus one, so that `NONE` is zero. Empty if one does not fit.
+    /// Each id plus one, so `NONE` is 0. Empty if some id doesn't fit.
     short: Fixed<'s, u16>,
-    /// Empty if all fit.
+    /// Empty if `short` is used.
     long: Fixed<'s, T>,
 }
 
@@ -521,7 +523,7 @@ impl<T: Id> Ids<T> for Narrow<'_, T> {
 }
 
 impl<'s, T: Id> Narrow<'s, T> {
-    /// Copies `list` to `arena`, and empties it. It retains its capacity.
+    /// Copies `list` into `arena` and clears it. `list` keeps its capacity.
     pub(crate) fn moved_in(arena: &'s Arena, list: &mut Vec<T>) -> Self {
         let fits =
             |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
@@ -551,7 +553,7 @@ impl<'s, T: Id> Narrow<'s, T> {
         self.short.len().max(self.long.len())
     }
 
-    /// Passes each id to `change`. The list is then this program's own, in `arena`.
+    /// Calls `change` on each id and stores the result in `arena`, so a shared list becomes this program's own copy.
     pub(crate) fn change_each_in(&mut self, arena: &'s Arena, change: impl FnMut(&mut T)) {
         let mut all: Vec<T> = (0..self.len()).filter_map(|at| self.id_at(at)).collect();
         all.iter_mut().for_each(change);
@@ -752,7 +754,7 @@ pub enum ExprKind {
         obj: ExprId,
         name: Atom,
         chain: Chain,
-        /// How far before the end of the expression the name starts, or [`FAR`]: [`FileIn::name_pos`].
+        /// Distance from the start of the name to the end of the expression, or [`FAR`]. Use [`FileIn::name_pos`].
         name_before_end: u16,
     },
     Index {
@@ -814,10 +816,10 @@ pub enum ExprKind {
     NewTarget(Atom),
 }
 
-/// `name_before_end` of a `Dot` whose name is in [`FileIn::far_names`].
+/// `name_before_end` of a `Dot` whose name position is in [`FileIn::far_names`] instead.
 pub const FAR: u16 = u16::MAX;
 
-/// [`FileIn::stmt_modifiers`], given the list of the file.
+/// [`FileIn::stmt_modifiers`] for callers that only have the file's list.
 pub fn stmt_modifiers_in(
     modifiers_of_stmts: &[(StmtId, Span<ModifierId>)],
     s: StmtId,
@@ -826,13 +828,13 @@ pub fn stmt_modifiers_in(
     found.map_or(Span::EMPTY, |at| modifiers_of_stmts[at].1)
 }
 
-/// [`FileIn::template_of`], given the list of the file.
+/// [`FileIn::template_of`] for callers that only have the file's list.
 pub fn template_in(tagged_templates: &[(CallId, ExprId)], call: CallId) -> ExprId {
     let found = tagged_templates.binary_search_by_key(&call, |it| it.0);
     found.map_or(ExprId::NONE, |at| tagged_templates[at].1)
 }
 
-/// [`FileIn::name_pos`], given the lists of the file.
+/// [`FileIn::name_pos`] for callers that only have the file's lists.
 #[inline]
 pub fn name_pos_in(exprs: &[Expr], far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
     match exprs.get(e.idx()) {
@@ -1303,7 +1305,7 @@ pub mod rare {
     /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
     /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
     pub const ODD_DECLARATION: u32 = 1 << 26;
-    /// `await`, `for await` or `await using` was read as a keyword at the top level.
+    /// The parser treated a top-level `await`, `for await` or `await using` as a keyword.
     pub const TOP_LEVEL_AWAIT: u32 = 1 << 27;
     /// `import.meta`
     pub const IMPORT_META: u32 = 1 << 28;
@@ -2375,8 +2377,8 @@ pub struct FileIn<S: Storage> {
     /// separate column and not a field of `Param`: few parameters have a modifier, and a field
     /// would cost every parameter.
     pub modifiers_of_params: S::Nodes<Span<ModifierId>>,
-    /// `node.Modifiers()` of the statements that have any: see `stmt_modifiers`. Sorted. A separate list for the same
-    /// reason: one statement in forty has a modifier.
+    /// `node.Modifiers()` of the statements that have any, sorted by statement. Read it with `stmt_modifiers`. Kept out
+    /// of `Stmt` because only one statement in forty has a modifier.
     pub modifiers_of_stmts: S::Nodes<(StmtId, Span<ModifierId>)>,
     /// `node.Modifiers()` of the members of object literals that have any: see `prop_modifiers`.
     /// Sorted.
@@ -2411,9 +2413,9 @@ pub struct FileIn<S: Storage> {
     /// `NonNullExpression`s of the run: the `NonNull`, and where each ends. Ordered by expression, the
     /// innermost first.
     pub non_null_ends: S::Few<(ExprId, u32)>,
-    /// The `Dot`s whose name does not start within 65,534 bytes before their end, and where it starts. Ordered by expression.
+    /// Name positions of the `Dot`s whose name starts more than 65,534 bytes before their end. Sorted by expression.
     pub far_names: S::Few<(ExprId, u32)>,
-    /// `TaggedTemplateExpression.Template` of each tagged template, whose substitutions are the `args` of the call. Ordered by call.
+    /// `TaggedTemplateExpression.Template` of each tagged template, sorted by call. The call's `args` are its substitutions.
     pub tagged_templates: S::Few<(CallId, ExprId)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
@@ -2600,7 +2602,7 @@ impl<S: Storage> FileIn<S> {
             .copied()
             .unwrap_or(Span::EMPTY)
     }
-    /// `node.Modifiers()` of the statement `s`.
+    /// Returns `node.Modifiers()` of the statement `s`.
     pub fn stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
         stmt_modifiers_in(&self.modifiers_of_stmts, s)
     }
@@ -2778,12 +2780,12 @@ impl<S: Storage> FileIn<S> {
         list.of(&self.ids)
     }
 
-    /// `TaggedTemplateExpression.Template`. `NONE`: `call` is no tagged template.
+    /// Returns `TaggedTemplateExpression.Template`, or `NONE` if `call` isn't a tagged template.
     pub fn template_of(&self, call: CallId) -> ExprId {
         template_in(&self.tagged_templates, call)
     }
 
-    /// Where the name of the `Dot` `e` starts.
+    /// Returns the position of the name in the `Dot` expression `e`.
     #[inline]
     pub fn name_pos(&self, e: ExprId) -> u32 {
         name_pos_in(&self.exprs, &self.far_names, e)
@@ -2853,7 +2855,7 @@ impl FileBuilder {
             _of: PhantomData,
         }
     }
-    /// The kind of `obj.name`, for the next expression that is added, which ends at `end`.
+    /// Builds the kind for `obj.name`. The caller must add it as the very next expression, ending at `end`.
     #[inline]
     pub fn dot(
         &mut self,

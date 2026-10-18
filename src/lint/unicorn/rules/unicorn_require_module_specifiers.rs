@@ -66,8 +66,9 @@ impl RequireModuleSpecifiers {
         let braces = find_empty_braces_in_span(cx.file(), stmt.span()).unwrap_or_else(|| stmt.span());
         cx.report(braces, EMPTY_SPECIFIER)
             .data("statement_type", "export")
-            // `export {}` makes a module of a file that has no other `import` or `export`. Without it `declare global` is an error and
-            // the names at the top level are global. In a declaration file it also keeps the rest from being exported.
+            // `export {}` makes a file a module when it has no other `import` or `export`. Without it, `declare global`
+            // is an error and top-level names become global. In a declaration file it also stops everything else from
+            // being exported.
             .fix_where_safe(
                 || is_module_without_empty_exports(cx.file()) && !cx.file().is_declaration_file(),
                 |fixer| (!export.has_from()).then(|| fixer.remove(stmt)),

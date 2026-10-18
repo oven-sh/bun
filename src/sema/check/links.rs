@@ -1,32 +1,33 @@
-//! The parts of a type that tsgo keeps in fields of the type and assigns when they are first asked for:
+//! Caches the parts of a type that tsgo stores in fields of the type and assigns on first use:
 //! `ConditionalType.checkType`, `extendsType`, `resolvedTrueType`, `resolvedFalseType` and `resolvedDefaultConstraint`,
-//! `ConditionalRoot.inferTypeParameters`, `MappedType.typeParameter`, `mapper`, `constraintType`, `templateType`, `nameType`,
-//! `modifiersType` and `resolvedApparentType`, and `Type.alias`. And what it keeps by type in `cachedTypes`: the restrictive
-//! and the permissive instantiation.
+//! `ConditionalRoot.inferTypeParameters`, `MappedType.typeParameter`, `mapper`, `constraintType`, `templateType`,
+//! `nameType`, `modifiersType` and `resolvedApparentType`, and `Type.alias`. Also caches the restrictive and permissive
+//! instantiations, which tsgo stores per type in `cachedTypes`.
 //!
-//! Here a conditional or a mapped type is a type node and a mapper, and a part is derived from them each time: the type of
-//! a node is looked up and instantiated. `TypeLinks` keeps what was derived, by type, so that the next read is a load.
+//! In this checker a conditional or mapped type is a type node plus a mapper. Deriving a part means looking up the type
+//! of a node and instantiating it. `TypeLinks` caches the derived part per type, so the next read is a single load.
 //!
-//! The rule: a part is kept once deriving it again computes nothing and gives the same, for as long as the task runs. Then
-//! not deriving it is not observable, but for the two things at the end.
-//! - All of this belongs to one checker, and so to one task. No other task sees it, nothing of it goes to a barrier, and no
-//!   id in it outlives the task. What a task publishes is what it published before.
-//! - A part that takes no more than interning is a function of the interning key of the type and of the program: the type
-//!   parameter and the mapper of a mapped type, an alias. It is kept at once.
-//! - Any other part is `instantiate(declared, mapper)`, and is kept if both steps read an entry that stays (`derive_part`):
-//!   - `declared` is in a table, and nothing in progress is going to store another one. Of a type node that is in progress
-//!     several times, the outermost stores last (`is_type_node_settled`).
-//!   - The result is in `Program::instantiations`, which has the rule of `instantiate_cached`: no cycle, no limit and no
-//!     refusal on the way. And no instantiation with `mapper` is in progress: of two with one key, the outer one stores
-//!     last (`is_mapper_idle`).
-//! - A part that is derived from other parts is kept if each of those is: `TypeLinks::left_open`.
-//! - A part whose derivation makes an inference is kept by the rules for leaving out a walk of an inference: it began with
-//!   no `obstacle_to_leaving_out` and where `is_settled_for_inference`, and left nothing that the next derivation would
-//!   leave again (`derive_with_inference`). It is read where there is no `obstacle_to_leaving_out`.
-//! - Nothing is read while `index_infos_in_instantiation` is not empty: `instantiate` then reads no older result either.
+//! A part is cached only when deriving it again would compute nothing and return the same value for the rest of the
+//! task. Skipping the derivation is then unobservable, except for the two effects described at the end. The rules:
+//! - The cache belongs to one checker, and so to one task. Other tasks can't see it, it's never merged at a barrier,
+//!   and none of its ids outlive the task. A task publishes the same things with and without it.
+//! - A part that only needs interning is cached immediately. It depends only on the type's interning key and the
+//!   program. This covers a mapped type's type parameter and mapper, and an alias.
+//! - Any other part is `instantiate(declared, mapper)`. It's cached if both steps read a final entry (`derive_part`):
+//!   - `declared` is in a table, and no computation in progress will overwrite it. If a type node is in progress
+//!     several times, the outermost evaluation stores last (`is_type_node_settled`).
+//!   - The result is in `Program::instantiations`. `instantiate_cached` only stores a result there if it was computed
+//!     without a cycle, a limit, or a refusal. Also, no instantiation with `mapper` is in progress, because the outer
+//!     of two instantiations with the same key stores last (`is_mapper_idle`).
+//! - A part derived from other parts is cached only if all of them are. See `TypeLinks::left_open`.
+//! - A part whose derivation runs an inference follows the rules for skipping an inference walk. The derivation must
+//!   start with `obstacle_to_leaving_out` returning `None` and `is_settled_for_inference` returning true, and it must
+//!   not have an effect that the next derivation would repeat (`derive_with_inference`). The cached part is read only
+//!   while `obstacle_to_leaving_out` returns `None`.
+//! - Nothing is read while `index_infos_in_instantiation` isn't empty. `instantiate` ignores older results then too.
 //!
-//! What a read of a kept part leaves out is what `instantiate` does before it looks anything up: it adds to
-//! `instantiation_count`, and at a limit it reports 2589 and returns the error type. tsgo loads the field and does neither.
+//! Reading a cached part skips the work that `instantiate` does before any lookup: it increments `instantiation_count`,
+//! and at a limit it reports 2589 and returns the error type. tsgo loads the field and does neither.
 
 use super::*;
 use crate::table::{Id, Packed};
@@ -34,18 +35,20 @@ use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::sync::atomic::AtomicU32;
 
-/// `false`: `cond_piece`, `cond_infer_params` and `default_constraint_of_conditional` derive the part each time, as before.
+/// If `false`, `cond_piece`, `cond_infer_params` and `default_constraint_of_conditional` derive the part on every call.
 pub(super) const KEEPS_CONDITIONAL_PARTS: bool = true;
-/// The same for `mapped_type_param`, `mapped_mapper`, `mapped_keys`, `mapped_template`, `mapped_name_type`,
-/// `mapped_modifiers_type` and `apparent_type_of_mapped`.
+/// If `false`, `mapped_type_param`, `mapped_mapper`, `mapped_keys`, `mapped_template`, `mapped_name_type`,
+/// `mapped_modifiers_type` and `apparent_type_of_mapped` derive the part on every call.
 pub(super) const KEEPS_MAPPED_PARTS: bool = true;
-/// The same for `alias_of_type`. `alias_symbol_of_type` then keeps its results in `Checker::alias_symbols`, as before.
+/// If `false`, `alias_of_type` derives the alias on every call, and `alias_symbol_of_type` caches its results in
+/// `Checker::alias_symbols` instead.
 pub(super) const KEEPS_ALIASES: bool = true;
-/// The same for `restrictive_instantiation`, `permissive_instantiation` and `unique_literal_filled_instantiation`.
+/// If `false`, `restrictive_instantiation`, `permissive_instantiation` and `unique_literal_filled_instantiation`
+/// instantiate on every call.
 pub(super) const KEEPS_INSTANTIATIONS_WITH_FIXED_MAPPERS: bool = true;
 
-/// Every part that is read from here is derived as well. It is a panic that names the type and the file if that gives
-/// another one, or if it computes anything. For debugging.
+/// Debug switches. Every part read from the cache is also derived. Panics with the type and the file if the derived
+/// part differs or if deriving it computed anything.
 pub(super) const CHECKS_CONDITIONAL_PARTS: bool = false;
 pub(super) const CHECKS_MAPPED_PARTS: bool = false;
 pub(super) const CHECKS_ALIASES: bool = false;
@@ -54,7 +57,7 @@ pub(super) const CHECKS_INSTANTIATIONS_WITH_FIXED_MAPPERS: bool = false;
 /// `Type.alias.typeArguments`
 pub(super) type AliasArguments = SmallVec<[TypeId; 4]>;
 
-/// The names of the parts of a conditional type, by the `which` of `cond_piece`.
+/// Names of a conditional type's parts, indexed by the `which` argument of `cond_piece`.
 pub(super) const CONDITIONAL_PARTS: [&str; 4] = [
     "checkType",
     "extendsType",
@@ -62,12 +65,12 @@ pub(super) const CONDITIONAL_PARTS: [&str; 4] = [
     "resolvedFalseType",
 ];
 
-/// The cell of a conditional type for `resolvedDefaultConstraint`, after those of `cond_piece`.
+/// Cell index of a conditional type's `resolvedDefaultConstraint`. It follows the `cond_piece` cells.
 pub(super) const DEFAULT_CONSTRAINT: usize = 4;
-/// The one for `root.inferTypeParameters`: 1 + where they are in `TypeLinks::infer_type_parameters`, the start times
-/// `MOST_INFER_TYPE_PARAMETERS` plus the length.
+/// Cell index of `root.inferTypeParameters`. The cell contains 1 + start * `MOST_INFER_TYPE_PARAMETERS` + length, where
+/// start and length locate the list in `TypeLinks::infer_type_parameters`.
 const INFER_TYPE_PARAMETERS: usize = 5;
-/// A longer list is not kept.
+/// Lists of this length or longer aren't cached.
 const MOST_INFER_TYPE_PARAMETERS: usize = 64;
 
 #[derive(Copy, Clone, Debug)]
@@ -81,17 +84,17 @@ pub(super) enum MappedPart {
     ApparentType,
 }
 
-/// The kind of type that a row of `TypeLinks::parts` is about.
+/// Kind of type that a row of `TypeLinks::parts` describes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Kind {
     Conditional,
     Mapped,
 }
 
-/// The cells of a row: as many as there are `MappedPart`s.
+/// Number of cells in a row, one per `MappedPart`.
 const PARTS: usize = 7;
 
-/// `restrictiveMapper`, `permissiveMapper` and `uniqueLiteralMapper`: the mappers that are the same for every type.
+/// `restrictiveMapper`, `permissiveMapper` and `uniqueLiteralMapper`, which are the same for every type.
 #[derive(Copy, Clone, Debug)]
 pub(super) enum FixedMapper {
     Restrictive,
@@ -99,20 +102,22 @@ pub(super) enum FixedMapper {
     UniqueLiteral,
 }
 
-/// A part whose derivation makes an inference is kept if that took no more of the native stack than this, and is read where
-/// as much is left. So no `is_stack_low` of the derivation that is left out would have cut it short.
+/// A part whose derivation runs an inference is cached only if the derivation used at most this many bytes of native
+/// stack, and it's read only where that many bytes are free. So no `is_stack_low` check would have cut the skipped
+/// derivation short.
 const STACK_OF_KEPT_PART: usize = 64 << 10;
 
-/// How many published types share a page of `ByType`.
+/// Number of published types per page of `ByType`.
 const PAGE: usize = 128;
 
-/// A number for each type, 0 until one is set.
+/// Maps each type to a number, which is 0 until it's set.
 #[derive(Default)]
 pub(super) struct ByType {
-    /// By the index of a type of the task.
+    /// Numbers of the task's own types, indexed by `TypeId::local_number`.
     own: Vec<u32>,
-    /// By the number of a published type divided by `PAGE`: 1 + the index of its page. 0: no number of the page is set. A
-    /// task asks about few of the published types.
+    /// Indexed by a published type's id divided by `PAGE`. Each item is 1 + the index of the page in `published`, or 0
+    /// if no number on the page is set. Pages are allocated on demand because a task only asks about a few of the
+    /// published types.
     pages: Vec<u32>,
     published: Vec<[u32; PAGE]>,
 }
@@ -151,46 +156,47 @@ impl ByType {
 
 struct KeptAlias {
     symbol: Sym,
-    /// Where its type arguments are in `Aliases::type_arguments`. `u32::MAX`: nothing has asked for them.
+    /// Offset of its type arguments in `Aliases::type_arguments`, or `u32::MAX` if they haven't been requested.
     start: u32,
     len: u32,
 }
 
 #[derive(Default)]
 struct Aliases {
-    /// 0: nothing has asked. 1: the type has no alias. Otherwise 2 + the index in `kept`.
+    /// 0 if the alias hasn't been requested, 1 if the type has no alias, otherwise 2 + the index in `kept`.
     of: ByType,
     kept: Vec<KeptAlias>,
     type_arguments: Vec<TypeId>,
 }
 
-/// See the top of the file.
+/// See the module docs.
 #[derive(Default)]
 pub(super) struct TypeLinks {
-    /// 0: nothing is kept for the type. Otherwise 1 + the index of its row in `parts`, times two, plus its `Kind`.
+    /// 0 if nothing is cached for the type. Otherwise (1 + the index of its row in `parts`) * 2 + its `Kind`.
     rows: ByType,
-    /// A `Packed` value in each cell, 0 for none. Of a conditional type by the `which` of `cond_piece`, of a mapped type
-    /// by `MappedPart`.
+    /// Each cell is a `Packed` value, or 0 if it's empty. A conditional type's cells are indexed by the `which`
+    /// argument of `cond_piece`, a mapped type's by `MappedPart`.
     parts: Vec<[u32; PARTS]>,
     /// See `INFER_TYPE_PARAMETERS`.
     infer_type_parameters: Vec<TypeId>,
-    /// 0: nothing is kept for the type. Otherwise 1 + the index of its row in `with_fixed_mappers`.
+    /// 0 if nothing is cached for the type. Otherwise 1 + the index of its row in `with_fixed_mappers`.
     fixed_mapper_rows: ByType,
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]`, `cachedTypes[CachedTypeKindPermissiveInstantiation]` and
-    /// `uniqueLiteralFilledInstantiation`, by `FixedMapper`: a `Packed` type, 0 for none.
+    /// `uniqueLiteralFilledInstantiation`, indexed by `FixedMapper`. Each cell is a `Packed` type, or 0 if it's empty.
     with_fixed_mappers: Vec<[u32; 3]>,
-    /// The calls of `forget_restrictive_instantiations`.
+    /// Number of `forget_restrictive_instantiations` calls.
     times_forgotten: u32,
-    /// How many times a part was derived and not kept. A part that is derived from other parts is not kept if it moves.
+    /// Number of times a part was derived but not cached. A part derived from other parts isn't cached if this changes
+    /// during its derivation.
     left_open: u64,
-    /// The task has added to `Program::circular_mapped_constraints`. See `Checker::mapped_keys`.
+    /// True if the task has added to `Program::circular_mapped_constraints`. See `Checker::mapped_keys`.
     has_found_circular_mapped_constraint: bool,
-    /// They are asked for under `&Checker`.
+    /// In a `RefCell` because aliases are looked up through `&Checker`.
     aliases: RefCell<Aliases>,
 }
 
 impl TypeLinks {
-    /// 0: it is not kept.
+    /// Returns 0 if the part isn't cached.
     #[inline]
     fn cell(&self, ty: TypeId, kind: Kind, at: usize) -> u32 {
         let row = self.rows.get(ty);
@@ -211,13 +217,13 @@ impl TypeLinks {
         self.parts[(row >> 1) as usize - 1][at] = raw;
     }
 
-    /// A part was derived outside `Checker::derive_settled`, so nobody knows whether it stays.
+    /// Records that a part was derived outside `Checker::derive_settled`, so it isn't known to be final.
     #[inline]
     pub(super) fn note_left_open(&mut self) {
         self.left_open += 1;
     }
 
-    /// `root.inferTypeParameters` of the conditional type `ty`, if `keep_infer_type_parameters` has kept them.
+    /// Returns `root.inferTypeParameters` of the conditional type `ty` if `keep_infer_type_parameters` has cached them.
     #[inline]
     pub(super) fn infer_type_parameters(&self, ty: TypeId) -> Option<SmallVec<[TypeId; 4]>> {
         let place =
@@ -230,9 +236,9 @@ impl TypeLinks {
         Some(SmallVec::from_slice(kept))
     }
 
-    /// They take no more than interning.
+    /// Caches `parameters`. It doesn't need permission because deriving them only needs interning.
     pub(super) fn keep_infer_type_parameters(&mut self, ty: TypeId, parameters: &[TypeId]) {
-        // Nothing is added for an empty list, which most are.
+        // Most lists are empty, and an empty list adds nothing to `infer_type_parameters`.
         let start = match parameters.is_empty() {
             true => 0,
             false => self.infer_type_parameters.len(),
@@ -247,7 +253,7 @@ impl TypeLinks {
         }
     }
 
-    /// 0: it is not kept.
+    /// Returns 0 if the instantiation isn't cached.
     #[inline]
     fn with_fixed_mapper(&self, mapper: FixedMapper, ty: TypeId) -> u32 {
         match self.fixed_mapper_rows.get(ty) {
@@ -266,8 +272,9 @@ impl TypeLinks {
         self.with_fixed_mappers[row as usize - 1][mapper as usize] = raw;
     }
 
-    /// `getUniqueTypeParameters` has made type parameters whose constraints nothing has asked for, under ids that it may
-    /// have used before. `getRestrictiveTypeParameter` leaves such a type parameter as it is.
+    /// Discards the cached restrictive instantiations. Call it when `getUniqueTypeParameters` has created type
+    /// parameters whose constraints are unresolved, possibly under ids that it has used before.
+    /// `getRestrictiveTypeParameter` returns a type parameter like that unchanged, so the cached results can be stale.
     pub(super) fn forget_restrictive_instantiations(&mut self) {
         for row in &mut self.with_fixed_mappers {
             row[FixedMapper::Restrictive as usize] = 0;
@@ -275,7 +282,8 @@ impl TypeLinks {
         self.times_forgotten = self.times_forgotten.wrapping_add(1);
     }
 
-    /// One that was being made at the time is not kept either.
+    /// Returns the number of `forget_restrictive_instantiations` calls. An instantiation that was in progress during a
+    /// call isn't cached either.
     #[inline]
     pub(super) fn times_forgotten(&self) -> u32 {
         self.times_forgotten
@@ -290,7 +298,7 @@ impl TypeLinks {
         self.has_found_circular_mapped_constraint
     }
 
-    /// `t.alias.symbol`. `None`: nothing has asked yet.
+    /// Returns `t.alias.symbol`, or `None` if it hasn't been requested yet.
     #[inline]
     pub(super) fn alias_symbol(&self, ty: TypeId) -> Option<Option<Sym>> {
         let aliases = self.aliases.borrow();
@@ -314,7 +322,7 @@ impl TypeLinks {
         aliases.of.set(ty, aliases.kept.len() as u32 + 1);
     }
 
-    /// `t.alias.typeArguments`, if `keep_alias_type_arguments` has been called.
+    /// Returns `t.alias.typeArguments` if `keep_alias_type_arguments` has cached them.
     #[inline]
     pub(super) fn alias_type_arguments(&self, ty: TypeId) -> Option<AliasArguments> {
         let aliases = self.aliases.borrow();
@@ -325,7 +333,7 @@ impl TypeLinks {
         Some(SmallVec::from_slice(type_arguments))
     }
 
-    /// After `keep_alias_symbol`, with a symbol.
+    /// A no-op unless `keep_alias_symbol` has already cached a symbol for `ty`.
     pub(super) fn keep_alias_type_arguments(&self, ty: TypeId, type_arguments: &[TypeId]) {
         let aliases = &mut *self.aliases.borrow_mut();
         let Some(at) = (aliases.of.get(ty) as usize).checked_sub(2) else {
@@ -339,7 +347,7 @@ impl TypeLinks {
     }
 }
 
-/// A part, for the message of a `CHECKS_*` switch.
+/// Formats a part for the panic message of a `CHECKS_*` switch.
 pub(super) trait Described: Copy + PartialEq {
     fn described(self, c: &mut Checker<'_, '_>) -> String;
 }
@@ -367,7 +375,7 @@ impl Described for MapperId {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// The part of `ty` in the cell `at`, if it is kept and may be read now.
+    /// Returns the part of `ty` in cell `at` if it's cached and may be read now.
     #[inline]
     pub(super) fn kept_part<V: Packed<Cell = AtomicU32>>(
         &self,
@@ -379,7 +387,7 @@ impl<'p, 's> Checker<'p, 's> {
         (raw != 0 && self.index_infos_in_instantiation.is_empty()).then(|| V::unpack(raw))
     }
 
-    /// Keeps a part that takes no more than interning.
+    /// Caches a part that only needs interning.
     pub(super) fn keep_interned_part<V: Packed<Cell = AtomicU32>>(
         &mut self,
         ty: TypeId,
@@ -390,7 +398,7 @@ impl<'p, 's> Checker<'p, 's> {
         (self.links).keep(ty, kind, at, part.pack(), Stored::new());
     }
 
-    /// Keeps a part that `derive_settled` has returned with the permission.
+    /// Caches a part. `stored` is the permission that `derive_settled` returned with it.
     pub(super) fn keep_part<V: Packed<Cell = AtomicU32>>(
         &mut self,
         (ty, kind, at): (TypeId, Kind, usize),
@@ -400,7 +408,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.links.keep(ty, kind, at, part.pack(), stored);
     }
 
-    /// The part of `ty` for the cell `at`, from `derive`. Keeps it if the rule at the top of the file allows.
+    /// Calls `derive` to get the part for `cell`, and caches it if the rules in the module docs allow.
     pub(super) fn derive_part<V: Packed<Cell = AtomicU32>>(
         &mut self,
         cell: (TypeId, Kind, usize),
@@ -414,9 +422,10 @@ impl<'p, 's> Checker<'p, 's> {
         part
     }
 
-    /// What `derive` returns, and the permission to keep it if the rule at the top of the file allows.
-    /// `is_settled`: whether the entries that `derive` has read stay (`is_type_node_settled`, `is_mapper_idle`). It is asked
-    /// afterwards, and nothing is asked before: `derive` creates what it creates in the order in which it always has.
+    /// Returns the result of `derive`, plus permission to cache it if the rules in the module docs allow. `is_settled`
+    /// must return true if the entries that `derive` read are final (`is_type_node_settled`, `is_mapper_idle`). It's
+    /// called after `derive`, and nothing is looked up before, so `derive` creates everything in the same order as
+    /// without the cache.
     pub(super) fn derive_settled<V>(
         &mut self,
         derive: impl FnOnce(&mut Self) -> V,
@@ -443,10 +452,10 @@ impl<'p, 's> Checker<'p, 's> {
         (part, stored)
     }
 
-    /// `derive`, which makes an inference, and whether it has left nothing for a caller to notice but what
-    /// `derive_settled` looks at: no mark on the variance that is being measured, which a hit in `Program::relations`
-    /// leaves each time, nothing that depends on the comparisons or the variance computations in progress, and no more
-    /// than `STACK_OF_KEPT_PART` in use.
+    /// Calls `derive`, which runs an inference. The returned flag is true if `derive` had no effect that a caller could
+    /// notice, apart from the ones that `derive_settled` checks. For that, it must not have marked the variance being
+    /// measured (a hit in `Program::relations` does that every time), its result must not depend on the comparisons or
+    /// variance computations in progress, and it must have used at most `STACK_OF_KEPT_PART` bytes of stack.
     pub(super) fn derive_with_inference<V>(
         &mut self,
         derive: impl FnOnce(&mut Self) -> V,
@@ -479,8 +488,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.stack_base.saturating_sub(stack_pointer()) + STACK_OF_KEPT_PART <= self.stack_limit
     }
 
-    /// `instantiateType(ty, mapper)` for one of the mappers that are the same for every type, if it is kept and may be
-    /// read now.
+    /// Returns `instantiateType(ty, mapper)` for a fixed mapper if it's cached and may be read now.
     #[inline]
     pub(super) fn kept_with_fixed_mapper(&self, mapper: FixedMapper, ty: TypeId) -> Option<TypeId> {
         let raw = self.links.with_fixed_mapper(mapper, ty);
@@ -497,21 +505,22 @@ impl<'p, 's> Checker<'p, 's> {
         (self.links).keep_with_fixed_mapper(mapper, ty, instantiated.pack(), stored);
     }
 
-    /// Whether no `instantiate_cached` with `mapper` is in progress, which would store its result over the entry that an
-    /// instantiation with `mapper` has just read or stored.
+    /// True if no `instantiate_cached` call with `mapper` is in progress. A call in progress would overwrite the entry
+    /// that an instantiation with `mapper` has just read or stored.
     #[inline]
     pub(super) fn is_mapper_idle(&self, mapper: MapperId) -> bool {
         !self.active_mappers.is_active(mapper)
     }
 
-    /// Whether `type_from_node` reads the type of `node` from `Program::type_node_types`, and from an entry that stays.
+    /// True if `type_from_node` reads the type of `node` from `Program::type_node_types` and that entry is final.
     pub(super) fn is_type_node_settled(&self, file: FileId, node: TypeNodeId) -> bool {
         let q = Query::TypeNode(file, node);
         (self.p.type_node_types.get(&self.task, &(file, node))).is_some()
             && !(self.may_be_in_flight(q) && self.stack.contains(&q))
     }
 
-    /// Under a `CHECKS_*` switch: `kept` was read as the part `name` of `ty`, and `derive` is the long way.
+    /// Used by the `CHECKS_*` switches. `kept` was read from the cache as part `name` of `ty`, and `derive` computes it
+    /// without the cache.
     #[cold]
     #[inline(never)]
     pub(super) fn check_kept_part<V: Described>(
@@ -521,7 +530,7 @@ impl<'p, 's> Checker<'p, 's> {
         kept: V,
         derive: impl FnOnce(&mut Self) -> V,
     ) {
-        // There, or a few levels further in, the long way fails and reports it.
+        // At these values, or a few levels deeper, `derive` hits a limit and reports it.
         if self.instantiation_depth >= 90 || self.instantiation_count >= 4_900_000 {
             return;
         }
@@ -546,7 +555,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Under a `CHECKS_*` switch: the long way has `found` something else than `kept`, which is `what` of `ty`.
+    /// Panics for a `CHECKS_*` switch. `kept` is the cached `what` of `ty`, and `found` describes what deriving it
+    /// returned instead.
     #[cold]
     #[inline(never)]
     pub(super) fn kept_part_differs(&self, ty: TypeId, what: &str, kept: &str, found: &str) -> ! {
@@ -604,7 +614,7 @@ mod tests {
         ] {
             assert_eq!(numbers.get(TypeId(other)), 0);
         }
-        // Only the pages that have a number.
+        // Only pages with a number are allocated.
         assert_eq!(numbers.published.len(), 3);
     }
 

@@ -299,8 +299,8 @@ fn is_type_of_expression(template: TypeNode) -> bool {
     }
 }
 
-/// How tightly a type has to bind to stand where `ty` stands without parentheses, 0 where any type can. A conditional or a
-/// function type binds with 0, a union with 1, an intersection with 2, `keyof T` with 3.
+/// Returns the lowest precedence a type can have to replace `ty` without parentheses, or 0 if any type works there. A
+/// conditional or function type has precedence 0, a union 1, an intersection 2, `keyof T` 3.
 pub(crate) fn binding_needed_in_place_of(ty: TypeNode) -> u8 {
     let is_ty = |it: TypeNode| it.span() == ty.span();
     match ty.parent() {
@@ -331,8 +331,8 @@ fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
     binding < binding_needed_in_place_of(template)
 }
 
-/// Whether `` `${interpolation}` `` is there to make a string of whatever a caller passes. The type says what the author promises,
-/// not what arrives: a parameter, and `` a = `${a}` ``.
+/// True if `` `${interpolation}` `` is probably there to convert whatever a caller passes to a string. The declared
+/// type is what the author promises, not what arrives at run time. This covers parameters and `` a = `${a}` ``.
 fn is_coercion<'a>(template: Node<'a>, interpolation: Node<'a>) -> bool {
     let (Node::Expr(template), Node::Expr(interpolation)) = (template, interpolation) else {
         return false;

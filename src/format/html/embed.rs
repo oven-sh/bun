@@ -37,8 +37,8 @@ pub(crate) fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8
     })
 }
 
-/// The classes in `value`, one blank apart. HTML splits them at ASCII white space. Prettier splits at what is white
-/// space in JavaScript, which makes two classes of one with a no-break space in it.
+/// Returns the classes in `value`, separated by single spaces. HTML splits them at ASCII whitespace. Prettier splits at
+/// JavaScript whitespace, so a class name that contains a no-break space becomes two classes.
 fn class_names(value: &[u8]) -> Vec<u8> {
     let names = strings::split_any(value, b" \t\n\x0C\r").filter(|name| !name.is_empty());
     names.collect::<Vec<_>>().join(&b' ')
@@ -550,7 +550,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let Some(value) = self.out.end_attempt_as_content(attempt, is_written) else {
             return false;
         };
-        // It would be written after the quote, as Prettier does with `v-for="a in b // c"`. The value stays as it is.
+        // The comment would be printed after the closing quote, as Prettier does with `v-for="a in b // c"`. Leave the
+        // value as is.
         if ends_with_line_suffix(value, self.out.f) {
             return false;
         }
@@ -647,7 +648,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             }
         }
         match self.options.parser {
-            // To Vue it is an attribute like another, not code. Prettier formats it.
+            // Under `v-pre`, Vue treats it as a plain attribute, not code. Prettier formats it anyway.
             Parser::Vue if self.tree[element].has(Flags::IS_IN_V_PRE) => false,
             Parser::Vue => self.embed_vue_attribute(element, attr, value),
             Parser::Angular => self.embed_angular_attribute(element, attr, raw_value, value),

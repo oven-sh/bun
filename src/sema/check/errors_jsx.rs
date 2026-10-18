@@ -8,7 +8,8 @@
 //! `getJSXFragmentType`, `resolveJsxOpeningLikeElement`, `elaborateJsxComponents` and
 //! `checkJsxReturnAssignableToAppropriateBound` of TypeScript 7.0.2's jsx.go, and
 //! `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
-//! `getCandidateForOverloadFailure` of its checker.go. `getJsxNamespaceContainerForImplicitImport` is that of 7.1.
+//! `getCandidateForOverloadFailure` of its checker.go. `getJsxNamespaceContainerForImplicitImport`
+//! follows TypeScript 7.1.
 
 use super::call::{CallLike, ExpectsReturn};
 use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
@@ -74,21 +75,21 @@ impl Checker<'_, '_> {
         elements.shared_sort_unstable_by_key(|&e| hir[e].pos);
         let first_jsx_tag_in_file = elements.first().copied();
         elements.retain(|e| !bound.is_unchecked(e.idx()));
-        // `getJsxNamespaceContainerForImplicitImport` of TypeScript 7.1: whichever element asks first, the error is at
-        // `firstJSXTagInFile`, which may be one that is never checked.
+        // `getJsxNamespaceContainerForImplicitImport` of TypeScript 7.1. Whichever element triggers
+        // the error, it is reported at `firstJSXTagInFile`, even if that tag is never checked.
         if let (Some(spec), Some(first)) = (runtime, first_jsx_tag_in_file)
             && let ExprKind::Jsx(j) = hir[first].kind
             && (elements.iter()).any(|&e| !self.is_never_checked(hir[e].pos))
         {
-            // The whole element, or the opening fragment.
+            // The error spans the whole element, or only the opening of a fragment.
             let has_closing_element = hir[j].tag.is_some() && hir[j].close_pos != u32::MAX;
             let end = if has_closing_element {
                 hir[j].end
             } else {
                 hir[j].opening_end
             };
-            // `getJSXRuntimeImportSpecifier`: the specifier of the synthetic import the loader
-            // added, which has no import clause and is nowhere in the text.
+            // `getJSXRuntimeImportSpecifier`. The loader added this specifier as a synthetic
+            // import. It has no import clause and doesn't appear in the source text.
             let specifier = SpecifierUse {
                 spec,
                 pos: u32::MAX,
@@ -103,7 +104,7 @@ impl Checker<'_, '_> {
             }
         }
         // `getJSXFragmentType` reports once per file, on the fragment that is checked first.
-        // Fragments the walk does not reach come last, in source order.
+        // Fragments that the walk doesn't reach come last, in source order.
         let is_fragment =
             |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
         let mut first_fragment = None;

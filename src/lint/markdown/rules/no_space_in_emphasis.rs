@@ -10,10 +10,10 @@ const SPACE_IN_EMPHASIS: Message = Message::new(
     "Unexpected space around emphasis marker.",
 );
 
-/// Stands for a character of a child that is not text: code, a link, HTML.
+/// Placeholder byte in the masked text for a child node that isn't text: code, a link, HTML.
 const NOT_TEXT: u8 = 1;
 
-/// A marker in the masked text, and the indices of its start and end in the file.
+/// A marker's byte range in the masked text, and its start and end indices in the file.
 #[derive(Copy, Clone)]
 struct Marker {
     start: usize,
@@ -25,8 +25,8 @@ fn is_blank(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }
 
-/// Whether a marker is not stuck to a word on this side. `outward` is the text from the marker on, which may have
-/// punctuation before the next blank. `/` and `\` count as parts of a word: `src/*`, `*/`.
+/// True if the marker isn't attached to a word on this side. `outward` iterates over the text, moving away from the
+/// marker. Punctuation before the next blank is skipped. `/` and `\` count as word characters: `src/*`, `*/`.
 fn is_free(mut outward: impl Iterator<Item = u8>) -> bool {
     let is_in_word =
         |byte: u8| byte.is_ascii_alphanumeric() || byte >= 0x80 || matches!(byte, b'/' | b'\\');
@@ -35,10 +35,10 @@ fn is_free(mut outward: impl Iterator<Item = u8>) -> bool {
         .is_some_and(is_in_word)
 }
 
-/// Whether two markers with the same text would be emphasis but for a blank inside of them: `** a**`, `_a _`, `__ a __`.
+/// True if two identical markers would be emphasis if not for a blank just inside them: `** a**`, `_a _`, `__ a __`.
 ///
-/// Upstream takes the first and the second marker of a paragraph for a pair, then the third and the fourth, whatever is
-/// around them. So it reports `*.ts, *.tsx` and `char *a, *b`, and its fix joins the words.
+/// Upstream pairs a paragraph's first marker with its second, its third with its fourth, and so on, no matter what
+/// surrounds them. So it reports `*.ts, *.tsx` and `char *a, *b`, and its fix joins the words.
 fn is_broken_pair(text: &[u8], opening: Marker, closing: Marker) -> bool {
     let (Some(&first), Some(&last)) = (
         text.get(opening.end),
@@ -50,14 +50,14 @@ fn is_broken_pair(text: &[u8], opening: Marker, closing: Marker) -> bool {
         text.get(..opening.start).unwrap_or_default(),
         text.get(closing.end..).unwrap_or_default(),
     );
-    // `(* a comment in OCaml *)`
+    // A single `*` or `~` with blanks inside on both ends isn't emphasis: `(* a comment in OCaml *)`.
     let is_single = opening.end - opening.start == 1 && text.get(opening.start) != Some(&b'_');
     match (is_blank(first), is_blank(last)) {
         (false, false) => return false,
         (true, true) if is_single => return false,
         _ => {}
     }
-    // `*.ts`, `*/`, `/*`
+    // Skip `*.ts`, `*/` and `/*`.
     !matches!(first, b'.' | b'/')
         && last != b'/'
         && is_free(before.iter().rev().copied())
@@ -142,7 +142,7 @@ impl Listens for NoSpaceInEmphasis {
         if !texts.iter().any(has_marker) {
             return Ok(());
         }
-        // One byte for each UTF-16 code unit of everything else.
+        // The text nodes are copied as is. Everything between them becomes one byte per UTF-16 code unit.
         let mut masked = Vec::with_capacity(node.text().len());
         let mut from = node.span().start;
         for &span in texts.iter() {
@@ -164,7 +164,7 @@ impl Listens for NoSpaceInEmphasis {
                 }
                 Ok(())
             };
-        // For each marker text, the last marker that has no partner yet.
+        // The last unpaired marker for each marker string.
         let mut open: Vec<(&[u8], Option<Marker>)> = Vec::new();
         let mut indices = Indices::new(&masked, node.start_index());
         for (start, len) in self.markers(&masked) {
@@ -175,7 +175,8 @@ impl Listens for NoSpaceInEmphasis {
                 end,
                 place: (index, index + len as Index),
             };
-            // `2 * 3`, `~ 5`: a character of the text. Upstream makes `2 *3* 4` of `2 * 3 * 4`.
+            // A `*` or `~` with blanks on both sides is plain text: `2 * 3`, `~ 5`. Upstream's fix turns `2 * 3 * 4`
+            // into `2 *3* 4`.
             let is_blank_at = |at: Option<usize>| {
                 at.and_then(|at| masked.get(at))
                     .copied()

@@ -1052,13 +1052,15 @@ impl Order {
             return;
         }
         report.fix(|fixer| {
-            // The lines above a declaration stay where they are.
+            // The fix doesn't move the comment lines above a declaration, so a directive or doc comment would end up
+            // above other code.
             if fixer.has_directive_or_doc_before(second.root)
                 || !is_after && fixer.has_directive_or_doc_before(first.root)
             {
                 return None;
             }
-            // What follows the two gets another statement before it.
+            // After the move, a different statement precedes the code that follows. Bail out if that code would
+            // continue it.
             let (previous, next) = match is_after {
                 false => (file.token_before(second.root), file.token_after(second.root)),
                 true => (file.last_token(second.root), file.token_after(first.root)),

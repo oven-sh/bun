@@ -1067,7 +1067,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The callback of `mapTypeEx` in `getTypeOfPropertyOfContextualTypeEx`.
+    /// The `mapTypeEx` callback in `getTypeOfPropertyOfContextualTypeEx`.
     fn contextual_property_of_member(
         &mut self,
         part: TypeId,
@@ -1459,7 +1459,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `Inference::for_params(&[], None)`
+    /// Returns an empty context equal to `Inference::for_params(&[], None)`, reusing a spare one if possible.
     pub(super) fn spare_inference(&mut self) -> Box<Inference> {
         (self.spare_inferences.pop()).unwrap_or_else(|| Box::new(Inference::for_params(&[], None)))
     }

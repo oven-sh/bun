@@ -73,9 +73,9 @@ impl<'a> Ctx<'a, '_> {
         };
     }
 
-    /// Whether a fix may write the name `name` at `at`: whether it is the runner's function there. For Jest and Vitest that is a
-    /// global, imported, or required at the top level. In a file that imports from `bun:test` nothing else is declared than what
-    /// it imports: `bun test` declares `it` and the like only where nothing is imported from there.
+    /// True if a fix may write `name` at `at`, because `name` refers to the runner's function there. For Jest and
+    /// Vitest it can be a global, imported, or required at the top level. For `bun:test` it has to be imported or
+    /// required: `bun test` only declares `it` and the other globals in files that don't import from `bun:test`.
     pub(crate) fn can_write(&self, name: &[u8], at: Expr<'a>) -> bool {
         let is_bun = self.runner == Runner::Bun;
         let Some(symbol) = Node::Expr(at).scope().resolve_bytes(name) else {
@@ -393,7 +393,8 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
     })
 }
 
-/// The `{ test: t }` and the `a` of `const { test: t } = require("a")` and of `.. = await import("a")`.
+/// Returns the pattern and the module specifier: `{ test: t }` and `a` for `const { test: t } = require("a")` or
+/// `.. = await import("a")`.
 fn required(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     let init = declarator.init()?;
     let source = match init.kind() {
@@ -407,7 +408,7 @@ fn required(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     Some((declarator.pat(), static_string(source?)?))
 }
 
-/// [`required`] of the declarations at the top level.
+/// Runs [`required`] on every top-level variable declaration.
 fn all_required<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Pat<'a>, Name<'a>)> {
     let declarators = file.body().iter().filter_map(Stmt::as_var).flatten();
     declarators.filter_map(required)

@@ -110,10 +110,10 @@ impl Session {
         kept.downcast_ref().expect("it was boxed as a `T`")
     }
 
-    /// Drops the session of a process that is about to end. Every thread destroys an arena, its own if it has one, and the
-    /// memory goes back to the system at once. Otherwise one thread gives back whatever the process has when it ends,
-    /// which takes 70 ms for each GB.
-    /// `in_parallel` calls its second argument with every index below the first, on any number of threads.
+    /// Drops the session right before the process exits. The arenas are destroyed in parallel, each thread preferring its
+    /// own, and their memory is returned to the OS immediately. Without this, a single thread unmaps everything at exit,
+    /// which costs about 70 ms per GB.
+    /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads.
     pub fn drop_before_the_process_ends(
         mut self,
         in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
@@ -124,7 +124,7 @@ impl Session {
             next = node.next.take();
             arenas.push(node);
         }
-        // From now on the allocator does not keep what is freed for a while, in case it is needed again.
+        // Make mimalloc return freed pages right away instead of caching them for reuse.
         bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
         let (count, arenas) = (arenas.len(), Guarded::new(arenas));
         in_parallel(count, &|_| {

@@ -763,9 +763,9 @@ impl<'a> Report<'a> {
         self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
     }
 
-    /// For a fix that is only right for some code: [`Report::fix`] where `is_safe`, [`Report::fix_dangerously`] elsewhere.
-    /// `--fix` must not change what a program does or whether it type checks, whatever the original tool's `--fix` does.
-    /// `is_safe` is called only if the fix is read, so it can ask about scopes.
+    /// Attaches a fix that's only correct for some code: [`Report::fix`] if `is_safe` returns true, otherwise
+    /// [`Report::fix_dangerously`]. `--fix` must not change a program's behavior or break type checking, whatever the
+    /// original tool's `--fix` does. `is_safe` is only called if the fix is read, so it can afford to look at scopes.
     pub fn fix_where_safe<F: IntoFix>(
         self,
         is_safe: impl FnOnce() -> bool,

@@ -31,7 +31,8 @@ impl Rule for PreferDomNodeAppend {
             && name.name().is("appendChild")
             && call_expr.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
         {
-            // `appendChild` returns the child and `append` returns nothing. The nodes of an XML library may have no `append`.
+            // `appendChild` returns the child, but `append` returns `undefined`. And an XML library's nodes may not
+            // have an `append` method.
             cx.report(name, PREFER_DOM_NODE_APPEND)
                 .fix_where_safe(|| is_expression_statement(e) && is_visibly_dom_node(obj), |fixer| fixer.replace(name, "append"));
         }

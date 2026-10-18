@@ -192,9 +192,9 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.add_line(LineMode::Hard);
     }
 
-    /// A `hardline` after `line`, which another formatter has printed. That only leaves blanks at the end of a line if
-    /// they have to stay, and a `hardline` trims them. A line break that is text does not, and the `hardline` after it
-    /// only indents.
+    /// Prints a `hardline` after `line`, which is the output of another formatter. That formatter only prints trailing
+    /// spaces and tabs that must be kept, and a `hardline` would trim them. A line break printed as text doesn't, and
+    /// the `hardline` after it then only indents.
     pub(crate) fn hardline_after(&mut self, line: &[u8]) {
         if !matches!(line.last(), Some(b' ' | b'\t')) {
             return self.hardline();

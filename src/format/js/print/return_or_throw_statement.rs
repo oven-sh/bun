@@ -111,8 +111,8 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
     }
 }
 
-/// Prettier's `hasNakedLeftSide`, and `a<T>`, which it leaves out: it prints `return // comment⏎a<T>;` for
-/// `return (// comment⏎a)<T>;`.
+/// Prettier's `hasNakedLeftSide`, plus `a<T>`. Prettier doesn't check for it and turns `return (// comment⏎a)<T>;` into
+/// `return // comment⏎a<T>;`.
 fn has_naked_left_side(e: Expr<'_>) -> bool {
     match e.kind() {
         ExprKind::Assign { .. }
@@ -184,18 +184,20 @@ fn has_own_line_comment_before_property<'a>(e: Expr<'a>, f: &Formatter<'a>) -> b
 }
 
 /// Prettier's `returnArgumentHasLeadingComment`: whether a leading comment of `argument` ends its line or spans several, or a
-/// leading comment of anything down its left edge ends its line. Also whatever [`has_comment_right_after_keyword`] finds.
+/// leading comment of anything down its left edge ends its line. Also true if [`has_comment_right_after_keyword`] is.
 pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     has_comment_on_left_edge(argument, true, f)
 }
 
-/// Whether a comment would put a line break between the keyword and `argument`, which ends a `return` or a `yield` and is a
-/// syntax error after `throw`. `return (/* two⏎lines */ a).b;`: Prettier misses the comment and drops the parentheses.
+/// True if a comment would put a line break between the keyword and `argument`. That ends a `return` or a `yield` early
+/// and is a syntax error after `throw`. In `return (/* two⏎lines */ a).b;` Prettier misses the comment and drops the
+/// parentheses.
 pub(crate) fn has_comment_right_after_keyword<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     has_comment_on_left_edge(argument, false, f)
 }
 
-/// `as_prettier_does`: a comment that ends its line counts wherever it is written, like the one in `return a⏎// comment⏎.b();`.
+/// If `as_prettier_does` is set, a comment that ends its line counts even if it isn't printed right after the keyword,
+/// like the one in `return a⏎// comment⏎.b();`.
 fn has_comment_on_left_edge<'a>(
     argument: Expr<'a>,
     as_prettier_does: bool,
@@ -231,7 +233,7 @@ fn has_comment_on_left_edge<'a>(
     {
         return true;
     }
-    // A sequence and an assignment are written in parentheses.
+    // A sequence or an assignment is printed in parentheses.
     let mut is_right_after_keyword = !matches!(
         argument.kind(),
         ExprKind::Assign { .. }
@@ -240,7 +242,8 @@ fn has_comment_on_left_edge<'a>(
                 ..
             }
     );
-    // Up to it, every `.b`, `[b]`, `!` and `()` is written with its comments behind what it is applied to.
+    // The head of the member chain being walked. It's printed first. Every `.b`, `[b]`, `!` and `()` applied to it is
+    // printed after it, along with its comments.
     let mut chain_head = None;
     let mut current = argument;
     while let Some(left) = left_side(current)

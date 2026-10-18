@@ -2502,10 +2502,10 @@ describe.concurrent("bun lint with built-in Markdown", () => {
     const options = `{ files: ["**/*.md"], rules: { "markdown/no-space-in-emphasis": ["error", { checkStrikethrough: true }] } }`;
     const files = { ...markdownPackage(), "eslint.config.mjs": markdownConfig(options, "[]") };
 
-    // The plugin pairs the first marker of a paragraph with the second and the third with the fourth, whatever is around
-    // them. It reports every one of these down to the table, and its fix changes what a reader sees: `2 *3* 4`,
+    // The plugin pairs a paragraph's first marker with the second and the third with the fourth, regardless of the text
+    // around them. It reports every line below through the table, and its fix changes the rendered text: `2 *3* 4`,
     // `*.ts,*.tsx`.
-    test("leaves stars and underscores alone that are only text", async () => {
+    test("ignores stars and underscores that are plain text", async () => {
       const text = [
         "The area is 2 * 3 * 4 units.",
         "x = a * b + c * d",
@@ -2545,7 +2545,7 @@ describe.concurrent("bun lint with built-in Markdown", () => {
       ["2 * 3 is ** important**.", "2 * 3 is **important**."],
       ["This is ~~ gone~~.", "This is ~~gone~~."],
       ["# A ** heading**", "# A **heading**"],
-    ])("--fix makes emphasis of %j", async (before, after) => {
+    ])("--fix turns %j into emphasis", async (before, after) => {
       expect(Bun.markdown.html(before)).not.toMatch(/<(em|strong|del)>/);
       expect(Bun.markdown.html(after)).toMatch(/<(em|strong|del)>/);
       const result = await lint({ ...files, "a.gfm.md": `${before}\n` }, ["--fix", "."], ["a.gfm.md"]);

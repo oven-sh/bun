@@ -1823,7 +1823,7 @@ const testRules: Record<string, Case[]> = {
     `«test»("a", 1000, () => {});`,
     `«test.if(a)»("b", () => {});`,
     `«test.each([1])»("a", () => {});`,
-    // Nor a comment, which is often the test itself, commented out.
+    // The fix doesn't delete a comment either. It's often the test body, commented out.
     `«test»("a", () => {\n  // expect(b()).toBe(1);\n});`,
     `«test»("a", /* later */ () => {});`,
     `test(() => {});`,
@@ -1931,7 +1931,7 @@ const testRules: Record<string, Case[]> = {
       code: `const { it, test } = require("bun:test");\n«it»("a", () => {});`,
       output: `const { it, test } = require("bun:test");\ntest("a", () => {});`,
     },
-    // Where the call is, `test` is something else than what "bun:test" exports.
+    // At the call site, `test` isn't the `test` that "bun:test" exports.
     `import { it } from "bun:test";\n«it».concurrent("a", () => {});\nfunction test(name: string) {\n  «it»(name, () => {});\n}`,
     `import { it } from "bun:test";\nimport { test } from "./helpers";\n«it»("a", () => {});`,
     `import { it, expect as test } from "bun:test";\n«it»("a", () => {});`,
@@ -2176,12 +2176,12 @@ const testRules: Record<string, Case[]> = {
       code: inTest(`await expect(«async function () {\n    await load("a");\n  }»).rejects.not.toThrow("b");`),
       output: inTest(`await expect(load("a")).rejects.not.toThrow("b");`),
     },
-    // A comment in the call is kept.
+    // A comment inside the call is kept.
     {
       code: inTest(`await expect(«async () => {\n    await load(/* no name */);\n  }»).rejects.toThrow();`),
       output: inTest(`await expect(load(/* no name */)).rejects.toThrow();`),
     },
-    // Any other comment would be lost, so there is no fix.
+    // Any other comment would be deleted, so these have no fix.
     inTest(`await expect(«async () => {\n    // @ts-expect-error\n    await load(1);\n  }»).rejects.toThrow();`),
     inTest(`await expect(«async () => {\n    await load(1); // not a name\n  }»).rejects.toThrow();`),
     inTest(`await expect(«async (/* nothing */) => await load(1)»).rejects.toThrow();`),
@@ -2895,7 +2895,7 @@ describe.concurrent("bun:test/, jest/ and vitest/ are one implementation", () =>
     );
   });
 
-  // Jest and Vitest take a promise with and without `.rejects`. `bun test` only takes one with it.
+  // Jest and Vitest accept a promise with or without `.rejects`. `bun test` only accepts one with `.rejects`.
   test.each([
     ["bun:test", "bun:test", []],
     ["jest", "@jest/globals", ["10 load(3)"]],
@@ -2919,7 +2919,7 @@ test("a", async () => {
     const files = { "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`, "a.test.ts": code };
     const { stdout } = await lint(files, ["-f", "json", "a.test.ts"]);
     const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
-    // The fix would delete the comment, so the first has none.
+    // The fix would delete the comment, so the first report has no fix.
     expect(messages.filter(it => it.ruleId === rule).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
       "3 undefined",
       "7 load(2)",
@@ -2927,11 +2927,11 @@ test("a", async () => {
     ]);
   });
 
-  // For Jest and Vitest `test` is a global, which a variable around the call hides.
+  // For Jest and Vitest, `test` is a global, and a local variable in scope at the call shadows it.
   test.each([
     ["jest", "@jest/globals"],
     ["vitest", "vitest"],
-  ])("%s/consistent-test-it doesn't write `test` where that's a local variable", async (plugin, source) => {
+  ])("%s/consistent-test-it doesn't rename to `test` where `test` is a local variable", async (plugin, source) => {
     const rule = `${plugin}/consistent-test-it`;
     const code = `import { it } from "${source}";
 for (const test of cases) {
@@ -2948,7 +2948,7 @@ it("a", () => {});
     ]);
   });
 
-  // The calls that are reported are those of globals. oxlint 1.87 writes the names whatever they stand for.
+  // Only calls to globals are reported. oxlint 1.87 writes the names regardless of what they refer to.
   test.each([
     ["jest", `const { it, describe } = require("@jest/globals");`, true],
     ["vitest", `const { it, describe } = require("vitest");`, true],
@@ -2959,7 +2959,7 @@ it("a", () => {});
     ["jest", `const { test: it, suite: describe } = require("@jest/globals");`, false],
     ["jest", `const [it, describe] = require("@jest/globals");`, false],
     ["jest", `const it = require("@jest/globals"), describe = it;`, false],
-  ])("%s: whether a fix writes the names of `%s`: %p", async (plugin, declaration, isWritten) => {
+  ])("%s: a fix uses the names from `%s`: %p", async (plugin, declaration, isWritten) => {
     const code = `${declaration}
 xdescribe("a", () => {
   test("b", () => {});

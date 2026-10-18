@@ -51,8 +51,8 @@ pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatte
     }
 }
 
-/// What the chain that ends with the call `call_expression` starts with. It is written first, and each link after it has its
-/// comments directly before it.
+/// Returns the head of the member chain that ends with the call `call_expression`. The head is printed first. Each link
+/// after it is printed with its comments directly before it.
 pub(crate) fn head_of_member_chain<'a>(
     call_expression: Expr<'a>,
     f: &Formatter<'a>,

@@ -22,8 +22,8 @@ type Result = {
 };
 
 /**
- * `reports` has one `a.js:1:1 error no-debugger` string per problem, and `problems` one `a.js:1:1 Unexpected 'debugger' statement.`
- * `texts` has the files' contents after the run.
+ * Runs `bun lint -f json` on `files`. `reports` lists each problem as `a.js:1:1 error no-debugger`, `problems` lists
+ * each as `a.js:1:1 Unexpected 'debugger' statement.`, and `texts` maps each file name to its contents after the run.
  */
 async function lint(files: Record<string, string>, args: string[], stdin?: string, cwd = ".") {
   using dir = tempDir("bun-lint-defaults", files);
@@ -713,7 +713,7 @@ export const texts = [
   \`\${{ a: 1 }}\`,
 ];
 `;
-    // The shape of @types/node: the global extends the interface of node:url.
+    // Same shape as @types/node: the global URL extends node:url's interface.
     const node = `declare module "node:url" {
   interface URLSearchParams { toString(): string }
   interface URL { href: string; searchParams: URLSearchParams; toString(): string }
@@ -727,7 +727,7 @@ declare global {
 }
 `;
 
-    test("is fine when a types package declares the global, as in a project from bun init", async () => {
+    test("isn't reported when a types package declares the global, like in a `bun init` project", async () => {
       const files = {
         "tsconfig.json": tsconfig(["ESNext"]),
         "url.d.ts": node,
@@ -739,7 +739,7 @@ declare global {
       expect(eslint).toEqual([3, 4, 5, 6].map(line => `a.ts:${line}:6 error ${rule}`));
     });
 
-    test("is fine when a script declares the global", async () => {
+    test("isn't reported when a script declares the global", async () => {
       const declared = `declare class URLSearchParams { toString(): string }
 declare class URL { constructor(url: string, base?: string | URL); searchParams: URLSearchParams; toString(): string }
 `;
@@ -747,20 +747,20 @@ declare class URL { constructor(url: string, base?: string | URL); searchParams:
       expect((await inBothModes(files, [rule], ["--type-aware"])).native).toEqual([`a.ts:6:6 error ${rule}`]);
     });
 
-    test("is fine when it's imported from node:url", async () => {
+    test("isn't reported when it's imported from node:url", async () => {
       const imported = `import { URL } from "node:url";\nexport const text = \`\${new URL("https://bun.com")}\`;\n`;
       const files = { "tsconfig.json": tsconfig(["ESNext"]), "url.d.ts": node, "a.ts": imported };
       expect((await inBothModes(files, [rule], ["--type-aware"])).native).toEqual([]);
     });
 
-    test("is fine with the DOM lib, as before", async () => {
+    test("isn't reported with the DOM lib", async () => {
       const files = { "tsconfig.json": tsconfig(["ESNext", "DOM"]), "a.ts": code };
       const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
       expect(native).toEqual([`a.ts:6:6 error ${rule}`]);
       expect(eslint).toEqual(native);
     });
 
-    test("is reported when URL is a class of the project", async () => {
+    test("is reported when URL is the project's own class", async () => {
       const files = {
         "tsconfig.json": tsconfig(["ESNext", "DOM"]),
         "url.ts": 'export class URL {\n  href = "";\n}\n',
@@ -771,7 +771,7 @@ declare class URL { constructor(url: string, base?: string | URL); searchParams:
       expect(native).toEqual([`a.ts:2:24 error ${rule}`, `b.ts:4:24 error ${rule}`]);
     });
 
-    test("is reported when your own allow list says from lib and the lib doesn't have it", async () => {
+    test("is reported when the allow list only allows URL from lib and the lib doesn't declare it", async () => {
       const files = {
         "tsconfig.json": tsconfig(["ESNext"]),
         "url.d.ts": node,
@@ -784,7 +784,7 @@ declare class URL { constructor(url: string, base?: string | URL); searchParams:
     });
   });
 
-  test("with --type-aware, setTimeout with an argument of type any isn't an implied eval", async () => {
+  test("with --type-aware, no-implied-eval ignores a setTimeout argument of type any", async () => {
     const rule = "@typescript-eslint/no-implied-eval";
     const files = {
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
@@ -803,10 +803,10 @@ export function later(callback: any, code: string, options: { done: any }) {
     expect(eslint).toEqual([3, 4, 5, 6, 7].map(line => `a.ts:${line}:14 error ${rule}`));
   });
 
-  describe("with --type-aware, await in front of a promise matcher of bun:test", () => {
+  describe("with --type-aware, awaiting a bun:test promise matcher", () => {
     const rule = "@typescript-eslint/await-thenable";
     const tsconfig = `{ "compilerOptions": { "strict": true, "lib": ["esnext"], "types": [] } }`;
-    // The lines of bun-types that matter.
+    // The relevant declarations from bun-types.
     const matchers = `interface Matchers<T> {
     not: Matchers<unknown>;
     resolves: Matchers<Awaited<T>>;
@@ -834,7 +834,7 @@ await expect(1).toBe(1);
       expect(eslint).toEqual([`a.ts:6:1 error ${rule}`]);
     });
 
-    test("is reported when expect isn't the one of bun:test", async () => {
+    test("is reported when expect doesn't come from bun:test", async () => {
       const files = {
         "tsconfig.json": tsconfig,
         "mine.ts": `export ${matchers.replace("export function", "export declare function")}\n`,
@@ -1256,8 +1256,8 @@ export function Timer({ ms, cb }) {
     expect(dangerous.texts["b.jsx"]).toBe(files["b.jsx"].replace("[ms]", "[cb, ms]"));
   });
 
-  // ESLint applies all of these with --fix. The project type checks before and doesn't after.
-  test("--fix writes nothing that bun check rejects", async () => {
+  // ESLint's --fix applies all of these. The project type checks before those fixes and fails after them.
+  test("--fix skips fixes that would cause type errors", async () => {
     const kept = {
       // TS2339 on `globalThis.BUILD_ID`, and TS2451 if another file declares it too
       "global.ts": "declare var BUILD_ID: string;\nconsole.log(globalThis.BUILD_ID);\n",
@@ -1783,24 +1783,24 @@ module.exports = os.platform();
     ["no package.json", {}],
     ["a package.json without a type", { "package.json": `{ "name": "a" }` }],
     [`"type": "commonjs"`, { "package.json": `{ "type": "commonjs" }` }],
-  ])("a file can return at the top level with %s", async (_, files) => {
+  ])("allows a top-level return with %s", async (_, files) => {
     const { problems, exitCode } = await lint({ ...files, "early.js": early }, []);
     expect(problems).toEqual([]);
     expect(exitCode).toBe(0);
   });
 
-  test("rules run on a file that returns at the top level", async () => {
+  test("runs rules on a file with a top-level return", async () => {
     const { reports } = await lint({ "early.js": `${early}debugger;\n` }, []);
     expect(reports).toEqual(["early.js:6:1 error no-debugger"]);
   });
 
-  test(`a top-level return is still an error with "type": "module"`, async () => {
+  test(`reports a top-level return with "type": "module"`, async () => {
     const { problems, exitCode } = await lint({ ...ofModule, "early.js": early }, []);
     expect(problems).toEqual([`early.js:3:3 ${returnOutside}`]);
     expect(exitCode).toBe(1);
   });
 
-  test("the nearest package.json decides", async () => {
+  test("uses the type from the nearest package.json", async () => {
     const files = {
       ...ofModule,
       "early.js": early,
@@ -1836,13 +1836,13 @@ module.exports = os.platform();
   test.each([
     ["import()", `import("./b.js").then(console.log);`],
     ["an await in a function", "(async () => { await 1; })();"],
-    ["the word in a string", `console.log("import.meta, export, await");`],
+    ["a keyword inside a string", `console.log("import.meta, export, await");`],
   ])("%s doesn't make a file a module", async (_, code) => {
     const { problems } = await lint({ "a.js": `${code}\nreturn;\n`, "b.js": "" }, ["a.js"]);
     expect(problems).toEqual([]);
   });
 
-  test(`an import is fine with "type": "commonjs", as it is for Bun and TypeScript`, async () => {
+  test(`allows an import with "type": "commonjs", like Bun and TypeScript`, async () => {
     const files = {
       "package.json": `{ "type": "commonjs" }`,
       "a.js": `import os from "os";\nexport default os.platform();\n`,
@@ -1855,15 +1855,15 @@ module.exports = os.platform();
 
   const sloppy: [name: string, code: string, inStrictMode: string][] = [
     ["with", "with (Math) console.log(PI);", "'with' in strict mode"],
-    ["delete of a variable", "var a = 1;\ndelete a;", "Deleting local variable in strict mode"],
-    ["a word that strict mode reserves", "var public = 1;\nconsole.log(public);", "The keyword 'public' is reserved"],
+    ["deleting a variable", "var a = 1;\ndelete a;", "Deleting local variable in strict mode"],
+    ["a strict-mode reserved word", "var public = 1;\nconsole.log(public);", "The keyword 'public' is reserved"],
     ["an octal literal", "console.log(010);", ""],
-    ["two parameters with one name", "console.log(function (a, a) {});", ""],
-    ["await as a name", "var await = 1;\nconsole.log(await);", ""],
+    ["duplicate parameter names", "console.log(function (a, a) {});", ""],
+    ["await as an identifier", "var await = 1;\nconsole.log(await);", ""],
     ["an HTML comment", "<!-- hidden from old browsers\nconsole.log(1);\n--> the end", ""],
   ];
 
-  test.each(sloppy)("CommonJS isn't strict: %s", async (_, code, inStrictMode) => {
+  test.each(sloppy)("parses a CommonJS file in sloppy mode: %s", async (_, code, inStrictMode) => {
     const line = code.split("\n").length + 1;
     const files = { "a.js": `${code}\ndebugger;\n` };
     const [commonJs, esm] = await Promise.all([lint(files, []), lint({ ...ofModule, ...files }, [])]);
@@ -1877,7 +1877,7 @@ module.exports = os.platform();
     expect(problems).toEqual(["a.js:2:1 Parsing error: 'with' in strict mode"]);
   });
 
-  test("the extension counts for more than package.json", async () => {
+  test("the file extension overrides package.json", async () => {
     const files = { "a.mjs": early, "a.cjs": early };
     const [inCommonJs, inModule] = await Promise.all([
       lint({ ...files, "package.json": `{ "type": "commonjs" }` }, []),
@@ -1910,19 +1910,19 @@ module.exports = os.platform();
     test.each([
       ...ways(`sourceType = "module"`, "sourceType:module"),
       ...ways(`sourceType = "script"`, "sourceType:script"),
-    ])("%s refuses a top-level return", async (_, files, flags) => {
+    ])("%s rejects a top-level return", async (_, files, flags) => {
       const { problems, exitCode } = await lint({ ...files, "early.js": early }, flags);
       expect(problems).toEqual([`early.js:3:3 ${returnOutside}`]);
       expect(exitCode).toBe(1);
     });
 
-    test("globalReturn doesn't count in a file with an import, as in ESLint", async () => {
+    test("ignores globalReturn in a file with an import, like ESLint", async () => {
       const flags = ["--parser-options", "ecmaFeatures:{globalReturn:true}", "a.js"];
       const { problems } = await lint({ "a.js": `import "./b.js";\nreturn;\n`, "b.js": "" }, flags);
       expect(problems).toEqual([`a.js:2:1 ${returnOutside}`]);
     });
 
-    test("a script isn't strict, and refuses an import", async () => {
+    test("parses a script in sloppy mode and rejects an import", async () => {
       const files = { "a.js": "with (Math) console.log(PI);\ndebugger;\n", "b.js": `import "./a.js";\n` };
       const { problems, reports } = await lint(files, ["--parser-options", "sourceType:script"]);
       expect(reports).toContain("a.js:2:1 error no-debugger");
@@ -1931,7 +1931,7 @@ module.exports = os.platform();
       );
     });
 
-    test("what a script declares is global, and what a CommonJS file declares isn't", async () => {
+    test("top-level declarations are global in a script but not in a CommonJS file", async () => {
       const files = { "a.js": "var a = 1;\nconsole.log(a);\n" };
       const rule = ["--rule", "no-implicit-globals: error"];
       const [commonJs, script] = await Promise.all([
@@ -1948,7 +1948,7 @@ module.exports = os.platform();
       expect(exitCode).toBe(2);
     });
 
-    test("--print-config says what decides", async () => {
+    test("--print-config prints the sourceType", async () => {
       const files = { "esm/package.json": ofModule["package.json"] };
       const sourceType = async (...args: string[]) =>
         (await lint(files, ["--print-config", ...args])).json.languageOptions.sourceType;
@@ -1984,12 +1984,12 @@ module.exports = (function () {
       },
     );
 
-    test("a CommonJS file needs the directive", async () => {
+    test(`reports a CommonJS file without "use strict"`, async () => {
       const { problems } = await lint({ ...bunfig, "a.js": "module.exports = 1;\n" }, []);
       expect(problems).toEqual(["a.js:1:1 Use the global form of 'use strict'."]);
     });
 
-    test("--fix removes it from a module", async () => {
+    test(`--fix removes "use strict" from a module`, async () => {
       const files = {
         ...bunfig,
         "a.js": `"use strict";\nexport default 1;\n`,
@@ -2016,20 +2016,20 @@ module.exports = (function () {
     });
   });
 
-  test("no-undef knows what a CommonJS file gets", async () => {
+  test("no-undef allows the CommonJS globals in a CommonJS file", async () => {
     const code = "module.exports = exports.a = [require, __filename, __dirname];\n";
     const { reports } = await lint({ "a.js": code, "b.cjs": code }, ["--rule", "no-undef: error"]);
     expect(reports).toEqual([]);
   });
 
-  test("no-inner-declarations reports a function in a block of a CommonJS file", async () => {
+  test("no-inner-declarations reports a function inside a block in a CommonJS file", async () => {
     const code = "if (process.env.DEBUG) {\n  function log() {}\n  log();\n}\n";
     const files = { "a.js": code, "b.js": `${code}export {};\n` };
     const { reports } = await lint(files, ["--rule", "no-inner-declarations: error"]);
     expect(reports).toEqual(["a.js:2:3 error no-inner-declarations"]);
   });
 
-  test("a JavaScript plugin is told what the file is", async () => {
+  test("a JavaScript plugin sees the file's sourceType", async () => {
     const files = {
       "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\n\n[lint.rules]\n"local/kind" = "error"\n`,
       "plugin.mjs": `
@@ -2061,7 +2061,7 @@ module.exports = (function () {
       "eslint.config.mjs": `export default [{ languageOptions: ${languageOptions}, rules: ${rules} }];\n`,
     });
 
-    test(".js and .mjs are modules and .cjs is CommonJS, whatever package.json says", async () => {
+    test(".js and .mjs are modules and .cjs is CommonJS, regardless of package.json", async () => {
       const files = { ...config(), "a.js": early, "a.mjs": early, "a.cjs": early };
       const { problems, exitCode } = await lint(files, ["a.js", "a.mjs", "a.cjs"]);
       expect(problems.sort()).toEqual([`a.js:3:3 ${returnOutside}`, `a.mjs:3:3 ${returnOutside}`]);
@@ -2082,12 +2082,12 @@ module.exports = (function () {
       `{ parserOptions: { ecmaFeatures: { globalReturn: true } } }`,
       // ESLint overwrites it with `languageOptions.sourceType` before it calls espree.
       `{ parserOptions: { sourceType: "commonjs" } }`,
-    ])("languageOptions: %s doesn't", async languageOptions => {
+    ])("languageOptions: %s rejects a top-level return", async languageOptions => {
       const { problems } = await lint({ ...config(languageOptions), "a.js": early }, ["a.js"]);
       expect(problems).toEqual([`a.js:3:3 ${returnOutside}`]);
     });
 
-    test("no-undef knows require and module only in CommonJS", async () => {
+    test("no-undef allows require and module only in CommonJS", async () => {
       const code = "module.exports = require;\n";
       const rules = `{ "no-undef": "error" }`;
       const [byDefault, commonJs] = await Promise.all([
@@ -2105,22 +2105,22 @@ module.exports = (function () {
     });
   });
 
-  test("with an .oxlintrc.json, a file without an import or an export can return at the top level, as in oxlint", async () => {
+  test("with an .oxlintrc.json, allows a top-level return in a file without imports or exports", async () => {
     const { json, exitCode } = await lint({ ...ofModule, ".oxlintrc.json": "{}", "early.js": early }, ["early.js"]);
     expect(json.diagnostics).toEqual([]);
     expect(exitCode).toBe(0);
   });
 });
 
-// The tool that each rule comes from applies all of these fixes with --fix.
-describe.concurrent("--fix keeps what the program does, and its comments", () => {
+// Each rule's original linter applies all of these fixes with --fix.
+describe.concurrent("--fix preserves behavior and comments", () => {
   type Case = {
     rule: string;
-    /** Reported, and --fix leaves it alone. */
+    /** Code that is reported but that --fix doesn't change. */
     kept: string;
-    /** What --fix-dangerously makes of `kept`. Without it, no flag changes `kept`. */
+    /** `kept` after --fix-dangerously. If omitted, --fix-dangerously doesn't change `kept` either. */
     dangerous?: string;
-    /** Code where the fix is safe, and what --fix makes of it. */
+    /** Code where the fix is safe, before and after --fix. */
     fixed?: [string, string];
     extension?: string;
   };
@@ -2149,7 +2149,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     },
     {
       rule: "unicorn/prefer-regexp-test",
-      // `pattern` can be a string or have the `g` flag, and `database` is no regular expression.
+      // `pattern` can be a string or have the `g` flag, and `database` isn't a regular expression.
       kept: "export const has = (text, pattern) => (text.match(pattern) ? 1 : 2);\nexport const ran = (database, sql) => (database.exec(sql) ? 1 : 2);\n",
       dangerous:
         "export const has = (text, pattern) => (pattern.test(text) ? 1 : 2);\nexport const ran = (database, sql) => (database.test(sql) ? 1 : 2);\n",
@@ -2170,7 +2170,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     },
     {
       rule: "unicorn/no-useless-undefined",
-      // `g` would return `void`, and `x` would have no type.
+      // `g` would return `void`, and `x` would lose its inferred type.
       kept: "export function g() {\n  return undefined;\n}\nexport let x = undefined;\nx = g();\n",
       dangerous: "export function g() {\n  return;\n}\nexport let x;\nx = g();\n",
       fixed: [
@@ -2213,7 +2213,8 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       ],
       extension: "ts",
     },
-    // A type alias can't be declared twice, so there is no fix. Two properties of one name parse, and don't type check.
+    // A type alias can't be declared twice, so a merged interface has no fix. Two properties with the same name parse
+    // but don't type check, so that fix needs --fix-dangerously.
     {
       rule: "@typescript-eslint/no-empty-interface",
       kept: "export interface Base { a: number }\nexport interface Thing extends Base {}\nexport interface Thing { b: string }\n",
@@ -2250,7 +2251,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       extension: "ts",
     },
     {
-      // Other files add to what `declare global` declares. A lone interface at the top of a script keeps its fix.
+      // Other files can merge with an interface in `declare global`. A single top-level interface in a script is fixed.
       rule: "@typescript-eslint/prefer-function-type",
       kept: "export {};\ndeclare global {\n  interface Handler { (event: string): void }\n}\n",
       dangerous: "export {};\ndeclare global {\n  type Handler = (event: string) => void\n}\n",
@@ -2328,7 +2329,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     },
     {
       rule: "import/order",
-      // The type would be that of `a`.
+      // The `@type` comment would apply to `a`.
       kept: '/** @type {{ b: number }} */\nconst b = require("./b");\nconst a = require("a-package");\nconsole.log(a, b);\n',
       fixed: [
         '// the two letters\nconst b = require("./b");\nconst a = require("a-package");\nconsole.log(a, b);\n',
@@ -2337,7 +2338,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     },
     {
       rule: "import/order",
-      // `require("./b")` and `[a, b]` would be one expression.
+      // `require("./b")` and `[a, b]` would parse as one expression.
       kept: 'const b = require("./b")\nconst a = require("a-package")\n;[a, b].forEach(console.log)\n',
       fixed: [
         'const b = require("./b");\nconst a = require("a-package")\n;[a, b].forEach(console.log)\n',
@@ -2367,11 +2368,12 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     const rule = "@typescript-eslint/prefer-function-type";
     const use = "export const handler: Handler = () => {};\n";
     const alias = "type Handler = (event: string) => void;";
-    /** The code, and what --fix makes of it. */
+    /** Code before and after --fix. */
     type Cases = Record<string, [string, string]>;
-    // typescript-eslint 8.71.1 puts the declaration behind a line comment that stood on the line of the signature, so it is commented
-    // out. It turns the order around and loses what is before the `{`. oxlint 1.87.0 writes a comment in the signature twice, and
-    // loses all those of an interface with type parameters and of a type literal.
+    // typescript-eslint 8.71.1 moves a line comment that follows the signature in front of the declaration, which
+    // comments the declaration out. It also reverses the comments' order and drops comments before the `{`.
+    // oxlint 1.87.0 duplicates a comment inside the signature and drops every comment in an interface with type
+    // parameters or in a type literal.
     const comments: Cases = {
       "after-the-signature.ts": [
         `interface Handler {\n  (event: string): void; // called once\n}\n${use}`,
@@ -2470,8 +2472,8 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
         'export function call(handler: // called once\n(event: string) => void) {\n  handler("a");\n}\n',
       ],
     };
-    // oxlint says nothing about these. typescript-eslint only has parentheses in the array: `() => void["length"]` and
-    // `() => void extends object ? 1 : 2` are functions.
+    // oxlint doesn't report these. typescript-eslint only adds parentheses for the array. Without them,
+    // `() => void["length"]` and `() => void extends object ? 1 : 2` are function types.
     const parentheses: Cases = {
       "array.ts": [
         "export type Handlers = {\n  (event: string): void; // called once\n}[];\n",
@@ -2495,7 +2497,8 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
         "export const handlers: Array<() => void> = [];\n",
       ],
     };
-    // There is no `export default type`. In the other two, a block comment would come between the directive and its line.
+    // `export default type` doesn't exist. In the other two files, a block comment would end up between the directive
+    // and its line.
     const kept = {
       "export-default.ts": "export default interface Handler {\n  (event: string): void; // called once\n}\n",
       "directive-above.ts":
@@ -2523,7 +2526,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     test.each([
       ["no config", {}, turnedOn, { ...comments, ...parentheses }],
       [".oxlintrc.json", { ".oxlintrc.json": oxlintrc }, [], comments],
-    ])("has every comment once, and no code behind a line comment: %s", async (_, config, args, cases) => {
+    ])("--fix keeps every comment exactly once and never comments out code: %s", async (_, config, args, cases) => {
       const expected = { ...config, ...pick(cases, 1), ...kept };
       const first = await lint({ ...config, ...pick(cases, 0), ...kept }, ["--fix", ...args]);
       expect(first.texts).toEqual(expected);
@@ -2531,13 +2534,13 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       expect(second.texts).toEqual(expected);
     });
 
-    test("still reports what it has no fix for", async () => {
+    test("still reports code it can't fix", async () => {
       const result = await lint({ ...pick(comments, 0), ...kept }, ["--fix-dangerously", ...turnedOn]);
       expect(result.texts).toEqual({ ...pick(comments, 1), ...kept });
       expect(filesWithReports(result)).toEqual(Object.keys(kept).sort());
     });
 
-    test("in a namespace", async () => {
+    test("only --fix-dangerously fixes an interface in a namespace", async () => {
       const [safe, first] = await Promise.all([
         lint(pick(inNamespace, 0), ["--fix", ...turnedOn]),
         lint(pick(inNamespace, 0), ["--fix-dangerously", ...turnedOn]),
@@ -2551,7 +2554,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     });
   });
 
-  test("a new first import goes below what has to stay first", async () => {
+  test("--fix inserts an import below the hashbang, directives and file-level comments", async () => {
     const body = 'test("a", () => {\n  expect(1).toBe(1);\n});\n';
     const heads = ["// @ts-nocheck\n", '/// <reference types="node" />\n', '"use strict";\n', "#!/usr/bin/env bun\n"];
     const files = Object.fromEntries(heads.map((head, i) => [`${i}.test.ts`, head + body]));
@@ -2582,7 +2585,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     const filesWithReports = (result: { reports: string[] }, rule: string) =>
       [...new Set(result.reports.filter(it => it.endsWith(` ${rule}`)).map(it => it.slice(0, it.indexOf(":"))))].sort();
 
-    /** `--fix` makes each `after` of its `before`, nothing is left to report, and a second run changes nothing. */
+    /** Expects `--fix` to turn each `before` into its `after` and report nothing, and a second run to be a no-op. */
     async function expectFixed(rule: string, cases: Cases) {
       const pick = (index: 0 | 1) => Object.fromEntries(Object.entries(cases).map(([name, it]) => [name, it[index]]));
       const args = ["--fix", "--rule", `${rule}: warn`];
@@ -2593,7 +2596,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       expect(second.texts).toEqual(pick(1));
     }
 
-    /** `--fix` leaves the files alone, without trying a fix that breaks them, and each still has its report. */
+    /** Expects `--fix` to leave the files unchanged without attempting a broken fix, and to still report each file. */
     async function expectKept(rule: string, files: Record<string, string>) {
       const result = await lint(files, ["--fix", "--rule", `${rule}: warn`]);
       expect(result.texts).toEqual(files);
@@ -2601,7 +2604,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       expect(filesWithReports(result, rule)).toEqual(Object.keys(files).sort());
     }
 
-    // What stays first, and the first statement with the comments that are about it.
+    // Each entry is the header that must stay first, then the first statement with its own comments.
     const heads: Record<string, [head: string, first: string]> = {
       "directive.ts": ["", `${suppressed}console.log(Math.abs("1"));\n`],
       "doc.ts": ["", "/** Adds one. */\nfunction increment(n: number) {\n  return n + 1;\n}\n"],
@@ -2625,7 +2628,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       "doc-above-reference.ts": ['/** Counts. */\n/// <reference lib="dom" />\n', "const count = 1;\n"],
       "doc-above-license.ts": [`/** Counts. */\n${license}\n`, "/** Starts at one. */\nconst count = 1;\n"],
       "byte-order-mark.ts": ["\ufeff", "// starts at one\nconst count = 1;\n"],
-      // An empty line separates what is about the file from what is about the first statement.
+      // An empty line separates file-level comments from the first statement's comments.
       "header.ts": ["// Counts things.\n// Nothing else.\n\n", "const count = 1;\n"],
       "header-in-a-block.ts": ["/**\n * Counts things.\n */\n\n", "// starts at one\nconst count = 1;\n"],
       "header-and-doc.ts": ["// Counts things.\n\n", "/** Starts at one. */\nconst count = 1;\n"],
@@ -2638,7 +2641,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
         "// Counts things.\n/* eslint-disable @typescript-eslint/no-unused-vars */\n",
         "// starts at one\nconst count = 1;\n",
       ],
-      // What is about the next line is about it across an empty line, and so is what is below it.
+      // A next-line directive applies across an empty line, so it and the comments below it stay with the statement.
       "directive-and-empty-line.ts": ["", `${suppressed}\nconsole.log(Math.abs("1"));\n`],
       "directive-above-header.ts": ["", `${suppressed}// Counts things.\n\nconsole.log(Math.abs("1"));\n`],
       "triple-slash-directive.ts": ["", `/${suppressed}\nconsole.log(Math.abs("1"));\n`],
@@ -2653,14 +2656,14 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       "no-side-effects.ts": ["", "/* @__NO_SIDE_EFFECTS__ */\n\nfunction one() {\n  return 1;\n}\n"],
       "deno.ts": ["// deno-lint-ignore-file no-console\n", "// deno-lint-ignore no-unused-vars\n\nconst count = 1;\n"],
     };
-    // The same with the line breaks of Windows.
+    // Repeat a few with CRLF line endings.
     for (const name of ["directive.ts", "use-strict.ts", "license.ts", "header.ts", "header-in-two-parts.ts"]) {
       heads[`crlf-${name}`] = heads[name];
     }
     const withLineBreaksOf = (name: string, text: string) =>
       name.startsWith("crlf-") ? text.replaceAll("\n", "\r\n") : text;
 
-    test("import/first: below what stays first, above the comments of the first statement", async () => {
+    test("import/first: moves the import below the file header, above the first statement's comments", async () => {
       const a = 'import { a } from "./a";\n';
       const cases = Object.entries(heads).map(([name, [head, first]]) => [
         name,
@@ -2684,7 +2687,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     test.each([
       ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
       ["jest/prefer-importing-jest-globals", "const { test } = require('@jest/globals');\n"],
-    ])("%s: below what stays first, above the comments of the first statement", async (rule, statement) => {
+    ])("%s: adds the import below the file header, above the first statement's comments", async (rule, statement) => {
       const cases = Object.entries(heads).map(([name, [head, first]]) => [
         name.replace(".ts", ".test.ts"),
         [`${head}${first}test("a", () => {});\n`, `${head}${statement}${first}test("a", () => {});\n`].map(it =>
@@ -2697,7 +2700,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     test.each([
       ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
       ["jest/prefer-importing-jest-globals", "import { test } from '@jest/globals';\n"],
-    ])("%s: in a file that starts with comments and imports", async (rule, statement) => {
+    ])("%s: adds the import in a file that starts with comments and imports", async (rule, statement) => {
       const rest = 'import { a } from "./a";\ntest("a", () => a);\n';
       await expectFixed(rule, {
         "header.test.ts": [`// Tests a.\n\n${rest}`, `// Tests a.\n\n${statement}${rest}`],
@@ -2705,7 +2708,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       });
     });
 
-    test("import/first: a comment beside a statement stays beside it", async () => {
+    test("import/first: keeps a trailing comment with its statement", async () => {
       const [a, b] = ['import { a } from "./a";', 'import { b } from "./b";'];
       await expectFixed("import/first", {
         "the-statement-before.ts": [
@@ -2728,7 +2731,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
           `const count = 1;\n${a} // the first letter\nconsole.log(count); ${b}\nconsole.log(a, b);\n`,
           `${a} // the first letter\n${b}\nconst count = 1;\nconsole.log(count);\nconsole.log(a, b);\n`,
         ],
-        // These two are about the next line.
+        // These two comments apply to the next line.
         "directive-for-the-import.ts": [
           'const count = 1; // @ts-expect-error there is no c\nimport { c } from "./a";\nconsole.log(c, count);\n',
           '// @ts-expect-error there is no c\nimport { c } from "./a";\nconst count = 1;\nconsole.log(c, count);\n',
@@ -2738,12 +2741,12 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
           `${a}\nconst count = 1; ${suppressed}console.log(Math.abs("1"));\nconsole.log(a, count);\n`,
         ],
       });
-      // The second `run()` would be part of the comment.
+      // The second `run()` would end up inside the comment.
       await expectKept("import/first", { "code-behind-the-import.js": 'run(); // once\nimport "./side"; run();\n' });
     });
 
     describe("import/first: in code without semicolons", () => {
-      // Each goes on with the line before it, unless that ends with a `;`.
+      // Each of these continues the previous line's statement unless that line ends with a `;`.
       const starts = {
         bracket: "[1, 2].forEach(run)",
         parenthesis: "(function () {})()",
@@ -2756,7 +2759,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       const each = <T>(make: (name: string, start: string) => [string, T][]) =>
         Object.fromEntries(Object.entries(starts).flatMap(([name, start]) => make(name, start)));
 
-      test("the `;` that a line starts with stays there", async () => {
+      test("keeps a leading `;` on its line", async () => {
         await expectFixed("import/first", {
           ...each<[string, string]>((name, start) => [
             [`${name}.js`, [`run()\nimport "./side"\n;${start}\n`, `import "./side"\nrun()\n;${start}\n`]],
@@ -2777,7 +2780,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
         });
       });
 
-      test("an import without a `;` gets a line of its own", async () => {
+      test("moves an import without a `;` onto its own line", async () => {
         await expectFixed("import/first", {
           "behind-a-statement.js": ['run(); import "./side"\nrun()\n', 'import "./side"\nrun();\nrun()\n'],
           "behind-a-statement-with-an-import-on-top.js": [
@@ -2791,7 +2794,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
         });
       });
 
-      test("a next line that can't continue the previous statement is fine", async () => {
+      test("fixes the import when the next line can't continue the previous statement", async () => {
         await expectFixed("import/first", {
           "word.js": ['run()\nimport "./side"\nrun()\n', 'import "./side"\nrun()\nrun()\n'],
           "increment.js": ['let n = run()\nimport "./side"\n++n\n', 'import "./side"\nlet n = run()\n++n\n'],
@@ -2811,7 +2814,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
         });
       });
 
-      test("no fix is offered where two statements would join", async () => {
+      test("doesn't fix the import when two statements would merge", async () => {
         await expectKept("import/first", {
           ...each<string>((name, start) => [
             [`${name}.js`, `run()\nimport "./side"\n${start}\n`],
@@ -2828,7 +2831,7 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       });
     });
 
-    test("import/first: an import doesn't pass an `export .. from`, whose module would run later", async () => {
+    test("import/first: keeps an import below an `export .. from` so the modules run in the same order", async () => {
       await expectKept("import/first", {
         "all.js": 'export * from "./first";\nimport "./side";\n',
         "names.js": 'export { a } from "./first";\nimport "./side";\n',
@@ -2842,13 +2845,13 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     });
   });
 
-  test("with types", async () => {
+  test("with --type-aware, fixes still type check and keep string coercions", async () => {
     const files = {
       "tsconfig.json": '{ "compilerOptions": { "strict": true, "types": [], "lib": ["esnext"] }, "include": ["*.ts"] }',
-      // `readonly #limit = 0` has the type `0`, which the constructor can't assign a number to.
+      // `readonly #limit = 0` has type `0`, so the constructor couldn't assign a number to it.
       "readonly.ts":
         "export class Pool {\n  #limit = 0;\n  constructor(limit: number) {\n    this.#limit = limit;\n  }\n  get limit() {\n    return this.#limit;\n  }\n}\n",
-      // A caller without types can pass a number.
+      // An untyped caller can pass a number.
       "coerce.ts": 'export function time(label = "default") {\n  label = `${label}`;\n  return label;\n}\n',
       "plain.ts": "declare const name: string;\nexport const text = `${name}`;\n",
     };

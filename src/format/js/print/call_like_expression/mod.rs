@@ -64,15 +64,16 @@ fn write_call<'a>(
     }
 }
 
-/// A member access needs no parentheses as a callee, unless an optional chain ends with it. Then
-/// it is a member access only in JavaScript: see `is_member_expression`.
+/// True if `callee` is a member access that is printed without parentheses. It only needs them if
+/// it ends an optional chain. In that case Prettier only sees a member access in JavaScript files:
+/// see `is_member_expression`.
 fn is_link_of_member_chain<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
     matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
         && (!callee.is_chain_root()
             || (f.context().has_tree_of_babel() && !chain_expression_needs_parentheses(callee, f)))
 }
 
-/// Whether [`write_member_chain`] writes the call `e`.
+/// True if the call `e` is printed by [`write_member_chain`].
 pub(crate) fn is_written_as_member_chain<'a>(
     e: Expr<'a>,
     call: Call<'a>,

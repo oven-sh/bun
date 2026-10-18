@@ -174,10 +174,10 @@ impl PartialEq for Container {
 /// See `Checker::forget_nodes_of_leaf`.
 #[derive(Default)]
 pub(super) struct CheckedLeaves {
-    /// The files whose nodes are still in the memos, by `FileId`.
+    /// Checked leaf files whose nodes are still in the memos, indexed by `FileId`.
     files: PositionSet,
     is_any: bool,
-    /// How many entries the memos had when the nodes of such files were last dropped from them.
+    /// Number of entries left in the memos after the last sweep.
     entries_kept: usize,
 }
 
@@ -186,10 +186,10 @@ impl Checker<'_, '_> {
     /// been checked: no other file refers to it, so nothing evaluates one of its nodes again. A
     /// task of the last step checks dozens of such files. The capacity stays for the next one.
     ///
-    /// To go through a memo takes as long as it is large, however little of it is dropped, and what
-    /// stays of the other files only grows. So the nodes of several files are dropped together,
-    /// once the memos have doubled: until then nothing reads them, and they take no more room than
-    /// what stays.
+    /// A sweep costs time proportional to the memo's size, however few entries it drops, and the
+    /// number of entries kept for other files only grows. So the nodes of several files are dropped
+    /// in one sweep, once the memos have doubled in size. Until then nothing reads the stale
+    /// entries, and they use no more memory than the entries that are kept.
     fn forget_nodes_of_leaf(&mut self, file: FileId) {
         if !self.checked_leaves.is_any {
             let files = self.files().modules.len();
@@ -224,7 +224,7 @@ impl Checker<'_, '_> {
         };
     }
 
-    /// How many entries the memos of `forget_nodes_of_leaf` have.
+    /// Total number of entries in the memos that `forget_nodes_of_leaf` sweeps.
     fn entries_by_node(&self) -> usize {
         self.literals_checked_under.len()
             + self.discriminated.len()

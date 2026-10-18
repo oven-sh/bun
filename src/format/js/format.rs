@@ -931,7 +931,8 @@ fn write_ignored_statement_without_terminator<'a>(
             write!(f, [FormatSuppressedNode(content), terminator])
         });
     }
-    // Before a type cast comment the `;` is written already: see `semicolon_is_before_cast_comment_of_ignored_statement`.
+    // If a type cast comment comes first, the `;` was already printed before it: see
+    // `semicolon_is_before_cast_comment_of_ignored_statement`.
     let needs_leading_semicolon =
         print::statements::ignored_statement_needs_semicolon(statement, content.start, f)
             && !print::statements::follows_type_cast_comment(content.start, f);

@@ -78,7 +78,8 @@ impl Matcher {
         match relative {
             b"**" => Matcher::Everything,
             relative => {
-                // `src/!(a).js` is searched for as `!(a).js`, which minimatch takes for all that `(a).js` does not match.
+                // `src/!(a).js` is searched for as `!(a).js`. Without `nonegate`, minimatch would read that as the
+                // negation of `(a).js`.
                 let (dot, nonegate) = (true, true);
                 Matcher::Pattern(Minimatch::with(
                     relative,
@@ -536,9 +537,10 @@ pub(crate) fn list_as_eslint_8(
     Ok(listed.collect())
 }
 
-/// Splits `patterns`, the arguments, into those that select files and those that leave files out: the ones that start with `!`
-/// and name nothing that is there, as for `bun fmt`. ESLint refuses these, and oxlint passes them over. If there are no others,
-/// oxfmt starts from the working directory, so the same goes for a configuration of oxlint.
+/// Splits the arguments in `patterns` into those that select files and those that exclude files. An argument excludes
+/// files if it starts with `!` and no file or directory has that name, as in `bun fmt`. ESLint rejects these arguments
+/// and oxlint ignores them. If every argument is an exclusion, oxfmt searches the working directory, so a run with an
+/// oxlint config does too.
 fn split_negative<'p>(loader: &Loader, patterns: &'p [Vec<u8>]) -> (Cow<'p, [Vec<u8>]>, Negative) {
     let mut negative = Negative::default();
     if !patterns.iter().any(|it| it.starts_with(b"!")) {
@@ -726,9 +728,9 @@ pub(crate) fn find_files(
     Ok(found)
 }
 
-/// What [`find_files`] would find of `files` if they were on disk. `files`: absolute paths, each with the size of its text.
-/// `--staged` has these from the index. One is taken if it's an argument, in a directory that is one, or a pattern matches it, and
-/// neither the configuration nor an ignore file leaves it out.
+/// Returns the `files` that [`find_files`] would find if they were on disk. `files` are absolute paths, each with the
+/// size of its text. `--staged` reads them from the index. A file is included if it's an argument, is inside a
+/// directory argument, or matches a pattern, and neither the config nor an ignore file excludes it.
 pub(crate) fn find_files_not_on_disk<'f>(
     loader: &Loader,
     patterns: &[Vec<u8>],
@@ -736,7 +738,7 @@ pub(crate) fn find_files_not_on_disk<'f>(
 ) -> Result<Vec<Target>, Fatal> {
     let cwd = &loader.environment().cwd;
     let (patterns, negative) = split_negative(loader, patterns);
-    // A search does not enter a directory that is left out.
+    // A search doesn't enter an excluded directory.
     let is_left_out = |file: &[u8]| paths::ancestors(file).any(|it| negative.matches(cwd, it));
     let is_wanted = |file: &[u8]| {
         !is_left_out(file)

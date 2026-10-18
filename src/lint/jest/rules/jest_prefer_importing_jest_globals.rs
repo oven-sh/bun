@@ -203,6 +203,6 @@ fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: 
             create_import_text(is_module, &functions_to_import),
         );
     }
-    // oxlint knows the `#!` line and the directives, and puts it above `// @ts-nocheck`.
+    // oxlint only skips the `#!` line and the directives, so it inserts the import above `// @ts-nocheck`.
     fixer.insert_first_statement(&create_import_text(is_module, &functions_to_import))
 }

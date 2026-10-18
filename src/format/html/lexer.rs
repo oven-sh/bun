@@ -195,7 +195,7 @@ fn is_name_end(code: u32) -> bool {
     is_whitespace(code) || matches!(code, 62 | 60 | 47 | 39 | 34 | 61 | 0)
 }
 
-/// HTML's "attribute value (unquoted) state": `=`, `<` and quotes are errors there, but part of the value, as `/` is.
+/// HTML's "attribute value (unquoted) state". `=`, `<` and quotes are errors there but, like `/`, part of the value.
 fn is_unquoted_value_end(code: u32) -> bool {
     matches!(code, 9 | 10 | 12 | 13 | 32 | 62 | 0)
 }
@@ -1151,8 +1151,8 @@ impl<'a> Tokenizer<'a, '_> {
                 self.consume_quote(quote)?;
                 value
             } else {
-                // Angular's lexer, which this is, ends the value where a name ends: `a=b=c` is `a="b" ="c"`. That is
-                // what a template of Angular means. Prettier reads HTML and Vue like that too.
+                // This is a port of Angular's lexer, which ends the value where a name would end: `a=b=c` becomes
+                // `a="b" ="c"`. That's right for Angular templates. Prettier parses HTML and Vue that way too.
                 let end = match self.options.tokenize_angular_blocks {
                     true => End::Name,
                     false => End::UnquotedValue,

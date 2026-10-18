@@ -244,7 +244,7 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
         .and_then(|flag| {
             let before = &value[..value.len() - 1];
             let unflagged = bun_core::strings::trim_js_whitespace_end(before);
-            // Prettier prints `"b\" c` for `b\ c`, and `"b\31" c` for `b\31 c`, which is `b1c`.
+            // Prettier turns `b\ c` into `"b\" c`. It turns `b\31 c`, which means `b1c`, into `"b\31" c`.
             let is_escaped = ends_before_escaped_blank(unflagged);
             let blank_of_escape = usize::from(is_escaped || ends_with_hex_escape(unflagged));
             let is_match = unflagged.len() + blank_of_escape < before.len()
@@ -303,8 +303,8 @@ pub(crate) fn ends_before_escaped_blank(text: &[u8]) -> bool {
     text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
 }
 
-/// Whether `text` ends with `\` and one to six hexadecimal digits. One character of white space after that is part of the
-/// escape: `\31 0` is `10`.
+/// True if `text` ends with `\` and one to six hex digits. One whitespace character after that is part of the escape:
+/// `\31 0` means `10`.
 pub(crate) fn ends_with_hex_escape(text: &[u8]) -> bool {
     let digits = (text.iter().rev())
         .take_while(|byte| byte.is_ascii_hexdigit())
@@ -312,8 +312,8 @@ pub(crate) fn ends_with_hex_escape(text: &[u8]) -> bool {
     (1..=6).contains(&digits) && ends_before_escaped_blank(&text[..text.len() - digits])
 }
 
-/// Where the first `//` comment of SCSS or Less starts in `text`, from `at` on. What is in a string, in a `/* */` comment
-/// or in a `url()` without quotes doesn't count.
+/// Returns the offset of the first SCSS or Less `//` comment in `text` at or after `at`. Skips strings, `/* */`
+/// comments and unquoted `url()`s.
 pub(crate) fn next_line_comment(text: &[u8], mut at: usize) -> Option<usize> {
     while let Some(found) = strings::index_of_any(text.get(at..)?, b"/\"'(") {
         at += found;
@@ -344,7 +344,7 @@ pub(crate) fn next_line_comment(text: &[u8], mut at: usize) -> Option<usize> {
     None
 }
 
-/// Where the `//` comment starts that `text` ends with.
+/// Returns the offset of the `//` comment that `text` ends with.
 pub(crate) fn line_comment_at_end(text: &[u8]) -> Option<usize> {
     let mut at = 0;
     loop {

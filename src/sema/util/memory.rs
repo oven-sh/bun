@@ -1,12 +1,13 @@
 //! The memory that the checker manages by hand. The containers of this crate that need `unsafe` are
-//! here. The file depends on `std` only but for the way out of memory, so its tests run under Miri.
+//! here. Apart from `bun_alloc::out_of_memory`, this file depends only on `std`, so its tests run
+//! under Miri.
 //!
 //! An element never moves and is never freed before its container, so a reference to one stays
 //! valid while others are added:
 //!
 //! - `AppendVec`: a vector that any thread appends to and reads without a lock.
 //! - `LocalVec`: the same for one thread, without atomic read-modify-write operations.
-//! - `Segmented`: either of the two in chunks of one size.
+//! - `Segmented`: an `AppendVec` or a `LocalVec` with fixed-size chunks.
 //! - `Cells`: atomic integers for a range of indices that keeps growing, initially all zero.
 //! - `Newest`: the newest of a series of slices of cells, read without a lock.
 //!
@@ -327,8 +328,8 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Stable<T, L, A> {
     }
 }
 
-/// What a vector that several threads fill at a barrier offers: one thread makes room, and each
-/// element of the room is written once, by any thread.
+/// A vector that several threads fill at a barrier. One thread reserves a range of elements, then
+/// each reserved element is written exactly once, by any thread.
 pub(crate) trait Fill<T> {
     /// See `Stable::get`.
     fn get(&self, index: u32) -> &T;
@@ -349,59 +350,68 @@ impl<T, L: Length, A: Allocator + Clone> Fill<T> for Stable<T, L, A> {
     }
 
     unsafe fn reserve(&self, count: u32) -> u32 {
-        // SAFETY: the caller's.
+        // SAFETY: the caller upholds the contract of `Stable::reserve`.
         unsafe { Stable::reserve(self, count) }
     }
 
     #[inline]
     unsafe fn write(&self, index: u32, value: T) {
-        // SAFETY: the caller's.
+        // SAFETY: the caller upholds the contract of `Stable::write`.
         unsafe { Stable::write(self, index, value) }
     }
 }
 
 // ───────────────────────────── segmented vectors ─────────────────────────────
 
-/// A segment has two to the power of this many elements. Every task has a few vectors of its own, most
-/// of them short, and a directory that threads share has `OWN >> SEGMENT_BITS` entries.
+/// Base-2 log of a segment's element count. Small segments waste less memory, because every task
+/// has several vectors and most of them are short. Large segments keep a shared vector's directory
+/// small, because it always has `OWN >> SEGMENT_BITS` entries.
 const SEGMENT_BITS: u32 = 14;
 
 const SEGMENT: usize = 1 << SEGMENT_BITS;
 
-/// In a number that `Segmented::of_either` takes: the element is in the vector itself, not in the
-/// one that it is laid over. No vector has so many elements.
+/// Flag in a number passed to `Segmented::of_either`. If set, the number refers to the vector's own
+/// elements, not to the shared vector underneath it. Every element index is below `OWN`.
 pub(crate) const OWN: u32 = 1 << 30;
 
-/// Where a segment starts. Null: it is not allocated.
+/// Pointer to a segment's first element. Null if the segment isn't allocated.
 type Segment<T> = AtomicPtr<MaybeUninit<T>>;
 
-/// A `Stable` whose chunks are all of one size: the chunk of an element is a shift and its place
-/// there a mask, with nothing to count and nothing to compare.
+/// A `Stable` with fixed-size chunks, called segments. An element's segment is a shift of its index
+/// and its offset is a mask, so a lookup doesn't count leading zeros like `Chunks::locate`.
+///
+/// With `L = AtomicU32` the vector is shared between threads, like an `AppendVec`. With
+/// `L = Cell<u32>` it belongs to one thread, like a `LocalVec`, and `lay_over` can layer it over a
+/// shared vector so that `of_either` reads from both.
 pub(crate) struct Segmented<'a, T, L: Length, A: Allocator + Clone = Global> {
-    /// The segments, in order. Threads that share the vector find it as long as it can get. One thread
-    /// replaces it by a longer one.
+    /// Segment pointers, in order. A shared vector allocates the directory at its maximum length,
+    /// so it's never replaced. A single-threaded vector starts with an empty directory and replaces
+    /// it with a longer one as it grows.
     directory: UnsafeCell<Box<[Segment<T>], A>>,
-    /// For `of_either`, by the two highest bits of a number: the address that the number of the
-    /// segment, with these bits, is an index from ..
+    /// Used by `of_either`, indexed by the top two bits of a number. Each entry is a directory
+    /// pointer, biased so that `number >> SEGMENT_BITS` indexes it with the top bits still set.
+    /// Entry 0 is the shared vector's directory, entry 1 is this vector's, and entries 2 and 3 are
+    /// unused.
     directories: [Cell<*const Segment<T>>; 4],
-    /// .. and what the number is less than, if it stands for an element.
+    /// Used by `of_either`, indexed like `directories`. A number refers to an element only if it's
+    /// below its limit. An unused entry's limit is 0, which rejects every number.
     limits: [L; 4],
-    /// As in `Stable`.
+    /// Same as the `len` field of `Stable`.
     len: L,
     alloc: A,
-    /// What it is laid over.
+    /// Borrow of the shared vector passed to `lay_over`.
     below: PhantomData<&'a [T]>,
     owns: Owns<T>,
 }
 
-// SAFETY: it owns its elements. The addresses in `directories` are of its own directory and of one
-// that it borrows, which threads share.
+// SAFETY: the vector owns its elements. The pointers in `directories` point into its own directory
+// and into the borrowed directory of a shared vector, which any thread may read.
 unsafe impl<T: Send + Sync, L: Length + Send, A: Allocator + Clone + Send> Send
     for Segmented<'_, T, L, A>
 {
 }
-// SAFETY: with this `Length`, nothing replaces `directory` or writes to `directories` through a shared
-// reference. For the elements see `Owns`.
+// SAFETY: with an `AtomicU32` length, nothing replaces `directory` or writes to `directories`
+// through a shared reference. See `Owns` for the elements.
 unsafe impl<T: Send + Sync, A: Allocator + Clone + Sync> Sync for Segmented<'_, T, AtomicU32, A> {}
 
 impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
@@ -423,10 +433,10 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         }
     }
 
-    /// `len` segments: those of `old`, and then none. From the allocator's zeroed memory: see
-    /// `Zeroed::zeroed_slice_in`.
+    /// Returns a directory of `len` entries: a copy of `old`, then nulls. Uses the allocator's
+    /// zeroed memory: see `Zeroed::zeroed_slice_in`.
     fn new_directory(len: usize, old: &[Segment<T>], alloc: &A) -> Box<[Segment<T>], A> {
-        // SAFETY: all zero bytes are a null pointer.
+        // SAFETY: all zero bytes are a valid null `AtomicPtr`.
         let mut new = unsafe { Box::new_zeroed_slice_in(len, alloc.clone()).assume_init() };
         for (new, old) in std::iter::zip(&mut new, old) {
             *new = AtomicPtr::new(old.load(Ordering::Relaxed));
@@ -436,7 +446,8 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
 
     #[inline]
     fn directory(&self) -> &[Segment<T>] {
-        // SAFETY: only `install` replaces it, for one thread, which holds no reference to it then.
+        // SAFETY: only `install` replaces the directory, and only in a single-threaded vector. That
+        // thread doesn't have a live reference to the directory at that point.
         unsafe { &*self.directory.get() }
     }
 
@@ -445,14 +456,15 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         self.len.get()
     }
 
-    /// The address of the element `index`. Meaningless if its segment is not allocated.
+    /// Returns a pointer to element `index`. The pointer is meaningless if the segment isn't
+    /// allocated.
     #[inline]
     fn slot(&self, index: u32) -> *mut MaybeUninit<T> {
         (self.directory()[(index >> SEGMENT_BITS) as usize].load(Ordering::Relaxed))
             .wrapping_add(index as usize % SEGMENT)
     }
 
-    /// Allocates the segment of the element `index`. Several threads may race here: the first to
+    /// Allocates the segment for element `index`. If several threads race here, the first to
     /// install its segment wins.
     #[cold]
     #[inline(never)]
@@ -464,10 +476,11 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         if at >= self.directory().len() {
             let longer = (at + 1).next_power_of_two().max(4);
             let longer = Self::new_directory(longer, self.directory(), &self.alloc);
-            // As many before its start as the number of a segment is too high by.
+            // Biased by `OWN >> SEGMENT_BITS`, because `of_either` indexes it without clearing the
+            // `OWN` bit.
             self.directories[1].set(longer.as_ptr().wrapping_sub(OWN as usize >> SEGMENT_BITS));
-            // SAFETY: a directory that threads share is as long as it can get, so this is the only
-            // thread, and it holds no reference to the old one.
+            // SAFETY: a shared vector's directory already has the maximum length, so this vector is
+            // single-threaded, and this thread doesn't have a live reference to the old directory.
             unsafe { *self.directory.get() = longer };
         }
         let fresh = Box::<[T], A>::new_uninit_slice_in(SEGMENT, self.alloc.clone());
@@ -479,16 +492,18 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
             Ordering::Acquire,
         );
         if installed.is_err() {
-            // SAFETY: it comes from `into_raw_with_allocator` above, and nobody else has seen it.
+            // SAFETY: `fresh` came from `into_raw_with_allocator` above, and no other thread has
+            // seen it.
             drop(unsafe { Box::from_raw_in(fresh, self.alloc.clone()) });
         }
     }
 
-    /// Returns the index of the element.
+    /// Appends `value` and returns its index.
     #[inline]
     pub(crate) fn push(&self, value: T) -> u32 {
         let index = self.len.add(1);
-        // SAFETY: `add` has given the index to this call alone, which has not returned it yet.
+        // SAFETY: `add` returns each index to only one call, and this call hasn't returned it yet,
+        // so nothing else accesses the element.
         unsafe { Fill::write(self, index, value) };
         if L::IS_CHECKED {
             self.limits[1].add(1);
@@ -496,8 +511,8 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         index
     }
 
-    /// `index` was returned by `push`, or passed to `write`. One that threads share trusts that, like
-    /// an `AppendVec`.
+    /// Returns element `index`, which must have been returned by `push` or passed to `write`. A
+    /// shared vector checks that only in debug builds, like an `AppendVec`.
     #[inline]
     pub(crate) fn get(&self, index: u32) -> &T {
         if L::IS_CHECKED {
@@ -505,18 +520,20 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         } else {
             debug_assert!(index < self.len.get());
         }
-        // SAFETY: the element was initialized before its index reached this thread, so its segment is
-        // allocated. Nothing writes to it again before `&mut self`.
+        // SAFETY: the element was initialized before its index reached this thread, so its segment
+        // is allocated. Nothing writes to the element again without `&mut self`, except `replace`:
+        // see `Placeholder::index`.
         unsafe { (*self.slot(index)).assume_init_ref() }
     }
 
-    /// Moves the elements out, in order, and leaves it empty. Only the first segment stays allocated.
+    /// Moves the elements out in order and empties the vector. Only the first segment stays
+    /// allocated.
     pub(crate) fn drain(&mut self, mut take: impl FnMut(u32, T)) {
         self.limits[1].take();
         self.limits[1].add(OWN);
         for index in 0..self.len.take() {
-            // SAFETY: the elements below the length are initialized. The length is 0 by now, so
-            // none is read again, even if `take` panics.
+            // SAFETY: every element below the old length is initialized. The length is already 0,
+            // so no element is read twice, even if `take` panics.
             take(index, unsafe { (*self.slot(index)).assume_init_read() });
         }
         self.release(1);
@@ -526,13 +543,14 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         self.drain(|_, value| drop(value));
     }
 
-    /// Frees all but the first `keep` segments. There is no element.
+    /// Frees all but the first `keep` segments. The vector must be empty.
     fn release(&mut self, keep: usize) {
         let alloc = self.alloc.clone();
         for segment in self.directory.get_mut().iter_mut().skip(keep) {
             let start = std::mem::replace(segment.get_mut(), null_mut());
             if !start.is_null() {
-                // SAFETY: `install` got it from a box of this length and this allocator.
+                // SAFETY: `install` made this pointer from a box with this length and this
+                // allocator. Its directory entry is null now, so it's freed only once.
                 drop(unsafe {
                     Box::from_raw_in(slice_from_raw_parts_mut(start, SEGMENT), alloc.clone())
                 });
@@ -564,30 +582,30 @@ impl<T, L: Length, A: Allocator + Clone> Fill<T> for Segmented<'_, T, L, A> {
         if segment.is_none_or(|segment| segment.load(Ordering::Acquire).is_null()) {
             self.install(index);
         }
-        // SAFETY: the segment is allocated. Only this call accesses the element, and what it holds is
-        // not dropped.
+        // SAFETY: the segment is allocated, and only this call accesses the element. The old
+        // contents, which may be uninitialized, aren't dropped.
         unsafe { self.slot(index).write(MaybeUninit::new(value)) };
     }
 }
 
-/// Elements of one `Segmented` that stand for what is to come, one after the other. Nobody but the
-/// owner of this can replace them.
+/// A run of consecutive placeholder elements in one `Segmented`. Only the owner of this value can
+/// replace them.
 pub(crate) struct Placeholders<'a> {
-    /// The address of the vector.
+    /// Address of the `Segmented`. `Segmented::replace` checks it.
     of: usize,
     next: u32,
     end: u32,
     borrowed: PhantomData<&'a ()>,
 }
 
-/// One of `Placeholders`.
+/// One placeholder taken from a `Placeholders`.
 pub(crate) struct Placeholder<'a> {
     of: usize,
     index: u32,
     borrowed: PhantomData<&'a ()>,
 }
 
-/// None.
+/// An empty run.
 impl Default for Placeholders<'_> {
     fn default() -> Self {
         Placeholders {
@@ -605,7 +623,7 @@ impl<'a> Placeholders<'a> {
         self.next == self.end
     }
 
-    /// The index of the first.
+    /// Returns the index of the first remaining placeholder.
     pub(crate) fn first(&self) -> Option<u32> {
         (!self.is_empty()).then_some(self.next)
     }
@@ -623,14 +641,15 @@ impl<'a> Placeholders<'a> {
 }
 
 impl Placeholder<'_> {
-    /// Not for `Segmented::get` before `Segmented::replace` has returned.
+    /// Returns the element's index. Don't pass it to `Segmented::get` until `Segmented::replace`
+    /// has returned.
     #[inline]
     pub(crate) fn index(&self) -> u32 {
         self.index
     }
 }
 
-/// The elements of a `Segmented` that threads share, those to come too, for reading.
+/// Read-only handle to the elements of a shared `Segmented`, including elements added later.
 pub(crate) struct Elements<'a, T> {
     directory: *const Segment<T>,
     borrowed: PhantomData<&'a [T]>,
@@ -645,12 +664,12 @@ impl<T> Clone for Elements<'_, T> {
 impl<T> Copy for Elements<'_, T> {}
 
 impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
-    /// Adds `count` elements. Any thread.
+    /// Appends `count` placeholders made by `new`. Any thread may call this.
     pub(crate) fn add_placeholders(&self, count: u32, new: impl Fn() -> T) -> Placeholders<'_> {
-        // SAFETY: each index is written below, and goes nowhere before.
+        // SAFETY: the loop below writes every reserved index before any of them escapes this call.
         let next = unsafe { self.reserve(count) };
         for index in next..next + count {
-            // SAFETY: once, and no other thread has the index.
+            // SAFETY: the index was reserved above, it's written once, and no other thread has it.
             unsafe { self.write(index, new()) };
         }
         Placeholders {
@@ -661,17 +680,19 @@ impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
         }
     }
 
-    /// Puts `value` in the place of a placeholder, which is not dropped. Any thread.
+    /// Overwrites a placeholder with `value`, without dropping the placeholder element. Any thread
+    /// may call this.
     #[inline]
     #[expect(
         clippy::needless_pass_by_value,
-        reason = "the placeholder ends here, so no second write has one"
+        reason = "consuming the placeholder rules out a second write to its element"
     )]
     pub(crate) fn replace(&self, placeholder: Placeholder<'_>, value: T) -> &T {
-        // It borrows its vector, which has not moved or made way for another one since.
+        // The placeholder borrows its vector, so that vector can't have moved or been freed, and
+        // its address still identifies it.
         assert!(placeholder.of == std::ptr::from_ref(self).addr());
-        // SAFETY: there is one `Placeholder` for the index, which ends here, so nothing else writes to
-        // the element. Nothing reads it: see `Placeholder::index`.
+        // SAFETY: each index has exactly one `Placeholder`, and this call consumes it, so nothing
+        // else writes to the element. Nothing reads the element yet: see `Placeholder::index`.
         unsafe { self.write(placeholder.index, value) };
         self.get(placeholder.index)
     }
@@ -685,29 +706,31 @@ impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
 }
 
 impl<'a, T, A: Allocator + Clone> Segmented<'a, T, Cell<u32>, A> {
-    /// From now on `of_either` finds `shared` too.
+    /// Layers this vector over `shared`. After this, `of_either` maps a number without `OWN` to an
+    /// element of `shared`.
     pub(crate) fn lay_over(&mut self, shared: Elements<'a, T>) {
         self.directories[0].set(shared.directory);
         self.limits[0].set(OWN);
     }
 
-    /// Whether `lay_over(shared)` was the last call of `lay_over`.
+    /// True if `shared` was passed to the most recent `lay_over` call.
     pub(crate) fn is_laid_over(&self, shared: Elements<'_, T>) -> bool {
         std::ptr::eq(self.directories[0].get(), shared.directory)
     }
 
-    /// The element `number` of the vector that this one is laid over, or with `OWN` in `number` the
-    /// element `number - OWN` of this one. A number without `OWN` is trusted, as in `get`.
+    /// Returns element `number - OWN` of this vector if `number` has the `OWN` bit set, and element
+    /// `number` of the shared vector underneath otherwise. A number without `OWN` isn't checked
+    /// against the shared vector's length, as in `get`.
     #[inline(always)]
     pub(crate) fn of_either(&self, number: u32) -> &T {
         let which = (number >> 30) as usize;
-        // No number without `OWN` is less than its limit before `lay_over`.
+        // Before `lay_over`, `limits[0]` is 0, so this rejects every number without `OWN`.
         assert!(number < self.limits[which].get());
         let segment =
             (self.directories[which].get()).wrapping_add((number >> SEGMENT_BITS) as usize);
-        // SAFETY: the directory of the one of the two that the number is an index of has a segment
-        // for every number below the limit. `lay_over` was given a borrow of the other that lasts as
-        // long as this one can exist. The rest is as in `get`.
+        // SAFETY: the directory that the number selects has an entry for every number below the
+        // limit. The shared vector's directory is still alive, because `lay_over` requires a borrow
+        // of it for `'a`, which outlives this vector. The rest is as in `get`.
         unsafe {
             let start = (*segment).load(Ordering::Relaxed);
             (*start.wrapping_add(number as usize % SEGMENT)).assume_init_ref()
@@ -722,17 +745,18 @@ const SMALLEST_PAGE: usize = 4 << 10;
 /// A type for which all zero bytes are a value.
 ///
 /// # Safety
-/// They are.
+/// All zero bytes must be a valid value of the type.
 pub unsafe trait Zeroed: Sized {
     /// From the allocator's zeroed memory, which for a long slice comes from the operating system: a
     /// page that is never touched is never resident.
     fn zeroed_slice_in<A: Allocator>(len: usize, alloc: A) -> Box<[Self], A>;
-    /// Writes to the cell without changing it.
+    /// Writes to the cell without changing its value.
     fn touch(&self);
 }
 
-/// Writes to every page of `cells`, which are about to be read and written all over. A page of zeroed memory from the
-/// operating system that is read first takes a second page fault at its first write, which interrupts every other thread.
+/// Writes to every page of `cells`. Use it for cells that are about to be read and written at random. If a zeroed page
+/// from the operating system is read before it's written, its first write causes a second page fault, and that fault
+/// interrupts every other thread.
 fn touch_pages<C: Zeroed>(cells: &[C]) {
     (cells.iter().step_by(SMALLEST_PAGE / size_of::<C>())).for_each(C::touch);
     if let Some(last) = cells.last() {
@@ -742,15 +766,15 @@ fn touch_pages<C: Zeroed>(cells: &[C]) {
 
 macro_rules! zeroed {
     ($($atomic:ty),*) => {$(
-        // SAFETY: an atomic integer has the representation of the integer, for which all zero bytes are 0.
+        // SAFETY: an atomic integer has the same representation as the integer, for which all zero bytes are 0.
         unsafe impl Zeroed for $atomic {
             fn zeroed_slice_in<A: Allocator>(len: usize, alloc: A) -> Box<[Self], A> {
-                // SAFETY: as above.
+                // SAFETY: all zero bytes are a valid value, as above.
                 unsafe { Box::new_zeroed_slice_in(len, alloc).assume_init() }
             }
             #[inline]
             fn touch(&self) {
-                // Not `fetch_or(0)`, which may be compiled to a load.
+                // Not `fetch_or(0)`, because the compiler may turn that into a plain load.
                 let _ = self.compare_exchange(0, 0, Ordering::Relaxed, Ordering::Relaxed);
             }
         }
@@ -758,12 +782,12 @@ macro_rules! zeroed {
 }
 zeroed!(AtomicU32, AtomicU64);
 
-/// A bit for each page of an array of cells that are initially all zero: whether anything was written there. Who finds the
-/// bit clear knows that the cell is zero without reading it. So a page that was never written is never read either: it
-/// takes no cache line and no entry of a page table, and its first write is its first page fault. A page of zeroed
-/// memory from the operating system that is read first takes a second one then, which interrupts every other thread.
+/// One bit per page of an array of cells that starts out all zero. The bit is set once anything on the page has been
+/// written. A reader that finds the bit clear treats the cell as zero without loading it. So a page that was never
+/// written is never read either. It doesn't use a cache line or a page table entry, and its first write is its first
+/// page fault. Reading it first would cost a second page fault: see `touch_pages`.
 ///
-/// `index`, here and below: of a cell in the array, which starts at a page boundary if it is longer than a page.
+/// `index`, here and below, is the index of a cell in the array. An array longer than a page starts at a page boundary.
 trait Written<C: Zeroed> {
     fn words(&self) -> &[AtomicU64];
 
@@ -773,14 +797,14 @@ trait Written<C: Zeroed> {
         (page / 64, 1 << (page % 64))
     }
 
-    /// `true` for a cell beyond those that have a bit.
+    /// True if the page of cell `index` may have been written. Always true for a cell past the end of the bitmap.
     #[inline(always)]
     fn may_be_written(&self, index: usize) -> bool {
         let (word, bit) = Self::place(index);
         (self.words().get(word)).is_none_or(|word| word.load(Ordering::Relaxed) & bit != 0)
     }
 
-    /// `cell`, which is the one at `index`, is about to be written.
+    /// Marks the page of `cell` as written. Call this before writing to `cell`, which must be the cell at `index`.
     #[inline(always)]
     fn note_write(&self, index: usize, cell: &C) {
         let (word, bit) = Self::place(index);
@@ -792,14 +816,14 @@ trait Written<C: Zeroed> {
     }
 }
 
-/// The page is written before anyone is told to read it.
+/// Writes to the page before setting its bit, so that no reader loads from the page first.
 #[cold]
 fn note_first_write<C: Zeroed>(word: &AtomicU64, bit: u64, cell: &C) {
     cell.touch();
     word.fetch_or(bit, Ordering::Relaxed);
 }
 
-/// Cells for a range of indices that is known from the start, initially all zero.
+/// Cells for a fixed range of indices, initially all zero.
 pub struct FixedCells<C, A: Allocator = Global> {
     cells: Box<[C], A>,
     written: Box<[AtomicU64], A>,
@@ -821,13 +845,13 @@ impl<C: Zeroed, A: Allocator + Clone> FixedCells<C, A> {
         }
     }
 
-    /// `None`: the cell is zero.
+    /// Returns the cell at `index`, or `None` if the cell is known to be zero.
     #[inline]
     pub fn existing(&self, index: usize) -> Option<&C> {
         self.may_be_written(index).then(|| &self.cells[index])
     }
 
-    /// For one who writes to it.
+    /// Returns the cell at `index` for writing.
     #[inline]
     pub fn cell(&self, index: usize) -> &C {
         let cell = &self.cells[index];
@@ -842,14 +866,15 @@ impl<C: Zeroed, A: Allocator + Clone> FixedCells<C, A> {
 
 const FIRST_CELLS_BITS: u32 = 12;
 
-/// As many cells of four bytes have a bit in `Cells::written` as a large program has types.
+/// Length of `Cells::written`. 256 words cover 16.7 million four-byte cells, about as many as a large program has
+/// types.
 const WRITTEN_WORDS: usize = 256;
 
 /// Cells for a range of indices that keeps growing, initially all zero. `C` is an atomic integer: a
 /// cell is only ever accessed through a shared reference.
 pub struct Cells<C, A: Allocator + Clone = Global> {
     chunks: Chunks<C, FIRST_CELLS_BITS, A>,
-    /// By `Located::offset`: the first cell of every chunk is the first of a page by that count too.
+    /// Indexed by `Located::offset`. Counted that way, the first cell of every chunk is still the first cell of a page.
     written: Box<[AtomicU64], A>,
 }
 
@@ -874,14 +899,15 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
         }
     }
 
-    /// `None`: the cell is zero. For a time when no thread calls `cell`, and something has ordered
-    /// the earlier calls before this one.
+    /// Returns the cell at `index`, or `None` if the cell is known to be zero. Call this only while
+    /// no thread calls `cell`, and after something has ordered the earlier `cell` calls before this
+    /// call.
     #[inline]
     pub fn existing(&self, index: u32) -> Option<&C> {
         self.existing_loaded(index, Ordering::Relaxed)
     }
 
-    /// `existing`, while other threads call `cell`.
+    /// Like `existing`, but may run while other threads call `cell`.
     #[inline]
     pub fn existing_by_now(&self, index: u32) -> Option<&C> {
         self.existing_loaded(index, Ordering::Acquire)
@@ -901,7 +927,7 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
         Some(unsafe { &*base.wrapping_add(offset) })
     }
 
-    /// For one who writes to it.
+    /// Returns the cell at `index` for writing, and allocates its chunk if needed.
     #[inline]
     pub fn cell(&self, index: u32) -> &C {
         // SAFETY: as in `existing`.
@@ -927,11 +953,12 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
 
 // ───────────────────────────── the newest of a series ─────────────────────────────
 
-/// A slice of a `Newest` starts at a multiple of this: the line of a cache. So the low bits of its address are free.
+/// Alignment of every slice in a `Newest`, the size of a cache line. This frees the low 6 bits of the address, which
+/// `Slice` uses for the length.
 const SLICE_ALIGNMENT: usize = 64;
 
-/// The address of the first cell of a slice plus the binary logarithm of the number of its cells. So who has loaded one
-/// word has the slice.
+/// A slice packed into one word: the address of its first cell plus log2 of its length. A reader gets both with one
+/// load.
 struct Slice<C>(*mut C);
 
 impl<C> Slice<C> {
@@ -961,12 +988,12 @@ struct Retired<C> {
     next: *mut Retired<C>,
 }
 
-/// `N` series of slices of cells, and the newest of each, read without a lock: the shards of a table, each of which is
-/// replaced by a bigger one when it fills up. The older ones stay allocated until `forget_older`, because a reader may
-/// still hold one.
+/// `N` series of cell slices. Readers get the newest slice of a series without a lock. Each series is a shard of a
+/// table, and a bigger slice replaces the newest one when the shard fills up. Older slices stay allocated until
+/// `forget_older`, because a reader may still be using one.
 pub struct Newest<C, A: Allocator + Clone = Global, const N: usize = 1> {
-    /// Null: the series has none yet. They are next to each other: eight share a line of the cache, and nothing else
-    /// that a thread writes is there.
+    /// The newest `Slice` of each series, or null if the series is still empty. The pointers are adjacent, so eight
+    /// share a cache line, and threads don't write anything else on those lines.
     newest: [AtomicPtr<C>; N],
     retired: AtomicPtr<Retired<C>>,
     alloc: A,
@@ -989,21 +1016,22 @@ impl<C: Zeroed, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
         }
     }
 
-    /// The newest of `series`. Empty: there is none yet. `Relaxed`: something else has ordered the last `replace` before
-    /// this call.
+    /// Returns the newest slice of `series`, or an empty slice if there isn't one yet. Pass `Relaxed` only if something
+    /// else has ordered the last `replace` before this call.
     #[inline]
     pub fn get(&self, series: usize, order: Ordering) -> &[C] {
         let newest = Slice(self.newest[series].load(order));
         if newest.0.is_null() {
             return &[];
         }
-        // SAFETY: `replace` has stored it, for that many cells, which it has initialized. Only `forget_older` frees
-        // them, once they are retired.
+        // SAFETY: `replace` stored this address and length after it initialized that many cells. Only `forget_older`
+        // frees them, and only after they're retired.
         unsafe { std::slice::from_raw_parts(newest.first(), newest.len()) }
     }
 
-    /// Replaces the newest of `series` by `len` cells, a power of two, all zero but for what `fill` stores before any
-    /// reader sees them. One thread at a time for a series: the caller holds a lock, or the owner is not shared.
+    /// Replaces the newest slice of `series` with `len` zeroed cells. `len` must be a power of two. `fill` stores into
+    /// the new cells before any reader sees them. Only one thread at a time may replace a given series, so the caller
+    /// must either lock the series or have exclusive use of the `Newest`.
     pub fn replace(&self, series: usize, len: usize, fill: impl FnOnce(&[C])) -> &[C] {
         assert!(len.is_power_of_two());
         let layout = Slice::<C>::layout(len);
@@ -1011,7 +1039,7 @@ impl<C: Zeroed, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
             std::alloc::handle_alloc_error(layout)
         };
         let first = block.cast::<C>().as_ptr();
-        // SAFETY: the block has room for `len` cells and is aligned for them, and all zero bytes are a `C`.
+        // SAFETY: `block` has room for `len` cells and is aligned for them, and all zero bytes are a valid `C`.
         let cells = unsafe { std::slice::from_raw_parts(first, len) };
         touch_pages(cells);
         fill(cells);
@@ -1022,7 +1050,8 @@ impl<C: Zeroed, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
 }
 
 impl<C, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
-    /// Any thread: two series can be replaced at a time.
+    /// Adds `slice` to the retired list. Any thread may call this, because different series can be replaced at the same
+    /// time.
     fn retire(&self, slice: Slice<C>) {
         if slice.0.is_null() {
             return;
@@ -1037,19 +1066,19 @@ impl<C, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
             Ordering::Relaxed,
         ) {
             next = now;
-            // SAFETY: it was a box above, and no other thread has seen it.
+            // SAFETY: `retired` came from a box above, and no other thread has seen it.
             unsafe { (*retired).next = now };
         }
     }
 
-    /// Frees all but the newest of each series.
+    /// Frees every slice except the newest of each series.
     #[inline]
     pub fn forget_older(&mut self) {
         let mut next = std::mem::replace(self.retired.get_mut(), null_mut());
         while !next.is_null() {
-            // SAFETY: `retire` has made it from a box of this allocator, and `replace` has allocated the slice there
-            // with this layout. A slice is retired once, when `newest` has ceased to point to it, the list is
-            // unlinked, and `&mut self` shows that no reference to a cell is in use.
+            // SAFETY: `retire` made `next` from a box in this allocator, and `replace` allocated the slice from the
+            // same allocator with this layout. A slice is retired only once, after `newest` has stopped pointing to it.
+            // The list is already unlinked, and `&mut self` proves that no reference to a cell is in use.
             next = unsafe {
                 let retired = Box::from_raw_in(next, self.alloc.clone());
                 let first = NonNull::new_unchecked(retired.slice.first());
@@ -1415,7 +1444,7 @@ mod tests {
     fn a_segmented_vector_keeps_its_elements_where_they_are() {
         let vec = Segmented::<Box<u32>, Cell<u32>>::new_in(Global);
         let first = vec.get(vec.push(Box::new(0)));
-        // More than two segments. 131,077 elements take a minute under Miri.
+        // More than two segments. Miri gets fewer because 131,077 elements took it a minute.
         let many = if cfg!(miri) {
             300
         } else {
@@ -1487,7 +1516,7 @@ mod tests {
         let blocks = AtomicUsize::new(0);
         let vec = Segmented::<Box<u32>, AtomicU32, _>::new_in(Counting(&blocks));
         vec.push(Box::new(u32::MAX));
-        // SAFETY: every index is written below, once, before it is read.
+        // SAFETY: every reserved index is written exactly once below, before it's read.
         let first = unsafe { vec.reserve(THREADS * EACH) };
         assert_eq!(first, 1);
         std::thread::scope(|scope| {
@@ -1505,7 +1534,7 @@ mod tests {
         for index in first..vec.len() {
             assert_eq!(**vec.get(index), index);
         }
-        // A thread that has lost the race for a segment has freed its own.
+        // A thread that loses the race to install a segment frees the one it allocated.
         let segments = (vec.len() as usize).div_ceil(SEGMENT);
         assert_eq!(blocks.load(Ordering::Relaxed), segments + 1);
     }
@@ -1517,7 +1546,7 @@ mod tests {
         assert!(!own.is_laid_over(shared.elements()));
         own.lay_over(shared.elements());
         assert!(own.is_laid_over(shared.elements()));
-        // Both sides of the end of a segment, and so many segments that the directory grows twice.
+        // Crosses segment boundaries, with enough segments that the directory grows twice.
         let many = if cfg!(miri) {
             300
         } else {
@@ -1566,7 +1595,7 @@ mod tests {
                     for _ in 0..16 {
                         let mut mine = store.add_placeholders(64, || u64::MAX);
                         let first = mine.first().unwrap();
-                        // The last one stays.
+                        // The last placeholder is never replaced.
                         for index in first..first + 63 {
                             let one = mine.take_first().unwrap();
                             assert_eq!(one.index(), index);
@@ -1652,7 +1681,7 @@ mod tests {
         newest.replace(0, 1, |_| {});
         let len = |newest: &Newest<_, _, 2>, series| newest.get(series, Ordering::Relaxed).len();
         assert_eq!((first.len(), len(&newest, 1), len(&newest, 0)), (4, 8, 1));
-        // A block for each slice, and one for the one that is retired.
+        // One allocation per slice, plus the list node for the retired slice.
         assert_eq!(count(), 4);
         newest.forget_older();
         assert_eq!((len(&newest, 1), len(&newest, 0), count()), (8, 1, 2));

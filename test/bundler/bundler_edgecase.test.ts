@@ -127,6 +127,17 @@ describe("bundler", () => {
       stdout: "undefined",
     },
   });
+  itBundled("edgecase/HoistableOnlyCommonJSEntryPoint", {
+    files: {
+      "/entry.cjs": `function foo() { module.exports = 1; }\n`,
+    },
+    entryPoints: ["/entry.cjs"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_entry");
+    },
+    run: true,
+  });
   // DEFAULT_UNWRAP_COMMONJS_PACKAGES parse as Esm with FORCE_CJS_TO_ESM. A default import makes the linker CJS-wrap them.
   itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
     files: {

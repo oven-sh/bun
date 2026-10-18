@@ -66,7 +66,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
 /// Version 36: TypeScript `a ? async(...b) : c` keeps its spread.
-const EXPECTED_VERSION: u32 = 36;
+/// Version 37: TypeScript `a ? (b) : c => d : e` does not take the outcome of an arrow function attempt from another parser state.
+const EXPECTED_VERSION: u32 = 37;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

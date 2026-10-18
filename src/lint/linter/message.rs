@@ -181,11 +181,12 @@ pub struct LintMessage {
     pub message: Vec<u8>,
     /// `None`: it is from the linter itself. Empty: from a rule whose messages have no ids.
     pub message_id: Option<Cow<'static, str>>,
-    /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`.
+    /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`. A rule written in JavaScript
+    /// can give any number, which ESLint passes on. One below 0 is here as an `i32`: -1 is `u32::MAX`.
     pub line: u32,
-    /// From 1, in UTF-16 code units.
+    /// From 1, in UTF-16 code units. One below 0 is as in `line`.
     pub column: u32,
-    /// `endLine` and `endColumn`.
+    /// `endLine` and `endColumn`. Those below 0 are as in `line`.
     pub end: Option<(u32, u32)>,
     /// The file is not linted because of it.
     pub is_fatal: bool,
@@ -585,10 +586,30 @@ fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
 impl LintMessage {
     /// Sorts by line and column. Those at the same place keep their order. Most lists are in order already.
     pub fn sort(messages: &mut [LintMessage]) {
-        let place = |it: &LintMessage| (it.line, it.column);
+        let place = |it: &LintMessage| (it.line as i32, it.column as i32);
         if !messages.is_sorted_by_key(place) {
             crate::utils::sort::sort_by_key(messages, place);
         }
+    }
+
+    /// The line and column to go to. What a rule reports before the first line is at the start of the file, and what it reports
+    /// before the first column is at the start of the line.
+    pub fn place(&self) -> (u32, u32) {
+        let is_of_rule = !matches!(self.rule_id, None | Some(RuleId::Unknown(_)));
+        match is_of_rule && self.line as i32 <= 0 {
+            true => (1, 1),
+            false => (self.line, (self.column as i32).max(0) as u32),
+        }
+    }
+
+    /// For where there's no ESLint to agree with, whose own formats print what the rule gave: it starts at
+    /// [`LintMessage::place`] in every format, and has no end before that.
+    pub(crate) fn stay_in_file(&mut self) {
+        let signed = |(line, column): (u32, u32)| (line as i32, column as i32);
+        let place = self.place();
+        (self.line, self.column) = place;
+        self.end = self.end.filter(|end| signed(*end) >= signed(place));
+        self.not_numbers = NotNumbers::default();
     }
 
     /// As ESLint's `json` formatter prints it.
@@ -616,7 +637,7 @@ impl LintMessage {
             ] {
                 let _ = match is_null {
                     true => write!(out, ",\"{key}\":null"),
-                    false => write!(out, ",\"{key}\":{number}"),
+                    false => write!(out, ",\"{key}\":{}", number as i32),
                 };
             }
         }
@@ -625,6 +646,7 @@ impl LintMessage {
             json_stringify(id.as_bytes(), out);
         }
         if let Some((line, column)) = self.end {
+            let (line, column) = (line as i32, column as i32);
             let _ = write!(out, ",\"endLine\":{line},\"endColumn\":{column}");
         }
         if is_severity_last {

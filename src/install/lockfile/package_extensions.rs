@@ -300,6 +300,19 @@ impl PackageExtensions {
         );
     }
 
+    /// Returns the dependencies `packageExtensions` adds to a package, as `(name hash, is peer)`.
+    pub(crate) fn dependencies_added_to(
+        &self,
+        name_hash: PackageNameHash,
+        version: semver::Version,
+        buf: &[u8],
+    ) -> Vec<(PackageNameHash, bool)> {
+        Wanted::of(&self.rules, name_hash, version, buf)
+            .iter()
+            .map(|wanted| (wanted.edge.name_hash, wanted.behavior.is_peer()))
+            .collect()
+    }
+
     fn record(&mut self, applied: Applied) {
         if !self.applied.contains(&applied) {
             self.applied.push(applied);
@@ -521,6 +534,75 @@ impl Lockfile {
             self.package_extensions
                 .record(Applied(package, name_hash, kind));
         }
+    }
+
+    /// Used when migrating from pnpm-lock.yaml, which doesn't say which dependencies came from
+    /// `packageExtensions`. `added` lists the ones that the package's manifest doesn't declare, as
+    /// `(package, name hash, is peer)`. Each one gets the extension's range, keeps its resolved
+    /// version, and is recorded as added by an extension.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn record_migrated_package_extensions(
+        &mut self,
+        log: &mut bun_ast::Log,
+        added: &[(PackageID, PackageNameHash, bool)],
+    ) -> Result<(), AllocError> {
+        let rules = core::mem::take(&mut self.package_extensions.rules);
+        let result = added.iter().try_for_each(|&(id, name_hash, is_peer)| {
+            self.record_migrated_package_extension(&rules, log, id, name_hash, is_peer)
+        });
+        self.package_extensions.rules = rules;
+        result
+    }
+
+    fn record_migrated_package_extension(
+        &mut self,
+        rules: &[Rule],
+        log: &mut bun_ast::Log,
+        id: PackageID,
+        name_hash: PackageNameHash,
+        is_peer: bool,
+    ) -> Result<(), AllocError> {
+        let wanted = Wanted::of(
+            rules,
+            self.packages.items_name_hash()[id as usize],
+            self.packages.items_resolution()[id as usize].npm().version,
+            self.buffers.string_bytes.as_slice(),
+        );
+        let slice = self.packages.items_dependencies()[id as usize];
+        let at = (slice.off as usize..(slice.off + slice.len) as usize).find(|&at| {
+            let row = &self.buffers.dependencies[at];
+            row.name_hash == name_hash && row.behavior.is_peer() == is_peer
+        });
+        let wanted = wanted.iter().find(|wanted| {
+            wanted.edge.name_hash == name_hash && wanted.behavior.is_peer() == is_peer
+        });
+        let (Some(wanted), Some(at)) = (wanted, at) else {
+            return Ok(());
+        };
+        let version = self.package_extension_row(wanted, log)?.version;
+        // Leave the dependency alone if an override resolved it outside the extension's range.
+        let buf = self.buffers.string_bytes.as_slice();
+        let resolved =
+            (self.packages.items_resolution()).get(self.buffers.resolutions[at] as usize);
+        let is_in_range = version.tag == VersionTag::Npm
+            && resolved.is_none_or(|resolved| {
+                resolved.tag == ResolutionTag::Npm
+                    && (version.npm().version).satisfies(resolved.npm().version, buf, buf)
+            });
+        if !is_in_range || (resolved.is_none() && !is_peer) {
+            return Ok(());
+        }
+        self.buffers.dependencies[at].version = version;
+        let kind = if is_peer {
+            Kind::Peer
+        } else {
+            Kind::Dependency
+        };
+        let package = self.package_extension_key(id);
+        self.package_extensions
+            .record(Applied(package, name_hash, kind));
+        Ok(())
     }
 
     /// For a package that `Package::from_npm` just made. Returns it with its new rows.

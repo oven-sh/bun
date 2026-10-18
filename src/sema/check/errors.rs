@@ -40,6 +40,28 @@ pub struct Checked {
 }
 
 impl Checked {
+    /// Whether `finish_file` has nothing to report for the file unless another task reports something in it.
+    pub fn is_empty(&self) -> bool {
+        let Checked {
+            syntactic,
+            semantic,
+            declaration,
+            include,
+            expected_errors,
+            // Only drops what other tasks report.
+            never_checked: _,
+            unused_private_members,
+            declaration_file,
+        } = self;
+        syntactic.is_empty()
+            && semantic.as_ref().is_none_or(Vec::is_empty)
+            && declaration.is_empty()
+            && include.is_empty()
+            && expected_errors.is_empty()
+            && unused_private_members.is_empty()
+            && declaration_file.is_none()
+    }
+
     /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
     /// separately. `None` if there are none.
     pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {
@@ -218,8 +240,8 @@ impl Checker<'_, '_> {
         let is_json = hir.kind == FileKind::Json;
         let is_checked = match self.expected {
             Requested::All => true,
-            // A walk of the control flow nests at most once per flow node.
-            Requested::Types => self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH,
+            // There the types depend on what was checked before, and the rules do not ask in the order of the file.
+            Requested::Types => self.bound(file).has_types_that_depend_on_order(),
             Requested::Syntactic | Requested::Declaration => false,
         };
         if !is_checked || is_json || !self.reports_semantic_errors(file) {

@@ -380,6 +380,74 @@ describe.concurrent("certificate authority", () => {
     expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
   });
 
+  // With --use-system-ca, every file in $SSL_CERT_DIR is loaded. The default store only loads files named after the
+  // certificate's hash, so `my-ca.pem` is only trusted with the flag. Linux only: other systems don't use $SSL_CERT_DIR.
+  describe.skipIf(!isLinux)("--use-system-ca", () => {
+    async function run(args: string[], extraEnv: Record<string, string> = {}) {
+      const { packageDir, packageJson, env } = await setupTest();
+      using server = Bun.serve({
+        port: 0,
+        fetch: mockRegistryFetch(),
+        ...tls,
+      });
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.1.1",
+            dependencies: { "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz` },
+          }),
+        ),
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: `https://localhost:${server.port}/` } }),
+        ),
+        write(join(packageDir, "certs", "my-ca.pem"), tls.cert),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env: {
+          ...env,
+          SSL_CERT_DIR: join(packageDir, "certs"),
+          SSL_CERT_FILE: "",
+          BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+          ...extraEnv,
+        },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    test("doesn't trust the certificate without the flag", async () => {
+      const { out, err, exitCode } = await run(["install"]);
+      expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(out).not.toContain("+ no-deps@");
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      [["install", "--use-system-ca"], {}],
+      [["--use-system-ca", "install"], {}],
+      [["install"], { BUN_OPTIONS: "--use-system-ca" }],
+      [["install"], { NODE_USE_SYSTEM_CA: "1" }],
+    ])("bun %j with %j trusts the system's certificates", async (args, extraEnv) => {
+      const { out, err, exitCode } = await run(args, extraEnv);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("+ no-deps@");
+      expect(exitCode).toBe(0);
+    });
+
+    test("errors when combined with --use-bundled-ca", async () => {
+      const { err, exitCode } = await run(["install", "--use-system-ca", "--use-bundled-ca"]);
+      expect(err).toBe("error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test(`non-existent --cafile`, async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
@@ -1569,6 +1637,7 @@ describe.concurrent("frozen lockfile", () => {
       "Resolving dependencies
       Resolved, downloaded and extracted [4]
       error: lockfile had changes, but lockfile is frozen
+      note: dependencies in package.json changed since bun.lock was saved: basic-1 was added
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(exitCode).toBe(1);
@@ -7231,6 +7300,110 @@ describe.concurrent("hoisting", async () => {
       });
       expect(await peerWarnings(dir)).toEqual([]);
       expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.0.0");
+    });
+
+    // Example: elysia has a peer dependency on @sinclair/typebox >=0.34.0, and @jest/schemas depends on ^0.27.8.
+    describe("doesn't fall back to a version that only unrelated packages depend on", () => {
+      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0. peer-deps-fixed has a peer dependency on no-deps@^1.0.0.
+      async function expectSeparateVersions(dir: string, unrelated: string[]) {
+        expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+        expect(await versionSeenFrom(dir, unrelated, "no-deps")).toBe("2.0.0");
+      }
+
+      test("on a fresh install", async () => {
+        const dir = await project({
+          "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" } },
+        });
+        expect(await peerWarnings(dir)).toEqual([]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
+
+        const lock = await file(join(dir, "bun.lock")).text();
+        await rm(join(dir, "node_modules"), { recursive: true, force: true });
+        expect(await peerWarnings(dir, "--frozen-lockfile")).toEqual([]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
+        expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
+      });
+
+      test("when the package with the peer dependency is added later", async () => {
+        const dir = await project({ "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0" } } });
+        expect(await peerWarnings(dir)).toEqual([]);
+        expect(await peerWarnings(dir, "peer-deps-fixed@1.0.0")).toEqual([]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
+      });
+
+      test("when the unrelated package is another workspace", async () => {
+        const dir = await project({
+          "package.json": { name: "mono", workspaces: ["packages/*"] },
+          "packages/a/package.json": { name: "a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } },
+          "packages/b/package.json": { name: "b", version: "1.0.0", dependencies: { "peer-deps-fixed": "1.0.0" } },
+        });
+        expect(await peerWarnings(dir)).toEqual([]);
+        expect(await versionSeenFrom(join(dir, "packages", "b"), ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+        expect(await versionSeenFrom(join(dir, "packages", "a"), [], "no-deps")).toBe("2.0.0");
+      });
+    });
+
+    test("a package two levels below a workspace uses the workspace's version", async () => {
+      // dedupe-divergent-peers depends on dedupe-divergent-strict, which has a peer dependency on no-deps@^2.0.0.
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0", "dedupe-divergent-peers": "1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([
+        'warn: incorrect peer dependency "no-deps@1.0.0": "dedupe-divergent-strict@1.0.0" requires "no-deps@^2.0.0"',
+      ]);
+      const below = ["dedupe-divergent-peers", "dedupe-divergent-strict"];
+      expect(await versionSeenFrom(join(dir, "packages", "a"), below, "no-deps")).toBe("1.0.0");
+    });
+
+    test("packages below a workspace use the version that satisfies the workspace's own peer dependency", async () => {
+      // one-fixed-dep@1.0.0 depends on no-deps@1.0.0. dedupe-divergent-strict has a peer dependency on no-deps@^2.0.0.
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "one-fixed-dep": "1.0.0", "dedupe-divergent-strict": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([
+        'warn: incorrect peer dependency "no-deps@1.0.0": "dedupe-divergent-strict@1.0.0" requires "no-deps@^2.0.0"',
+      ]);
+      expect(await versionSeenFrom(join(dir, "packages", "a"), ["dedupe-divergent-strict"], "no-deps")).toBe("1.0.0");
+      expect(await file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
+    });
+
+    test("the root's own peer dependency doesn't fall back to an unrelated package's version either", async () => {
+      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0.
+      const dir = await project({
+        "package.json": {
+          name: "foo",
+          dependencies: { "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([]);
+      expect(await versionSeenFrom(dir, [], "no-deps")).toBe("1.1.0");
+      expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+      expect(await versionSeenFrom(dir, ["one-fixed-dep"], "no-deps")).toBe("2.0.0");
+    });
+
+    test("a direct dependency of a workspace uses the workspace's version", async () => {
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([rootsNoDeps2]);
+      expect(await versionSeenFrom(join(dir, "packages", "a"), ["peer-deps-fixed"], "no-deps")).toBe("2.0.0");
     });
 
     test("one line for each dependent", async () => {

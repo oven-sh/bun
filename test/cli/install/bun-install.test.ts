@@ -16799,6 +16799,8 @@ describe.concurrent("the flags of the runtime that take no value", () => {
   ];
   // What some of these commands have themselves, with another meaning.
   const taken = ["--help", "--silent", "--prefer-offline", "--no-env-file", "--check", "--interactive"];
+  // These flags and --use-system-ca are mutually exclusive.
+  const exclusive = ["--use-openssl-ca", "--use-bundled-ca"];
   async function runtimeFlags() {
     const { stdout, exitCode } = await bunIn(import.meta.dir, ["--help"]);
     expect(exitCode).toBe(0);
@@ -16806,7 +16808,7 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     expect(listed).toContain("--bun");
     expect(listed).toContain("--smol");
     expect(listed).not.toContain("--cwd");
-    return [...listed, ...hidden].filter(flag => !taken.includes(flag));
+    return [...listed, ...hidden].filter(flag => !taken.includes(flag) && !exclusive.includes(flag));
   }
   const project = (dependencies?: Record<string, string>) =>
     tempDir("install-runtime-flags", {

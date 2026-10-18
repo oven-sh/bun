@@ -1,6 +1,7 @@
 use crate::api::bun::Rusage;
 use crate::generated_bindgen::resource_usage::{
-    ContextSwitches, CpuTime, Messages, Ops, ResourceUsageClass,
+    ResourceUsageClass, ResourceUsageContextSwitches, ResourceUsageCpuTime, ResourceUsageMessages,
+    ResourceUsageOps,
 };
 use bun_spawn::RusageFields as _; // trait + impls now live in bun_spawn_sys::spawn_process
 
@@ -9,18 +10,18 @@ pub(crate) struct ResourceUsage {
 }
 
 impl ResourceUsageClass for ResourceUsage {
-    fn context_switches(&self) -> ContextSwitches {
-        ContextSwitches {
+    fn context_switches(&self) -> ResourceUsageContextSwitches {
+        ResourceUsageContextSwitches {
             voluntary: self.rusage.nvcsw(),
             involuntary: self.rusage.nivcsw(),
         }
     }
 
-    fn cpu_time(&self) -> CpuTime {
+    fn cpu_time(&self) -> ResourceUsageCpuTime {
         let microseconds = |sec: i64, usec: i64| (sec * 1_000_000 + usec) as u64;
         let user = microseconds(self.rusage.utime_sec(), self.rusage.utime_usec());
         let system = microseconds(self.rusage.stime_sec(), self.rusage.stime_usec());
-        CpuTime {
+        ResourceUsageCpuTime {
             user,
             system,
             total: user + system,
@@ -31,15 +32,15 @@ impl ResourceUsageClass for ResourceUsage {
         self.rusage.maxrss()
     }
 
-    fn messages(&self) -> Messages {
-        Messages {
+    fn messages(&self) -> ResourceUsageMessages {
+        ResourceUsageMessages {
             sent: self.rusage.msgsnd(),
             received: self.rusage.msgrcv(),
         }
     }
 
-    fn ops(&self) -> Ops {
-        Ops {
+    fn ops(&self) -> ResourceUsageOps {
+        ResourceUsageOps {
             r#in: self.rusage.inblock(),
             out: self.rusage.oublock(),
         }

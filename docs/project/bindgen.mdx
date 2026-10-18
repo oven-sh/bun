@@ -302,7 +302,7 @@ The second argument of `b.dictionary` takes:
 | `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
 | `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                           |
-| `nullPrototype`    | as a result, the object has no prototype                                                                                                                                                                          |
+| `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                            |
 
 ### Enumerations
 

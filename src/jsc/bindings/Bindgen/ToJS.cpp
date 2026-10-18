@@ -20,14 +20,16 @@ static EncodedJSValue putMembers(VM& vm, JSObject* object, unsigned firstMemberN
 
 extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObject, unsigned firstMemberNameIndex, const JSValue* values, size_t count)
 {
+    VM& vm = getVM(globalObject);
     JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(count, JSFinalObject::maxInlineCapacity));
-    return putMembers(getVM(globalObject), object, firstMemberNameIndex, values, count);
+    return putMembers(vm, object, firstMemberNameIndex, values, count);
 }
 
 extern "C" EncodedJSValue Bun__Bindgen__createNullPrototypeObject(JSGlobalObject* globalObject, unsigned firstMemberNameIndex, const JSValue* values, size_t count)
 {
     VM& vm = getVM(globalObject);
-    return putMembers(vm, constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()), firstMemberNameIndex, values, count);
+    JSObject* object = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    return putMembers(vm, object, firstMemberNameIndex, values, count);
 }
 
 extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* globalObject, unsigned index)

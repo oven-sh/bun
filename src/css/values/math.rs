@@ -1,21 +1,6 @@
-//! `f32` math that gives the same bits on every host.
-//!
-//! The CSS parser folds math functions and converts colors while it parses, and it prints the
-//! results. `asinf`, `acosf`, `atanf`, `atan2f`, `hypotf` and `cbrtf` of the C library differ in
-//! the last bit between glibc, musl, Apple's libm and the C runtime that Bun links on Windows.
-//! With them, `rotate(atan2(0px, -1px))` is `rotate(180deg)` on Linux and `rotate(3.14159rad)`
-//! on macOS. The CSS crates call the functions here instead of those six:
-//! `test/internal/source-lints/css-host-math.test.ts` fails on a call to one of them. The other
-//! functions that the parser folds (`sin`, `cos`, `tan`, `exp`, `ln`, `powf`) call the C library.
-//!
-//! Every function here widens to `f64`, computes with code that is compiled into Bun, and rounds
-//! once to `f32`. The kernels use only IEEE addition, subtraction, multiplication, division and
-//! square root, so the processor does not change the result either. `src/sema/check/decl.rs`
-//! has its own `log`, which needs `mul_add`, as Go compiles it for arm64.
-//!
-//! The functions are `#[inline(never)]`, as a call to the C library was. The fold sites are
-//! generic over the value type, and each instantiation would get a copy of the kernels.
+//! `f32` math from IEEE `f64` arithmetic only: the same bits on every host, unlike the C library's.
 
+// Not inlined: the fold sites are generic, and each instantiation would get a copy of the kernels.
 #[inline(never)]
 pub(crate) fn asin(x: f32) -> f32 {
     kernel::asin(f64::from(x)) as f32
@@ -36,8 +21,7 @@ pub(crate) fn atan2(y: f32, x: f32) -> f32 {
     kernel::atan2(f64::from(y), f64::from(x)) as f32
 }
 
-/// The logarithm of `x` to `base`. `f32::log` divides two `f32` logarithms, which makes
-/// `log(32768, 2)` less than 15.
+/// `f32::log` divides two `f32` logarithms, which makes `log(32768, 2)` less than 15.
 #[inline(never)]
 pub(crate) fn log(x: f32, base: f32) -> f32 {
     (kernel::ln(f64::from(x)) / kernel::ln(f64::from(base))) as f32
@@ -54,8 +38,7 @@ pub(crate) fn hypot(x: f32, y: f32) -> f32 {
     (x * x + y * y).sqrt() as f32
 }
 
-/// `cbrtf` of FreeBSD's msun (`s_cbrtf.c`): an estimate from the exponent, then two Halley steps
-/// in `f64`.
+/// `cbrtf` of FreeBSD's msun: an estimate from the exponent, then two Halley steps in `f64`.
 #[inline(never)]
 pub(crate) fn cbrt(x: f32) -> f32 {
     /// `(127 - 127.0 / 3 - 0.03306235651) * 2**23`
@@ -83,17 +66,7 @@ pub(crate) fn cbrt(x: f32) -> f32 {
     t as f32
 }
 
-// The kernels are ports of Go's `math` package, go1.24.4, Copyright 2009 The Go Authors, under
-// its BSD 3-Clause license. Its `log`, and `cbrtf` above, come from FreeBSD's msun, which has
-// this notice:
-//
-//     Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
-//     Developed at SunPro, a Sun Microsystems, Inc. business.
-//     Permission to use, copy, modify, and distribute this software is freely granted,
-//     provided that this notice is preserved.
-//
-// Go took `atan` from the Cephes Math Library Release 2.8,
-// Copyright 1984, 1987, 1989, 1992, 2000 by Stephen L. Moshier.
+// Ports of Go's `math` (go1.24.4), and `cbrt` above of FreeBSD's msun. LICENSE.md has the notices.
 mod kernel {
     use core::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 

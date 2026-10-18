@@ -20,7 +20,7 @@ use crate::local::{
 use crate::program::{FileId, Sym};
 use crate::session::Session;
 use crate::types::{ComponentsId, Follow, Link, MapperId, Marks, OwnStore, SigId, TypeId, Visitor};
-use crate::util::memory::{Cells, Zeroed};
+use crate::util::memory::{Cells, FixedCells, Zeroed};
 use crate::util::{AppendVec, FxHasher, ShardedMap, shard_among, spread_hash};
 use std::alloc::{Allocator, Global};
 use std::hash::{Hash, Hasher};
@@ -464,8 +464,7 @@ const NO_SLOT: u32 = u32::MAX;
 /// A value for each node of one kind in the program.
 pub struct ByNode<K, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
     bases: Bases<A>,
-    /// Initially all zero.
-    cells: Box<[V::Cell], A>,
+    cells: FixedCells<V::Cell, A>,
     /// For each key, the number of the commit that has stored its entry: see `crate::check::commit`. 0, or no cell: no
     /// commit has.
     stamps: Cells<AtomicU32, A>,
@@ -496,7 +495,7 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
         };
         ByNode {
             stamps: Cells::new_in(alloc.clone()),
-            cells: V::Cell::zeroed_slice_in(bases.total().div_ceil(Self::PER_CELL), alloc),
+            cells: FixedCells::new_in(bases.total().div_ceil(Self::PER_CELL), alloc),
             bases,
             slot: NO_SLOT,
             key: PhantomData,
@@ -507,22 +506,34 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
         self.slot = slot.number();
     }
 
-    /// The cell of the key at `at` in the concatenation of all keys, and the bit offset of the key
-    /// within the cell.
+    /// Which cell the key at `at` in the concatenation of all keys has, and the bit offset of the key within the cell.
     #[inline]
-    fn field_at(&self, at: usize) -> (&V::Cell, u32) {
-        let shift = (at % Self::PER_CELL) as u32 * V::BITS;
-        (&self.cells[at / Self::PER_CELL], shift)
+    fn place_of(at: usize) -> (usize, u32) {
+        (at / Self::PER_CELL, (at % Self::PER_CELL) as u32 * V::BITS)
     }
 
-    /// `None`: there is no such node.
+    /// What the cell of the key at `at` holds, shifted down to the bits of the key, with the bits of the keys above.
+    #[inline]
+    fn bits_at(&self, at: usize, load: impl FnOnce(&V::Cell) -> <V::Cell as Cell>::Raw) -> u64 {
+        let (cell, shift) = Self::place_of(at);
+        (self.cells.existing(cell)).map_or(0, |cell| V::Cell::widen(load(cell)) >> shift)
+    }
+
+    /// The cell of the key at `at`, for one who writes to it, and the bit offset of the key within the cell.
+    #[inline]
+    fn field_at(&self, at: usize) -> (&V::Cell, u32) {
+        let (cell, shift) = Self::place_of(at);
+        (self.cells.cell(cell), shift)
+    }
+
+    /// `field_at`. `None`: there is no such node.
     #[inline]
     fn field(&self, key: K) -> Option<(&V::Cell, u32)> {
         Some(self.field_at(self.bases.at(key.file(), key.index())?))
     }
 
     pub fn footprint(&self) -> Footprint {
-        Footprint::of_cells(&self.cells)
+        Footprint::of_cells(self.cells.all())
     }
 }
 
@@ -706,8 +717,8 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc + Default> Default for ByKe
 impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, Frozen, A> {
     #[inline]
     pub fn get(&self, key: &K) -> Option<V> {
-        let (cell, shift) = self.field(*key)?;
-        let raw = V::Cell::narrow(V::Cell::widen(cell.load()) >> shift & Self::MASK);
+        let at = self.bases.at(key.file(), key.index())?;
+        let raw = V::Cell::narrow(self.bits_at(at, Cell::load) & Self::MASK);
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 
@@ -802,8 +813,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> ByNode<K, V, Buffered, A
     /// 0: nothing is published for the key at `at`.
     #[inline]
     fn published_at(&self, at: usize) -> u32 {
-        let (cell, shift) = self.field_at(at);
-        cell.load(Ordering::Relaxed) >> shift & Self::MASK as u32
+        (self.bits_at(at, |cell| cell.load(Ordering::Relaxed)) & Self::MASK) as u32
     }
 
     /// 0: nothing is published for `key`. A node that `Bases` does not count has no cell, and nothing is ever published for it.
@@ -823,8 +833,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> ByNode<K, V, Buffered, A
         };
         // Before the look: a miss is a look at the file too.
         let snapshot = view.snapshot_of(key.file());
-        let (cell, shift) = self.field_at(at);
-        let raw = cell.load(Ordering::Acquire) >> shift & Self::MASK as u32;
+        let raw = (self.bits_at(at, |cell| cell.load(Ordering::Acquire)) & Self::MASK) as u32;
         match raw != 0 && self.stamp_at(at) > snapshot {
             true => 0,
             false => raw,

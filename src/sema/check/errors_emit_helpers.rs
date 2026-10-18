@@ -127,7 +127,7 @@ impl Checker<'_, '_> {
             return;
         }
         let (checked, elsewhere) = self.emit_helpers_checked_out_of_order(file);
-        self.check_external_emit_helpers_of_later_files(file, elsewhere);
+        self.check_external_emit_helpers_of_later_files(file, &elsewhere);
         if self.emit_helpers_is_effective_external_module(file) {
             let mut requests = self.emit_helpers_requests(file, &checked);
             requests.shared_sort_by_key(|request| request.order);
@@ -152,7 +152,7 @@ impl Checker<'_, '_> {
     fn check_external_emit_helpers_of_later_files(
         &mut self,
         visited: FileId,
-        elsewhere: Vec<(FileId, ExprId)>,
+        elsewhere: &[(FileId, ExprId)],
     ) {
         let mut later: Vec<FileId> = elsewhere.iter().map(|it| it.0).collect();
         later.shared_sort_unstable();

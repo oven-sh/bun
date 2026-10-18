@@ -164,6 +164,11 @@ impl Found {
     #[inline(never)]
     fn grow(slots: &mut Box<[u64]>, count: usize) {
         let mut bigger = vec![0; slots_for::<OfTask>(count, slots.len())].into_boxed_slice();
+        // A page of zeroed memory from the operating system that is read first takes a second page fault at its first
+        // write, which interrupts every other thread.
+        for page in bigger.chunks_mut((4 << 10) / size_of::<u64>()) {
+            *std::hint::black_box(&mut page[0]) = 0;
+        }
         for &place in slots.iter().filter(|&&place| place != 0) {
             let at = free_slot::<OfTask>(bigger.len(), (place >> 32) as u32, |at| bigger[at]);
             bigger[at] = place;
@@ -171,9 +176,15 @@ impl Found {
         *slots = bigger;
     }
 
+    /// The slots stay for the next task, which then neither grows them step by step nor gets fresh memory for them, unless
+    /// this one has used few of them: emptying them takes time in proportion to what was added.
     pub fn clear(&mut self) {
-        if self.count.replace(0) != 0 {
-            *self.slots.get_mut() = Box::default();
+        let count = self.count.replace(0);
+        let slots = self.slots.get_mut();
+        if count != 0 && slots.len() <= 4 * slots_for::<OfTask>(count, 0) {
+            slots.fill(0);
+        } else if count != 0 {
+            *slots = Box::default();
         }
     }
 }
@@ -334,7 +345,7 @@ pub(crate) struct Half<'s> {
     /// Type-erased storage: `S::In` of the table's `Slot<S>`. An indirect table:
     /// `LocalVec<(u64, T)>`, the values with their keys, indexed by handle without `LOCAL`.
     /// A `ByKey`: `Hashed<K, V>`.
-    typed: Option<Box<dyn Typed + Send + 's>>,
+    typed: Option<Box<dyn Reused + Send + 's>>,
 }
 
 /// Any type. What is stored without its type is dropped as this.
@@ -349,9 +360,28 @@ impl<T> Typed for T {
     }
 }
 
+/// What one task after the other uses.
+pub(crate) trait Reused: Typed {
+    /// Drops what it holds. It keeps some of its memory for the next task.
+    fn clear(&mut self);
+}
+
+impl<T> Reused for LocalVec<T> {
+    fn clear(&mut self) {
+        LocalVec::clear(self);
+    }
+}
+
+impl<K, V> Reused for Hashed<K, V> {
+    fn clear(&mut self) {
+        self.found.clear();
+        clear_cells(&mut self.entries);
+    }
+}
+
 /// What a table stores in `Half::typed`. The implementor is only a name for it.
 pub(crate) trait InTask {
-    type In<'s>: Send + 's
+    type In<'s>: Reused + Send + 's
     where
         Self: 's;
 
@@ -526,7 +556,7 @@ impl<'s> Half<'s> {
         clear_cells(&mut self.dense);
         (self.file, self.ordinal, self.may_be_hashed) = (NO_FILE, 0, false);
         self.earlier.clear();
-        self.sparse.take();
+        self.sparse.clear();
     }
 }
 
@@ -648,7 +678,9 @@ impl<'s> Buffer<'s> {
         clear_cells(&mut self.ordinals);
         for half in &mut self.halves {
             half.clear_cells();
-            half.typed = None;
+            if let Some(typed) = &mut half.typed {
+                typed.clear();
+            }
         }
     }
 
@@ -879,7 +911,7 @@ impl FileLocalTables {
     pub(crate) fn begin_file(&mut self, file: u32) {
         for table in &mut self.tables {
             clear_cells(&mut table.cells);
-            table.sparse.take();
+            table.sparse.clear();
         }
         self.file = file;
     }

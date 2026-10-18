@@ -992,6 +992,17 @@ pub trait Zeroed: Sized {
     /// From the allocator's zeroed memory, which for a long slice comes from the operating system: a
     /// page that is never touched is never resident.
     fn zeroed_slice_in<A: Allocator>(len: usize, alloc: A) -> Box<[Self], A>;
+    /// Writes to the cell without changing it.
+    fn touch(&self);
+}
+
+/// Writes to every page of `cells`, which are about to be read and written all over. A page of zeroed memory from the
+/// operating system that is read first takes a second page fault at its first write, which interrupts every other thread.
+fn touch_pages<C: Zeroed>(cells: &[C]) {
+    (cells.iter().step_by(SMALLEST_PAGE / size_of::<C>())).for_each(C::touch);
+    if let Some(last) = cells.last() {
+        last.touch();
+    }
 }
 
 macro_rules! zeroed {
@@ -1002,17 +1013,116 @@ macro_rules! zeroed {
                 // zero bytes are 0.
                 unsafe { Box::new_zeroed_slice_in(len, alloc).assume_init() }
             }
+            #[inline]
+            fn touch(&self) {
+                // Not `fetch_or(0)`, which may be compiled to a load.
+                let _ = self.compare_exchange(0, 0, Ordering::Relaxed, Ordering::Relaxed);
+            }
         }
     )*};
 }
 zeroed!(AtomicU32, AtomicU64);
 
+/// A bit for each page of an array of cells that are initially all zero: whether anything was written there. Who finds the
+/// bit clear knows that the cell is zero without reading it. So a page that was never written is never read either: it
+/// takes no cache line and no entry of a page table, and its first write is its first page fault. A page of zeroed
+/// memory from the operating system that is read first takes a second one then, which interrupts every other thread.
+///
+/// `index`, here and below: of a cell in the array, which starts at a page boundary if it is longer than a page.
+trait Written<C: Zeroed> {
+    fn words(&self) -> &[AtomicU64];
+
+    #[inline(always)]
+    fn place(index: usize) -> (usize, u64) {
+        let page = index / (SMALLEST_PAGE / size_of::<C>());
+        (page / 64, 1 << (page % 64))
+    }
+
+    /// `true` for a cell beyond those that have a bit.
+    #[inline(always)]
+    fn may_be_written(&self, index: usize) -> bool {
+        let (word, bit) = Self::place(index);
+        (self.words().get(word)).is_none_or(|word| word.load(Ordering::Relaxed) & bit != 0)
+    }
+
+    /// `cell`, which is the one at `index`, is about to be written.
+    #[inline(always)]
+    fn note_write(&self, index: usize, cell: &C) {
+        let (word, bit) = Self::place(index);
+        if let Some(word) = self.words().get(word)
+            && word.load(Ordering::Relaxed) & bit == 0
+        {
+            note_first_write(word, bit, cell);
+        }
+    }
+}
+
+/// The page is written before anyone is told to read it.
+#[cold]
+fn note_first_write<C: Zeroed>(word: &AtomicU64, bit: u64, cell: &C) {
+    cell.touch();
+    word.fetch_or(bit, Ordering::Relaxed);
+}
+
+/// Cells for a range of indices that is known from the start, initially all zero.
+pub struct FixedCells<C, A: Allocator = Global> {
+    cells: Box<[C], A>,
+    written: Box<[AtomicU64], A>,
+}
+
+impl<C: Zeroed, A: Allocator> Written<C> for FixedCells<C, A> {
+    #[inline(always)]
+    fn words(&self) -> &[AtomicU64] {
+        &self.written
+    }
+}
+
+impl<C: Zeroed, A: Allocator + Clone> FixedCells<C, A> {
+    pub fn new_in(len: usize, alloc: A) -> Self {
+        let pages = (len * size_of::<C>()).div_ceil(SMALLEST_PAGE);
+        FixedCells {
+            cells: C::zeroed_slice_in(len, alloc.clone()),
+            written: AtomicU64::zeroed_slice_in(pages.div_ceil(64), alloc),
+        }
+    }
+
+    /// `None`: the cell is zero.
+    #[inline]
+    pub fn existing(&self, index: usize) -> Option<&C> {
+        self.may_be_written(index).then(|| &self.cells[index])
+    }
+
+    /// For one who writes to it.
+    #[inline]
+    pub fn cell(&self, index: usize) -> &C {
+        let cell = &self.cells[index];
+        self.note_write(index, cell);
+        cell
+    }
+
+    pub fn all(&self) -> &[C] {
+        &self.cells
+    }
+}
+
 const FIRST_CELLS_BITS: u32 = 12;
+
+/// As many cells of four bytes have a bit in `Cells::written` as a large program has types.
+const WRITTEN_WORDS: usize = 256;
 
 /// Cells for a range of indices that keeps growing, initially all zero. `C` is an atomic integer: a
 /// cell is only ever accessed through a shared reference.
 pub struct Cells<C, A: Allocator + Clone = Global> {
     chunks: Chunks<C, FIRST_CELLS_BITS, A>,
+    /// By `Located::offset`: the first cell of every chunk is the first of a page by that count too.
+    written: [AtomicU64; WRITTEN_WORDS],
+}
+
+impl<C: Zeroed, A: Allocator + Clone> Written<C> for Cells<C, A> {
+    #[inline(always)]
+    fn words(&self) -> &[AtomicU64] {
+        &self.written
+    }
 }
 
 impl<C: Zeroed + Sync, A: Allocator + Clone + Default> Default for Cells<C, A> {
@@ -1025,11 +1135,12 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     pub fn new_in(alloc: A) -> Self {
         Cells {
             chunks: Chunks::new_in(alloc),
+            written: [const { AtomicU64::new(0) }; WRITTEN_WORDS],
         }
     }
 
-    /// `None`: nothing has been written to the chunk of `index`. For a time when no thread calls
-    /// `cell`, and something has ordered the earlier calls before this one.
+    /// `None`: the cell is zero. For a time when no thread calls `cell`, and something has ordered
+    /// the earlier calls before this one.
     #[inline]
     pub fn existing(&self, index: u32) -> Option<&C> {
         self.existing_loaded(index, Ordering::Relaxed)
@@ -1044,6 +1155,9 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     #[inline(always)]
     fn existing_loaded(&self, index: u32, order: Ordering) -> Option<&C> {
         let Located { chunk, offset } = Chunks::<C, FIRST_CELLS_BITS, A>::locate(index);
+        if !self.may_be_written(offset) {
+            return None;
+        }
         let base = self.chunks.bases[chunk].load(order);
         if base.is_null() {
             return None;
@@ -1052,10 +1166,14 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
         Some(unsafe { &*base.wrapping_add(offset) })
     }
 
+    /// For one who writes to it.
     #[inline]
     pub fn cell(&self, index: u32) -> &C {
         // SAFETY: as in `existing`.
-        unsafe { &*self.chunks.slot_or_install(index, C::zeroed_slice_in) }
+        let cell = unsafe { &*self.chunks.slot_or_install(index, C::zeroed_slice_in) };
+        let offset = Chunks::<C, FIRST_CELLS_BITS, A>::locate(index).offset;
+        self.note_write(offset, cell);
+        cell
     }
 
     /// The chunks that are allocated.
@@ -1123,6 +1241,7 @@ impl<C: Zeroed, A: Allocator + Clone> Newest<C, A> {
     /// One thread at a time: the caller holds a lock, or the owner is not shared.
     pub fn replace(&self, len: usize, fill: impl FnOnce(&[C])) -> &[C] {
         let cells = C::zeroed_slice_in(len, self.alloc.clone());
+        touch_pages(&cells);
         fill(&cells);
         let cells = Box::into_raw_with_allocator(cells).0;
         let newest = Box::new_in(Table { cells }, self.alloc.clone());

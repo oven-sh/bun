@@ -2774,8 +2774,8 @@ impl RunCommand {
 
         // `bun bake` in a project with no `bake` script, file or binary of its own.
         if target_name == b"bake" && bun_core::FeatureFlags::bake() {
-            // These flags of `bun` mean the same after `bake` as before it: `bun bake --watch` is
-            // `bun --watch bake`.
+            // These flags of `bun` mean the same after `bake` as before it: `bun bake --check` is
+            // `bun --check bake`.
             let mut take_flag =
                 |flag: &[u8]| match ctx.passthrough.iter().position(|arg| &arg[..] == flag) {
                     Some(i) => {
@@ -2784,32 +2784,25 @@ impl RunCommand {
                     }
                     None => false,
                 };
-            let (check, hot, watch, no_clear_screen) = (
-                take_flag(b"--check"),
-                take_flag(b"--hot"),
-                take_flag(b"--watch"),
-                take_flag(b"--no-clear-screen"),
-            );
-            let hot_reload = ctx.debug.hot_reload;
-            if hot_reload == cli::command::HotReload::None {
-                // As in the argument parser, `--hot` wins over `--watch`.
-                if hot {
-                    ctx.debug.hot_reload = cli::command::HotReload::Hot;
-                } else if watch {
-                    ctx.debug.hot_reload = cli::command::HotReload::Watch;
-                    #[cfg(not(windows))]
-                    {
-                        bun_core::set_auto_reload_on_crash(true);
-                    }
-                }
+            let (check, no_clear_screen) = (take_flag(b"--check"), take_flag(b"--no-clear-screen"));
+            if check {
+                ctx.runtime_options.check = true;
             }
             if no_clear_screen {
                 ctx.debug.no_clear_screen = true;
             }
-            if check {
-                ctx.runtime_options.check = true;
+            let hot_reload = ctx.debug.hot_reload;
+            // `bun --check --watch bake` is how `--check` restarts; a `--watch` of its own is not.
+            if hot_reload == cli::command::HotReload::Watch && !ctx.runtime_options.check {
+                pretty_errorln!(
+                    "<r><red>error<r>: \"bun bake\" reloads app/server.ts on its own. Remove --watch."
+                );
+                Output::flush();
+                Global::exit(1);
             }
-            // Also when `--check` came before `bake` and `--hot` after it.
+            // `bun bake` reloads `app/server.ts` in place on a change, as `--hot` does. With
+            // `--check`, it starts again instead, to type check again.
+            ctx.debug.hot_reload = cli::command::HotReload::Hot;
             if ctx.runtime_options.check {
                 cli::watch_instead_of_hot_for_check(ctx);
             }

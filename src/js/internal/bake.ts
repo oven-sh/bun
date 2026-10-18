@@ -31,6 +31,8 @@ Serves the app in the working directory, with hot reloading:
   bake.config.ts        Optional. Build plugins, as Bun plugins:
                         export default defineConfig({ plugins: [...] }), with
                         defineConfig from "bun:bake". Restart after you change it.
+
+Changes to app/server.ts and the files it imports apply without a restart.
   app/server.ts         Optional. Its default export holds options of Bun.serve(), as
                         for \`export default\` in \`bun app.ts\` (a Hono app works). "fetch"
                         gets the requests that no page and no route matched.
@@ -41,10 +43,8 @@ Options:
   --host <STR>, --hostname <STR>
   --console # print console logs from browser
   --no-console # don't print console logs from browser
-  --check # type check the project first, and do not serve it if it has errors
-  --watch # start again when a file that it loaded changes
-  --hot # reload app/server.ts in place when it changes
-  --no-clear-screen # with --watch or --hot, do not clear the terminal on a reload
+  --check # type check the project first, and again after each change. With errors, do not serve it
+  --no-clear-screen # do not clear the terminal on a reload
 `;
 
 type Page = {
@@ -106,6 +106,9 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
   return pages;
 }
 
+/** The default export of `bake.config.ts` that the server has the plugins of, after the first load. */
+let configInUse: unknown;
+
 /** The plugins of `bake.config.ts`: its default export is a config, or a function that returns one. */
 async function loadConfig(cwd: string): Promise<{ plugins: unknown[]; names: string[] }> {
   let file: string;
@@ -118,6 +121,11 @@ async function loadConfig(cwd: string): Promise<{ plugins: unknown[]; names: str
 
   const name = display(file);
   let config = (await import(file)).default;
+  // A reload imports the file again only when it changed. The server loads plugins once.
+  if (configInUse !== undefined && config !== configInUse) {
+    console.warn(`"${name}" changed. Restart "bun bake" to use the new plugins.`);
+  }
+  configInUse ??= config;
   if ($isCallable(config)) config = await config({ mode: "development" });
   if (config === null || typeof config !== "object") {
     throw new TypeError(`"${name}" must have a default export: a config object, or a function that returns one.`);
@@ -191,6 +199,16 @@ async function loadAppServer(
   return { file, server, routes, fetch };
 }
 
+/**
+ * Prints the message of `error` and exits. An error that a change to `app/server.ts` or
+ * `bake.config.ts` can fix is thrown instead: the process waits for that change and reloads. These
+ * come from the arguments or from files that `bun bake` does not load, so no change reloads it.
+ */
+function exitWith(error: any): never {
+  console.error(`error: ${error?.message ?? error}`);
+  process.exit(1);
+}
+
 async function start() {
   const flags = defaultServeFlags();
   // There is no entry module, so the arguments start at argv[1], as for `bun -e`.
@@ -200,10 +218,13 @@ async function start() {
       console.log(help);
       process.exit(0);
     }
-    const used = parseServeFlag(argv, i, flags);
-    if (used === 0) {
-      throw new Error(`Unknown argument "${arg}". Run "bun bake --help" for the usage.`);
+    let used: number;
+    try {
+      used = parseServeFlag(argv, i, flags);
+    } catch (error) {
+      exitWith(error);
     }
+    if (used === 0) exitWith(`Unknown argument "${arg}". Run "bun bake --help" for the usage.`);
     i += used;
   }
 
@@ -211,10 +232,10 @@ async function start() {
   const config = await loadConfig(cwd);
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
-  const pages = await loadPages(path.join(cwd, "app", "pages"));
+  const pages = await loadPages(path.join(cwd, "app", "pages")).catch(exitWith);
   const app = await loadAppServer(cwd);
   if (pages.length === 0 && app === undefined) {
-    throw new Error(`Nothing to serve in "${cwd}": there are no pages in app/pages/ and no app/server.ts.`);
+    exitWith(`Nothing to serve in "${cwd}": there are no pages in app/pages/ and no app/server.ts.`);
   }
 
   const routes: Record<string, unknown> = {};

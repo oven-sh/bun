@@ -1057,10 +1057,11 @@ describe("Bun.Transpiler", () => {
           "x = <out,>(y) => y": "x = (y) => y;\n",
           "x = async <out,>(y) => y": "x = async (y) => y;\n",
           "x = async <out extends string ? 1 : 2>(y)": "x = async(y);\n",
+          // A JSX element named "out" on the right of "<" closes a type parameter
+          // list inside an attempt at type arguments that fails later.
+          "x = a < <out T></out>":
+            'x = a < jsxDEV_7x81h0kn("out", {\n  T: true\n}, undefined, false, undefined, this);\n',
         });
-        // A JSX element named "out" on the right of "<" closes a type parameter
-        // list inside an attempt at type arguments that fails later.
-        expect(run("x = a < <out T></out>", "tsx")).toStartWith("x = a < jsx");
       });
 
       it.each(["ts", "tsx"])("out is the name of a type parameter when no word follows it on its line (%s)", loader => {
@@ -1133,9 +1134,12 @@ describe("Bun.Transpiler", () => {
           'x = a < b > import\n--> c\n("y")': warning,
         });
         check("js", { "for (async\n--> c\nin {});": warning });
-        check("tsx", { "var x = <\n--> c\nT,>(a: T) => a;": warning });
-        // The attempt at type arguments reads "--> t" as a comment. It is the text of the element.
-        expect(run("x = a < <b>\n--> t</b>", "tsx")).toStartWith("x = a < jsx");
+        check("tsx", {
+          "var x = <\n--> c\nT,>(a: T) => a;": warning,
+          // The attempt at type arguments reads "--> t" as a comment. It is the text of the element.
+          "x = a < <b>\n--> t</b>":
+            'x = a < jsxDEV_7x81h0kn("b", {\n  children: "--> t"\n}, undefined, false, undefined, this);\n',
+        });
         // The lookahead for a TSX arrow function logs the error of the escaped
         // name. The attempt that reads the name next does not, so the error stays.
         check("tsx", {

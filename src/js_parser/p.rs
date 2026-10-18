@@ -8191,12 +8191,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// expression can be undone with [`Self::restore_parser_snapshot`]. The
     /// lexer-only backtracking in `parse_skip_typescript.rs` only covers
     /// types: an expression also declares symbols, pushes scopes and records
-    /// dynamic imports. The log goes back with the lexer snapshot, because
-    /// `P::log()` ignores `lexer.is_log_disabled`. Lists are captured as
-    /// lengths and truncated on restore; the attempt's arena allocations just
-    /// become unreachable. The legal comments waiting for the next statement
-    /// are moved out instead: a block body or `import()` drains them, so a
-    /// length cannot restore them.
+    /// dynamic imports. Lists are captured as lengths and truncated
+    /// on restore; the attempt's arena allocations just become unreachable.
+    /// The legal comments waiting for the next statement are moved out
+    /// instead: a block body or `import()` drains them, so a length cannot
+    /// restore them.
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
         let comments_to_preserve_before =
             core::mem::take(&mut self.lexer.comments_to_preserve_before);

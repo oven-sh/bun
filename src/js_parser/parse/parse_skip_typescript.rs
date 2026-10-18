@@ -1210,17 +1210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if self.lexer.is_contextual_keyword(b"out") {
-                    // Where variance annotations are not allowed, "out" is a
-                    // modifier only when the word it modifies follows on the same
-                    // line, which is the rule of the TypeScript compiler. Otherwise
-                    // it is the name of the type parameter.
-                    // Valid:
-                    //   "function foo<out>() {}"
-                    //   "function foo<out, T>() {}"
-                    //   "function foo<const out = T>() {}"
-                    // Invalid:
-                    //   "function foo<out T>() {}"
-                    //   "function foo<out extends T>() {}"
+                    // As in tsc, "out" is the name unless a word follows it on the same line.
                     if !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
                         && !self.word_follows_on_same_line()
                     {
@@ -1474,11 +1464,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Both return `Err` only for stack and memory exhaustion, which are not properties of the attempt. If they counted as a failed
     // attempt, the caller would parse the same text another way, and where that way needs less stack per level it would end in an
     // ordinary syntax error for valid code.
-    //
-    // A failed attempt leaves nothing in the log. The lexer logs no error while `lexer.is_log_disabled` is set, but `P::log()`
-    // and the lexer's warnings ignore that flag, so `Lexer::restore` truncates the log to its length at the snapshot.
-    // An attempt that is kept keeps what it logged, because its tokens are not parsed a second time. An error that the lexer
-    // did not log during it, and that did not end it, is lost.
 
     #[inline]
     fn lexer_backtracker_bool<F, R>(&mut self, func: F) -> Result<bool, Error>

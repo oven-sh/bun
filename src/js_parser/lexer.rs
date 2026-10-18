@@ -137,9 +137,8 @@ pub struct ScanResult<'a> {
 /// ```
 ///
 /// This struct is `Copy` and intentionally excludes `source`, `arena`
-/// (shared/unique borrows that never change across a backtrack) and the
-/// growable buffers: the three `Vec`s and the messages of the `Log` are
-/// captured as lengths only, and `restore()` truncates them.
+/// (shared/unique borrows that never change across a backtrack) and the three
+/// growable `Vec` buffers (captured as lengths only — `restore()` truncates).
 #[derive(Clone, Copy)]
 pub struct LexerSnapshot<'a> {
     pub(crate) current: usize,
@@ -365,9 +364,8 @@ impl<'a> Lexer<'a> {
     }
 
     /// Rewind to a prior `snapshot()`: copy each scalar field and
-    /// truncate the Vecs and the log to their snapshotted lengths. The scan
-    /// that reads the text again logs what there is to log about it.
-    /// `source`/`arena` are left untouched.
+    /// truncate the Vecs to their snapshotted lengths. `source`/`arena`
+    /// are left untouched.
     pub(crate) fn restore(&mut self, original: &LexerSnapshot<'a>) {
         // Keep this field list in sync with `snapshot()` and the Lexer struct fields.
         self.current = original.current;

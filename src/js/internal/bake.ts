@@ -222,9 +222,10 @@ async function loadAppServer(
 /** How many times `start()` ran: once, then once more for each reload. */
 let runs = 0;
 /**
- * Whether this process is a restart: a new process that a change started, not the first start.
- * Under `--check` every change restarts; otherwise only a change to `bake.config.ts` does. An error
- * at the start of a restart waits for a fix instead of exiting, since the session goes on.
+ * Whether this process is a restart of `bun bake --check`: a new process that a change started, not
+ * the first start. An error at its start waits for a fix instead of exiting, since the session goes
+ * on and the type checker watches the project. A restart for a change to `bake.config.ts` counts as
+ * a first start.
  */
 let restarted = false;
 
@@ -250,7 +251,11 @@ async function start() {
 
   const cwd = process.cwd();
   const config = await loadConfig(cwd);
-  if (configKeyInServer !== undefined && config.key !== configKeyInServer) restartProcess();
+  if (configKeyInServer !== undefined && config.key !== configKeyInServer) {
+    restartProcess();
+    // It returns only when the restart failed. The server keeps its plugins.
+    console.warn(`Could not start "bun bake" again. Restart it to use the new plugins of "${config.name}".`);
+  }
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
   const pages = await loadPages(path.join(cwd, "app", "pages"));

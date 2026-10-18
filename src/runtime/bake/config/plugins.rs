@@ -30,9 +30,8 @@ const RESTART_ENV_VAR: &bun_core::ZStr = bun_core::zstr!("BUN_INTERNAL_BAKE_REST
 
 static RESTARTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// `bun bake`, before the type check: records whether this process is a restart after a change
-/// (any change under `--check`, a change to `bake.config.ts` otherwise), and marks the environment
-/// for the next restart. On Windows, a manager process starts
+/// `bun bake --check`, before the type check: records whether this process is a restart after a
+/// change, and marks the environment for the next restart. On Windows, a manager process starts
 /// every run with the same environment, so no run is seen as a restart there.
 pub(crate) fn mark_restart() {
     #[cfg(not(windows))]
@@ -46,7 +45,7 @@ pub(crate) fn mark_restart() {
     }
 }
 
-/// `isRestart()`: whether this process is `bun bake` started again after a change.
+/// `isRestart()`: whether this process is `bun bake --check` started again after a change.
 pub(crate) fn is_restart(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::from(
         RESTARTED.load(core::sync::atomic::Ordering::Relaxed),
@@ -55,6 +54,8 @@ pub(crate) fn is_restart(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResu
 
 /// `restartProcess()`: starts `bun bake` again with the same arguments, after a change to
 /// `bake.config.ts`. The server loads plugins once, so only a new process gets the new ones.
+/// Returns `false` when the restart failed (the error is printed); the server keeps running.
 pub(crate) fn restart_process(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    global.bun_vm().as_mut().restart_process()
+    global.bun_vm().as_mut().restart_process(true);
+    Ok(JSValue::FALSE)
 }

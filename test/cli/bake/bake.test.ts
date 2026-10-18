@@ -636,10 +636,10 @@ test.concurrent("bun bake starts again when bake.config.ts changes, and only the
       },
     }],
   };`;
-  // \`globalThis\` lives through a reload in place, not through a new process.
+  // \`globalThis\` lives through a reload in place, not through a new process: the id tells them apart.
   const server = (version: string) =>
-    `globalThis.loads = (globalThis.loads ?? 0) + 1;
-    export default { fetch: () => new Response("${version} " + globalThis.loads) };`;
+    `globalThis.processId ??= crypto.randomUUID();
+    export default { fetch: () => new Response("${version} " + globalThis.processId) };`;
   using dir = tempDir("bake-command-config-change", {
     "bake.config.ts": config("first"),
     "app/server.ts": server("v1"),
@@ -651,17 +651,63 @@ test.concurrent("bun bake starts again when bake.config.ts changes, and only the
   const output = collectOutput(proc);
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
   expect(await getPageCss(url, "/")).toContain(".first");
+  const [, , firstId] = (await get(url, "/missing")).split(" ");
 
   // A change to another file reloads in place, although it evaluates bake.config.ts again.
   await Bun.write(join(String(dir), "app/server.ts"), server("v2"));
-  await output.waitFor(/url: [\s\S]*url: /);
-  expect(await get(url, "/missing")).toBe("200 v2 2");
+  let body = await get(url, "/missing");
+  while (!body.includes("v2")) body = await get(url, "/missing");
+  expect(body).toBe(`200 v2 ${firstId}`);
 
-  // A change to bake.config.ts starts a new process, which loads the new plugins.
+  // A change to bake.config.ts starts a new process, which loads the new plugins. Its URL is the
+  // first one printed after the write.
+  const before = output.text.length;
   await Bun.write(join(String(dir), "bake.config.ts"), config("second"));
-  const [, next] = await output.waitFor(/url: [\s\S]*url: [\s\S]*url: (http:\/\/\S+)/);
-  expect(await get(next, "/missing")).toBe("200 v2 1");
+  await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*url: http`));
+  const next = output.text.slice(before).match(/url: (http:\/\/\S+)/)![1];
+  const [, nextVersion, nextId] = (await get(next, "/missing")).split(" ");
+  expect(nextVersion).toBe("v2");
+  expect(nextId).not.toBe(firstId);
   expect(await getPageCss(next, "/")).toContain(".second");
+});
+
+// Windows has no signal handlers to run before a restart.
+test.concurrent.skipIf(isWindows)(
+  "bun bake runs the SIGTERM handlers before it starts again for bake.config.ts",
+  async () => {
+    using dir = tempDir("bake-command-config-sigterm", {
+      "bake.config.ts": `export default { plugins: [] };`,
+      "app/server.ts": `
+      process.on("SIGTERM", () => console.log("SIGTERM before restart"));
+      export default { fetch: () => new Response("ok") };
+    `,
+    });
+
+    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+    await output.waitFor(/SIGTERM before restart/);
+  },
+);
+
+test.concurrent("bun bake exits when a start for a bake.config.ts change finds a page it cannot serve", async () => {
+  using dir = tempDir("bake-command-config-restart-error", {
+    "bake.config.ts": `export default { plugins: [] };`,
+    "app/pages/index.html": page,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: /);
+
+  // No file that the new process loads could fix the page name, so it exits as at a first start.
+  await Bun.write(join(String(dir), "app/pages/[slug].html"), page);
+  await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+  await output.waitFor(/a page cannot have/);
+
+  expect(await proc.exited).toBe(1);
 });
 
 // Windows has no signal handlers to run before a restart.

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
+import type { AddressInfo } from "node:net";
 import { createServer as createTlsServer } from "node:tls";
 import { basename, dirname, join } from "path";
 import { TestRegistry } from "registry";
@@ -5539,7 +5540,7 @@ describe.concurrent("a config folder where no file can be is a missing file", ()
   const share = "\\\\127.0.0.1\\nope\\x";
   test
     .skipIf(!isWindows)
-    .each([
+    .each<Record<string, string>>([
       { XDG_CONFIG_HOME: "/home/u/.config" },
       { USERPROFILE: "/home/u" },
       { XDG_CONFIG_HOME: share },

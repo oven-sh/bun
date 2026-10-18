@@ -30,6 +30,7 @@ import {
   tempDir,
   unprivilegedSpawnOptions,
   writeBinCommand,
+  type DirectoryTree,
 } from "harness";
 import { mkfifo } from "mkfifo";
 import { constants } from "os";
@@ -1078,7 +1079,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
     return { err, exitCode };
   }
 
-  test.concurrent.each([
+  test.concurrent.each<{ args: string[]; left: string[] }>([
     { args: [], left: ["index.js", "package.json"] },
     { args: ["--destination=out"], left: ["index.js", "out", "package.json"] },
     { args: ["--filename=custom.tgz"], left: ["index.js", "package.json"] },
@@ -4898,7 +4899,7 @@ describe.concurrent.skipIf(isWindows)("an entry that is there and does not open"
   const manifest = (name: string, fields: object = {}) => JSON.stringify({ name, version: "1.0.0", ...fields });
   const bundlesDep1 = manifest("pack-locked", { bundledDependencies: ["dep1"] });
 
-  test.each([
+  test.each<{ what: string; locked: string; failsOn: string; tree: DirectoryTree }>([
     {
       // Before, the hoisted copy, another version, was bundled in its place.
       what: "the nested copy of a dependency of a bundled dependency",
@@ -5353,7 +5354,15 @@ long syscall(long nr, ...) {
 
   const index = "module.exports = 1;";
 
-  test.concurrent.each([
+  test.concurrent.each<{
+    walk: string;
+    packageJson: object;
+    files: Record<string, string>;
+    dir: string;
+    reader?: number;
+    read?: "end";
+    args?: string[];
+  }>([
     // One row for each loop that reads a directory. `dir` is the directory whose first read fails.
     { walk: "the default walk, a subdirectory", packageJson: {}, files: { "lib/index.js": index }, dir: "lib" },
     // The resolver reads the package root before pack does: pack is the second reader.

@@ -589,7 +589,7 @@ describe("Headers", () => {
         ["Set-Cookie", "b=2"],
         ["Accept", "*/*"],
       ]);
-      const expected = [
+      const expected: [string, string][] = [
         ["accept", "*/*"],
         ["x-last", "1"],
         ["set-cookie", "a=1"],
@@ -898,7 +898,7 @@ describe("Headers", () => {
         return iterator;
       })();
       Bun.gc(true);
-      expect([...iterator]).toEqual(
+      expect([...iterator]).toEqual<string[][]>(
         Array.from({ length: 32 }, (_, i) => [`x-custom-${i}`, valueOf(i)]).sort((a, b) => byCodeUnit(a[0], b[0])),
       );
     });

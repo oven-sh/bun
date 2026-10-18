@@ -2713,7 +2713,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
 
   it("from a plain object", async () => {
     const opened: string[] = [];
-    using server = serve({
+    using server = serve<string>({
       port: 0,
       hostname: "127.0.0.1",
       fetch(req, srv) {
@@ -2744,7 +2744,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
       },
     });
 
-    const lines = await rawHandshake(server.port);
+    const lines = await rawHandshake(server.port!);
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     expect(fields(lines)).toEqual(
       [
@@ -2775,7 +2775,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
       websocket: { message() {} },
     });
 
-    const lines = await rawHandshake(server.port, { "Sec-WebSocket-Protocol": "superchat, chat" });
+    const lines = await rawHandshake(server.port!, { "Sec-WebSocket-Protocol": "superchat, chat" });
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     // Sec-WebSocket-Protocol in options.headers picks the subprotocol.
     // upgrade() writes it exactly once.
@@ -2811,7 +2811,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
       },
       websocket: { message() {} },
     });
-    const lines = await rawHandshake(server.port);
+    const lines = await rawHandshake(server.port!);
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     expect(fields(lines)).toEqual(["connection: Upgrade", `sec-websocket-accept: ${ACCEPT}`, "upgrade: websocket"]);
   });
@@ -2827,7 +2827,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
       },
       websocket: { message() {} },
     });
-    const lines = await rawHandshake(server.port, { "Sec-WebSocket-Protocol": "superchat, chat" });
+    const lines = await rawHandshake(server.port!, { "Sec-WebSocket-Protocol": "superchat, chat" });
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     expect(fields(lines)).toEqual(["connection: Upgrade", `sec-websocket-accept: ${ACCEPT}`, "upgrade: websocket"]);
     // Control: without Sec-WebSocket-Protocol in options.headers, the first offered subprotocol is selected.
@@ -2846,7 +2846,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
       },
       websocket: { perMessageDeflate: true, message() {} },
     });
-    const lines = await rawHandshake(server.port);
+    const lines = await rawHandshake(server.port!);
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     expect(fields(lines)).toEqual(["connection: Upgrade", `sec-websocket-accept: ${ACCEPT}`, "upgrade: websocket"]);
   });
@@ -3545,7 +3545,7 @@ describe.concurrent("ServerWebSocket argument validation", () => {
 
   it("a close handler that passes undefined to unsubscribe() and send() runs to its end", async () => {
     const finished = Promise.withResolvers<unknown[]>();
-    using server = serve({
+    using server = serve<{ room?: string; farewell?: string }>({
       port: 0,
       hostname: "127.0.0.1",
       fetch(req, server) {
@@ -3732,7 +3732,7 @@ describe.concurrent.each([
       opened: Promise.withResolvers<ServerWebSocket<string>>(),
       closed: Promise.withResolvers<[number, string, number]>(),
     };
-    const server = serve({
+    const server = serve<string>({
       port: 0,
       hostname: "127.0.0.1",
       tls: secure ? tlsCert : undefined,

@@ -311,7 +311,7 @@ it("should report when all packages are already cached", async () => {
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 });
 
-describe.each([
+describe.each<{ title: string; flags: string[]; bunfig: string }>([
   { title: "--dry-run", flags: ["--dry-run"], bunfig: "" },
   { title: "dryRun = true in bunfig.toml", flags: [], bunfig: "dryRun = true\n" },
 ])("$title", ({ flags, bunfig }) => {

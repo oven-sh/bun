@@ -1695,7 +1695,7 @@ describe("the trusted set", () => {
         files: {
           "package.json": { name: "foo", workspaces: ["packages/*"] },
           "packages/a/package.json": { name: "a", dependencies: { tok: "link:../../vendor/tok" } },
-        },
+        } as Files,
       },
       {
         title: "a name registered with bun link",

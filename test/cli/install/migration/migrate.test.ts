@@ -2668,7 +2668,7 @@ describe("package-lock.json migration fixes", () => {
 
     // npm deduplicated a local folder's `files` onto the hoisted link into file-dep. Each dependent needs its own
     // form of the row: file-dep's is read relative to file-dep, the local folder's relative to the project.
-    test.concurrent.each([
+    test.concurrent.each<string[]>([
       ["file-dep", "local"],
       ["local", "file-dep"],
     ])("a local folder sharing the directory gets the project-relative row (%s linked first)", async (...order) => {

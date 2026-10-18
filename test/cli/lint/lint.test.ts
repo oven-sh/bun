@@ -660,6 +660,7 @@ describe.concurrent("bun lint", () => {
     const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\nawait (z);\n"]));
     const config = { categories: { correctness: "off" }, rules: { "no-undef": "error" } };
     const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    type Diagnostic = { filename: string; code?: string; message: string; labels: { span: Record<string, number> }[] };
     const found: Record<string, string> = Object.fromEntries(cases.map(({ name }) => [name, "the operator"]));
     for (const { filename, code, message } of JSON.parse(raw).diagnostics as Diagnostic[]) {
       if (code !== "eslint(no-undef)") found[filename] = message;
@@ -1013,7 +1014,7 @@ describe.concurrent("bun lint", () => {
       ...it,
       labels: it.labels.map(({ span }) => [span.offset, span.length]),
     }));
-    expect(diagnostics).toEqual([
+    expect(diagnostics).toEqual<Record<string, unknown>[]>([
       {
         "message": "Constructor implementation is missing.",
         "code": "TS(2390)",
@@ -9411,7 +9412,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           );
         }
         if (isWindows) rows.push([withSmallDrive(root), []], [root, ["src\\a.ts"]]);
-        const results = [];
+        const results: { cwd: string; args: string[]; found: string[]; exitCode: number }[] = [];
         for (const [cwd, args] of rows) {
           const { found, exitCode } = await problems(cwd, args);
           results.push({ cwd, args, found, exitCode });
@@ -9444,7 +9445,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "--fix in several passes, and --stdin, however the path is spelled",
       async () => {
         const names = foldsCase ? ["src/a.ts", "SRC/A.ts"] : ["src/a.ts"];
-        const results = [];
+        const results: { name: string; left: string[]; text: string; piped: string[]; exitCodes: number[] }[] = [];
         for (const name of names) {
           using dir = tempDir("bun-lint", respelled("declare const text: string;\nexport const a = text!!;\n"));
           const fixed = await problems(String(dir), ["--fix", name]);
@@ -9485,7 +9486,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         const root = String(dir);
         const args = ["-c", join(root, ".oxlintrc.json"), "--type-aware", "-f", "unix", join(root, "a.ts")];
         const from = [root, parse(root).root, ...(isWindows ? [inUpperCase(root), withSmallDrive(root)] : [])];
-        const results = [];
+        const results: { cwd: string; stdout: string; exitCode: number }[] = [];
         for (const cwd of from) {
           await using proc = spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
           const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -11093,7 +11094,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
   }
 
   test("--cwd before lint, and the flags of BUN_OPTIONS, which are not the linter's", async () => {
-    const results = await Promise.all([
+    const results: { stdout: string; exitCode: number }[] = await Promise.all([
       bun(files, ["--cwd=sub", "lint", "-f", "unix"]),
       bun(files, ["--silent", "lint", "-f", "unix", "sub"]),
       bun(files, ["lint", "-f", "unix", "sub"], { BUN_OPTIONS: "--silent --no-install" }),
@@ -12162,7 +12163,7 @@ describe.concurrent("nativePluginRules", () => {
   });
 
   describe.each(["eslint.config.js", ".eslintrc.json"])("react: %s", kind => {
-    const config = (rules: Record<string, string>) =>
+    const config = (rules: Record<string, string>): Record<string, string> =>
       kind === "eslint.config.js"
         ? {
             "eslint.config.js": `module.exports = [{

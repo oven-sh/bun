@@ -3971,11 +3971,11 @@ fn existing_peer_target(
     .then_some(highest)
 }
 
-/// A peer shares `copy` if a package above the peer's declaring package names it too, as a peer or
-/// not: `react@17` in a workspace serves every library below that workspace, and a UI kit with the
-/// peer `react` uses one `react` together with the libraries it depends on. It also shares a `copy`
-/// that was itself installed for a peer. A copy that is only there as the dependency of unrelated
-/// packages is not meant for it.
+/// A peer shares `copy` if a package above the peer's declaring package depends on that name:
+/// `react@17` in a workspace serves every library below that workspace. It also shares a `copy` that
+/// fits another package's peer or was installed for one: `@octokit/rest` and its plugins use one
+/// `@octokit/core`, and a second one at the top of `node_modules` would part them. A copy that is
+/// only there as the dependency of unrelated packages is not meant for it.
 fn may_use_copy_out_of_range(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
@@ -3987,13 +3987,25 @@ fn may_use_copy_out_of_range(
     let Some(package) = lockfile.get_parent_pkg_of_dependency(row) else {
         return true;
     };
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let installed = &lockfile.packages.items_resolution()[copy as usize];
+    let fits = |id: DependencyID, dep: &Dependency| {
+        installed.tag == ResolutionTag::Npm
+            && crate::dedupe::effective_npm_range(lockfile, id, dep).is_some_and(|range| {
+                (range.npm().version).satisfies(installed.npm().version, buf, buf)
+            })
+    };
     let mut is_a_dependency = false;
     let mut have_the_name: Vec<PackageID> = Vec::new();
     for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
         for id in list.begin()..list.end() {
             let dep = &deps[id as usize];
             if dep.name_hash == name_hash && id != row {
-                have_the_name.push(owner as PackageID);
+                if !dep.behavior.is_peer() {
+                    have_the_name.push(owner as PackageID);
+                } else if fits(id, dep) {
+                    return true;
+                }
             }
             is_a_dependency |= !dep.behavior.is_peer() && resolutions[id as usize] == copy;
         }

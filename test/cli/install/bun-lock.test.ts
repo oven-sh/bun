@@ -4474,6 +4474,54 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.5" },
   },
   {
+    // p and r lead to each other and have the same peer. Neither provides it, so o's copy is for neither.
+    shape: "p peers z@^2.0.0 and -> r, r peers z@^2.0.0 and p, o -> z@1.0.5",
+    manifests: {
+      o: { "1.0.0": { dependencies: { z: "1.0.5" } } },
+      p: { "1.0.0": { dependencies: { r: "1.0.0" }, peerDependencies: { z: "^2.0.0" } } },
+      r: { "1.0.0": { peerDependencies: { p: "1.0.0", z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { o: "1.0.0", p: "1.0.0" } } },
+    orders: {
+      "r's manifest last": [{ manifest: "r", until: "/z" }],
+      "o's manifest last": [{ manifest: "o", until: "/p" }],
+    },
+    z: { "z": "z@1.0.5", "p/z": "z@2.0.0", "r/z": "z@2.0.0" },
+  },
+  {
+    // s and the b it depends on use one z. A second z for p would be first at the top, where b finds it.
+    shape: "s -> z@^1.0.0 and b, b peers z@>=1.0.0, p peers z@^2.0.0",
+    manifests: {
+      b: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } },
+      p: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      s: { "1.0.0": { dependencies: { b: "1.0.0", z: "^1.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { p: "1.0.0", s: "1.0.0" } } },
+    orders: {
+      "s's manifest last": [{ manifest: "s", until: "/p-1.0.0.tgz" }],
+      "p's manifest last": [{ manifest: "p", until: "/s" }],
+    },
+    z: { "z": "z@1.1.0" },
+  },
+  {
+    // t is above r and has the same peer, which o's copy does not fit either.
+    shape: "r peers z@^2.0.0, t peers z@^2.0.0 and -> r, o -> z@1.0.5",
+    manifests: {
+      o: { "1.0.0": { dependencies: { z: "1.0.5" } } },
+      r: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      t: { "1.0.0": { dependencies: { r: "1.0.0" }, peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { o: "1.0.0", r: "1.0.0", t: "1.0.0" } } },
+    orders: {
+      "t's manifest last": [{ manifest: "t", until: "/r-1.0.0.tgz" }],
+      "r's manifest last": [{ manifest: "r", until: "/t" }],
+    },
+    z: { "z": "z@1.0.5", "r/z": "z@2.0.0", "t/z": "z@2.0.0" },
+  },
+  {
     // Nothing above r names z, so o's copy is not for it.
     shape: "r peers z@^2.0.0, o -> z@1.0.5",
     manifests: {

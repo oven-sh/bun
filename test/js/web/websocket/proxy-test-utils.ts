@@ -3,10 +3,30 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
+import { afterAll, beforeAll, expect } from "bun:test";
 import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
+
+/**
+ * NO_PROXY applies to explicit proxies too. An ambient NO_PROXY=localhost,127.0.0.1,... would bypass
+ * the proxy tests in the calling describe block (or file).
+ */
+export function ignoreAmbientNoProxy() {
+  const prevNoProxy = process.env.NO_PROXY;
+  const prevNoProxyLower = process.env.no_proxy;
+  beforeAll(() => {
+    process.env.NO_PROXY = "";
+    process.env.no_proxy = "";
+  });
+  afterAll(() => {
+    if (prevNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = prevNoProxy;
+    if (prevNoProxyLower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = prevNoProxyLower;
+  });
+}
 
 /** One CONNECT request as the proxy read it. Header names are lowercased. */
 export interface ConnectRequest {
@@ -18,6 +38,8 @@ export interface ConnectProxyOptions {
   requireAuth?: boolean;
   /** Terminate TLS in front of the proxy (an HTTPS proxy), with the harness certificate. */
   tls?: boolean;
+  /** Extra options for that TLS server, e.g. `requestCert`. */
+  tlsOptions?: tls.TlsOptions;
   /** Observes every CONNECT request the proxy reads, before the proxy answers it. */
   onConnectRequest?: (request: ConnectRequest) => void;
   /**
@@ -139,7 +161,7 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
   };
 
   return options.tls
-    ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, onClient)
+    ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert, ...options.tlsOptions }, onClient)
     : net.createServer(onClient);
 }
 
@@ -180,6 +202,7 @@ export function departure(socket: net.Socket): Promise<Departure> {
 export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   const requests: ConnectRequest[] = [];
   const sni: (string | null)[] = [];
+  const clientCertificates: (string | null)[] = [];
   const departures: Promise<Departure>[] = [];
   let connections = 0;
   const proxy = createConnectProxy({
@@ -194,6 +217,7 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   });
   proxy.on("secureConnection", (socket: tls.TLSSocket) => {
     sni.push(socket.servername || null);
+    clientCertificates.push((socket.getPeerCertificate().subject?.CN as string | undefined) ?? null);
   });
   proxy.on(options.tls ? "secureConnection" : "connection", (socket: net.Socket) => {
     departures.push(departure(socket));
@@ -204,6 +228,8 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
     requests,
     /** With `tls: true`, the SNI of every handshake the proxy completed. `null` when the client sent none. */
     sni,
+    /** With `requestCert`, the CN of the client certificate of every handshake. `null` when the client sent none. */
+    clientCertificates,
     /** One per connection the proxy accepted so far. Each resolves when that connection is gone. */
     departures,
     get connections() {
@@ -266,7 +292,8 @@ export async function startRawWssServer(
  * A TLS 1.2 wss:// server that renegotiates once: before it answers the upgrade,
  * when the upgrade client owns the connection, or on the client's first frame,
  * when the connected client does. After the client's first frame (and that
- * renegotiation) it sends "after renegotiation". It runs in real node because a
+ * renegotiation) it sends "after renegotiation", then replies to the client's next
+ * frame (its Close frame) with Close 1000. It runs in real node because a
  * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
  */
 export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101") {
@@ -286,6 +313,7 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
             const greet = () => {
               const payload = Buffer.from("after renegotiation");
               socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+              socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
             };
             let head = "";
             const onHead = chunk => {
@@ -368,6 +396,20 @@ export function clientEvents(ws: WebSocket): Promise<ClientEvent[]> {
 }
 
 /**
+ * Resolves with "open", or with the `error` event's message without the "... failed: " prefix. With
+ * `until: "message"`, waits for the first message and resolves with its data. Terminates `ws` afterwards.
+ */
+export function openOrFailure(ws: WebSocket, until: "open" | "message" = "open"): Promise<string> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  ws.addEventListener(until, event => resolve(until === "open" ? "open" : String((event as MessageEvent).data)));
+  ws.addEventListener("error", event =>
+    resolve((event as ErrorEvent).message.replace(/^WebSocket connection to '[^']*' failed: /, "")),
+  );
+  ws.addEventListener("close", event => resolve(`close ${event.code} ${event.reason}`));
+  return promise.finally(() => ws.terminate());
+}
+
+/**
  * Sends `message` once open and closes after the echo arrives. A working
  * tunnel to an echo server produces `echoed(message)`.
  */
@@ -393,10 +435,14 @@ export function echoed(message: string): ClientEvent[] {
   return ["connected", message, { code: 1000, reason: "", wasClean: true }];
 }
 
-/** A connection the proxy refused, or whose TLS handshake with the proxy failed. */
-export function failed(url: string, reason: string, code: number): ClientEvent[] {
+/**
+ * Events of a connection that failed before it opened, e.g. the proxy rejected it or a TLS
+ * handshake failed. The error message is only matched up to `reason`, because TLS libraries
+ * append their own details.
+ */
+export function failed(url: string, reason: string): ClientEvent[] {
   return [
-    { error: `WebSocket connection to '${new URL(url).href}' failed: ${reason}` },
-    { code, reason, wasClean: false },
+    { error: expect.stringContaining(`WebSocket connection to '${new URL(url).href}' failed: ${reason}`) },
+    { code: 1006, reason: "", wasClean: false },
   ];
 }

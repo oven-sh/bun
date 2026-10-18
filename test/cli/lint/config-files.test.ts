@@ -5644,7 +5644,7 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     const { problems, stderr, exitCode } = await lint(files);
     expect(problems).toEqual(["a.js:1:1 no-var"]);
     expect(stderr).toContain(
-      "4 files were not linted because bun lint only supports JavaScript and TypeScript (3 *.one, 1 *.two): b.one, c.one, d.one, ..",
+      "4 files were not linted because they need eslint, which is not installed (3 *.one, 1 *.two): b.one, c.one, d.one, ..\n  Run bun add -d eslint",
     );
     expect(exitCode).toBe(2);
     expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);

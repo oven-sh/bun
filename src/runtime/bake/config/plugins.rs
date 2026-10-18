@@ -54,8 +54,11 @@ pub(crate) fn is_restart(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResu
 
 /// `restartProcess()`: starts `bun bake` again with the same arguments, after a change to
 /// `bake.config.ts`. The server loads plugins once, so only a new process gets the new ones.
-/// Returns `false` when the restart failed (the error is printed); the server keeps running.
+/// When the restart fails, `reload_process` prints why and this exits 1: the kill signal handlers
+/// have run and the signal dispositions are reset, so the server cannot go on.
 pub(crate) fn restart_process(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     global.bun_vm().as_mut().restart_process(true);
-    Ok(JSValue::FALSE)
+    // Not `process.exit()`: during a restart it tries the restart again, and panics when it fails.
+    bun_core::Output::flush();
+    bun_core::Global::exit(1);
 }

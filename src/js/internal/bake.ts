@@ -32,12 +32,12 @@ Serves the app in the working directory, with hot reloading:
   app/pages/**/*.html   Pages. The path is the URL: app/pages/docs/index.html is /docs.
   bake.config.ts        Optional. Build plugins, as Bun plugins:
                         export default defineConfig({ plugins: [...] }), with
-                        defineConfig from "bun:bake". Restart after you change it.
-
-Changes to app/server.ts and the files it imports apply without a restart.
+                        defineConfig from "bun:bake". "bun bake" starts again when it changes.
   app/server.ts         Optional. Its default export holds options of Bun.serve(), as
                         for \`export default\` in \`bun app.ts\` (a Hono app works). "fetch"
                         gets the requests that no page and no route matched.
+
+Changes to app/server.ts and the files it imports apply without a restart.
 
 Options:
 
@@ -252,9 +252,8 @@ async function start() {
   const cwd = process.cwd();
   const config = await loadConfig(cwd);
   if (configKeyInServer !== undefined && config.key !== configKeyInServer) {
+    // Does not return: on a failure it prints the error and exits.
     restartProcess();
-    // It returns only when the restart failed. The server keeps its plugins.
-    console.warn(`Could not start "bun bake" again. Restart it to use the new plugins of "${config.name}".`);
   }
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);

@@ -659,38 +659,39 @@ test.concurrent("bun bake starts again when bake.config.ts changes, and only the
   while (!body.includes("v2")) body = await get(url, "/missing");
   expect(body).toBe(`200 v2 ${firstId}`);
 
-  // A change to bake.config.ts starts a new process, which loads the new plugins. Its URL is the
-  // first one printed after the write.
+  // A change to bake.config.ts starts a new process, which loads the new plugins. A late reload in
+  // place can print a URL after the write too, so the new process is the URL that answers with
+  // another id. The URL of the old process may not answer at all.
   const before = output.text.length;
   await Bun.write(join(String(dir), "bake.config.ts"), config("second"));
-  await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*url: http`));
-  const next = output.text.slice(before).match(/url: (http:\/\/\S+)/)![1];
-  const [, nextVersion, nextId] = (await get(next, "/missing")).split(" ");
-  expect(nextVersion).toBe("v2");
-  expect(nextId).not.toBe(firstId);
+  let next: string;
+  let nextBody: string;
+  for (let count = 1; ; count++) {
+    await output.waitFor(new RegExp(`^[\\s\\S]{${before}}(?:[\\s\\S]*?url: http){${count}}`));
+    next = [...output.text.slice(before).matchAll(/url: (http:\/\/\S+)/g)][count - 1][1];
+    nextBody = await get(next, "/missing").catch(() => "");
+    if (nextBody !== "" && !nextBody.endsWith(firstId)) break;
+  }
+  expect(nextBody).toStartWith("200 v2 ");
   expect(await getPageCss(next, "/")).toContain(".second");
 });
 
-// Windows has no signal handlers to run before a restart.
-test.concurrent.skipIf(isWindows)(
-  "bun bake runs the SIGTERM handlers before it starts again for bake.config.ts",
-  async () => {
-    using dir = tempDir("bake-command-config-sigterm", {
-      "bake.config.ts": `export default { plugins: [] };`,
-      "app/server.ts": `
+test.concurrent("bun bake runs the SIGTERM handlers before it starts again for bake.config.ts", async () => {
+  using dir = tempDir("bake-command-config-sigterm", {
+    "bake.config.ts": `export default { plugins: [] };`,
+    "app/server.ts": `
       process.on("SIGTERM", () => console.log("SIGTERM before restart"));
       export default { fetch: () => new Response("ok") };
     `,
-    });
+  });
 
-    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
-    const output = collectOutput(proc);
-    await output.waitFor(/url: /);
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: /);
 
-    await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
-    await output.waitFor(/SIGTERM before restart/);
-  },
-);
+  await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+  await output.waitFor(/SIGTERM before restart/);
+});
 
 test.concurrent("bun bake exits when a start for a bake.config.ts change finds a page it cannot serve", async () => {
   using dir = tempDir("bake-command-config-restart-error", {
@@ -710,7 +711,7 @@ test.concurrent("bun bake exits when a start for a bake.config.ts change finds a
   expect(await proc.exited).toBe(1);
 });
 
-// Windows has no signal handlers to run before a restart.
+// Windows has no SIGUSR2.
 test.concurrent.skipIf(isWindows)(
   "bun --watch-kill-signal ... bake --check sends that signal before a restart",
   async () => {

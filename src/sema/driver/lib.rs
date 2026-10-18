@@ -498,6 +498,9 @@ pub struct PlanOptions {
     /// With `shares_at_once`: there are no steps and no barriers. Every thread takes the next task of one list, and a task
     /// publishes on its own thread while the others run (`bun_sema::check::commit`).
     pub has_no_steps: bool,
+    /// With `has_no_steps`: a thread takes a run of consecutive files from the queue at a time, of the cost of what is left
+    /// divided by the number of threads and by this. 0: one file.
+    pub runs_per_thread: usize,
     /// With `has_no_steps`: when a task commits besides at its end.
     pub commit_policy: CommitPolicy,
     /// For tests of `shares_at_once` and `has_no_steps`.
@@ -578,6 +581,7 @@ impl Default for PlanOptions {
             orders_types_by_content: true,
             shares_at_once: true,
             has_no_steps: true,
+            runs_per_thread: 4,
             commit_policy: CommitPolicy {
                 entries: 1024,
                 ..CommitPolicy::default()
@@ -1227,6 +1231,8 @@ pub struct StepReport {
     /// `PlanOptions::has_no_steps`, summed over the tasks: how long they have waited for the mutex of the commits, have had
     /// it, and have waited for claims of variances.
     pub waits: [Duration; 3],
+    /// .. the tasks that were lost: the file that each was at, and why.
+    pub lost: Vec<(Vec<u8>, &'static str)>,
     /// How long threads had no task because the step was not over, summed over the threads.
     pub idle: Duration,
     /// The five tasks that took longest: wall time, the number of files, the path of the first file.
@@ -4810,6 +4816,7 @@ fn check_named_files(
                 in_link,
                 in_publish,
                 waits: [Duration::ZERO; 3],
+                lost: Vec::new(),
                 idle: (in_tasks * threads as u32)
                     .saturating_sub(Duration::from_nanos(busy.into_inner())),
                 entries,
@@ -4851,6 +4858,7 @@ fn check_named_files(
         logged: u64,
         stored: u64,
         waits: [Duration; 3],
+        lost: Vec<(usize, &'static str)>,
         generic_relation_entries_not_published: u64,
         foreign_evaluations: [u64; FOREIGN_EVALUATION_KINDS.len()],
     }
@@ -4858,34 +4866,72 @@ fn check_named_files(
     let differing: Guarded<DifferingEntries> = Guarded::new(DifferingEntries::default());
     // `Report::entries_that_differ`
     let entries_that_differ: Guarded<(Vec<(&'static str, u64)>, Vec<String>)> = Guarded::default();
-    // Every thread takes the next task of `tasks` until none is left. `is_last_round`: there is one task, which is believed.
-    let run_tasks = |round: usize, tasks: &[Task], expected: Requested, is_last_round: bool| {
-        let weight_of = |i: usize| tasks[i].iter().map(|&it| size_of(it)).sum::<usize>();
-        // The largest first, so that no thread begins it when the others are nearly done.
-        let mut start_order: Vec<usize> = (0..tasks.len()).collect();
-        match request.order {
-            1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
-            order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
+    // Every thread takes files from one queue until none is left. `files`: in program order.
+    // `is_last_round`: one thread checks them all in that order, in one task, which is believed.
+    //
+    // No thread holds a file that it has not begun but for the rest of its run, so none is left with a long list when
+    // the others are through: how long a file takes is known only afterwards.
+    let run_tasks = |round: usize, files: &[usize], expected: Requested, is_last_round: bool| {
+        let cost: usize = files.iter().map(|&file| size_of(file)).sum();
+        // A checker is replaced by a new one after this much: what it holds for itself grows with every file.
+        let task_cost = match request.plan_options.min_tasks {
+            _ if is_last_round => usize::MAX,
+            0 => usize::MAX,
+            tasks => (cost / tasks).max(1),
+        };
+        let workers = if is_last_round { 1 } else { threads };
+        // The heavy files first, the largest first, so that no thread begins one when the others are nearly done. Then
+        // the others in program order: neighbors use the same types. One thread takes them all in program order.
+        let is_heavy = |file: &usize| workers != 1 && size_of(*file) >= task_cost;
+        let (mut queue, light): (Vec<usize>, Vec<usize>) =
+            files.iter().partition(|it| is_heavy(it));
+        queue.shared_sort_by_key(|&file| Reverse(size_of(file)));
+        let heavy = queue.len();
+        queue.extend(light);
+        if request.order != 1 {
+            queue.shared_sort_by_key(|&file| (file as u32 + 1).wrapping_mul(request.order));
         }
+        // How many files of `queue` are taken, and the cost of the others.
+        let left = Guarded::new((0usize, cost));
+        // The next run: consecutive files of `queue` for one thread. Threads that work far apart ask for different
+        // types at any one time. A run is a share of what is left, so the runs get shorter toward the end.
+        let take_run = || -> std::ops::Range<usize> {
+            let (taken, cost_left) = &mut *left.lock();
+            let from = *taken;
+            let share = match request.plan_options.runs_per_thread {
+                _ if is_last_round => usize::MAX,
+                0 => 0,
+                runs => *cost_left / (workers * runs),
+            };
+            let mut cost_of_run = 0;
+            while *taken < queue.len() && (*taken == from || *taken > heavy && cost_of_run < share)
+            {
+                cost_of_run += size_of(queue[*taken]);
+                *taken += 1;
+            }
+            *cost_left = cost_left.saturating_sub(cost_of_run);
+            from..*taken
+        };
         // As in `run_round`.
         let is_read_afterwards = request.retains_everything
             || request.after_file.is_some()
                 && !request.plan_options.after_file_is_for_checked_files;
-        let unstarted = AtomicUsize::new(tasks.len());
         let sums: Guarded<Sums> = Guarded::new(Sums::default());
         let (started, busy) = (Instant::now(), AtomicU64::new(0));
-        // One task, of the first files of `files_left`. Returns how many: all of them, unless the task is lost.
-        let run_task = |files_left: &[usize]| -> usize {
+        // One task, which begins with the file `first` and goes on with what `next` returns. Returns the file that the
+        // next task of the thread begins with.
+        let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
             let (began, cost_before) = (Instant::now(), request.task_clock.map(|clock| clock()));
             let mut checker = new_checker(expected);
             // The index of a task is that of its first file, which no other task of the round has.
-            checker.begin_task(round as u32, files_left[0] as u32, true);
+            checker.begin_task(round as u32, first as u32, true);
             checker.see_commits(request.plan_options.commit_policy, is_last_round);
             // Of the files that are checked and that no commit has followed.
             let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
+            let mut waiting: Vec<usize> = Vec::new();
             let mut trees_to_free = Vec::new();
-            let mut done = 0;
-            for &index in files_left {
+            let (mut done, mut spent, mut index) = (0, 0, first);
+            let upcoming = loop {
                 let file = to_check[index];
                 checked.push((file, checker.check_file(file)));
                 if let Some(after_file) = request.after_file
@@ -4901,16 +4947,16 @@ fn check_named_files(
                     let bytes = bytes_of(index);
                     progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
                 }
-                done += 1;
-                let is_last = done == files_left.len();
+                waiting.push(index);
+                (done, spent) = (done + 1, spent + size_of(index));
+                let upcoming = next();
+                let is_last = upcoming.is_none() || spent >= task_cost;
                 // Nothing waits for what the tasks that end last have found out.
-                let is_read = !is_last
-                    || is_read_afterwards
-                    || unstarted.load(Ordering::Relaxed) != 0
-                    || !lost.lock().is_empty();
+                let is_read = upcoming.is_some() || is_read_afterwards || !lost.lock().is_empty();
                 match checker.commit_after_file(is_last, is_read) {
                     AfterFile::Waits => {}
                     AfterFile::Committed => {
+                        waiting.clear();
                         let files = checked.iter().map(|it: &(FileId, Checked)| it.0);
                         trees_to_free
                             .extend(files.filter(|it| program.files.modules[it.idx()].is_leaf));
@@ -4924,17 +4970,20 @@ fn check_named_files(
                         });
                     }
                     AfterFile::Lost => {
-                        let again = &files_left[done - checked.len()..done];
                         if let Some(progress) = request.progress {
-                            let bytes = again.iter().map(|&file| bytes_of(file)).sum();
-                            progress.checked.fetch_sub(again.len(), Ordering::Relaxed);
+                            let bytes = waiting.iter().map(|&file| bytes_of(file)).sum();
+                            progress.checked.fetch_sub(waiting.len(), Ordering::Relaxed);
                             progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
                         }
-                        lost.lock().extend_from_slice(again);
-                        break;
+                        lost.lock().append(&mut waiting);
+                        break upcoming;
                     }
                 }
-            }
+                match upcoming {
+                    Some(following) if !is_last => index = following,
+                    _ => break upcoming,
+                }
+            };
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
             let walks = checker.inference_walk_counts();
             for (sum, more) in inference_walks.lock().iter_mut().zip(walks) {
@@ -4952,6 +5001,7 @@ fn check_named_files(
                 for (sum, more) in sums.waits.iter_mut().zip(ended.waits) {
                     *sum += more;
                 }
+                (sums.lost).extend(ended.lost_because_of.map(|why| (index, why)));
                 sums.generic_relation_entries_not_published +=
                     checker.generic_relation_entries_not_published();
                 let evaluations = sums.foreign_evaluations.iter_mut();
@@ -4969,15 +5019,20 @@ fn check_named_files(
                 (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
                 _ => elapsed,
             };
-            task_times.lock().push((cost, done, files_left[0]));
-            done
+            task_times.lock().push((cost, done, first));
+            upcoming
         };
-        host.parallel(tasks.len(), &|i| {
-            unstarted.fetch_sub(1, Ordering::Relaxed);
-            // A new task goes on with the files that a lost one has not begun.
-            let mut files_left = &tasks[start_order[i]][..];
-            while !files_left.is_empty() {
-                files_left = &files_left[run_task(files_left)..];
+        host.parallel(workers, &|_| {
+            let mut run = 0..0;
+            let mut next = || {
+                if run.is_empty() {
+                    run = take_run();
+                }
+                run.next().map(|at| queue[at])
+            };
+            let mut first = next();
+            while let Some(file) = first {
+                first = run_task(file, &mut next);
             }
         });
         let in_tasks = started.elapsed();
@@ -5000,11 +5055,14 @@ fn check_named_files(
             ranges: 0,
             ranges_dropped: 0,
             ranges_by_obstacle: [0; 3],
-            files: tasks.iter().map(Vec::len).sum(),
+            files: files.len(),
             in_tasks,
             in_link: Duration::ZERO,
             in_publish: Duration::ZERO,
             waits: sums.waits,
+            lost: (sums.lost.into_iter())
+                .map(|(file, why)| (path_of(file), why))
+                .collect(),
             idle: (in_tasks * threads as u32)
                 .saturating_sub(Duration::from_nanos(busy.into_inner())),
             entries: Published {
@@ -5019,14 +5077,12 @@ fn check_named_files(
         });
     };
     let run_without_steps = |expected: Requested| {
-        let all = (0..to_check.len()).collect();
-        let tasks = Plan::cut(all, &size_of, &request.plan_options);
-        run_tasks(0, &tasks, expected, false);
+        let all: Vec<usize> = (0..to_check.len()).collect();
+        run_tasks(0, &all, expected, false);
         let mut again = std::mem::take(&mut *lost.lock());
         if !again.is_empty() {
-            // In program order.
             again.shared_sort_unstable();
-            run_tasks(1, &[again], expected, true);
+            run_tasks(1, &again, expected, true);
         }
         let differing = std::mem::take(&mut *differing.lock());
         if !differing.by_table.is_empty() {

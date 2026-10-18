@@ -94,7 +94,7 @@ pub struct Task<'s> {
     /// `Some`: the task commits while it runs, and sees the commits of the others. See `super::commit`.
     view: Option<View<'s>>,
     /// See `lose`. It is set under `&Checker`.
-    is_lost: Cell<bool>,
+    is_lost: Cell<Option<&'static str>>,
     /// The task is never lost: it runs alone, in the last round.
     is_believed: bool,
     /// How many keys the task had logged at its commits, and how many entries they have stored.
@@ -136,7 +136,7 @@ impl<'s> Task<'s> {
             assignments_walked: RefCell::default(),
             held_back: Cell::new(0),
             view: None,
-            is_lost: Cell::new(false),
+            is_lost: Cell::new(None),
             is_believed: false,
             committed: Cell::new([0; 2]),
             waits: Cell::new([Duration::ZERO; 3]),
@@ -258,14 +258,17 @@ impl<'s> Task<'s> {
     }
 
     /// What the task has done since its last commit is thrown away, and so is what it does from now on.
-    pub(super) fn lose(&self) {
-        self.is_lost.set(self.commits() && !self.is_believed);
+    /// `why`: for `--timing`.
+    pub(super) fn lose(&self, why: &'static str) {
+        if self.commits() && !self.is_believed && !self.is_lost() {
+            self.is_lost.set(Some(why));
+        }
         self.stop_writing_at_once();
     }
 
     #[inline]
     pub(super) fn is_lost(&self) -> bool {
-        self.is_lost.get()
+        self.is_lost.get().is_some()
     }
 
     pub(super) fn is_believed(&self) -> bool {
@@ -304,6 +307,7 @@ impl<'s> Task<'s> {
             logged,
             stored,
             waits: self.waits.get(),
+            lost_because_of: self.is_lost.get(),
             foreign_evaluations: self.foreign_evaluations,
             differing: self.differing.take(),
         };
@@ -375,7 +379,7 @@ impl<'s> Task<'s> {
         self.listings.clear();
         self.assignments_walked.get_mut().clear();
         (self.view, self.is_believed) = (None, false);
-        self.is_lost.set(false);
+        self.is_lost.set(None);
         self.committed.set([0; 2]);
         self.waits.set([Duration::ZERO; 3]);
         (self.at_once_unless_stopped, self.at_once) = (0, Cell::new(0));
@@ -479,6 +483,8 @@ pub struct Ended {
     pub stored: u64,
     /// How long the task has waited for the mutex of the commits, has had it, and has waited for claims of variances.
     pub waits: [Duration; 3],
+    /// `Some`: the task was lost, and why.
+    pub lost_because_of: Option<&'static str>,
     pub foreign_evaluations: [u32; 14],
     pub differing: DifferingEntries,
 }

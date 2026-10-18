@@ -590,7 +590,7 @@ impl<'s> Checker<'_, 's> {
             && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
         if is_invalid {
             drop(committing);
-            self.task.lose();
+            self.task.lose("a commit that is invalid");
             return false;
         }
         let number = committing.number + 1;

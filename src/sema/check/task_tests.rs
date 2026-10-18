@@ -2037,7 +2037,7 @@ fn a_task_that_has_stopped_writes_at_once_again_after_its_next_commit() {
     tables.by_id.insert(&task, NUMBER, NUMBER, from_now(&task));
     assert_eq!(tables.by_id.get(&other, &NUMBER), Some(NUMBER));
     // Not if it is lost.
-    task.lose();
+    task.lose("a test");
     assert_eq!(commit(&tables, &commits, &task, 2), 0);
     assert!(!task.writes_at_once() && !task.shares_what_it_stores());
 }

@@ -298,6 +298,7 @@ fn run(args: &[String]) {
                     || has("--share-at-once")
                     || has("--no-steps"),
                 has_no_steps: defaults.has_no_steps || has("--no-steps"),
+                runs_per_thread: number("--runs-per-thread=", defaults.runs_per_thread),
                 commit_policy: bun_sema::check::commit::CommitPolicy {
                     entries: number("--commit-entries=", defaults.commit_policy.entries),
                     microseconds: number(
@@ -616,6 +617,9 @@ fn run(args: &[String]) {
                             error_line!(
                                 "  summed over the tasks: waiting for the commit mutex {for_commits:.3} s, in commits {in_commits:.3}, waiting for claims {for_claims:.3}"
                             );
+                        }
+                        for (path, why) in &step.lost {
+                            error_line!("  lost to {why}: {}", text(path));
                         }
                         if step.ranges != 0 {
                             let [cycle, limit, nesting] = step.ranges_by_obstacle;

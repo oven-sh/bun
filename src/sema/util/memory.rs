@@ -561,6 +561,9 @@ mod aside {
     /// The length of the quarter of the largest address space.
     const LARGEST: usize = 2 << 44;
 
+    /// A range of so many bytes is as long in every address space.
+    const SHORT: usize = 64 << 20;
+
     /// Where the quarter starts and ends. `None`: there is no such quarter.
     fn quarter() -> Option<(usize, usize)> {
         static QUARTER: OnceLock<Option<(usize, usize)>> = OnceLock::new();
@@ -578,33 +581,51 @@ mod aside {
         })
     }
 
-    /// A range of `len` bytes, a multiple of `STEP`, and its length: in a smaller address space all
-    /// ranges are smaller in proportion. `None`: there is none to be had.
-    pub(super) fn claim(len: usize) -> Option<(NonNull<u8>, usize)> {
-        let (mut start, end) = quarter()?;
-        let len = (len
-            >> (end - start)
-                .leading_zeros()
-                .saturating_sub(LARGEST.leading_zeros()))
-        .next_multiple_of(STEP);
-        let mut ranges = RANGES.lock();
-        // Before the first range that leaves room enough after the one before it.
-        let at = ranges.iter().position(|&range| {
-            let fits = range.0 - start >= len;
-            if !fits {
-                start = range.1;
+    /// Where a range of `len` bytes, a multiple of `STEP`, starts and ends in `quarter`, beside `ranges`,
+    /// to which it is added. `None`: there is no room at all.
+    ///
+    /// In the quarter of a small address space a long range is a sixteenth as long. That is room for a
+    /// program and thirty tasks, each with 2^24 records of every kind or more. Whatever comes when a
+    /// quarter is nearly full is half as long as it would be, or half of that, and so on.
+    pub(super) fn place(
+        ranges: &mut Vec<(usize, usize)>,
+        quarter: (usize, usize),
+        len: usize,
+    ) -> Option<(usize, usize)> {
+        let is_small = quarter.1 - quarter.0 < LARGEST;
+        let mut len = match is_small {
+            true => (len / 16).max(len.min(SHORT)).next_multiple_of(STEP),
+            false => len,
+        };
+        loop {
+            let mut start = quarter.0;
+            // Before the first range that leaves room enough after the one before it.
+            let at = ranges.iter().position(|&range| {
+                let fits = range.0 - start >= len;
+                if !fits {
+                    start = range.1;
+                }
+                fits
+            });
+            if quarter.1 - start >= len {
+                ranges.insert(at.unwrap_or(ranges.len()), (start, start + len));
+                return Some((start, start + len));
             }
-            fits
-        });
-        if end - start < len {
-            return None;
+            if len == STEP {
+                return None;
+            }
+            len = (len / 2).next_multiple_of(STEP);
         }
-        let at = at.unwrap_or(ranges.len());
-        ranges.insert(at, (start, start + len));
+    }
+
+    /// A range of `len` bytes, a multiple of `STEP`, or fewer (`place`), and its length. `None`: there
+    /// is none to be had.
+    pub(super) fn claim(len: usize) -> Option<(NonNull<u8>, usize)> {
+        let (start, end) = place(&mut RANGES.lock(), quarter()?, len)?;
         let base = NonNull::<u8>::new(std::ptr::with_exposed_provenance_mut(start))?;
         #[cfg(bun_asan)]
-        super::os::__lsan_register_root_region(base.as_ptr().cast(), len);
-        Some((base, len))
+        super::os::__lsan_register_root_region(base.as_ptr().cast(), end - start);
+        Some((base, end - start))
     }
 
     /// Whether the range has memory now. One thread at a time.
@@ -829,11 +850,8 @@ impl Drop for Taken<'_> {
 
 /// The number of elements that a `Flat` which threads share has addresses for: as many as an id can
 /// number.
-#[cfg(not(any(miri, target_os = "android")))]
+#[cfg(not(miri))]
 const MOST: usize = 1 << 30;
-/// There a process may have 512 GB of addresses in all.
-#[cfg(all(target_os = "android", not(miri)))]
-const MOST: usize = 1 << 24;
 /// There all of a range has memory from the start.
 #[cfg(miri)]
 const MOST: usize = 1 << 14;
@@ -1875,6 +1893,7 @@ mod tests {
     fn threads_give_memory_to_a_range_that_is_set_aside() {
         let room = room_of(64 * STEP);
         let range = Reserved::new(room);
+        // Short enough to be as long in a small address space.
         assert!(range.is_set_aside && range.len == 64 * STEP);
         let mut vec = Flat::<u64, AtomicU32>::new_in(range.take(room).unwrap());
         std::thread::scope(|scope| {
@@ -1891,6 +1910,54 @@ mod tests {
         assert_eq!(sum, 4 * (49_999 * 50_000 / 2));
         vec.clear();
         assert_eq!(range.committed_bytes(), KEPT * size_of::<u64>());
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", not(miri)))]
+    fn an_address_space_of_39_bits_has_room_for_a_large_program() {
+        let quarter = (3 << 36, 5 << 36);
+        let mut ranges = Vec::new();
+        // How many records of `size` bytes a vector for `most` of them has room for.
+        let mut room_for = |size: usize, most: usize| {
+            let (start, end) = aside::place(&mut ranges, quarter, size * most).unwrap();
+            assert!(quarter.0 <= start && end <= quarter.1);
+            (end - start) / size
+        };
+        // The records of a program are about so long, and those of a task.
+        for size in [64, 32, 56, 40, 16] {
+            assert_eq!(room_for(size, MOST), 1 << 26);
+        }
+        for _ in 0..30 {
+            for size in [64, 32, 56, 40, 16, 16] {
+                assert_eq!(room_for(size, MOST / SHARE_OF_ONE_THREAD), 1 << 24);
+            }
+        }
+        // What is left is for 13 more ranges, and then for ever shorter ones.
+        let later = std::iter::from_fn(|| {
+            let len = 48 * MOST / SHARE_OF_ONE_THREAD;
+            aside::place(&mut ranges, quarter, len).map(|(start, end)| (end - start) / 48)
+        });
+        let later: Vec<usize> = later.collect();
+        assert!(later[..13].iter().all(|&records| records == 1 << 24));
+        assert!(later.len() > 14 && later[12..].is_sorted_by(|a, b| a > b));
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", not(miri)))]
+    fn a_range_is_shorter_in_a_small_address_space_only_if_it_is_long() {
+        let place = |bits: u32, len| {
+            let (start, end) = aside::place(&mut Vec::new(), (3 << (bits - 3), 5 << (bits - 3)), len)?;
+            Some(end - start)
+        };
+        for len in [STEP, 64 << 20, 1 << 30, 64 << 30] {
+            assert_eq!(place(47, len), Some(len));
+        }
+        assert_eq!(place(39, STEP), Some(STEP));
+        assert_eq!(place(39, 64 << 20), Some(64 << 20));
+        assert_eq!(place(39, (64 << 20) + STEP), Some(64 << 20));
+        assert_eq!(place(39, 1 << 30), Some(64 << 20));
+        assert_eq!(place(39, 2 << 30), Some(128 << 20));
+        assert_eq!(place(39, 64 << 30), Some(4 << 30));
     }
 
     #[test]

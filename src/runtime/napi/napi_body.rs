@@ -1694,7 +1694,10 @@ fn conclude_deferred(
     deferred: napi_deferred,
     settle: impl FnOnce(&mut jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
 ) -> napi_status {
-    // SAFETY: deferred was created by heap::alloc in napi_create_promise.
+    if deferred.is_null() {
+        return env.invalid_arg();
+    }
+    // SAFETY: deferred is non-null and was created by heap::alloc in napi_create_promise.
     let context = unsafe { (*deferred).context };
     if !env.to_js().bun_vm().is_context_live(context) {
         // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled.

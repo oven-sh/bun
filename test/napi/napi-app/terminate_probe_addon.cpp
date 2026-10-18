@@ -67,6 +67,10 @@ static void probe(napi_env env, const std::string &signal_path,
     if (status != gate_status) {
       continue;
     }
+    // A gated call with no check inside its body: its status is the entry's.
+    napi_value external = nullptr;
+    napi_status entry_status =
+        napi_create_external(env, nullptr, nullptr, nullptr, &external);
     bool pending = false;
     napi_is_exception_pending(env, &pending);
     napi_value message = nullptr, error = nullptr;
@@ -83,6 +87,7 @@ static void probe(napi_env env, const std::string &signal_path,
       napi_typeof(env, exception, &type);
     }
     line = "refused: status=" + std::to_string(status) +
+           " entry_status=" + std::to_string(entry_status) +
            " pending=" + std::to_string(pending) +
            " napi_throw=" + std::to_string(throw_status) +
            " pending_after_throw=" + std::to_string(pending_after_throw) +

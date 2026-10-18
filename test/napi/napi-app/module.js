@@ -1968,12 +1968,16 @@ nativeTests.test_terminate_during_gated_calls = async (_gc, version, frame, dir)
   const worker = new Worker(path.join(__dirname, "terminate-probe-worker.js"), {
     workerData: { version, frame, signal, probe },
   });
+  let done = false;
   const failed = new Promise((_, reject) => {
     worker.once("error", reject);
     worker.once("exit", code => reject(new Error(`worker exited with ${code} before the signal`)));
+  }).catch(error => {
+    done = true;
+    throw error;
   });
   const signalSeen = (async () => {
-    while (!fs.existsSync(signal)) await new Promise(resolve => setImmediate(resolve));
+    while (!done && !fs.existsSync(signal)) await new Promise(resolve => setImmediate(resolve));
   })();
   await Promise.race([signalSeen, failed]);
   worker.removeAllListeners("exit");

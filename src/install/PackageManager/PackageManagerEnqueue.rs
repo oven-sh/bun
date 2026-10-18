@@ -1893,12 +1893,7 @@ pub(crate) fn bind_row(
                         }
                         highest_peer_candidate(&this.lockfile, name_hash, version).filter(
                             |&highest| {
-                                can_share_out_of_range_peer(
-                                    &this.lockfile,
-                                    dependency.name_hash,
-                                    id,
-                                    highest,
-                                )
+                                can_share_out_of_range_peer(&this.lockfile, name_hash, id, highest)
                             },
                         )
                     };
@@ -4003,12 +3998,15 @@ fn can_share_out_of_range_peer(
                 (range.npm().version).satisfies(resolution.npm().version, buf, buf)
             })
     };
+    let names = lockfile.packages.items_name_hash();
     let mut is_regular_dependency = false;
     let mut dependents: Vec<PackageID> = Vec::new();
     for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
         for id in list.begin()..list.end() {
             let dep = &deps[id as usize];
-            if dep.name_hash == name_hash && id != row {
+            // `"alias": "npm:name@range"` depends on the name as well.
+            let is_alias = names.get(resolutions[id as usize] as usize) == Some(&name_hash);
+            if (dep.name_hash == name_hash || is_alias) && id != row {
                 if !dep.behavior.is_peer() {
                     dependents.push(owner as PackageID);
                 } else if accepts_candidate(id, dep) {

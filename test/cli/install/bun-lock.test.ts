@@ -4952,6 +4952,23 @@ it("a peer shares the `npm:` alias that the project depends on if the registry r
   expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "zz@1.0.0" });
 });
 
+it("a peer on an `npm:` alias shares the version that the project depends on if the registry refuses the manifest", async () => {
+  const forbidden: string[] = [];
+  using registry = await serveRegistry(
+    { a: { "1.0.0": { peerDependencies: { zz: "npm:z@^2.0.0" } } }, z: zVersions },
+    forbidden,
+  );
+  using dir = projectOnRegistry(registry, { "package.json": { name: "foo", dependencies: { z: "1.0.0" } } });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  expect(await removeCachedManifest(cwd, "/z-1.0.0.tgz")).toBe(1);
+  forbidden.push("z");
+  await write(join(cwd, "package.json"), JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", z: "1.0.0" } }));
+  await installWithOwnCache(cwd);
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@1.0.0" });
+});
+
 // a's peer shares w's z@1.0.0, so z@2.0.0 and its `y` are not installed.
 const peerSharesOlderZ: Manifests = {
   a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },

@@ -910,16 +910,11 @@ describe.concurrent("backoff", () => {
   // What `bun init` writes. Asking for the peers only after everything else has failed would double the wait offline.
   it("asks for the project's peers while it asks for the dependencies, not after they have failed", async () => {
     const requested: string[] = [];
-    const askedForPeer = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      async fetch(request) {
-        const { pathname } = new URL(request.url);
-        requested.push(pathname);
-        if (pathname === "/baz") askedForPeer.resolve();
-        // Nothing fails before the peer is asked for.
-        await askedForPeer.promise;
+      fetch(request) {
+        requested.push(new URL(request.url).pathname);
         return busy(503);
       },
     });
@@ -938,24 +933,19 @@ describe.concurrent("backoff", () => {
       "error: bar@latest failed to resolve",
     ]);
     expect(requested.toSorted()).toEqual([...Array(6).fill("/bar"), ...Array(6).fill("/baz")]);
+    expect(requested.indexOf("/baz")).toBeLessThan(requested.lastIndexOf("/bar"));
     expect(exitCode).toBe(1);
   });
 
   it("asks for a package's peers while it asks for the dependencies of that package, not after they have failed", async () => {
     const requested: string[] = [];
-    const askedForPeer = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      async fetch(request) {
+      fetch(request) {
         const { origin, pathname } = new URL(request.url);
         requested.push(pathname);
-        if (pathname === "/baz") askedForPeer.resolve();
-        if (pathname !== "/bar") {
-          // Nothing fails before the peer is asked for.
-          await askedForPeer.promise;
-          return busy(503);
-        }
+        if (pathname !== "/bar") return busy(503);
         const version = {
           name: "bar",
           version: "1.0.0",
@@ -973,6 +963,7 @@ describe.concurrent("backoff", () => {
     const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only");
     expect(lines).toContain("error: GET " + server.url.href + "qux - 503");
     expect(requested.toSorted()).toEqual(["/bar", ...Array(6).fill("/baz"), ...Array(6).fill("/qux")]);
+    expect(requested.indexOf("/baz")).toBeLessThan(requested.lastIndexOf("/qux"));
     expect(exitCode).toBe(1);
   });
 

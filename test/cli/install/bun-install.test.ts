@@ -17003,6 +17003,8 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--yes", "true"],
     // The next flag isn't this option's value.
     ["--cache", "--no-progress"],
+    // Unlike `--noproxy`, this one has no value, so the package after it still counts.
+    ["--no-proxy"],
   ].flat();
 
   it.each([
@@ -17030,6 +17032,8 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["add", "--workspace", "dep", "./dep"], "add", "--workspace", "--filter"],
     [["install", "--prefix=dep"], "install", "--prefix", "--cwd"],
     [["add", "--dir", "dep", "./dep"], "add", "--dir", "--cwd"],
+    [["install", "--before=2026-01-01"], "install", "--before", "--minimum-release-age"],
+    [["install", "--min-release-age", "7"], "install", "--min-release-age", "--minimum-release-age"],
   ])("bun %j is an error that names the closest flag", async (cmd, command, theirs, ours) => {
     expect(await outcome(cmd, {})).toEqual({
       stdout: "",
@@ -17112,6 +17116,14 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["add", "--workspace-root", "./dep"], "add", "--workspace-root"],
     [["install", "--ws", "./dep"], "install", "--ws"],
     [["add", "--save-catalog-name=tools", "./dep"], "add", "--save-catalog-name"],
+    [["install", "--lockfile-dir=dep"], "install", "--lockfile-dir"],
+    [["install", "--virtual-store-dir=dep"], "install", "--virtual-store-dir"],
+    // This one chooses the version.
+    [["add", "--tag=next", "./dep"], "add", "--tag"],
+    // These choose the file that registries and tokens are read from.
+    [["install", "--userconfig=dep/.npmrc"], "install", "--userconfig"],
+    [["install", "--globalconfig=dep/.npmrc"], "install", "--globalconfig"],
+    [["install", "--npmrc-auth-file=dep/.npmrc"], "install", "--npmrc-auth-file"],
     // Ignoring these would turn a safety setting off.
     [["install", "--config.frozen-lockfile=true"], "install", "--config.frozen-lockfile"],
     [["install", "--config.ignore-scripts=true"], "install", "--config.ignore-scripts"],

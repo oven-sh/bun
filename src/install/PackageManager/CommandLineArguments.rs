@@ -442,11 +442,14 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--workspace", Near(b"--filter")),
     (b"--prefix", Near(b"--cwd")),
     (b"--dir", Near(b"--cwd")),
+    (b"--before", Near(b"--minimum-release-age")),
+    (b"--min-release-age", Near(b"--minimum-release-age")),
 ];
 
 /// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove` and
 /// `update` skip them, like Bun 1.4 and earlier did, so scripts written for those tools keep working.
-/// A flag that changes where packages are installed or saved isn't listed, so it stays an error.
+/// A flag isn't listed, so it stays an error, if it changes where packages are installed or saved,
+/// which version is installed, or which `.npmrc` is read.
 const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     #[rustfmt::skip]
     flags: &[
@@ -461,7 +464,7 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"include-github-actions", b"inline-builds", b"install-links",
     b"json", b"legacy-bundling", b"link-duplicates", b"link-workspace-packages",
     b"lockfile", b"long", b"merge-git-branch-lockfiles", b"no-frozen-lockfile", b"no-immutable",
-    b"no-prefer-frozen-lockfile", b"no-production", b"node-version-check",
+    b"no-prefer-frozen-lockfile", b"no-production", b"no-proxy", b"node-version-check",
     b"omit-lockfile-registry-resolved", b"package-lock", b"parseable", b"patches", b"pnp",
     b"prefer-dedupe", b"prefer-online", b"prefer-workspace-packages", b"progress", b"pure-lockfile",
     b"rebuild-bundle", b"refresh-lockfile", b"resolution-only",
@@ -476,20 +479,20 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     ],
     #[rustfmt::skip]
     options: &[
-    b"allow-build", b"allow-scripts", b"also", b"before", b"cache", b"cache-folder", b"cache-max",
-    b"cache-min", b"cert", b"changed-files-ignore-pattern", b"child-concurrency", b"enjoy-by",
+    b"allow-build", b"allow-scripts", b"also", b"cache", b"cache-folder", b"cache-max",
+    b"cache-min", b"cert", b"changed-files-ignore-pattern", b"child-concurrency",
     b"fetch-min-speed-ki-bps", b"fetch-retries", b"fetch-retry-factor", b"fetch-retry-maxtimeout",
     b"fetch-retry-mintimeout", b"fetch-timeout", b"fetch-warn-timeout-ms", b"filter-prod",
-    b"global-folder", b"global-pnpmfile", b"globalconfig", b"hoist-pattern", b"http-proxy",
-    b"https-proxy", b"include", b"install-strategy", b"key", b"link-folder", b"local-address",
-    b"location", b"lockfile-dir", b"lockfile-version", b"loglevel", b"logs-dir", b"logs-max",
-    b"maxsockets", b"merge-git-branch-lockfiles-branch-pattern", b"min-release-age", b"mode",
-    b"mutex", b"network-timeout", b"no-proxy", b"node-gyp", b"node-linker", b"node-options",
-    b"noproxy", b"npmrc-auth-file", b"only", b"otp", b"package-import-method", b"pnpmfile",
+    b"global-pnpmfile", b"hoist-pattern", b"http-proxy",
+    b"https-proxy", b"include", b"install-strategy", b"key", b"local-address",
+    b"location", b"lockfile-version", b"loglevel", b"logs-dir", b"logs-max",
+    b"maxsockets", b"merge-git-branch-lockfiles-branch-pattern", b"mode",
+    b"mutex", b"network-timeout", b"node-gyp", b"node-linker", b"node-options",
+    b"noproxy", b"only", b"otp", b"package-import-method", b"pnpmfile",
     b"pnpr-server", b"preferred-cache-folder", b"proxy", b"public-hoist-pattern",
     b"replace-registry-host", b"reporter", b"save-prefix", b"scope",
-    b"script-shell", b"state-dir", b"store-dir", b"tag", b"test-pattern", b"umask", b"use-yarnrc",
-    b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace-concurrency",
+    b"script-shell", b"state-dir", b"store-dir", b"test-pattern", b"umask", b"use-yarnrc",
+    b"user-agent", b"workspace-concurrency",
     b"workspace-packages",
     ],
 };

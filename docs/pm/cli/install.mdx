@@ -633,15 +633,15 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 
 `--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value doesn't accept one: `--legacy-peer-deps=true` is an error. Bun still installs peer dependencies with `--legacy-peer-deps`; use `--omit=peer` to skip them.
 
-`bun remove` doesn't save any dependency, so it ignores the four `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
+`bun remove` doesn't save any dependency, so it ignores the five `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
 
-- `--save-exact` is `--exact`. `--save-dev`, `--save-optional` and `--save-peer` do nothing.
+- `--save-exact` is `--exact`. `--save-dev`, `--save-optional`, `--save-peer` and `--save-catalog` do nothing.
 - `--production=true` is an error.
 - `--no-optional` does not update `optionalDependencies`, but it installs them. `--ignore-optional` is `--omit=optional`.
 
 Other flags from those tools that Bun has no equivalent for are ignored, for example `--ci`, `--no-color`, `--no-package-lock`, `--network-timeout=100000` and `--reporter=silent`.
 
-Some flags are errors because ignoring them would install or save to the wrong place. Use `--cwd` instead of `--prefix` or `--dir`, and `--filter` instead of `--workspace`, `--ws` or `--workspace-root`. A flag that none of these tools has is also an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
+Some flags are errors because ignoring them would install or save to the wrong place, install another version, or read registries and tokens from another file. Use `--cwd` instead of `--prefix` or `--dir`, `--filter` instead of `--workspace`, `--ws` or `--workspace-root`, `--minimum-release-age` instead of `--before` or `--min-release-age`, and `NPM_CONFIG_USERCONFIG` instead of `--userconfig`. A flag that none of these tools has is also an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
 
 ## pnpm migration
 

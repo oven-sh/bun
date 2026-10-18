@@ -174,7 +174,14 @@ function totalmem() {
 
 function getHeapStatistics() {
   const stats = jsc.heapStats();
-  const memory = jsc.memoryUsage();
+  const heapSize = stats.heapSize;
+  const heapCapacity = stats.heapCapacity;
+  const peak = jsc.memoryUsage().peak;
+  // The heap counts declared bytes, which can be above what is resident. Its capacity floors peak RSS and total memory.
+  const floor = heapCapacity > heapSize ? heapCapacity : heapSize;
+  const ram = totalmem();
+  const ceiling = ram > floor ? ram : floor;
+  const wanted = (peak > floor ? peak : floor) * 10;
 
   // These numbers need to be plausible, even if incorrect
   // From npm's codebase:
@@ -182,15 +189,15 @@ function getHeapStatistics() {
   // > static #heapLimit = Math.floor(getHeapStatistics().heap_size_limit)
   //
   return {
-    total_heap_size: stats.heapSize,
-    total_heap_size_executable: stats.heapSize >> 1,
-    total_physical_size: memory.peak,
-    total_available_size: totalmem() - stats.heapSize,
-    used_heap_size: stats.heapSize,
-    total_allocated_bytes: stats.heapCapacity,
-    heap_size_limit: Math.min(memory.peak * 10, totalmem()),
-    malloced_memory: stats.heapSize,
-    peak_malloced_memory: memory.peak,
+    total_heap_size: heapSize,
+    total_heap_size_executable: (heapSize - (heapSize % 2)) / 2,
+    total_physical_size: peak,
+    total_available_size: ceiling - heapSize,
+    used_heap_size: heapSize,
+    total_allocated_bytes: heapCapacity,
+    heap_size_limit: wanted < ceiling ? wanted : ceiling,
+    malloced_memory: heapSize,
+    peak_malloced_memory: peak,
 
     // -- Copied from Node:
     does_zap_garbage: 0,

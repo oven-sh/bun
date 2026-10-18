@@ -13,7 +13,7 @@ const {
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
 const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
-const restartsOnChange = $newRustFunction("bake/config/plugins.rs", "restartsOnChange", 0);
+const takeRestartMark = $newRustFunction("bake/config/plugins.rs", "takeRestartMark", 0);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -204,6 +204,8 @@ async function loadAppServer(
 
 /** How many times `start()` ran: once, then once more for each reload. */
 let runs = 0;
+/** Whether this process is `bun bake --check` started again after a change. */
+let restarted = false;
 
 /**
  * At the start, prints the message of `error` and exits: it comes from a file that `bun bake` does
@@ -212,9 +214,9 @@ let runs = 0;
  * reload, the server is up: throw, so it keeps serving until the next change.
  */
 function exitWith(error: any): never {
-  // `--check` starts the process again on a change, so a restart is a first run here too. Its
-  // type checker watches the files of the project, so a change to them gives a restart.
-  if (runs > 1 || restartsOnChange()) throw $isObject(error) ? error : new Error(error);
+  // `--check` starts the process again on a change: a restart is a first run here too, but the
+  // session goes on.
+  if (runs > 1 || restarted) throw $isObject(error) ? error : new Error(error);
   exitForArguments(error);
 }
 
@@ -225,7 +227,7 @@ function exitForArguments(error: any): never {
 }
 
 async function start() {
-  runs++;
+  if (++runs === 1) restarted = takeRestartMark();
   const flags = defaultServeFlags();
   // There is no entry module, so the arguments start at argv[1], as for `bun -e`.
   for (let i = 1, argvLength = argv.length; i < argvLength;) {

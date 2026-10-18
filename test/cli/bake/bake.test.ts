@@ -717,32 +717,56 @@ test.concurrent("bun bake reads a bake.config.ts whose default export is a promi
   expect(await getPageCss(url, "/")).toContain(".from-promise");
 });
 
-test.concurrent("bun bake --check waits for a fix when a restart finds a page it cannot serve", async () => {
-  using dir = tempDir("bake-command-check-restart-error", {
+// On Windows, a manager process starts each restart with its own environment, so a restart cannot
+// tell it is one, and exits on this error as at the first start.
+test.concurrent.skipIf(isWindows)(
+  "bun bake --check waits for a fix when a restart finds a page it cannot serve",
+  async () => {
+    using dir = tempDir("bake-command-check-restart-error", {
+      "tsconfig.json": checkedTsconfig,
+      "app/pages/index.html": page,
+      "app/server.ts": `declare const Response: any;\nexport default { fetch: () => new Response("v1") };\n`,
+    });
+
+    await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    // `--check` starts the process again on a change: the error must not end the session.
+    const slug = join(String(dir), "app/pages/[slug].html");
+    await Bun.write(slug, page);
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+    );
+    await output.waitFor(/a page cannot have/);
+
+    rmSync(slug);
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
+    );
+    const [, url] = await output.waitFor(/a page cannot have[\s\S]*url: (http:\/\/\S+)/);
+
+    expect(await get(url, "/missing")).toBe("200 v3");
+  },
+);
+
+test.concurrent.each([
+  { name: "nothing to serve", files: { "README.md": "" }, error: "Nothing to serve in" },
+  { name: "a page it cannot serve", files: { "app/pages/[slug].html": page }, error: "a page cannot have" },
+])("bun bake --check exits at the start on $name", async ({ files, error }) => {
+  // `lib.ts` gives the type checker an input, so the check passes and `bun bake` runs.
+  using dir = tempDir("bake-command-check-first-error", {
     "tsconfig.json": checkedTsconfig,
-    "app/pages/index.html": page,
-    "app/server.ts": `declare const Response: any;\nexport default { fetch: () => new Response("v1") };\n`,
+    "lib.ts": `export const one: number = 1;`,
+    ...files,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
-  const output = collectOutput(proc);
-  await output.waitFor(/url: /);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // `--check` starts the process again on a change: the error must not end the session.
-  const slug = join(String(dir), "app/pages/[slug].html");
-  await Bun.write(slug, page);
-  await Bun.write(
-    join(String(dir), "app/server.ts"),
-    `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
-  );
-  await output.waitFor(/a page cannot have/);
-
-  rmSync(slug);
-  await Bun.write(
-    join(String(dir), "app/server.ts"),
-    `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
-  );
-  const [, url] = await output.waitFor(/a page cannot have[\s\S]*url: (http:\/\/\S+)/);
-
-  expect(await get(url, "/missing")).toBe("200 v3");
+  expect(stderr).toContain(error);
+  expect(stdout).not.toContain("url: ");
+  expect(exitCode).toBe(1);
 });

@@ -190,17 +190,6 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       });
     }
 
-    test("the clone of an error has a position only if the error has one", async () => {
-      const own = (error: Error) => Object.getOwnPropertyNames(error).sort();
-      const error = new Error("message");
-      expect(own(await structuredCloneFn(error))).toEqual(["column", "line", "message", "sourceURL", "stack"]);
-
-      for (const name of ["line", "column", "sourceURL"]) delete error[name];
-      const cloned = await structuredCloneFn(error);
-      expect(own(cloned)).toEqual(["message", "stack"]);
-      expect(Object.getOwnPropertyDescriptor(cloned, "stack")).toEqual(Object.getOwnPropertyDescriptor(error, "stack"));
-    });
-
     test("Array with primitives", async () => {
       const input = [
         undefined,
@@ -979,6 +968,49 @@ describe("Error serialization semantics", () => {
     } finally {
       Error.prepareStackTrace = original;
     }
+  });
+
+  const ownNames = (error: Error) => Object.getOwnPropertyNames(error).sort();
+  function errorWithoutPosition() {
+    const e: any = new Error("message");
+    for (const name of ["line", "column", "sourceURL"]) delete e[name];
+    return e;
+  }
+
+  test("line, column and sourceURL are cloned", () => {
+    expect(ownNames(structuredClone(new Error("message")))).toEqual([
+      "column",
+      "line",
+      "message",
+      "sourceURL",
+      "stack",
+    ]);
+  });
+
+  test("an error without line, column and sourceURL clones without them", () => {
+    const e = errorWithoutPosition();
+    const cloned = structuredClone(e);
+    expect(ownNames(cloned)).toEqual(["message", "stack"]);
+    expect(Object.getOwnPropertyDescriptor(cloned, "stack")).toEqual(Object.getOwnPropertyDescriptor(e, "stack"));
+  });
+
+  // The first is what an error made under Error.prepareStackTrace has.
+  test.each([
+    { line: 0, column: 0 },
+    { line: 0, column: 0, sourceURL: "" },
+  ])("%j is cloned", position => {
+    const e = Object.assign(errorWithoutPosition(), position);
+    expect(ownNames(structuredClone(e))).toEqual(["column", "line", "message", "stack"]);
+  });
+
+  // It adds frames to an error whose stack has not been made yet.
+  test("a stream that is errored with a clone without line, column and sourceURL leaves it as it is", async () => {
+    const e = errorWithoutPosition();
+    const cloned = Object.freeze(structuredClone(e));
+    const reader = new ReadableStream({ pull: controller => controller.error(cloned) }).getReader();
+    expect(await reader.read().catch(error => error)).toBe(cloned);
+    expect(ownNames(cloned)).toEqual(["message", "stack"]);
+    expect(cloned.stack).toBe(e.stack);
   });
 });
 

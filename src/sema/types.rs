@@ -1957,7 +1957,13 @@ impl<'s, V: Record> Interned<'s, V> {
     }
 
     /// For `put`.
-    fn halves(&self) -> (&GrowingPlaces<&'s Session, INDEX_SHARDS>, &Shared<'s, V>, u32) {
+    fn halves(
+        &self,
+    ) -> (
+        &GrowingPlaces<&'s Session, INDEX_SHARDS>,
+        &Shared<'s, V>,
+        u32,
+    ) {
         (&self.index, self.items, 0)
     }
 

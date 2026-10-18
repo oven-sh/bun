@@ -1469,9 +1469,12 @@ impl<C, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
         let mut next = self.retired.load(Ordering::Relaxed);
         let retired = Box::new_in(Retired { slice, next }, self.alloc.clone());
         let retired = Box::into_raw_with_allocator(retired).0;
-        while let Err(now) =
-            (self.retired).compare_exchange_weak(next, retired, Ordering::Release, Ordering::Relaxed)
-        {
+        while let Err(now) = (self.retired).compare_exchange_weak(
+            next,
+            retired,
+            Ordering::Release,
+            Ordering::Relaxed,
+        ) {
             next = now;
             // SAFETY: it was a box above, and no other thread has seen it.
             unsafe { (*retired).next = now };

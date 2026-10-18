@@ -2590,7 +2590,8 @@ describe.concurrent("a version published after the manifest was cached", () => {
     { to: depends("1.0.1"), args: ["--prefer-offline"], locked: "fresh-pkg@1.0.1" },
     // It used to be skipped without a message, and the lockfile that was saved never tried again.
     { to: depends("1.0.1", "optionalDependencies"), args: [], locked: "fresh-pkg@1.0.1" },
-    { to: depends("9.9.9", "optionalDependencies"), args: [] },
+    // Unresolved, the optional row asks again on every install that may change bun.lock.
+    { to: depends("9.9.9", "optionalDependencies"), args: [], requestsAgain: [null, null] },
     { to: depends("9.9.9"), args: [], messages: [noVersion("9.9.9"), "error: fresh-pkg@9.9.9 failed to resolve"] },
     {
       to: depends("nope"),
@@ -2607,7 +2608,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
       messages: [noVersion("1.0.1"), "error: fresh-pkg@1.0.1 failed to resolve"],
       requests: [],
     },
-  ])("$to $args", async ({ to, args, locked, messages = [], requests = [null] }) => {
+  ])("$to $args", async ({ to, args, locked, messages = [], requests = [null], requestsAgain = requests }) => {
     const versions = ["1.0.0"];
     const tags: Record<string, string> = {};
     using registry = serveMutableRegistry(versions, tags);
@@ -2629,7 +2630,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
 
     if (!messages.length) {
       expect(await install(String(dir))).toEqual({ messages: [], exitCode: 0, locked });
-      expect(registry.requests).toEqual(requests);
+      expect(registry.requests).toEqual(requestsAgain);
     }
   });
 

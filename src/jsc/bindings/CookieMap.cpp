@@ -317,9 +317,7 @@ bool CookieMap::entriesEqual(CookieMap& other)
     if (sameOrder)
         return true;
 
-    // set() moves a name in front of the parsed cookies, so the order of the names is edit
-    // history. The order within one name is not: only the parsed header can repeat a name,
-    // and get() returns its first value.
+    // set() reorders names, so only the order within one name counts: get() returns its first value.
     auto sortedByName = [](CookieMap& map) {
         Vector<Entry> entries;
         auto iterator = map.createIterator();

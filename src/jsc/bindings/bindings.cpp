@@ -1905,14 +1905,12 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
             }
 
-            // FormData, Blob, Cookie and CookieMap keep their state in native memory, so the
-            // own-property walk calls any two of a kind equal. Each owner type compares its own
-            // state. node compares a FormData or a Blob as a plain object, so the node modes
-            // keep the walk for those two.
             const JSC::ClassInfo* classInfo = c1->classInfo();
             bool isCookieOrCookieMap = c1Type == JSAsJSONType && (classInfo == JSCookie::info() || classInfo == JSCookieMap::info());
             bool isFormDataOrBlob = c1Type == JSDOMWrapperType && (classInfo == JSDOMFormData::info() || classInfo == JSBlob::info());
-            if ((isCookieOrCookieMap || (isFormDataOrBlob && !mode.checkPrototypes)) && classInfo == c2->classInfo()) {
+            // node compares a FormData or a Blob as a plain object, so its modes keep the own-property walk.
+            bool comparesNativeState = isCookieOrCookieMap || (isFormDataOrBlob && !mode.checkPrototypes);
+            if (comparesNativeState && classInfo == c2->classInfo()) {
                 if (classInfo == JSBlob::info()) {
                     void* blob1 = uncheckedDowncast<JSBlob>(c1)->wrapped();
                     void* blob2 = uncheckedDowncast<JSBlob>(c2)->wrapped();
@@ -1932,8 +1930,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                     contentsEqual = uncheckedDowncast<JSCookieMap>(c1)->wrapped().entriesEqual(uncheckedDowncast<JSCookieMap>(c2)->wrapped());
                 if (!contentsEqual)
                     return false;
-                // One structure and no own properties: the walk has nothing left to compare and
-                // answers true. An expando or a subclass still takes it.
+                // With one structure and no own properties the own-property walk has nothing left to compare.
                 if (c1->structureID() == c2->structureID() && !hasExtraOwnProperties(c1->structure()))
                     return true;
             }

@@ -527,6 +527,7 @@ impl Elements {
     }
 
     /// Move what a box has below `value` in `ch` to the front: bins, pixels, and their moments.
+    #[inline(never)] // Apart from its caller, the loop has the registers to itself.
     fn partition(&mut self, b: &ColorBox, ch: usize, value: u8) -> (usize, usize, Moments) {
         let mut left = Moments::default();
         let bins = &mut self.bins[b.bins.0..b.bins.1];
@@ -634,6 +635,7 @@ fn split_boxes(elements: &mut Elements, want: usize) -> Result<Vec<u8>, AllocErr
 }
 
 /// The cut of a box along `ch` with the least squared error, as the value that starts part two.
+#[inline(never)] // Apart from its caller, the loop has the registers to itself.
 fn cut(elements: &Elements, b: &ColorBox, ch: usize, at_value: &mut [Sums]) -> Option<u8> {
     let total = &b.moments;
     // A box of a few pixels has few of the 256 values: `has` names them.

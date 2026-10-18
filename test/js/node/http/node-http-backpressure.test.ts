@@ -1837,6 +1837,70 @@ describe("backpressure", () => {
       }
     });
 
+    // 1xx blocks are the one thing that can back up the socket before the
+    // response has a body write. The empty write behind them reports the
+    // backpressure, and it still commits the header section like any first
+    // write does.
+    it("behind backed-up 1xx blocks, and still terminates the header section", async () => {
+      const wrote = Promise.withResolvers<{ returned: boolean; hints: number }>();
+      const headSeen = Promise.withResolvers<void>();
+      await using server = http.createServer(async (req, res) => {
+        try {
+          const pad = Buffer.alloc(64 * 1024, "a").toString();
+          let hints = 0;
+          while (res.writableLength === 0 && hints < 10_000) {
+            res.writeEarlyHints({ link: "</style.css>; rel=preload; as=style", "x-pad": pad });
+            hints++;
+          }
+          res.writeHead(200);
+          const returned = res.write("");
+          wrote.resolve({ returned, hints });
+          await headSeen.promise;
+          res.end("bye");
+        } catch (e) {
+          wrote.reject(e);
+          headSeen.reject(e);
+          res.destroy();
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const socket = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.pause();
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      try {
+        const { returned, hints } = await wrote.promise;
+        expect(hints).toBeGreaterThan(0);
+        expect(returned).toBe(false);
+
+        let data = "";
+        let head: string | undefined;
+        socket.on("data", chunk => {
+          data += chunk.toString("latin1");
+          if (head !== undefined) return;
+          const start = data.indexOf("HTTP/1.1 200");
+          if (start < 0) return;
+          const end = data.indexOf("\r\n\r\n", start);
+          if (end < 0) return;
+          head = data.slice(start, end + 4);
+          headSeen.resolve();
+        });
+        const closed = once(socket, "close");
+        socket.resume();
+        // Without the fix the head never gets its empty line, and this waits until the test times out.
+        await headSeen.promise;
+        await closed;
+        const tail = data.slice(data.indexOf("HTTP/1.1 200"));
+        expect({ head: head!.replace(/^Date: .*$/m, "Date: <D>"), tail: tail.slice(head!.length) }).toEqual({
+          head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n",
+          tail: "3\r\nbye\r\n0\r\n\r\n",
+        });
+      } finally {
+        socket.destroy();
+      }
+    });
+
     it("in the turn of a write that reached the high water mark", async () => {
       const finished = Promise.withResolvers<{ size: number; returned: boolean[] }>();
       finished.promise.catch(() => {});

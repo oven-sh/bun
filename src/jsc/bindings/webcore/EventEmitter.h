@@ -56,7 +56,8 @@ public:
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
-    WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
+    // With `listenerThrew`, the listeners after one that throws are not called, as in Node.
+    WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&, bool* listenerThrew = nullptr);
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
     WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
@@ -73,10 +74,7 @@ public:
 
     void setMaxListeners(unsigned count);
 
-    // Report: it is an uncaught exception, and the next listener is called. Throw: it ends the emit, as in Node.
-    enum class ListenerException : bool { Report,
-        Throw };
-    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments, ListenerException = ListenerException::Report);
+    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments, bool* listenerThrew = nullptr);
     bool isFiringEventListeners() const;
 
     const EventEmitterData* eventTargetData() const;
@@ -105,7 +103,7 @@ private:
     {
     }
 
-    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, ListenerException);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, bool* listenerThrew);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

@@ -1515,7 +1515,7 @@ class ChildProcess extends EventEmitter {
         this.channel = new Control();
         this.#pendingMessages = [];
         this.on("newListener", () => {
-          if (this.#pendingMessages.length > 0) process.nextTick(() => this.#emitPendingMessages());
+          process.nextTick(() => this.#emitPendingMessages());
         });
         Object.defineProperty(this, "_channel", {
           get() {
@@ -1571,13 +1571,13 @@ class ChildProcess extends EventEmitter {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
   #emitIpcMessage(message, _, handle) {
     if (isInternalIpcMessage(message)) this.emit("internalMessage", message, handle);
-    else if (this.listenerCount("message") > 0) this.emit("message", message, handle);
+    else if (this.listenerCount("message")) this.emit("message", message, handle);
     else ArrayPrototypePush.$call(this.#pendingMessages, [message, handle]);
   }
 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
   #emitPendingMessages() {
-    if (!this.connected || this.listenerCount("message") === 0) return;
+    if (!this.connected || !this.listenerCount("message")) return;
     const messages = this.#pendingMessages;
     const { length } = messages;
     for (let i = 0; i < length; i++) this.emit("message", messages[i][0], messages[i][1]);

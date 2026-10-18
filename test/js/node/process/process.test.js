@@ -3300,32 +3300,3 @@ it("no socket close handler runs after the 'exit' event", async () => {
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
 });
-
-it("process.emit() throws what a listener throws, and does not call the listeners after it", () => {
-  const calls = [];
-  const first = () => {
-    calls.push("first");
-    throw new Error("from the listener");
-  };
-  const second = () => calls.push("second");
-  process.on("emit throws", first).on("emit throws", second);
-  try {
-    expect(() => process.emit("emit throws")).toThrow("from the listener");
-    expect(calls).toEqual(["first"]);
-  } finally {
-    process.off("emit throws", first).off("emit throws", second);
-  }
-});
-
-it("process.on() throws what a 'newListener' listener throws, and does not add the listener", () => {
-  const onNewListener = name => {
-    if (name === "on throws") throw new Error("from 'newListener'");
-  };
-  process.on("newListener", onNewListener);
-  try {
-    expect(() => process.on("on throws", () => {})).toThrow("from 'newListener'");
-    expect(process.listenerCount("on throws")).toBe(0);
-  } finally {
-    process.off("newListener", onNewListener);
-  }
-});

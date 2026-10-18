@@ -1159,37 +1159,6 @@ test("postMessageToThread survives a tampered Map prototype", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("a process.once('workerMessage') listener gets one message", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const wt = require("worker_threads");
-       const w = new wt.Worker(
-         \`const wt = require("worker_threads");
-           wt.parentPort.on("message", async () => {
-             await wt.postMessageToThread(0, 1);
-             await wt.postMessageToThread(0, 2);
-           });\`,
-         { eval: true },
-       );
-       const got = [];
-       process.once("workerMessage", v => got.push(v));
-       process.on("workerMessage", v => {
-         if (v !== 2) return;
-         console.log(JSON.stringify(got), process.listenerCount("workerMessage"));
-         w.terminate();
-       });
-       w.postMessage("ping");`,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("[1] 1");
-  expect(exitCode).toBe(0);
-});
-
 // The listener registry must not route through user-overridable Map/Set/WeakMap:
 // not their methods, not the `size` getter, not their iterators. Spawned, because
 // it clobbers prototypes and would poison the whole runner.

@@ -100,7 +100,7 @@ impl PendingConnect {
 
     /// DNS worker may call from off the HTTP thread; mirror
     /// us_internal_dns_callback_threadsafe: push onto a mutex-protected list and
-    /// wake the loop. `drain_resolved` runs from `HTTPThread.drainEvents` on the
+    /// wake the loop. `drain_deferred` runs from `HTTPThread.drainEvents` on the
     /// next loop iteration after the wakeup.
     ///
     /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`.
@@ -109,22 +109,33 @@ impl PendingConnect {
         // wrap it in a `ParentRef` (pointee outlives holder) so the shared
         // `loop_ptr` read goes through the safe `Deref` impl instead of an
         // open-coded `(*this)`. Read *before* publishing — once pushed, the
-        // HTTP thread may free `this` at any time via `drain_resolved`.
-        let loop_ptr = bun_ptr::ParentRef::from(
-            NonNull::new(this).expect("on_dns_resolved_threadsafe: non-null"),
-        )
-        .r#loop();
-        RESOLVED.lock().push(Resolved(this));
+        // HTTP thread may free `this` at any time via `drain_deferred`.
+        let this = NonNull::new(this).expect("on_dns_resolved_threadsafe: non-null");
+        let loop_ptr = bun_ptr::ParentRef::from(this).r#loop();
+        DEFERRED.lock().push(Deferred::Resolved(this));
         // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
         unsafe { (*loop_ptr).wakeup() };
     }
 
-    pub(crate) fn drain_resolved() {
-        let batch = core::mem::take(&mut *RESOLVED.lock());
-        for Resolved(head) in batch {
-            // SAFETY: every entry was heap-allocated in `register()` and is
-            // consumed exactly once here.
-            unsafe { PendingConnect::on_dns_resolved(head) };
+    /// From `callbacks::on_stream_reset`, so on the HTTP thread inside its loop
+    /// tick: the next `drain_events` follows with no wakeup.
+    pub(crate) fn defer_retry_over_http1() {
+        DEFERRED.lock().push(Deferred::RetryOverHttp1);
+    }
+
+    pub(crate) fn drain_deferred() {
+        let batch = core::mem::take(&mut *DEFERRED.lock());
+        for entry in batch {
+            match entry {
+                // SAFETY: every entry was heap-allocated in `register()` and is
+                // consumed exactly once here.
+                Deferred::Resolved(head) => unsafe {
+                    PendingConnect::on_dns_resolved(head.as_ptr())
+                },
+                Deferred::RetryOverHttp1 => {
+                    super::client_context::ClientContext::retry_marked_over_http1()
+                }
+            }
         }
     }
 
@@ -156,19 +167,24 @@ impl PendingConnect {
     }
 }
 
-/// Heap-allocated `PendingConnect` handed from DNS worker → HTTP thread.
-/// `*mut T` is `!Send` by default; this wrapper asserts the actual contract:
-/// the pointee is touched by exactly one thread at a time (producer pushes,
-/// consumer pops + frees), serialized by `RESOLVED`'s mutex.
-#[repr(transparent)]
-struct Resolved(*mut PendingConnect);
-// SAFETY: `Resolved` only ever crosses threads while held inside `RESOLVED`'s
-// mutex; the pointee is heap-allocated in `register()` and freed on the HTTP
-// thread in `on_dns_resolved()`. No thread touches it without the lock or
-// after handoff.
-unsafe impl Send for Resolved {}
+/// Work for the next `HTTPThread::drain_events`.
+enum Deferred {
+    /// Heap-allocated `PendingConnect` handed from DNS worker → HTTP thread.
+    Resolved(NonNull<PendingConnect>),
+    /// A STOP_SENDING marked a stream `http1_required`. lsquic drops the
+    /// STOP_SENDING that a close from inside its callback queues, so the
+    /// close waits here until lsquic has returned.
+    RetryOverHttp1,
+}
+// SAFETY: `NonNull<T>` is `!Send` by default. The actual contract: a
+// `Resolved` pointee is touched by exactly one thread at a time (producer
+// pushes, consumer pops + frees), serialized by `DEFERRED`'s mutex. It is
+// heap-allocated in `register()` and freed on the HTTP thread in
+// `on_dns_resolved()`. No thread touches it without the lock or after handoff.
+unsafe impl Send for Deferred {}
 
-/// Queue of `PendingConnect`s whose DNS resolved off the HTTP thread, drained
+/// Queue of `PendingConnect`s whose DNS resolved off the HTTP thread, and of
+/// stream closes that an lsquic callback left for later, drained
 /// on the next `HTTPThread::drain_events`. Conceptually a field of
 /// [`HTTPThread`](crate::HTTPThread) (there is exactly one), but kept as a
 /// module static because `http_thread()` hands out `&'static mut HTTPThread`
@@ -176,4 +192,4 @@ unsafe impl Send for Resolved {}
 /// DNS worker would alias that exclusive borrow under Stacked Borrows. A
 /// dedicated `Sync` static sidesteps that without weakening the singleton
 /// accessor's `&mut` contract.
-static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());
+static DEFERRED: Guarded<Vec<Deferred>> = Guarded::new(Vec::new());

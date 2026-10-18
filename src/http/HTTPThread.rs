@@ -822,7 +822,7 @@ impl HttpThread {
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
         self.drain_queued_pool_closes();
-        h3::PendingConnect::drain_resolved();
+        h3::PendingConnect::drain_deferred();
 
         self.queued_threadlocal_proxy_derefs.clear();
 

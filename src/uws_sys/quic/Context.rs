@@ -66,6 +66,10 @@ unsafe extern "C" {
         ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Stream),
     );
+    safe fn us_quic_socket_context_on_stream_reset(
+        ctx: &mut Context,
+        cb: unsafe extern "C" fn(*mut Stream, c_int, u64),
+    );
 }
 
 pub enum ConnectResult {
@@ -168,5 +172,11 @@ impl Context {
     #[inline]
     pub fn on_stream_close(&mut self, cb: unsafe extern "C" fn(*mut Stream)) {
         us_quic_socket_context_on_stream_close(self, cb)
+    }
+    /// The peer sent RESET_STREAM (`how` 0) or STOP_SENDING (`how` 1) with `code`.
+    /// The callback must not close the stream: see `quic.h`.
+    #[inline]
+    pub fn on_stream_reset(&mut self, cb: unsafe extern "C" fn(*mut Stream, c_int, u64)) {
+        us_quic_socket_context_on_stream_reset(self, cb)
     }
 }

@@ -2189,9 +2189,40 @@ impl<'a> HTTPClient<'a> {
 
     pub(crate) fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
+        self.h2_retries += 1;
+        self.restart_from_top();
+    }
+
+    /// The peer ended the request's stream, before it answered, with the code
+    /// that asks for HTTP/1.1 (HTTP_1_1_REQUIRED, H3_VERSION_FALLBACK). The
+    /// request fails with `err` when it names its protocol or its body cannot
+    /// be sent again.
+    pub(crate) fn retry_over_http1(&mut self, err: crate::Error) {
+        debug_assert!(self.h2.is_none());
+        debug_assert!(self.h3.is_none());
+        if !matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+            || !self.pin_to_http1()
+        {
+            return self.fail_from_h2(err);
+        }
+        self.restart_from_top();
+    }
+
+    /// Keep the rest of this request on HTTP/1.1: `can_offer_h2` and
+    /// `can_try_h3_alt_svc` refuse it from here on, redirect hops included.
+    /// `false` for a request that names its protocol, which stays as it is.
+    pub(crate) fn pin_to_http1(&mut self) -> bool {
+        if self.flags.forced_protocol.is_some() {
+            return false;
+        }
+        self.flags.forced_protocol = Some(Protocol::Http1_1);
+        true
+    }
+
+    /// Start the request again through `start()`. The body can be sent again from its first byte.
+    fn restart_from_top(&mut self) {
         self.unregister_abort_tracker();
         self.flags.protocol = Protocol::Http1_1;
-        self.h2_retries += 1;
         let body = core::mem::replace(
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
@@ -4120,7 +4151,7 @@ impl<'a> HTTPClient<'a> {
                     // PendingConnect that the rest of this loop would re-coalesce
                     // onto (which would serialise N cold fetches into N
                     // sequential handshakes). The origin already chose h1 once.
-                    waiter.flags.forced_protocol = Some(Protocol::Http1_1);
+                    waiter.pin_to_http1();
                     waiter.start_::<true>();
                 }
                 // The first waiter becomes the new leader; the rest re-coalesce

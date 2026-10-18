@@ -89,6 +89,8 @@ struct us_quic_socket_context_s {
     void (*on_stream_data)(us_quic_stream_t *, const char *, unsigned int, int);
     void (*on_stream_writable)(us_quic_stream_t *);
     void (*on_stream_close)(us_quic_stream_t *);
+    /* Client only, see us_quic_client_on_reset. */
+    void (*on_stream_reset)(us_quic_stream_t *, int, uint64_t);
 
     char read_buf[US_QUIC_READ_BUF];
     /* ext follows */
@@ -742,6 +744,15 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
     if (h && stream && how == 0) lsquic_stream_close(stream);
 }
 
+/* The client also learns the peer's code, and that a STOP_SENDING arrived.
+ * on_stream_close carries neither, and a STOP_SENDING alone never gets there. */
+static void us_quic_client_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how) {
+    us_quic_stream_t *s = (us_quic_stream_t *) h;
+    if (s && stream && s->ctx->on_stream_reset)
+        s->ctx->on_stream_reset(s, how, lsquic_stream_get_error_code(stream));
+    us_quic_on_reset(stream, h, how);
+}
+
 /* ───── public API ───── */
 
 static const struct lsquic_stream_if us_quic_stream_if = {
@@ -754,6 +765,18 @@ static const struct lsquic_stream_if us_quic_stream_if = {
     .on_write = us_quic_on_write,
     .on_close = us_quic_on_close,
     .on_reset = us_quic_on_reset,
+};
+
+static const struct lsquic_stream_if us_quic_client_stream_if = {
+    .on_new_conn = us_quic_on_new_conn,
+    .on_conn_closed = us_quic_on_conn_closed,
+    .on_hsk_done = us_quic_on_hsk_done,
+    .on_goaway_received = us_quic_on_goaway_received,
+    .on_new_stream = us_quic_on_new_stream,
+    .on_read = us_quic_on_read,
+    .on_write = us_quic_on_write,
+    .on_close = us_quic_on_close,
+    .on_reset = us_quic_client_on_reset,
 };
 
 static const struct lsquic_hset_if us_quic_hset_if = {
@@ -1091,6 +1114,7 @@ DEF_CB(on_stream_headers, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_data, void (*cb)(us_quic_stream_t *, const char *, unsigned int, int))
 DEF_CB(on_stream_writable, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_close, void (*cb)(us_quic_stream_t *))
+DEF_CB(on_stream_reset, void (*cb)(us_quic_stream_t *, int, uint64_t))
 #undef DEF_CB
 
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len) {
@@ -1358,7 +1382,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
     api.ea_settings = &ctx->settings;
-    api.ea_stream_if = &us_quic_stream_if;
+    api.ea_stream_if = &us_quic_client_stream_if;
     api.ea_stream_if_ctx = ctx;
     api.ea_packets_out = us_quic_packets_out;
     api.ea_packets_out_ctx = ctx;

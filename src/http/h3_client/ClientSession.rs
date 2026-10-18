@@ -299,6 +299,39 @@ impl ClientSession {
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
 
+    /// The peer ended `stream` with H3_VERSION_FALLBACK before a final
+    /// response. Unlike `retry_or_fail`, the connection is healthy and stays
+    /// open: only this request leaves it, for HTTP/1.1.
+    fn fall_back_to_http1(&mut self, stream: *mut Stream) {
+        bun_core::scoped_log!(
+            h3_client,
+            "version fallback {}:{}",
+            bstr::BStr::new(&self.hostname),
+            self.port,
+        );
+        // Shaped like `fail`: capture the client ptr before detach() invalidates `stream`.
+        let client = stream_mut(stream).client;
+        self.detach_with(stream, true);
+        let Some(cl) = client else { return };
+        let client = client_mut(cl);
+        if client.signals.get(Signal::Aborted) {
+            return client.fail_from_h2(crate::Error::Aborted);
+        }
+        client.retry_over_http1(crate::Error::HTTP3StreamReset);
+    }
+
+    /// A STOP_SENDING marked these streams `http1_required` and left them
+    /// open (`callbacks::on_stream_reset`). Runs once lsquic has returned.
+    pub(crate) fn retry_marked_over_http1(&mut self) {
+        // `fall_back_to_http1` unlinks the stream from `pending`: locate, then act.
+        while let Some(stream) = self.pending.iter().copied().find(|&s| {
+            let s = stream_ref(s);
+            s.http1_required && s.status_code == 0
+        }) {
+            self.fall_back_to_http1(stream);
+        }
+    }
+
     pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
         // `fail` mutates `pending`, so it cannot be called while the iterator
         // holds `&self.pending`, and only one entry can match — so locate
@@ -385,6 +418,9 @@ impl ClientSession {
 
         if client.state.response_stage != HTTPStage::Body {
             if done {
+                if st.http1_required && st.status_code == 0 {
+                    return self.fall_back_to_http1(stream);
+                }
                 // Stream closed before headers — handshake/reset failure.
                 return self.retry_or_fail(
                     stream,

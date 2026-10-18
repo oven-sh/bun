@@ -101,6 +101,9 @@ pub struct ClientSession {
     pub(crate) preface_sent: bool,
     pub(crate) settings_received: bool,
     pub(crate) goaway_received: bool,
+    /// The peer sent GOAWAY(HTTP_1_1_REQUIRED): a request this connection
+    /// never wrote leaves for HTTP/1.1, not for another h2 connection.
+    pub(crate) http1_required: bool,
     /// Set when the HPACK encoder's dynamic table has diverged from the
     /// server's view (writeRequest failed mid-encode). Existing siblings whose
     /// HEADERS already went out are unaffected, but no new stream may be
@@ -395,6 +398,7 @@ impl ClientSession {
             preface_sent: false,
             settings_received: false,
             goaway_received: false,
+            http1_required: false,
             encoder_poisoned: false,
             delivering: false,
             stream_progressed: false,
@@ -507,6 +511,10 @@ impl ClientSession {
             } else if self.has_headroom() {
                 self.attach(client);
             } else {
+                if self.http1_required {
+                    // A request that names h2 keeps its protocol.
+                    client.pin_to_http1();
+                }
                 client.h2_retry_after_coalesce();
             }
         }
@@ -1207,6 +1215,10 @@ impl ClientSession {
         if let Some(err) = stream.fatal_error {
             stream.client = None;
             client.h2 = None;
+            if stream.http1_required && stream.status_code == 0 {
+                client.retry_over_http1(err);
+                return true;
+            }
             // Only transparently retry when the server refused the stream
             // before producing any of it (REFUSED_STREAM after HEADERS would
             // be a server bug, but retrying then re-streams a body prefix

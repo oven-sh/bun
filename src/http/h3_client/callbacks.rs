@@ -84,6 +84,7 @@ pub(crate) fn register(qctx: &mut quic::Context) {
     qctx.on_stream_data(on_stream_data);
     qctx.on_stream_writable(on_stream_writable);
     qctx.on_stream_close(on_stream_close);
+    qctx.on_stream_reset(on_stream_reset);
 }
 
 extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
@@ -303,6 +304,30 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
         return;
     }
     encode::drain_send_body(stream, s);
+}
+
+/// RFC 9114 §8.1: "The requested operation cannot be served over HTTP/3. The
+/// peer should retry over HTTP/1.1."
+const H3_VERSION_FALLBACK: u64 = 0x110;
+
+/// The peer sent RESET_STREAM (`how` 0) or STOP_SENDING (`how` 1) with `code`.
+/// Only marks the stream. After a RESET_STREAM, quic.c closes the stream and
+/// `deliver` reads the mark. A STOP_SENDING leaves the stream open, and a
+/// close from here would lose its own STOP_SENDING (see `quic.h`), so that
+/// close is left to the next `drain_events`.
+extern "C" fn on_stream_reset(s: *mut quic::Stream, how: c_int, code: u64) {
+    if code != H3_VERSION_FALLBACK {
+        return;
+    }
+    let s = qstream_arg(s);
+    let Some(stream) = stream_of(s) else { return };
+    if stream.status_code != 0 {
+        return;
+    }
+    stream.http1_required = true;
+    if how == 1 {
+        super::PendingConnect::defer_retry_over_http1();
+    }
 }
 
 extern "C" fn on_stream_close(s: *mut quic::Stream) {

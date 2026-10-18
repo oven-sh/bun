@@ -3,6 +3,8 @@ import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
 import { createPrivateKey } from "node:crypto";
+import http2 from "node:http2";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { listen } from "node:quic";
 
@@ -1189,6 +1191,171 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("proxied body=from-origin\ndirect body=from-origin sessions=0\n");
     expect(exitCode).toBe(0);
+  });
+
+  // RFC 9114 section 8.1, H3_VERSION_FALLBACK: "The requested operation cannot
+  // be served over HTTP/3. The peer should retry over HTTP/1.1." Bun.serve ends
+  // no stream with that code, so the alternative is a node:quic server. The
+  // origin answers h2 and HTTP/1.1 over TCP and records which one it was. Both
+  // run here. Only the client is a subprocess, for the flags.
+  describe("a stream that the alternative ends with H3_VERSION_FALLBACK", () => {
+    const H3_VERSION_FALLBACK = 0x110;
+    // The alternative lets a client send this much of a request body before it reads any.
+    const streamWindow = 16 * 1024;
+    // So the upload of this body is still in progress when the alternative answers the request headers.
+    const largeBody = 16 * streamWindow;
+    const client = /* js */ `
+      const { origin, alternative, init } = JSON.parse(process.env.H3_CASE);
+      const lax = { tls: { rejectUnauthorized: false } };
+      const settle = p => p.then(async r => r.status + " " + (await r.text()), e => e.code ?? e.name);
+      const bodies = {
+        string: () => ({ body: "payload" }),
+        large: () => ({ body: Buffer.alloc(${largeBody}, "x").toString() }),
+        stream: () => ({ body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(3)); c.close(); } }), duplex: "half" }),
+      };
+      // A request that names HTTP/3 goes to the port of the alternative itself.
+      const port = init.protocol === "http3" ? alternative : origin;
+      // The first response records the alternative. The next two requests are routed to it.
+      const out = [await settle(fetch("https://127.0.0.1:" + origin + "/0", lax))];
+      for (const path of ["/1", "/2"]) {
+        const { body, ...rest } = init;
+        out.push(await settle(fetch("https://127.0.0.1:" + port + path, { ...lax, ...rest, ...bodies[body]?.() })));
+      }
+      console.log(JSON.stringify(out));
+      // Keep the QUIC connection until the test has looked at the alternative.
+      for await (const _ of Bun.stdin.stream());
+    `;
+
+    async function runFallback(
+      frames: string[],
+      init: Record<string, string> = {},
+      { args = ["--experimental-http3-fetch"], env = {}, code = H3_VERSION_FALLBACK } = {},
+    ) {
+      const hits: string[] = [];
+      let sessions = 0;
+      let openStreams = 0;
+      let onAllClosed: (() => void) | undefined;
+      const alternative = await listen(
+        async (session: any) => {
+          sessions++;
+          session.onstream = (stream: any) => {
+            openStreams++;
+            stream.closed.catch(() => {}).then(() => --openStreams || onAllClosed?.());
+          };
+          await session.closed.catch(() => {});
+        },
+        {
+          sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+          transportParams: { maxIdleTimeout: 5, initialMaxStreamDataBidiRemote: streamWindow },
+          onheaders(this: any, received: NodeJS.Dict<string | string[]>) {
+            hits.push(`h3 ${received[":method"]} ${received[":path"]}`);
+            if (frames.includes("STOP_SENDING")) this.stopSending(BigInt(code));
+            if (frames.includes("RESET_STREAM")) this.resetStream(BigInt(code));
+          },
+        },
+      );
+      const origin = http2.createSecureServer({ ...tls, allowHTTP1: true }, async (req, res) => {
+        let bytes = 0;
+        for await (const chunk of req) bytes += chunk.length;
+        hits.push(`tcp HTTP/${req.httpVersion} ${req.method} ${req.url}` + (bytes ? ` ${bytes} bytes` : ""));
+        res.setHeader("alt-svc", `h3=":${alternative.address!.port}"; ma=3600`);
+        res.end("origin");
+      });
+      origin.on("clientError", () => {});
+      await new Promise<void>(resolve => origin.listen(0, "127.0.0.1", resolve));
+      try {
+        const ports = { origin: (origin.address() as AddressInfo).port, alternative: alternative.address!.port };
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--no-warnings", ...args, "-e", client],
+          env: { ...bunEnv, ...env, H3_CASE: JSON.stringify({ ...ports, init }) },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        // One line, once the last request has settled.
+        let stdout = "";
+        for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+          stdout += chunk;
+          if (stdout.includes("\n")) break;
+        }
+        // The client left no request stream open on the connection that it keeps.
+        if (stdout && openStreams > 0) await new Promise<void>(resolve => (onAllClosed = resolve));
+        proc.stdin.end();
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { out: stdout ? JSON.parse(stdout) : stderr, hits, sessions, exitCode };
+      } finally {
+        origin.close();
+        // Not close(): it waits for the session that fetch() keeps in its pool.
+        await alternative.destroy();
+      }
+    }
+
+    // One attempt over HTTP/3 and one over HTTP/1.1 for each routed request, all on one QUIC connection.
+    const sentAgain = (method = "GET", body = "", first = "HTTP/1.1") => ({
+      out: ["200 origin", "200 origin", "200 origin"],
+      hits: [
+        `tcp ${first} GET /0`,
+        `h3 ${method} /1`,
+        `tcp HTTP/1.1 ${method} /1${body}`,
+        `h3 ${method} /2`,
+        `tcp HTTP/1.1 ${method} /2${body}`,
+      ],
+      sessions: 1,
+      exitCode: 0,
+    });
+
+    test("RESET_STREAM: the request is sent again over HTTP/1.1", async () => {
+      expect(await runFallback(["RESET_STREAM"])).toEqual(sentAgain());
+    });
+
+    test("RESET_STREAM: a string body is sent again", async () => {
+      expect(await runFallback(["RESET_STREAM"], { method: "POST", body: "string" })).toEqual(
+        sentAgain("POST", " 7 bytes"),
+      );
+    });
+
+    // A STOP_SENDING reaches the client only while the request body is still on its way.
+    test.each([[["STOP_SENDING", "RESET_STREAM"]], [["STOP_SENDING"]]])(
+      "%j during the upload: the request is sent again over HTTP/1.1",
+      async frames => {
+        expect(await runFallback(frames, { method: "POST", body: "large" })).toEqual(
+          sentAgain("POST", ` ${largeBody} bytes`),
+        );
+      },
+    );
+
+    test("BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1: the request is sent again over HTTP/1.1", async () => {
+      const env = { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" };
+      expect(await runFallback(["RESET_STREAM"], {}, { args: [], env })).toEqual(sentAgain());
+    });
+
+    test("with --experimental-http2-fetch too, the request is sent again over HTTP/1.1, not h2", async () => {
+      const args = ["--experimental-http3-fetch", "--experimental-http2-fetch"];
+      expect(await runFallback(["RESET_STREAM"], {}, { args })).toEqual(sentAgain("GET", "", "HTTP/2.0"));
+    });
+
+    // A request that names HTTP/3 has no HTTP/1.1 to go to, and a stream body
+    // may be consumed already: both reject, after one attempt.
+    test.each([
+      ["protocol: 'http3'", { protocol: "http3" }, "GET"],
+      ["a ReadableStream body", { method: "POST", body: "stream" }, "POST"],
+    ])("%s: the request rejects", async (_name, init, method) => {
+      expect(await runFallback(["RESET_STREAM"], init)).toEqual({
+        out: ["200 origin", "HTTP3StreamReset", "HTTP3StreamReset"],
+        hits: ["tcp HTTP/1.1 GET /0", `h3 ${method} /1`, `h3 ${method} /2`],
+        sessions: 1,
+        exitCode: 0,
+      });
+    });
+
+    test("another code does not send the request to the origin", async () => {
+      const H3_INTERNAL_ERROR = 0x102;
+      const { out, hits } = await runFallback(["RESET_STREAM"], {}, { code: H3_INTERNAL_ERROR });
+      expect({ out, tcp: hits.filter(hit => hit.startsWith("tcp")) }).toEqual({
+        out: ["200 origin", "HTTP3StreamReset", "HTTP3StreamReset"],
+        tcp: ["tcp HTTP/1.1 GET /0"],
+      });
+    });
   });
 });
 

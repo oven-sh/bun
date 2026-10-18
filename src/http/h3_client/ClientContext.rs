@@ -221,6 +221,19 @@ impl ClientContext {
         false
     }
 
+    /// See `ClientSession::retry_marked_over_http1`.
+    pub(crate) fn retry_marked_over_http1() {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        // `BackRef` as in `abort_by_http_id`. A request pinned to HTTP/1.1
+        // opens no QUIC connection, so `sessions` is stable across the loop.
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
+            session_mut(s).retry_marked_over_http1();
+        }
+    }
+
     /// Close the connections of fetch session `pool_id` that carry no request.
     pub(crate) fn close_idle_sessions(pool_id: u64) {
         let Some(this) = Self::get() else {

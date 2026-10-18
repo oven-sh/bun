@@ -128,6 +128,12 @@ void us_quic_socket_context_on_stream_writable(us_quic_socket_context_t *ctx,
     void (*on_writable)(us_quic_stream_t *));
 void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_stream_t *));
+/* Client only. The peer sent RESET_STREAM (how=0) or STOP_SENDING (how=1) with
+ * `code`. on_stream_close follows a RESET_STREAM. A STOP_SENDING alone leaves
+ * the stream open, and lsquic is still handling the frame: it drops the
+ * STOP_SENDING that a close from inside this callback queues. Close later. */
+void us_quic_socket_context_on_stream_reset(us_quic_socket_context_t *ctx,
+    void (*on_reset)(us_quic_stream_t *, int how, uint64_t code));
 
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
  * (may be < len under flow-control backpressure). */

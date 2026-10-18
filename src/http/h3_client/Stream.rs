@@ -38,6 +38,9 @@ pub struct Stream {
     pub(crate) is_streaming_body: bool,
     pub(crate) headers_delivered: bool,
     pub(crate) read_paused: bool,
+    /// The peer sent RESET_STREAM or STOP_SENDING with H3_VERSION_FALLBACK
+    /// before a final response: see `callbacks::on_stream_reset`.
+    pub(crate) http1_required: bool,
 }
 
 impl Stream {
@@ -58,6 +61,7 @@ impl Stream {
             is_streaming_body: false,
             headers_delivered: false,
             read_paused: false,
+            http1_required: false,
         }))
     }
 

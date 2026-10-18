@@ -8,6 +8,7 @@ import {
   type BytesOptions,
   BytesType,
   type ClassOptions,
+  ClassRefType,
   ClassType,
   type DictionaryOptions,
   DictionaryType,
@@ -39,7 +40,7 @@ export const { u8, u16, i32, u32, u64, usize } = integers;
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. */
 export const f64 = new DoubleType();
 
-/** An owned `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. */
+/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. */
 export const string = new StringType();
 
 /** The JS value itself, as a `JsLocal<'a>`. */
@@ -60,6 +61,9 @@ export const blob = new RefType(
   [{ cpp: "WebCore::JSBlob" }],
   "detached Blobs",
 );
+
+/** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct it wraps. */
+export const classRef = (name: string) => new ClassRefType(name);
 
 const null_ = new UnitType("null");
 

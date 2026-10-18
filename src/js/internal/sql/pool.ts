@@ -12,9 +12,9 @@ const {
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } = require("internal/sql/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
-const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
+const monotonicNowMs = $bindgen("Timer.bind.ts", "monotonicNowMs");
 /// how many times `bun --hot` has reloaded the program, -1 without --hot
-const hotReloadGeneration = $newRustFunction("jsc_hooks.rs", "hotReloadGeneration", 0);
+const hotReloadGeneration = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
 
 const enum PooledConnectionState {
   connecting = 0,

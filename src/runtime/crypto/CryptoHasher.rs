@@ -384,7 +384,7 @@ impl CryptoHasherClass for CryptoHasher {
         &mut self,
         this: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
-        input: bun_core::String,
+        input: &bun_core::String,
         encoding: Option<&'a [u8]>,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         match encoding.and_then(Encoding::from).unwrap_or(Encoding::Utf8) {
@@ -440,7 +440,7 @@ impl CryptoHasherClass for CryptoHasher {
 
     fn hash<'a>(
         heap: &JsHeap<'a>,
-        algorithm: bun_core::String,
+        algorithm: &bun_core::String,
         input: &'a [u8],
         output: Option<DigestOutput<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {

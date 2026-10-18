@@ -1,11 +1,12 @@
 use bun_paths::strings;
 use core::ffi::c_int;
 
-use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
@@ -614,13 +615,12 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-pub(crate) fn js_assert_encoding_valid(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let value = call_frame.argument(0);
-    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn assert_encoding_valid<'a>(
+    cx: &mut JsScope<'a>,
+    encoding: JsLocal<'a>,
+) -> JsResult<()> {
+    Encoding::assert(encoding.to_js(), cx.global(), Encoding::Utf8)?;
+    Ok(())
 }
 
 impl Encoding {

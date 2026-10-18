@@ -269,17 +269,17 @@ describe("InternalSourceMap.toVLQ", () => {
         `const { internalSourceMap } = require("bun:internal-for-testing");
          // Blob layout (see src/sourcemap/InternalSourceMap.rs):
          // [0..8] total_len u64, [8..16] mapping_count u64,
-         // [16..20] sync_count u32, [20..24] stream_offset u32,
-         // [24..48] SyncEntry, [48..80] window header (count=1, no deltas),
-         // [80] stream tail pad.
-         const blob = new Uint8Array(81);
+         // [16..24] unused, [24..28] sync_count u32,
+         // [28..32] stream_offset u32, [32..56] SyncEntry, [56..88] window
+         // header (count=1, no deltas), [88] stream tail pad.
+         const blob = new Uint8Array(89);
          const dv = new DataView(blob.buffer);
-         dv.setBigUint64(0, 81n, true); // total_len
+         dv.setBigUint64(0, 89n, true); // total_len
          dv.setBigUint64(8, 1n, true); // mapping_count
-         dv.setUint32(16, 1, true); // sync_count
-         dv.setUint32(20, 48, true); // stream_offset
-         dv.setInt32(28, -2147483648, true); // SyncEntry.generated_column
-         blob[48] = 1; // window mapping count
+         dv.setUint32(24, 1, true); // sync_count
+         dv.setUint32(28, 56, true); // stream_offset
+         dv.setInt32(36, -2147483648, true); // SyncEntry.generated_column
+         blob[56] = 1; // window mapping count
          console.log("TOVLQ: " + internalSourceMap.toVLQ(blob));`,
       ],
       env: bunEnv,

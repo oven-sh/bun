@@ -629,8 +629,8 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   //   then twelve u64 fields; sourcemap_byte_offset @ 54,
   //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
   // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
-  //   0: total_len u64, 8: mapping_count u64, 16: sync_count u32,
-  //   20: stream_offset u32.
+  //   0: total_len u64, 8: mapping_count u64, 16: unused,
+  //   24: sync_count u32, 28: stream_offset u32.
   const SOURCEMAP_BYTE_OFFSET_AT = 54;
   const SOURCEMAP_BYTE_LENGTH_AT = 62;
 
@@ -639,10 +639,10 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
     if (data.length < 102) return false;
     const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
     const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
-    if (smLen < 24 || smOff + smLen > data.length) return false;
+    if (smLen < 32 || smOff + smLen > data.length) return false;
     // Inflate sync_count so the SyncEntry array claims far more entries than
     // the section holds.
-    data.writeUInt32LE(0x0fffffff, smOff + 16);
+    data.writeUInt32LE(0x0fffffff, smOff + 24);
     writeFileSync(file, data);
     return true;
   }

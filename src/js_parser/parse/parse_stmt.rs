@@ -14,7 +14,7 @@ use js_lexer::T;
 use crate::parser::fs;
 use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
-    StatementScope, StmtList,
+    StatementScope, StmtList, TypeParameterFlag,
 };
 use crate::typescript;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
@@ -1738,6 +1738,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             expr = p.parse_async_prefix_expr(async_range, Level::Lowest, EFlags::None)?;
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+        } else if Self::IS_TYPESCRIPT_ENABLED
+            && is_identifier
+            && matches!(name, b"type" | b"interface" | b"namespace" | b"module")
+        {
+            expr = Self::parse_ts_decl_keyword_expr(p, name, opts.scope)?;
         } else {
             let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
             match expr_or_let.stmt_or_expr {
@@ -1779,6 +1784,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         ))
+    }
+
+    /// The expression that starts a statement led by `type`, `interface`, `namespace` or `module`. It ends before the name of a declaration.
+    #[cold]
+    #[inline(never)]
+    fn parse_ts_decl_keyword_expr(
+        p: &mut Self,
+        keyword: &[u8],
+        scope: StatementScope,
+    ) -> Result<Expr> {
+        let mut expr = Expr::EMPTY;
+        p.parse_expr_common::<true>(Level::Lowest, None, EFlags::None, &mut expr)?;
+        if (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
+            && !Self::ts_decl_follows_name(p, keyword, scope)?
+        {
+            // "type as any;" casts a variable named `type`, as in esbuild. tsc reads a declaration and rejects it (microsoft/TypeScript#58248).
+            p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+        }
+        Ok(expr)
+    }
+
+    /// Looks past the name after `keyword`. Returns whether the rest of a declaration with that name follows ("type as = any").
+    #[cold]
+    #[inline(never)]
+    fn ts_decl_follows_name(p: &mut Self, keyword: &[u8], scope: StatementScope) -> Result<bool> {
+        let follows = p.speculate(|p| {
+            p.lexer.next()?;
+            if matches!(keyword, b"type" | b"interface") {
+                let _ = p.skip_type_script_type_parameters(
+                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                        | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
+                )?;
+            }
+            Ok(match keyword {
+                b"type" => p.lexer.token == T::TEquals,
+                b"interface" => matches!(p.lexer.token, T::TOpenBrace | T::TExtends),
+                _ => {
+                    scope != StatementScope::Nested
+                        && matches!(p.lexer.token, T::TOpenBrace | T::TDot)
+                }
+            })
+        })?;
+        Ok(follows == Some(true))
     }
 
     /// Cold TS-only statement keywords reached from `parse_stmt_fallthrough` once the

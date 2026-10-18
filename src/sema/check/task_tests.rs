@@ -967,6 +967,24 @@ fn a_task_that_has_stopped_writes_at_once_again_after_its_next_commit() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn a_task_that_hit_a_limit_is_not_rechecked_early() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_at_once(&session, &tables, &commits, 0);
+    assert!(!task.can_recheck_early());
+    task.discard_until_recheck("a test");
+    assert!(task.is_lost() && task.can_recheck_early());
+    // A limit that it hits later doesn't matter: it was already discarded.
+    task.lose("a limit");
+    assert!(task.can_recheck_early());
+    let other = begin_writing_at_once(&session, &tables, &commits, 1);
+    other.lose("a limit");
+    other.discard_until_recheck("a test");
+    assert!(!other.can_recheck_early());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn what_a_task_holds_back_under_a_key_is_what_it_goes_by() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));

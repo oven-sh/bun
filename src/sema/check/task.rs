@@ -76,8 +76,8 @@ pub struct Task<'s> {
     is_lost: Cell<Option<&'static str>>,
     /// The task is never lost: it runs alone, in the last round.
     is_believed: bool,
-    /// See `discard_for_cycle`.
-    is_discarded_for_cycle: Cell<bool>,
+    /// See `discard_until_recheck`.
+    can_recheck_early: Cell<bool>,
     /// See `close_ring`.
     is_first_in_order: Cell<bool>,
     is_first_in_component: Cell<bool>,
@@ -122,7 +122,7 @@ impl<'s> Task<'s> {
             view: None,
             is_lost: Cell::new(None),
             is_believed: false,
-            is_discarded_for_cycle: Cell::new(false),
+            can_recheck_early: Cell::new(false),
             is_first_in_order: Cell::new(false),
             is_first_in_component: Cell::new(false),
             cycle_members: RefCell::default(),
@@ -243,15 +243,16 @@ impl<'s> Task<'s> {
         self.stop_writing_at_once();
     }
 
-    /// Discards the task because of a cycle. Its files can be rechecked once a commit resolves that cycle.
-    pub(super) fn discard_for_cycle(&self, why: &'static str) {
-        self.is_discarded_for_cycle
-            .set(!self.is_lost() || self.is_discarded_for_cycle.get());
+    /// Discards the task because of a cycle or an invalid commit. Another task can recheck its files while the others
+    /// still run: after a cycle, once a commit resolves that cycle. After an invalid commit, right away.
+    pub(super) fn discard_until_recheck(&self, why: &'static str) {
+        self.can_recheck_early
+            .set(!self.is_lost() || self.can_recheck_early.get());
         self.lose(why);
     }
 
-    pub(super) fn is_discarded_for_cycle(&self) -> bool {
-        self.is_discarded_for_cycle.get()
+    pub(super) fn can_recheck_early(&self) -> bool {
+        self.can_recheck_early.get()
     }
 
     #[inline]
@@ -295,7 +296,7 @@ impl<'s> Task<'s> {
             }
             self.stop_writing_at_once();
         } else {
-            self.discard_for_cycle("a ring that an earlier file may enter");
+            self.discard_until_recheck("a ring that an earlier file may enter");
         }
     }
 
@@ -424,7 +425,7 @@ impl<'s> Task<'s> {
         self.assignments_walked.get_mut().clear();
         (self.view, self.is_believed) = (None, false);
         self.is_lost.set(None);
-        self.is_discarded_for_cycle.set(false);
+        self.can_recheck_early.set(false);
         self.is_first_in_order.set(false);
         self.is_first_in_component.set(false);
         self.cycle_members.get_mut().clear();

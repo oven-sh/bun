@@ -4237,8 +4237,8 @@ fn check_named_files(
         unresolved_cycle: Vec<u64>,
         /// Commits up to this number don't resolve `unresolved_cycle`.
         commits_compared: u32,
-        /// `Checker::is_discarded_for_cycle`
-        is_discarded_for_cycle: bool,
+        /// `Checker::can_recheck_early`
+        can_recheck_early: bool,
         /// The file was already rechecked once because all earlier files were done.
         was_retried_as_first: bool,
         /// How many times the file was rechecked before the last round.
@@ -4313,8 +4313,8 @@ fn check_named_files(
             *cost_left = cost_left.saturating_sub(cost_of_run);
             from..to
         };
-        // Returns the first file in program order that was discarded because of a cycle and is worth rechecking now:
-        // either a commit has resolved that cycle, or all earlier files are done, so this file's task will be trusted.
+        // Returns the first file in program order that was discarded and is worth rechecking now: its commit was invalid,
+        // a commit has resolved the cycle it was discarded for, or all earlier files are done, so its task will be trusted.
         let take_file_to_recheck = || -> Option<usize> {
             let next = checked_for_good.lock().1;
             let last = program.last_commit();
@@ -4327,7 +4327,7 @@ fn check_named_files(
                 }
                 // One early recheck per file. If that one is discarded too, the file waits until it's the first unchecked
                 // file, so a file is checked four times at most, counting the last round.
-                visit.is_discarded_for_cycle
+                visit.can_recheck_early
                     && (visit.unresolved_cycle.is_empty() && visit.rechecks == 0
                         || file == next && !visit.was_retried_as_first)
             };
@@ -4428,8 +4428,7 @@ fn check_named_files(
                         {
                             let mut visits = visits.lock();
                             for &file in &waiting {
-                                visits[file].is_discarded_for_cycle =
-                                    checker.is_discarded_for_cycle();
+                                visits[file].can_recheck_early = checker.can_recheck_early();
                                 visits[file].unresolved_cycle.clear();
                             }
                             // Only the last file hit a cycle. The earlier ones can be rechecked right away.

@@ -24,11 +24,12 @@
 //!   the end (`View::pin`). What the task stores itself it finds in its own part.
 //! - **A commit is valid or nothing of it is stored.** Some results depend on which of two evaluations came first in their
 //!   checker, and `Program::is_invalid` says which. The serial order that a commit is compared with is the order of the
-//!   commits. What is thrown away is what the task has done since its last commit. It ends then, and the files that it had not
-//!   checked to the end by that commit go to the last round.
+//!   commits. What is thrown away is what the task has done since its last commit. It ends then, and the driver rechecks the
+//!   files that it had not checked to the end by that commit right away, on any thread. The new task starts after the
+//!   commit that the old one conflicted with, so it finds those variances and walks.
 //! - **A task that gives up at a limit is not believed** (`Checker::note_gave_up`). How far from a limit a computation
 //!   begins depends on what was computed before, which for a task includes what it has found. It is thrown away like an
-//!   invalid one.
+//!   invalid one, but its files wait for the last round.
 //! - **A ring is entered from the first file that leads to it.** What a query gets that comes round to itself, or to what
 //!   it has in place, depends on where the checker came in (`Checker::close_ring_from`). `tsc --singleThreaded` comes in
 //!   from the first file in program order that leads there. So a task is believed about a ring only if every file before
@@ -47,8 +48,8 @@
 //!   first entry (`Numbers::with_a_ring`). A task that has not been at rest since then writes nothing at once
 //!   (`Task::is_beside_a_ring`). It is lost if it has stored under a key of that commit: it has missed that one
 //!   (`Checker::lose_what_has_missed_a_ring`).
-//! - **The last round** is one task that checks those files in program order while nothing else runs. It finds all that was
-//!   committed. What it computes at a limit is what counts, as with one checker.
+//! - **The last round** is one task that checks the files that are still discarded, in program order, while nothing else
+//!   runs. It finds all that was committed. What it computes at a limit is what counts, as with one checker.
 //! - **A diagnostic goes with the entry of the query that has reported it**, in the same commit, and stays if the task is
 //!   lost later: whoever checks the file again finds the entry and does not report. If the entry loses, so does the
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
@@ -508,8 +509,7 @@ pub enum AfterFile {
     Waits,
     /// The files that the task has checked so far are checked for good.
     Committed,
-    /// The task is lost. The files that it has checked since it last returned `Committed` are to be checked again, in the
-    /// last round.
+    /// The task is discarded. The files that it has checked since it last returned `Committed` have to be rechecked.
     Lost,
 }
 
@@ -594,7 +594,7 @@ impl<'s> Checker<'_, 's> {
         if has_missed && !self.task.is_lost() {
             // That cycle is already committed, so the file can be rechecked right away.
             drop(self.task.take_cycle_members());
-            (self.task).discard_for_cycle("a ring of which it has missed a member");
+            (self.task).discard_until_recheck("a ring of which it has missed a member");
         }
     }
 
@@ -603,9 +603,10 @@ impl<'s> Checker<'_, 's> {
         self.task.is_lost()
     }
 
-    /// True if the task was discarded because of a cycle, not a limit. Its files can be rechecked before the last round.
-    pub fn is_discarded_for_cycle(&self) -> bool {
-        self.task.is_discarded_for_cycle()
+    /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked
+    /// before the last round.
+    pub fn can_recheck_early(&self) -> bool {
+        self.task.can_recheck_early()
     }
 
     /// Returns hashes of the queries in the cycle that got this task discarded. Empty if that cycle is already committed.
@@ -674,7 +675,7 @@ impl<'s> Checker<'_, 's> {
             && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
         if is_invalid {
             drop(committing);
-            self.task.lose("a commit that is invalid");
+            (self.task).discard_until_recheck("a commit that is invalid");
             return false;
         }
         let number = committing.number + 1;

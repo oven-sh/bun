@@ -536,7 +536,9 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
     ...(opts.implicitInputs ?? []),
-    ...(opts.islands && cfg.islands ? [islandsScript(cfg), islandsLayoutScript(cfg), islandsCoffScript(cfg), islandsDoors(cfg)] : []),
+    ...(opts.islands && cfg.islands
+      ? [islandsScript(cfg), islandsLayoutScript(cfg), islandsCoffScript(cfg), islandsDoors(cfg)]
+      : []),
     ...lazyInputs,
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)

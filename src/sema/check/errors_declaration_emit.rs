@@ -5420,7 +5420,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn literal_const_type(&mut self, node: Node) -> Option<TypeId> {
         let hir = self.c.hir(self.file());
         let ty = match hir.data(node) {
-            NodeData::VarDecl(d) if self.c.bound(self.file()).is_const(hir, d) && hir[d].init.is_some() => {
+            NodeData::VarDecl(d)
+                if self.c.bound(self.file()).is_const(hir, d) && hir[d].init.is_some() =>
+            {
                 self.c.type_of_pat(self.file(), hir[d].pat)
             }
             NodeData::Member(m)

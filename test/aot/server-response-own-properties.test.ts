@@ -85,14 +85,25 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("aot-server-response-own-properties", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), bunEnv);
-    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
+    expect({
+      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({ stderr: [], exitCode: 0 });
     const plain = await run([bunExe(), "run", "main.cjs"], String(dir), bunEnv);
     const compiled = await run([executable], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
     const lines = plain.stdout.split("\n");
     expect(lines[0]).toStartWith("2 1 ");
-    expect(lines[0].split(/[ ,]/).filter(name => name === "writable" || name === "chunkedEncoding" || name === "shouldKeepAlive")).toEqual([]);
+    expect(
+      lines[0]
+        .split(/[ ,]/)
+        .filter(name => name === "writable" || name === "chunkedEncoding" || name === "shouldKeepAlive"),
+    ).toEqual([]);
     const served = lines.slice(lines.indexOf("served") + 1, lines.indexOf("served") + 5);
     expect(served).toEqual([
       "  writable: data true true,true,true",

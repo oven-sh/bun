@@ -151,7 +151,8 @@ const isAsyncFunction = (v: unknown): boolean =>
   typeof v === "function" && StringPrototypeStartsWith.$call(FunctionPrototypeToString.$call(v), "async");
 const generatorFunctionRegExp = /^(async\s+)?function *\*/;
 const isGeneratorFunction = (v: unknown): boolean =>
-  typeof v === "function" && StringPrototypeMatch.$call(FunctionPrototypeToString.$call(v), generatorFunctionRegExp) !== null;
+  typeof v === "function" &&
+  StringPrototypeMatch.$call(FunctionPrototypeToString.$call(v), generatorFunctionRegExp) !== null;
 
 const {
   //! The native versions of the commented out functions are currently buggy, so we use the polyfills above for now.
@@ -617,7 +618,12 @@ function getUserOptions(ctx: Context, isCrossContext: boolean): Record<string, u
  * @param {object} opts Optional options object that alters the output.
  */
 /* Legacy: value, showHidden, depth, colors */
-function inspect(value?: unknown, opts?: unknown, legacyDepth: unknown = undefined, legacyColors: unknown = undefined): any {
+function inspect(
+  value?: unknown,
+  opts?: unknown,
+  legacyDepth: unknown = undefined,
+  legacyColors: unknown = undefined,
+): any {
   if (
     opts === undefined &&
     ((typeof value !== "object" && typeof value !== "function") || value === null) &&
@@ -753,7 +759,8 @@ const defaultOptionsDescriptor: Record<string, unknown> = {
     return inspectDefaultOptions;
   },
   set(options) {
-    if (typeof options !== "object" || options === null || $isArray(options)) throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    if (typeof options !== "object" || options === null || $isArray(options))
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     return ObjectAssign(inspectDefaultOptions, options);
   },
 };
@@ -764,7 +771,8 @@ const replDefaultsDescriptor: Record<string, unknown> = {
     return inspectReplDefaults;
   },
   set(options) {
-    if (typeof options !== "object" || options === null || $isArray(options)) throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    if (typeof options !== "object" || options === null || $isArray(options))
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     return ObjectAssign(inspectReplDefaults, options);
   },
   // node:repl re-defines this property with its own writer-backed accessor
@@ -920,7 +928,12 @@ function escapeFn(str: string): string {
 function isPlainString(str: string): boolean {
   for (let i = 0; i < str.length; i++) {
     const point = StringPrototypeCharCodeAt.$call(str, i);
-    if (point < 32 || point === 39 || point === 92 || (point > 126 && (point < 160 || (point >= 0xd800 && point <= 0xdfff)))) {
+    if (
+      point < 32 ||
+      point === 39 ||
+      point === 92 ||
+      (point > 126 && (point < 160 || (point >= 0xd800 && point <= 0xdfff)))
+    ) {
       return false;
     }
   }
@@ -932,14 +945,12 @@ function isIdentifier(str: string): boolean {
   if (length === 0) return false;
   for (let i = 0; i < length; i++) {
     const point = StringPrototypeCharCodeAt.$call(str, i);
-    if (
-      !(
-        (point >= 97 && point <= 122) ||
-        (point >= 65 && point <= 90) ||
-        point === 95 ||
-        (point >= 48 && point <= 57 && i !== 0)
-      )
-    ) {
+    if (!(
+      (point >= 97 && point <= 122) ||
+      (point >= 65 && point <= 90) ||
+      point === 95 ||
+      (point >= 48 && point <= 57 && i !== 0)
+    )) {
       return false;
     }
   }
@@ -1016,7 +1027,8 @@ function highlightRegExp(regexpString) {
   let inClass = false;
 
   // Verify palette and update cache if user changed colors
-  const paletteNames: any = highlightRegExpAsObject.colors?.length > 0 ? highlightRegExpAsObject.colors : highlightRegExpColors;
+  const paletteNames: any =
+    highlightRegExpAsObject.colors?.length > 0 ? highlightRegExpAsObject.colors : highlightRegExpColors;
 
   const palette: string[][] = [];
   for (const name of paletteNames) {
@@ -1288,7 +1300,12 @@ function getWellKnownConstructor(name: string): any {
   }
 }
 
-function getConstructorName(obj: any, ctx: Context, recurseTimes: number, protoProps: unknown[] | undefined): string | null {
+function getConstructorName(
+  obj: any,
+  ctx: Context,
+  recurseTimes: number,
+  protoProps: unknown[] | undefined,
+): string | null {
   let firstProto: any;
   const tmp = obj;
   while (obj || isUndetectableObject(obj)) {
@@ -1713,7 +1730,9 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       }
     } else if (isDate(value)) {
       // Make dates with properties first say the date
-      base = NumberIsNaN(DatePrototypeGetTime.$call(value)) ? DatePrototypeToString.$call(value) : DatePrototypeToISOString.$call(value);
+      base = NumberIsNaN(DatePrototypeGetTime.$call(value))
+        ? DatePrototypeToString.$call(value)
+        : DatePrototypeToISOString.$call(value);
       const prefix = getPrefix(constructor, tag, "Date");
       if (prefix !== "Date ") base = `${prefix}${base}`;
       if (keys.length === 0 && protoProps === undefined) {
@@ -1822,7 +1841,9 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
         output = formatNamespaceObject(keys, ctx, value, recurseTimes);
     }
     isSingleLine =
-      (formatter === kFormatEmpty || output === outputWithoutLineBreak) && extraKeys === undefined && protoProps === undefined;
+      (formatter === kFormatEmpty || output === outputWithoutLineBreak) &&
+      extraKeys === undefined &&
+      protoProps === undefined;
     if (extraKeys !== undefined) {
       for (i = 0; i < extraKeys.length; i++) {
         let formatted: unknown;
@@ -1848,12 +1869,16 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       const constructorName = StringPrototypeSlice.$call(getCtxStyle(value, constructor, tag), 0, -1);
       ArrayPrototypePop.$call(ctx.seen!);
       ctx.indentationLvl = indentationLvl;
-      return stylize(ctx, 
+      return stylize(
+        ctx,
         `[${constructorName}: Inspection interrupted prematurely. Maximum call stack size exceeded.]`,
         "special",
       );
     }
-    throw new (require("internal/errors").AssertionError)("handleMaxCallStackSize assertion failed: " + String(err), true);
+    throw new (require("internal/errors").AssertionError)(
+      "handleMaxCallStackSize assertion failed: " + String(err),
+      true,
+    );
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -1890,7 +1915,10 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
     } else {
       const keysLength = keys.length;
       if (keysLength > 1) {
-        const sorted: any[] = ArrayPrototypeSort.$call(ArrayPrototypeSlice.$call(output, output.length - keysLength), comparator);
+        const sorted: any[] = ArrayPrototypeSort.$call(
+          ArrayPrototypeSlice.$call(output, output.length - keysLength),
+          comparator,
+        );
         ArrayPrototypeUnshift.$call(sorted, output.length - keysLength, keysLength);
         ArrayPrototypeSplice.$apply(output, sorted as [number, number, ...unknown[]]);
       }
@@ -1989,7 +2017,10 @@ function getFunctionBase(ctx: Context, value: any, constructor: string | null, t
       bracketIndex !== -1 &&
       (!StringPrototypeIncludes.$call(StringPrototypeSlice.$call(slice, 0, bracketIndex), "(") ||
         // Slow path to guarantee that it's indeed a class.
-        RegExpPrototypeExec.$call(classRegExp, RegExpPrototypeSymbolReplace.$call(stripCommentsRegExp, slice, undefined as any)) !== null)
+        RegExpPrototypeExec.$call(
+          classRegExp,
+          RegExpPrototypeSymbolReplace.$call(stripCommentsRegExp, slice, undefined as any),
+        ) !== null)
     ) {
       return getClassBase(value, constructor, tag);
     }
@@ -2115,7 +2146,10 @@ function removeDuplicateErrorKeys(ctx: Context, keys: PropertyKey[], err: any, s
     for (const name of ["name", "message", "stack"]) {
       const index = ArrayPrototypeIndexOf.$call(keys, name);
       // Only hide the property in case it's part of the original stack
-      if (index !== -1 && StringPrototypeIncludes.$call(stack, name === "name" ? err.name : name === "message" ? err.message : err.stack)) {
+      if (
+        index !== -1 &&
+        StringPrototypeIncludes.$call(stack, name === "name" ? err.name : name === "message" ? err.message : err.stack)
+      ) {
         ArrayPrototypeSplice.$call(keys, index, 1);
       }
     }
@@ -2252,7 +2286,8 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
   return stack;
 }
 
-const kSpaces = "                                                                                                                                ";
+const kSpaces =
+  "                                                                                                                                ";
 
 function padStart(str: string, maxLength: number): string {
   const count = maxLength - str.length;
@@ -2416,14 +2451,14 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
     // Dynamically check how many columns seem possible.
     const columns = $min(
       $min(
-      // Ideally a square should be drawn. We expect a character to be about 2.5
-      // times as high as wide. This is the area formula to calculate a square
-      // which contains n rectangles of size `actualMax * approxCharHeights`.
-      // Divide that by `actualMax` to receive the correct number of columns.
-      // The added bias increases the columns for short entries.
-      MathRound(MathSqrt(approxCharHeights * biasedMax * outputLength) / biasedMax),
-      // Do not exceed the breakLength.
-      MathFloor((breakLength - indentationLvl) / actualMax),
+        // Ideally a square should be drawn. We expect a character to be about 2.5
+        // times as high as wide. This is the area formula to calculate a square
+        // which contains n rectangles of size `actualMax * approxCharHeights`.
+        // Divide that by `actualMax` to receive the correct number of columns.
+        // The added bias increases the columns for short entries.
+        MathRound(MathSqrt(approxCharHeights * biasedMax * outputLength) / biasedMax),
+        // Do not exceed the breakLength.
+        MathFloor((breakLength - indentationLvl) / actualMax),
       ),
       // Limit array grouping for small `compact` modes as the user requested
       // minimal grouping.
@@ -2465,7 +2500,9 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
         // others.
         const padding = maxLineLength[j - i] + output[j].length - dataLen[j];
         const entry = `${output[j]}, `;
-        str += padStart ? StringPrototypePadStart.$call(entry, padding, " ") : StringPrototypePadEnd.$call(entry, padding, " ");
+        str += padStart
+          ? StringPrototypePadStart.$call(entry, padding, " ")
+          : StringPrototypePadEnd.$call(entry, padding, " ");
       }
       if (padStart) {
         const padding = maxLineLength[j - i] + output[j].length - dataLen[j] - separatorSpace;
@@ -2639,7 +2676,14 @@ function formatNamespaceObject(keys: PropertyKey[], ctx: Context, value: any, re
 }
 
 // The array is sparse and/or has extra keys
-function formatSpecialArray(ctx: Context, value: any, recurseTimes: number, maxLength: number, output: unknown[], i: number): unknown[] {
+function formatSpecialArray(
+  ctx: Context,
+  value: any,
+  recurseTimes: number,
+  maxLength: number,
+  output: unknown[],
+  i: number,
+): unknown[] {
   const keys = ObjectKeys(value);
   let index = i;
   for (; i < keys.length && output.length < maxLength; i++) {
@@ -2693,7 +2737,11 @@ function formatArrayBuffer(ctx: Context, value: any): unknown[] {
     return [stylize(ctx, "(detached)", "special")];
   }
   let str = StringPrototypeTrim.$call(
-    RegExpPrototypeSymbolReplace.$call(/(.{2})/g, hexSlice(buffer, 0, $min(ctx.maxArrayLength as any, buffer.length)), "$1 "),
+    RegExpPrototypeSymbolReplace.$call(
+      /(.{2})/g,
+      hexSlice(buffer, 0, $min(ctx.maxArrayLength as any, buffer.length)),
+      "$1 ",
+    ),
   );
   const remaining = buffer.length - (ctx.maxArrayLength as any);
   if (remaining > 0) str += ` ... ${remaining} more byte${remaining > 1 ? "s" : ""}`;
@@ -2913,7 +2961,13 @@ function readExtraProperty(value: any, key: string): unknown {
   }
 }
 
-function formatExtraProperties(ctx: Context, value: any, recurseTimes: number, key: string, typedArray: unknown): string {
+function formatExtraProperties(
+  ctx: Context,
+  value: any,
+  recurseTimes: number,
+  key: string,
+  typedArray: unknown,
+): string {
   ctx.indentationLvl += 2;
   const str = formatValue(ctx, readExtraProperty(value, key), recurseTimes, typedArray);
   ctx.indentationLvl -= 2;
@@ -2987,9 +3041,15 @@ function formatProperty(
   }
   if (type === kArrayType) return str;
   if (typeof key === "symbol") {
-    const tmp = RegExpPrototypeSymbolReplace.$call(strEscapeSequencesReplacer, SymbolPrototypeToString.$call(key), escapeFn);
+    const tmp = RegExpPrototypeSymbolReplace.$call(
+      strEscapeSequencesReplacer,
+      SymbolPrototypeToString.$call(key),
+      escapeFn,
+    );
     name = stylize(ctx, tmp, "symbol");
-  } else if (typeof key === "string" ? isIdentifier(key) : RegExpPrototypeExec.$call(keyStrRegExp, key as any) !== null) {
+  } else if (
+    typeof key === "string" ? isIdentifier(key) : RegExpPrototypeExec.$call(keyStrRegExp, key as any) !== null
+  ) {
     name = key === "__proto__" ? "['__proto__']" : stylize(ctx, key, "name");
   } else {
     name = stylize(ctx, strEscape(key as string), "string");
@@ -3211,7 +3271,8 @@ function format(...args: unknown[]): string {
 }
 
 function formatWithOptions(inspectOptions: unknown, ...args: unknown[]): string {
-  if (typeof inspectOptions !== "object" || inspectOptions === null) throw $ERR_INVALID_ARG_TYPE("inspectOptions", "object", inspectOptions);
+  if (typeof inspectOptions !== "object" || inspectOptions === null)
+    throw $ERR_INVALID_ARG_TYPE("inspectOptions", "object", inspectOptions);
   return formatWithOptionsInternal(inspectOptions, args);
 }
 
@@ -3399,7 +3460,11 @@ const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBun
 /**
  * Returns the number of columns required to display the given string.
  */
-const kPerCodePointWidthOptions: Record<string, unknown> = { __proto__: null, perCodePoint: true, countAnsiEscapeCodes: true };
+const kPerCodePointWidthOptions: Record<string, unknown> = {
+  __proto__: null,
+  perCodePoint: true,
+  countAnsiEscapeCodes: true,
+};
 
 function getStringWidth(str: any, removeControlChars: unknown = true): number {
   if (typeof str === "string") {

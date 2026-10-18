@@ -4030,7 +4030,12 @@ impl<V> Taken<V> {
         Taken {
             len: self.len,
             records: records
-                .map(|piece| piece.into_iter().map(|(index, record)| (index, of(record))).collect())
+                .map(|piece| {
+                    piece
+                        .into_iter()
+                        .map(|(index, record)| (index, of(record)))
+                        .collect()
+                })
                 .collect(),
             positions: self.positions,
             hashes: self.hashes,
@@ -4072,7 +4077,9 @@ fn take<V>(own: &mut Own<V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
     };
     let count = marks.count();
     let pieces = (0..count).step_by(RECORDS_PER_PIECE);
-    taken.records = pieces.map(|first| Vec::with_capacity(RECORDS_PER_PIECE.min(count - first))).collect();
+    taken.records = pieces
+        .map(|first| Vec::with_capacity(RECORDS_PER_PIECE.min(count - first)))
+        .collect();
     let mut position = 0;
     own.records.drain(|index, record| {
         if marks.has(index as usize) {
@@ -4226,15 +4233,24 @@ fn number<V: Send + Sync>(
     }
     let place = |task: usize, position: usize| (task as u64) << 32 | position as u64;
     // GROUP: for each record, the `place` of the first record with the same hash.
-    let firsts: Vec<Vec<AtomicU64>> = tasks.iter_mut().map(|task| std::mem::take(&mut task.firsts)).collect();
+    let firsts: Vec<Vec<AtomicU64>> = tasks
+        .iter_mut()
+        .map(|task| std::mem::take(&mut task.firsts))
+        .collect();
     {
         let tasks: &[&mut Taken<V>] = tasks;
         in_parallel(HASH_PARTS, &|part| {
-            let records = tasks.iter().map(|task| (task.parts[part + 1] - task.parts[part]) as usize).sum();
-            let mut first: FxHashMap<ContentHash, u64> = FxHashMap::with_capacity_and_hasher(records, Default::default());
+            let records = tasks
+                .iter()
+                .map(|task| (task.parts[part + 1] - task.parts[part]) as usize)
+                .sum();
+            let mut first: FxHashMap<ContentHash, u64> =
+                FxHashMap::with_capacity_and_hasher(records, Default::default());
             for (t, task) in tasks.iter().enumerate() {
                 let (from, to) = (task.parts[part] as usize, task.parts[part + 1] as usize);
-                for (&position, &hash) in task.positions[from..to].iter().zip(&task.hashes[from..to]) {
+                for (&position, &hash) in
+                    task.positions[from..to].iter().zip(&task.hashes[from..to])
+                {
                     let position = position as usize;
                     let first = *first.entry(hash).or_insert_with(|| place(t, position));
                     firsts[t][position].store(first, Ordering::Relaxed);
@@ -4285,18 +4301,26 @@ fn number<V: Send + Sync>(
         records: &'a mut Vec<(u32, V)>,
         joined: Vec<(u32, V)>,
     }
-    let mut links: Vec<Box<[u32]>> = ranks.iter_mut().map(|it| std::mem::take(&mut it.ids)).collect();
+    let mut links: Vec<Box<[u32]>> = ranks
+        .iter_mut()
+        .map(|it| std::mem::take(&mut it.ids))
+        .collect();
     let mut joined: Vec<&mut Vec<(u32, V)>> = Vec::with_capacity(tasks.len());
     let mut pieces: Vec<Piece<'_, V>> = Vec::new();
     for (t, task) in tasks.iter_mut().enumerate() {
         let task = &mut **task;
         joined.push(&mut task.joined);
-        pieces.extend(task.records.iter_mut().enumerate().map(|(piece, records)| Piece {
-            task: t,
-            first: piece * RECORDS_PER_PIECE,
-            records,
-            joined: Vec::new(),
-        }));
+        pieces.extend(
+            task.records
+                .iter_mut()
+                .enumerate()
+                .map(|(piece, records)| Piece {
+                    task: t,
+                    first: piece * RECORDS_PER_PIECE,
+                    records,
+                    joined: Vec::new(),
+                }),
+        );
     }
     {
         let ids: Vec<&[AtomicU32]> = (links.iter_mut())
@@ -4374,13 +4398,18 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
         if !task.joined.is_empty() {
             merged.push((task.joined, link));
         }
-        work.extend(task.records.into_iter().filter(|records| !records.is_empty()).map(|records| Work {
-            records,
-            link,
-            added: Vec::new(),
-            shards: Vec::new(),
-            later: Vec::new(),
-        }));
+        work.extend(
+            task.records
+                .into_iter()
+                .filter(|records| !records.is_empty())
+                .map(|records| Work {
+                    records,
+                    link,
+                    added: Vec::new(),
+                    shards: Vec::new(),
+                    later: Vec::new(),
+                }),
+        );
     }
     for_each_mut(&mut work, in_parallel, &|it| {
         let mut indexed: Vec<(u64, u32)> = Vec::with_capacity(it.records.len());
@@ -4418,10 +4447,14 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
     });
     {
         let work = &work;
-        let of = |it: &'_ Work<'_, V>, shard: usize| it.shards[shard] as usize..it.shards[shard + 1] as usize;
+        let of = |it: &'_ Work<'_, V>, shard: usize| {
+            it.shards[shard] as usize..it.shards[shard + 1] as usize
+        };
         in_parallel(SHARDS, &|shard| {
             let count = work.iter().map(|it| of(it, shard).len()).sum();
-            let added = work.iter().flat_map(|it| it.added[of(it, shard)].iter().copied());
+            let added = work
+                .iter()
+                .flat_map(|it| it.added[of(it, shard)].iter().copied());
             shards[shard].extend(count, added);
         });
     }
@@ -4551,10 +4584,16 @@ impl<'s> TypeStore<'s> {
             sigs.push((task.sigs, link));
             types.push((task.types, link));
         }
-        let (_, joined) = put(atoms.halves(), texts, in_parallel, &|text, _, _| {
-            let spread = crate::atom::hash_of(&text);
-            Placed::Indexed(text, spread)
-        }, &|_, _| {});
+        let (_, joined) = put(
+            atoms.halves(),
+            texts,
+            in_parallel,
+            &|text, _, _| {
+                let spread = crate::atom::hash_of(&text);
+                Placed::Indexed(text, spread)
+            },
+            &|_, _| {},
+        );
         check_joined(atoms.halves(), joined, |a, b| **a == **b);
         let (_, joined) = put(
             self.components.halves(),

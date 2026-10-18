@@ -95,29 +95,47 @@ describe("a place is sent from the door to its stub, as src/exe_islands/lib.rs d
 
   test("an adr and its nop become adrp and add again", () => {
     const nopWord = 0xd503201f;
-    function unrelaxed(first: [number, number, number], second: [number, number, number], door: number, stub: number): number[] {
+    function unrelaxed(
+      first: [number, number, number],
+      second: [number, number, number],
+      door: number,
+      stub: number,
+    ): number[] {
       const file = Buffer.alloc(12, 0xaa);
       file.writeUInt32LE(first[2], 0);
       file.writeUInt32LE(second[2], 8);
-      unrelax(file, [0, 8], [first, second].map(([address, kind]) => ({ address, kind })), door, stub);
+      unrelax(
+        file,
+        [0, 8],
+        [first, second].map(([address, kind]) => ({ address, kind })),
+        door,
+        stub,
+      );
       expect(file.readUInt32LE(4)).toBe(0xaaaaaaaa);
       return [file.readUInt32LE(0), file.readUInt32LE(8)];
     }
-    const adrFirst = (door: number, stub: number, first: number, second: number) => unrelaxed([0x201308, adr, first], [0x20130c, nop, second], door, stub);
-    const nopFirst = (door: number, stub: number, first: number, second: number) => unrelaxed([0x201304, nop, first], [0x201308, adr, second], door, stub);
+    const adrFirst = (door: number, stub: number, first: number, second: number) =>
+      unrelaxed([0x201308, adr, first], [0x20130c, nop, second], door, stub);
+    const nopFirst = (door: number, stub: number, first: number, second: number) =>
+      unrelaxed([0x201304, nop, first], [0x201308, adr, second], door, stub);
     expect(adrFirst(0x201080, 0x5204010, 0x10ffebc1, nopWord)).toEqual([0xf0028001, 0x91004021]);
     expect(nopFirst(0x201080, 0x5204010, nopWord, 0x10ffebc1)).toEqual([0xf0028001, 0x91004021]);
     expect(adrFirst(0x201080, 0x100ff8, 0x10ffebc1, nopWord)).toEqual([0xf0fff7e1, 0x913fe021]);
     expect(adrFirst(0x204000, 0x201000, 0x100167dc, nopWord)).toEqual([0x9000001c, 0x9100039c]);
-    expect(unrelaxed([0x201ffc, adr, 0x10000423], [0x202000, nop, nopWord], 0x202080, 0x204008)).toEqual([0xf0000003, 0x91002063]);
-    expect(unrelaxed([0x201ffc, nop, nopWord], [0x202000, adr, 0x10000403], 0x202080, 0x204008)).toEqual([0xf0000003, 0x91002063]);
+    expect(unrelaxed([0x201ffc, adr, 0x10000423], [0x202000, nop, nopWord], 0x202080, 0x204008)).toEqual([
+      0xf0000003, 0x91002063,
+    ]);
+    expect(unrelaxed([0x201ffc, nop, nopWord], [0x202000, adr, 0x10000403], 0x202080, 0x204008)).toEqual([
+      0xf0000003, 0x91002063,
+    ]);
     expect(adrFirst(0x201080, 0x201000 + 0xfffff * 4096, 0x10ffebc1, nopWord)).toEqual([0xf07fffe1, 0x91000021]);
     expect(() => adrFirst(0x201080, 0x201000 + 0x100000 * 4096, 0x10ffebc1, nopWord)).toThrow("refused");
     expect(() => adrFirst(0x201084, 0x5204010, 0x10ffebc1, nopWord)).toThrow("refused");
     expect(() => adrFirst(0x201080, 0x5204010, 0x90ffebc1, nopWord)).toThrow("refused");
     expect(() => adrFirst(0x201080, 0x5204010, 0x10ffebc1, 0x91004021)).toThrow("refused");
     expect(() => nopFirst(0x201080, 0x5204010, 0x10ffebc1, nopWord)).toThrow("refused");
-    for (const kind of [adr, nop]) expect(() => word(kind, 0x201308)(0x201080, 0x204000, 0x10ffebc1)).toThrow("refused");
+    for (const kind of [adr, nop])
+      expect(() => word(kind, 0x201308)(0x201080, 0x204000, 0x10ffebc1)).toThrow("refused");
   });
 });
 
@@ -134,21 +152,25 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
   };
 
   function executable(): Buffer {
-    const file = Buffer.from(Array.from({ length: 0x4000 }, (_, index) => index % 251 | 1));
+    const file = Buffer.from(Array.from({ length: 0x4000 }, (_, index) => (index % 251) | 1));
     file.writeBigUInt64LE(0x40n, 0x20);
     file.writeUInt16LE(56, 0x36);
     file.writeUInt16LE(segments.length, 0x38);
     segments.forEach(([flags, offset, address, size], index) => {
       file.writeUInt32LE(1, 0x40 + index * 56);
       file.writeUInt32LE(flags, 0x44 + index * 56);
-      [offset, address, address, size, size, 0x1000].forEach((value, field) => file.writeBigUInt64LE(BigInt(value), 0x48 + index * 56 + field * 8));
+      [offset, address, address, size, size, 0x1000].forEach((value, field) =>
+        file.writeBigUInt64LE(BigInt(value), 0x48 + index * 56 + field * 8),
+      );
     });
     return file;
   }
 
   const put = (file: Buffer, address: number, bytes: number[] | Buffer) => void file.set(bytes, at(address));
-  const putCall = (file: Buffer, address: number, target: number) => void file.writeInt32LE(target - (address + 4), at(address));
-  const putPointer = (file: Buffer, address: number, target: number) => void file.writeBigUInt64LE(BigInt(target), at(address));
+  const putCall = (file: Buffer, address: number, target: number) =>
+    void file.writeInt32LE(target - (address + 4), at(address));
+  const putPointer = (file: Buffer, address: number, target: number) =>
+    void file.writeBigUInt64LE(BigInt(target), at(address));
   const putWord = (file: Buffer, address: number, word: number) => void file.writeUInt32LE(word, at(address));
 
   function exitStub(address: number, number: number, feature: number): Buffer {
@@ -192,7 +214,8 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
   function linked(): Buffer {
     const file = executable();
     for (const door of table.doors) {
-      for (const place of door.places ?? []) (place.kind === add64 ? putPointer : putCall)(file, place.address, door.address);
+      for (const place of door.places ?? [])
+        (place.kind === add64 ? putPointer : putCall)(file, place.address, door.address);
     }
     return file;
   }
@@ -238,25 +261,39 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
     expect(open.readInt32LE(at(0x201111))).toBe(0x201300 - 0x201115);
     expect(open.subarray(at(0x202000), at(0x202000) + 10)).toEqual(exitStub(0x202000, 2, 0));
     expect(shutDoors(linked(), shared, ["c"], false).equals(linked())).toBe(true);
-    expect(shutDoors(linked(), shared, ["a", "c"], false).equals(shutDoors(linked(), table, ["a", "c"], false))).toBe(true);
-    expect(shutDoors(linked(), shared, ["a", "c"], false).subarray(at(0x201200), at(0x201200) + 10)).toEqual(exitStub(0x201200, 0, 0));
+    expect(shutDoors(linked(), shared, ["a", "c"], false).equals(shutDoors(linked(), table, ["a", "c"], false))).toBe(
+      true,
+    );
+    expect(shutDoors(linked(), shared, ["a", "c"], false).subarray(at(0x201200), at(0x201200) + 10)).toEqual(
+      exitStub(0x201200, 0, 0),
+    );
   });
 
   test("no strip", () => {
     const withIslands = (islands: Table["islands"]) => ({ ...table, islands });
     const [data, code] = table.islands;
     expect(() => shutDoors(linked(), table, ["b"], false)).toThrow("refused: no dead code holds a strip of 10 bytes");
-    expect(() => shutDoors(linked(), withIslands([data!, { ...code!, end: 0x202016 }]), ["a"], false)).toThrow("refused: no dead code holds a strip of 23 bytes");
-    expect(shutDoors(linked(), withIslands([data!, { ...code!, end: 0x202017 }]), ["a"], false)[at(0x202016)]).toBe(0xc3);
-    expect(() => shutDoors(linked(), withIslands([data!]), ["a"], false)).toThrow("refused: no dead code holds a strip of 23 bytes");
+    expect(() => shutDoors(linked(), withIslands([data!, { ...code!, end: 0x202016 }]), ["a"], false)).toThrow(
+      "refused: no dead code holds a strip of 23 bytes",
+    );
+    expect(shutDoors(linked(), withIslands([data!, { ...code!, end: 0x202017 }]), ["a"], false)[at(0x202016)]).toBe(
+      0xc3,
+    );
+    expect(() => shutDoors(linked(), withIslands([data!]), ["a"], false)).toThrow(
+      "refused: no dead code holds a strip of 23 bytes",
+    );
   });
 
   test("a place that cannot be rewritten stops the writer", () => {
     const file = linked();
     file.writeUInt32LE(0x80000000, at(0x201101));
     expect(() => shutDoors(file, table, ["a"], false)).toThrow("refused");
-    const doors = table.doors.map((door, index) => (index === 1 ? { ...door, places: [{ address: 0x500000, kind: add32 }] } : door));
-    expect(() => shutDoors(linked(), { ...table, doors }, ["a"], false)).toThrow("refused: nothing in the file is loaded at 0x500000");
+    const doors = table.doors.map((door, index) =>
+      index === 1 ? { ...door, places: [{ address: 0x500000, kind: add32 }] } : door,
+    );
+    expect(() => shutDoors(linked(), { ...table, doors }, ["a"], false)).toThrow(
+      "refused: nothing in the file is loaded at 0x500000",
+    );
   });
 
   test("arm64", () => {
@@ -300,7 +337,9 @@ describe("the doors of an executable are shut, as src/exe_islands/lib.rs does it
     expect([...file.subarray(at(0x202002), at(0x202004))]).toEqual([0x20, 0x00]);
     expect(words(0x202004, 0x202008, 0x20200c)).toEqual([0x52800000, 0x72a00000, 0x17fffc01]);
     expect(words(0x202010, 0x202014)).toEqual([0x52800000, 0xd65f03c0]);
-    expect(words(0x201100, 0x201104, 0x201108, 0x20110c, 0x201110, 0x201114)).toEqual([0x940003c1, 0xb0000000, 0x91001000, 0xb0000000, 0x91001000, 0x140003bf]);
+    expect(words(0x201100, 0x201104, 0x201108, 0x20110c, 0x201110, 0x201114)).toEqual([
+      0x940003c1, 0xb0000000, 0x91001000, 0xb0000000, 0x91001000, 0x140003bf,
+    ]);
     expect(words(0x201120, 0x201124)).toEqual([0xb0000003, 0x91001063]);
     expect(file.readBigUInt64LE(at(0x403008))).toBe(0x202004n);
   });

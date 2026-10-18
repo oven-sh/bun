@@ -149,19 +149,27 @@ impl Manifest {
                 b"function" => {
                     let id = number(field()?).ok_or_else(error)?;
                     let key = [field()?, field()?].join(&b'\t');
-                    manifest.builtin_functions.push((key.into_boxed_slice(), id));
+                    manifest
+                        .builtin_functions
+                        .push((key.into_boxed_slice(), id));
                 }
                 b"requires" => {
                     let id = number(field()?).ok_or_else(error)?;
-                    manifest.requires.push((id, numbers(fields).ok_or_else(error)?));
+                    manifest
+                        .requires
+                        .push((id, numbers(fields).ok_or_else(error)?));
                 }
                 b"besides" => {
                     let id = number(field()?).ok_or_else(error)?;
-                    manifest.also_required.push((id, numbers(fields).ok_or_else(error)?));
+                    manifest
+                        .also_required
+                        .push((id, numbers(fields).ok_or_else(error)?));
                 }
                 b"triggered" => {
                     let id = number(field()?).ok_or_else(error)?;
-                    manifest.triggered.push((id, numbers(fields).ok_or_else(error)?));
+                    manifest
+                        .triggered
+                        .push((id, numbers(fields).ok_or_else(error)?));
                 }
                 b"always" => {
                     let id = number(field()?).ok_or_else(error)?;
@@ -170,17 +178,31 @@ impl Manifest {
                 b"behalf" => {
                     let function = number(field()?).ok_or_else(error)?;
                     let name = field()?.into();
-                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.map(Into::into).collect() });
+                    manifest.on_behalf_of.push(OnBehalfOf {
+                        function,
+                        name,
+                        facts: fields.map(Into::into).collect(),
+                    });
                 }
                 b"behalf-module" => {
                     let function = MODULE_ROOT | number(field()?).ok_or_else(error)?;
                     let name = field()?.into();
-                    manifest.on_behalf_of.push(OnBehalfOf { function, name, facts: fields.map(Into::into).collect() });
+                    manifest.on_behalf_of.push(OnBehalfOf {
+                        function,
+                        name,
+                        facts: fields.map(Into::into).collect(),
+                    });
                 }
                 b"root" => {
-                    let kind = if field()? == b"module" { MODULE_ROOT } else { 0 };
+                    let kind = if field()? == b"module" {
+                        MODULE_ROOT
+                    } else {
+                        0
+                    };
                     let id = number(field()?).ok_or_else(error)?;
-                    manifest.roots_made_for.push((kind | id, fields.map(Into::into).collect()));
+                    manifest
+                        .roots_made_for
+                        .push((kind | id, fields.map(Into::into).collect()));
                 }
                 b"trigger" => {
                     let path = field()?;
@@ -254,7 +276,9 @@ impl Manifest {
                 let key = native_binding_key(name, file, symbol);
                 match find(&self.native_bindings, &key) {
                     Some(id) => Macro::NativeBinding(id),
-                    None if name == b"bindgen" && file.ends_with(b"_test.bind.ts") => Macro::Undefined,
+                    None if name == b"bindgen" && file.ends_with(b"_test.bind.ts") => {
+                        Macro::Undefined
+                    }
                     None => return Err(MacroError::UnknownNativeBinding),
                 }
             }
@@ -330,9 +354,16 @@ impl Manifest {
     }
 
     pub fn module_for_loader(&self, name: &[u8]) -> Option<u32> {
-        let name = if name == b"@vercel/fetch" { b"vercel_fetch" } else { name };
+        let name = if name == b"@vercel/fetch" {
+            b"vercel_fetch"
+        } else {
+            name
+        };
         let with_source = self.modules.iter().filter(|module| !module.path.is_empty());
-        with_source.filter(|module| *module.name == *name).map(|module| module.id).next()
+        with_source
+            .filter(|module| *module.name == *name)
+            .map(|module| module.id)
+            .next()
     }
 
     pub fn function_files(&self) -> &[Box<[u8]>] {
@@ -345,12 +376,20 @@ impl Manifest {
     }
 
     pub fn is_vouched_for(&self, function: u32) -> bool {
-        self.on_behalf_of.iter().any(|entry| entry.function == function)
+        self.on_behalf_of
+            .iter()
+            .any(|entry| entry.function == function)
     }
 
     pub fn on_behalf_of(&self, function: u32, name: &[u8]) -> Option<&[Box<[u8]>]> {
-        let of_function = self.on_behalf_of.iter().filter(|entry| entry.function == function);
-        of_function.filter(|entry| *entry.name == *name || *entry.name == *b"*").map(|entry| &entry.facts[..]).next()
+        let of_function = self
+            .on_behalf_of
+            .iter()
+            .filter(|entry| entry.function == function);
+        of_function
+            .filter(|entry| *entry.name == *name || *entry.name == *b"*")
+            .map(|entry| &entry.facts[..])
+            .next()
     }
 
     pub fn waits_to_be_named(&self, root: u32) -> bool {
@@ -358,7 +397,9 @@ impl Manifest {
     }
 
     pub fn roots_made_for(&self) -> impl Iterator<Item = (u32, &[Box<[u8]>])> {
-        self.roots_made_for.iter().map(|waiting| (waiting.0, &waiting.1[..]))
+        self.roots_made_for
+            .iter()
+            .map(|waiting| (waiting.0, &waiting.1[..]))
     }
 
     pub fn native_bindings(&self) -> impl Iterator<Item = NativeBinding<'_>> {
@@ -379,7 +420,10 @@ impl Manifest {
     }
 
     pub fn also_required(&self, id: u32) -> &[u32] {
-        self.also_required.iter().find(|module| module.0 == id).map_or(&[], |module| &module.1)
+        self.also_required
+            .iter()
+            .find(|module| module.0 == id)
+            .map_or(&[], |module| &module.1)
     }
 
     pub fn always_included(&self) -> &[u32] {
@@ -396,7 +440,8 @@ impl Manifest {
         let mut follows_triggers = vec![false; self.modules.len()];
         let from_native_code = native_roots.iter().map(|&root| (root, Reason::Root, false));
         let of_program = program_roots.iter().map(|&root| (root, Reason::Root, true));
-        let mut pending: std::collections::VecDeque<(u32, Reason, bool)> = from_native_code.chain(of_program).collect();
+        let mut pending: std::collections::VecDeque<(u32, Reason, bool)> =
+            from_native_code.chain(of_program).collect();
         while let Some((id, reason, with_triggers)) = pending.pop_front() {
             let index = id as usize;
             if index >= is_found.len() {
@@ -406,14 +451,27 @@ impl Manifest {
             if is_new {
                 found.push((id, reason));
             }
-            let is_upgraded = with_triggers && !std::mem::replace(&mut follows_triggers[index], true);
+            let is_upgraded =
+                with_triggers && !std::mem::replace(&mut follows_triggers[index], true);
             if !is_new && !is_upgraded {
                 continue;
             }
-            pending.extend(self.requires(id).iter().map(|&required| (required, Reason::RequiredBy(id), with_triggers)));
+            pending.extend(
+                self.requires(id)
+                    .iter()
+                    .map(|&required| (required, Reason::RequiredBy(id), with_triggers)),
+            );
             if with_triggers {
-                let triggered = self.triggered.iter().find(|module| module.0 == id).map_or(&[][..], |module| &module.1);
-                pending.extend(triggered.iter().map(|&required| (required, Reason::RequiredBy(id), true)));
+                let triggered = self
+                    .triggered
+                    .iter()
+                    .find(|module| module.0 == id)
+                    .map_or(&[][..], |module| &module.1);
+                pending.extend(
+                    triggered
+                        .iter()
+                        .map(|&required| (required, Reason::RequiredBy(id), true)),
+                );
             }
         }
         found.sort_unstable_by_key(|entry| entry.0);
@@ -443,9 +501,14 @@ impl Archive {
         static EMBEDDED: OnceLock<Archive> = OnceLock::new();
         EMBEDDED.get_or_init(|| {
             let text = Archive::read(b"manifest").expect("the archive has a manifest");
-            let manifest = Manifest::parse(&text).expect("the manifest of the archive is well-formed");
+            let manifest =
+                Manifest::parse(&text).expect("the manifest of the archive is well-formed");
             let mut paths: Vec<Box<[u8]>> = Vec::new();
-            for module in manifest.modules.iter().filter(|module| !module.path.is_empty()) {
+            for module in manifest
+                .modules
+                .iter()
+                .filter(|module| !module.path.is_empty())
+            {
                 if paths.len() <= module.id as usize {
                     paths.resize_with(module.id as usize + 1, Default::default);
                 }
@@ -465,11 +528,13 @@ impl Archive {
 
     pub fn source(&self, id: u32) -> Cow<'static, [u8]> {
         let name = self.path(id).strip_prefix(VIRTUAL_ROOT);
-        name.and_then(Archive::read).map_or(Cow::Borrowed(&[]), Cow::Owned)
+        name.and_then(Archive::read)
+            .map_or(Cow::Borrowed(&[]), Cow::Owned)
     }
 
     pub fn read(name: &[u8]) -> Option<Vec<u8>> {
-        let number = |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let number =
+            |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         let records = &ARCHIVE[4..][..number(ARCHIVE) * RECORD_LEN];
         let records = records.as_chunks::<RECORD_LEN>().0;
         let found = records.binary_search_by(|record| record[1..][..record[0] as usize].cmp(name));

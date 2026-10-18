@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "../../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "../../aot/supported";
 
 setDefaultTimeout(60_000);
 
@@ -13,7 +13,13 @@ const warning = "warn: --coverage is ignored with --aot";
 
 async function ran(flags: string[]) {
   using dir = tempDir("test-aot-coverage", files);
-  await using proc = spawn({ cmd: [bunExe(), "test", ...flags], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", ...flags],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);

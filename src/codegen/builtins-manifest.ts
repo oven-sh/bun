@@ -3,8 +3,8 @@ import path from "node:path";
 import { constants, zstdCompressSync } from "node:zlib";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "../jsc/bindings/js_classes";
-import { census, uncurryThisMismatch } from "./builtin-name-census";
 import { builtinFunctionIds } from "./builtin-function-ids";
+import { census, uncurryThisMismatch } from "./builtin-name-census";
 import { jscNames, typeNames } from "./builtin-names";
 import "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
@@ -50,7 +50,8 @@ functionFiles.push(
     .sort()
     .map(file => "engine/" + file),
 );
-const locate = (file: string) => (file.startsWith("engine/") ? path.join(ENGINE, file.slice(7)) : path.join(BASE, file));
+const locate = (file: string) =>
+  file.startsWith("engine/") ? path.join(ENGINE, file.slice(7)) : path.join(BASE, file);
 const read = (file: string) => fs.readFileSync(locate(file), "utf8");
 
 const names = new Map<string, string>();
@@ -227,7 +228,9 @@ const modulesTriggeredBy = (file: string) => {
   return Object.entries(triggers)
     .filter(([trigger]) => {
       const [global, property] = trigger.split(".");
-      return new RegExp(`\\b${global}\\??\\.${property}\\b`).test(code) || patternNames(code, global).includes(property);
+      return (
+        new RegExp(`\\b${global}\\??\\.${property}\\b`).test(code) || patternNames(code, global).includes(property)
+      );
     })
     .flatMap(([, specifiers]) => specifiers);
 };
@@ -311,7 +314,8 @@ const onBehalfOf: Record<string, Record<string, string[]>> = {
 };
 for (const [key, names] of Object.entries(onBehalfOf)) {
   const id = functionIds.get(key);
-  if (id === undefined) throw new Error(`\`onBehalfOf\` names ${key.replace("\t", ": ")}, which is no built-in function`);
+  if (id === undefined)
+    throw new Error(`\`onBehalfOf\` names ${key.replace("\t", ": ")}, which is no built-in function`);
   for (const [name, facts] of Object.entries(names)) {
     lines.push(`behalf\t${id}\t${name}\t${facts.join("\t")}`);
   }
@@ -331,7 +335,14 @@ const standardInput = ["process stdin", "process openStdin"];
 const bundlerPlugins = ["Bun build", "Bun plugin", "loader html"];
 const nodeModule = ["native node:module"];
 const requireFunction = ["global require", "global module", ...nodeModule];
-const printedObjects = ["Bun inspect", "Bun jest", "console *", "native bun:test", "prints object", "symbol nodejs.util.inspect.custom"];
+const printedObjects = [
+  "Bun inspect",
+  "Bun jest",
+  "console *",
+  "native bun:test",
+  "prints object",
+  "symbol nodejs.util.inspect.custom",
+];
 const channel = [
   "process send",
   "process channel",
@@ -346,7 +357,12 @@ const channel = [
 const rootsMadeFor: Record<string, string[]> = {
   "internal/util/inspect": printedObjects,
   "node:path": [],
-  "node:timers/promises": ["value setTimeout", "value setInterval", "value setImmediate", "symbol nodejs.util.promisify.custom"],
+  "node:timers/promises": [
+    "value setTimeout",
+    "value setInterval",
+    "value setImmediate",
+    "symbol nodejs.util.promisify.custom",
+  ],
   "Bake.ts\trenderRoutesForProdStatic": ["Bun build"],
   "BundlerPlugin.ts\tloadAndResolvePluginsForServe": bundlerPlugins,
   "BundlerPlugin.ts\trunOnEndCallbacks": bundlerPlugins,
@@ -391,7 +407,8 @@ const rootsMadeFor: Record<string, string[]> = {
 };
 for (const [key, facts] of Object.entries(rootsMadeFor)) {
   const id = key.includes("\t") ? functionIds.get(key) : resolve(key, "");
-  if (id === undefined) throw new Error(`\`rootsMadeFor\` names ${key.replace("\t", ": ")}, which is no built-in function`);
+  if (id === undefined)
+    throw new Error(`\`rootsMadeFor\` names ${key.replace("\t", ": ")}, which is no built-in function`);
   lines.push(["root", key.includes("\t") ? "function" : "module", id, ...facts].join("\t"));
 }
 
@@ -444,7 +461,9 @@ if (archive) {
     fs.readFileSync(locate(file)),
   ]);
   files.push(["manifest", Buffer.from(manifest)]);
-  const table = /BUILTINS_HASH: u32 = 0x([0-9a-f]{8});/.exec(fs.readFileSync(path.join(import.meta.dir, "../aot/builtins_generated.rs"), "utf8"));
+  const table = /BUILTINS_HASH: u32 = 0x([0-9a-f]{8});/.exec(
+    fs.readFileSync(path.join(import.meta.dir, "../aot/builtins_generated.rs"), "utf8"),
+  );
   if (!table) throw new Error("src/aot/builtins_generated.rs has no BUILTINS_HASH");
   files.push([`table-${table[1]}`, Buffer.alloc(0)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));

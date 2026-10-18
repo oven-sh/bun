@@ -58,9 +58,11 @@ const booleanOptions = new Map(
 );
 
 function readCases(): [name: string, source: string][] {
-  const bytes = Buffer.from(Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "../cli/check/typescript-go/bundle.zst"))));
+  const bytes = Buffer.from(
+    Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "../cli/check/typescript-go/bundle.zst"))),
+  );
   const cases: [string, string][] = [];
-  for (let at = 0; at < bytes.length; ) {
+  for (let at = 0; at < bytes.length;) {
     const end = bytes.indexOf(10, at);
     const header = bytes.toString("utf8", at + 4, end);
     const space = header.lastIndexOf(" ");
@@ -90,7 +92,11 @@ function writeCase(folder: string, source: string): string | undefined {
   if (pieces.length > 1) {
     files = [];
     for (let i = 1; i < pieces.length; i += 2) files.push([pieces[i].trim().replace(/^\/+/, ""), pieces[i + 1]]);
-    if (files.some(([name]) => name.includes("..") || !/\.(ts|mts|cts)$/.test(name)) || files.at(-1)![0].endsWith(".d.ts")) return;
+    if (
+      files.some(([name]) => name.includes("..") || !/\.(ts|mts|cts)$/.test(name)) ||
+      files.at(-1)![0].endsWith(".d.ts")
+    )
+      return;
   }
   for (const [name, text] of files) {
     mkdirSync(dirname(join(folder, name)), { recursive: true });
@@ -98,7 +104,10 @@ function writeCase(folder: string, source: string): string | undefined {
   }
   const entryPoint = files.at(-1)![0];
   const included = files.map(([name]) => name).filter(name => name === entryPoint || name.endsWith(".d.ts"));
-  writeFileSync(join(folder, "tsconfig.json"), JSON.stringify({ compilerOptions: compilerOptions(source), files: included }));
+  writeFileSync(
+    join(folder, "tsconfig.json"),
+    JSON.stringify({ compilerOptions: compilerOptions(source), files: included }),
+  );
   return entryPoint;
 }
 
@@ -115,7 +124,11 @@ const errorClass = (text: string) => /\b((?:[A-Z][a-z]+)*Error)\b/.exec(text)?.[
 async function judge(folder: string, source: string): Promise<string> {
   const entryPoint = writeCase(folder, source);
   if (!entryPoint) return "skipped";
-  const built = await run([bunExe(), "build", "--compile", "--aot", "./" + entryPoint, "--outfile", "./compiled"], folder, 120_000);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "./" + entryPoint, "--outfile", "./compiled"],
+    folder,
+    120_000,
+  );
   const said = built.stdout + built.stderr;
   if (built.signal || /\bpanic/.test(said)) return "the build crashed";
   if (built.timedOut) return "the build hangs";
@@ -131,7 +144,9 @@ async function judge(folder: string, source: string): Promise<string> {
   if (compiled.signal) return "the program crashed: " + compiled.signal;
   if (compiled.timedOut) return "the program hangs";
   if ((compiled.exitCode === 0) !== (interpreted.exitCode === 0)) {
-    return compiled.exitCode ? "throws " + errorClass(compiled.stderr) : "does not throw " + errorClass(interpreted.stderr);
+    return compiled.exitCode
+      ? "throws " + errorClass(compiled.stderr)
+      : "does not throw " + errorClass(interpreted.stderr);
   }
   if (compiled.stdout !== interpreted.stdout) return "different output";
   if (compiled.exitCode && errorClass(compiled.stderr) !== errorClass(interpreted.stderr)) {
@@ -144,7 +159,9 @@ const cases = unsupported
   ? []
   : readCases()
       .filter(([, source]) => !skippedDirective.test(source))
-      .filter(([name], index) => (selection === "all" ? true : selection ? name.includes(selection) : index % 50 === 0));
+      .filter(([name], index) =>
+        selection === "all" ? true : selection ? name.includes(selection) : index % 50 === 0,
+      );
 
 for (let shard = 0; shard < shardCount; shard++) {
   test.skipIf(!!unsupported)(

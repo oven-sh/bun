@@ -17,7 +17,10 @@ test.skipIf(isDebug || isASAN)(
     using dir = tempDir("aot-many-site-caches", { "main.js": generateProgram() });
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
     const built = await run([bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", executable], String(dir));
-    expect({ errors: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ errors: [], exitCode: 0 });
+    expect({
+      errors: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({ errors: [], exitCode: 0 });
     const plain = await run([bunExe(), "run", "main.js"], String(dir));
     expect(plain.exitCode).toBe(0);
     const compiled = await run([executable], String(dir));

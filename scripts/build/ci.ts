@@ -603,7 +603,7 @@ export async function* candidateBuilds(
   // one commit. A build can fail its tests, or be cancelled, and still have
   // linked and published.
   let number = ctx.buildNumber;
-  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; ) {
+  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET;) {
     if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
     const nearest: number = number - 1;
     const count = Math.min(PROBES_AT_ONCE, NUMBER_PROBE_BUDGET - probes, nearest);
@@ -720,6 +720,8 @@ export async function inheritIslandsPlan(cfg: Config, ctx: OrderFileContext): Pr
     console.log(`+ islands: inherited ${artifact} from #${build.number ?? "?"} in ${since(start)}: one link`);
     return true;
   }
-  console.log(`~ islands: no earlier build published ${artifact} (${since(start)}): this build links twice and publishes it`);
+  console.log(
+    `~ islands: no earlier build published ${artifact} (${since(start)}): this build links twice and publishes it`,
+  );
   return false;
 }

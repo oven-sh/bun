@@ -7,9 +7,15 @@ use std::cmp::Reverse;
 fn is_pure_annotation(comment: &[u8]) -> bool {
     let is_sign = |byte: &u8| matches!(byte, b'@' | b'#');
     if let Some(written) = comment.strip_prefix(b"//") {
-        return written.iter().position(is_sign).is_some_and(|at| strings::is_all_whitespace(&written[..at]) && strings::has_prefix_with_word_boundary(&written[at + 1..], b"__PURE__"));
+        return written.iter().position(is_sign).is_some_and(|at| {
+            strings::is_all_whitespace(&written[..at])
+                && strings::has_prefix_with_word_boundary(&written[at + 1..], b"__PURE__")
+        });
     }
-    let Some(mut rest) = comment.strip_suffix(b"*/").filter(|_| comment.starts_with(b"/*")) else {
+    let Some(mut rest) = comment
+        .strip_suffix(b"*/")
+        .filter(|_| comment.starts_with(b"/*"))
+    else {
         return false;
     };
     while let Some(at) = rest.iter().position(is_sign) {
@@ -22,14 +28,20 @@ fn is_pure_annotation(comment: &[u8]) -> bool {
 }
 
 fn skip_type_assertions(hir: &hir::File<'_>, mut e: ExprId) -> ExprId {
-    while let ExprKind::As { expr: operand, .. } | ExprKind::Satisfies { expr: operand, .. } | ExprKind::AsConst(operand) | ExprKind::NonNull(operand) = hir[e].kind {
+    while let ExprKind::As { expr: operand, .. }
+    | ExprKind::Satisfies { expr: operand, .. }
+    | ExprKind::AsConst(operand)
+    | ExprKind::NonNull(operand) = hir[e].kind
+    {
         e = operand;
     }
     e
 }
 
 fn start_including_parens(hir: &hir::File<'_>, e: ExprId) -> u32 {
-    hir::parentheses_around(hir, e).last().map_or(hir[e].pos, |outermost| outermost.1)
+    hir::parentheses_around(hir, e)
+        .last()
+        .map_or(hir[e].pos, |outermost| outermost.1)
 }
 
 pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
@@ -38,12 +50,19 @@ pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
         return Vec::new();
     }
     let next_token = |at: u32| skip_trivia(text, at as usize) as u32;
-    let mut marked: Vec<u32> = hir.comments.iter().filter(|comment| is_pure_annotation(&text[comment.pos as usize..comment.end as usize])).map(|comment| next_token(comment.end)).collect();
+    let mut marked: Vec<u32> = hir
+        .comments
+        .iter()
+        .filter(|comment| is_pure_annotation(&text[comment.pos as usize..comment.end as usize]))
+        .map(|comment| next_token(comment.end))
+        .collect();
     marked.sort_unstable();
     marked.dedup();
     let prefix_casts: Vec<(u32, ExprId, u32)> = (hir.exprs.iter())
         .filter_map(|e| match e.kind {
-            ExprKind::As { expr: operand, .. } | ExprKind::AsConst(operand) => Some((e.pos, operand, start_including_parens(hir, operand))),
+            ExprKind::As { expr: operand, .. } | ExprKind::AsConst(operand) => {
+                Some((e.pos, operand, start_including_parens(hir, operand)))
+            }
             _ => None,
         })
         .filter(|&(cast, _, operand)| cast < operand)
@@ -63,8 +82,12 @@ pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
         let Ok(at) = marked.binary_search(&start_including_parens(hir, e)) else {
             continue;
         };
-        let is_word = |word: &'static [u8]| strings::has_prefix_with_word_boundary(&text[marked[at] as usize..], word);
-        if is_word(b"using") || is_word(b"async") && for_head_starts.binary_search(&(i as u32)).is_err() {
+        let is_word = |word: &'static [u8]| {
+            strings::has_prefix_with_word_boundary(&text[marked[at] as usize..], word)
+        };
+        if is_word(b"using")
+            || is_word(b"async") && for_head_starts.binary_search(&(i as u32)).is_err()
+        {
             marked.remove(at);
         }
     }
@@ -75,7 +98,13 @@ pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
             continue;
         };
         match e.kind {
-            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::NonNull(_) | ExprKind::Instantiation { .. } => {
+            ExprKind::Dot { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Call(_)
+            | ExprKind::New(_)
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. } => {
                 if chains[at].is_none() || hir[chains[at]].end < e.end {
                     chains[at] = ExprId(i as u32);
                 }
@@ -106,14 +135,19 @@ pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
 }
 
 fn parse_react_hooks_suppression(comment: &[u8]) -> Option<bool> {
-    let written = if comment.starts_with(b"/*") { comment.strip_suffix(b"*/").unwrap_or(comment) } else { comment };
+    let written = if comment.starts_with(b"/*") {
+        comment.strip_suffix(b"*/").unwrap_or(comment)
+    } else {
+        comment
+    };
     let after = &written[strings::index_of(written, b"eslint-disable")? + "eslint-disable".len()..];
     let is_word_end = |rest: &[u8]| rest.first().is_none_or(u8::is_ascii_whitespace);
     let (is_block, rules) = match after.strip_prefix(b"-next-line") {
         Some(rules) => (false, rules),
         None => (true, after),
     };
-    let is_rule_name = strings::contains(rules, b"react-hooks/rules-of-hooks") || strings::contains(rules, b"react-hooks/exhaustive-deps");
+    let is_rule_name = strings::contains(rules, b"react-hooks/rules-of-hooks")
+        || strings::contains(rules, b"react-hooks/exhaustive-deps");
     (is_word_end(rules) && is_rule_name).then_some(is_block)
 }
 
@@ -136,9 +170,17 @@ fn is_inside_jsx_tag(hir: &hir::File<'_>, token: u32) -> bool {
         let mut arguments = hir.ids(element.type_args);
         if let Some(first) = arguments.next() {
             let last = arguments.next_back().unwrap_or(first);
-            look_at(hir[first].pos - 1, skip_trivia(&hir.text, hir[last].end as usize) as u32 + 1, false);
+            look_at(
+                hir[first].pos - 1,
+                skip_trivia(&hir.text, hir[last].end as usize) as u32 + 1,
+                false,
+            );
         }
-        for attribute in element.attrs.iter().filter(|&attribute| hir[attribute].kind == PropKind::Spread) {
+        for attribute in element
+            .attrs
+            .iter()
+            .filter(|&attribute| hir[attribute].kind == PropKind::Spread)
+        {
             look_at(hir[attribute].start, hir[attribute].end, false);
         }
     }
@@ -148,28 +190,48 @@ fn is_inside_jsx_tag(hir: &hir::File<'_>, token: u32) -> bool {
     innermost.1
 }
 
-fn is_nested_only_in_function_bodies(hir: &hir::File<'_>, bound: &Bound<'_>, mut func: usize) -> bool {
+fn is_nested_only_in_function_bodies(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    mut func: usize,
+) -> bool {
     loop {
         let around = bound.fns[func].enclosing;
         if around.is_none() {
             return true;
         }
-        let enclosing_body = hir.body_starts.binary_search_by_key(&around.0, |body| body.0.0).ok().map(|at| hir.body_starts[at].1);
-        if hir.fns[around.idx()].kind == FnKind::Arrow || enclosing_body.is_none_or(|body| body <= hir.fns[func].start) {
+        let enclosing_body = hir
+            .body_starts
+            .binary_search_by_key(&around.0, |body| body.0.0)
+            .ok()
+            .map(|at| hir.body_starts[at].1);
+        if hir.fns[around.idx()].kind == FnKind::Arrow
+            || enclosing_body.is_none_or(|body| body <= hir.fns[func].start)
+        {
             return false;
         }
         func = around.idx();
     }
 }
 
-pub(crate) fn functions_with_react_hooks_suppression(hir: &hir::File<'_>, bound: &Bound<'_>) -> Vec<u32> {
+pub(crate) fn functions_with_react_hooks_suppression(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+) -> Vec<u32> {
     let text: &[u8] = &hir.text;
     if !strings::contains(text, b"eslint-disable") {
         return Vec::new();
     }
     let suppressions: Vec<(u32, bool)> = (hir.comments.iter())
-        .filter_map(|comment| Some((comment, parse_react_hooks_suppression(&text[comment.pos as usize..comment.end as usize])?)))
-        .filter(|(comment, _)| !is_inside_jsx_tag(hir, skip_trivia(text, comment.end as usize) as u32))
+        .filter_map(|comment| {
+            Some((
+                comment,
+                parse_react_hooks_suppression(&text[comment.pos as usize..comment.end as usize])?,
+            ))
+        })
+        .filter(|(comment, _)| {
+            !is_inside_jsx_tag(hir, skip_trivia(text, comment.end as usize) as u32)
+        })
         .map(|(comment, is_block)| (comment.pos, is_block))
         .collect();
     if suppressions.is_empty() {
@@ -189,14 +251,21 @@ pub(crate) fn functions_with_react_hooks_suppression(hir: &hir::File<'_>, bound:
     for member in hir.members.iter().filter(|member| member.func.is_some()) {
         ends[member.func.idx()] = member.loc.end;
     }
-    let has_closing_body = |func: &hir::Func| !matches!(func.body, FnBody::None) && func.kind != FnKind::StaticBlock;
-    let mut closing: Vec<(u32, Reverse<u32>, u32)> = (hir.fns.iter().enumerate()).filter(|&(i, func)| ends[i] != 0 && has_closing_body(func)).map(|(i, func)| (ends[i], Reverse(func.start), i as u32)).collect();
+    let has_closing_body =
+        |func: &hir::Func| !matches!(func.body, FnBody::None) && func.kind != FnKind::StaticBlock;
+    let mut closing: Vec<(u32, Reverse<u32>, u32)> = (hir.fns.iter().enumerate())
+        .filter(|&(i, func)| ends[i] != 0 && has_closing_body(func))
+        .map(|(i, func)| (ends[i], Reverse(func.start), i as u32))
+        .collect();
     closing.sort_unstable();
     let (mut seen, mut is_pending, mut is_for_the_rest) = (0, false, false);
     let mut found = Vec::new();
     for (end, _, func) in closing {
         let next_token = skip_trivia(text, end as usize) as u32;
-        while let Some(&(_, is_block)) = suppressions.get(seen).filter(|suppression| suppression.0 < next_token) {
+        while let Some(&(_, is_block)) = suppressions
+            .get(seen)
+            .filter(|suppression| suppression.0 < next_token)
+        {
             is_pending = true;
             is_for_the_rest |= is_block;
             seen += 1;

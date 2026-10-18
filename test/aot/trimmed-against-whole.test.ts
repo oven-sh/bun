@@ -3,7 +3,15 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported, withoutDebugInformation } from "./run-programs";
-import { compareAll, described, jailOfThisMachine, Tally, type Program, type Result, type Settings } from "./trimmed-against-whole/compare";
+import {
+  compareAll,
+  described,
+  jailOfThisMachine,
+  Tally,
+  type Program,
+  type Result,
+  type Settings,
+} from "./trimmed-against-whole/compare";
 import { aotPrograms, repository, test262 } from "./trimmed-against-whole/corpora";
 import { programsOfEveryLocale } from "./trimmed-against-whole/locales";
 import { programsThatNameEverything, programsThatReachNames, reflect } from "./trimmed-against-whole/reach-names";
@@ -25,7 +33,9 @@ const known = readFileSync(join(import.meta.dir, "trimmed-against-whole/known-di
 
 function isKnown(result: Result): boolean {
   const said = `${result.trimmed?.stdout}\n${result.trimmed?.stderr}`;
-  return known.some(([kind, pattern]) => (kind === "program" ? pattern === `${result.corpus} ${result.name}` : new RegExp(pattern).test(said)));
+  return known.some(([kind, pattern]) =>
+    kind === "program" ? pattern === `${result.corpus} ${result.name}` : new RegExp(pattern).test(said),
+  );
 }
 
 function sample(programs: Program[], count: number, seed: string): Program[] {
@@ -78,21 +88,60 @@ async function expectSame(programs: Program[], minutes: number) {
 const inOneMode = (programs: Program[]) => programs.filter(program => !program.name.endsWith("(strict too)"));
 const conformanceTests = () => inOneMode(test262(join(import.meta.dir, "trimmed-against-whole/test262")));
 
-test.skipIf(!hasIslands)("a part that is left out of a program that uses it is found and named", async () => {
-  using scratch = tempDir("trimmed-against-whole", {});
-  const program: Program = { corpus: "control", name: "color", entry: "color.mjs", files: () => ({ "color.mjs": `console.log(Bun.color("red", "hex"));\n` }) };
-  const results: Result[] = [];
-  await compareAll([program], { ...settingsIn(String(scratch)), wronglyLeftOut: ["color"] }, result => results.push(result));
-  expect(results).toEqual([expect.objectContaining({ verdict: "differs", why: "exit code 0 | 70", features: ["color"], door: expect.any(Number), world: "closed" })]);
-  expect(results[0].whole).toEqual({ stdout: "#ff0000\n", stderr: "", exitCode: 0, signal: null });
-}, 300_000);
+test.skipIf(!hasIslands)(
+  "a part that is left out of a program that uses it is found and named",
+  async () => {
+    using scratch = tempDir("trimmed-against-whole", {});
+    const program: Program = {
+      corpus: "control",
+      name: "color",
+      entry: "color.mjs",
+      files: () => ({ "color.mjs": `console.log(Bun.color("red", "hex"));\n` }),
+    };
+    const results: Result[] = [];
+    await compareAll([program], { ...settingsIn(String(scratch)), wronglyLeftOut: ["color"] }, result =>
+      results.push(result),
+    );
+    expect(results).toEqual([
+      expect.objectContaining({
+        verdict: "differs",
+        why: "exit code 0 | 70",
+        features: ["color"],
+        door: expect.any(Number),
+        world: "closed",
+      }),
+    ]);
+    expect(results[0].whole).toEqual({ stdout: "#ff0000\n", stderr: "", exitCode: 0, signal: null });
+  },
+  300_000,
+);
 
-test.skipIf(!hasIslands)("test262: the same 200 files on every commit", () => expectSame(conformanceTests(), 4), 900_000);
+test.skipIf(!hasIslands)(
+  "test262: the same 200 files on every commit",
+  () => expectSame(conformanceTests(), 4),
+  900_000,
+);
 
-test.skipIf(!hasIslands)("each service of Intl alone in a program, for every locale", () => expectSame(programsOfEveryLocale(), 2), 900_000);
+test.skipIf(!hasIslands)(
+  "each service of Intl alone in a program, for every locale",
+  () => expectSame(programsOfEveryLocale(), 2),
+  900_000,
+);
 
-test.skipIf(!hasIslands)("other programs on every commit, chosen by the revision of this Bun", () => expectSame(sample([...aotPrograms(), ...programsThatNameEverything(reflect(bunExe()))], 400, Bun.revision), 2), 900_000);
+test.skipIf(!hasIslands)(
+  "other programs on every commit, chosen by the revision of this Bun",
+  () => expectSame(sample([...aotPrograms(), ...programsThatNameEverything(reflect(bunExe()))], 400, Bun.revision), 2),
+  900_000,
+);
 
-test.skipIf(!hasIslands)("names reached by constant and computed keys: --corpus names --seed fixed", () => expectSame(programsThatReachNames(reflect(bunExe()), doors, "fixed", 30), 1), 900_000);
+test.skipIf(!hasIslands)(
+  "names reached by constant and computed keys: --corpus names --seed fixed",
+  () => expectSame(programsThatReachNames(reflect(bunExe()), doors, "fixed", 30), 1),
+  900_000,
+);
 
-test.skipIf(!hasIslands)(`names reached by constant and computed keys: --corpus names --seed ${Bun.revision}`, () => expectSame(programsThatReachNames(reflect(bunExe()), doors, Bun.revision, 400), 1), 900_000);
+test.skipIf(!hasIslands)(
+  `names reached by constant and computed keys: --corpus names --seed ${Bun.revision}`,
+  () => expectSame(programsThatReachNames(reflect(bunExe()), doors, Bun.revision, 400), 1),
+  900_000,
+);

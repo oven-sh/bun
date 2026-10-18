@@ -35,14 +35,22 @@ function split(command: string) {
 
 function forTarget({ command, arguments: list }: Command) {
   const words = list ? [...list] : split(command!);
-  for (let at; (at = words.indexOf("-include-pch")) >= 0; ) words.splice(at - 1, 4);
+  for (let at; (at = words.indexOf("-include-pch")) >= 0;) words.splice(at - 1, 4);
   const kept: string[] = [];
   for (let at = 0; at < words.length; at++) {
     const word = words[at];
     if (["-o", "-MF", "-MT", "-arch"].includes(word)) at++;
-    else if (word !== "-MD" && word !== "-c" && !/^(-mcpu=|-march=|-mtune=|--target=|-mmacosx-version-min=)/.test(word)) kept.push(word);
+    else if (word !== "-MD" && word !== "-c" && !/^(-mcpu=|-march=|-mtune=|--target=|-mmacosx-version-min=)/.test(word))
+      kept.push(word);
   }
-  return [...kept, `--target=${args.target}`, "-fsyntax-only", "-ferror-limit=12", "-Wno-everything", "-fno-color-diagnostics"];
+  return [
+    ...kept,
+    `--target=${args.target}`,
+    "-fsyntax-only",
+    "-ferror-limit=12",
+    "-Wno-everything",
+    "-fno-color-diagnostics",
+  ];
 }
 
 const errors = new Map<string, string>();
@@ -68,6 +76,8 @@ await Promise.all(
   }),
 );
 
-console.log(`${commands.length} translation units, ${failed} do not compile for ${args.target}, ${errors.size} different errors`);
+console.log(
+  `${commands.length} translation units, ${failed} do not compile for ${args.target}, ${errors.size} different errors`,
+);
 for (const line of [...errors.keys()].slice(0, +args.show)) console.log("  " + line);
 process.exitCode = failed ? 1 : 0;

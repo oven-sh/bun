@@ -27,7 +27,8 @@ const count = 700;
 const manyFunctions = (prefix: string) =>
   Array.from(
     { length: count },
-    (_, index) => `__attribute__((noinline)) int ${prefix}${index}(int x) { for (int i = 0; i < ${index + 3}; i++) x = x * ${index + 7} + i; return x ^ ${index}; }`,
+    (_, index) =>
+      `__attribute__((noinline)) int ${prefix}${index}(int x) { for (int i = 0; i < ${index + 3}; i++) x = x * ${index + 7} + i; return x ^ ${index}; }`,
   ).join("\n");
 const callAll = (prefix: string) => Array.from({ length: count }, (_, index) => `x += ${prefix}${index}(x);`).join(" ");
 
@@ -86,7 +87,12 @@ function readMachO(file: Buffer) {
     const kind = file.readUInt32LE(at);
     const text = (offset: number) => file.toString("latin1", offset, offset + 16).replace(/\0.*$/, "");
     if (kind === 0x19) {
-      segments.push({ name: text(at + 8), address: Number(file.readBigUInt64LE(at + 24)), size: Number(file.readBigUInt64LE(at + 48)), offset: Number(file.readBigUInt64LE(at + 40)) });
+      segments.push({
+        name: text(at + 8),
+        address: Number(file.readBigUInt64LE(at + 24)),
+        size: Number(file.readBigUInt64LE(at + 48)),
+        offset: Number(file.readBigUInt64LE(at + 40)),
+      });
       for (let index = 0; index < file.readUInt32LE(at + 64); index++) {
         const section = at + 72 + index * 80;
         sections.push({
@@ -102,7 +108,10 @@ function readMachO(file: Buffer) {
         const entry = file.readUInt32LE(at + 8) + index * 16;
         if ((file[entry + 4]! & 0xee) !== 0x0e) continue;
         const name = strings + file.readUInt32LE(entry);
-        addressOf.set(file.toString("latin1", name, file.indexOf(0, name)).replace(/^_/, ""), Number(file.readBigUInt64LE(entry + 8)));
+        addressOf.set(
+          file.toString("latin1", name, file.indexOf(0, name)).replace(/^_/, ""),
+          Number(file.readBigUInt64LE(entry + 8)),
+        );
       }
     } else if (kind === 0x80000034) fixups = file.readUInt32LE(at + 8);
     at += file.readUInt32LE(at + 4);
@@ -133,36 +142,55 @@ function pagesWithFixups(file: Buffer, { segments, fixups }: ReturnType<typeof r
     if (info === starts) continue;
     const size = file.readUInt16LE(info + 4);
     const first = segments.find(({ name }) => name === "__TEXT")!.address + Number(file.readBigUInt64LE(info + 8));
-    for (let page = 0; page < file.readUInt16LE(info + 20); page++) pages.push({ start: first + page * size, end: first + (page + 1) * size, chain: info + 22 + page * 2 });
+    for (let page = 0; page < file.readUInt16LE(info + 20); page++)
+      pages.push({ start: first + page * size, end: first + (page + 1) * size, chain: info + 22 + page * 2 });
   }
   return pages;
 }
 
-function danglingReferences(file: Buffer, image: ReturnType<typeof readMachO>, table: Table, plan: string, isArm64: boolean, excluded: string[]) {
+function danglingReferences(
+  file: Buffer,
+  image: ReturnType<typeof readMachO>,
+  table: Table,
+  plan: string,
+  isArm64: boolean,
+  excluded: string[],
+) {
   const isOut = (features: string) => features.split(",").every(feature => excluded.includes(feature));
   const dead = mergedRanges(table.islands.filter(island => isOut(island.features)));
   const isDead = (address: number) => dead.some(({ start, end }) => start <= address && address < end);
-  const rewritten = new Set(table.doors.filter(door => isOut(door.feature)).flatMap(door => (door.places ?? []).map(place => place.address)));
-  const shutInPlace = new Set(table.doors.filter(door => isOut(door.feature) && !door.places?.length).map(door => door.address));
+  const rewritten = new Set(
+    table.doors.filter(door => isOut(door.feature)).flatMap(door => (door.places ?? []).map(place => place.address)),
+  );
+  const shutInPlace = new Set(
+    table.doors.filter(door => isOut(door.feature) && !door.places?.length).map(door => door.address),
+  );
   const leftOutside = new Set<string>();
   let isOfAnIslandThatIsOut = false;
   for (const line of plan.split("\n")) {
     if (line.startsWith("island ")) isOfAnIslandThatIsOut = isOut(line.slice(7));
-    else if (isOfAnIslandThatIsOut) leftOutside.add(line.replace(/^behind /, "").replace(/^.*:/, "").replace(/^_/, ""));
+    else if (isOfAnIslandThatIsOut)
+      leftOutside.add(
+        line
+          .replace(/^behind /, "")
+          .replace(/^.*:/, "")
+          .replace(/^_/, ""),
+      );
   }
   const names = [...image.addressOf].sort((a, b) => a[1] - b[1]);
   const found: string[] = [];
   const refersTo = (from: number, to: number) => {
     if (isDead(from) || !isDead(to) || rewritten.has(from)) return;
     const [holder, start] = names.findLast(([, address]) => address <= from) ?? ["", 0];
-    if (!leftOutside.has(holder) && !shutInPlace.has(start)) found.push(`${holder}: 0x${from.toString(16)} -> 0x${to.toString(16)}`);
+    if (!leftOutside.has(holder) && !shutInPlace.has(start))
+      found.push(`${holder}: 0x${from.toString(16)} -> 0x${to.toString(16)}`);
   };
   if (isDead(table.stub)) found.push(`every stub -> 0x${table.stub.toString(16)}`);
   const base = image.segments.find(({ name }) => name === "__TEXT")!.address;
   for (const { start, chain } of pagesWithFixups(file, image)) {
     const first = file.readUInt16LE(chain);
     if (first === 0xffff) continue;
-    for (let at = start + first; ; ) {
+    for (let at = start + first; ;) {
       const pointer = file.readBigUInt64LE(image.offsetOf(at));
       if (pointer >> 63n === 0n) refersTo(at, Number(pointer & 0xfffffffffn));
       const next = Number((pointer >> 51n) & 0xfffn) * 4;
@@ -171,7 +199,8 @@ function danglingReferences(file: Buffer, image: ReturnType<typeof readMachO>, t
     }
   }
   const beforeMain = image.section("__TEXT,__init_offsets");
-  for (let at = 0; at < (beforeMain?.size ?? 0); at += 4) refersTo(beforeMain!.address + at, base + file.readUInt32LE(beforeMain!.offset + at));
+  for (let at = 0; at < (beforeMain?.size ?? 0); at += 4)
+    refersTo(beforeMain!.address + at, base + file.readUInt32LE(beforeMain!.offset + at));
   if (!isArm64) return found;
   const signed = (value: number, bits: number) => (value >= 2 ** (bits - 1) ? value - 2 ** bits : value);
   for (const { name, address, size, offset } of image.sections) {
@@ -179,19 +208,22 @@ function danglingReferences(file: Buffer, image: ReturnType<typeof readMachO>, t
     for (let at = 0; at < size; at += 4) {
       const word = file.readUInt32LE(offset + at);
       const distance21 = signed((((word >>> 5) & 0x7ffff) << 2) | ((word >>> 29) & 3), 21);
-      if ((word & 0x7c000000) >>> 0 === 0x14000000) refersTo(address + at, address + at + signed(word & 0x3ffffff, 26) * 4);
+      if ((word & 0x7c000000) >>> 0 === 0x14000000)
+        refersTo(address + at, address + at + signed(word & 0x3ffffff, 26) * 4);
       else if ((word & 0x9f000000) >>> 0 === 0x10000000) refersTo(address + at, address + at + distance21);
       else if ((word & 0x9f000000) >>> 0 === 0x90000000 && at + 4 < size) {
         const next = file.readUInt32LE(offset + at + 4);
         const isAddToIt = (next & 0xffc00000) >>> 0 === 0x91000000 && ((next >>> 5) & 31) === (word & 31);
-        if (isAddToIt) refersTo(address + at, address + at - ((address + at) % 4096) + distance21 * 4096 + ((next >>> 10) & 0xfff));
+        if (isAddToIt)
+          refersTo(address + at, address + at - ((address + at) % 4096) + distance21 * 4096 + ((next >>> 10) & 0xfff));
       }
     }
   }
   return found;
 }
 
-const subsetsOf = (features: string[]): string[][] => features.reduce<string[][]>((subsets, feature) => [...subsets, ...subsets.map(subset => [...subset, feature])], [[]]);
+const subsetsOf = (features: string[]): string[][] =>
+  features.reduce<string[][]>((subsets, feature) => [...subsets, ...subsets.map(subset => [...subset, feature])], [[]]);
 
 interface Program {
   objects?: string[];
@@ -206,14 +238,35 @@ let shared: ReturnType<typeof tempDir> | undefined;
 
 async function compile(machine: Machine, folder: string, name: string, flags: string[] = []) {
   const source = [".c", ".S"].map(extension => name + extension).find(file => Bun.file(join(folder, file)).size > 0)!;
-  const compiled = await run([tools.clang!, `--target=${machine.target}`, "-O1", "-faddrsig", ...flags, "-c", source, "-o", `${name}.o`], folder);
+  const compiled = await run(
+    [tools.clang!, `--target=${machine.target}`, "-O1", "-faddrsig", ...flags, "-c", source, "-o", `${name}.o`],
+    folder,
+  );
   expect(compiled).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 }
 
-async function wrapped(machine: Machine, folder: string, { objects = ["behind", "door", "table", "main"], compileFlags = {}, linkFlags = [], archived = [], plan = "none" }: Program) {
+async function wrapped(
+  machine: Machine,
+  folder: string,
+  {
+    objects = ["behind", "door", "table", "main"],
+    compileFlags = {},
+    linkFlags = [],
+    archived = [],
+    plan = "none",
+  }: Program,
+) {
   for (const name of objects) if (name !== "behind") await compile(machine, folder, name, compileFlags[name]);
-  if (archived.length > 0) expect((await run([tools["llvm-ar"]!, "rcs", "lib.a", ...archived.map(name => `${name}.o`)], folder)).exitCode).toBe(0);
-  const inputs = [...objects.filter(name => !archived.includes(name)).map(name => (name === "behind" ? behindObjects.get(machine.name)! : `${name}.o`)), ...(archived.length > 0 ? ["lib.a"] : [])];
+  if (archived.length > 0)
+    expect(
+      (await run([tools["llvm-ar"]!, "rcs", "lib.a", ...archived.map(name => `${name}.o`)], folder)).exitCode,
+    ).toBe(0);
+  const inputs = [
+    ...objects
+      .filter(name => !archived.includes(name))
+      .map(name => (name === "behind" ? behindObjects.get(machine.name)! : `${name}.o`)),
+    ...(archived.length > 0 ? ["lib.a"] : []),
+  ];
   writeFileSync(join(folder, "in.rsp"), inputs.map(path => `${path}\n`).join(""));
   const flags = [
     `--target=${machine.target}`,
@@ -229,7 +282,24 @@ async function wrapped(machine: Machine, folder: string, { objects = ["behind", 
     "exported.txt",
     ...linkFlags,
   ];
-  return await run([bunExe(), wrapper, "doors", tools["llvm-cxxfilt"]!, "work", plan, "program.plan", "--", tools.clang!, "@in.rsp", ...flags, "-o", "program"], folder);
+  return await run(
+    [
+      bunExe(),
+      wrapper,
+      "doors",
+      tools["llvm-cxxfilt"]!,
+      "work",
+      plan,
+      "program.plan",
+      "--",
+      tools.clang!,
+      "@in.rsp",
+      ...flags,
+      "-o",
+      "program",
+    ],
+    folder,
+  );
 }
 
 async function signAndRun(folder: string, name: string, file: Buffer, args: string[] = []) {
@@ -257,7 +327,12 @@ async function linked(machine: Machine, folder: string, program: Program = {}) {
     return at < 0 || (at > 0 && bytes[at - 1] !== 0) ? NaN : strings!.address + at;
   };
   const trimmed = Buffer.from(file);
-  const fill = (start: number, end: number) => void trimmed.fill(machine.isArm64 ? Buffer.from([0x20, 0x00, 0x20, 0xd4]) : 0xcc, image.offsetOf(start), image.offsetOf(start) + end - start);
+  const fill = (start: number, end: number) =>
+    void trimmed.fill(
+      machine.isArm64 ? Buffer.from([0x20, 0x00, 0x20, 0xd4]) : 0xcc,
+      image.offsetOf(start),
+      image.offsetOf(start) + end - start,
+    );
   for (const { start, end } of table.islands) if (image.segmentAt(start)!.name === "__TEXT") fill(start, end);
   for (const { start, end, chain } of pagesWithFixups(file, image)) {
     if (!mergedRanges(table.islands).some(run => run.start <= start && end <= run.end)) continue;
@@ -265,9 +340,27 @@ async function linked(machine: Machine, folder: string, program: Program = {}) {
     fill(start, end);
   }
   const plan = readFileSync(join(folder, "program.plan"), "utf8");
-  for (const excluded of subsetsOf(table.features)) expect({ excluded, dangling: danglingReferences(file, image, table, plan, machine.isArm64, excluded) }).toEqual({ excluded, dangling: [] });
-  const exitCodes = machine.canRun ? { whole: await signAndRun(folder, "whole", file), trimmed: await signAndRun(folder, "trimmed", trimmed) } : { whole: 0, trimmed: 0 };
-  return { said: said.stdout, file, ...image, table, addressOf, canGo, canGoAt, door, stringAt, exitCodes, whyFat: readFileSync(join(folder, "work/doors.txt"), "utf8") };
+  for (const excluded of subsetsOf(table.features))
+    expect({ excluded, dangling: danglingReferences(file, image, table, plan, machine.isArm64, excluded) }).toEqual({
+      excluded,
+      dangling: [],
+    });
+  const exitCodes = machine.canRun
+    ? { whole: await signAndRun(folder, "whole", file), trimmed: await signAndRun(folder, "trimmed", trimmed) }
+    : { whole: 0, trimmed: 0 };
+  return {
+    said: said.stdout,
+    file,
+    ...image,
+    table,
+    addressOf,
+    canGo,
+    canGoAt,
+    door,
+    stringAt,
+    exitCodes,
+    whyFat: readFileSync(join(folder, "work/doors.txt"), "utf8"),
+  };
 }
 
 const { add32, branch26, page21, low12, adr, pointer36, nop } = placeKinds;
@@ -284,8 +377,10 @@ function targetsOf(file: Buffer, offsetOf: (address: number) => number, places: 
     else if (kind === add32) targets.push(address + 4 + file.readInt32LE(offset));
     else if ((word & 0x7c000000) >>> 0 === 0x14000000) targets.push(address + signed(word & 0x3ffffff, 26) * 4);
     else if ((word & 0x9f000000) >>> 0 === 0x10000000) targets.push(address + distance21);
-    else if ((word & 0x9f000000) >>> 0 === 0x90000000) page = { register: word & 31, address: address - (address % 4096) + distance21 * 4096 };
-    else if ((word & 0xffc00000) >>> 0 === 0x91000000 && page !== undefined && ((word >>> 5) & 31) === page.register) targets.push(page.address + ((word >>> 10) & 0xfff));
+    else if ((word & 0x9f000000) >>> 0 === 0x90000000)
+      page = { register: word & 31, address: address - (address % 4096) + distance21 * 4096 };
+    else if ((word & 0xffc00000) >>> 0 === 0x91000000 && page !== undefined && ((word >>> 5) & 31) === page.register)
+      targets.push(page.address + ((word >>> 10) & 0xfff));
     else if (word !== 0xd503201f) targets.push(NaN);
   }
   return targets;
@@ -300,13 +395,26 @@ const doorTo = (name: string) => `
   int ${name}(int);
   __attribute__((noinline)) int the_door(int x) { return behind(x) * 3 + ${name}(x + 1); }
 `;
-const mixes = (name: string, by: number) => `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 3; i++) x = x * ${by} + i; return x ^ ${by}; }`;
+const mixes = (name: string, by: number) =>
+  `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 3; i++) x = x * ${by} + i; return x ^ ${by}; }`;
 
 beforeAll(async () => {
   if (!canLink) return;
   shared = tempDir("islands-macho-behind", { "behind.c": sources["behind.c"] });
   for (const machine of machines) {
-    const made = await run([tools.clang!, `--target=${machine.target}`, "-O1", "-faddrsig", "-c", "behind.c", "-o", `behind-${machine.name}.o`], String(shared));
+    const made = await run(
+      [
+        tools.clang!,
+        `--target=${machine.target}`,
+        "-O1",
+        "-faddrsig",
+        "-c",
+        "behind.c",
+        "-o",
+        `behind-${machine.name}.o`,
+      ],
+      String(shared),
+    );
     expect(made).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     behindObjects.set(machine.name, join(String(shared), `behind-${machine.name}.o`));
   }
@@ -339,7 +447,8 @@ const asCStrings = (assembly: string) =>
     .join(" ");
 const functionWithAltEntry = (piece: string, entry: string, target: string) =>
   `.text\n.globl ${piece}, ${entry}\n.p2align 2\n${piece}:\n${perMachine(`cbz w0, ${entry}`, `testl %edi, %edi\nje ${entry}`)}${addOne}\n.alt_entry ${entry}\n${entry}:\n${jumpTo(target)}\n`;
-const twin = (name: string) => `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 3; i++) x = x * 3 + i; return x ^ 77; }`;
+const twin = (name: string) =>
+  `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 3; i++) x = x * 3 + i; return x ^ 77; }`;
 
 const roads: Record<string, Road> = {
   "the name of a function in another input": {
@@ -465,7 +574,9 @@ const roads: Record<string, Road> = {
   "falling from one name into the next, in an input whose sections are not cut at its names": {
     more: `int whole_second(int); ${mixes("behind_target", 3)} int more(int x) { return whole_second(x) + behind_target(x); }`,
     main: `int whole_first(int); int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : whole_first(argc) == 56 ? 0 : 1; }`,
-    files: { "whole.S": `.text\n.globl _whole_first, _whole_second\n.p2align 2\n_whole_first:\n${addOne}\n_whole_second:\n${jumpTo("_behind_target")}\n` },
+    files: {
+      "whole.S": `.text\n.globl _whole_first, _whole_second\n.p2align 2\n_whole_first:\n${addOne}\n_whole_second:\n${jumpTo("_behind_target")}\n`,
+    },
     objects: ["behind", "door", "more", "whole", "main"],
     stay: ["whole_second", "behind_target"],
   },
@@ -518,7 +629,9 @@ const roads: Record<string, Road> = {
       int more(int x) { return piece(x) + behind_target(x); }
     `,
     main: `int entry_in_the_middle(int); int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : entry_in_the_middle(argc) == 35 ? 0 : 1; }`,
-    files: { "piece.c": `__asm__(${asCStrings(functionWithAltEntry("_piece", "_entry_in_the_middle", "_behind_target"))});` },
+    files: {
+      "piece.c": `__asm__(${asCStrings(functionWithAltEntry("_piece", "_entry_in_the_middle", "_behind_target"))});`,
+    },
     objects: ["behind", "door", "more", "piece", "main"],
     stay: ["piece", "entry_in_the_middle", "behind_target"],
   },
@@ -574,7 +687,9 @@ const roads: Record<string, Road> = {
       int deeper(int);
       int more(int x) { return member_one(x) + member_two(x) + deeper(x); }
     `,
-    files: { "deeper.c": `extern int (*const one)(int); extern int (*const two)(int); int deeper(int x) { return one(x) + two(x); }` },
+    files: {
+      "deeper.c": `extern int (*const one)(int); extern int (*const two)(int); int deeper(int x) { return one(x) + two(x); }`,
+    },
     objects: ["behind", "door", "more", "deeper", "main"],
     main: `
       extern int (*const first_of_the_set[])(int) __asm__("section$start$__DATA$the_set");
@@ -595,7 +710,9 @@ const roads: Record<string, Road> = {
       int more(int x) { return behind_target(x) + behind_words()[x & 7]; }
     `,
     main: `int a_member_with_a_long_name(int); int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : a_member_with_a_long_name(argc) == 35 + 'o' ? 0 : 1; }`,
-    files: { "a_member_with_a_long_name.c": `int behind_target(int); int a_member_with_a_long_name(int x) { return behind_target(x) + "words that a member of an archive names too"[x]; }` },
+    files: {
+      "a_member_with_a_long_name.c": `int behind_target(int); int a_member_with_a_long_name(int x) { return behind_target(x) + "words that a member of an archive names too"[x]; }`,
+    },
     objects: ["behind", "door", "more", "a_member_with_a_long_name", "main"],
     archived: ["a_member_with_a_long_name"],
     stay: ["behind_target", "a_member_with_a_long_name"],
@@ -657,7 +774,12 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     test("what only the door reaches can go, code and constants; what stays cannot", async () => {
       using dir = tempDir("islands-macho", sources);
       const { canGo, exitCodes } = await linked(machine, String(dir));
-      expect(["behind", "behind_0", `behind_${count - 1}`, "behind_numbers"].map(canGo)).toEqual([true, true, true, true]);
+      expect(["behind", "behind_0", `behind_${count - 1}`, "behind_numbers"].map(canGo)).toEqual([
+        true,
+        true,
+        true,
+        true,
+      ]);
       expect(["main", "stays", "Bun__trimmedOut", "table_that_stays"].map(canGo)).toEqual([false, false, false, false]);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
@@ -665,7 +787,10 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
 
   describe("the link stops", () => {
     test("where no function matches a door", async () => {
-      using dir = tempDir("islands-macho-stops", { ...sources, "doors": sources.doors + "door extra exit ^no_such_function$\n" });
+      using dir = tempDir("islands-macho-stops", {
+        ...sources,
+        "doors": sources.doors + "door extra exit ^no_such_function$\n",
+      });
       const said = await wrapped(machine, String(dir), {});
       expect(said.stderr).toContain("islands: no function matches the door ^no_such_function$");
       expect(said.exitCode).toBe(1);
@@ -682,7 +807,9 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         "doors": sources.doors + "smallest extra 1000000\n",
       });
       const said = await wrapped(machine, String(dir), { objects: ["behind", "door", "main"] });
-      expect(said.stderr).toMatch(/islands: 0\.\d+ MB can go with extra, which is to be at least 1\.00 MB: something that stays names the rest:/);
+      expect(said.stderr).toMatch(
+        /islands: 0\.\d+ MB can go with extra, which is to be at least 1\.00 MB: something that stays names the rest:/,
+      );
       expect(said.stderr).toMatch(/behind_5 \(behind-\w+\.o, \d+ bytes\)\n\s+<- main \(main\.o, \d+ bytes\)/);
       expect(said.exitCode).toBe(1);
     });
@@ -699,7 +826,10 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
           int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : first_member(argc) + second_member(argc) != 0 ? 0 : 1; }
         `,
       });
-      const said = await wrapped(machine, String(dir), { objects: ["behind", "door", "one/member", "two/member", "main"], archived: ["one/member", "two/member"] });
+      const said = await wrapped(machine, String(dir), {
+        objects: ["behind", "door", "one/member", "two/member", "main"],
+        archived: ["one/member", "two/member"],
+      });
       expect(said.stderr).toContain("inputs could not be read, so what they name is not known:\n  lib.a(member.o)");
       expect(said.exitCode).toBe(1);
     });
@@ -736,9 +866,13 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
           compileFlags: road.compileFlags,
           linkFlags: road.linkFlags,
         });
-        expect(Object.fromEntries(road.stay.map(name => [name, canGo(name)]))).toEqual(Object.fromEntries(road.stay.map(name => [name, false])));
+        expect(Object.fromEntries(road.stay.map(name => [name, canGo(name)]))).toEqual(
+          Object.fromEntries(road.stay.map(name => [name, false])),
+        );
         const go = ["behind", "behind_0", `behind_${count - 1}`, ...(road.go ?? [])];
-        expect(Object.fromEntries(go.map(name => [name, canGo(name)]))).toEqual(Object.fromEntries(go.map(name => [name, true])));
+        expect(Object.fromEntries(go.map(name => [name, canGo(name)]))).toEqual(
+          Object.fromEntries(go.map(name => [name, true])),
+        );
         if (!road.skipsWitnessCheck) expect(said).toContain("; 0 references lead where the names did not");
         expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
       });
@@ -746,7 +880,8 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
   });
 
   describe("a door", () => {
-    const loops = (name: string, calls: string) => `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return ${calls}(x) & 0xffff; }`;
+    const loops = (name: string, calls: string) =>
+      `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return ${calls}(x) & 0xffff; }`;
     const folded = (doors: string) => ({
       ...sources,
       "deeper.c": mixes("behind_the_folded_door", 5),
@@ -761,7 +896,10 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       "doors": sources.doors + doors,
     });
 
-    for (const objects of [["behind", "door", "deeper", "more", "main"], ["behind", "door", "deeper", "main", "more"]]) {
+    for (const objects of [
+      ["behind", "door", "deeper", "more", "main"],
+      ["behind", "door", "deeper", "main", "more"],
+    ]) {
       test(`folded with a function that is no door stays open, whichever of the two the linker kept: ${objects.slice(3).join(", ")}`, async () => {
         using dir = tempDir("islands-macho-door", folded("door extra exit ^folded_door$\n"));
         const { said, addressOf, door, canGo, exitCodes } = await linked(machine, String(dir), { objects });
@@ -775,18 +913,30 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
 
     test("folded only with a door of its own feature is thin, and the places that name it by either name are listed", async () => {
       using dir = tempDir("islands-macho-door", folded("door extra exit ^(folded_door|equal_to_the_door)$\n"));
-      const { said, addressOf, door, canGo, file, offsetOf } = await linked(machine, String(dir), { objects: ["behind", "door", "deeper", "more", "main"] });
+      const { said, addressOf, door, canGo, file, offsetOf } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "deeper", "more", "main"],
+      });
       expect(addressOf("folded_door")).toBe(addressOf("equal_to_the_door"));
       expect(said).not.toContain("stay open");
       expect(said).toContain("2 doors are thin");
       expect(["folded_door", "behind_the_folded_door"].map(canGo)).toEqual([true, true]);
-      expect(door("folded_door")!.places!.map(place => place.kind)).toEqual(machine.isArm64 ? [branch26, branch26] : [add32, add32]);
-      expect(targetsOf(file, offsetOf, door("folded_door")!.places!)).toEqual([addressOf("folded_door"), addressOf("folded_door")]);
+      expect(door("folded_door")!.places!.map(place => place.kind)).toEqual(
+        machine.isArm64 ? [branch26, branch26] : [add32, add32],
+      );
+      expect(targetsOf(file, offsetOf, door("folded_door")!.places!)).toEqual([
+        addressOf("folded_door"),
+        addressOf("folded_door"),
+      ]);
     });
 
     test("folded with a door of its own feature that returns where it exits stays open", async () => {
-      using dir = tempDir("islands-macho-door", folded("door extra exit ^folded_door$\ndoor extra return ^equal_to_the_door$\n"));
-      const { said, addressOf, door, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "deeper", "more", "main"] });
+      using dir = tempDir(
+        "islands-macho-door",
+        folded("door extra exit ^folded_door$\ndoor extra return ^equal_to_the_door$\n"),
+      );
+      const { said, addressOf, door, canGo, exitCodes } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "deeper", "more", "main"],
+      });
       expect(addressOf("folded_door")).toBe(addressOf("equal_to_the_door"));
       expect(said).toContain("1 doors were folded into other functions and stay open");
       expect(door("folded_door")).toBeUndefined();
@@ -821,8 +971,14 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         `,
         "doors": sources.doors + "door extra exit ^gone::\n",
       });
-      const { door, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "main"], compileFlags: { more: cxx, main: cxx } });
-      expect({ entered: door("_ZN4gone7enteredEi") !== undefined, moved: door("_Z5movedIiEPN4gone5ThingES2_T_") !== undefined }).toEqual({ entered: true, moved: false });
+      const { door, canGo, exitCodes } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "more", "main"],
+        compileFlags: { more: cxx, main: cxx },
+      });
+      expect({
+        entered: door("_ZN4gone7enteredEi") !== undefined,
+        moved: door("_Z5movedIiEPN4gone5ThingES2_T_") !== undefined,
+      }).toEqual({ entered: true, moved: false });
       expect(["_Z5movedIiEPN4gone5ThingES2_T_", "touched"].map(canGo)).toEqual([false, false]);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
@@ -842,7 +998,9 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         `,
         "doors": sources.doors + "door extra exit ^shared_door$\n",
       });
-      const { said, door, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "main"] });
+      const { said, door, canGo, exitCodes } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "more", "main"],
+      });
       expect(said).toContain("1 doors were folded into other functions and stay open");
       expect(door("shared_door")).toBeUndefined();
       expect(["shared_door", "behind_the_shared_door", "behind_0"].map(canGo)).toEqual([false, false, true]);
@@ -860,15 +1018,25 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         `,
       });
       const folder = String(dir);
-      const { said, table, door, canGo, addressOf, whyFat, file, offsetOf } = await linked(machine, folder, { objects: ["behind", "door", "main"] });
+      const { said, table, door, canGo, addressOf, whyFat, file, offsetOf } = await linked(machine, folder, {
+        objects: ["behind", "door", "main"],
+      });
       expect(said).toContain("0 doors are thin");
       expect(whyFat).toContain("the_door (fat: it is small)");
       expect(door("the_door")!.places ?? []).toEqual([]);
       expect(["the_door", "behind"].map(canGo)).toEqual([false, true]);
       const shut = shutDoors(file, table, ["extra"], machine.isArm64);
       const at = addressOf("the_door");
-      expect(targetsOf(shut, offsetOf, [machine.isArm64 ? { address: at + 8, kind: branch26 } : { address: at + 6, kind: add32 }])).toEqual([addressOf("Bun__trimmedOut")]);
-      if (machine.canRun) expect([await signAndRun(folder, "shut", shut), await signAndRun(folder, "shut", shut, ["through the door"])]).toEqual([0, 70]);
+      expect(
+        targetsOf(shut, offsetOf, [
+          machine.isArm64 ? { address: at + 8, kind: branch26 } : { address: at + 6, kind: add32 },
+        ]),
+      ).toEqual([addressOf("Bun__trimmedOut")]);
+      if (machine.canRun)
+        expect([
+          await signAndRun(folder, "shut", shut),
+          await signAndRun(folder, "shut", shut, ["through the door"]),
+        ]).toEqual([0, 70]);
     });
 
     test("that runs before main stays open, and what it names stays", async () => {
@@ -885,8 +1053,12 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         "main.c": `${start} extern int early_value; int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : early_value != 0 ? 0 : 1; }`,
         "doors": sources.doors + "door extra exit ^early$\n",
       });
-      const { said, door, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "main"] });
-      expect(said).toContain("1 functions that match a door run before main or after it, or have a second entry, and are no doors");
+      const { said, door, canGo, exitCodes } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "more", "main"],
+      });
+      expect(said).toContain(
+        "1 functions that match a door run before main or after it, or have a second entry, and are no doors",
+      );
       expect(door("early")).toBeUndefined();
       expect(["early", "behind_early", "behind_0"].map(canGo)).toEqual([false, false, true]);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
@@ -906,8 +1078,12 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         `,
         "doors": sources.doors + "door extra exit ^piece$\n",
       });
-      const { said, door, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "piece", "main"] });
-      expect(said).toContain("1 functions that match a door run before main or after it, or have a second entry, and are no doors");
+      const { said, door, canGo, exitCodes } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "more", "piece", "main"],
+      });
+      expect(said).toContain(
+        "1 functions that match a door run before main or after it, or have a second entry, and are no doors",
+      );
       expect(door("piece")).toBeUndefined();
       expect(["piece", "entry", "behind_target", "behind_0"].map(canGo)).toEqual([false, false, false, true]);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
@@ -927,7 +1103,9 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         `,
         "doors": sources.doors + "door extra exit ^small_door$\n",
       });
-      const { said, canGo, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "main"] });
+      const { said, canGo, exitCodes } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "more", "main"],
+      });
       expect(said).toContain("1 functions that match a door are too small to be shut and are no doors");
       expect(["small_door", "behind_the_small_door", "behind_0"].map(canGo)).toEqual([false, false, true]);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
@@ -952,13 +1130,17 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
           return argc > 5 ? the_door(argc) : 0;
         }
       `,
-      "doors": sources.doors + "feature one the first\nfeature another the second\ndoor one exit ^door_of_one$\ndoor another exit ^door_of_another$\n",
+      "doors":
+        sources.doors +
+        "feature one the first\nfeature another the second\ndoor one exit ^door_of_one$\ndoor another exit ^door_of_another$\n",
     };
 
     test("are one body, which goes when both are out and is shut only then", async () => {
       using dir = tempDir("islands-macho-twins", twins);
       const folder = String(dir);
-      const { table, addressOf, door, file, offsetOf } = await linked(machine, folder, { objects: ["behind", "door", "table", "more", "main"] });
+      const { table, addressOf, door, file, offsetOf } = await linked(machine, folder, {
+        objects: ["behind", "door", "table", "more", "main"],
+      });
       expect(addressOf("door_of_one")).toBe(addressOf("door_of_another"));
       const { address, feature, places } = door("door_of_one")!;
       expect(feature).toBe("one,another");
@@ -970,7 +1152,10 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       expect(withoutOne.equals(file)).toBe(true);
       expect(targetsOf(withoutBoth, offsetOf, places!)).toEqual(Array(2).fill(Math.ceil(body[0]!.start / 4) * 4));
       if (!machine.canRun) return;
-      const codes = async (name: string, program: Buffer) => [await signAndRun(folder, name, program, ["a"]), await signAndRun(folder, name, program, ["a", "b"])];
+      const codes = async (name: string, program: Buffer) => [
+        await signAndRun(folder, name, program, ["a"]),
+        await signAndRun(folder, name, program, ["a", "b"]),
+      ];
       expect(await codes("without-one", withoutOne)).toEqual(await codes("whole", file));
       expect(await codes("without-both", withoutBoth)).toEqual(Array(2).fill(70 + table.features.indexOf("one")));
     });
@@ -998,31 +1183,57 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
 
     test.each([
       ["is listed", "", 0, "another <- extra: 1 references"],
-      ["stops the link once pairs are argued and this one is not", "argued extra another the other way round\n", 1, "another <- extra: 1 references"],
+      [
+        "stops the link once pairs are argued and this one is not",
+        "argued extra another the other way round\n",
+        1,
+        "another <- extra: 1 references",
+      ],
       ["is argued", "argued another extra whoever gets there has asked for both\n", 0, ""],
-      ["is kept with it by a condition", "argued extra another the other way round\nwhen another feature extra\n", 0, ""],
+      [
+        "is kept with it by a condition",
+        "argued extra another the other way round\nwhen another feature extra\n",
+        0,
+        "",
+      ],
     ])("%s", async (_, lines, exitCode, listed) => {
-      using dir = tempDir("islands-macho-pairs", naming("when extra global Extra\nwhen another global Another\n" + lines));
-      const said = await wrapped(machine, String(dir), { objects: ["behind", "door", "more", "another", "table", "main"] });
+      using dir = tempDir(
+        "islands-macho-pairs",
+        naming("when extra global Extra\nwhen another global Another\n" + lines),
+      );
+      const said = await wrapped(machine, String(dir), {
+        objects: ["behind", "door", "more", "another", "table", "main"],
+      });
       expect(said.exitCode).toBe(exitCode);
       if (exitCode !== 0) expect(said.stderr).toContain('no line "argued" says why');
       expect(readFileSync(join(String(dir), "work/pairs.txt"), "utf8").split("\n")[0]).toBe(listed);
     });
 
     test("is written down where no condition keeps the second with the first", async () => {
-      expect(await pairs("when extra module extra\n")).toBe("another <- extra: 1 references\n    door_of_another <- more\n");
+      expect(await pairs("when extra module extra\n")).toBe(
+        "another <- extra: 1 references\n    door_of_another <- more\n",
+      );
     });
 
     test("meets the stub while the first is kept and the second is out", async () => {
       using dir = tempDir("islands-macho-pairs", naming(""));
-      const { table, door, file, offsetOf, addressOf, canGo } = await linked(machine, String(dir), { objects: ["behind", "door", "more", "another", "table", "main"] });
+      const { table, door, file, offsetOf, addressOf, canGo } = await linked(machine, String(dir), {
+        objects: ["behind", "door", "more", "another", "table", "main"],
+      });
       expect(["more", "door_of_another"].map(canGo)).toEqual([true, true]);
       const { places, feature } = door("door_of_another")!;
-      expect({ feature, kinds: places!.map(place => place.kind) }).toEqual({ feature: "another", kinds: [machine.isArm64 ? branch26 : add32] });
+      expect({ feature, kinds: places!.map(place => place.kind) }).toEqual({
+        feature: "another",
+        kinds: [machine.isArm64 ? branch26 : add32],
+      });
       expect(targetsOf(file, offsetOf, places!)).toEqual([addressOf("door_of_another")]);
       const body = table.islands.find(island => island.features === "another")!;
-      expect(targetsOf(shutDoors(file, table, ["another"], machine.isArm64), offsetOf, places!)).toEqual([Math.ceil(body.start / 4) * 4]);
-      expect(targetsOf(shutDoors(file, table, ["extra"], machine.isArm64), offsetOf, places!)).not.toEqual([addressOf("door_of_another")]);
+      expect(targetsOf(shutDoors(file, table, ["another"], machine.isArm64), offsetOf, places!)).toEqual([
+        Math.ceil(body.start / 4) * 4,
+      ]);
+      expect(targetsOf(shutDoors(file, table, ["extra"], machine.isArm64), offsetOf, places!)).not.toEqual([
+        addressOf("door_of_another"),
+      ]);
     });
 
     test("is not, where the second follows the first or is kept by the same facts", async () => {
@@ -1069,19 +1280,34 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       using dir = tempDir("islands-macho-operations", operations);
       const folder = String(dir);
       const { said, table, canGo, door, file } = await linked(machine, folder);
-      expect(said).toContain("1 operations are named by more than the table that compiled code calls them through and are no doors");
+      expect(said).toContain(
+        "1 operations are named by more than the table that compiled code calls them through and are no doors",
+      );
       expect(said).toContain("2 doors are thin");
       expect(table.conditions).toEqual([
         { feature: "extra", kind: "operation", name: "operationOnlyInTheTable" },
         { feature: "other", kind: "global", name: "Other" },
         { feature: "other", kind: "operation", name: "operationOfAnotherFeature" },
       ]);
-      expect({ isDoor: door("operationOnlyInTheTable") !== undefined, canGo: canGo("operationOnlyInTheTable") }).toEqual({ isDoor: true, canGo: true });
-      expect({ isDoor: door("operationCalledDirectlyToo") !== undefined, canGo: canGo("operationCalledDirectlyToo") }).toEqual({ isDoor: false, canGo: false });
+      expect({
+        isDoor: door("operationOnlyInTheTable") !== undefined,
+        canGo: canGo("operationOnlyInTheTable"),
+      }).toEqual({ isDoor: true, canGo: true });
+      expect({
+        isDoor: door("operationCalledDirectlyToo") !== undefined,
+        canGo: canGo("operationCalledDirectlyToo"),
+      }).toEqual({ isDoor: false, canGo: false });
       if (!machine.canRun) return;
       const shut = shutDoors(file, table, ["extra"], machine.isArm64);
       const codes: number[] = [];
-      for (const way of [[], ["through the table"], ["the", "other"], ["the", "other", "directly"], ["that", "of", "another", "feature"]]) codes.push(await signAndRun(folder, "shut", shut, way));
+      for (const way of [
+        [],
+        ["through the table"],
+        ["the", "other"],
+        ["the", "other", "directly"],
+        ["that", "of", "another", "feature"],
+      ])
+        codes.push(await signAndRun(folder, "shut", shut, way));
       expect(codes[0]).toBe(0);
       expect(codes[1]).toBe(70);
       expect(codes.slice(2)).not.toContain(70);
@@ -1119,31 +1345,66 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       `,
     });
     const objects = ["behind", "door", "holders", "main"];
-    const ways = [[], ["call"], ["a", "table"], ["an", "address", "taken"], ["a", "jump", "at", "the end"], ["a", "table", "that", "can", "change"]];
+    const ways = [
+      [],
+      ["call"],
+      ["a", "table"],
+      ["an", "address", "taken"],
+      ["a", "jump", "at", "the end"],
+      ["a", "table", "that", "can", "change"],
+    ];
     const kindsOf = (places: Place[]) => places.map(place => place.kind).sort((a, b) => a - b);
 
-    for (const [far, throughTheTable] of [[false, false], [true, false], [false, true], [true, true]]) {
+    for (const [far, throughTheTable] of [
+      [false, false],
+      [true, false],
+      [false, true],
+      [true, true],
+    ]) {
       test(`goes with its feature, and everybody who names it from ${far ? "far away" : "nearby"}${throughTheTable ? ", its address taken through the table of global offsets," : ""} meets the stub`, async () => {
         using dir = tempDir("islands-macho-thin", thin(far!, throughTheTable));
         const folder = String(dir);
-        const { said, table, canGo, door, addressOf, file, offsetOf, sectionAt } = await linked(machine, folder, { objects });
+        const { said, table, canGo, door, addressOf, file, offsetOf, sectionAt } = await linked(machine, folder, {
+          objects,
+        });
         expect(said).toContain("1 doors are thin");
         expect(canGo("the_door")).toBe(true);
         const places = door("the_door")!.places!;
-        expect(kindsOf(places)).toEqual(!machine.isArm64 ? [add32, add32, add32, pointer36, pointer36] : far ? [branch26, branch26, page21, low12, pointer36, pointer36] : [branch26, branch26, adr, pointer36, pointer36, nop]);
-        expect(places.filter(place => place.kind === pointer36).map(place => sectionAt(place.address)!.name)).toEqual(["__DATA_CONST,__const", "__DATA,__data"]);
-        expect(places.filter(place => place.kind === pointer36).map(place => place.address)).toEqual([addressOf("handlers") + 8, addressOf("handlers_that_change") + 8]);
+        expect(kindsOf(places)).toEqual(
+          !machine.isArm64
+            ? [add32, add32, add32, pointer36, pointer36]
+            : far
+              ? [branch26, branch26, page21, low12, pointer36, pointer36]
+              : [branch26, branch26, adr, pointer36, pointer36, nop],
+        );
+        expect(places.filter(place => place.kind === pointer36).map(place => sectionAt(place.address)!.name)).toEqual([
+          "__DATA_CONST,__const",
+          "__DATA,__data",
+        ]);
+        expect(places.filter(place => place.kind === pointer36).map(place => place.address)).toEqual([
+          addressOf("handlers") + 8,
+          addressOf("handlers_that_change") + 8,
+        ]);
         expect(targetsOf(file, offsetOf, places)).toEqual(Array(5).fill(addressOf("the_door")));
 
         const shut = shutDoors(file, table, ["extra"], machine.isArm64);
         const stub = Math.ceil(table.islands[0]!.start / 4) * 4;
         expect(targetsOf(shut, offsetOf, places)).toEqual(Array(5).fill(stub));
         expect(table.stub).toBe(addressOf("Bun__trimmedOut"));
-        expect(targetsOf(shut, offsetOf, [machine.isArm64 ? { address: stub + 8, kind: branch26 } : { address: stub + 6, kind: add32 }])).toEqual([table.stub]);
+        expect(
+          targetsOf(shut, offsetOf, [
+            machine.isArm64 ? { address: stub + 8, kind: branch26 } : { address: stub + 6, kind: add32 },
+          ]),
+        ).toEqual([table.stub]);
         const changed = new Set<number>();
         for (let at = 0; at < file.length; at++) if (file[at] !== shut[at]) changed.add(at);
-        for (const { start, end } of table.islands) for (let at = offsetOf(start); at < offsetOf(start) + end - start; at++) changed.delete(at);
-        const fields = new Set(places.flatMap(place => Array.from({ length: place.kind === pointer36 ? 8 : 4 }, (_, index) => offsetOf(place.address) + index)));
+        for (const { start, end } of table.islands)
+          for (let at = offsetOf(start); at < offsetOf(start) + end - start; at++) changed.delete(at);
+        const fields = new Set(
+          places.flatMap(place =>
+            Array.from({ length: place.kind === pointer36 ? 8 : 4 }, (_, index) => offsetOf(place.address) + index),
+          ),
+        );
         expect([...changed].filter(at => !fields.has(at))).toEqual([]);
 
         if (!machine.canRun) return;
@@ -1157,7 +1418,8 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     }
 
     test("that returns when it is shut shares one stub, behind the stubs of those that exit", async () => {
-      const returning = (name: string, by: number) => `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 5; i++) x += behind(x + i) * ${by} + behind(x ^ i); return x | 1; }`;
+      const returning = (name: string, by: number) =>
+        `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 5; i++) x += behind(x + i) * ${by} + behind(x ^ i); return x | 1; }`;
       using dir = tempDir("islands-macho-thin", {
         ...thin(false),
         "more.c": `int behind(int); ${returning("returns_nothing", 5)} ${returning("returns_nothing_too", 7)}`,
@@ -1171,24 +1433,39 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         "doors": sources.doors + "door extra return ^returns_nothing\n",
       });
       const folder = String(dir);
-      const { said, table, door, file, offsetOf } = await linked(machine, folder, { objects: ["behind", "door", "more", "main"] });
+      const { said, table, door, file, offsetOf } = await linked(machine, folder, {
+        objects: ["behind", "door", "more", "main"],
+      });
       expect(said).toContain("3 doors are thin");
-      expect(["the_door", "returns_nothing", "returns_nothing_too"].map(name => door(name)!.whenShut)).toEqual(["exit", "return", "return"]);
+      expect(["the_door", "returns_nothing", "returns_nothing_too"].map(name => door(name)!.whenShut)).toEqual([
+        "exit",
+        "return",
+        "return",
+      ]);
       const shut = shutDoors(file, table, ["extra"], machine.isArm64);
       const strip = Math.ceil(table.islands[0]!.start / 4) * 4;
       const returnStub = strip + (machine.isArm64 ? 12 : 10);
-      expect(["the_door", "returns_nothing", "returns_nothing_too"].map(name => targetsOf(shut, offsetOf, door(name)!.places!))).toEqual([[strip], [returnStub], [returnStub]]);
-      expect(shut.subarray(offsetOf(returnStub), offsetOf(returnStub) + (machine.isArm64 ? 8 : 3)).toString("hex")).toBe(machine.isArm64 ? "00008052c0035fd6" : "31c0c3");
+      expect(
+        ["the_door", "returns_nothing", "returns_nothing_too"].map(name =>
+          targetsOf(shut, offsetOf, door(name)!.places!),
+        ),
+      ).toEqual([[strip], [returnStub], [returnStub]]);
+      expect(
+        shut.subarray(offsetOf(returnStub), offsetOf(returnStub) + (machine.isArm64 ? 8 : 3)).toString("hex"),
+      ).toBe(machine.isArm64 ? "00008052c0035fd6" : "31c0c3");
       if (!machine.canRun) return;
       const codes: number[] = [];
-      for (const way of [[], ["exits"], ["returns", "nothing"], ["returns", "nothing", "too"]]) codes.push(await signAndRun(folder, "shut", shut, way));
+      for (const way of [[], ["exits"], ["returns", "nothing"], ["returns", "nothing", "too"]])
+        codes.push(await signAndRun(folder, "shut", shut, way));
       expect(codes).toEqual([0, 70, 0, 0]);
     });
 
-    test.skipIf(machine.isArm64)("called through its slot in the table of global offsets: the slot is the place", async () => {
-      using dir = tempDir("islands-macho-thin", {
-        ...thin(false),
-        "main.c": `
+    test.skipIf(machine.isArm64)(
+      "called through its slot in the table of global offsets: the slot is the place",
+      async () => {
+        using dir = tempDir("islands-macho-thin", {
+          ...thin(false),
+          "main.c": `
           int the_door(int);
           __attribute__((noinline)) void Bun__trimmedOut(int feature) { __builtin_trap(); }
           __attribute__((noinline)) static int through_the_slot(int x) {
@@ -1198,15 +1475,22 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
           }
           int main(int argc, char **argv) { return argc > 5 ? through_the_slot(argc) : 0; }
         `,
-      });
-      const { said, table, canGo, door, addressOf, file, offsetOf, sectionAt } = await linked(machine, String(dir), { objects: ["behind", "door", "main"] });
-      expect(said).toContain("1 doors are thin");
-      expect(canGo("the_door")).toBe(true);
-      const places = door("the_door")!.places!;
-      expect(places.map(place => [place.kind, sectionAt(place.address)!.name])).toEqual([[pointer36, "__DATA_CONST,__got"]]);
-      expect(targetsOf(file, offsetOf, places)).toEqual([addressOf("the_door")]);
-      expect(targetsOf(shutDoors(file, table, ["extra"], false), offsetOf, places)).toEqual([Math.ceil(table.islands[0]!.start / 4) * 4]);
-    });
+        });
+        const { said, table, canGo, door, addressOf, file, offsetOf, sectionAt } = await linked(machine, String(dir), {
+          objects: ["behind", "door", "main"],
+        });
+        expect(said).toContain("1 doors are thin");
+        expect(canGo("the_door")).toBe(true);
+        const places = door("the_door")!.places!;
+        expect(places.map(place => [place.kind, sectionAt(place.address)!.name])).toEqual([
+          [pointer36, "__DATA_CONST,__got"],
+        ]);
+        expect(targetsOf(file, offsetOf, places)).toEqual([addressOf("the_door")]);
+        expect(targetsOf(shutDoors(file, table, ["extra"], false), offsetOf, places)).toEqual([
+          Math.ceil(table.islands[0]!.start / 4) * 4,
+        ]);
+      },
+    );
 
     test("goes though a constant that only it names holds its address and a distance, which cannot be rewritten", async () => {
       using dir = tempDir("islands-macho-thin", {
@@ -1218,14 +1502,19 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         `,
         "its_own.c": `int the_door(int); const char *const past_its_first_instruction = (const char *)the_door + 4;`,
       });
-      const { said, canGo, door, file, offsetOf, addressOf } = await linked(machine, String(dir), { objects: [...objects, "its_own"] });
+      const { said, canGo, door, file, offsetOf, addressOf } = await linked(machine, String(dir), {
+        objects: [...objects, "its_own"],
+      });
       expect(said).toContain("1 doors are thin");
       expect(canGo("the_door")).toBe(true);
       expect(targetsOf(file, offsetOf, door("the_door")!.places!)).toEqual(Array(5).fill(addressOf("the_door")));
     });
 
     test("that only its own feature names is not listed at all", async () => {
-      using dir = tempDir("islands-macho-thin", { ...thin(false), "doors": sources.doors + "door extra exit ^behind$\n" });
+      using dir = tempDir("islands-macho-thin", {
+        ...thin(false),
+        "doors": sources.doors + "door extra exit ^behind$\n",
+      });
       const { said, canGo, door, table } = await linked(machine, String(dir), { objects });
       expect(said).toContain("2 doors are thin");
       expect(["the_door", "behind"].map(canGo)).toEqual([true, true]);
@@ -1234,7 +1523,10 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     });
 
     test("marked as used, as every host function is, goes all the same", async () => {
-      using dir = tempDir("islands-macho-thin", { ...thin(false), "door.c": thin(false)["door.c"].replace("__attribute__((noinline))", "__attribute__((used, noinline))") });
+      using dir = tempDir("islands-macho-thin", {
+        ...thin(false),
+        "door.c": thin(false)["door.c"].replace("__attribute__((noinline))", "__attribute__((used, noinline))"),
+      });
       const { said, canGo, door } = await linked(machine, String(dir), { objects });
       expect(said).toContain("1 doors are thin");
       expect(canGo("the_door")).toBe(true);
@@ -1245,22 +1537,32 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       using dir = tempDir("islands-macho-thin", {
         ...thin(false),
         "holders.c": `${thin(false)["holders.c"]} const char *const its_start_and_past_it[2] = { (const char *)the_door, (const char *)the_door + 4 };`,
-        "main.c": thin(false)["main.c"].replace("return 0;", "extern const char *const its_start_and_past_it[2]; return its_start_and_past_it[argc & 1][argc] == 1;"),
+        "main.c": thin(false)["main.c"].replace(
+          "return 0;",
+          "extern const char *const its_start_and_past_it[2]; return its_start_and_past_it[argc & 1][argc] == 1;",
+        ),
       });
       const { said, canGo, door, whyFat } = await linked(machine, String(dir), { objects });
       expect(said).toContain("0 doors are thin");
       expect(canGo("the_door")).toBe(false);
       expect(door("the_door")!.places ?? []).toEqual([]);
-      expect(whyFat).toMatch(/the_door \(fat: a reference in holders\.o:_its_start_and_past_it.* cannot be rewritten\)/);
+      expect(whyFat).toMatch(
+        /the_door \(fat: a reference in holders\.o:_its_start_and_past_it.* cannot be rewritten\)/,
+      );
     });
 
     test("named by constants that nothing reads and that are marked as used: the place is listed", async () => {
-      using dir = tempDir("islands-macho-thin", { ...thin(false), "holders.c": `${thin(false)["holders.c"]} __attribute__((used)) static int (*const kept_and_never_read)(int) = the_door;` });
+      using dir = tempDir("islands-macho-thin", {
+        ...thin(false),
+        "holders.c": `${thin(false)["holders.c"]} __attribute__((used)) static int (*const kept_and_never_read)(int) = the_door;`,
+      });
       const { said, canGo, door, addressOf, file, offsetOf } = await linked(machine, String(dir), { objects });
       expect(said).toContain("1 doors are thin");
       expect(canGo("the_door")).toBe(true);
       const places = door("the_door")!.places!;
-      expect(places.filter(place => place.kind === pointer36).map(place => place.address)).toContain(addressOf("kept_and_never_read"));
+      expect(places.filter(place => place.kind === pointer36).map(place => place.address)).toContain(
+        addressOf("kept_and_never_read"),
+      );
       expect(targetsOf(file, offsetOf, places)).toEqual(Array(6).fill(addressOf("the_door")));
     });
 
@@ -1272,14 +1574,20 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
         "exported.txt": "_main\n_the_door\n",
       });
       const folder = String(dir);
-      const { said, table, canGo, door, section, addressOf, file, offsetOf } = await linked(machine, folder, { objects });
+      const { said, table, canGo, door, section, addressOf, file, offsetOf } = await linked(machine, folder, {
+        objects,
+      });
       expect(section("__TEXT,__stubs")).toBeDefined();
       expect(said).toContain("0 doors are thin");
       expect(["the_door", "behind"].map(canGo)).toEqual([false, true]);
       expect(door("the_door")!.places ?? []).toEqual([]);
       const shut = shutDoors(file, table, ["extra"], machine.isArm64);
       const at = addressOf("the_door");
-      expect(targetsOf(shut, offsetOf, [machine.isArm64 ? { address: at + 8, kind: branch26 } : { address: at + 6, kind: add32 }])).toEqual([addressOf("Bun__trimmedOut")]);
+      expect(
+        targetsOf(shut, offsetOf, [
+          machine.isArm64 ? { address: at + 8, kind: branch26 } : { address: at + 6, kind: add32 },
+        ]),
+      ).toEqual([addressOf("Bun__trimmedOut")]);
       if (!machine.canRun) return;
       const codes: number[] = [];
       for (const way of ways) codes.push(await signAndRun(folder, "shut", shut, way));
@@ -1287,7 +1595,11 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     });
 
     test("stays fat when the executable exports it, also where only its own feature loads what can call it", async () => {
-      using dir = tempDir("islands-macho-thin", { ...thin(false), "exported.txt": "_main\n_the_door\n", "doors": sources.doors + "exported extra\n" });
+      using dir = tempDir("islands-macho-thin", {
+        ...thin(false),
+        "exported.txt": "_main\n_the_door\n",
+        "doors": sources.doors + "exported extra\n",
+      });
       const { said, door, whyFat } = await linked(machine, String(dir), { objects });
       expect(said).toContain("0 doors are thin");
       expect(door("the_door")!.places ?? []).toEqual([]);
@@ -1307,7 +1619,8 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
   describe("a string", () => {
     const word = (index: number) => `words that only the feature names, ${index}`;
     const words = `const char *const behind_words[${count}] = { ${Array.from({ length: count }, (_, index) => JSON.stringify(word(index))).join(", ")} };`;
-    const says = (name: string, text: string, from = 0) => `__attribute__((noinline)) const char *${name}(void) { return &${JSON.stringify(text)}[${from}]; }`;
+    const says = (name: string, text: string, from = 0) =>
+      `__attribute__((noinline)) const char *${name}(void) { return &${JSON.stringify(text)}[${from}]; }`;
     const inBoth = "the same words in both";
     const onlyBehind = "only the feature names these words";
     const twiceBehind = "equal words from two inputs behind the door";
@@ -1336,15 +1649,26 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     test("that only the feature names can go, from one input or two, by its start or its middle; one that what stays names too, by its start or its middle, stays", async () => {
       using dir = tempDir("islands-macho-strings", strings);
       const { said, stringAt, canGoAt, exitCodes } = await linked(machine, String(dir), { objects });
-      expect(said).toContain(`${count + 5} strings are followed by their text; 0 more lie in an input in which nothing was seen to name them, and stay`);
+      expect(said).toContain(
+        `${count + 5} strings are followed by their text; 0 more lie in an input in which nothing was seen to name them, and stay`,
+      );
       const go = [word(1), word(count - 1), onlyBehind, twiceBehind, endGoes];
-      expect(Object.fromEntries(go.map(text => [text, canGoAt(stringAt(text))]))).toEqual(Object.fromEntries(go.map(text => [text, true])));
-      expect(Object.fromEntries([inBoth, endStays].map(text => [text, [Number.isNaN(stringAt(text)), canGoAt(stringAt(text))]]))).toEqual({ [inBoth]: [false, false], [endStays]: [false, false] });
+      expect(Object.fromEntries(go.map(text => [text, canGoAt(stringAt(text))]))).toEqual(
+        Object.fromEntries(go.map(text => [text, true])),
+      );
+      expect(
+        Object.fromEntries(
+          [inBoth, endStays].map(text => [text, [Number.isNaN(stringAt(text)), canGoAt(stringAt(text))]]),
+        ),
+      ).toEqual({ [inBoth]: [false, false], [endStays]: [false, false] });
       expect(said).toContain("; 0 references lead where the names did not");
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
 
-    for (const inputs of [["more", "kept"], ["kept", "more"]]) {
+    for (const inputs of [
+      ["more", "kept"],
+      ["kept", "more"],
+    ]) {
       test(`that an input holds in which nothing is seen to name it stays: ${inputs.join(" ahead of ")}`, async () => {
         const alsoKept = "words that an input keeps and does not name";
         using dir = tempDir("islands-macho-strings", {
@@ -1352,7 +1676,15 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
           "more_words.c": `${says("behind_kept", alsoKept)} int more_words(int x) { return behind_kept()[x & 7]; }`,
           "kept.S": `.section __TEXT,__cstring,cstring_literals\nl_kept: .asciz ${JSON.stringify(alsoKept)}\n.no_dead_strip l_kept\n.subsections_via_symbols\n`,
         });
-        const { said, stringAt, canGoAt, exitCodes } = await linked(machine, String(dir), { objects: ["behind", "door", "said", "main", ...inputs.flatMap(input => (input === "more" ? ["more", "said_behind", "more_words"] : [input]))] });
+        const { said, stringAt, canGoAt, exitCodes } = await linked(machine, String(dir), {
+          objects: [
+            "behind",
+            "door",
+            "said",
+            "main",
+            ...inputs.flatMap(input => (input === "more" ? ["more", "said_behind", "more_words"] : [input])),
+          ],
+        });
         expect(said).toContain("1 more lie in an input in which nothing was seen to name them, and stay");
         expect([word(1), onlyBehind, alsoKept].map(text => canGoAt(stringAt(text)))).toEqual([true, true, false]);
         expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
@@ -1360,7 +1692,8 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     }
 
     test("cannot go, none of them, once one reference leads to no string that the map holds", async () => {
-      const lea = (name: string, to: string) => `${name}:${perMachine(`adrp x0, ${to}@PAGE\nadd x0, x0, ${to}@PAGEOFF`, `leaq ${to}(%rip), %rax`)}ret\n`;
+      const lea = (name: string, to: string) =>
+        `${name}:${perMachine(`adrp x0, ${to}@PAGE\nadd x0, x0, ${to}@PAGEOFF`, `leaq ${to}(%rip), %rax`)}ret\n`;
       using dir = tempDir("islands-macho-strings", {
         ...strings,
         "labels.S": `
@@ -1377,21 +1710,41 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
           int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : stays_second() != 0 ? 0 : 1; }
         `,
       });
-      const { said, stringAt, canGoAt, canGo, exitCodes } = await linked(machine, String(dir), { objects: [...objects, "labels"] });
-      expect(said).toMatch(/1 references to strings lead to none that the map holds and \d lead elsewhere by the bytes: no string can go/);
-      expect([word(1), word(count - 1), onlyBehind].map(text => canGoAt(stringAt(text)))).toEqual([false, false, false]);
+      const { said, stringAt, canGoAt, canGo, exitCodes } = await linked(machine, String(dir), {
+        objects: [...objects, "labels"],
+      });
+      expect(said).toMatch(
+        /1 references to strings lead to none that the map holds and \d lead elsewhere by the bytes: no string can go/,
+      );
+      expect([word(1), word(count - 1), onlyBehind].map(text => canGoAt(stringAt(text)))).toEqual([
+        false,
+        false,
+        false,
+      ]);
       expect(canGo("behind_0")).toBe(true);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
 
-    test.skipIf(!machine.isArm64)("cannot go, none of them, once the bytes lead to another string than the text", async () => {
-      using dir = tempDir("islands-macho-strings", strings);
-      const { said, stringAt, canGoAt, canGo, exitCodes } = await linked(machine, String(dir), { objects, linkFlags: ["-Wl,--no-deduplicate-strings"] });
-      expect(said).toMatch(/0 references to strings lead to none that the map holds and [1-9] lead elsewhere by the bytes: no string can go/);
-      expect([word(1), word(count - 1), onlyBehind].map(text => canGoAt(stringAt(text)))).toEqual([false, false, false]);
-      expect(canGo("behind_0")).toBe(true);
-      expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
-    });
+    test.skipIf(!machine.isArm64)(
+      "cannot go, none of them, once the bytes lead to another string than the text",
+      async () => {
+        using dir = tempDir("islands-macho-strings", strings);
+        const { said, stringAt, canGoAt, canGo, exitCodes } = await linked(machine, String(dir), {
+          objects,
+          linkFlags: ["-Wl,--no-deduplicate-strings"],
+        });
+        expect(said).toMatch(
+          /0 references to strings lead to none that the map holds and [1-9] lead elsewhere by the bytes: no string can go/,
+        );
+        expect([word(1), word(count - 1), onlyBehind].map(text => canGoAt(stringAt(text)))).toEqual([
+          false,
+          false,
+          false,
+        ]);
+        expect(canGo("behind_0")).toBe(true);
+        expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
+      },
+    );
   });
 
   describe("the layout", () => {
@@ -1418,8 +1771,15 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     };
     const objects = ["behind", "door", "table", "more", "main", "builtins"];
 
-    const threeRuns = ["__TEXT,__text .. __TEXT,__text", "__TEXT,__cstring .. __TEXT,__const", "__DATA_CONST,__const .. the end of __DATA_CONST"];
-    const describeRange = ({ sectionAt, segmentAt }: ReturnType<typeof readMachO>, { start, end }: { start: number; end: number }) =>
+    const threeRuns = [
+      "__TEXT,__text .. __TEXT,__text",
+      "__TEXT,__cstring .. __TEXT,__const",
+      "__DATA_CONST,__const .. the end of __DATA_CONST",
+    ];
+    const describeRange = (
+      { sectionAt, segmentAt }: ReturnType<typeof readMachO>,
+      { start, end }: { start: number; end: number },
+    ) =>
       `${sectionAt(start)!.name} .. ${end === segmentAt(end - 1)!.address + segmentAt(end - 1)!.size ? `the end of ${segmentAt(end - 1)!.name}` : sectionAt(end - 1)!.name}`;
     const allWords = Array.from({ length: count - 1 }, (_, index) => word(index + 1));
 
@@ -1437,7 +1797,9 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       expect(["words that stay", "more words that stay"].map(text => canGoAt(stringAt(text)))).toEqual([false, false]);
       expect(allWords.filter(text => !canGoAt(stringAt(text)))).toEqual([]);
       expect(Math.max(stringAt("words that stay"), stringAt("more words that stay"))).toBeLessThan(dead[1]!.start);
-      expect(["builtins_text", "behind_numbers", "behind_words", "table_that_stays", "words_that_stay"].map(canGo)).toEqual([true, true, true, false, false]);
+      expect(
+        ["builtins_text", "behind_numbers", "behind_words", "table_that_stays", "words_that_stay"].map(canGo),
+      ).toEqual([true, true, true, false, false]);
       expect(addressOf("table_that_stays")).toBeGreaterThanOrEqual(dead[1]!.end);
       expect(addressOf("words_that_stay")).toBeLessThan(dead[2]!.start);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
@@ -1456,7 +1818,9 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       const again = await linked(machine, folder, { objects, plan: "second.plan" });
       expect(again.table).toEqual(once.table);
       expect(again.file.equals(once.file)).toBe(true);
-      expect(readFileSync(join(folder, "program.plan"), "utf8")).toBe(readFileSync(join(folder, "second.plan"), "utf8"));
+      expect(readFileSync(join(folder, "program.plan"), "utf8")).toBe(
+        readFileSync(join(folder, "second.plan"), "utf8"),
+      );
     });
 
     test("a string that stays is not laid among those that go because one of them has its hash", async () => {
@@ -1464,7 +1828,10 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       expect(Bun.hash.xxHash3(stays) & 0x7fffffffn).toBe(Bun.hash.xxHash3(goes) & 0x7fffffffn);
       using dir = tempDir("islands-macho-layout", {
         ...everyKind,
-        "more.c": everyKind["more.c"].replace("int more(int x) { return ", `int more(int x) { return ${JSON.stringify(goes)}[x & 7] + `),
+        "more.c": everyKind["more.c"].replace(
+          "int more(int x) { return ",
+          `int more(int x) { return ${JSON.stringify(goes)}[x & 7] + `,
+        ),
         "main.c": everyKind["main.c"].replace(`"words that stay"`, JSON.stringify(stays)),
       });
       const image = await linked(machine, String(dir), { objects });
@@ -1478,8 +1845,13 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
     });
 
     test("the strings of each island lie together, behind those that stay, the last island's first", async () => {
-      const says = (index: number) => `__attribute__((noinline)) const char *says_${index}(void) { return ${JSON.stringify(`${word(index)}, which every second feature names`)}; }`;
-      const sum = (parity: number) => Array.from({ length: count }, (_, index) => index).filter(index => index % 2 === parity).map(index => `says_${index}()[x & 7]`).join(" + ");
+      const says = (index: number) =>
+        `__attribute__((noinline)) const char *says_${index}(void) { return ${JSON.stringify(`${word(index)}, which every second feature names`)}; }`;
+      const sum = (parity: number) =>
+        Array.from({ length: count }, (_, index) => index)
+          .filter(index => index % 2 === parity)
+          .map(index => `says_${index}()[x & 7]`)
+          .join(" + ");
       using dir = tempDir("islands-macho-layout", {
         ...sources,
         "door.c": doorTo("more"),
@@ -1502,10 +1874,15 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       });
       const folder = String(dir);
       for (const plan of ["none", "earlier.plan"]) {
-        const { said, table, section, stringAt, exitCodes } = await linked(machine, folder, { objects: ["behind", "door", "main", "more"], plan });
+        const { said, table, section, stringAt, exitCodes } = await linked(machine, folder, {
+          objects: ["behind", "door", "main", "more"],
+          plan,
+        });
         expect(said.includes("(laid out by an earlier build's plan)")).toBe(plan !== "none");
         const strings = section("__TEXT,__cstring")!;
-        const inStrings = table.islands.filter(({ start }) => strings.address <= start && start < strings.address + strings.size);
+        const inStrings = table.islands.filter(
+          ({ start }) => strings.address <= start && start < strings.address + strings.size,
+        );
         expect(inStrings.map(({ features }) => features)).toEqual(["another", "extra"]);
         expect(stringAt("words that stay")).toBeLessThan(inStrings[0]!.start);
         expect(inStrings[0]!.end).toBe(inStrings[1]!.start);
@@ -1575,7 +1952,9 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       expect(once.said).toContain("link by an earlier build's plan");
       expect(once.said).toContain("(laid out by an earlier build's plan)");
       expect(once.table).toEqual(twice.table);
-      expect(readFileSync(join(folder, "program.plan"), "utf8")).toBe(readFileSync(join(folder, "earlier.plan"), "utf8"));
+      expect(readFileSync(join(folder, "program.plan"), "utf8")).toBe(
+        readFileSync(join(folder, "earlier.plan"), "utf8"),
+      );
       expect(names.map(once.canGo)).toEqual([true, true, true, false, false]);
     });
 
@@ -1664,7 +2043,13 @@ describe.concurrent.skipIf(!canLink).each(machines)("Mach-O $name", machine => {
       expect(said).toContain("(laid out by an earlier build's plan)");
       expect(addressOf("stays")).toBeGreaterThan(addressOf("behind_4"));
       expect(addressOf("stays")).toBeLessThan(addressOf("behind_5"));
-      expect(["stays", "main", "behind_4", "behind_5", `behind_${count - 1}`].map(canGo)).toEqual([false, false, false, true, true]);
+      expect(["stays", "main", "behind_4", "behind_5", `behind_${count - 1}`].map(canGo)).toEqual([
+        false,
+        false,
+        false,
+        true,
+        true,
+      ]);
       expect(exitCodes).toEqual({ whole: 0, trimmed: 0 });
     });
   });

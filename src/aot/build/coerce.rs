@@ -3,7 +3,10 @@ use super::{FileBuild, Fx, Source};
 use crate::builder::Var;
 use crate::declared::{Declared, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
-use crate::ir::{BinOp, FuncKind, LayoutKind, MethodKind, Op, Operation, Prediction, Term, UnOp, CoerceReason, field_flags, func_flags};
+use crate::ir::{
+    BinOp, CoerceReason, FuncKind, LayoutKind, MethodKind, Op, Operation, Prediction, Term, UnOp,
+    field_flags, func_flags,
+};
 use bun_sema::atom::Atom;
 use bun_sema::bind::Parent;
 use bun_sema::check::kind;
@@ -43,10 +46,16 @@ pub(crate) struct CoercionState {
 }
 
 impl Ty {
-    pub(crate) const NONE: Ty = Ty { id: TyId::NONE, checked: TypeId::UNRESOLVED };
+    pub(crate) const NONE: Ty = Ty {
+        id: TyId::NONE,
+        checked: TypeId::UNRESOLVED,
+    };
 
     pub(crate) fn from_id(id: TyId) -> Ty {
-        Ty { id, checked: TypeId::UNRESOLVED }
+        Ty {
+            id,
+            checked: TypeId::UNRESOLVED,
+        }
     }
 }
 
@@ -129,7 +138,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn or_anything(&self, ty: TyId) -> TyId {
-        if ty.is_none() { self.out.tys.anything } else { ty }
+        if ty.is_none() {
+            self.out.tys.anything
+        } else {
+            ty
+        }
     }
 
     pub(crate) fn op_result_type(&mut self, fx: &Fx, op: &Op) -> Ty {
@@ -137,28 +150,76 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let id = match *op {
             Op::Undefined => known.undefined,
             Op::Null => known.null,
-            Op::Bool(value) => return Ty { id: if value { known.yes } else { known.no }, checked: if value { TypeId::TRUE } else { TypeId::FALSE } },
-            Op::Int(value) => return Ty { id: self.out.tys.intern(Declared::int(value)), checked: TypeId::NUMBER },
-            Op::Double(_) => return Ty { id: known.number, checked: TypeId::NUMBER },
-            Op::Str(_) | Op::ToStr(_) | Op::StrConcat(_) | Op::TypeOf(_) => return Ty { id: known.string, checked: TypeId::STRING },
-            Op::BigInt(_) => return Ty { id: known.bigint, checked: TypeId::BIGINT },
-            Op::Symbol(_) => return Ty { id: self.out.tys.intern(Declared::prims(prim::SYMBOL)), checked: TypeId::SYMBOL },
+            Op::Bool(value) => {
+                return Ty {
+                    id: if value { known.yes } else { known.no },
+                    checked: if value { TypeId::TRUE } else { TypeId::FALSE },
+                };
+            }
+            Op::Int(value) => {
+                return Ty {
+                    id: self.out.tys.intern(Declared::int(value)),
+                    checked: TypeId::NUMBER,
+                };
+            }
+            Op::Double(_) => {
+                return Ty {
+                    id: known.number,
+                    checked: TypeId::NUMBER,
+                };
+            }
+            Op::Str(_) | Op::ToStr(_) | Op::StrConcat(_) | Op::TypeOf(_) => {
+                return Ty {
+                    id: known.string,
+                    checked: TypeId::STRING,
+                };
+            }
+            Op::BigInt(_) => {
+                return Ty {
+                    id: known.bigint,
+                    checked: TypeId::BIGINT,
+                };
+            }
+            Op::Symbol(_) => {
+                return Ty {
+                    id: self.out.tys.intern(Declared::prims(prim::SYMBOL)),
+                    checked: TypeId::SYMBOL,
+                };
+            }
             Op::FuncRef(_) | Op::Closure { .. } | Op::ClosureOnce { .. } => known.function,
             Op::GlobalGet(global) => {
-                let checked = self.checked_globals.get(&global).copied().unwrap_or(TypeId::UNRESOLVED);
-                return Ty { id: self.or_anything(self.out.globals[global.idx()].declared), checked };
+                let checked = self
+                    .checked_globals
+                    .get(&global)
+                    .copied()
+                    .unwrap_or(TypeId::UNRESOLVED);
+                return Ty {
+                    id: self.or_anything(self.out.globals[global.idx()].declared),
+                    checked,
+                };
             }
             Op::New(layout) | Op::NewWith { layout, .. } => {
-                let checked = self.layout_types.get(&layout).copied().unwrap_or(TypeId::UNRESOLVED);
-                return Ty { id: self.out.tys.intern(Declared::part(Part::Class(layout))), checked };
+                let checked = self
+                    .layout_types
+                    .get(&layout)
+                    .copied()
+                    .unwrap_or(TypeId::UNRESOLVED);
+                return Ty {
+                    id: self.out.tys.intern(Declared::part(Part::Class(layout))),
+                    checked,
+                };
             }
             Op::FieldGet { layout, field, .. } => return self.field_type(layout, field),
             Op::PropGet { obj, name } => return self.property_read_type(self.ty(fx, obj), name),
             Op::NewArray(_) => known.array,
             Op::NewObject => known.object,
             Op::Binary { op: BinOp::Add, .. } => known.sum,
-            Op::Binary { op: BinOp::UShr, .. } => known.uint32,
-            Op::Unary { op: UnOp::ToNumber, .. } => known.number,
+            Op::Binary {
+                op: BinOp::UShr, ..
+            } => known.uint32,
+            Op::Unary {
+                op: UnOp::ToNumber, ..
+            } => known.number,
             Op::Binary { .. } | Op::Unary { .. } => known.numeric,
             Op::Relational { .. }
             | Op::StrictEq { .. }
@@ -172,10 +233,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             | Op::PropDelete { .. }
             | Op::ElemHas { .. }
             | Op::ElemDelete { .. }
-            | Op::IterHas { .. } => return Ty { id: known.boolean, checked: TypeId::BOOLEAN },
+            | Op::IterHas { .. } => {
+                return Ty {
+                    id: known.boolean,
+                    checked: TypeId::BOOLEAN,
+                };
+            }
             Op::CallDirect { func, .. } => {
-                let checked = self.signatures.get(&func).and_then(|signature| signature.result).unwrap_or(TypeId::UNRESOLVED);
-                return Ty { id: self.or_anything(self.out.funcs[func.idx()].result), checked };
+                let checked = self
+                    .signatures
+                    .get(&func)
+                    .and_then(|signature| signature.result)
+                    .unwrap_or(TypeId::UNRESOLVED);
+                return Ty {
+                    id: self.or_anything(self.out.funcs[func.idx()].result),
+                    checked,
+                };
             }
             Op::Coerce { to, .. } => to,
             Op::ResumeMode => self.out.tys.intern(Declared::ints(0, 2)),
@@ -208,14 +281,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn field_type(&mut self, layout: LayoutId, field: u32) -> Ty {
         self.resolve_field_types(layout);
-        let checked = self.checked_fields.get(&(layout, field)).copied().unwrap_or(TypeId::UNRESOLVED);
-        Ty { id: self.or_anything(self.out.layouts[layout.idx()].fields[field as usize].declared), checked }
+        let checked = self
+            .checked_fields
+            .get(&(layout, field))
+            .copied()
+            .unwrap_or(TypeId::UNRESOLVED);
+        Ty {
+            id: self.or_anything(self.out.layouts[layout.idx()].fields[field as usize].declared),
+            checked,
+        }
     }
 
     fn property_read_type(&mut self, obj: TyId, name: StrId) -> Ty {
         let anything = Ty::from_id(self.out.tys.anything);
-        let Some(layout) = self.out.tys.get(obj).single_layout() else { return anything };
-        if self.layout_types.get(&layout).is_some_and(|&ty| self.c.is_coercion_result_type(ty)) {
+        let Some(layout) = self.out.tys.get(obj).single_layout() else {
+            return anything;
+        };
+        if self
+            .layout_types
+            .get(&layout)
+            .is_some_and(|&ty| self.c.is_coercion_result_type(ty))
+        {
             return anything;
         }
         if let Some(field) = self.out.layouts[layout.idx()].field(name) {
@@ -233,8 +319,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 return match method.kind {
                     MethodKind::Method => Ty::from_id(self.known.function),
                     MethodKind::Getter => {
-                        let checked = self.signatures.get(&method.func).and_then(|signature| signature.result).unwrap_or(TypeId::UNRESOLVED);
-                        Ty { id: self.or_anything(self.out.funcs[method.func.idx()].result), checked }
+                        let checked = self
+                            .signatures
+                            .get(&method.func)
+                            .and_then(|signature| signature.result)
+                            .unwrap_or(TypeId::UNRESOLVED);
+                        Ty {
+                            id: self.or_anything(self.out.funcs[method.func.idx()].result),
+                            checked,
+                        }
                     }
                     MethodKind::Setter => continue,
                 };
@@ -246,18 +339,32 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn field_cast_reason(&mut self, layout: LayoutId, field: u32) -> CoerceReason {
         self.resolve_field_types(layout);
-        if self.annotated_fields.contains(&(layout, field)) { CoerceReason::Cast } else { CoerceReason::Store }
+        if self.annotated_fields.contains(&(layout, field)) {
+            CoerceReason::Cast
+        } else {
+            CoerceReason::Store
+        }
     }
 
-    pub(crate) fn store_target_field(&mut self, obj: TyId, name: StrId) -> Option<(Ty, CoerceReason)> {
+    pub(crate) fn store_target_field(
+        &mut self,
+        obj: TyId,
+        name: StrId,
+    ) -> Option<(Ty, CoerceReason)> {
         let layout = self.out.tys.get(obj).single_layout()?;
         let field = self.out.layouts[layout.idx()].field(name)?;
-        Some((self.field_type(layout, field), self.field_cast_reason(layout, field)))
+        Some((
+            self.field_type(layout, field),
+            self.field_cast_reason(layout, field),
+        ))
     }
 
     pub(crate) fn with_integers(&mut self, ty: TyId, integers: Option<(i64, i64)>) -> TyId {
         let Some(integers) = integers else { return ty };
-        if ty.is_none() || ty == self.out.tys.anything || self.out.tys.get(ty).prims & prim::NUMBER == 0 {
+        if ty.is_none()
+            || ty == self.out.tys.anything
+            || self.out.tys.get(ty).prims & prim::NUMBER == 0
+        {
             return ty;
         }
         let mut narrowed = self.out.tys.get(ty).clone();
@@ -269,7 +376,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn expression_ty(&mut self, fx: &Fx, e: ExprId, checked: TypeId) -> TyId {
         self.c.record_expression_type(checked);
         let described = self.ty_of(checked);
-        if described == self.out.tys.anything || self.out.tys.get(described).prims & prim::NUMBER == 0 {
+        if described == self.out.tys.anything
+            || self.out.tys.get(described).prims & prim::NUMBER == 0
+        {
             return described;
         }
         let integers = self.c.expr_integer_range(fx.file, e);
@@ -289,7 +398,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.none_if_unranged_number(described)
     }
 
-    pub(crate) fn emit_arithmetic(&mut self, fx: &mut Fx, op: Op, e: ExprId, computes: NumberRole) -> V {
+    pub(crate) fn emit_arithmetic(
+        &mut self,
+        fx: &mut Fx,
+        op: Op,
+        e: ExprId,
+        computes: NumberRole,
+    ) -> V {
         let value = self.emit_throwing(fx, op);
         if matches!(computes, NumberRole::Stored) {
             self.record_stored_value_span(fx, value, e);
@@ -306,7 +421,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if described == self.out.tys.anything || self.out.tys.get(described).is_never() {
             return value;
         }
-        let mut described = Declared { prims: self.out.tys.get(described).prims & !prim::NULLISH, ..self.out.tys.get(described).clone() };
+        let mut described = Declared {
+            prims: self.out.tys.get(described).prims & !prim::NULLISH,
+            ..self.out.tys.get(described).clone()
+        };
         if described.parts.is_empty() && described.prims != 0 {
             (described.any_object, described.any_function) = (false, false);
         }
@@ -322,7 +440,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let written = self.c.type_of_expr(fx.file, e);
         let written = self.ty_of(written);
         let written = self.out.tys.get(written);
-        if described != self.known.string && written.prims & !prim::NULLISH == prim::STRING && !written.has_objects() {
+        if described != self.known.string
+            && written.prims & !prim::NULLISH == prim::STRING
+            && !written.has_objects()
+        {
             fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(self.known.string));
         }
         value
@@ -331,11 +452,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn as_checked_primitive(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
         let have = self.ty(fx, value);
         let described = self.out.tys.get(have);
-        if !fx.is_typed || described.prims == 0 && described.ints.is_none() || have == self.out.tys.anything || fx.b.func.prediction(value) != Prediction::None {
+        if !fx.is_typed
+            || described.prims == 0 && described.ints.is_none()
+            || have == self.out.tys.anything
+            || fx.b.func.prediction(value) != Prediction::None
+        {
             return value;
         }
         if !described.has_objects() {
-            if described.prims & prim::STRING != 0 && described.prims & !(prim::NULLISH | prim::STRING) != 0 {
+            if described.prims & prim::STRING != 0
+                && described.prims & !(prim::NULLISH | prim::STRING) != 0
+            {
                 let written = self.c.type_of_expr(fx.file, e);
                 let written = self.ty_of(written);
                 let written = self.out.tys.get(written);
@@ -349,37 +476,82 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return value;
         }
         let declared = self.c.type_of_expr(fx.file, e);
-        let primitives = Declared { prims: described.prims, ints: described.ints, ..Declared::default() };
+        let primitives = Declared {
+            prims: described.prims,
+            ints: described.ints,
+            ..Declared::default()
+        };
         if self.c.is_external_data_prediction(declared) {
-            let expected = self.out.tys.intern(Declared { prims: primitives.prims & !prim::NULLISH, ..primitives });
+            let expected = self.out.tys.intern(Declared {
+                prims: primitives.prims & !prim::NULLISH,
+                ..primitives
+            });
             fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(expected));
             return value;
         }
         let written = self.ty_of(declared);
         let written = self.out.tys.get(written);
-        if written.prims & !prim::NULLISH == prim::STRING && !written.has_objects() && primitives.prims & !(prim::NULLISH | prim::STRING) != 0 {
+        if written.prims & !prim::NULLISH == prim::STRING
+            && !written.has_objects()
+            && primitives.prims & !(prim::NULLISH | prim::STRING) != 0
+        {
             fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(self.known.string));
             return value;
         }
         let primitives = self.out.tys.intern(primitives);
-        self.coerce_to(fx, value, Ty { id: primitives, checked: declared }, CoerceReason::Claim)
+        self.coerce_to(
+            fx,
+            value,
+            Ty {
+                id: primitives,
+                checked: declared,
+            },
+            CoerceReason::Claim,
+        )
     }
 
-    fn try_pass_uncoerced(&mut self, fx: &mut Fx, value: V, want: Ty, why: CoerceReason) -> Option<V> {
+    fn try_pass_uncoerced(
+        &mut self,
+        fx: &mut Fx,
+        value: V,
+        want: Ty,
+        why: CoerceReason,
+    ) -> Option<V> {
         if fx.uncoercible_objects.is_empty() {
             return None;
         }
         let &own = fx.uncoercible_objects.get(&value)?;
         let views = self.layout_types_in(want.id);
-        if !self.c.accepts_untyped(own, &views) && !(why == CoerceReason::Cast && want.checked != TypeId::UNRESOLVED && self.c.accepts_untyped(want.checked, &views)) {
+        if !self.c.accepts_untyped(own, &views)
+            && !(why == CoerceReason::Cast
+                && want.checked != TypeId::UNRESOLVED
+                && self.c.accepts_untyped(want.checked, &views))
+        {
             return None;
         }
-        let have = Ty { id: self.ty(fx, value), checked: own };
+        let have = Ty {
+            id: self.ty(fx, value),
+            checked: own,
+        };
         let mut held = value;
         if self.out.tys.get(have.id).prims != 0 {
             self.record_cast(have, want.id, CoerceReason::Claim);
-            held = self.emit_throwing(fx, Op::Coerce { value, to: want.id, why: CoerceReason::Claim });
-            fx.uncoercible_objects.insert(held, if want.checked != TypeId::UNRESOLVED { want.checked } else { own });
+            held = self.emit_throwing(
+                fx,
+                Op::Coerce {
+                    value,
+                    to: want.id,
+                    why: CoerceReason::Claim,
+                },
+            );
+            fx.uncoercible_objects.insert(
+                held,
+                if want.checked != TypeId::UNRESOLVED {
+                    want.checked
+                } else {
+                    own
+                },
+            );
             if want.checked != TypeId::UNRESOLVED {
                 fx.checked.insert(held, want.checked);
             }
@@ -389,35 +561,85 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn coerce_to(&mut self, fx: &mut Fx, value: V, want: Ty, why: CoerceReason) -> V {
-        let value = if want.id.is_none() || self.out.tys.get(want.id).has_literal_string() { value } else { self.widen_literal_string(fx, value) };
-        if want.id.is_none() || want.id == self.out.tys.anything || self.out.tys.get(want.id).is_never() {
-            if want.id == self.out.tys.anything && want.checked != TypeId::UNRESOLVED && !self.c.is_uninformative(want.checked) {
+        let value = if want.id.is_none() || self.out.tys.get(want.id).has_literal_string() {
+            value
+        } else {
+            self.widen_literal_string(fx, value)
+        };
+        if want.id.is_none()
+            || want.id == self.out.tys.anything
+            || self.out.tys.get(want.id).is_never()
+        {
+            if want.id == self.out.tys.anything
+                && want.checked != TypeId::UNRESOLVED
+                && !self.c.is_uninformative(want.checked)
+            {
                 let entering = self.checked(fx, value);
                 self.record_untyped_inflow_into_host_object(entering, want);
             }
             return value;
         }
-        let (mut value, mut have) = (value, Ty { id: self.ty(fx, value), checked: self.checked(fx, value) });
-        if self.out.tys.get(want.id).has_literal_string() && !self.out.tys.get(have.id).has_literal_string() {
-            if matches!(why, CoerceReason::Claim | CoerceReason::Flow | CoerceReason::NonNull(_) | CoerceReason::Upcast | CoerceReason::ArgumentClaim(_)) {
-                let as_string = self.out.tys.get(want.id).clone().with_literal_string_widened();
-                let as_string = Ty { id: self.out.tys.intern(as_string), ..want };
+        let (mut value, mut have) = (
+            value,
+            Ty {
+                id: self.ty(fx, value),
+                checked: self.checked(fx, value),
+            },
+        );
+        if self.out.tys.get(want.id).has_literal_string()
+            && !self.out.tys.get(have.id).has_literal_string()
+        {
+            if matches!(
+                why,
+                CoerceReason::Claim
+                    | CoerceReason::Flow
+                    | CoerceReason::NonNull(_)
+                    | CoerceReason::Upcast
+                    | CoerceReason::ArgumentClaim(_)
+            ) {
+                let as_string = self
+                    .out
+                    .tys
+                    .get(want.id)
+                    .clone()
+                    .with_literal_string_widened();
+                let as_string = Ty {
+                    id: self.out.tys.intern(as_string),
+                    ..want
+                };
                 let held = self.coerce_to(fx, value, as_string, why);
                 return self.coerce_to(fx, held, want, CoerceReason::Store);
             } else if let Some(&Op::Str(text)) = fx.b.func.op(value) {
                 let is_newest = fx.b.func.blocks[fx.b.block.idx()].ops.last() == Some(&value);
-                let literal = if is_newest { value } else { fx.b.emit(Op::Str(text), self.known.literal_string) };
+                let literal = if is_newest {
+                    value
+                } else {
+                    fx.b.emit(Op::Str(text), self.known.literal_string)
+                };
                 fx.b.func.values[literal.idx()].ty = self.known.literal_string;
-                fx.checked.insert(literal, if want.checked != TypeId::UNRESOLVED { want.checked } else { have.checked });
+                fx.checked.insert(
+                    literal,
+                    if want.checked != TypeId::UNRESOLVED {
+                        want.checked
+                    } else {
+                        have.checked
+                    },
+                );
                 return literal;
             }
         }
         let want = {
             let (had, wanted) = (self.out.tys.get(have.id), self.out.tys.get(want.id));
-            let has_room = had.any_object && had.parts.is_empty() && (had.prims & !prim::NULLISH != 0 || had.ints.is_some()) && have.id != self.out.tys.anything;
+            let has_room = had.any_object
+                && had.parts.is_empty()
+                && (had.prims & !prim::NULLISH != 0 || had.ints.is_some())
+                && have.id != self.out.tys.anything;
             if why == CoerceReason::Flow && has_room && !wanted.has_objects() {
                 let with_nullish = wanted.or(&Declared::any_object()).nullable();
-                Ty { id: self.out.tys.intern(with_nullish), ..want }
+                Ty {
+                    id: self.out.tys.intern(with_nullish),
+                    ..want
+                }
             } else {
                 want
             }
@@ -426,13 +648,30 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && let Some(own) = self.ty_if_never_plain_data(have.checked)
             && own != want.id
         {
-            value = self.coerce_to(fx, value, Ty { id: own, checked: have.checked }, CoerceReason::Claim);
+            value = self.coerce_to(
+                fx,
+                value,
+                Ty {
+                    id: own,
+                    checked: have.checked,
+                },
+                CoerceReason::Claim,
+            );
             have.id = self.ty(fx, value);
         }
         if self.is_within(have, want) {
             let described = self.out.tys.get(have.id);
-            let has_no_layout = described.has_objects() && !described.parts.iter().any(|part| matches!(part, Part::Class(_)));
-            if fx.is_typed && has_no_layout && !self.c.is_uninformative(have.checked) && !self.type_has_fixed_layout(have.checked) && !self.layout_types_in(want.id).is_empty() {
+            let has_no_layout = described.has_objects()
+                && !described
+                    .parts
+                    .iter()
+                    .any(|part| matches!(part, Part::Class(_)));
+            if fx.is_typed
+                && has_no_layout
+                && !self.c.is_uninformative(have.checked)
+                && !self.type_has_fixed_layout(have.checked)
+                && !self.layout_types_in(want.id).is_empty()
+            {
                 fx.uncoercible_objects.entry(value).or_insert(have.checked);
             }
             return value;
@@ -457,24 +696,63 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(held) = self.try_pass_uncoerced(fx, value, want, why) {
             return held;
         }
-        if matches!(why, CoerceReason::Cast | CoerceReason::Store) && fx.nullish_after_cast.contains(&value) {
+        if matches!(why, CoerceReason::Cast | CoerceReason::Store)
+            && fx.nullish_after_cast.contains(&value)
+        {
             let (had, wanted) = (self.out.tys.get(have.id), self.out.tys.get(want.id));
-            if had.has_objects() && !wanted.has_objects() && had.prims & prim::NULLISH & !wanted.prims != 0 && wanted.prims & !prim::NULLISH != 0 {
-                let primitives = Declared { prims: had.prims, ints: had.ints, ..Declared::default() };
-                let without_nullish = Declared { prims: had.prims & (wanted.prims | !prim::NULLISH), ..primitives.clone() };
+            if had.has_objects()
+                && !wanted.has_objects()
+                && had.prims & prim::NULLISH & !wanted.prims != 0
+                && wanted.prims & !prim::NULLISH != 0
+            {
+                let primitives = Declared {
+                    prims: had.prims,
+                    ints: had.ints,
+                    ..Declared::default()
+                };
+                let without_nullish = Declared {
+                    prims: had.prims & (wanted.prims | !prim::NULLISH),
+                    ..primitives.clone()
+                };
                 let without_nullish = self.out.tys.intern(without_nullish);
-                if self.is_within(Ty { id: without_nullish, checked: want.checked }, want) {
+                if self.is_within(
+                    Ty {
+                        id: without_nullish,
+                        checked: want.checked,
+                    },
+                    want,
+                ) {
                     let primitives = self.out.tys.intern(primitives);
-                    let claimed = self.coerce_to(fx, value, Ty { id: primitives, checked: want.checked }, CoerceReason::Claim);
+                    let claimed = self.coerce_to(
+                        fx,
+                        value,
+                        Ty {
+                            id: primitives,
+                            checked: want.checked,
+                        },
+                        CoerceReason::Claim,
+                    );
                     fx.nullish_after_cast.insert(claimed);
                     return self.coerce_to(fx, claimed, want, why);
                 }
             }
             let (had, wanted) = (self.out.tys.get(have.id), self.out.tys.get(want.id));
-            let is_also_nullish = !had.has_objects() && !wanted.has_objects() && had.prims & prim::NULLISH & !wanted.prims != 0 && wanted.prims & !prim::NULLISH != 0;
+            let is_also_nullish = !had.has_objects()
+                && !wanted.has_objects()
+                && had.prims & prim::NULLISH & !wanted.prims != 0
+                && wanted.prims & !prim::NULLISH != 0;
             if is_also_nullish {
-                let without_nullish = self.out.tys.intern(Declared { prims: had.prims & (wanted.prims | !prim::NULLISH), ..had.clone() });
-                if self.is_within(Ty { id: without_nullish, checked: want.checked }, want) {
+                let without_nullish = self.out.tys.intern(Declared {
+                    prims: had.prims & (wanted.prims | !prim::NULLISH),
+                    ..had.clone()
+                });
+                if self.is_within(
+                    Ty {
+                        id: without_nullish,
+                        checked: want.checked,
+                    },
+                    want,
+                ) {
                     let converted = self.coerce(fx, value, want, want, why);
                     return self.coerce_to(fx, converted, want, why);
                 }
@@ -490,12 +768,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !is_nullish && self.c.is_any_like(have.checked) {
             self.record_any_inflow(want);
         }
-        if have.id == self.out.tys.anything && have.checked != TypeId::UNRESOLVED && self.is_engine_declared_type(have.checked) {
+        if have.id == self.out.tys.anything
+            && have.checked != TypeId::UNRESOLVED
+            && self.is_engine_declared_type(have.checked)
+        {
             let views = self.layout_types_in(want.id);
             self.c.accepts_untyped(have.checked, &views);
         }
-        let only_verifies = matches!(why, CoerceReason::Claim | CoerceReason::NonNull(_)) || why == CoerceReason::Cast && !self.cast_may_allocate(want.id);
-        if only_verifies && have.id == self.out.tys.anything && self.try_set_result_type(fx, value, want.id) {
+        let only_verifies = matches!(why, CoerceReason::Claim | CoerceReason::NonNull(_))
+            || why == CoerceReason::Cast && !self.cast_may_allocate(want.id);
+        if only_verifies
+            && have.id == self.out.tys.anything
+            && self.try_set_result_type(fx, value, want.id)
+        {
             self.record_cast(have, want.id, why);
             if want.checked != TypeId::UNRESOLVED {
                 fx.checked.insert(value, want.checked);
@@ -505,13 +790,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut to = want.id;
         if why == CoerceReason::Cast {
             to = self.cast_target_ty(to);
-            if let ([source], [target]) = (&self.layout_types_in(have.id)[..], &self.layout_types_in(to)[..])
-                && !self.out.tys.get(have.id).any_object
+            if let ([source], [target]) = (
+                &self.layout_types_in(have.id)[..],
+                &self.layout_types_in(to)[..],
+            ) && !self.out.tys.get(have.id).any_object
                 && let Some(both) = self.c.intersection_for_forced_cast(*source, *target)
             {
                 let described = self.out.tys.get(to).clone();
-                let mut joined = Declared { parts: Default::default(), ..described };
-                for part in described.parts.iter().filter(|part| !matches!(part, Part::Class(_))) {
+                let mut joined = Declared {
+                    parts: Default::default(),
+                    ..described
+                };
+                for part in described
+                    .parts
+                    .iter()
+                    .filter(|part| !matches!(part, Part::Class(_)))
+                {
                     joined = joined.or(&Declared::part(part.clone()));
                 }
                 let of_both = self.ty_of(both);
@@ -525,10 +819,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.record_defined_field_casts(fx, value, to);
         }
         if to != want.id {
-            self.is_within(Ty { id: to, checked: want.checked }, want);
+            self.is_within(
+                Ty {
+                    id: to,
+                    checked: want.checked,
+                },
+                want,
+            );
         }
         if self.shared.constants.logs_type_errors
-            && let Some(road) = if self.c.is_untyped(have.checked) { Some(0) } else { self.external_origin_path(fx, value, 4) }
+            && let Some(road) = if self.c.is_untyped(have.checked) {
+                Some(0)
+            } else {
+                self.external_origin_path(fx, value, 4)
+            }
         {
             let mut views = Vec::new();
             self.layout_types_within(to, 3, &mut views);
@@ -538,7 +842,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let block = fx.b.block;
         let held = self.emit_throwing(fx, Op::Coerce { value, to, why });
-        if matches!(why, CoerceReason::Flow | CoerceReason::Cast) && self.only_removes_union_members(have.id, to) {
+        if matches!(why, CoerceReason::Flow | CoerceReason::Cast)
+            && self.only_removes_union_members(have.id, to)
+        {
             fx.b.func.values[held.idx()].set_keeps_unconvertible_objects();
         }
         fx.fitted.insert((block, value, want.id), held);
@@ -549,11 +855,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         held
     }
 
-    pub(crate) fn coerce(&mut self, fx: &mut Fx, value: V, tries: Ty, result: Ty, asserts: CoerceReason) -> V {
-        if tries.id.is_none() || tries.id == self.out.tys.anything || self.out.tys.get(tries.id).is_never() {
+    pub(crate) fn coerce(
+        &mut self,
+        fx: &mut Fx,
+        value: V,
+        tries: Ty,
+        result: Ty,
+        asserts: CoerceReason,
+    ) -> V {
+        if tries.id.is_none()
+            || tries.id == self.out.tys.anything
+            || self.out.tys.get(tries.id).is_never()
+        {
             return value;
         }
-        let have = Ty { id: self.ty(fx, value), checked: self.checked(fx, value) };
+        let have = Ty {
+            id: self.ty(fx, value),
+            checked: self.checked(fx, value),
+        };
         if self.is_within(have, tries) {
             return value;
         }
@@ -577,24 +896,65 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             widened.prims |= self.out.tys.get(result.id).prims & !prim::NULLISH;
         }
         let nil = self.out.tys.get(result.id).prims & prim::NULLISH;
-        let described = Declared { prims: widened.prims | nil, ints: None, ..self.out.tys.get(result.id).clone() };
-        let (to, result) = (self.out.tys.intern(widened), Ty { id: self.out.tys.intern(described), checked: result.checked });
-        if self.is_within(have, Ty { id: to, checked: tries.checked }) {
+        let described = Declared {
+            prims: widened.prims | nil,
+            ints: None,
+            ..self.out.tys.get(result.id).clone()
+        };
+        let (to, result) = (
+            self.out.tys.intern(widened),
+            Ty {
+                id: self.out.tys.intern(described),
+                checked: result.checked,
+            },
+        );
+        if self.is_within(
+            have,
+            Ty {
+                id: to,
+                checked: tries.checked,
+            },
+        ) {
             return value;
         }
         let tried = self.out.tys.get(to);
-        let is_engine_only = tried.has_objects() && !tried.any_object && !tried.parts.iter().any(|part| matches!(part, Part::Class(_)));
+        let is_engine_only = tried.has_objects()
+            && !tried.any_object
+            && !tried
+                .parts
+                .iter()
+                .any(|part| matches!(part, Part::Class(_)));
         let is_function_only = tried.any_function && tried.parts.is_empty();
         if is_engine_only && !is_function_only && self.out.tys.get(have.id).any_object {
             return self.convert_and_assert(fx, value, to, tries.checked, asserts);
         }
         if self.out.tys.get(to).has_objects() {
-            let on_anything: Vec<TypeId> = self.layout_types_in(result.id).into_iter().filter(|&view| self.c.is_coerced_unknown_type(view)).collect();
+            let on_anything: Vec<TypeId> = self
+                .layout_types_in(result.id)
+                .into_iter()
+                .filter(|&view| self.c.is_coerced_unknown_type(view))
+                .collect();
             for &view in &on_anything {
                 self.c.record_untyped(view, have.checked);
             }
-            let (tried, had) = (self.without_primitives(to), self.without_primitives(have.id));
-            let has_room = self.is_within(Ty { id: tried, checked: tries.checked }, result) && (!on_anything.is_empty() || self.is_within(Ty { id: had, checked: have.checked }, result));
+            let (tried, had) = (
+                self.without_primitives(to),
+                self.without_primitives(have.id),
+            );
+            let has_room = self.is_within(
+                Ty {
+                    id: tried,
+                    checked: tries.checked,
+                },
+                result,
+            ) && (!on_anything.is_empty()
+                || self.is_within(
+                    Ty {
+                        id: had,
+                        checked: have.checked,
+                    },
+                    result,
+                ));
             if !has_room {
                 return self.convert_and_assert(fx, value, to, tries.checked, asserts);
             }
@@ -605,7 +965,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         self.record_cast(have, to, CoerceReason::Coerce);
-        let why = if fx.is_coercing_fresh_graph { CoerceReason::CoerceFreshGraph } else { CoerceReason::Coerce };
+        let why = if fx.is_coercing_fresh_graph {
+            CoerceReason::CoerceFreshGraph
+        } else {
+            CoerceReason::Coerce
+        };
         let held = self.emit_throwing(fx, Op::Coerce { value, to, why });
         fx.b.func.values[held.idx()].ty = result.id;
         fx.checked.insert(held, result.checked);
@@ -615,13 +979,32 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         held
     }
 
-    fn convert_and_assert(&mut self, fx: &mut Fx, value: V, to: TyId, checked: TypeId, asserts: CoerceReason) -> V {
+    fn convert_and_assert(
+        &mut self,
+        fx: &mut Fx,
+        value: V,
+        to: TyId,
+        checked: TypeId,
+        asserts: CoerceReason,
+    ) -> V {
         let prims = self.out.tys.get(to).prims;
         let mut value = value;
         if prims & !prim::NULLISH != 0 {
             let have = self.checked(fx, value);
-            let converted = self.out.tys.intern(Declared { prims, any_object: true, any_function: true, ..Declared::default() });
-            value = self.emit_throwing(fx, Op::Coerce { value, to, why: CoerceReason::Coerce });
+            let converted = self.out.tys.intern(Declared {
+                prims,
+                any_object: true,
+                any_function: true,
+                ..Declared::default()
+            });
+            value = self.emit_throwing(
+                fx,
+                Op::Coerce {
+                    value,
+                    to,
+                    why: CoerceReason::Coerce,
+                },
+            );
             fx.b.func.values[value.idx()].ty = converted;
             fx.checked.insert(value, have);
         }
@@ -632,22 +1015,40 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !matches!(fx.b.func.op(value), Some(Op::PropGet { .. })) {
             return value;
         }
-        let Some((found, target)) = self.c.coerced_property_read(fx.file, e) else { return value };
+        let Some((found, target)) = self.c.coerced_property_read(fx.file, e) else {
+            return value;
+        };
         if self.c.is_predicted(fx.file, e) {
             return value;
         }
         let known = self.c.coerced_type(found, target);
         let mut value = value;
         if self.ty(fx, value) == self.out.tys.anything && !self.c.is_untyped(found) {
-            let found = Ty { id: self.ty_of(found), checked: found };
+            let found = Ty {
+                id: self.ty_of(found),
+                checked: found,
+            };
             value = self.coerce_to(fx, value, found, CoerceReason::Claim);
         }
-        let (tries, result) = (Ty { id: self.ty_of(target), checked: target }, Ty { id: self.ty_of(known), checked: known });
+        let (tries, result) = (
+            Ty {
+                id: self.ty_of(target),
+                checked: target,
+            },
+            Ty {
+                id: self.ty_of(known),
+                checked: known,
+            },
+        );
         self.coerce(fx, value, tries, result, CoerceReason::Claim)
     }
 
     fn without_primitives(&mut self, ty: TyId) -> TyId {
-        let objects = Declared { prims: 0, ints: None, ..self.out.tys.get(ty).clone() };
+        let objects = Declared {
+            prims: 0,
+            ints: None,
+            ..self.out.tys.get(ty).clone()
+        };
         self.out.tys.intern(objects)
     }
 
@@ -656,8 +1057,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return ty;
         }
         let described = self.out.tys.get(ty);
-        let narrowed = Declared { prims: described.prims & !prim::NULLISH, ..described.clone() };
-        if narrowed.is_never() { ty } else { self.out.tys.intern(narrowed) }
+        let narrowed = Declared {
+            prims: described.prims & !prim::NULLISH,
+            ..described.clone()
+        };
+        if narrowed.is_never() {
+            ty
+        } else {
+            self.out.tys.intern(narrowed)
+        }
     }
 
     fn ty_if_never_plain_data(&mut self, checked: TypeId) -> Option<TyId> {
@@ -666,36 +1074,71 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let own = self.ty_of(checked);
         let described = self.out.tys.get(own);
-        (own != self.out.tys.anything && described.has_objects() && !described.any_object && !self.cast_may_allocate(own)).then_some(own)
+        (own != self.out.tys.anything
+            && described.has_objects()
+            && !described.any_object
+            && !self.cast_may_allocate(own))
+        .then_some(own)
     }
 
     fn returned_argument(&mut self, fx: &mut Fx, value: V, e: ExprId) -> Option<V> {
-        let Some(Op::CallDirect { func: called, args }) = fx.b.func.op(value) else { return None };
-        let Source::Function { file, func, .. } = self.sources[called.idx()] else { return None };
+        let Some(Op::CallDirect { func: called, args }) = fx.b.func.op(value) else {
+            return None;
+        };
+        let Source::Function { file, func, .. } = self.sources[called.idx()] else {
+            return None;
+        };
         let number = self.c.returned_parameter(file, func)?;
-        let at = (args.len() + number as usize).checked_sub(self.out.funcs[called.idx()].params.len())?;
+        let at = (args.len() + number as usize)
+            .checked_sub(self.out.funcs[called.idx()].params.len())?;
         let argument = *args.get(at)?;
         let checked = self.c.type_of_expr(fx.file, e);
-        let (known, want) = (Ty { id: self.ty(fx, argument), checked: self.checked(fx, argument) }, Ty { id: self.ty_of(checked), checked });
-        (known.id != self.out.tys.anything && want.id != self.out.tys.anything && self.is_within(known, want)).then_some(argument)
+        let (known, want) = (
+            Ty {
+                id: self.ty(fx, argument),
+                checked: self.checked(fx, argument),
+            },
+            Ty {
+                id: self.ty_of(checked),
+                checked,
+            },
+        );
+        (known.id != self.out.tys.anything
+            && want.id != self.out.tys.anything
+            && self.is_within(known, want))
+        .then_some(argument)
     }
 
     fn as_returned_argument(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
         if let Some(argument) = self.returned_argument(fx, value, e) {
             return argument;
         }
-        let Some(first) = self.c.returned_argument_of(fx.file, e) else { return value };
-        let Some(Op::CallMethod { args, .. } | Op::Call { args, .. }) = fx.b.func.op(value) else { return value };
-        let Some(&target) = args.first() else { return value };
+        let Some(first) = self.c.returned_argument_of(fx.file, e) else {
+            return value;
+        };
+        let Some(Op::CallMethod { args, .. } | Op::Call { args, .. }) = fx.b.func.op(value) else {
+            return value;
+        };
+        let Some(&target) = args.first() else {
+            return value;
+        };
         if self.is_object_assign_target(fx, first) {
             return value;
         }
         let checked = self.c.type_of_expr(fx.file, e);
         let want = self.ty_of(checked);
         let have = self.out.tys.get(self.ty(fx, target)).clone();
-        let Some(to) = self.out.tys.get(want).single_layout() else { return value };
-        let is_program_defined = !have.parts.is_empty() && have.parts.iter().all(|part| matches!(part, Part::Class(_)));
-        if !is_program_defined || have.prims & !prim::NULLISH != 0 || have.ints.is_some() || have.any_object || have.any_function {
+        let Some(to) = self.out.tys.get(want).single_layout() else {
+            return value;
+        };
+        let is_program_defined =
+            !have.parts.is_empty() && have.parts.iter().all(|part| matches!(part, Part::Class(_)));
+        if !is_program_defined
+            || have.prims & !prim::NULLISH != 0
+            || have.ints.is_some()
+            || have.any_object
+            || have.any_function
+        {
             return value;
         }
         if have.single_layout() == Some(to) {
@@ -704,13 +1147,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for part in &have.parts {
             if let &Part::Class(from) = part
                 && from != to
-                && let (Some(&source), Some(&seen_as)) = (self.layout_types.get(&from), self.layout_types.get(&to))
+                && let (Some(&source), Some(&seen_as)) =
+                    (self.layout_types.get(&from), self.layout_types.get(&to))
             {
                 self.c.record_upcast(source, seen_as);
             }
         }
-        let to = if have.prims & prim::NULLISH == 0 { self.without_nullish(want) } else { want };
-        let viewed = self.emit(fx, Op::Coerce { value: target, to, why: CoerceReason::Upcast });
+        let to = if have.prims & prim::NULLISH == 0 {
+            self.without_nullish(want)
+        } else {
+            want
+        };
+        let viewed = self.emit(
+            fx,
+            Op::Coerce {
+                value: target,
+                to,
+                why: CoerceReason::Upcast,
+            },
+        );
         fx.checked.insert(viewed, checked);
         viewed
     }
@@ -720,7 +1175,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if yields_literal && self.is_copy_source_only(fx, e) {
             return TypeId::UNKNOWN;
         }
-        if let ExprKind::Binary { op: hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish, left, right } = self.hir(fx.file)[e].kind
+        if let ExprKind::Binary {
+            op: hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish,
+            left,
+            right,
+        } = self.hir(fx.file)[e].kind
             && yields_literal
         {
             let operands = [self.value_type(fx, left), self.value_type(fx, right)];
@@ -746,11 +1205,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut at = e;
         loop {
             at = match bound.expr_parent[at.idx()] {
-                Parent::Prop(prop) if bound.prop_owner[prop.idx()].is_some() => bound.prop_owner[prop.idx()],
+                Parent::Prop(prop) if bound.prop_owner[prop.idx()].is_some() => {
+                    bound.prop_owner[prop.idx()]
+                }
                 Parent::Expr(parent) => match hir[parent].kind {
                     ExprKind::As { .. } => break,
                     ExprKind::Satisfies { .. } => return true,
-                    ExprKind::Array(_) | ExprKind::AsConst(_) | ExprKind::Binary { op: hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish, .. } => parent,
+                    ExprKind::Array(_)
+                    | ExprKind::AsConst(_)
+                    | ExprKind::Binary {
+                        op: hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish,
+                        ..
+                    } => parent,
                     ExprKind::Cond { test, .. } if test != at => parent,
                     _ => return false,
                 },
@@ -764,28 +1230,60 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn stays_plain_for(&mut self, fx: &Fx, value: V, e: ExprId, want: TyId) -> bool {
         let hir = self.hir(fx.file);
-        let ExprKind::Object(props) = hir[e].kind else { return false };
-        let is_for_any = self.c.contextual_type_of_literal(fx.file, e).is_some_and(|expected| self.c.is_any(expected) || expected == TypeId::UNKNOWN);
-        let has_room = want.is_none() && !is_for_any || want.is_some() && {
-            let wanted = self.out.tys.get(want);
-            wanted.parts.iter().any(|part| matches!(part, Part::Class(_))) && (wanted.any_object || wanted.parts.iter().any(|part| matches!(part, Part::Global(..))) || !self.cast_may_allocate(want))
+        let ExprKind::Object(props) = hir[e].kind else {
+            return false;
         };
+        let is_for_any = self
+            .c
+            .contextual_type_of_literal(fx.file, e)
+            .is_some_and(|expected| self.c.is_any(expected) || expected == TypeId::UNKNOWN);
+        let has_room = want.is_none() && !is_for_any
+            || want.is_some() && {
+                let wanted = self.out.tys.get(want);
+                wanted
+                    .parts
+                    .iter()
+                    .any(|part| matches!(part, Part::Class(_)))
+                    && (wanted.any_object
+                        || wanted
+                            .parts
+                            .iter()
+                            .any(|part| matches!(part, Part::Global(..)))
+                        || !self.cast_may_allocate(want))
+            };
         fx.is_typed
             && has_room
-            && props.iter().filter(|&p| hir[p].kind == hir::PropKind::Spread).all(|p| {
-                let spread = self.c.type_of_expr(fx.file, hir[p].value);
-                self.type_has_fixed_layout(spread)
-            })
-            && matches!(fx.b.func.op(value), Some(Op::NewObject | Op::Operation { .. }))
+            && props
+                .iter()
+                .filter(|&p| hir[p].kind == hir::PropKind::Spread)
+                .all(|p| {
+                    let spread = self.c.type_of_expr(fx.file, hir[p].value);
+                    self.type_has_fixed_layout(spread)
+                })
+            && matches!(
+                fx.b.func.op(value),
+                Some(Op::NewObject | Op::Operation { .. })
+            )
             && self.c.has_declared_type(fx.file, e)
-            && !(self.is_explicitly_dynamic(fx, e) || self.defines_accessor(fx, e) || self.is_object_assign_target(fx, e) || self.is_copy_source_only(fx, e))
-            && !self.c.contextual_type_of_literal(fx.file, e).is_some_and(|expected| self.c.is_checked_against_inferred_type(fx.file, e, expected))
+            && !(self.is_explicitly_dynamic(fx, e)
+                || self.defines_accessor(fx, e)
+                || self.is_object_assign_target(fx, e)
+                || self.is_copy_source_only(fx, e))
+            && !self
+                .c
+                .contextual_type_of_literal(fx.file, e)
+                .is_some_and(|expected| {
+                    self.c
+                        .is_checked_against_inferred_type(fx.file, e, expected)
+                })
             && self.methods_needing_home_object(fx, props).is_empty()
     }
 
     fn stays_plain_for_generic_spread(&mut self, fx: &Fx, e: ExprId) -> bool {
         let hir = self.hir(fx.file);
-        let ExprKind::Object(props) = hir[e].kind else { return false };
+        let ExprKind::Object(props) = hir[e].kind else {
+            return false;
+        };
         if props.iter().len() < 2 {
             return false;
         }
@@ -807,13 +1305,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.is_returned_directly(fx, e) {
             return false;
         }
-        let Some(expected) = self.c.contextual_type_of_literal_before_bounds(fx.file, e) else { return false };
-        self.c.parts(expected).to_vec().into_iter().any(|part| self.has_type_variable_without_layout(part))
+        let Some(expected) = self.c.contextual_type_of_literal_before_bounds(fx.file, e) else {
+            return false;
+        };
+        self.c
+            .parts(expected)
+            .to_vec()
+            .into_iter()
+            .any(|part| self.has_type_variable_without_layout(part))
     }
 
     fn has_type_variable_without_layout(&mut self, ty: TypeId) -> bool {
-        let bun_sema::types::TypeData::Intersection(parts) = self.c.data(ty) else { return false };
-        parts.iter().copied().any(|part| self.c.is_generic(part) && !self.type_has_fixed_layout(part))
+        let bun_sema::types::TypeData::Intersection(parts) = self.c.data(ty) else {
+            return false;
+        };
+        parts
+            .iter()
+            .copied()
+            .any(|part| self.c.is_generic(part) && !self.type_has_fixed_layout(part))
     }
 
     fn is_returned_directly(&self, fx: &Fx, e: ExprId) -> bool {
@@ -822,12 +1331,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         loop {
             at = match bound.expr_parent[at.idx()] {
                 Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::NonNull(_) | ExprKind::AsConst(_) => parent,
+                    ExprKind::As { .. }
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::NonNull(_)
+                    | ExprKind::AsConst(_) => parent,
                     ExprKind::Cond { test, .. } if test != at => parent,
-                    ExprKind::Binary { op: hir::BinOp::Comma, right, .. } if right == at => parent,
+                    ExprKind::Binary {
+                        op: hir::BinOp::Comma,
+                        right,
+                        ..
+                    } if right == at => parent,
                     _ => return false,
                 },
-                Parent::Stmt(statement) => return statement.is_some() && matches!(hir[statement].kind, hir::StmtKind::Return(_)),
+                Parent::Stmt(statement) => {
+                    return statement.is_some()
+                        && matches!(hir[statement].kind, hir::StmtKind::Return(_));
+                }
                 Parent::FnBody(_) => return true,
                 _ => return false,
             };
@@ -835,10 +1354,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn is_engine_declared_type(&mut self, checked: TypeId) -> bool {
-        self.c.parts(checked).to_vec().into_iter().any(|part| match self.c.data(part) {
-            bun_sema::types::TypeData::Ref { target, .. } => self.hir(target.file).kind == hir::FileKind::Declaration && self.c.global_type_symbol(self.files.symbol(*target).name) == Some(*target),
-            _ => false,
-        })
+        self.c
+            .parts(checked)
+            .to_vec()
+            .into_iter()
+            .any(|part| match self.c.data(part) {
+                bun_sema::types::TypeData::Ref { target, .. } => {
+                    self.hir(target.file).kind == hir::FileKind::Declaration
+                        && self.c.global_type_symbol(self.files.symbol(*target).name)
+                            == Some(*target)
+                }
+                _ => false,
+            })
     }
 
     fn defines_accessor(&self, fx: &Fx, e: ExprId) -> bool {
@@ -849,12 +1376,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn evaluates_to_object_literal(&self, fx: &Fx, e: ExprId) -> bool {
         match self.hir(fx.file)[e].kind {
             ExprKind::Object(_) => true,
-            ExprKind::Cond { yes, no, .. } => self.evaluates_to_object_literal(fx, yes) || self.evaluates_to_object_literal(fx, no),
-            ExprKind::Binary { op: hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish, left, right } => {
-                self.evaluates_to_object_literal(fx, left) || self.evaluates_to_object_literal(fx, right)
+            ExprKind::Cond { yes, no, .. } => {
+                self.evaluates_to_object_literal(fx, yes)
+                    || self.evaluates_to_object_literal(fx, no)
             }
-            ExprKind::Binary { op: hir::BinOp::Comma, right, .. } => self.evaluates_to_object_literal(fx, right),
-            ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.evaluates_to_object_literal(fx, expr),
+            ExprKind::Binary {
+                op: hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.evaluates_to_object_literal(fx, left)
+                    || self.evaluates_to_object_literal(fx, right)
+            }
+            ExprKind::Binary {
+                op: hir::BinOp::Comma,
+                right,
+                ..
+            } => self.evaluates_to_object_literal(fx, right),
+            ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => {
+                self.evaluates_to_object_literal(fx, expr)
+            }
             _ => false,
         }
     }
@@ -872,18 +1413,39 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let func = &fx.b.func;
         let defined: Vec<(StrId, TyId)> = (func.values[object.idx() + 1..].iter())
             .filter_map(|value| match &value.def {
-                crate::ir::Def::Op(Op::Operation { which: Operation::DefineField, args }) if args.len() == 3 && args[0] == object => match func.op(args[1]) {
+                crate::ir::Def::Op(Op::Operation {
+                    which: Operation::DefineField,
+                    args,
+                }) if args.len() == 3 && args[0] == object => match func.op(args[1]) {
                     Some(&Op::Str(key)) => Some((key, func.ty(args[2]))),
                     _ => None,
                 },
                 _ => None,
             })
             .collect();
-        let layouts: Vec<LayoutId> = self.out.tys.get(to).parts.iter().filter_map(|part| if let Part::Class(layout) = part { Some(*layout) } else { None }).filter(|layout| layout.is_some()).collect();
+        let layouts: Vec<LayoutId> = self
+            .out
+            .tys
+            .get(to)
+            .parts
+            .iter()
+            .filter_map(|part| {
+                if let Part::Class(layout) = part {
+                    Some(*layout)
+                } else {
+                    None
+                }
+            })
+            .filter(|layout| layout.is_some())
+            .collect();
         for layout in layouts {
             self.resolve_field_types(layout);
             for &(key, have) in &defined {
-                let declared = self.out.layouts[layout.idx()].fields.iter().find(|field| field.name == key).map(|field| field.declared);
+                let declared = self.out.layouts[layout.idx()]
+                    .fields
+                    .iter()
+                    .find(|field| field.name == key)
+                    .map(|field| field.declared);
                 if let Some(declared) = declared
                     && declared.is_some()
                     && have.is_some()
@@ -899,7 +1461,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !fx.is_typed {
             return value;
         }
-        let want = Ty { id: self.ty_of(checked), checked };
+        let want = Ty {
+            id: self.ty_of(checked),
+            checked,
+        };
         if fx.b.func.prediction(value) == Prediction::None && want.id != self.out.tys.anything {
             fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(want.id));
         }
@@ -913,30 +1478,67 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         while let Some(&Op::Coerce { value: of, .. }) = fx.b.func.op(created) {
             created = of;
         }
-        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind {
+        while let ExprKind::As { expr, .. }
+        | ExprKind::Satisfies { expr, .. }
+        | ExprKind::NonNull(expr)
+        | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind
+        {
             written = expr;
         }
-        matches!(fx.b.func.op(created), Some(Op::CallDirect { .. })) && self.c.returns_fresh_call_result(fx.file, written)
+        matches!(fx.b.func.op(created), Some(Op::CallDirect { .. }))
+            && self.c.returns_fresh_call_result(fx.file, written)
     }
 
     pub(crate) fn mark_fresh_cast(&mut self, fx: &mut Fx, held: V, value: V) {
-        if let Some(&Op::Coerce { value: of, to, why: CoerceReason::Cast }) = fx.b.func.op(held)
-            && (of == value || held == value && matches!(fx.b.func.op(of), Some(Op::NewObject | Op::Operation { .. })))
+        if let Some(&Op::Coerce {
+            value: of,
+            to,
+            why: CoerceReason::Cast,
+        }) = fx.b.func.op(held)
+            && (of == value
+                || held == value
+                    && matches!(fx.b.func.op(of), Some(Op::NewObject | Op::Operation { .. })))
         {
-            fx.b.func.values[held.idx()].def = crate::ir::Def::Op(Op::Coerce { value: of, to, why: CoerceReason::CastFresh });
+            fx.b.func.values[held.idx()].def = crate::ir::Def::Op(Op::Coerce {
+                value: of,
+                to,
+                why: CoerceReason::CastFresh,
+            });
         }
     }
 
     fn only_removes_union_members(&mut self, from: TyId, to: TyId) -> bool {
-        let records = |declared: &Declared| -> Vec<LayoutId> { declared.parts.iter().filter_map(|part| if let Part::Class(layout) = part { Some(*layout) } else { None }).collect() };
-        let (had, kept) = (records(self.out.tys.get(from)), records(self.out.tys.get(to)));
-        if self.out.tys.get(from).any_object || kept.is_empty() || !kept.iter().all(|record| had.contains(record)) {
+        let records = |declared: &Declared| -> Vec<LayoutId> {
+            declared
+                .parts
+                .iter()
+                .filter_map(|part| {
+                    if let Part::Class(layout) = part {
+                        Some(*layout)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        let (had, kept) = (
+            records(self.out.tys.get(from)),
+            records(self.out.tys.get(to)),
+        );
+        if self.out.tys.get(from).any_object
+            || kept.is_empty()
+            || !kept.iter().all(|record| had.contains(record))
+        {
             return false;
         }
         for removed in had.iter().filter(|record| !kept.contains(record)) {
-            let Some(&removed) = self.layout_types.get(removed) else { return false };
+            let Some(&removed) = self.layout_types.get(removed) else {
+                return false;
+            };
             for record in &kept {
-                let Some(&record) = self.layout_types.get(record) else { return false };
+                let Some(&record) = self.layout_types.get(record) else {
+                    return false;
+                };
                 if self.c.is_comparable(record, removed) || self.c.is_comparable(removed, record) {
                     return false;
                 }
@@ -946,9 +1548,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn keep_unconvertible_objects(&mut self, fx: &mut Fx, held: V, value: V) {
-        if let Some(&Op::Coerce { value: of, to, why: CoerceReason::Cast }) = fx.b.func.op(held)
+        if let Some(&Op::Coerce {
+            value: of,
+            to,
+            why: CoerceReason::Cast,
+        }) = fx.b.func.op(held)
             && of == value
-            && self.out.tys.get(to).parts.iter().any(|part| matches!(part, Part::Class(_)))
+            && self
+                .out
+                .tys
+                .get(to)
+                .parts
+                .iter()
+                .any(|part| matches!(part, Part::Class(_)))
         {
             fx.b.func.values[held.idx()].set_keeps_unconvertible_objects();
             fx.fitted.retain(|_, fitted| *fitted != held);
@@ -991,7 +1603,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if fx.calls_in_tail_position.contains(&e) {
             self.mark_call_in_tail_position(fx, value);
         }
-        let may_repeat = fx.unchanged_by_coercion.as_ref().is_some_and(|latest| latest.e == e && latest.value == value && latest.value_count == fx.b.func.values.len());
+        let may_repeat = fx.unchanged_by_coercion.as_ref().is_some_and(|latest| {
+            latest.e == e && latest.value == value && latest.value_count == fx.b.func.values.len()
+        });
         if may_repeat && fx.unchanged_by_coercion == Some(self.coercion_state(fx, value, e)) {
             self.c.set_current_site(fx.file, self.hir(fx.file)[e].pos);
             return value;
@@ -999,13 +1613,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let before = self.coercion_state(fx, value, e);
         let coerced = self.coerce_to_expr_type_uncached(fx, value, e);
         let has_emitted = before.value_count != fx.b.func.values.len();
-        let is_idempotent = match std::mem::replace(&mut fx.coercion_idempotence, Idempotence::Unknown) {
-            Idempotence::Always => true,
-            Idempotence::IfNothingEmitted => !has_emitted && coerced == value,
-            Idempotence::Unknown => false,
-        };
+        let is_idempotent =
+            match std::mem::replace(&mut fx.coercion_idempotence, Idempotence::Unknown) {
+                Idempotence::Always => true,
+                Idempotence::IfNothingEmitted => !has_emitted && coerced == value,
+                Idempotence::Unknown => false,
+            };
         fx.unchanged_by_coercion = if is_idempotent || coerced == value && !has_emitted {
-            Some(self.coercion_state(fx, coerced, e)).filter(|after| is_idempotent || *after == before)
+            Some(self.coercion_state(fx, coerced, e))
+                .filter(|after| is_idempotent || *after == before)
         } else {
             None
         };
@@ -1036,7 +1652,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && let Some(created) = self.call_result_ty(fx.file, e)
         {
             let checked = self.c.type_of_expr(fx.file, e);
-            self.coerce_to(fx, value, Ty { id: created, checked }, CoerceReason::Claim)
+            self.coerce_to(
+                fx,
+                value,
+                Ty {
+                    id: created,
+                    checked,
+                },
+                CoerceReason::Claim,
+            )
         } else {
             value
         };
@@ -1044,15 +1668,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if fx.is_typed
             && operation_type.is_some()
             && self.out.tys.get(operation_type).any_object
-            && matches!(fx.b.func.op(value), Some(Op::CallDirect { .. } | Op::Call { .. } | Op::CallMethod { .. }))
+            && matches!(
+                fx.b.func.op(value),
+                Some(Op::CallDirect { .. } | Op::Call { .. } | Op::CallMethod { .. })
+            )
             && let Some(created) = self.c.generic_call_allocation(fx.file, e)
         {
             let allocated_as = self.c.type_of_expr(fx.file, e);
-            self.c.record_generic_function_result(&created, allocated_as);
+            self.c
+                .record_generic_function_result(&created, allocated_as);
             if let Some(sink) = fx.sink
                 && sink.e == e
             {
-                self.c.record_generic_function_result(&created, sink.want.checked);
+                self.c
+                    .record_generic_function_result(&created, sink.want.checked);
             }
         }
         if fx.is_typed && matches!(kind, ExprKind::Call(_) | ExprKind::New(_)) {
@@ -1068,41 +1697,91 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
         }
-        if fx.is_typed && self.ty(fx, value) == self.out.tys.anything && self.c.is_read_from_beyond_layouts(fx.file, e) {
+        if fx.is_typed
+            && self.ty(fx, value) == self.out.tys.anything
+            && self.c.is_read_from_beyond_layouts(fx.file, e)
+        {
             let read_as = self.c.type_of_expr(fx.file, e);
             self.c.record_untyped_source(read_as);
         }
         if !fx.is_typed
             && matches!(kind, ExprKind::Call(_) | ExprKind::Dot { .. })
-            && !matches!(fx.b.func.op(value), None | Some(Op::Coerce { .. } | Op::FieldGet { .. } | Op::GlobalGet(_)))
+            && !matches!(
+                fx.b.func.op(value),
+                None | Some(Op::Coerce { .. } | Op::FieldGet { .. } | Op::GlobalGet(_))
+            )
         {
-            let (shown, have) = (self.ty_from_syntax(fx, e, NumberRole::Value), self.ty(fx, value));
-            if shown.is_some() && shown != have && self.is_within(Ty::from_id(shown), Ty::from_id(have)) {
+            let (shown, have) = (
+                self.ty_from_syntax(fx, e, NumberRole::Value),
+                self.ty(fx, value),
+            );
+            if shown.is_some()
+                && shown != have
+                && self.is_within(Ty::from_id(shown), Ty::from_id(have))
+            {
                 fx.b.func.values[value.idx()].ty = shown;
             }
         }
         let value = if !fx.is_typed && matches!(kind, ExprKind::Ident(_)) {
             let shown = self.ty_from_syntax(fx, e, NumberRole::Value);
-            let shows_a_symbol = shown.is_some() && *self.out.tys.get(shown) == Declared::prims(prim::SYMBOL);
-            if shows_a_symbol && self.ty(fx, value) == self.out.tys.intern(Declared::prims(prim::UNDEFINED | prim::SYMBOL)) { value } else { self.coerce_to(fx, value, Ty::from_id(shown), CoerceReason::Flow) }
+            let shows_a_symbol =
+                shown.is_some() && *self.out.tys.get(shown) == Declared::prims(prim::SYMBOL);
+            if shows_a_symbol
+                && self.ty(fx, value)
+                    == self
+                        .out
+                        .tys
+                        .intern(Declared::prims(prim::UNDEFINED | prim::SYMBOL))
+            {
+                value
+            } else {
+                self.coerce_to(fx, value, Ty::from_id(shown), CoerceReason::Flow)
+            }
         } else {
             value
         };
         let produced = value;
-        let value = if fx.is_typed && !fx.handed_back.contains(&e) { self.as_returned_argument(fx, value, e) } else { value };
+        let value = if fx.is_typed && !fx.handed_back.contains(&e) {
+            self.as_returned_argument(fx, value, e)
+        } else {
+            value
+        };
         if value != produced {
             fx.handed_back.insert(e);
         }
         let is_returned_argument = fx.handed_back.contains(&e);
         let is_tested = self.is_tested(fx, e);
-        let value = if fx.is_typed && !is_tested { self.coerce_read_through_cast(fx, value, e) } else { value };
-        let read = if fx.is_typed { self.c.reference_read(fx.file, e) } else { None };
+        let value = if fx.is_typed && !is_tested {
+            self.coerce_read_through_cast(fx, value, e)
+        } else {
+            value
+        };
+        let read = if fx.is_typed {
+            self.c.reference_read(fx.file, e)
+        } else {
+            None
+        };
         let value = match read {
             Some(read) if read.is_asserted && !is_tested => {
                 let described = self.expression_ty(fx, e, read.declared);
-                let named = if self.c.parts(read.declared).iter().any(|part| part.is_null()) { prim::NULL } else { 0 };
-                let described = Declared { prims: self.out.tys.get(described).prims & !(prim::NULLISH & !named), ..self.out.tys.get(described).clone() };
-                let declared = Ty { id: self.out.tys.intern(described), checked: read.declared };
+                let named = if self
+                    .c
+                    .parts(read.declared)
+                    .iter()
+                    .any(|part| part.is_null())
+                {
+                    prim::NULL
+                } else {
+                    0
+                };
+                let described = Declared {
+                    prims: self.out.tys.get(described).prims & !(prim::NULLISH & !named),
+                    ..self.out.tys.get(described).clone()
+                };
+                let declared = Ty {
+                    id: self.out.tys.intern(described),
+                    checked: read.declared,
+                };
                 let text = self.reference_text(fx, e);
                 self.coerce_to(fx, value, declared, CoerceReason::NonNull(text))
             }
@@ -1111,22 +1790,64 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let stays_dictionary = fx.is_typed
             && matches!(fx.b.func.op(value), Some(Op::NewObject))
             && matches!(kind, ExprKind::Object(_))
-            && self.c.contextual_type_of_literal(fx.file, e).is_none_or(|expected| self.ty_of(expected) == self.out.tys.anything)
+            && self
+                .c
+                .contextual_type_of_literal(fx.file, e)
+                .is_none_or(|expected| self.ty_of(expected) == self.out.tys.anything)
             && {
                 let own = self.c.type_of_expr(fx.file, e);
-                self.c.members(own).is_some_and(|members| !members.shape().index.is_empty())
+                self.c
+                    .members(own)
+                    .is_some_and(|members| !members.shape().index.is_empty())
             };
-        let may_be_overridden = fx.is_typed && matches!(fx.b.func.op(value), Some(Op::NewObject)) && self.may_be_overridden_by_spread(fx, e);
-        let extends_generic_spread = fx.is_typed && matches!(fx.b.func.op(value), Some(Op::NewObject | Op::Operation { .. })) && self.stays_plain_for_generic_spread(fx, e);
+        let may_be_overridden = fx.is_typed
+            && matches!(fx.b.func.op(value), Some(Op::NewObject))
+            && self.may_be_overridden_by_spread(fx, e);
+        let extends_generic_spread = fx.is_typed
+            && matches!(
+                fx.b.func.op(value),
+                Some(Op::NewObject | Op::Operation { .. })
+            )
+            && self.stays_plain_for_generic_spread(fx, e);
         let flows_into_class_as_built = fx.is_typed
-            && matches!(fx.b.func.op(value), Some(Op::NewObject | Op::Operation { .. }))
+            && matches!(
+                fx.b.func.op(value),
+                Some(Op::NewObject | Op::Operation { .. })
+            )
             && matches!(kind, ExprKind::Object(_))
-            && fx.sink.is_some_and(|sink| sink.e == e && sink.want.id.is_some() && self.out.tys.get(sink.want.id).parts.iter().any(|part| matches!(part, Part::Class(_))) && !self.cast_may_allocate(sink.want.id))
-            && fx.sink.is_some_and(|sink| !self.stays_plain_for(fx, value, e, sink.want.id));
-        if fx.is_typed && (matches!(fx.b.func.op(value), Some(Op::NewObject)) && self.defines_accessor(fx, e) || self.c.returns_redefined_literal(fx.file, e) || stays_dictionary || may_be_overridden || flows_into_class_as_built || extends_generic_spread) {
+            && fx.sink.is_some_and(|sink| {
+                sink.e == e
+                    && sink.want.id.is_some()
+                    && self
+                        .out
+                        .tys
+                        .get(sink.want.id)
+                        .parts
+                        .iter()
+                        .any(|part| matches!(part, Part::Class(_)))
+                    && !self.cast_may_allocate(sink.want.id)
+            })
+            && fx
+                .sink
+                .is_some_and(|sink| !self.stays_plain_for(fx, value, e, sink.want.id));
+        if fx.is_typed
+            && (matches!(fx.b.func.op(value), Some(Op::NewObject)) && self.defines_accessor(fx, e)
+                || self.c.returns_redefined_literal(fx.file, e)
+                || stays_dictionary
+                || may_be_overridden
+                || flows_into_class_as_built
+                || extends_generic_spread)
+        {
             let own = self.c.type_of_expr(fx.file, e);
             fx.uncoercible_objects.insert(value, own);
-            for slot_type in [Some(own), Some(self.c.widened(own)), self.c.contextual_type_of_literal(fx.file, e)].into_iter().flatten() {
+            for slot_type in [
+                Some(own),
+                Some(self.c.widened(own)),
+                self.c.contextual_type_of_literal(fx.file, e),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 let slot_type = self.ty_of(slot_type);
                 let views = self.layout_types_in(slot_type);
                 self.c.accepts_untyped(own, &views);
@@ -1150,15 +1871,32 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let known_before = fx.checked.get(value).copied();
             if self.c.has_declared_type(fx.file, e) {
                 let checked = match read {
-                    Some(read) if !read.is_narrowing_reliable && read.declared != TypeId::UNRESOLVED && self.c.coerced_property_read(fx.file, e).is_none() && !self.value_type(fx, e).is_never() => read.declared,
+                    Some(read)
+                        if !read.is_narrowing_reliable
+                            && read.declared != TypeId::UNRESOLVED
+                            && self.c.coerced_property_read(fx.file, e).is_none()
+                            && !self.value_type(fx, e).is_never() =>
+                    {
+                        read.declared
+                    }
                     _ => self.value_type(fx, e),
                 };
                 self.set_checked(fx, value, checked);
             }
             let is_new = matches!(kind, ExprKind::New(_));
-            let want = if is_new { Ty { id: self.without_nullish(sink.want.id), ..sink.want } } else { sink.want };
+            let want = if is_new {
+                Ty {
+                    id: self.without_nullish(sink.want.id),
+                    ..sink.want
+                }
+            } else {
+                sink.want
+            };
             if fx.is_typed && self.c.is_predicted(fx.file, e) {
-                let (predicted, supertypes) = (self.c.type_of_expr(fx.file, e), self.layout_types_in(want.id));
+                let (predicted, supertypes) = (
+                    self.c.type_of_expr(fx.file, e),
+                    self.layout_types_in(want.id),
+                );
                 self.c.accepts_untyped(predicted, &supertypes);
                 self.c.record_untyped_inflow_to_nested(want.checked);
                 self.record_untyped_inflow_to_nested_classes_of(want.checked);
@@ -1172,8 +1910,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if !is_returned_argument {
                 self.record_declared_result_cast(fx, e, want.id);
             }
-            let is_literal_as_built = matches!(kind, ExprKind::Object(_)) && matches!(fx.b.func.op(value), Some(Op::NewObject | Op::Operation { .. }));
-            let why = if is_literal_as_built && matches!(sink.why, CoerceReason::NonNull(_)) { CoerceReason::Cast } else { sink.why };
+            let is_literal_as_built = matches!(kind, ExprKind::Object(_))
+                && matches!(
+                    fx.b.func.op(value),
+                    Some(Op::NewObject | Op::Operation { .. })
+                );
+            let why = if is_literal_as_built && matches!(sink.why, CoerceReason::NonNull(_)) {
+                CoerceReason::Cast
+            } else {
+                sink.why
+            };
             let first_new_value = fx.b.func.values.len();
             let held = self.coerce_to(fx, value, want, why);
             if sink.keeps_unconvertible_objects && held.idx() >= first_new_value {
@@ -1195,12 +1941,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     | ExprKind::AsConst(_)
                     | ExprKind::Assign { op: None, .. }
                     | ExprKind::Cond { .. }
-                    | ExprKind::Binary { op: hir::BinOp::Comma | hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish, .. }
+                    | ExprKind::Binary {
+                        op: hir::BinOp::Comma
+                            | hir::BinOp::And
+                            | hir::BinOp::Or
+                            | hir::BinOp::Nullish,
+                        ..
+                    }
             );
-            if !is_allocated_for_other_type && matches!(fx.b.func.op(value), Some(Op::PropGet { .. })) {
+            if !is_allocated_for_other_type
+                && matches!(fx.b.func.op(value), Some(Op::PropGet { .. }))
+            {
                 self.mark_read_unchecked(fx, value);
             }
-            if fx.is_typed && !is_allocated_for_other_type && !is_returned_argument && self.is_checked_at_creation(fx, value) {
+            if fx.is_typed
+                && !is_allocated_for_other_type
+                && !is_returned_argument
+                && self.is_checked_at_creation(fx, value)
+            {
                 self.problem(fx.file, pos, "this expression (internal error: a predicted type was checked as a declared type; please report it)");
             }
             let predicted = self.predict_expression(fx, value, e);
@@ -1213,39 +1971,86 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return predicted;
         }
         let why = match fx.b.func.op(value) {
-            Some(Op::New(_) | Op::NewWith { .. }) if !matches!(kind, ExprKind::Ident(_)) => return value,
-            Some(Op::Closure { .. } | Op::ClosureOnce { .. } | Op::FuncRef(_) | Op::FreeGet { .. }) => {
+            Some(Op::New(_) | Op::NewWith { .. }) if !matches!(kind, ExprKind::Ident(_)) => {
+                return value;
+            }
+            Some(
+                Op::Closure { .. } | Op::ClosureOnce { .. } | Op::FuncRef(_) | Op::FreeGet { .. },
+            ) => {
                 let checked = self.c.type_of_expr(fx.file, e);
                 fx.checked.insert(value, checked);
                 fx.coercion_idempotence = Idempotence::Always;
                 return value;
             }
-            Some(Op::NewObject) if self.is_plain_copy_literal(fx, e) || self.is_explicitly_dynamic(fx, e) || self.defines_accessor(fx, e) || self.is_object_assign_target(fx, e) || self.is_copy_source_only(fx, e) => return value,
-            Some(Op::NewObject) if self.c.contextual_type_of_literal(fx.file, e).is_some_and(|expected| self.c.is_checked_against_inferred_type(fx.file, e, expected)) => return value,
             Some(Op::NewObject)
-                if self.c.contextual_type_of_literal(fx.file, e).is_none_or(|expected| self.ty_of(expected) == self.out.tys.anything) && {
-                    let own = self.c.type_of_expr(fx.file, e);
-                    self.c.members(own).is_some_and(|members| !members.shape().index.is_empty())
-                } =>
+                if self.is_plain_copy_literal(fx, e)
+                    || self.is_explicitly_dynamic(fx, e)
+                    || self.defines_accessor(fx, e)
+                    || self.is_object_assign_target(fx, e)
+                    || self.is_copy_source_only(fx, e) =>
+            {
+                return value;
+            }
+            Some(Op::NewObject)
+                if self
+                    .c
+                    .contextual_type_of_literal(fx.file, e)
+                    .is_some_and(|expected| {
+                        self.c
+                            .is_checked_against_inferred_type(fx.file, e, expected)
+                    }) =>
+            {
+                return value;
+            }
+            Some(Op::NewObject)
+                if self
+                    .c
+                    .contextual_type_of_literal(fx.file, e)
+                    .is_none_or(|expected| self.ty_of(expected) == self.out.tys.anything)
+                    && {
+                        let own = self.c.type_of_expr(fx.file, e);
+                        self.c
+                            .members(own)
+                            .is_some_and(|members| !members.shape().index.is_empty())
+                    } =>
             {
                 return value;
             }
             Some(Op::NewObject) => CoerceReason::Cast,
             Some(Op::Operation { .. }) if matches!(kind, ExprKind::Object(_)) => {
-                if self.is_explicitly_dynamic(fx, e) || self.is_object_assign_target(fx, e) || self.is_copy_source_only(fx, e) {
+                if self.is_explicitly_dynamic(fx, e)
+                    || self.is_object_assign_target(fx, e)
+                    || self.is_copy_source_only(fx, e)
+                {
                     return value;
                 }
                 CoerceReason::Cast
             }
-            Some(Op::CallDirect { .. } | Op::Call { .. } | Op::CallMethod { .. } | Op::Operation { .. }) if self.is_result_cast_like(fx, e) => CoerceReason::Cast,
+            Some(
+                Op::CallDirect { .. }
+                | Op::Call { .. }
+                | Op::CallMethod { .. }
+                | Op::Operation { .. },
+            ) if self.is_result_cast_like(fx, e) => CoerceReason::Cast,
             _ if self.ty(fx, value) == self.out.tys.anything => CoerceReason::Claim,
             _ => CoerceReason::Flow,
         };
         let checked = self.value_type(fx, e);
-        if why == CoerceReason::Claim && read.is_some_and(|read| self.c.is_uninformative(read.declared)) && self.c.parts(checked).to_vec().into_iter().any(|part| self.c.is_array(part)) {
+        if why == CoerceReason::Claim
+            && read.is_some_and(|read| self.c.is_uninformative(read.declared))
+            && self
+                .c
+                .parts(checked)
+                .to_vec()
+                .into_iter()
+                .any(|part| self.c.is_array(part))
+        {
             return self.predict_expression(fx, value, e);
         }
-        let mut want = Ty { id: self.expression_ty(fx, e, checked), checked };
+        let mut want = Ty {
+            id: self.expression_ty(fx, e, checked),
+            checked,
+        };
         let value = if why == CoerceReason::Cast && self.stays_plain_for(fx, value, e, want.id) {
             let own = self.c.type_of_expr(fx.file, e);
             self.coerce_fresh(fx, value, own)
@@ -1270,8 +2075,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && !read.is_narrowing_reliable
         {
             let mut value = value;
-            if why == CoerceReason::Claim && read.declared != TypeId::UNRESOLVED && !checked.is_never() {
-                let mut declared = Ty { id: self.expression_ty(fx, e, read.declared), checked: read.declared };
+            if why == CoerceReason::Claim
+                && read.declared != TypeId::UNRESOLVED
+                && !checked.is_never()
+            {
+                let mut declared = Ty {
+                    id: self.expression_ty(fx, e, read.declared),
+                    checked: read.declared,
+                };
                 if may_be_undefined {
                     declared.id = self.or_undefined_unless_any(declared.id);
                 }
@@ -1287,7 +2098,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let value = self.coerce_to(fx, value, want, why);
         let mut written = e;
-        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind {
+        while let ExprKind::As { expr, .. }
+        | ExprKind::Satisfies { expr, .. }
+        | ExprKind::NonNull(expr)
+        | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind
+        {
             written = expr;
         }
         if let ExprKind::Object(props) = self.hir(fx.file)[written].kind
@@ -1313,7 +2128,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn clear_narrowing(&self, fx: &mut Fx, e: ExprId, value: V, known_before: Option<TypeId>) {
-        if !matches!(self.hir(fx.file)[e].kind, ExprKind::Ident(_) | ExprKind::This) || self.ty(fx, value) != self.out.tys.anything {
+        if !matches!(
+            self.hir(fx.file)[e].kind,
+            ExprKind::Ident(_) | ExprKind::This
+        ) || self.ty(fx, value) != self.out.tys.anything
+        {
             return;
         }
         match known_before {
@@ -1335,7 +2154,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         | Op::Await(_)
                         | Op::Operation { .. }
                         | Op::IterGet { .. }
-                        | Op::Coerce { why: CoerceReason::Cast | CoerceReason::CastFresh | CoerceReason::Store | CoerceReason::Flow | CoerceReason::Claim | CoerceReason::NonNull(_), .. }
+                        | Op::Coerce {
+                            why: CoerceReason::Cast
+                                | CoerceReason::CastFresh
+                                | CoerceReason::Store
+                                | CoerceReason::Flow
+                                | CoerceReason::Claim
+                                | CoerceReason::NonNull(_),
+                            ..
+                        }
                 )
             )
     }
@@ -1345,10 +2172,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && matches!(self.hir(fx.file)[e].kind, ExprKind::Call(_))
             && let Some(declared) = self.c.declared_call_result(fx.file, e)
         {
-            let declared = Ty { id: self.ty_of(declared), checked: declared };
+            let declared = Ty {
+                id: self.ty_of(declared),
+                checked: declared,
+            };
             self.record_cast(declared, want, CoerceReason::Flow);
             if self.c.callee_returns_any(fx.file, e) {
-                let result = Ty { id: want, checked: self.c.type_of_expr(fx.file, e) };
+                let result = Ty {
+                    id: want,
+                    checked: self.c.type_of_expr(fx.file, e),
+                };
                 self.record_untyped_inflow(result);
                 self.record_any_inflow(result);
             }
@@ -1391,26 +2224,49 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && described.has_objects()
             && !described.any_object
             && (!self.cast_may_allocate(own)
-                || matches!(self.hir(fx.file)[e].kind, ExprKind::Dot { .. } | ExprKind::Index { .. }) && matches!((described.single_layout(), self.out.tys.get(want).single_layout()), (Some(read_as), Some(supertypes_of)) if read_as != supertypes_of))
+                || matches!(
+                    self.hir(fx.file)[e].kind,
+                    ExprKind::Dot { .. } | ExprKind::Index { .. }
+                ) && matches!((described.single_layout(), self.out.tys.get(want).single_layout()), (Some(read_as), Some(supertypes_of)) if read_as != supertypes_of))
     }
 
     fn coerce_as_annotated(&mut self, fx: &mut Fx, value: V, want: Ty) -> V {
         let have = self.out.tys.get(self.ty(fx, value));
-        let (Some(known), Some(written)) = (have.single_layout(), self.out.tys.get(want.id).single_layout()) else { return value };
+        let (Some(known), Some(written)) = (
+            have.single_layout(),
+            self.out.tys.get(want.id).single_layout(),
+        ) else {
+            return value;
+        };
         if known == written {
             return value;
         }
-        let to = if have.prims & prim::NULLISH == 0 { self.without_nullish(want.id) } else { want.id };
+        let to = if have.prims & prim::NULLISH == 0 {
+            self.without_nullish(want.id)
+        } else {
+            want.id
+        };
         if let Some(&viewed) = fx.fitted.get(&(fx.b.block, value, to)) {
             return viewed;
         }
-        let viewed = self.emit(fx, Op::Coerce { value, to, why: CoerceReason::Upcast });
+        let viewed = self.emit(
+            fx,
+            Op::Coerce {
+                value,
+                to,
+                why: CoerceReason::Upcast,
+            },
+        );
         fx.fitted.insert((fx.b.block, value, to), viewed);
         viewed
     }
 
     fn or_undefined_unless_any(&mut self, ty: TyId) -> TyId {
-        if ty == self.out.tys.anything || self.out.tys.get(ty).is_never() { ty } else { self.or_undefined(ty) }
+        if ty == self.out.tys.anything || self.out.tys.get(ty).is_never() {
+            ty
+        } else {
+            self.or_undefined(ty)
+        }
     }
 
     fn without_nullish(&mut self, ty: TyId) -> TyId {
@@ -1421,21 +2277,39 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !described.has_objects() {
             return ty;
         }
-        let narrowed = Declared { prims: described.prims & !prim::NULLISH, ..described.clone() };
+        let narrowed = Declared {
+            prims: described.prims & !prim::NULLISH,
+            ..described.clone()
+        };
         self.out.tys.intern(narrowed)
     }
 
-    fn remember_narrowing(&mut self, fx: &mut Fx, value: V, declared: TypeId, want: Ty, e: ExprId) -> V {
-        let have = Ty { id: self.ty(fx, value), checked: declared };
+    fn remember_narrowing(
+        &mut self,
+        fx: &mut Fx,
+        value: V,
+        declared: TypeId,
+        want: Ty,
+        e: ExprId,
+    ) -> V {
+        let have = Ty {
+            id: self.ty(fx, value),
+            checked: declared,
+        };
         let is_narrowed = !self.out.tys.get(want.id).is_never() && !self.is_within(have, want);
         let checked = if is_narrowed { declared } else { want.checked };
         if !self.c.is_uninformative(checked) {
             fx.checked.insert(value, checked);
         }
         let read = value;
-        let value = if have.id == self.out.tys.anything { self.predict_expression(fx, value, e) } else { value };
+        let value = if have.id == self.out.tys.anything {
+            self.predict_expression(fx, value, e)
+        } else {
+            value
+        };
         let wanted = self.out.tys.get(want.id);
-        let is_only_nullish = wanted.prims & !prim::NULLISH == 0 && wanted.ints.is_none() && !wanted.has_objects();
+        let is_only_nullish =
+            wanted.prims & !prim::NULLISH == 0 && wanted.ints.is_none() && !wanted.has_objects();
         if is_narrowed && !is_only_nullish {
             fx.narrowed.insert(value, want);
         } else {
@@ -1454,11 +2328,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn is_result_cast_like(&mut self, fx: &Fx, e: ExprId) -> bool {
         let hir = self.hir(fx.file);
-        let ExprKind::Call(call) = hir[e].kind else { return false };
+        let ExprKind::Call(call) = hir[e].kind else {
+            return false;
+        };
         if self.c.is_call_result_annotated(fx.file, e) {
             return true;
         }
-        hir.ids(hir[call].args).next().is_some_and(|first| self.is_object_assign_target(fx, first))
+        hir.ids(hir[call].args)
+            .next()
+            .is_some_and(|first| self.is_object_assign_target(fx, first))
     }
 
     pub(crate) fn is_object_assign_target(&mut self, fx: &Fx, e: ExprId) -> bool {
@@ -1473,17 +2351,36 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if ty == self.out.tys.anything || self.out.tys.get(ty).is_never() {
             return true;
         }
-        if self.shared.constants.logs_type_errors && self.out.tys.get(ty).parts.iter().any(|part| matches!(part, Part::Class(_))) {
+        if self.shared.constants.logs_type_errors
+            && self
+                .out
+                .tys
+                .get(ty)
+                .parts
+                .iter()
+                .any(|part| matches!(part, Part::Class(_)))
+        {
             return false;
         }
         let may_throw = matches!(
             fx.b.func.op(value),
-            Some(Op::PropGet { .. } | Op::ElemGet { .. } | Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } | Op::Await(_) | Op::Operation { .. } | Op::IterGet { .. })
+            Some(
+                Op::PropGet { .. }
+                    | Op::ElemGet { .. }
+                    | Op::Call { .. }
+                    | Op::CallMethod { .. }
+                    | Op::Construct { .. }
+                    | Op::Await(_)
+                    | Op::Operation { .. }
+                    | Op::IterGet { .. }
+            )
         );
         if value.idx() + 1 != fx.b.func.values.len() {
             return false;
         }
-        if !may_throw || !fx.handlers.is_empty() && fx.b.func.blocks[fx.b.block.idx()].ops.contains(&value) {
+        if !may_throw
+            || !fx.handlers.is_empty() && fx.b.func.blocks[fx.b.block.idx()].ops.contains(&value)
+        {
             return false;
         }
         fx.b.func.values[value.idx()].ty = ty;
@@ -1491,7 +2388,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn new_var(&mut self, fx: &mut Fx, ty: Ty) -> Var {
-        let ty = if ty.id.is_some() && self.out.tys.get(ty.id).is_never() { Ty::NONE } else { ty };
+        let ty = if ty.id.is_some() && self.out.tys.get(ty.id).is_never() {
+            Ty::NONE
+        } else {
+            ty
+        };
         let var = fx.b.new_var(self.or_anything(ty.id));
         let blank = self.default_value_op(ty.id);
         if blank != Op::Undefined {
@@ -1533,7 +2434,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn add_entry_param(&mut self, fx: &mut Fx, ty: Ty) -> V {
-        let value = fx.b.func.add_param(crate::ir::Func::ENTRY, self.or_anything(ty.id));
+        let value =
+            fx.b.func
+                .add_param(crate::ir::Func::ENTRY, self.or_anything(ty.id));
         if ty.checked != TypeId::UNRESOLVED {
             fx.checked.insert(value, ty.checked);
         }
@@ -1543,7 +2446,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn push_env(&mut self, fx: &mut Fx, layout: LayoutId, env: V) {
         let var = fx.b.new_var(self.layout_ty(layout));
         fx.b.write(var, env);
-        fx.envs.push(super::EnvScope { layout, var, shares_activation_with_previous: false });
+        fx.envs.push(super::EnvScope {
+            layout,
+            var,
+            shares_activation_with_previous: false,
+        });
     }
 
     pub(crate) fn new_result(&mut self, fx: &mut Fx, e: Option<ExprId>) -> Var {
@@ -1554,8 +2461,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             Some(e) if fx.is_typed && self.c.has_declared_type(fx.file, e) => {
                 let checked = self.value_type(fx, e);
-                let mut ty = Ty { id: self.expression_ty(fx, e, checked), checked };
-                if self.c.is_optional_chain(fx.file, e) || self.c.may_return_uninitialized_variable(fx.file, e) {
+                let mut ty = Ty {
+                    id: self.expression_ty(fx, e, checked),
+                    checked,
+                };
+                if self.c.is_optional_chain(fx.file, e)
+                    || self.c.may_return_uninitialized_variable(fx.file, e)
+                {
                     ty.id = self.or_undefined_unless_any(ty.id);
                 }
                 self.new_var(fx, ty)
@@ -1585,7 +2497,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn count(&mut self, fx: &mut Fx, counter: Var, at: V) {
         let one = self.emit(fx, Op::Int(1));
-        let next = self.emit(fx, Op::Binary { op: BinOp::Add, a: at, b: one });
+        let next = self.emit(
+            fx,
+            Op::Binary {
+                op: BinOp::Add,
+                a: at,
+                b: one,
+            },
+        );
         fx.b.func.values[next.idx()].ty = self.known.counter;
         fx.b.write(counter, next);
     }
@@ -1599,22 +2518,51 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn write_as(&mut self, fx: &mut Fx, var: Var, value: V, why: CoerceReason) {
-        let want = Ty { id: fx.b.var_type(var), checked: fx.checked_vars.get(&var).copied().unwrap_or(TypeId::UNRESOLVED) };
+        let want = Ty {
+            id: fx.b.var_type(var),
+            checked: fx
+                .checked_vars
+                .get(&var)
+                .copied()
+                .unwrap_or(TypeId::UNRESOLVED),
+        };
         let value = self.coerce_to(fx, value, want, why);
         fx.b.write(var, value);
     }
 
     pub(crate) fn write_falsy_as(&mut self, fx: &mut Fx, var: Var, value: V, why: CoerceReason) {
-        let want = Ty { id: fx.b.var_type(var), checked: fx.checked_vars.get(&var).copied().unwrap_or(TypeId::UNRESOLVED) };
-        let have = Ty { id: self.ty(fx, value), checked: self.checked(fx, value) };
+        let want = Ty {
+            id: fx.b.var_type(var),
+            checked: fx
+                .checked_vars
+                .get(&var)
+                .copied()
+                .unwrap_or(TypeId::UNRESOLVED),
+        };
+        let have = Ty {
+            id: self.ty(fx, value),
+            checked: self.checked(fx, value),
+        };
         let described = self.out.tys.get(have.id);
-        let falsy = Declared { prims: described.prims, ints: described.ints, ..Declared::never() };
-        let is_narrowable = have.id != self.out.tys.anything && described.has_objects() && !falsy.is_never();
+        let falsy = Declared {
+            prims: described.prims,
+            ints: described.ints,
+            ..Declared::never()
+        };
+        let is_narrowable =
+            have.id != self.out.tys.anything && described.has_objects() && !falsy.is_never();
         if !is_narrowable || want.id.is_none() || self.is_within(have, want) {
             return self.write_as(fx, var, value, why);
         }
         let to = self.out.tys.intern(falsy);
-        let value = self.emit_throwing(fx, Op::Coerce { value, to, why: CoerceReason::Flow });
+        let value = self.emit_throwing(
+            fx,
+            Op::Coerce {
+                value,
+                to,
+                why: CoerceReason::Flow,
+            },
+        );
         self.write_as(fx, var, value, why);
     }
 
@@ -1626,15 +2574,36 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         value
     }
 
-    pub(crate) fn branch(&mut self, fx: &mut Fx, cond: V, then: crate::id::BlockId, otherwise: crate::id::BlockId) {
+    pub(crate) fn branch(
+        &mut self,
+        fx: &mut Fx,
+        cond: V,
+        then: crate::id::BlockId,
+        otherwise: crate::id::BlockId,
+    ) {
         let boolean = Ty::from_id(self.known.boolean);
         let have = Ty::from_id(self.ty(fx, cond));
-        let hint = fx.branch_hints.get(&cond).copied().or_else(|| match fx.b.func.op(cond) {
-            Some(&Op::IsNullish(tested) | &Op::Not(tested)) => fx.branch_hints.get(&tested).map(|hint| super::BranchHint { is_likely: !hint.is_likely, ..*hint }),
-            _ => None,
-        });
-        let cond = if self.is_within(have, boolean) { cond } else { self.emit(fx, Op::Truthy(cond)) };
-        let Some(hint) = hint else { return fx.b.branch(cond, then, otherwise) };
+        let hint = fx
+            .branch_hints
+            .get(&cond)
+            .copied()
+            .or_else(|| match fx.b.func.op(cond) {
+                Some(&Op::IsNullish(tested) | &Op::Not(tested)) => {
+                    fx.branch_hints.get(&tested).map(|hint| super::BranchHint {
+                        is_likely: !hint.is_likely,
+                        ..*hint
+                    })
+                }
+                _ => None,
+            });
+        let cond = if self.is_within(have, boolean) {
+            cond
+        } else {
+            self.emit(fx, Op::Truthy(cond))
+        };
+        let Some(hint) = hint else {
+            return fx.b.branch(cond, then, otherwise);
+        };
         let unlikely = fx.b.new_block();
         if hint.is_likely {
             fx.b.branch(cond, then, unlikely);
@@ -1644,7 +2613,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.jump_from_unlikely_block(fx, unlikely, hint, then, otherwise);
     }
 
-    pub(crate) fn jump_from_unlikely_block(&mut self, fx: &mut Fx, unlikely: crate::id::BlockId, hint: super::BranchHint, then: crate::id::BlockId, otherwise: crate::id::BlockId) {
+    pub(crate) fn jump_from_unlikely_block(
+        &mut self,
+        fx: &mut Fx,
+        unlikely: crate::id::BlockId,
+        hint: super::BranchHint,
+        then: crate::id::BlockId,
+        otherwise: crate::id::BlockId,
+    ) {
         fx.b.seal(unlikely);
         fx.b.switch_to(unlikely);
         let outer = std::mem::replace(&mut fx.b.pos, hint.pos);
@@ -1676,16 +2652,38 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return None;
         }
         let signature = self.signatures.get(&fx.id);
-        let want = Ty { id: func.result, checked: signature.and_then(|signature| signature.result).unwrap_or(TypeId::UNRESOLVED) };
-        Some((want, if signature.is_some_and(|signature| signature.is_result_annotated) { CoerceReason::Cast } else { CoerceReason::Store }))
+        let want = Ty {
+            id: func.result,
+            checked: signature
+                .and_then(|signature| signature.result)
+                .unwrap_or(TypeId::UNRESOLVED),
+        };
+        Some((
+            want,
+            if signature.is_some_and(|signature| signature.is_result_annotated) {
+                CoerceReason::Cast
+            } else {
+                CoerceReason::Store
+            },
+        ))
     }
 
     fn as_common_supertype(&mut self, fx: &mut Fx, obj: V, name: StrId) -> V {
-        let obj = if fx.narrowed.contains_key(&obj) && self.has_declared_field(fx, obj, name) { obj } else { self.as_narrowed(fx, obj) };
+        let obj = if fx.narrowed.contains_key(&obj) && self.has_declared_field(fx, obj, name) {
+            obj
+        } else {
+            self.as_narrowed(fx, obj)
+        };
         let ty = self.out.tys.get(self.ty(fx, obj));
-        let is_of_several = ty.parts.len() > 1 && ty.parts.iter().all(|part| matches!(part, Part::Class(_)));
+        let is_of_several =
+            ty.parts.len() > 1 && ty.parts.iter().all(|part| matches!(part, Part::Class(_)));
         let has_shared_description = matches!(ty.parts[..], [Part::Class(layout)] if self.out.layouts[layout.idx()].field(name).is_none());
-        if !(is_of_several || has_shared_description) || ty.prims & !prim::NULLISH != 0 || ty.ints.is_some() || ty.any_object || ty.any_function {
+        if !(is_of_several || has_shared_description)
+            || ty.prims & !prim::NULLISH != 0
+            || ty.ints.is_some()
+            || ty.any_object
+            || ty.any_function
+        {
             return obj;
         }
         let checked = self.checked(fx, obj);
@@ -1697,9 +2695,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return obj;
         }
         let mut common = self.c.common_supertype_of_union(union);
-        let lacks_it = |b: &Self, layout: Option<LayoutId>| layout.is_none_or(|layout| b.out.layouts[layout.idx()].field(name).is_none());
+        let lacks_it = |b: &Self, layout: Option<LayoutId>| {
+            layout.is_none_or(|layout| b.out.layouts[layout.idx()].field(name).is_none())
+        };
         let in_common = self.record_layout(common);
-        let may_be_anything = self.c.parts(union).iter().any(|&part| self.c.is_coerced_unknown_type(part));
+        let may_be_anything = self
+            .c
+            .parts(union)
+            .iter()
+            .any(|&part| self.c.is_coerced_unknown_type(part));
         if may_be_anything || lacks_it(self, in_common) {
             let either = self.c.union_all_members_type(union);
             let of_either = self.record_layout(either);
@@ -1710,15 +2714,28 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.record_layout(common).is_none() {
             return obj;
         }
-        let want = Ty { id: self.ty_of(common), checked: common };
-        let have = Ty { id: self.ty(fx, obj), checked };
+        let want = Ty {
+            id: self.ty_of(common),
+            checked: common,
+        };
+        let have = Ty {
+            id: self.ty(fx, obj),
+            checked,
+        };
         if !self.is_within(have, want) {
             return obj;
         }
         if let Some(&viewed) = fx.fitted.get(&(fx.b.block, obj, want.id)) {
             return viewed;
         }
-        let viewed = self.emit(fx, Op::Coerce { value: obj, to: want.id, why: CoerceReason::Upcast });
+        let viewed = self.emit(
+            fx,
+            Op::Coerce {
+                value: obj,
+                to: want.id,
+                why: CoerceReason::Upcast,
+            },
+        );
         fx.fitted.insert((fx.b.block, obj, want.id), viewed);
         fx.checked.insert(viewed, common);
         viewed
@@ -1740,7 +2757,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.define_class(file, class);
             }
             let described = &self.out.layouts[layout.idx()];
-            if described.methods.iter().any(|method| method.name == name && method.flags & crate::ir::method_flags::STATIC == 0) {
+            if described.methods.iter().any(|method| {
+                method.name == name && method.flags & crate::ir::method_flags::STATIC == 0
+            }) {
                 return true;
             }
             layout = described.base;
@@ -1749,18 +2768,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn widen_literal_string(&mut self, fx: &mut Fx, value: V) -> V {
-        if value.is_none() || !fx.b.is_open() || !self.out.tys.get(self.ty(fx, value)).has_literal_string() {
+        if value.is_none()
+            || !fx.b.is_open()
+            || !self.out.tys.get(self.ty(fx, value)).has_literal_string()
+        {
             return value;
         }
         let checked = self.checked(fx, value);
-        let as_string = self.out.tys.get(self.ty(fx, value)).clone().with_literal_string_widened();
+        let as_string = self
+            .out
+            .tys
+            .get(self.ty(fx, value))
+            .clone()
+            .with_literal_string_widened();
         let to = self.out.tys.intern(as_string);
         if let Some(&held) = fx.fitted.get(&(fx.b.block, value, to)) {
             return held;
         }
         let held = match fx.b.func.op(value) {
             Some(&Op::Str(text)) => fx.b.emit(Op::Str(text), self.known.string),
-            _ => fx.b.emit(Op::Coerce { value, to, why: CoerceReason::Upcast }, to),
+            _ => fx.b.emit(
+                Op::Coerce {
+                    value,
+                    to,
+                    why: CoerceReason::Upcast,
+                },
+                to,
+            ),
         };
         fx.fitted.insert((fx.b.block, value, to), held);
         if checked != TypeId::UNRESOLVED {
@@ -1771,22 +2805,45 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn widen_literal_string_operands(&mut self, fx: &mut Fx, op: Op) -> Op {
         let mut has_one = false;
-        op.for_each_operand(|operand| has_one |= operand.is_some() && self.out.tys.get(fx.b.func.ty(operand)).has_literal_string());
+        op.for_each_operand(|operand| {
+            has_one |=
+                operand.is_some() && self.out.tys.get(fx.b.func.ty(operand)).has_literal_string()
+        });
         if !has_one {
             return op;
         }
         match op {
-            Op::GlobalSet(..) | Op::FieldSet { .. } | Op::NewWith { .. } | Op::Coerce { .. } | Op::Closure { .. } | Op::ClosureOnce { .. } | Op::CallDirect { .. } | Op::Not(_) | Op::Truthy(_) | Op::IsNullish(_) => op,
-            Op::PropSet { obj, name, value } => Op::PropSet { obj: self.widen_literal_string(fx, obj), name, value },
+            Op::GlobalSet(..)
+            | Op::FieldSet { .. }
+            | Op::NewWith { .. }
+            | Op::Coerce { .. }
+            | Op::Closure { .. }
+            | Op::ClosureOnce { .. }
+            | Op::CallDirect { .. }
+            | Op::Not(_)
+            | Op::Truthy(_)
+            | Op::IsNullish(_) => op,
+            Op::PropSet { obj, name, value } => Op::PropSet {
+                obj: self.widen_literal_string(fx, obj),
+                name,
+                value,
+            },
             Op::StrictEq { a, b } => {
                 let compares_unconverted = |this: &Self, other: V| {
                     let described = this.out.tys.get(fx.b.func.ty(other));
-                    described.has_literal_string() || matches!(fx.b.func.op(other), Some(Op::Str(_))) || !described.has_objects() && described.ints.is_none() && described.prims & !prim::NULLISH == 0
+                    described.has_literal_string()
+                        || matches!(fx.b.func.op(other), Some(Op::Str(_)))
+                        || !described.has_objects()
+                            && described.ints.is_none()
+                            && described.prims & !prim::NULLISH == 0
                 };
                 if compares_unconverted(self, a) && compares_unconverted(self, b) {
                     return op;
                 }
-                Op::StrictEq { a: self.widen_literal_string(fx, a), b: self.widen_literal_string(fx, b) }
+                Op::StrictEq {
+                    a: self.widen_literal_string(fx, a),
+                    b: self.widen_literal_string(fx, b),
+                }
             }
             mut op => {
                 let mut operands: Vec<V> = Vec::new();
@@ -1815,40 +2872,101 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         let op = match op {
-            Op::PropGet { obj, name } => Op::PropGet { obj: self.as_common_supertype(fx, obj, name), name },
-            Op::PropSet { obj, name, value } => Op::PropSet { obj: self.as_common_supertype(fx, obj, name), name, value },
-            Op::PropHas { obj, name } => Op::PropHas { obj: self.as_common_supertype(fx, obj, name), name },
-            Op::PropDelete { obj, name } => Op::PropDelete { obj: self.as_narrowed(fx, obj), name },
-            Op::CallMethod { obj, name, args } => Op::CallMethod { obj: self.as_common_supertype(fx, obj, name), name, args },
-            Op::ElemGet { obj, key } => Op::ElemGet { obj: self.as_narrowed(fx, obj), key },
-            Op::ElemSet { obj, key, value } => Op::ElemSet { obj: self.as_narrowed(fx, obj), key, value },
-            Op::ElemHas { obj, key } => Op::ElemHas { obj: self.as_narrowed(fx, obj), key },
-            Op::ElemDelete { obj, key } => Op::ElemDelete { obj: self.as_narrowed(fx, obj), key },
+            Op::PropGet { obj, name } => Op::PropGet {
+                obj: self.as_common_supertype(fx, obj, name),
+                name,
+            },
+            Op::PropSet { obj, name, value } => Op::PropSet {
+                obj: self.as_common_supertype(fx, obj, name),
+                name,
+                value,
+            },
+            Op::PropHas { obj, name } => Op::PropHas {
+                obj: self.as_common_supertype(fx, obj, name),
+                name,
+            },
+            Op::PropDelete { obj, name } => Op::PropDelete {
+                obj: self.as_narrowed(fx, obj),
+                name,
+            },
+            Op::CallMethod { obj, name, args } => Op::CallMethod {
+                obj: self.as_common_supertype(fx, obj, name),
+                name,
+                args,
+            },
+            Op::ElemGet { obj, key } => Op::ElemGet {
+                obj: self.as_narrowed(fx, obj),
+                key,
+            },
+            Op::ElemSet { obj, key, value } => Op::ElemSet {
+                obj: self.as_narrowed(fx, obj),
+                key,
+                value,
+            },
+            Op::ElemHas { obj, key } => Op::ElemHas {
+                obj: self.as_narrowed(fx, obj),
+                key,
+            },
+            Op::ElemDelete { obj, key } => Op::ElemDelete {
+                obj: self.as_narrowed(fx, obj),
+                key,
+            },
             op => op,
         };
         match op {
             Op::GlobalSet(global, value) => {
-                let want = Ty { id: self.out.globals[global.idx()].declared, checked: self.checked_globals.get(&global).copied().unwrap_or(TypeId::UNRESOLVED) };
+                let want = Ty {
+                    id: self.out.globals[global.idx()].declared,
+                    checked: self
+                        .checked_globals
+                        .get(&global)
+                        .copied()
+                        .unwrap_or(TypeId::UNRESOLVED),
+                };
                 Op::GlobalSet(global, self.coerce_to(fx, value, want, CoerceReason::Store))
             }
-            Op::FieldSet { obj, layout, field, value } => {
-                let (want, why) = (self.field_type(layout, field), self.field_cast_reason(layout, field));
-                Op::FieldSet { obj, layout, field, value: self.coerce_to(fx, value, want, why) }
+            Op::FieldSet {
+                obj,
+                layout,
+                field,
+                value,
+            } => {
+                let (want, why) = (
+                    self.field_type(layout, field),
+                    self.field_cast_reason(layout, field),
+                );
+                Op::FieldSet {
+                    obj,
+                    layout,
+                    field,
+                    value: self.coerce_to(fx, value, want, why),
+                }
             }
-            Op::PropSet { obj, name, value } => match self.store_target_field(self.ty(fx, obj), name) {
-                Some((want, why)) => Op::PropSet { obj, name, value: self.coerce_to(fx, value, want, why) },
-                None => op,
-            },
+            Op::PropSet { obj, name, value } => {
+                match self.store_target_field(self.ty(fx, obj), name) {
+                    Some((want, why)) => Op::PropSet {
+                        obj,
+                        name,
+                        value: self.coerce_to(fx, value, want, why),
+                    },
+                    None => op,
+                }
+            }
             Op::CallDirect { func, mut args } => {
                 let callee = &self.out.funcs[func.idx()];
                 let (this, params) = (callee.declared_this_type, callee.params.clone());
-                let reasons: Vec<CoerceReason> = (0..params.len()).map(|i| callee.param_cast_reason(i)).collect();
+                let reasons: Vec<CoerceReason> = (0..params.len())
+                    .map(|i| callee.param_cast_reason(i))
+                    .collect();
                 let mut at = callee.captures.len();
                 let has_this = callee.has(func_flags::HAS_THIS);
                 let signature = self.signatures.get(&func).cloned().unwrap_or_default();
                 if has_this {
                     if at < args.len() {
-                        let want = Ty { id: this, checked: signature.this.unwrap_or(TypeId::UNRESOLVED) };
+                        let want = Ty {
+                            id: this,
+                            checked: signature.this.unwrap_or(TypeId::UNRESOLVED),
+                        };
                         args[at] = self.coerce_to(fx, args[at], want, CoerceReason::Store);
                     }
                     at += 1;
@@ -1857,7 +2975,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     if at + i >= args.len() {
                         break;
                     }
-                    let want = Ty { id: param, checked: signature.params.get(i).copied().unwrap_or(TypeId::UNRESOLVED) };
+                    let want = Ty {
+                        id: param,
+                        checked: signature
+                            .params
+                            .get(i)
+                            .copied()
+                            .unwrap_or(TypeId::UNRESOLVED),
+                    };
                     args[at + i] = self.coerce_to(fx, args[at + i], want, reasons[i]);
                 }
                 Op::CallDirect { func, args }
@@ -1881,7 +3006,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     self.c.record_stored_read_only(record, dictionary);
                 }
             }
-            if have.id.is_some() && want.id.is_some() && self.out.tys.get(have.id).has_objects() && self.out.tys.get(want.id).has_objects() {
+            if have.id.is_some()
+                && want.id.is_some()
+                && self.out.tys.get(have.id).has_objects()
+                && self.out.tys.get(want.id).has_objects()
+            {
                 let held = self.c.dictionaries_in(have.checked);
                 if !held.is_empty() {
                     let others = self.c.dictionaries_in(want.checked);
@@ -1902,12 +3031,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let (a, b) = (self.out.tys.get(have.id), self.out.tys.get(want.id));
         let lacked = a.prims & !b.prims;
-        if (if b.prims & prim::STRING != 0 { lacked & !prim::LITERAL_STRING } else { lacked }) != 0 {
+        if (if b.prims & prim::STRING != 0 {
+            lacked & !prim::LITERAL_STRING
+        } else {
+            lacked
+        }) != 0
+        {
             return false;
         }
         if let Some((minimum, maximum)) = a.ints
             && b.prims & prim::NUMBER == 0
-            && !b.ints.is_some_and(|within| within.0 <= minimum && maximum <= within.1)
+            && !b
+                .ints
+                .is_some_and(|within| within.0 <= minimum && maximum <= within.1)
         {
             return false;
         }
@@ -1920,12 +3056,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let not_known_before = self.c.unknown_count();
                 let found = self.find_layout_subset_pairs(have.id, want.id);
                 if self.c.unknown_count() == not_known_before {
-                    self.layout_subset_pairs.insert((have.id, want.id), found.clone());
+                    self.layout_subset_pairs
+                        .insert((have.id, want.id), found.clone());
                 }
                 found
             }
         };
-        let Some((upcasts, is_foreign)) = found else { return false };
+        let Some((upcasts, is_foreign)) = found else {
+            return false;
+        };
         if is_foreign {
             if self.type_has_fixed_layout(have.checked) {
                 return false;
@@ -1945,18 +3084,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         for &(from, to) in upcasts.iter() {
-            self.c.record_upcast(self.layout_types[&from], self.layout_types[&to]);
+            self.c
+                .record_upcast(self.layout_types[&from], self.layout_types[&to]);
         }
         true
     }
 
-    fn find_layout_subset_pairs(&mut self, have: TyId, want: TyId) -> Option<(Rc<[(LayoutId, LayoutId)]>, bool)> {
-        let (a, b) = (self.out.tys.get(have).clone(), self.out.tys.get(want).clone());
+    fn find_layout_subset_pairs(
+        &mut self,
+        have: TyId,
+        want: TyId,
+    ) -> Option<(Rc<[(LayoutId, LayoutId)]>, bool)> {
+        let (a, b) = (
+            self.out.tys.get(have).clone(),
+            self.out.tys.get(want).clone(),
+        );
         let mut upcasts: Vec<(LayoutId, LayoutId)> = Vec::new();
         let mut is_foreign = a.any_object || a.any_function && !b.any_function;
         for part in &a.parts {
-            match (part, b.parts.iter().find(|other| self.is_part_subset(part, other))) {
-                (&Part::Class(from), Some(&Part::Class(to))) if from != to => upcasts.push((from, to)),
+            match (
+                part,
+                b.parts
+                    .iter()
+                    .find(|other| self.is_part_subset(part, other)),
+            ) {
+                (&Part::Class(from), Some(&Part::Class(to))) if from != to => {
+                    upcasts.push((from, to))
+                }
                 (_, Some(_)) => {}
                 (Part::Class(_), None) => return None,
                 (_, None) => is_foreign = true,
@@ -1970,7 +3124,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return false;
         }
         let described = self.ty_of(checked);
-        self.out.tys.get(described).parts.iter().any(|part| matches!(part, Part::Class(_)))
+        self.out
+            .tys
+            .get(described)
+            .parts
+            .iter()
+            .any(|part| matches!(part, Part::Class(_)))
     }
 
     fn is_part_subset(&mut self, part: &Part, other: &Part) -> bool {
@@ -1983,27 +3142,51 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn is_upcast(&mut self, from: LayoutId, to: LayoutId) -> bool {
-        let (Some(&source), Some(&target)) = (self.layout_types.get(&from), self.layout_types.get(&to)) else { return false };
+        let (Some(&source), Some(&target)) =
+            (self.layout_types.get(&from), self.layout_types.get(&to))
+        else {
+            return false;
+        };
         self.c.is_upcast_safe(source, target)
     }
 
-    pub(crate) fn record_stored_callee(&mut self, fx: &Fx, layout: LayoutId, name: Atom, value: ExprId, is_birth: bool) {
+    pub(crate) fn record_stored_callee(
+        &mut self,
+        fx: &Fx,
+        layout: LayoutId,
+        name: Atom,
+        value: ExprId,
+        is_birth: bool,
+    ) {
         if !self.layout_types.contains_key(&layout) {
             return;
         }
         let field = self.str(name);
-        let Some(field) = self.out.layouts[layout.idx()].field(field) else { return };
+        let Some(field) = self.out.layouts[layout.idx()].field(field) else {
+            return;
+        };
         self.record_field_stored_callee(fx, layout, field, name, value, is_birth);
     }
 
-    pub(crate) fn record_field_stored_callee(&mut self, fx: &Fx, layout: LayoutId, field: u32, name: Atom, value: ExprId, is_birth: bool) {
-        let Some(&holder) = self.layout_types.get(&layout) else { return };
+    pub(crate) fn record_field_stored_callee(
+        &mut self,
+        fx: &Fx,
+        layout: LayoutId,
+        field: u32,
+        name: Atom,
+        value: ExprId,
+        is_birth: bool,
+    ) {
+        let Some(&holder) = self.layout_types.get(&layout) else {
+            return;
+        };
         let declared = self.out.layouts[layout.idx()].fields[field as usize].declared;
         if self.c.atoms().is_symbol_name(name) {
             return;
         }
         if declared.is_none() || self.out.tys.get(declared).any_function {
-            self.c.record_stored_callee(holder, name, fx.file, value, is_birth);
+            self.c
+                .record_stored_callee(holder, name, fx.file, value, is_birth);
         }
     }
 
@@ -2018,7 +3201,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if ty.is_none() {
             return Vec::new();
         }
-        (self.out.tys.get(ty).parts.iter()).filter_map(|part| if let Part::Class(layout) = part { self.layout_types.get(layout).copied() } else { None }).collect()
+        (self.out.tys.get(ty).parts.iter())
+            .filter_map(|part| {
+                if let Part::Class(layout) = part {
+                    self.layout_types.get(layout).copied()
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub(crate) fn record_cast(&mut self, have: Ty, want: TyId, why: CoerceReason) {
@@ -2026,19 +3217,47 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn record_cast_at_depth(&mut self, have: Ty, want: TyId, why: CoerceReason, depth: u8) {
-        let (may_copy, may_convert) = (matches!(why, CoerceReason::Cast | CoerceReason::Coerce), matches!(why, CoerceReason::Cast | CoerceReason::Coerce | CoerceReason::Flow));
+        let (may_copy, may_convert) = (
+            matches!(why, CoerceReason::Cast | CoerceReason::Coerce),
+            matches!(
+                why,
+                CoerceReason::Cast | CoerceReason::Coerce | CoerceReason::Flow
+            ),
+        );
         let is_trusted = self.out.tys.get(have.id).any_object;
-        let is_told = is_trusted && have.checked != TypeId::UNRESOLVED && !self.c.is_untyped(have.checked);
-        let known = if is_told { self.ty_of(have.checked) } else { have.id };
+        let is_told =
+            is_trusted && have.checked != TypeId::UNRESOLVED && !self.c.is_untyped(have.checked);
+        let known = if is_told {
+            self.ty_of(have.checked)
+        } else {
+            have.id
+        };
         let sources = self.layout_types_in(known);
         let targets = self.layout_types_in(want);
         if is_trusted {
             self.c.record_untyped_inflow_to_union_members(&targets);
         }
         for target in targets {
-            self.c.record_cast(&sources, target, may_copy && is_trusted, is_trusted, may_convert, may_convert && !may_copy);
+            self.c.record_cast(
+                &sources,
+                target,
+                may_copy && is_trusted,
+                is_trusted,
+                may_convert,
+                may_convert && !may_copy,
+            );
         }
-        let elements_in = |this: &Self, ty: TyId| -> Vec<TyId> { (this.out.tys.get(ty).parts.iter()).filter_map(|part| if let Part::Array(elements) = part { Some(*elements) } else { None }).collect() };
+        let elements_in = |this: &Self, ty: TyId| -> Vec<TyId> {
+            (this.out.tys.get(ty).parts.iter())
+                .filter_map(|part| {
+                    if let Part::Array(elements) = part {
+                        Some(*elements)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
         if depth == MAX_DESCRIPTION_DEPTH {
             return;
         }
@@ -2062,7 +3281,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             match part {
                 Part::Class(_) => {}
                 Part::Array(elements) => self.layout_types_within(*elements, further - 1, found),
-                Part::Global(_, arguments) => arguments.iter().for_each(|&argument| self.layout_types_within(argument, further - 1, found)),
+                Part::Global(_, arguments) => arguments
+                    .iter()
+                    .for_each(|&argument| self.layout_types_within(argument, further - 1, found)),
             }
         }
     }
@@ -2072,15 +3293,30 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let ty = self.ty(fx, v);
             ty.is_none() || ty == self.out.tys.anything || self.out.tys.get(ty).parts.is_empty()
         };
-        let behind = |from: V| if further > 0 { self.external_origin_path(fx, from, further - 1) } else { None };
+        let behind = |from: V| {
+            if further > 0 {
+                self.external_origin_path(fx, from, further - 1)
+            } else {
+                None
+            }
+        };
         match fx.b.func.op(value) {
             Some(&Op::Call { callee, .. }) => behind(callee).map(|_| 1),
             Some(&Op::Construct { callee, .. }) => behind(callee).map(|_| 2),
             Some(Op::FreeGet { .. } | Op::ExternalModule(_)) => Some(3),
             Some(Op::Caught | Op::CaughtException | Op::Yield(_)) => Some(4),
-            Some(&(Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } | Op::CallMethod { obj, .. })) => is_uninformative(obj).then_some(5),
-            Some(&(Op::Await(from) | Op::IterGet { iter: from, .. } | Op::IterOpen(from) | Op::Coerce { value: from, .. })) => behind(from),
-            None => (self.ty(fx, value) == self.out.tys.anything && fx.b.func.blocks[0].params.contains(&value)).then_some(6),
+            Some(
+                &(Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } | Op::CallMethod { obj, .. }),
+            ) => is_uninformative(obj).then_some(5),
+            Some(
+                &(Op::Await(from)
+                | Op::IterGet { iter: from, .. }
+                | Op::IterOpen(from)
+                | Op::Coerce { value: from, .. }),
+            ) => behind(from),
+            None => (self.ty(fx, value) == self.out.tys.anything
+                && fx.b.func.blocks[0].params.contains(&value))
+            .then_some(6),
             _ => None,
         }
     }
@@ -2138,8 +3374,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for part in self.out.tys.get(ty).parts.clone() {
             match part {
                 Part::Class(_) => {}
-                Part::Array(elements) => self.record_untyped_inflow_into_nested_unions(elements, further - 1),
-                Part::Global(_, arguments) => arguments.iter().for_each(|&argument| self.record_untyped_inflow_into_nested_unions(argument, further - 1)),
+                Part::Array(elements) => {
+                    self.record_untyped_inflow_into_nested_unions(elements, further - 1)
+                }
+                Part::Global(_, arguments) => arguments.iter().for_each(|&argument| {
+                    self.record_untyped_inflow_into_nested_unions(argument, further - 1)
+                }),
             }
         }
     }
@@ -2149,7 +3389,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.record_untyped_inflow_to_nested_classes(instances);
     }
 
-    pub(crate) fn record_untyped_inflow_to_nested_classes(&mut self, types_of_instances: Vec<TypeId>) {
+    pub(crate) fn record_untyped_inflow_to_nested_classes(
+        &mut self,
+        types_of_instances: Vec<TypeId>,
+    ) {
         for instances in types_of_instances {
             let described = self.ty_of(instances);
             for view in self.layout_types_in(described) {
@@ -2160,7 +3403,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn record_untyped_inflow_into_host_object(&mut self, entering: TypeId, want: Ty) {
-        if want.id == self.out.tys.anything && want.checked != TypeId::UNRESOLVED && self.c.is_untyped(entering) && self.is_ambient_only(want.checked) {
+        if want.id == self.out.tys.anything
+            && want.checked != TypeId::UNRESOLVED
+            && self.c.is_untyped(entering)
+            && self.is_ambient_only(want.checked)
+        {
             self.record_untyped_inflow(want);
         }
     }
@@ -2189,7 +3436,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn is_object_literal(&self, fx: &Fx, e: ExprId) -> bool {
         match self.hir(fx.file)[e].kind {
             ExprKind::Object(_) => true,
-            ExprKind::Cond { yes, no, .. } => self.is_object_literal(fx, yes) && self.is_object_literal(fx, no),
+            ExprKind::Cond { yes, no, .. } => {
+                self.is_object_literal(fx, yes) && self.is_object_literal(fx, no)
+            }
             _ => false,
         }
     }
@@ -2198,7 +3447,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if e.is_none() || self.c.is_syntactically_nullish(fx.file, e) {
             return;
         }
-        self.c.record_proxies_returned_through(fx.file, e, want.checked);
+        self.c
+            .record_proxies_returned_through(fx.file, e, want.checked);
         let source = self.c.type_of_expr(fx.file, e);
         if self.c.is_untyped(source) && !self.is_object_literal(fx, e) {
             self.record_untyped_inflow(want);
@@ -2214,7 +3464,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if let Some(origin) = self.c.data_origin(fx.file, e) {
             self.c.set_current_site(fx.file, self.hir(fx.file)[e].pos);
-            self.c.record_types_staying_untyped(want.checked, false, origin);
+            self.c
+                .record_types_staying_untyped(want.checked, false, origin);
         }
     }
 
@@ -2227,14 +3478,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let source = self.c.type_of_expr(fx.file, e);
             if self.c.is_any_like(source) {
                 let id = self.ty_of(target);
-                self.record_any_inflow(Ty { id, checked: target });
+                self.record_any_inflow(Ty {
+                    id,
+                    checked: target,
+                });
             }
         }
         if let Some((source, target)) = self.c.spread_destination_types(fx.file, e) {
             self.record_type_flow(source, target);
         }
         for (declared, parameter) in self.c.generic_callback_parameters(fx.file, e) {
-            let (have, want) = (Ty { id: self.ty_of(declared), checked: declared }, self.ty_of(parameter));
+            let (have, want) = (
+                Ty {
+                    id: self.ty_of(declared),
+                    checked: declared,
+                },
+                self.ty_of(parameter),
+            );
             self.record_cast(have, want, CoerceReason::Flow);
         }
         if let ExprKind::Call(call) = self.hir(fx.file)[e].kind
@@ -2257,7 +3517,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         if self.c.is_predicted(of, value)
                             && let Some(slot_type) = self.c.type_of_property(target, name)
                         {
-                            let (predicted, described) = (self.c.type_of_expr(of, value), self.ty_of(slot_type));
+                            let (predicted, described) =
+                                (self.c.type_of_expr(of, value), self.ty_of(slot_type));
                             let views = self.layout_types_in(described);
                             self.c.accepts_untyped(predicted, &views);
                         }
@@ -2272,10 +3533,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(target) = untyped_target {
             return self.record_type_flow(TypeId::ANY, target);
         }
-        let Some(target) = self.c.destination_type_of_expr(fx.file, e) else { return };
+        let Some(target) = self.c.destination_type_of_expr(fx.file, e) else {
+            return;
+        };
         if fx.is_typed && self.c.is_predicted(fx.file, e) {
             let described = self.ty_of(target);
-            let (predicted, supertypes) = (self.c.type_of_expr(fx.file, e), self.layout_types_in(described));
+            let (predicted, supertypes) = (
+                self.c.type_of_expr(fx.file, e),
+                self.layout_types_in(described),
+            );
             self.c.accepts_untyped(predicted, &supertypes);
             for (held, slot_type) in self.c.nested_inflow_pairs(predicted, target) {
                 self.record_type_flow(held, slot_type);
@@ -2310,7 +3576,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             return;
         }
-        let (have, want) = (Ty { id: self.ty_of(source), checked: source }, Ty { id: self.ty_of(target), checked: target });
+        let (have, want) = (
+            Ty {
+                id: self.ty_of(source),
+                checked: source,
+            },
+            Ty {
+                id: self.ty_of(target),
+                checked: target,
+            },
+        );
         self.record_untyped_inflow_into_host_object(source, want);
         if !self.is_within(have, want) {
             if source.is_any() {
@@ -2321,11 +3596,31 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn record_union_parts_upcast(&mut self, ty: TyId) {
-        let views: Vec<LayoutId> = self.out.tys.get(ty).parts.iter().filter_map(|part| if let &Part::Class(view) = part { Some(view) } else { None }).collect();
+        let views: Vec<LayoutId> = self
+            .out
+            .tys
+            .get(ty)
+            .parts
+            .iter()
+            .filter_map(|part| {
+                if let &Part::Class(view) = part {
+                    Some(view)
+                } else {
+                    None
+                }
+            })
+            .collect();
         for view in views {
-            let (Some(parts), Some(&target)) = (self.union_part_layouts.get(&view).cloned(), self.layout_types.get(&view)) else { continue };
+            let (Some(parts), Some(&target)) = (
+                self.union_part_layouts.get(&view).cloned(),
+                self.layout_types.get(&view),
+            ) else {
+                continue;
+            };
             for part in parts {
-                let Some(&source) = self.layout_types.get(&part) else { continue };
+                let Some(&source) = self.layout_types.get(&part) else {
+                    continue;
+                };
                 if self.c.is_upcast_safe(source, target) {
                     self.c.record_upcast(source, target);
                 }
@@ -2335,7 +3630,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn record_argument_casts(&mut self, func: FuncId, only_tests: bool) {
         let anything = self.out.tys.anything;
-        self.c.set_current_site(self.file, self.out.funcs[func.idx()].pos);
+        self.c
+            .set_current_site(self.file, self.out.funcs[func.idx()].pos);
         let this = self.out.funcs[func.idx()].declared_this_type;
         if this.is_some() {
             self.record_cast(Ty::from_id(anything), this, CoerceReason::Store);
@@ -2344,7 +3640,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let makes_its_own_this = self.out.funcs[func.idx()].kind == FuncKind::Plain
                     && views.iter().any(|&view| !self.c.is_instance_type(view))
                     && match self.sources[func.idx()] {
-                        Source::Function { file, func, .. } => self.c.allocates_for_unknown_callers(file, func) && self.c.is_only_constructed(file, func),
+                        Source::Function { file, func, .. } => {
+                            self.c.allocates_for_unknown_callers(file, func)
+                                && self.c.is_only_constructed(file, func)
+                        }
                         _ => false,
                     };
                 for view in views {
@@ -2359,7 +3658,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let param = self.out.funcs[func.idx()].params[k];
             if param.is_some() {
                 let why = self.out.funcs[func.idx()].param_cast_reason(k);
-                let target = if why == CoerceReason::Cast { self.cast_target_ty(param) } else { param };
+                let target = if why == CoerceReason::Cast {
+                    self.cast_target_ty(param)
+                } else {
+                    param
+                };
                 let why = if only_tests { CoerceReason::Claim } else { why };
                 self.record_cast(Ty::from_id(anything), target, why);
                 self.record_union_parts_upcast(param);
@@ -2375,7 +3678,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 held.push(field.declared);
             }
         }
-        held.extend(self.out.layouts[layout.idx()].static_fields.iter().map(|field| field.1));
+        held.extend(
+            self.out.layouts[layout.idx()]
+                .static_fields
+                .iter()
+                .map(|field| field.1),
+        );
         held.retain(|declared| declared.is_some());
         let anything = self.out.tys.anything;
         for &declared in &held {

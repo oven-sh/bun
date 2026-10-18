@@ -265,8 +265,14 @@ impl Operation {
         ("ArraySpeciesCreate", Operation::ArraySpeciesCreate),
         ("AsyncGeneratorYield", Operation::AsyncGeneratorYield),
         ("AsyncIteratorNext", Operation::AsyncIteratorNext),
-        ("AsyncModuleExecutionFulfilled", Operation::AsyncModuleExecutionFulfilled),
-        ("AsyncModuleExecutionRejected", Operation::AsyncModuleExecutionRejected),
+        (
+            "AsyncModuleExecutionFulfilled",
+            Operation::AsyncModuleExecutionFulfilled,
+        ),
+        (
+            "AsyncModuleExecutionRejected",
+            Operation::AsyncModuleExecutionRejected,
+        ),
         ("Await", Operation::Await),
         ("AwaitBySavingFrame", Operation::AwaitBySavingFrame),
         ("AwaitMayContinue", Operation::AwaitMayContinue),
@@ -275,7 +281,10 @@ impl Operation {
         ("CallHeadersMethod", Operation::CallHeadersMethod),
         ("CallNoInline", Operation::CallNoInline),
         ("CallWithSpread", Operation::CallWithSpread),
-        ("ClearAsyncIteratorResult", Operation::ClearAsyncIteratorResult),
+        (
+            "ClearAsyncIteratorResult",
+            Operation::ClearAsyncIteratorResult,
+        ),
         ("CloneObject", Operation::CloneObject),
         ("CloneObjectAfter", Operation::CloneObjectAfter),
         ("CloneObjectWith", Operation::CloneObjectWith),
@@ -286,7 +295,10 @@ impl Operation {
         ("ConstructWithSpread", Operation::ConstructWithSpread),
         ("ConstructorResult", Operation::ConstructorResult),
         ("CopyDataProperties", Operation::CopyDataProperties),
-        ("CopyDataPropertiesExcluding", Operation::CopyDataPropertiesExcluding),
+        (
+            "CopyDataPropertiesExcluding",
+            Operation::CopyDataPropertiesExcluding,
+        ),
         ("CreateArguments", Operation::CreateArguments),
         ("CreateMappedArguments", Operation::CreateMappedArguments),
         ("DeclaredGenerator", Operation::DeclaredGenerator),
@@ -296,8 +308,14 @@ impl Operation {
         ("DefineMethod", Operation::DefineMethod),
         ("DefineSetter", Operation::DefineSetter),
         ("DeleteByValSloppy", Operation::DeleteByValSloppy),
-        ("DerivedConstructorResult", Operation::DerivedConstructorResult),
-        ("DidEvaluateRequiredModule", Operation::DidEvaluateRequiredModule),
+        (
+            "DerivedConstructorResult",
+            Operation::DerivedConstructorResult,
+        ),
+        (
+            "DidEvaluateRequiredModule",
+            Operation::DidEvaluateRequiredModule,
+        ),
         ("DidStartModuleBody", Operation::DidStartModuleBody),
         ("DirectEval", Operation::DirectEval),
         ("DisposeNextResource", Operation::DisposeNextResource),
@@ -318,7 +336,10 @@ impl Operation {
         ("GetByValWithThis", Operation::GetByValWithThis),
         ("GetContiguousIndex", Operation::GetContiguousIndex),
         ("GetDoubleIndex", Operation::GetDoubleIndex),
-        ("GetExternalModuleWithType", Operation::GetExternalModuleWithType),
+        (
+            "GetExternalModuleWithType",
+            Operation::GetExternalModuleWithType,
+        ),
         ("GetFromArguments", Operation::GetFromArguments),
         ("GetImportMeta", Operation::GetImportMeta),
         ("GetIndex", Operation::GetIndex),
@@ -328,7 +349,10 @@ impl Operation {
         ("GetMappedParameter", Operation::GetMappedParameter),
         ("GetNewTarget", Operation::GetNewTarget),
         ("GetOwnProperty", Operation::GetOwnProperty),
-        ("GetRequestOrResponseHeader", Operation::GetRequestOrResponseHeader),
+        (
+            "GetRequestOrResponseHeader",
+            Operation::GetRequestOrResponseHeader,
+        ),
         ("GetRequireFunction", Operation::GetRequireFunction),
         ("GetSuperConstructor", Operation::GetSuperConstructor),
         ("GetTemplateObject", Operation::GetTemplateObject),
@@ -336,12 +360,18 @@ impl Operation {
         ("HasContiguousIndex", Operation::HasContiguousIndex),
         ("HasEnumerableProperty", Operation::HasEnumerableProperty),
         ("HasHostClassStructure", Operation::HasHostClassStructure),
-        ("HasHostObjectCachedValue", Operation::HasHostObjectCachedValue),
+        (
+            "HasHostObjectCachedValue",
+            Operation::HasHostObjectCachedValue,
+        ),
         ("HasIndex", Operation::HasIndex),
         ("HasJSType", Operation::HasJSType),
         ("HasOriginalStructure", Operation::HasOriginalStructure),
         ("HostObjectCachedValue", Operation::HostObjectCachedValue),
-        ("HostObjectHasCachedValue", Operation::HostObjectHasCachedValue),
+        (
+            "HostObjectHasCachedValue",
+            Operation::HostObjectHasCachedValue,
+        ),
         ("ImportExternalModule", Operation::ImportExternalModule),
         ("ImportWithOptions", Operation::ImportWithOptions),
         ("Increment", Operation::Increment),
@@ -351,14 +381,23 @@ impl Operation {
         ("IsConstructor", Operation::IsConstructor),
         ("IsContiguousArray", Operation::IsContiguousArray),
         ("IsDoubleArray", Operation::IsDoubleArray),
-        ("IsGeneratorSuspendedAtStart", Operation::IsGeneratorSuspendedAtStart),
-        ("IsGlobalCachedAsBuiltin", Operation::IsGlobalCachedAsBuiltin),
+        (
+            "IsGeneratorSuspendedAtStart",
+            Operation::IsGeneratorSuspendedAtStart,
+        ),
+        (
+            "IsGlobalCachedAsBuiltin",
+            Operation::IsGlobalCachedAsBuiltin,
+        ),
         ("IsKnownFunction", Operation::IsKnownFunction),
         ("IsObject", Operation::IsObject),
         ("IsOriginalArray", Operation::IsOriginalArray),
         ("IsPlainArrayLike", Operation::IsPlainArrayLike),
         ("IsUnmodifiedGenerator", Operation::IsUnmodifiedGenerator),
-        ("IteratorCloseAndThrowMissingThrowMethod", Operation::IteratorCloseAndThrowMissingThrowMethod),
+        (
+            "IteratorCloseAndThrowMissingThrowMethod",
+            Operation::IteratorCloseAndThrowMissingThrowMethod,
+        ),
         ("JSONAbandon", Operation::JSONAbandon),
         ("JSONByteAt", Operation::JSONByteAt),
         ("JSONClose", Operation::JSONClose),
@@ -409,7 +448,10 @@ impl Operation {
         ("NewPrivateName", Operation::NewPrivateName),
         ("NewPromise", Operation::NewPromise),
         ("NewResponse", Operation::NewResponse),
-        ("NewResponseFromResponse", Operation::NewResponseFromResponse),
+        (
+            "NewResponseFromResponse",
+            Operation::NewResponseFromResponse,
+        ),
         ("ParseJSON", Operation::ParseJSON),
         ("PlainQueryEntries", Operation::PlainQueryEntries),
         ("PrivateFieldAdd", Operation::PrivateFieldAdd),
@@ -429,7 +471,10 @@ impl Operation {
         ("RejectPromise", Operation::RejectPromise),
         ("RequireBuiltinModule", Operation::RequireBuiltinModule),
         ("RequireExternalModule", Operation::RequireExternalModule),
-        ("RequireIteratorResultObject", Operation::RequireIteratorResultObject),
+        (
+            "RequireIteratorResultObject",
+            Operation::RequireIteratorResultObject,
+        ),
         ("ResolvePromise", Operation::ResolvePromise),
         ("ResumeGenerator", Operation::ResumeGenerator),
         ("ScanPlainQuery", Operation::ScanPlainQuery),
@@ -612,7 +657,9 @@ impl Operation {
             Operation::PutMappedParameter => "PutMappedParameter",
             Operation::GetIterator => "GetIterator",
             Operation::RequireIteratorResultObject => "RequireIteratorResultObject",
-            Operation::IteratorCloseAndThrowMissingThrowMethod => "IteratorCloseAndThrowMissingThrowMethod",
+            Operation::IteratorCloseAndThrowMissingThrowMethod => {
+                "IteratorCloseAndThrowMissingThrowMethod"
+            }
             Operation::NewDisposableStack => "NewDisposableStack",
             Operation::AddDisposableResource => "AddDisposableResource",
             Operation::DisposeNextResource => "DisposeNextResource",
@@ -680,10 +727,16 @@ impl Operation {
     }
 
     pub(crate) fn named(name: &[u8]) -> Option<Operation> {
-        Self::BY_NAME.binary_search_by(|entry| entry.0.as_bytes().cmp(name)).ok().map(|at| Self::BY_NAME[at].1)
+        Self::BY_NAME
+            .binary_search_by(|entry| entry.0.as_bytes().cmp(name))
+            .ok()
+            .map(|at| Self::BY_NAME[at].1)
     }
 
     pub(crate) fn numbered(number: u32) -> Option<Operation> {
-        Self::BY_NAME.iter().find(|entry| entry.1 as u32 == number).map(|entry| entry.1)
+        Self::BY_NAME
+            .iter()
+            .find(|entry| entry.1 as u32 == number)
+            .map(|entry| entry.1)
     }
 }

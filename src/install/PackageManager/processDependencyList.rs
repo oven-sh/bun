@@ -566,6 +566,17 @@ impl PackageManager {
         })
     }
 
+    pub(crate) fn waits_for_remote_package(&self, row: DependencyID) -> bool {
+        self.remote_packages.tasks.iter().any(|task_id| {
+            !self.network_task_has_failed(*task_id)
+                && self.task_queue.get(task_id).is_some_and(|waiting| {
+                    (waiting.iter()).any(
+                        |waiter| matches!(*waiter, TaskCallbackContext::Dependency(id) if id == row),
+                    )
+                })
+        })
+    }
+
     /// Adds the git, GitHub or tarball package whose turn it is to the lockfile, and resolves the
     /// dependencies that waited for it. Call this when the queue is empty: what the package
     /// depends on is queued. Returns false if no package was added.

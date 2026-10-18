@@ -328,10 +328,11 @@ pub(crate) enum HeldAbout {
 // - What a git, GitHub or tarball package depends on is only known after its download, so these
 //   packages are added one at a time once the queue is empty. See `RemotePackages`.
 // - A peer dependency is a row like any other. In its turn it takes what the lockfile has for it
-//   (`enqueue::peer_provider`), and is resolved like a regular dependency if that is nothing.
+//   (`enqueue::settle_peer`), and is resolved like a regular dependency if that is nothing.
 //   Whether the peers of a name share a version is decided once everything is resolved
-//   (`dedupe::Pass::find_spare`). Until then nothing shares a package that is only there for a peer
-//   (`Lockfile::only_peers`), so what that decision sees does not depend on which peer came first.
+//   (`dedupe::Pass::find_spare`). Until then no range shares a package that is only there for a
+//   peer, and nothing downloads it (`Lockfile::only_peers`), so what that decision sees does not
+//   depend on which peer came first.
 
 /// A manifest request that ended without a manifest. The message is logged by the first dependency
 /// that needs the manifest when it is resolved, not when the answer arrives: `LookAhead` requests

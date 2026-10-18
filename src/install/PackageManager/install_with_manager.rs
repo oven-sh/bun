@@ -627,14 +627,20 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
     }
 
+    if resolve_peers_of_failed_providers(manager) && manager.pending_task_count() > 0 {
+        resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
+    }
+
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
     let direct_only = manager.options.do_.update_direct_only();
     direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
-    // `bun audit fix` moved its rows to the fixed versions on purpose.
-    if !matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit) {
-        crate::dedupe::collapse_appended(manager);
+    match manager.subcommand {
+        Subcommand::Dedupe => {}
+        // `bun audit fix` moved its rows to the fixed versions on purpose.
+        Subcommand::Audit => crate::dedupe::collapse_appended_peers(manager),
+        _ => crate::dedupe::collapse_appended(manager),
     }
     manager.log_held();
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
@@ -1171,6 +1177,9 @@ fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()>
     RunAndWaitClosure::<true>::run_and_wait(this)
 }
 pub(crate) fn wait_for_pending_tasks(this: &mut PackageManager) -> crate::Result<()> {
+    if this.pending_task_count() == 0 {
+        return Ok(());
+    }
     RunAndWaitClosure::<false>::run_and_wait(this)
 }
 
@@ -1735,6 +1744,38 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     any
 }
 
+/// Runs when all else is resolved: a peer has left itself to an optional tarball or repository
+/// (`Lockfile::peer_provider`) that failed after the peer's turn. It is resolved like any other.
+#[cold]
+#[inline(never)]
+fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
+    if manager.remote_packages.tasks.is_empty() || manager.log_mut().has_errors() {
+        return false;
+    }
+    let lockfile: &Lockfile = &manager.lockfile;
+    let root_features = manager.options.local_package_features;
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let is_unresolved =
+        |row: DependencyID| lockfile.buffers.resolutions[row as usize] == invalid_package_id;
+    let mut rows: Vec<DependencyID> = Vec::new();
+    for (owner, owned) in lockfile.packages.items_dependencies().iter().enumerate() {
+        rows.extend((owned.begin()..owned.end()).filter(|&row| {
+            let peer = &dependencies[row as usize];
+            peer.behavior.is_peer()
+                && is_unresolved(row)
+                && (lockfile.peer_provider(owner as PackageID, peer.name_hash, root_features))
+                    .is_some_and(is_unresolved)
+        }));
+    }
+    for &row in &rows {
+        enqueue_row(manager, row);
+    }
+    if !rows.is_empty() {
+        manager.drain_dependency_list();
+    }
+    !rows.is_empty()
+}
+
 #[derive(Default)]
 struct NamedUpdates {
     /// Invalidated rows paired with the package they resolved to, for redirect_moved_edges.
@@ -2187,12 +2228,12 @@ fn resolve_pending_tasks(
         wait_for_calcing_patch_hashes(manager)?;
     }
 
-    wait_for_resolution(manager)?;
+    wait_for_pending_tasks(manager)?;
 
     if !named.latest_rows.is_empty() {
         let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
         named.moved.extend(child_moves);
-        wait_for_resolution(manager)?;
+        wait_for_pending_tasks(manager)?;
     }
 
     if log_level.show_progress() {
@@ -2238,13 +2279,6 @@ fn refresh_children_of_named(
     let moves = crate::update_transitive::refresh_children_of(manager, &package_ids)?;
     manager.drain_dependency_list();
     Ok(moves)
-}
-
-fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
-    if manager.pending_task_count() > 0 {
-        wait_for_pending_tasks(manager)?;
-    }
-    Ok(())
 }
 
 /// Returns the old lockfile.
@@ -2453,6 +2487,7 @@ fn reresolve_rows_outside_overrides(
         manager.crash();
     }
     redirect_moved_edges(&mut manager.lockfile, &moved, false);
+    crate::dedupe::collapse_appended_peers(manager);
 
     let before_clean = clean_lockfile(manager, log_level)?;
     *root = *manager.lockfile.packages.get(0);

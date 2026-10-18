@@ -933,7 +933,8 @@ describe.each(["hoisted", "isolated"])("a peer that a file: dependency provides,
     });
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
-    expect(await downloaded()).not.toEqual([]);
+    // bun.lock gives the one `no-deps` folder of the hoisted tree to the folder dependency.
+    expect((await downloaded()).length > 0).toBe(linker === "isolated");
     expect(exitCode).toBe(0);
   });
 });
@@ -4423,7 +4424,7 @@ it.each<OrderedShape>([
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
       "m's manifest last": [{ manifest: "m", until: "/z" }],
-      "z's manifest last": [{ manifest: "z", until: "/m-1.0.0.tgz" }],
+      "z's manifest last": [{ manifest: "z", until: "/b-1.0.0.tgz" }],
     },
     z: { "z": "z@1.0.5" },
   },
@@ -4491,6 +4492,40 @@ it.each<OrderedShape>([
     orders: {
       "d's manifest last": [{ manifest: "d", until: "/k" }],
       "k's manifest last": [{ manifest: "k", until: "/d-1.0.0.tgz" }],
+    },
+    z: { "z": "z@1.1.0" },
+  },
+  {
+    // Nothing provides z, so the peers share one. What the project asks for counts before what most packages ask for.
+    shape: "the project peers z@^1.0.0, a peers z@^2.0.0, b peers z@^2.0.0",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    files: {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" }, peerDependencies: { z: "^1.0.0" } },
+    },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/b" }],
+      "z's manifest last": [{ manifest: "z", until: "/b-1.0.0.tgz" }],
+    },
+    z: { "z": "z@1.1.0" },
+  },
+  {
+    // c and d are only there for z@2.0.0, so their peers must not be what keeps it. 1.1.0 suits both a and b.
+    shape: "a peers z@^1.0.0, b peers z@>=1.0.0, z@2.0.0 -> c and d, c and d peer z@^2.0.0",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } },
+      c: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      d: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: { "1.0.0": {}, "1.1.0": {}, "2.0.0": { dependencies: { c: "1.0.0", d: "1.0.0" } } },
+    },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/b" }],
+      "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0" },
   },
@@ -4769,6 +4804,142 @@ it("a broken manifest that no dependency needs in the end does not fail the inst
   });
   expect(instancesOf(lock, "x")).toEqual({ "x": "x@1.0.0" });
   expect(instancesOf(lock, "junk")).toEqual({});
+});
+
+function projectOnRegistry(registry: { url: string }, files: Record<string, object>) {
+  return tempDir("lock-peers", {
+    ...Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+  });
+}
+
+// A tarball is resolved after everything else, so a's peer has its turn before `z` is resolved.
+it("a peer that a tarball of the project provides is not looked up in the registry", async () => {
+  using registry = await serveRegistry({ a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } }, z: zVersions });
+  const tarball = `${registry.origin}/z-1.0.0.tgz`;
+  using dir = projectOnRegistry(registry, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0", z: tarball } },
+  });
+  await installWithOwnCache(String(dir));
+  expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({ "z": `z@${tarball}` });
+  expect(registry.requests).not.toContain("/z");
+});
+
+it.each<[string, Hold[]]>([
+  ["before", [{ manifest: "a", until: "/z-9.9.9.tgz" }]],
+  // bun asks for a's tarball once it has resolved a, and goes on to a's peer before it reads another response.
+  ["after", [{ manifest: "z-9.9.9.tgz", until: "/a-1.0.0.tgz" }]],
+])(
+  "a peer is looked up in the registry if the optional tarball that provides it fails %s its turn",
+  async (_, holds) => {
+    const ordered = await registryWithHolds({ a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } }, z: zVersions });
+    using server = ordered.server;
+    ordered.hold(holds);
+    const lock = await freshInstallLock(server, {
+      "package.json": {
+        name: "foo",
+        dependencies: { a: "1.0.0" },
+        optionalDependencies: { z: `${server.url.origin}/z-9.9.9.tgz` },
+      },
+    });
+    expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.1.0" });
+  },
+);
+
+// a loads w's z, so the z@2.0.0 that was resolved for a's peer goes again, with its dependency on `gone`.
+it("a version that is resolved for a peer and then dropped is not downloaded or warned about", async () => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+    z: { "1.0.0": {}, "2.0.0": { dependencies: { gone: "1.0.0" } } },
+  });
+  using dir = projectOnRegistry(registry, {
+    "package.json": { name: "foo", workspaces: ["w"] },
+    "w/package.json": { name: "w", dependencies: { a: "1.0.0", z: "1.0.0" } },
+  });
+  const { err } = await installWithOwnCache(String(dir));
+  expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({ "z": "z@1.0.0" });
+  expect(registry.requests).not.toContain("/z-2.0.0.tgz");
+  expect(err).not.toContain("gone");
+});
+
+it("a peer on an `npm:` alias gets a version in its range next to another version of the package", async () => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { peerDependencies: { zz: "npm:z@^1.0.0" } } },
+    b: { "1.0.0": { dependencies: { z: "2.0.0" } } },
+    z: zVersions,
+  });
+  using dir = projectOnRegistry(registry, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } },
+  });
+  await installWithOwnCache(String(dir));
+  const lock = await file(join(String(dir), "bun.lock")).text();
+  expect({ ...instancesOf(lock, "z"), ...instancesOf(lock, "zz") }).toEqual({ "z": "z@2.0.0", "zz": "z@1.1.0" });
+});
+
+it.each([
+  ["a", "b"],
+  ["b", "a"],
+])(
+  "a peer of %s that only the installed version can serve prints the same whatever the names",
+  async (peer, holder) => {
+    using registry = await serveRegistry({
+      [peer]: { "1.0.0": { peerDependencies: { z: "^9.0.0" } } },
+      [holder]: { "1.0.0": { dependencies: { z: "1.0.0" } } },
+      z: zVersions,
+    });
+    using dir = projectOnRegistry(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } },
+    });
+    const { err } = await installWithOwnCache(String(dir));
+    expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({ "z": "z@1.0.0" });
+    expect(err).not.toContain("No version matching");
+  },
+);
+
+// p loads q's z before and after. The rows that the override moves are resolved after the rest of the install.
+it("a peer of a version that an override brings in shares what the package above it depends on", async () => {
+  using registry = await serveRegistry({
+    p: { "1.0.0": {}, "1.0.1": { peerDependencies: { z: "^2.0.0" } } },
+    q: { "1.0.0": { dependencies: { p: "^1.0.0", z: "1.0.0" } } },
+    z: zVersions,
+  });
+  const packageJson = (p: string) => ({ name: "foo", dependencies: { q: "1.0.0" }, overrides: { p } });
+  using dir = projectOnRegistry(registry, { "package.json": packageJson("1.0.0") });
+  const lockfile = join(String(dir), "bun.lock");
+  await installWithOwnCache(String(dir));
+
+  // Both name the same override, so nothing but the packages of bun.lock disagrees with it.
+  const edited = (await file(lockfile).text()).replace(/("overrides": \{\s*"p": )"1\.0\.0"/, '$1"1.0.1"');
+  expect(edited).toContain('"p": "1.0.1"');
+  await write(lockfile, edited);
+  await write(join(String(dir), "package.json"), JSON.stringify(packageJson("1.0.1")));
+  await installWithOwnCache(String(dir));
+  const lock = await file(lockfile).text();
+  expect({ ...instancesOf(lock, "p"), ...instancesOf(lock, "z") }).toEqual({ "p": "p@1.0.1", "z": "z@1.0.0" });
+});
+
+// x@3.0.0 > y@2.0.0 > x@2.0.0 > y@1.0.0 > x@3.0.0. The last step is y's peer, which takes the project's x. The
+// second y@1.0.0 is below the x@3.0.0 that was nested for the first, so it does not get another.
+it("a dependency cycle that is closed through a required peer ends at the peer", async () => {
+  using registry = await serveRegistry({
+    x: { "1.0.0": {}, "2.0.0": { dependencies: { y: "1.0.0" } }, "3.0.0": { dependencies: { y: "2.0.0" } } },
+    y: { "1.0.0": { peerDependencies: { x: "1.0.0" } }, "2.0.0": { dependencies: { x: "2.0.0" } } },
+  });
+  using dir = projectOnRegistry(registry, { "package.json": { name: "foo", dependencies: { x: "3.0.0" } } });
+  await installWithOwnCache(String(dir));
+  const lock = await file(join(String(dir), "bun.lock")).text();
+  expect({ ...instancesOf(lock, "x"), ...instancesOf(lock, "y") }).toEqual({
+    "x": "x@3.0.0",
+    "y": "y@2.0.0",
+    "y/x": "x@2.0.0",
+    "y/x/y": "y@1.0.0",
+    "y/x/y/x": "x@3.0.0",
+    "y/x/y/x/y": "y@2.0.0",
+    "y/x/y/x/y/x": "x@2.0.0",
+    "y/x/y/x/y/x/y": "y@1.0.0",
+  });
+  await installWithOwnCache(String(dir), "--frozen-lockfile");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(lock);
 });
 
 // Dependencies are resolved in a fixed order, but none of them waits for its turn to start its requests.

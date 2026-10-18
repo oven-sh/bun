@@ -934,7 +934,8 @@ impl Lockfile {
     }
 
     /// The dependency that provides a peer dependency of `owner`, in range or not: the package's own
-    /// dependency of the name, else the root's. Both are resolved before the peer whatever the order.
+    /// dependency of the name, else the root's. Both are resolved before the peer whatever the order,
+    /// except a tarball or a repository, which is returned before it is resolved (`RemotePackages`).
     /// `root_features` tells which of the root's dependencies this install leaves out (`--omit`).
     pub(crate) fn peer_provider(
         &self,
@@ -952,7 +953,13 @@ impl Lockfile {
                     // What a tarball ships is private to the package that ships it.
                     && (package == owner
                         || (!dep.behavior.is_bundled() && dep.behavior.is_enabled(root_features)))
-                    && self.buffers.resolutions[id as usize] != invalid_package_id
+                    && (self.buffers.resolutions[id as usize] != invalid_package_id
+                        || matches!(
+                            dep.version.tag,
+                            dependency::version::Tag::Git
+                                | dependency::version::Tag::Github
+                                | dependency::version::Tag::Tarball
+                        ))
             })
         })
     }
@@ -1691,7 +1698,9 @@ impl Lockfile {
         packages_to_install: Option<&[PackageID]>,
         layout: tree::Layout,
     ) -> Result<tree::Hoisted, tree::SubtreeError> {
+        // Placing a peer resolves it, and the second attempt starts from what the first one did.
         let resolutions = self.buffers.resolutions.clone();
+        let (msgs, errors) = (log.msgs.len(), log.errors);
         for ends_cycles_at_peers in [false, true] {
             if let Some(hoisted) = self.try_hoist::<METHOD>(
                 log,
@@ -1705,11 +1714,13 @@ impl Lockfile {
                 return Ok(hoisted);
             }
             self.buffers.resolutions.clone_from(&resolutions);
+            log.msgs.truncate(msgs);
+            log.errors = errors;
         }
         unreachable!("`found_peer_cycle` is only set without `ends_cycles_at_peers`")
     }
 
-    /// `None` if packages would be nested without end and `ends_cycles_at_peers` can prevent it.
+    /// `None` if packages would be nested without end and `ends_cycles_at_peers` may prevent it.
     fn try_hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -2536,48 +2547,34 @@ impl Lockfile {
 
     #[inline]
     pub(crate) fn mark_exact_pin(&mut self, id: PackageID) {
-        let i = id as usize;
-        if self.exact_pinned.bit_length() <= i {
-            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
-        }
-        self.exact_pinned.set(i);
+        set_growing(&mut self.exact_pinned, id);
     }
 
     pub(crate) fn mark_only_bundled(&mut self, id: PackageID) {
-        let i = id as usize;
-        if self.only_bundled.bit_length() <= i {
-            bun_core::handle_oom(self.only_bundled.resize(i + 1, false));
-        }
-        self.only_bundled.set(i);
+        set_growing(&mut self.only_bundled, id);
     }
 
     pub(crate) fn mark_only_peers(&mut self, id: PackageID) {
-        let i = id as usize;
-        if self.only_peers.bit_length() <= i {
-            bun_core::handle_oom(self.only_peers.resize(i + 1, false));
-        }
-        self.only_peers.set(i);
+        set_growing(&mut self.only_peers, id);
+    }
+
+    pub(crate) fn is_only_for_peers(&self, id: PackageID) -> bool {
+        (self.only_peers).is_set_allow_out_of_bound(id as usize, false)
     }
 
     /// Is the row a peer dependency, or owned by an `only_peers` package?
-    pub(crate) fn is_row_only_for_peers(
-        &self,
-        id: DependencyID,
-        behavior: dependency::Behavior,
-    ) -> bool {
-        behavior.is_peer()
+    pub(crate) fn is_row_only_for_peers(&self, id: DependencyID) -> bool {
+        self.buffers.dependencies[id as usize].behavior.is_peer()
             || (self.only_peers.bit_length() != 0
-                && self.get_parent_pkg_of_dependency(id).is_some_and(|owner| {
-                    self.only_peers
-                        .is_set_allow_out_of_bound(owner as usize, false)
-                }))
+                && (self.get_parent_pkg_of_dependency(id))
+                    .is_some_and(|owner| self.is_only_for_peers(owner)))
     }
 
     /// Another row resolves to `id` now, and so to what `id` depends on.
-    fn unmark_only_peers(&mut self, id: PackageID) {
+    pub(crate) fn unmark_only_peers(&mut self, id: PackageID) {
         let mut stack = vec![id];
         while let Some(id) = stack.pop() {
-            if !(self.only_peers).is_set_allow_out_of_bound(id as usize, false) {
+            if !self.is_only_for_peers(id) {
                 continue;
             }
             self.only_peers.unset(id as usize);
@@ -2635,14 +2632,12 @@ impl Lockfile {
         self.find_package_id(name_hash, version, resolution, false)
     }
 
-    /// `only_bundled` packages ship in another's tarball: skipped unless `resolution` is one.
-    /// So are `only_peers` packages.
-    pub(crate) fn get_package_id_outside_bundles(
+    /// Skips `only_bundled` and `only_peers` packages unless `resolution` is exactly one.
+    pub(crate) fn get_shared_package_id(
         &mut self,
         name_hash: u64,
         version: Option<&DependencyVersion>,
         resolution: &Resolution,
-        is_only_for_peers: bool,
     ) -> Option<PackageID> {
         let found = self.find_package_id(name_hash, version, resolution, true);
         if found.is_some()
@@ -2654,9 +2649,6 @@ impl Lockfile {
         if (id as usize) < self.only_bundled.bit_length() {
             self.only_bundled.unset(id as usize);
         }
-        if !is_only_for_peers {
-            self.unmark_only_peers(id);
-        }
         Some(id)
     }
 
@@ -2665,7 +2657,7 @@ impl Lockfile {
         name_hash: u64,
         version: Option<&DependencyVersion>,
         resolution: &Resolution,
-        skip_only_bundled: bool,
+        skip_private: bool,
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
         let resolutions: &[Resolution] = self.packages.items_resolution();
@@ -2693,13 +2685,11 @@ impl Lockfile {
                 || existing.npm().version.major >= resolution.npm().version.major
         };
         let skipped = |id: PackageID| -> bool {
-            skip_only_bundled
+            skip_private
                 && (self
                     .only_bundled
                     .is_set_allow_out_of_bound(id as usize, false)
-                    || self
-                        .only_peers
-                        .is_set_allow_out_of_bound(id as usize, false))
+                    || self.is_only_for_peers(id))
         };
 
         entry.as_slice().iter().copied().find(|&id| {
@@ -2844,6 +2834,14 @@ pub struct Scratch {
     pub(crate) dependency_list_queue: DependencyQueue,
     /// `bit[dependency_id]`: this resolve reached it below a dependency that the installers filter.
     pub(crate) unplaced_subtree: DynamicBitSet,
+}
+
+fn set_growing(bits: &mut DynamicBitSet, id: PackageID) {
+    let i = id as usize;
+    if bits.bit_length() <= i {
+        bun_core::handle_oom(bits.resize(i + 1, false));
+    }
+    bits.set(i);
 }
 
 pub(crate) type DuplicateCheckerMap =

@@ -3226,8 +3226,8 @@ test.concurrent("ranged peer dependency resolution is stable across installs fro
   // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
   // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
   // of the saved tree) and no-deps@1.1.0 (exact pin via the `nd11` alias). The
-  // fresh resolve binds the peer edge to the highest satisfying version (1.1.0)
-  // in its deferred-peer phase; reloading bun.lock used to re-derive the edge
+  // fresh resolve binds the peer edge to the highest satisfying version
+  // (1.1.0); reloading bun.lock used to re-derive the edge
   // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
   // That silently changed the runtime dependency tree on the second install
   // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
@@ -3452,7 +3452,7 @@ test.concurrent("aliased peer dependency binds to its real package across instal
 });
 
 test.concurrent("optional ranged peer keeps its hoisted-tree binding across installs from bun.lock", async () => {
-  // Optional peers never reach the fresh resolver's deferred-peer phase: it
+  // The fresh resolver leaves an optional peer alone: it
   // returns before the version scan and the edge is bound to the
   // hoisted-tree sibling during tree resolution, which the printed tree's
   // path walk reproduces exactly. With both no-deps@1.0.1 and no-deps@1.1.0
@@ -6470,8 +6470,8 @@ test.concurrent("transitive peer deps are resolved when resolution is fully sync
 // registry, while the manifest cache is keyed by registry URL hash and is not.
 // The cold install then fetches strict-peer-dep's manifest as its last pending
 // task, resolves the package with no new task (tarball already extracted), and
-// defers its peer `no-deps@^2.0.0`. Without the fix nothing wakes the wait
-// loop again and `bun install` hangs in "Resolving dependencies" forever.
+// still has its peer `no-deps@^2.0.0` to resolve. If nothing wakes the wait
+// loop again, `bun install` hangs in "Resolving dependencies" forever.
 test.concurrent("transitive peer resolves when its tarball is cached from another registry", async () => {
   using serverA = serveFixtures();
   using serverB = serveFixtures();
@@ -6505,7 +6505,7 @@ test.concurrent("transitive peer resolves when its tarball is cached from anothe
   expect(strictPeerEntry).toBeDefined();
   expect(usesStrictEntry).toBeDefined();
 
-  // The deferred transitive peer must end up resolved and linked.
+  // The transitive peer must end up resolved and linked.
   expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
   expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),

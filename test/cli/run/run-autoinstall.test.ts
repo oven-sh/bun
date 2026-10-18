@@ -603,7 +603,7 @@ describe.concurrent("auto-install reads every dependency group of the project's 
     expect((await peak("-i")) - without).toBeLessThan(limit);
   });
 
-  // A peer waited for a second pass that auto-install does not have: "Cannot find module 'no-deps'".
+  // Auto-install leaves a peer to the import that needs it. It must not fail: "Cannot find module 'no-deps'".
   test("the peerDependencies of an auto-installed package", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-group-package-peer", {

@@ -2120,6 +2120,34 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
+  // peer-deps-fixed loads w's no-deps before and after the fix.
+  test.concurrent("the peer of a fixed version shares what the workspace above it depends on", async () => {
+    await using server = startRegistry(
+      { "peer-deps-fixed": [adv("<1.0.1")] },
+      { copyVersions: { "peer-deps-fixed": { "1.0.1": "1.0.0" } } },
+    );
+    using dir = await setup(
+      server,
+      { name: "foo", workspaces: ["w"] },
+      {
+        "w/package.json": JSON.stringify({
+          name: "w",
+          dependencies: { "peer-deps-fixed": "^1.0.0", "no-deps": "2.0.0" },
+        }),
+      },
+    );
+    const noDeps = (lockfile: string) => lockfile.match(/"no-deps@[^"]+"/g);
+    let lockfile = await lock(dir);
+    expect(lockfile).toContain('"peer-deps-fixed@1.0.0"');
+    expect(noDeps(lockfile)).toEqual(['"no-deps@2.0.0"']);
+
+    const { exitCode } = await auditFix(dir);
+    lockfile = await lock(dir);
+    expect(lockfile).toContain('"peer-deps-fixed@1.0.1"');
+    expect(noDeps(lockfile)).toEqual(['"no-deps@2.0.0"']);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("peer dependency edges constrain the fix and are re-pointed", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" } });

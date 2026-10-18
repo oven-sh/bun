@@ -20,8 +20,8 @@ impl Resolution {
     /// True when this resolution can satisfy `dep_version`: npm ranges by
     /// semver, git/github by exact repo equality. Any other kind pairing
     /// (workspace, folder, tarball, dist-tag, …) never satisfies. This is
-    /// the comparison the resolver's deferred-peer phase uses to bind peer
-    /// edges against already-resolved packages.
+    /// the comparison that binds a peer to a package the lockfile has
+    /// (`Lockfile::package_satisfying`).
     pub(crate) fn satisfies_dependency_version(
         &self,
         dep_version: &dependency::Version,

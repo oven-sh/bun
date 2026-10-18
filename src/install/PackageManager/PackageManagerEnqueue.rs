@@ -56,6 +56,9 @@ fn bind_existing(
     package_id: PackageID,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
+    if !this.lockfile.is_row_only_for_peers(dependency_id) {
+        this.lockfile.unmark_only_peers(package_id);
+    }
     success_fn(this, dependency_id, package_id);
     Ok(Some(ResolvedPackageResult {
         // read after `success_fn`, which can change the packages array
@@ -3130,17 +3133,12 @@ fn get_or_put_resolved_package_with_find_result(
         Some(version)
     };
     let inside_bundle = this.lockfile.is_row_inside_bundle(dependency_id, behavior);
-    let only_for_peers = (this.lockfile).is_row_only_for_peers(dependency_id, behavior);
     let existing = if inside_bundle {
         this.lockfile
             .get_package_id(name_hash, reusable_range, &npm_resolution)
     } else {
-        this.lockfile.get_package_id_outside_bundles(
-            name_hash,
-            reusable_range,
-            &npm_resolution,
-            only_for_peers,
-        )
+        this.lockfile
+            .get_shared_package_id(name_hash, reusable_range, &npm_resolution)
     };
     if let Some(id) = existing {
         // The existing entry may come from an abbreviated manifest or a pre-`libc` lockfile.
@@ -3184,6 +3182,7 @@ fn get_or_put_resolved_package_with_find_result(
     if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
         this.lockfile.mark_exact_pin(package_id);
     }
+    let only_for_peers = this.lockfile.is_row_only_for_peers(dependency_id);
     if only_for_peers {
         this.lockfile.mark_only_peers(package_id);
     }
@@ -3220,6 +3219,8 @@ fn get_or_put_resolved_package_with_find_result(
             install::PreinstallState::Done => None,
             // If a placed dependency needs it too, the install phase fetches and patches it.
             _ if unplaced => None,
+            // `dedupe::collapse_appended` may drop it. If not, the install phase fetches it.
+            _ if only_for_peers => None,
             // e.g., --lockfile-only
             install::PreinstallState::Extract
                 if !this.options.do_.contains(Do::PREFETCH_RESOLVED_TARBALLS) =>
@@ -3274,10 +3275,11 @@ enum Settled {
 }
 
 /// `None` if the dependency can only be resolved from its manifest. `request_ahead` asks the same
-/// question as `get_or_put_resolved_package`, so it requests no manifest that resolving would not.
+/// question as `get_or_put_resolved_package`, so it requests no manifest that resolving would not,
+/// except for a peer: what provides one may still be in the queue.
 #[inline(always)]
 fn settle_without_manifest(
-    this: &mut PackageManager,
+    this: &PackageManager,
     name_hash: PackageNameHash,
     dependency: &Dependency,
     version: &dependency::Version,
@@ -3287,7 +3289,7 @@ fn settle_without_manifest(
     latest_for_target: bool,
 ) -> Option<Settled> {
     if dependency.behavior.is_peer() && !latest_for_target && !version_was_replaced {
-        if let Some(provided) = peer_provider(this, name_hash, dependency, version, dependency_id) {
+        if let Some(provided) = settle_peer(this, name_hash, dependency, version, dependency_id) {
             return Some(provided);
         }
     }
@@ -3315,7 +3317,7 @@ fn settle_without_manifest(
 /// The package that a peer takes without a look at the registry. `None` if it is to be resolved like
 /// any other dependency, which may add a version that `dedupe::collapse_appended` drops again: only
 /// that can tell whether the peers of this name share a version (`dedupe::Pass::find_spare`).
-fn peer_provider(
+fn settle_peer(
     this: &PackageManager,
     name_hash: PackageNameHash,
     peer: &Dependency,
@@ -3323,33 +3325,38 @@ fn peer_provider(
     row: DependencyID,
 ) -> Option<Settled> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let in_range = lockfile.package_satisfying(name_hash, range, |id| {
-        !(lockfile.only_peers).is_set_allow_out_of_bound(id as usize, false)
-    });
+    let in_range =
+        lockfile.package_satisfying(name_hash, range, |id| !lockfile.is_only_for_peers(id));
     if let Some(id) = in_range {
         return Some(Settled::Package(id));
     }
     let owner = lockfile.get_parent_pkg_of_dependency(row)?;
     let root_features = this.options.local_package_features;
-    if let Some(provider) = lockfile.peer_provider(owner, peer.name_hash, root_features) {
-        let provider = lockfile.buffers.resolutions[provider as usize];
-        match lockfile.packages.items_resolution()[provider as usize].tag {
-            ResolutionTag::Npm | ResolutionTag::Workspace | ResolutionTag::Root => {
+    if let Some(row_of_provider) = lockfile.peer_provider(owner, peer.name_hash, root_features) {
+        let provider = lockfile.buffers.resolutions[row_of_provider as usize];
+        let resolution = lockfile.packages.items_resolution().get(provider as usize);
+        match resolution.map(|resolution| resolution.tag) {
+            Some(ResolutionTag::Npm | ResolutionTag::Workspace | ResolutionTag::Root) => {
                 // A tag names one version, whatever is installed.
                 if range.tag != dependency::version::Tag::DistTag {
                     let highest = highest_peer_candidate(lockfile, name_hash, range);
                     return Some(Settled::Package(highest.unwrap_or(provider)));
                 }
             }
-            _ => return Some(Settled::ProvidedLocally),
+            Some(_) => return Some(Settled::ProvidedLocally),
+            None if this.waits_for_remote_package(row_of_provider) => {
+                return Some(Settled::ProvidedLocally);
+            }
+            // It has failed.
+            None => {}
         }
     }
     alias_of_every_dependent(lockfile, peer, range, owner).map(Settled::Package)
 }
 
-/// If every package that depends on `owner` installs an `npm:` alias under the name of its peer,
-/// those aliases provide the peer, and this returns the package they resolve to. An alias that some
-/// other package declares does not count.
+/// If every package that depends on `owner` so far installs an `npm:` alias under the name of its
+/// peer, those aliases provide the peer, and this returns the package they resolve to. An alias that
+/// some other package declares does not count.
 fn alias_of_every_dependent(
     lockfile: &Lockfile::Lockfile,
     peer: &Dependency,
@@ -3367,6 +3374,7 @@ fn alias_of_every_dependent(
         {
             let alias = rows.find(|&id| {
                 deps[id].name_hash == peer.name_hash
+                    && !deps[id].behavior.is_peer()
                     && deps[id].version.try_npm().is_some_and(|npm| npm.is_alias)
                     && resolutions[id] != invalid_package_id
             })?;
@@ -4033,8 +4041,12 @@ impl PackageManager {
     /// the log until `log_held` knows whether `row` is still in the tree.
     #[cold]
     pub(crate) fn hold_log_since(&mut self, mark: usize, row: DependencyID) {
-        // Dedupe never drops what a package.json of the project asks for.
-        if self.held_messages.is_none() || self.lockfile.is_workspace_dependency(row) {
+        // Dedupe never drops what a package.json of the project asks for. A peer waits anyway.
+        let is_peer = self.lockfile.buffers.dependencies[row as usize]
+            .behavior
+            .is_peer();
+        if self.held_messages.is_none() || (self.lockfile.is_workspace_dependency(row) && !is_peer)
+        {
             return;
         }
         let msgs = self.take_log_since(mark);
@@ -4075,9 +4087,23 @@ impl PackageManager {
             (lockfile.get_parent_pkg_of_dependency(row))
                 .is_none_or(|owner| tree.is_set(owner as usize))
         };
+        let is_served_peer = |row: DependencyID| {
+            let dep = &lockfile.buffers.dependencies[row as usize];
+            dep.behavior.is_peer()
+                && (lockfile.packages_named(dep.name_hash).iter())
+                    .any(|&id| tree.is_set(id as usize))
+        };
+        // No range shared the package, so what it lacked changed nothing that is still there.
+        let was_only_for_peers = |row: DependencyID| {
+            (lockfile.get_parent_pkg_of_dependency(row)).is_some_and(|owner| {
+                !tree.is_set(owner as usize) && lockfile.is_only_for_peers(owner)
+            })
+        };
         let log = self.log_mut();
         for (about, msgs) in held {
             let is_needed = match about {
+                // A peer that the registry has no version for takes what there is.
+                HeldAbout::Row(row) if is_served_peer(row) || was_only_for_peers(row) => continue,
                 HeldAbout::Row(row) => is_in_tree(row),
                 // A dependency of the project needed the manifest later on and logged the error.
                 HeldAbout::Task(id)
@@ -4088,6 +4114,15 @@ impl PackageManager {
                     continue;
                 }
                 HeldAbout::Task(id) => match self.task_queue.get(&id) {
+                    Some(waiters)
+                        if !waiters.is_empty()
+                            && waiters.iter().all(|waiter| match *waiter {
+                                TaskCallbackContext::Dependency(row) => was_only_for_peers(row),
+                                _ => false,
+                            }) =>
+                    {
+                        continue;
+                    }
                     Some(waiters) if !waiters.is_empty() => {
                         waiters.iter().any(|waiter| match *waiter {
                             TaskCallbackContext::Dependency(row)

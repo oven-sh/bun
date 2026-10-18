@@ -23,8 +23,11 @@ struct Pass<'a> {
     pinned: &'a DynamicBitSet,
     /// Versions no edge may move onto; see `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
-    /// `collapse_appended`: edges onto loaded packages (ids below) and root/workspace rows stay.
+    /// `collapse_appended`: edges onto loaded packages (ids below) stay, and so do root/workspace
+    /// rows other than peers.
     frozen_below: Option<PackageID>,
+    /// `collapse_appended_peers`.
+    moves_only_peers: bool,
     /// Per group: each edge with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
     candidates: Vec<PackageID>,
@@ -52,6 +55,7 @@ impl<'a> Pass<'a> {
         pinned: &'a DynamicBitSet,
         closed: &'a DynamicBitSet,
         frozen_below: Option<PackageID>,
+        moves_only_peers: bool,
         max_edges: usize,
     ) -> Pass<'a> {
         let package_count = lockfile.packages.len();
@@ -63,6 +67,7 @@ impl<'a> Pass<'a> {
             pinned,
             closed,
             frozen_below,
+            moves_only_peers,
             edges: vec![Vec::new(); groups.len()],
             candidates: Vec::with_capacity(max_candidates),
             edge_count: 0,
@@ -146,6 +151,24 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
+    fn is_direct(&self, owner: PackageID) -> bool {
+        matches!(
+            self.lockfile.packages.items_resolution()[owner as usize].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        )
+    }
+
+    fn candidate_index(&self, id: PackageID) -> usize {
+        (self.candidates.iter().position(|&c| c == id))
+            .expect("edge target is a live candidate of its group")
+    }
+
+    // May an edge that resolves to candidate `cur_c` resolve to candidate `c`, as far as `c` goes?
+    fn is_open(&self, c: usize, cur_c: usize) -> bool {
+        let id = self.candidates[c] as usize;
+        (c == cur_c || !self.closed.is_set(id)) && !self.spare.is_set(id)
+    }
+
     // `collapse_appended`: a bundled edge neither votes nor holds its target.
     fn counts(&self, dep: &Dependency) -> bool {
         self.frozen_below.is_none() || !dep.behavior.is_bundled()
@@ -192,16 +215,9 @@ impl<'a> Pass<'a> {
         let lockfile = self.lockfile;
         let groups = self.groups;
         let pinned = self.pinned;
-        let closed = self.closed;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_res = lockfile.packages.items_resolution();
         let deps = lockfile.buffers.dependencies.as_slice();
-        let is_direct = |owner: PackageID| {
-            matches!(
-                pkg_res[owner as usize].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            )
-        };
 
         self.collect_edges(cur);
 
@@ -237,16 +253,13 @@ impl<'a> Pass<'a> {
             for (e, &(dep_id, owner)) in edges.iter().enumerate() {
                 let dep = &deps[dep_id as usize];
                 let target = cur[dep_id as usize];
-                let cur_c = self
-                    .candidates
-                    .iter()
-                    .position(|&c| c == target)
-                    .expect("edge target is a live candidate of its group");
+                let cur_c = self.candidate_index(target);
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
                 let frozen = self.frozen_below.is_some_and(|below| {
-                    (is_direct(owner) && !dep.behavior.is_peer()) || target < below
+                    ((self.is_direct(owner) || self.moves_only_peers) && !dep.behavior.is_peer())
+                        || target < below
                 });
                 let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
                 {
@@ -279,8 +292,7 @@ impl<'a> Pass<'a> {
                         };
                         for c in in_question {
                             let id = self.candidates[c] as usize;
-                            if (c == cur_c || !closed.is_set(id))
-                                && !self.spare.is_set(id)
+                            if self.is_open(c, cur_c)
                                 && query.satisfies(pkg_res[id].npm().version, buf, buf)
                             {
                                 self.sat.set(row + c);
@@ -302,25 +314,24 @@ impl<'a> Pass<'a> {
 
             // No version in range: an unmet peer goes along with the other peers, or with a version
             // that is installed with or without peers (`Lockfile::only_peers`).
-            let is_shared: Vec<bool> = (0..if unmet_peers.is_empty() { 0 } else { n })
-                .map(|c| {
-                    let id = self.candidates[c] as usize;
-                    !(lockfile.only_peers).is_set_allow_out_of_bound(id, false)
-                        || edges.iter().enumerate().any(|(e, &(dep_id, _))| {
-                            deps[dep_id as usize].behavior.is_peer()
-                                && !unmet_peers.contains(&e)
-                                && self.sat.is_set(e * n + c)
-                        })
-                })
-                .collect();
-            for &e in &unmet_peers {
-                let is_open = |c: usize| {
-                    let id = self.candidates[c] as usize;
-                    (c == self.cur_c[e] || !closed.is_set(id)) && !self.spare.is_set(id)
-                };
-                let any_shared = (0..n).any(|c| is_open(c) && is_shared[c]);
-                for c in (0..n).filter(|&c| is_open(c) && (!any_shared || is_shared[c])) {
-                    self.sat.set(e * n + c);
+            if !unmet_peers.is_empty() {
+                let is_shared: Vec<bool> = (0..n)
+                    .map(|c| {
+                        !lockfile.is_only_for_peers(self.candidates[c])
+                            || edges.iter().enumerate().any(|(e, &(dep_id, _))| {
+                                deps[dep_id as usize].behavior.is_peer()
+                                    && self.sat.is_set(e * n + c)
+                            })
+                    })
+                    .collect();
+                for &e in &unmet_peers {
+                    let cur_c = self.cur_c[e];
+                    let any_shared = (0..n).any(|c| self.is_open(c, cur_c) && is_shared[c]);
+                    for c in 0..n {
+                        if self.is_open(c, cur_c) && (!any_shared || is_shared[c]) {
+                            self.sat.set(e * n + c);
+                        }
+                    }
                 }
             }
 
@@ -335,7 +346,7 @@ impl<'a> Pass<'a> {
 
             self.protected.clear();
             for (e, &(_, owner)) in edges.iter().enumerate() {
-                if !is_direct(owner)
+                if !self.is_direct(owner)
                     || !self.movable.is_set(e)
                     || self.survivors.is_set(self.cur_c[e])
                 {
@@ -410,19 +421,21 @@ impl<'a> Pass<'a> {
 
     /// `collapse_appended`. The peers of one name share a version, in range or not, because a second
     /// copy would split a package from its plugins: `@octokit/rest` and its plugins share one
-    /// `@octokit/core`. In its turn a peer could not tell what else asks for the name, so it may have
-    /// added a version of its own. This marks in `spare` the added versions that only peers resolve
-    /// to and that go:
+    /// `@octokit/core`. This marks in `spare` the versions that only peers resolve to and that go:
     /// - all of them, if the highest of the other versions satisfies a peer;
     /// - else the ones that satisfy no peer. A peer does not count if a package above it depends on
     ///   the name: `react@17` in a workspace is used by every library under that workspace.
     /// - If there are no other versions, all but one: peers that nothing provides share a version.
     ///   It is the one that satisfies the most peers, and the highest of several. The peers of the
-    ///   project count first, then those of the packages that are installed with or without peers
-    ///   (`Lockfile::only_peers`). A version could otherwise stay for a package below itself.
+    ///   packages that are not `Lockfile::only_peers` count first. A version could otherwise stay
+    ///   for a package below itself.
     ///
-    /// The first two look only at what is installed with or without peers.
-    fn find_spare(&mut self, cur: &[PackageID], live: &DynamicBitSet, below: PackageID) {
+    /// An `only_peers` package is not one of the other versions, has no peer that the highest
+    /// satisfies, and is not above anything.
+    fn find_spare(&mut self, cur: &[PackageID], live: &DynamicBitSet) {
+        let Some(below) = self.frozen_below else {
+            return;
+        };
         live.copy_into(&mut self.voters);
         self.collect_edges(cur);
         for (g, group) in self.groups.iter().enumerate() {
@@ -449,48 +462,30 @@ impl<'a> Pass<'a> {
         let deps = lockfile.buffers.dependencies.as_slice();
         let candidates = self.candidates.as_slice();
         let n = candidates.len();
-        let index_of = |id: PackageID| candidates.iter().position(|&c| c == id);
-        let is_direct = |owner: PackageID| {
-            matches!(
-                pkg_res[owner as usize].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            )
-        };
 
         let mut spare: Vec<bool> = (candidates.iter())
             .map(|&id| id >= below && !self.pinned.is_set(id as usize))
             .collect();
-        // What bun.lock has is only left over from peers that may have changed since.
-        let mut is_leftover = spare.contains(&false);
+        // Only peers of packages other than the root resolve to the versions of bun.lock, usually
+        // because an earlier install added them for the same peers.
+        let mut is_leftover = candidates.iter().any(|&id| id < below);
         for &(dep_id, owner) in edges {
             let dep = &deps[dep_id as usize];
             let target = cur[dep_id as usize];
             is_leftover &= dep.behavior.is_peer() && (owner != 0 || target >= below);
             // A regular dependency holds its version, and so does a peer without a range (`latest`).
-            if (!dep.behavior.is_peer() || effective_npm_range(lockfile, dep_id, dep).is_none())
-                && let Some(c) = index_of(target)
-            {
-                spare[c] = false;
+            if !dep.behavior.is_peer() || effective_npm_range(lockfile, dep_id, dep).is_none() {
+                spare[self.candidate_index(target)] = false;
             }
         }
         if is_leftover {
-            // A range that the user has edited gets what it asks for.
+            // Then a peer of the project gets what it asks for: its range may have been edited.
             for &(dep_id, owner) in edges {
-                if is_direct(owner)
-                    && let Some(c) = index_of(cur[dep_id as usize])
-                {
-                    spare[c] = false;
+                if self.is_direct(owner) {
+                    spare[self.candidate_index(cur[dep_id as usize])] = false;
                 }
             }
         }
-        // The peers of a spare version move onto one of the others.
-        let is_open = |c: usize| !self.closed.is_set(candidates[c] as usize);
-        let ids = |spare: &[bool]| -> Vec<PackageID> {
-            (0..n)
-                .filter(|&c| spare[c] && (0..n).any(|other| !spare[other] && is_open(other)))
-                .map(|c| candidates[c])
-                .collect()
-        };
         if !spare.contains(&true) {
             return Vec::new();
         }
@@ -499,10 +494,19 @@ impl<'a> Pass<'a> {
             let version = pkg_res[candidates[c] as usize].npm().version;
             range.npm().version.satisfies(version, buf, buf)
         };
-        let is_only_for_peers =
-            |id: PackageID| (lockfile.only_peers).is_set_allow_out_of_bound(id as usize, false);
-        let highest_other =
-            (0..n).find(|&c| !spare[c] && is_open(c) && !is_only_for_peers(candidates[c]));
+        let is_closed = |c: usize| self.closed.is_set(candidates[c] as usize);
+        // The peers of a spare version move onto one of the others.
+        let ids = |spare: &[bool]| -> Vec<PackageID> {
+            if !(0..n).any(|c| !spare[c] && !is_closed(c)) {
+                return Vec::new();
+            }
+            (0..n)
+                .filter(|&c| spare[c])
+                .map(|c| candidates[c])
+                .collect()
+        };
+        let highest_other = (0..n)
+            .find(|&c| !spare[c] && !is_closed(c) && !lockfile.is_only_for_peers(candidates[c]));
         let name_hash = lockfile.packages.items_name_hash()[candidates[0] as usize];
         let mut dependents: Vec<PackageID> = Vec::new();
         let mut peers: Vec<(PackageID, dependency::Version)> = Vec::new();
@@ -510,10 +514,15 @@ impl<'a> Pass<'a> {
             if !self.voters.is_set(owner) {
                 continue;
             }
-            let counts = !is_only_for_peers(owner as PackageID);
+            let counts = !lockfile.is_only_for_peers(owner as PackageID);
             for id in list.begin()..list.end() {
                 let dep = &deps[id as usize];
-                if dep.name_hash != name_hash {
+                // `"alias": "npm:name@range"` asks for a version of the name as well.
+                let is_alias = dep.behavior.is_peer()
+                    && dep.name_hash != name_hash
+                    && self.group_of.get(cur[id as usize] as usize)
+                        == self.group_of.get(candidates[0] as usize);
+                if dep.name_hash != name_hash && !is_alias {
                     continue;
                 }
                 if !dep.behavior.is_peer() {
@@ -521,7 +530,7 @@ impl<'a> Pass<'a> {
                         dependents.push(owner as PackageID);
                     }
                 } else if let Some(range) = effective_npm_range(lockfile, id, dep) {
-                    if counts && highest_other.is_some_and(|c| accepts(&range, c)) {
+                    if counts && !is_alias && highest_other.is_some_and(|c| accepts(&range, c)) {
                         return ids(&spare);
                     }
                     if !dep.behavior.is_optional_peer() {
@@ -542,8 +551,8 @@ impl<'a> Pass<'a> {
         for c in (0..n).filter(|&c| spare[c]) {
             for &(owner, ref range) in &peers {
                 if !provided.is_set(owner as usize) && accepts(range, c) {
-                    scores[c].0 += is_direct(owner) as usize;
-                    scores[c].1 += !is_only_for_peers(owner) as usize;
+                    scores[c].0 += self.is_direct(owner) as usize;
+                    scores[c].1 += !lockfile.is_only_for_peers(owner) as usize;
                     scores[c].2 += 1;
                 }
             }
@@ -614,7 +623,11 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> Report {
+fn dedupe_lockfile(
+    lockfile: &mut Lockfile,
+    frozen_below: Option<PackageID>,
+    moves_only_peers: bool,
+) -> Report {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let checked = pkg_res.len();
@@ -701,11 +714,10 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
                 &pinned,
                 &closed,
                 frozen_below,
+                moves_only_peers,
                 max_edges,
             );
-            if let Some(below) = frozen_below {
-                pass.find_spare(&cur, &live, below);
-            }
+            pass.find_spare(&cur, &live);
             loop {
                 cur = pass.settle(&cur, &live);
                 let after = reachable(lockfile, &cur, frozen_below);
@@ -1168,7 +1180,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         refuse_out_of_date(manager);
     }
 
-    let report = dedupe_lockfile(&mut manager.lockfile, None);
+    let report = dedupe_lockfile(&mut manager.lockfile, None, false);
     if report.rows.is_empty() {
         report_already_deduplicated(manager, &report);
     }
@@ -1218,12 +1230,22 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
 
 /// After resolution: the versions appended this session, onto the fewest that satisfy their edges.
 pub fn collapse_appended(manager: &mut PackageManager) {
+    collapse(manager, false);
+}
+
+/// The same where the other dependencies were moved to their versions on purpose: only what
+/// `Pass::find_spare` is about.
+pub fn collapse_appended_peers(manager: &mut PackageManager) {
+    collapse(manager, true);
+}
+
+fn collapse(manager: &mut PackageManager, moves_only_peers: bool) {
     let lockfile = &mut *manager.lockfile;
     let frozen_below = lockfile.loaded_package_count;
     if lockfile.packages.len() as PackageID <= frozen_below {
         return;
     }
-    let report = dedupe_lockfile(lockfile, Some(frozen_below));
+    let report = dedupe_lockfile(lockfile, Some(frozen_below), moves_only_peers);
     for row in &report.rows {
         bun_output::scoped_log!(
             PackageManager,

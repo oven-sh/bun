@@ -1369,7 +1369,7 @@ fn run_tasks_erased(
                             .str(&manager.lockfile.packages.items_name()[package_id as usize]),
                     ))
                 {
-                    // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
+                    // What still waits for the manifest of that name.
                     for item in core::mem::take(dependency_list_entry).iter() {
                         manager.process_dependency_list_item(item, None)?;
                     }

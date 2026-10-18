@@ -112,7 +112,13 @@ function getContextOptions(options) {
   if (!options) {
     return {};
   }
-  const { contextName: name, contextOrigin: origin, contextCodeGeneration, microtaskMode, importModuleDynamically } = options;
+  const {
+    contextName: name,
+    contextOrigin: origin,
+    contextCodeGeneration,
+    microtaskMode,
+    importModuleDynamically,
+  } = options;
   const contextOptions = { name, origin, codeGeneration: undefined, microtaskMode, importModuleDynamically };
   if (name !== undefined) {
     validateString(name, "options.contextName");

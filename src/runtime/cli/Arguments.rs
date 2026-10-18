@@ -665,7 +665,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--environment <STR>              DOM for test files: 'node' (default, no DOM), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
     ),
     parse_param!(
-        "--globals <STR>                  Module that 'test', 'expect' and the other globals come from: 'bun' (default) uses \"vitest\" in files that import from it and \"bun:test\" elsewhere, 'vitest' uses it everywhere."
+        "--globals <STR>?                 Module that 'test', 'expect' and the other globals come from: 'bun' (default) uses \"vitest\" in files that import from it and \"bun:test\" elsewhere, 'vitest' uses it everywhere."
     ),
     parse_param!(
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
@@ -2034,7 +2034,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         };
         ctx.test_options.environment = Some(environment);
     }
-    if let Some(name) = args.option(b"--globals") {
+    // Vitest's --globals is a boolean, and Bun always defines the globals.
+    let globals = args.option(b"--globals");
+    if let Some(name) = globals.filter(|name| !matches!(*name, b"" | b"true" | b"false")) {
         let Some(globals) = TestGlobals::from_name(name) else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: --globals expects 'bun' or 'vitest', received \"{}\"",

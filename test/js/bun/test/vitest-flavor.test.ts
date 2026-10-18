@@ -3453,6 +3453,18 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
       exitCodes: [1, 1, 0],
     });
   });
+
+  test("accepts Vitest's true and false, which change nothing", async () => {
+    const runs = await Promise.all([
+      runTests({ "a.test.js": file, "bunfig.toml": `[test]\nglobals = true\n` }),
+      runTests({ "a.test.js": file, "bunfig.toml": `[test]\nglobals = false\n` }),
+      runTests({ "a.test.js": file }, ["--globals"]),
+      runTests({ "a.test.js": file }, ["--globals=true"]),
+      runTests({ "a.test.js": file }, ["--globals=false"]),
+      runTests({ "a.test.js": file }, ["--globals", "a.test.js"]),
+    ]);
+    for (const { log, exitCode } of runs) expect({ log, exitCode }).toEqual({ log: ofBun, exitCode: 0 });
+  });
 });
 
 // Testing Library's waitFor() takes a global `jest` to mean Jest's fake timers and advances them itself while waiting.

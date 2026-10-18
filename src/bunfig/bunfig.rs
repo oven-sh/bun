@@ -505,7 +505,10 @@ impl<'a> Parser<'a, '_> {
                     }
                 }
 
-                if let Some(expr) = test.get(b"globals") {
+                // Vitest's `globals` is a boolean, and Bun always defines the globals.
+                if let Some(expr) = test.get(b"globals")
+                    && !matches!(expr.data, ExprData::EBoolean(_))
+                {
                     self.expect_string(&expr)?;
                     let name = expr.as_string(self.bump).unwrap_or(b"");
                     let Some(globals) = TestGlobals::from_name(name) else {

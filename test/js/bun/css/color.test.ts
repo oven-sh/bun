@@ -686,15 +686,19 @@ describe("rgb() channel order and legacy syntax", () => {
   });
 });
 
-// A calculation that adds a <number> to a <percentage> has no value. It was folded to NaN, which
-// gave the wrong colors "#000", "#000" and "oklch(none .152244 34.675)". The two relative colors
-// are valid CSS: a channel keyword is a <number> there, and the parser reads it as a <percentage>.
-test.each(["rgb(calc(10 + 10%) 0 0)", "hsl(from blue h s calc(l + 20))", "oklch(from #ff876a calc(l - .08) c h)"])(
-  "%s has a calculation that is not reduced and is null",
-  input => {
-    expect(color(input, "css")).toBeNull();
-  },
-);
+// A <number> cannot be added to a <percentage>, so this is not a color.
+test("a calculation that adds a number to a percentage is null", () => {
+  expect(color("rgb(calc(10 + 10%) 0 0)", "css")).toBeNull();
+});
+
+// These are null: the parser reads a channel keyword as a <percentage> where the channel takes
+// only one, and a <number> cannot be added to it. https://github.com/oven-sh/bun/pull/45362
+test.todo.each([
+  ["hsl(from blue h s calc(l + 20))", "#66f"],
+  ["lab(from lab(50% 10 20) calc(l + 20) a b)", "lab(70% 10 20)"],
+])("%s is %s", (input, expected) => {
+  expect(color(input, "css")).toBe(expected);
+});
 
 describe("conversions between color spaces", () => {
   // Each case converts a color whose channels all differ, so a channel landing

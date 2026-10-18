@@ -189,8 +189,7 @@ describe("css tests", () => {
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
 
-    // A <number> and a <percentage> cannot be added. The declaration is left
-    // as written: the sum was evaluated to NaN and printed as 0.
+    // A <number> and a <percentage> cannot be added. The declaration is left as written.
     minify_test(`a { opacity: calc(50% + 1) }`, `a{opacity:calc(50% + 1)}`);
     minify_test(`a { opacity: calc(1 - 50%) }`, `a{opacity:calc(1 - 50%)}`);
     minify_test(`a { color: rgb(calc(10 + 10%) 0 0) }`, `a{color:rgb(calc(10 + 10%)0 0)}`);
@@ -202,7 +201,7 @@ describe("css tests", () => {
       `a{color:rgb(from #369 r g calc(b + max(10,20%)))}`,
     );
     // A channel that takes only a <percentage> reads its keyword of a relative color as one, so
-    // `calc(l + 20)` is such a sum too. The channel was printed as `none`, or the color as `#000`.
+    // `calc(l + 20)` is such a sum too.
     minify_test(`a { color: lab(from red calc(l + 20) a b) }`, `a{color:lab(from red calc(l + 20)a b)}`);
     minify_test(`a { color: lch(from red calc(l + 20) c h) }`, `a{color:lch(from red calc(l + 20)c h)}`);
     minify_test(`a { color: oklab(from red calc(l + .1) a b) }`, `a{color:oklab(from red calc(l + .1)a b)}`);
@@ -213,7 +212,7 @@ describe("css tests", () => {
     minify_test(`a { color: hwb(from blue h w calc(b + 20)) }`, `a{color:hwb(from blue h w calc(b + 20))}`);
     minify_test(`a { opacity: calc(50% + 25%) }`, `a{opacity:.75}`);
     minify_test(`a { opacity: calc(50% * 1.5) }`, `a{opacity:.75}`);
-    // Every other reader of a <percentage> keeps the declaration as written too. They printed `0%`.
+    // Every other reader of a <percentage> keeps the declaration as written too.
     minify_test(`a { font-stretch: calc(50% + 1) }`, `a{font-stretch:calc(50% + 1)}`);
     minify_test(`a { scale: 1 calc(50% + 1) }`, `a{scale:1 calc(50% + 1)}`);
     minify_test(`a { transform: scale(calc(50% + 1)) }`, `a{transform:scale(calc(50% + 1))}`);
@@ -223,16 +222,15 @@ describe("css tests", () => {
       `@font-face { font-family: x; src: url(a.woff); font-stretch: calc(50% + 1); }`,
       `@font-face{font-family:x;src:url(a.woff);font-stretch:calc(50% + 1)}`,
     );
-    // A keyframe with such a selector is dropped, as a browser drops it. It was printed as `0%`.
+    // A keyframe with such a selector is dropped. Chrome drops a keyframe whose selector is a math function.
     minify_test(`@keyframes k { calc(50% + 1) { color: red } to { color: blue } }`, `@keyframes k{to{color:#00f}}`);
     minify_test(`@keyframes k { calc(50% + 25%) { color: red } }`, `@keyframes k{75%{color:red}}`);
-    // A typed `initial-value` has no unparsed form: the rule is an error. It was built with `0%`, `#000` or `scale(0,0)`.
+    // A typed `initial-value` has no unparsed form: the rule is an error.
+    const property = (syntax: string, value: string) =>
+      cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
     test("@property with an initial-value that adds a <number> to a <percentage>", () => {
-      const property = (syntax: string, value: string) =>
-        cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
       expect(() => property("<percentage>", "calc(50% + 1)")).toThrow("Unexpected token: calc(");
       expect(() => property("<color>", "rgb(calc(10 + 10%) 0 0)")).toThrow("Unexpected token: rgb(");
-      expect(() => property("<color>", "hsl(from blue h s calc(l + 20))")).toThrow("Unexpected token: hsl(");
       expect(() => property("<image>", "linear-gradient(rgb(calc(10 + 10%) 0 0), red)")).toThrow(
         "Unexpected token: linear-gradient(",
       );
@@ -244,6 +242,16 @@ describe("css tests", () => {
       // The universal syntax has no type, so the value stays as written.
       expect(property("*", "calc(50% + 1)")).toBe(
         '@property --p{syntax:"*";inherits:false;initial-value:calc(50% + 1)}',
+      );
+    });
+    // These two values are valid, and fail with `Unexpected token: hsl(` and `Unexpected token: calc(`.
+    // https://github.com/oven-sh/bun/pull/45807 keeps a typed value that no component matches as written.
+    test.todo("@property with a valid initial-value that is not reduced", () => {
+      expect(property("<color>", "hsl(from blue h s calc(l + 20))")).toBe(
+        '@property --p{syntax:"<color>";inherits:false;initial-value:hsl(from blue h s calc(l + 20))}',
+      );
+      expect(property("<percentage>", "calc(50% + abs(-10%))")).toBe(
+        '@property --p{syntax:"<percentage>";inherits:false;initial-value:calc(50% + abs(-10%))}',
       );
     });
   });

@@ -218,7 +218,7 @@ int main(int argc, char **argv) {
       long n = ptrace(PTRACE_GET_SYSCALL_INFO, tid, sizeof info, &info);
       if (n > 0 && info.op == PTRACE_SYSCALL_INFO_ENTRY) {
         request = PTRACE_SYSCALL;
-      } else {
+      } else if (n > 0 && info.op == PTRACE_SYSCALL_INFO_EXIT) {
         set_return(tid, -ENOENT);
       }
     } else if (sig == SIGTRAP || sig == SIGSTOP) {

@@ -1798,7 +1798,7 @@ describe("DONT_CONTEXTIFY", () => {
 
 describe("a context's global proxy passed as a context", () => {
   // The unfixed build overflows the stack, so the cases that used to crash run in a child process.
-  test("createContext(globalProxy) creates a new context that reads through the proxy", async () => {
+  test.concurrent("createContext(globalProxy) creates a new context that reads through the proxy", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1822,7 +1822,7 @@ describe("a context's global proxy passed as a context", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("runInContext(code, globalProxy) rejects the proxy", async () => {
+  test.concurrent("runInContext(code, globalProxy) rejects the proxy", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2789,6 +2789,45 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
     await liveContextCleanedUp.promise;
     await nextTurn(); // A job posted after the live context's has run by now too.
+    if (deadContextCleanups !== 0) {
+      // Diagnostic for CI: which NodeVMGlobalObject survived, and what holds it.
+      const { generateHeapSnapshotForDebugging } = await import("bun:jsc");
+      fullGC();
+      const s = generateHeapSnapshotForDebugging();
+      const NF = 7, EF = 4;
+      const cls = i => s.nodeClassNames[s.nodes[i * NF + 2]];
+      const byId = new Map();
+      for (let i = 0; i < s.nodes.length / NF; i++) byId.set(s.nodes[i * NF], i);
+      const incoming = new Map();
+      for (let e = 0; e < s.edges.length; e += EF) {
+        const to = s.edges[e + 1];
+        if (!incoming.has(to)) incoming.set(to, []);
+        incoming.get(to).push(e);
+      }
+      const roots = new Map();
+      for (let r = 0; r < s.roots.length; r += 3) {
+        if (!roots.has(s.roots[r])) roots.set(s.roots[r], []);
+        roots.get(s.roots[r]).push(s.labels[s.roots[r + 1]] + "/" + s.labels[s.roots[r + 2]]);
+      }
+      const sandboxes = new Set();
+      for (let e = 0; e < s.edges.length; e += EF) {
+        if (s.edgeTypes[s.edges[e + 2]] === "Property" && s.edgeNames[s.edges[e + 3]] === "onCleanup") sandboxes.add(s.edges[e]);
+      }
+      const report = (what, id) => {
+        const counts = new Map();
+        for (const e of incoming.get(id) || []) {
+          const from = byId.get(s.edges[e]);
+          const type = s.edgeTypes[s.edges[e + 2]];
+          const key = cls(from) + "#" + s.edges[e] + " -" + type + (type === "Property" || type === "Variable" ? ":" + s.edgeNames[s.edges[e + 3]] : "") + "->";
+          counts.set(key, (counts.get(key) || 0) + 1);
+        }
+        console.error(what + "#" + id, "roots=" + JSON.stringify(roots.get(id) || []), JSON.stringify([...counts].filter(([k]) => !k.startsWith("Structure#") && !k.startsWith("Function#"))));
+      };
+      for (let i = 0; i < s.nodes.length / NF; i++) {
+        const id = s.nodes[i * NF];
+        if (cls(i) === "NodeVMGlobalObject" || cls(i) === "FinalizationRegistry" || sandboxes.has(id)) report(cls(i), id);
+      }
+    }
     console.log({ deadContextCleanups });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });

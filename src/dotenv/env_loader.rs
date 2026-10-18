@@ -555,6 +555,21 @@ impl Loader {
         })
     }
 
+    /// A copy for a VM on another thread: the map plus the record of what the
+    /// source already loaded (process env, default and explicit `.env` files).
+    /// The copy reads only the files the source skipped, into its own map.
+    pub fn clone_loaded(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            did_load_process: self.did_load_process,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());

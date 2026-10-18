@@ -93,6 +93,11 @@ pub struct InitOptions {
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
+    /// An env loader the VM owns, for a VM whose caller's loader belongs to
+    /// another thread (a parse-worker macro VM copies the build's loader).
+    /// The VM's transpiler uses it in place of `env_loader`, and the VM's
+    /// runtime state frees it on teardown.
+    pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
@@ -119,6 +124,7 @@ impl Default for InitOptions {
             debugger: Default::default(),
             log: None,
             env_loader: None,
+            owned_env_loader: None,
             graph: None,
             global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,

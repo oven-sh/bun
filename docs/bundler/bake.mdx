@@ -80,7 +80,7 @@ export default defineConfig({
 
 The default export can also be a function. It gets `{ mode }`, which is `"development"` in `bun bake`. The plugins in `[serve.static] plugins` of `bunfig.toml` also apply, before the plugins of `bake.config.ts`.
 
-The plugins load once. When `bake.config.ts` changes, `bun bake` prints a note: restart it to use the new plugins.
+When `bake.config.ts` changes, `bun bake` starts again, so that the new plugins apply. A change to a file that `bake.config.ts` imports, such as a local plugin, does not: restart `bun bake` for it.
 
 ## Options
 

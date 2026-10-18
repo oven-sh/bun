@@ -153,11 +153,10 @@ impl CryptoHasher {
         // SAFETY: caller passes a valid (ptr,len) byte slice
         let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
 
-        if let Some(inner) = CryptoHasherZig::init(name) {
+        let algorithm = evp::lookup_ignore_case(name)?;
+        if let Some(inner) = CryptoHasherZig::init(algorithm) {
             return Some(Box::new(CryptoHasher::Zig(inner)));
         }
-
-        let algorithm = evp::lookup_ignore_case(name)?;
 
         match algorithm {
             evp::Algorithm::Ripemd160
@@ -322,17 +321,18 @@ impl CryptoHasherClass for CryptoHasher {
             });
         }
 
-        if let Some(evp) = EVP::by_name_and_engine(engine_of(heap), algorithm) {
-            return Ok(CryptoHasher::Evp(Box::new(evp)));
-        }
-        CryptoHasherZig::init(algorithm)
-            .map(CryptoHasher::Zig)
-            .ok_or_else(|| {
-                heap.invalid_arguments(format_args!(
-                    "Unsupported algorithm {}",
-                    bstr::BStr::new(algorithm)
-                ))
-            })
+        let Some((algorithm, md)) = evp::md_by_name(algorithm) else {
+            return Err(heap.invalid_arguments(format_args!(
+                "Unsupported algorithm {}",
+                bstr::BStr::new(algorithm)
+            )));
+        };
+        Ok(match md {
+            Some(md) => CryptoHasher::Evp(Box::new(EVP::init(algorithm, md, engine_of(heap)))),
+            None => CryptoHasher::Zig(
+                CryptoHasherZig::init(algorithm).expect("a digest without an EVP_MD is a Zig one"),
+            ),
+        })
     }
 
     fn algorithm<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, bun_core::String> {
@@ -345,7 +345,7 @@ impl CryptoHasherClass for CryptoHasher {
                     .algorithm
             }
         };
-        Ok(bun_core::String::static_(algorithm.tag_cstr().to_bytes()))
+        Ok(bun_core::String::static_(algorithm.name()))
     }
 
     fn byte_length<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, u32> {
@@ -360,9 +360,7 @@ impl CryptoHasherClass for CryptoHasher {
     }
 
     fn algorithms() -> impl IntoIterator<Item = impl AsRef<[u8]>> {
-        evp::ALL
-            .iter()
-            .map(|algorithm| algorithm.tag_cstr().to_bytes())
+        evp::ALL.iter().map(|algorithm| algorithm.name())
     }
 
     fn copy<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
@@ -595,8 +593,8 @@ impl CryptoHasherZig {
         unreachable!("{algorithm:?} has a BoringSSL EVP_MD");
     }
 
-    pub(crate) fn init(name: &[u8]) -> Option<CryptoHasherZig> {
-        let algorithm = evp::lookup_ignore_case(name)?;
+    /// `None` when `algorithm` has a BoringSSL `EVP_MD`.
+    pub(crate) fn init(algorithm: evp::Algorithm) -> Option<CryptoHasherZig> {
         macro_rules! arm {
             ($ty:ty, $alg:expr) => {
                 if $alg == <$ty as ZigHashAlgo>::ALGORITHM {

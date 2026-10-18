@@ -3946,6 +3946,70 @@ describe("bundler", () => {
       ].join("\n"),
     },
   });
+
+  // With `minify: { syntax: true }`, and always at runtime, the parser joins these into one template literal or string
+  // before the compiler sees them. The joined text is a rope.
+  itBundled("react-compiler/TextJoinedByTheParser", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        const enum Route { Users = "users" }
+        export function useJoined(v: string) {
+          const [k] = useState("k");
+          return [
+            \`\${k}-\` + "b",
+            \`\${k}-\` + "b" + "c",
+            \`\${k}\` + "z",
+            "a" + \`-\${k}\`,
+            "a" + "b" + \`-\${k}\`,
+            \`\${k}-\` + \`+\${v}\` + "z",
+            \`\${k}-\` + "m" + \`\${v}\`,
+            \`\${k}-\` + 1,
+            \`\${k}-\` + null,
+            (() => \`\${k}-\` + "b")(),
+            \`a\${"b"}c/\${k}\`,
+            \`\${k}/x\${"y"}z\`,
+            \`\${Route.Users}/\${k}\`,
+            \`n\${1 + 2}m/\${k}\`,
+            Object.keys({ ["a" + "b"]: k }).join(),
+          ];
+        }
+        console.log(useJoined("v").join(" "));
+      `,
+      "/node_modules/react/index.js": `exports.useState = value => [value, () => {}];`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    minifySyntax: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "k-b k-bc kz a-k ab-k k-+vz k-mv k-1 k-null k-b abc/k k/xyz users/k n3m/k ab" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/\$\[\d+\]/);
+    },
+  });
+
+  // The argument of import() is joined without `minify: { syntax: true }` too.
+  itBundled("react-compiler/ImportSpecifierJoinedByTheParser", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const enum Dir { Pages = "./pages" }
+        export function Link({ name }: { name: string }) {
+          return <a onClick={() => import(Dir.Pages + \`/\${name}.js\`)}>{name}</a>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\$\[\d+\]/);
+      expect(out).toContain("import(`./pages/${name}.js`)");
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

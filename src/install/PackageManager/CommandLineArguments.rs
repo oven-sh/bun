@@ -1047,7 +1047,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
   <b><green>bun patch --commit 'node_modules/jquery'<r>
 
   <d>Generate a patch file in a custom directory for changes made to jquery<r>
-  <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
+  <b><green>bun patch --commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 ",
@@ -1688,6 +1688,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 patches_dir: args.option(b"--patches-dir").unwrap_or(b"patches"),
             };
         } else if subcommand == Subcommand::Patch {
+            if args.has(b"--patches-dir") {
+                Output::err_generic("--patches-dir only applies to bun patch --commit", ());
+                bun_core::note!("Run 'bun patch --help' for more information");
+                Global::crash();
+            }
             cli.patch = PatchOpts::Patch;
         }
 

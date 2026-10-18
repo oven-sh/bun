@@ -160,6 +160,14 @@ function withPath(env: Env, path: string): Env {
 
 const patched = "module.exports = 'patched';\n";
 
+/** What `bun patch` prints, and how it exits, when it gets `--patches-dir` without `--commit`. */
+const patchesDirWithoutCommit = {
+  stdout: "",
+  stderr:
+    "error: --patches-dir only applies to bun patch --commit\nnote: Run 'bun patch --help' for more information\n",
+  exitCode: 1,
+};
+
 describe.concurrent("error messages", () => {
   test("'bun patch' with no package name shows a usage example", async () => {
     await using dir = tempDir("bun-patch-noarg", {
@@ -198,6 +206,34 @@ describe.concurrent("error messages", () => {
       note: Run 'bun patch-commit --help' for more information"
     `);
     expect(exitCode).toBe(1);
+  });
+
+  // The arguments alone decide this, so Bun hasn't read the project yet.
+  test.each([
+    ["in a folder with no package.json", {}, ["no-deps"]],
+    ["next to a package.json that isn't JSON", { "package.json": "{" }, ["no-deps"]],
+    ["with --cwd to a folder that doesn't exist", {}, ["--cwd", "missing", "no-deps"]],
+    ["with no package name", { "package.json": JSON.stringify({ name: "t" }) }, []],
+  ])("'bun patch --patches-dir' without --commit names the flag %s", async (_, files, args) => {
+    await using dir = tempDir("bun-patch-patches-dir", files);
+    expect(await runBun(String(dir), bunEnv, "patch", "--patches-dir", "my-patches", ...args)).toEqual(
+      patchesDirWithoutCommit,
+    );
+  });
+
+  test("'bun patch --help' still prints the help, and its examples use --patches-dir with --commit", async () => {
+    await using dir = tempDir("bun-patch-help", {});
+    const { stdout, exitCode } = await runBun(String(dir), bunEnv, "patch", "--patches-dir", "my-patches", "--help");
+    const examples = stdout
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line.startsWith("bun patch "));
+    expect(examples).toEqual([
+      "bun patch jquery",
+      "bun patch --commit 'node_modules/jquery'",
+      "bun patch --commit --patches-dir 'my-patches' 'node_modules/jquery'",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -3632,5 +3668,89 @@ describe.concurrent("--patches-dir with an absolute path", () => {
       "basic-1@1.0.0": `${written}/basic-1@1.0.0.patch`,
     });
     expect(await Bun.file(join(project.dir, "bun.lock")).text()).toContain(`"${written}/basic-1@1.0.0.patch"`);
+  });
+});
+
+// The flag tells `bun patch --commit` where to write the patch file. Without `--commit`, Bun used to accept the flag,
+// ignore it and replace the package's folder, so an edit that wasn't committed yet was lost, with exit code 0.
+describe.concurrent("--patches-dir without --commit", () => {
+  const indexJs = (dir: string) => join(dir, "node_modules", "no-deps", "index.js");
+
+  /** What a commit to `my-patches` leaves in the project. */
+  const committed = async (dir: string) => ({
+    patchedDependencies: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
+    patchFiles: await readdirSorted(join(dir, "my-patches")),
+    indexJs: await Bun.file(indexJs(dir)).text(),
+  });
+  const inMyPatches = {
+    patchedDependencies: { "no-deps@1.0.0": "my-patches/no-deps@1.0.0.patch" },
+    patchFiles: ["no-deps@1.0.0.patch"],
+    indexJs: patched,
+  };
+
+  test("is an error that doesn't change the edited package or the project", async () => {
+    await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
+    const { dir, env } = project;
+    await bunOk(dir, env, "patch", "no-deps");
+    await Bun.write(indexJs(dir), patched);
+    const state = async () => ({
+      indexJs: await Bun.file(indexJs(dir)).text(),
+      // `bun patch` replaces this folder with a new one.
+      folder: lstatSync(join(dir, "node_modules", "no-deps")).ino,
+      project: await readdirSorted(dir),
+      packageJson: await Bun.file(join(dir, "package.json")).text(),
+      lockfile: await Bun.file(join(dir, "bun.lock")).text(),
+    });
+    const before = await state();
+
+    const commandLines: [args: string, BUN_OPTIONS?: string][] = [
+      ["patch --patches-dir my-patches node_modules/no-deps"],
+      ["patch --patches-dir=my-patches no-deps"],
+      ["patch no-deps --patches-dir my-patches"],
+      ["patch --patches-dir= no-deps"],
+      ["--patches-dir=my-patches patch no-deps"],
+      ["patch --dry-run --patches-dir my-patches no-deps"],
+      // The flag takes the next argument as its value, no matter what it is.
+      ["patch --patches-dir --commit node_modules/no-deps"],
+      // The flags in BUN_OPTIONS are added before the typed arguments.
+      ["patch no-deps", "--patches-dir=my-patches"],
+    ];
+    // None of them writes anything, so they can run at the same time.
+    const results = await Promise.all(
+      commandLines.map(([args, BUN_OPTIONS]) => runBun(dir, { ...env, BUN_OPTIONS }, ...args.split(" "))),
+    );
+    expect({
+      results: commandLines.map((commandLine, i) => [...commandLine, results[i]]),
+      project: await state(),
+    }).toEqual({
+      results: commandLines.map(commandLine => [...commandLine, patchesDirWithoutCommit]),
+      project: before,
+    });
+
+    await bunOk(dir, env, "patch", "--commit", "--patches-dir", "my-patches", "node_modules/no-deps");
+    expect(await committed(dir)).toEqual(inMyPatches);
+  });
+
+  // The commit step still accepts the flag, also when one of the two flags comes from BUN_OPTIONS.
+  test.each([
+    ["bun patch-commit --patches-dir <dir>", "patch-commit --patches-dir my-patches node_modules/no-deps", undefined],
+    [
+      "bun patch --patches-dir <dir> with BUN_OPTIONS=--commit",
+      "patch --patches-dir my-patches node_modules/no-deps",
+      "--commit",
+    ],
+    [
+      "bun patch --commit with BUN_OPTIONS=--patches-dir=<dir>",
+      "patch --commit node_modules/no-deps",
+      "--patches-dir=my-patches",
+    ],
+  ])("%s still writes the patch file to <dir>", async (_, args, BUN_OPTIONS) => {
+    await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
+    const { dir, env } = project;
+    await bunOk(dir, env, "patch", "no-deps");
+    await Bun.write(indexJs(dir), patched);
+
+    await bunOk(dir, { ...env, BUN_OPTIONS }, ...args.split(" "));
+    expect(await committed(dir)).toEqual(inMyPatches);
   });
 });

@@ -1677,21 +1677,22 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext and
-    // vm.runInNewContext take contextCodeGeneration.
+    // createContext takes name, origin and codeGeneration, the runInNewContext
+    // entry points take contextName, contextOrigin and contextCodeGeneration.
     // A dotted key puts the throwing getter on the nested object.
-    const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
-    const contextKeys = (...codeGenerationKeyNames: string[]) => [
-      "name",
-      "origin",
-      ...codeGenerationKeyNames.flatMap(codeGenerationKeys),
+    const contextKeys = (nameKey: string, originKey: string, codeGenerationKey: string) => [
+      nameKey,
+      originKey,
+      codeGenerationKey,
+      `${codeGenerationKey}.strings`,
+      `${codeGenerationKey}.wasm`,
       "importModuleDynamically",
       "microtaskMode",
     ];
     const matrix = {
-      createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("contextCodeGeneration"),
-      scriptRunInNewContext: contextKeys("contextCodeGeneration"),
+      createContext: contextKeys("name", "origin", "codeGeneration"),
+      runInNewContext: contextKeys("contextName", "contextOrigin", "contextCodeGeneration"),
+      scriptRunInNewContext: contextKeys("contextName", "contextOrigin", "contextCodeGeneration"),
     };
     const code = `
       const vm = require("node:vm");
@@ -2778,7 +2779,9 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
       const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
       liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
       contexts.push(liveContext);
-      for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
+      // The script's completion value is undefined: a registry returned through the native frames of
+      // runInContext can stay in a stack slot that the collections below scan, which keeps it alive.
+      for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup); void 0", context);
       edenGC(); // Old generation now: the next eden collection leaves them marked.
       for (const context of contexts) for (let i = 0; i < 5; i++) context.registry.register({ i }, i);
     }
@@ -2789,45 +2792,6 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
     await liveContextCleanedUp.promise;
     await nextTurn(); // A job posted after the live context's has run by now too.
-    if (deadContextCleanups !== 0) {
-      // Diagnostic for CI: which NodeVMGlobalObject survived, and what holds it.
-      const { generateHeapSnapshotForDebugging } = await import("bun:jsc");
-      fullGC();
-      const s = generateHeapSnapshotForDebugging();
-      const NF = 7, EF = 4;
-      const cls = i => s.nodeClassNames[s.nodes[i * NF + 2]];
-      const byId = new Map();
-      for (let i = 0; i < s.nodes.length / NF; i++) byId.set(s.nodes[i * NF], i);
-      const incoming = new Map();
-      for (let e = 0; e < s.edges.length; e += EF) {
-        const to = s.edges[e + 1];
-        if (!incoming.has(to)) incoming.set(to, []);
-        incoming.get(to).push(e);
-      }
-      const roots = new Map();
-      for (let r = 0; r < s.roots.length; r += 3) {
-        if (!roots.has(s.roots[r])) roots.set(s.roots[r], []);
-        roots.get(s.roots[r]).push(s.labels[s.roots[r + 1]] + "/" + s.labels[s.roots[r + 2]]);
-      }
-      const sandboxes = new Set();
-      for (let e = 0; e < s.edges.length; e += EF) {
-        if (s.edgeTypes[s.edges[e + 2]] === "Property" && s.edgeNames[s.edges[e + 3]] === "onCleanup") sandboxes.add(s.edges[e]);
-      }
-      const report = (what, id) => {
-        const counts = new Map();
-        for (const e of incoming.get(id) || []) {
-          const from = byId.get(s.edges[e]);
-          const type = s.edgeTypes[s.edges[e + 2]];
-          const key = cls(from) + "#" + s.edges[e] + " -" + type + (type === "Property" || type === "Variable" ? ":" + s.edgeNames[s.edges[e + 3]] : "") + "->";
-          counts.set(key, (counts.get(key) || 0) + 1);
-        }
-        console.error(what + "#" + id, "roots=" + JSON.stringify(roots.get(id) || []), JSON.stringify([...counts].filter(([k]) => !k.startsWith("Structure#") && !k.startsWith("Function#"))));
-      };
-      for (let i = 0; i < s.nodes.length / NF; i++) {
-        const id = s.nodes[i * NF];
-        if (cls(i) === "NodeVMGlobalObject" || cls(i) === "FinalizationRegistry" || sandboxes.has(id)) report(cls(i), id);
-      }
-    }
     console.log({ deadContextCleanups });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });

@@ -98,16 +98,16 @@ impl Framework {
     }
 
     /// `bun bake`: the router of the `.tsx` and `.jsx` pages in `app/pages/`, with the default React
-    /// renderer: server rendering and hydration, no server components.
+    /// framework: server rendering and hydration, no server components.
     /// `bun bake`: the router of the `.tsx` and `.jsx` pages in `app/pages/`, with the modules of a
-    /// renderer plugin (absolute paths), or the default React renderer: server rendering and
+    /// framework plugin (absolute paths), or the default React framework: server rendering and
     /// hydration, no server components.
     pub(crate) fn bake_pages(
         resolver: &mut bun_resolver::Resolver,
-        renderer: Option<(Box<[u8]>, Option<Box<[u8]>>)>,
+        framework: Option<(Box<[u8]>, Option<Box<[u8]>>)>,
     ) -> Framework {
         let mut fw = Self::auto(resolver, Vec::new());
-        let (entry_server, entry_client) = match renderer {
+        let (entry_server, entry_client) = match framework {
             Some((server, client)) => (
                 Utf8Bytes::Owned(server.into_vec()),
                 client.map(|client| Utf8Bytes::Owned(client.into_vec())),
@@ -117,7 +117,7 @@ impl Framework {
                     b"bun-bake-react/client.tsx",
                     // Browser-side source: compressed in release builds.
                     BuiltInModule::Code(Cow::Borrowed(bun_zstd::embed_compressed!(
-                        src "runtime/bake/react-renderer/client.tsx"
+                        src "runtime/bake/bun-bake-react/client.tsx"
                     ))),
                 ));
                 bun_core::handle_oom(
@@ -126,7 +126,7 @@ impl Framework {
                         BuiltInModule::Code(Cow::Borrowed(
                             bun_core::runtime_embed_file!(
                                 Src,
-                                "runtime/bake/react-renderer/server.tsx"
+                                "runtime/bake/bun-bake-react/server.tsx"
                             )
                             .as_bytes(),
                         )),

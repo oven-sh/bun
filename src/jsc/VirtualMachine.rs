@@ -152,10 +152,10 @@ pub enum BuiltinEntryPoint {
     Bake = 1,
 }
 
-/// The renderer of `bun bake` for the pages in `app/pages/`: absolute paths of the modules of a
-/// renderer plugin, or `None` for the default React renderer.
+/// The framework of `bun bake` for the pages in `app/pages/`: absolute paths of the modules of a
+/// framework plugin, or `None` for the default React framework.
 pub struct BakePages {
-    pub renderer: Option<(Box<[u8]>, Option<Box<[u8]>>)>,
+    pub framework: Option<(Box<[u8]>, Option<Box<[u8]>>)>,
 }
 
 pub struct VirtualMachine {

@@ -130,10 +130,16 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
  */
 let configKeyInServer: string | undefined;
 
-/** The modules of a renderer plugin, as absolute paths. */
-type Renderer = { server: string; client: string | undefined; plugin: string };
+/** The modules of a framework plugin, as absolute paths. */
+type FrameworkModules = { server: string; client: string | undefined; plugin: string };
 
-type Config = { plugins: unknown[]; names: string[]; name: string; key: string; renderer: Renderer | undefined };
+type Config = {
+  plugins: unknown[];
+  names: string[];
+  name: string;
+  key: string;
+  framework: FrameworkModules | undefined;
+};
 
 /** The plugins of `bake.config.ts`: its default export is a config, or a function that returns one. */
 async function loadConfig(cwd: string): Promise<Config> {
@@ -142,7 +148,7 @@ async function loadConfig(cwd: string): Promise<Config> {
     file = Bun.resolveSync("./bake.config", cwd);
   } catch (error: any) {
     if (error?.code === "ERR_MODULE_NOT_FOUND")
-      return { plugins: [], names: [], name: "bake.config.ts", key: "", renderer: undefined };
+      return { plugins: [], names: [], name: "bake.config.ts", key: "", framework: undefined };
     throw error;
   }
 
@@ -161,12 +167,12 @@ async function loadConfig(cwd: string): Promise<Config> {
     }
   }
   const list = config.plugins;
-  if (list === undefined) return { plugins: [], names: [], name, key, renderer: undefined };
+  if (list === undefined) return { plugins: [], names: [], name, key, framework: undefined };
   if (!$isArray(list)) throw new BakeError(`"${name}": "plugins" must be an array.`, true);
 
   const plugins: unknown[] = [];
   const names: string[] = [];
-  let renderer: Renderer | undefined;
+  let framework: FrameworkModules | undefined;
   for (let i = 0, length = list.length; i < length; i++) {
     const plugin = list[i];
     // A function with `name` and `setup` is a plugin too, as in `Bun.build()`.
@@ -177,12 +183,12 @@ async function loadConfig(cwd: string): Promise<Config> {
     if (typeof pluginName !== "string" || pluginName === "") {
       throw new BakeError(`"${name}": plugins[${i}] has no "name".`, true);
     }
-    const pluginRenderer = plugin.renderer;
-    if (pluginRenderer !== undefined) {
-      renderer = loadRenderer(name, file, pluginName, pluginRenderer, renderer);
+    const pluginFramework = plugin.framework;
+    if (pluginFramework !== undefined) {
+      framework = loadFramework(name, file, pluginName, pluginFramework, framework);
     }
-    // A renderer plugin needs no build hooks.
-    if (pluginRenderer !== undefined && plugin.setup === undefined) continue;
+    // A framework plugin needs no build hooks.
+    if (pluginFramework !== undefined && plugin.setup === undefined) continue;
     if (!$isCallable(plugin.setup)) {
       throw new BakeError(
         `"${name}": the plugin "${pluginName}" has no setup() function. "bun bake" takes Bun plugins.`,
@@ -192,25 +198,31 @@ async function loadConfig(cwd: string): Promise<Config> {
     plugins.push(plugin);
     names.push(pluginName);
   }
-  return { plugins, names, name, key, renderer };
+  return { plugins, names, name, key, framework };
 }
 
 /**
- * The `renderer` of a plugin: the module that renders a page on the server, and optionally the one
+ * The `framework` of a plugin: the module that renders a page on the server, and optionally the one
  * that runs in the browser. Paths and package names resolve from the folder of `bake.config.ts`.
  */
-function loadRenderer(name: string, configFile: string, pluginName: string, value: any, other: Renderer | undefined) {
+function loadFramework(
+  name: string,
+  configFile: string,
+  pluginName: string,
+  value: any,
+  other: FrameworkModules | undefined,
+) {
   if (other !== undefined) {
-    throw new BakeError(`"${name}": the plugins "${other.plugin}" and "${pluginName}" both have a renderer.`, true);
+    throw new BakeError(`"${name}": the plugins "${other.plugin}" and "${pluginName}" both have a framework.`, true);
   }
   if (value === null || typeof value !== "object" || typeof value.server !== "string") {
     throw new BakeError(
-      `"${name}": the renderer of "${pluginName}" must be an object with a "server" module, and may have a "client" module.`,
+      `"${name}": the framework of "${pluginName}" must be an object with a "server" module, and may have a "client" module.`,
       true,
     );
   }
   if (value.client !== undefined && typeof value.client !== "string") {
-    throw new BakeError(`"${name}": the "client" of the renderer of "${pluginName}" must be a module name.`, true);
+    throw new BakeError(`"${name}": the "client" of the framework of "${pluginName}" must be a module name.`, true);
   }
   const dir = path.dirname(configFile);
   const resolve = (specifier: string) => {
@@ -218,7 +230,7 @@ function loadRenderer(name: string, configFile: string, pluginName: string, valu
       return Bun.resolveSync(specifier, dir);
     } catch {
       throw new BakeError(
-        `"${name}": the renderer of "${pluginName}" names "${specifier}", which cannot be found.`,
+        `"${name}": the framework of "${pluginName}" names "${specifier}", which cannot be found.`,
         true,
       );
     }
@@ -245,7 +257,7 @@ function hasComponentPages(pagesDir: string): boolean {
   return false;
 }
 
-/** The React major versions that the default renderer is tested with. */
+/** The React major versions that the default framework is tested with. */
 const supportedReactMajors = [18, 19];
 
 /** The version in `name/package.json`, resolved from the project, or `undefined` when not installed. */
@@ -260,8 +272,8 @@ function installedVersion(name: string, cwd: string): string | undefined {
 }
 
 /**
- * The default renderer of `.tsx` pages uses the project's React. Checks that it is installed, is a
- * version the renderer supports, and that `react` and `react-dom` match.
+ * The default framework of `.tsx` pages uses the project's React. Checks that it is installed, is a
+ * version the framework supports, and that `react` and `react-dom` match.
  */
 function checkReactForPages(cwd: string) {
   const react = installedVersion("react", cwd);
@@ -362,8 +374,8 @@ async function start() {
   const pagesDir = path.join(cwd, "app", "pages");
   const pages = await loadPages(pagesDir);
   const componentPages = hasComponentPages(pagesDir);
-  // A renderer plugin renders the pages instead of the default React renderer.
-  if (componentPages && config.renderer === undefined) checkReactForPages(cwd);
+  // A framework plugin renders the pages instead of the default React framework.
+  if (componentPages && config.framework === undefined) checkReactForPages(cwd);
   const app = await loadAppServer(cwd);
   if (pages.length === 0 && !componentPages && app === undefined) {
     throw new BakeError(
@@ -412,7 +424,7 @@ async function start() {
       "bun bake",
       port => {
         // Each `Bun.serve()` attempt (the port retries too) takes it.
-        if (componentPages) setPages(config.renderer?.server, config.renderer?.client);
+        if (componentPages) setPages(config.framework?.server, config.framework?.client);
         const options = ObjectCreate(exported ?? null);
         // Own properties, defined rather than assigned: the export may be frozen, or have getters.
         const own = (key: string, value: unknown) =>

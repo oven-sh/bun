@@ -604,7 +604,7 @@ declare module "bun:bake/client" {
   export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
 
   /**
-   * For a router whose pages also run in the browser (the default React renderer of `bun bake`):
+   * For a router whose pages also run in the browser (the default React framework of `bun bake`):
    * loads the page and the layouts (inner-most first) of the route the page is on. `null` for
    * any other router.
    */

@@ -244,21 +244,21 @@ test.concurrent.each([
     error: `"bake.config.ts": plugins[0] has no "name".`,
   },
   {
-    name: "two plugins in bake.config.ts with a renderer",
+    name: "two plugins in bake.config.ts with a framework",
     files: {
       "r.ts": `export function render() { return new Response("x"); }`,
-      "bake.config.ts": `export default { plugins: [{ name: "a", renderer: { server: "./r.ts" } }, { name: "b", renderer: { server: "./r.ts" } }] };`,
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { server: "./r.ts" } }, { name: "b", framework: { server: "./r.ts" } }] };`,
     },
     waits: true,
-    error: `"bake.config.ts": the plugins "a" and "b" both have a renderer.`,
+    error: `"bake.config.ts": the plugins "a" and "b" both have a framework.`,
   },
   {
-    name: "a renderer module that cannot be found",
+    name: "a framework module that cannot be found",
     files: {
-      "bake.config.ts": `export default { plugins: [{ name: "a", renderer: { server: "./nope.ts" } }] };`,
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { server: "./nope.ts" } }] };`,
     },
     waits: true,
-    error: `"bake.config.ts": the renderer of "a" names "./nope.ts", which cannot be found.`,
+    error: `"bake.config.ts": the framework of "a" names "./nope.ts", which cannot be found.`,
   },
   {
     name: "a bake.config.ts default export that is not an object",
@@ -1052,8 +1052,8 @@ test.concurrent.each([
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("bun bake renders .tsx pages with the renderer of a bake.config.ts plugin", async () => {
-  using dir = tempDir("bake-command-renderer", {
+test.concurrent("bun bake renders .tsx pages with the framework of a bake.config.ts plugin", async () => {
+  using dir = tempDir("bake-command-framework", {
     // No React: the plugin renders the pages.
     "app/pages/index.tsx": `export default () => "home";`,
     "app/pages/[id].tsx": `export default params => "page " + params.id;`,
@@ -1063,13 +1063,13 @@ test.concurrent("bun bake renders .tsx pages with the renderer of a bake.config.
         return new Response(body, { headers: { "content-type": "text/plain" } });
       }
     `,
-    "bake.config.ts": `export default { plugins: [{ name: "strings", renderer: { server: "./render/server.ts" } }] };`,
+    "bake.config.ts": `export default { plugins: [{ name: "strings", framework: { server: "./render/server.ts" } }] };`,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
   const url = await getServerUrl(proc);
 
-  // A renderer with no client module has no browser bundle.
+  // A framework with no client module has no browser bundle.
   expect(await get(url, "/")).toBe("200 home []");
   expect(await get(url, "/7")).toBe("200 page 7 []");
 });
@@ -1079,7 +1079,7 @@ test.concurrent("bun bake reports two pages with the same URL pattern, and keeps
     "app/pages/[a].tsx": `export default () => "a";`,
     "app/pages/[b].tsx": `export default () => "b";`,
     "render/server.ts": `export function render(request, meta) { return new Response(meta.pageModule.default()); }`,
-    "bake.config.ts": `export default { plugins: [{ name: "strings", renderer: { server: "./render/server.ts" } }] };`,
+    "bake.config.ts": `export default { plugins: [{ name: "strings", framework: { server: "./render/server.ts" } }] };`,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);

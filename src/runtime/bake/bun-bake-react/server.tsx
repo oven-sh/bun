@@ -1,4 +1,4 @@
-// The default renderer of `bun bake` for `.tsx` and `.jsx` pages, with the project's own React.
+// The default framework of `bun bake` for `.tsx` and `.jsx` pages, with the project's own React.
 // Bake bundles it into the server graph from the project root, so `react` resolves from the project.
 // `react-dom/server.browser` has `renderToReadableStream` in React 18 and 19.
 import { renderToReadableStream } from "react-dom/server.browser";

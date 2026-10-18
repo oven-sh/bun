@@ -896,7 +896,7 @@ impl ServerConfig {
                     // we need `&mut Resolver` for `Framework::auto`.
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = if let Some(pages) = bake_pages.take() {
-                        crate::bake::Framework::bake_pages(resolver, pages.renderer)
+                        crate::bake::Framework::bake_pages(resolver, pages.framework)
                     } else {
                         crate::bake::Framework::auto(
                             resolver,

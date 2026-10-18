@@ -1,4 +1,4 @@
-// The browser half of the default renderer of `bun bake`: hydrates the HTML that `server.tsx`
+// The browser half of the default framework of `bun bake`: hydrates the HTML that `server.tsx`
 // rendered, with the same page, layouts and params.
 import { onServerSideReload, route } from "bun:bake/client";
 import { hydrateRoot } from "react-dom/client";

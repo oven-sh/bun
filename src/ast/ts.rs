@@ -5,7 +5,7 @@ use bun_collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;
-use crate::nodes::StoreStr;
+use crate::nodes::{StoreRef, StoreStr};
 
 /// This is for TypeScript "enum" and "namespace" blocks. Each block can
 /// potentially be instantiated multiple times. The exported members of each
@@ -151,7 +151,7 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub enum Metadata {
     #[default]
     MNone,
@@ -171,19 +171,36 @@ pub enum Metadata {
     MBigint,
     MSymbol,
     MPromise,
-    /// A type named by one identifier. The `Ref` holds the written name
-    /// (`P::store_name_in_ref`), which is bound to a symbol when the class is
-    /// lowered: the parse pass binds no names.
+    /// The written name (`P::store_name_in_ref`). The class binds it when it is lowered.
     MIdentifier(Ref),
-    /// "a.b.c": the written name of each part. Only the first is bound to a
-    /// symbol.
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<StoreStr>),
+    /// "a.b.c", from its last part. Only the first part is bound to a symbol.
+    MDot(StoreRef<QualifiedName>),
+}
+
+/// `left.name` in the qualified name of a type, arena-owned. The first part has no `left`.
+#[derive(Clone, Copy)]
+pub struct QualifiedName {
+    pub left: Option<StoreRef<QualifiedName>>,
+    pub name: StoreStr,
 }
 
 impl Metadata {
     pub const DEFAULT: Self = Metadata::MNone;
+
+    /// Copies an `MDot` name into `bump`: a clone does not point into the arena of its source.
+    pub(crate) fn deep_clone(self, bump: &bun_alloc::Arena) -> Self {
+        let Metadata::MDot(last) = self else {
+            return self;
+        };
+        let last = StoreRef::from_bump(bump.alloc(*last));
+        let mut part = last;
+        while let Some(left) = part.left {
+            let left = StoreRef::from_bump(bump.alloc(*left));
+            part.left = Some(left);
+            part = left;
+        }
+        Metadata::MDot(last)
+    }
 
     // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
     // translated from:
@@ -225,8 +242,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (&*result, &left) {
-                if load_name(*r) != load_name(*l) {
+            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (*result, left) {
+                if load_name(r) != load_name(l) {
                     *result = Metadata::MObject;
                 }
             }
@@ -278,8 +295,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (&*result, &left) {
-                if load_name(*r) != load_name(*l) {
+            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (*result, left) {
+                if load_name(r) != load_name(l) {
                     *result = Metadata::MObject;
                 }
             }

@@ -7586,7 +7586,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self
-                                        .serialize_metadata(ca.ts_metadata.clone())
+                                        .serialize_metadata(ca.ts_metadata)
                                         .expect("unreachable");
                                 }
                                 let items = ExprNodeList::from_arena_slice(param_array);
@@ -7684,7 +7684,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // design:type
                     let v = self
-                        .serialize_metadata(prop.ts_metadata.clone())
+                        .serialize_metadata(prop.ts_metadata)
                         .expect("unreachable");
                     push_metadata!(b"design:type", v);
                 }
@@ -7703,7 +7703,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7718,7 +7718,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:returntype", v);
                         }
@@ -7735,7 +7735,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: variant checked");
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -7770,7 +7770,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7785,7 +7785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if !method_args.is_empty() {
                             let v = self
-                                .serialize_metadata(method_args[0].ts_metadata.clone())
+                                .serialize_metadata(method_args[0].ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -7837,124 +7837,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let e = self.metadata_type_reference(name, 2, false)?;
                 return self.maybe_defined_helper(e);
             }
-            M::MDot(parts) => {
-                debug_assert!(parts.len() >= 2);
-                // The guard tests the first part once for each part, then prints the path.
-                let first =
-                    self.metadata_type_reference(parts[0].slice(), parts.len() as u32 + 1, true)?;
+            M::MDot(last) => {
+                // "a.b.c": the property names `c` and `b`, then the name `a`.
+                let mut names = BumpVec::<bun_ast::StoreStr>::new_in(self.arena);
+                let mut part = last;
+                while let Some(left) = part.left {
+                    names.push(part.name);
+                    part = left;
+                }
 
-                let mut dots = self.new_expr(
-                    E::Dot {
-                        name: E::Str::new(parts[parts.len() - 1].slice()),
-                        name_loc: bun_ast::Loc::EMPTY,
-                        target: Expr::default(), // patched below
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-
-                // `StoreRef<Expr>` (safe `Deref`/`DerefMut`) tracks the arena slot
-                // being patched, so the chain walk stays in safe code per hop.
-                let mut current_expr = js_ast::StoreRef::from_bump(
-                    &mut dots
-                        .data
-                        .e_dot_mut()
-                        .expect("infallible: variant checked")
-                        .target,
-                );
-                let mut i: usize = parts.len() - 2;
-                while i > 0 {
-                    *current_expr = self.new_expr(
+                // The guard tests `a`, `a.b` and `a.b.c`, then the metadata is `a.b.c`.
+                let mut path =
+                    self.metadata_type_reference(part.name.slice(), names.len() as u32 + 2, true)?;
+                let mut test = self.check_if_defined_helper(path)?;
+                for name in names.iter().rev() {
+                    path = self.new_expr(
                         E::Dot {
-                            name: E::Str::new(parts[i].slice()),
+                            target: path,
+                            name: E::Str::new(name.slice()),
                             name_loc: bun_ast::Loc::EMPTY,
-                            target: Expr::default(),
                             ..Default::default()
                         },
                         bun_ast::Loc::EMPTY,
                     );
-                    let next = js_ast::StoreRef::from_bump(
-                        &mut current_expr
-                            .data
-                            .e_dot_mut()
-                            .expect("infallible: variant checked")
-                            .target,
-                    );
-                    current_expr = next;
-                    i -= 1;
-                }
-
-                *current_expr = first;
-
-                let dot_identifier = *current_expr;
-                let mut current_dot = dots;
-
-                let right0 = self.check_if_defined_helper(current_dot)?;
-                let mut maybe_defined_dots = self.new_expr(
-                    E::Binary {
-                        op: js_ast::OpCode::BinLogicalOr,
-                        right: right0,
-                        left: Expr::default(), // patched below
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-
-                if i < parts.len() - 2 {
-                    current_dot = current_dot
-                        .data
-                        .e_dot()
-                        .expect("infallible: variant checked")
-                        .target;
-                }
-                current_expr = js_ast::StoreRef::from_bump(
-                    &mut maybe_defined_dots
-                        .data
-                        .e_binary_mut()
-                        .expect("infallible: variant checked")
-                        .left,
-                );
-
-                while i < parts.len() - 2 {
-                    let right_n = self.check_if_defined_helper(current_dot)?;
-                    *current_expr = self.new_expr(
+                    let right = self.check_if_defined_helper(path)?;
+                    test = self.new_expr(
                         E::Binary {
                             op: js_ast::OpCode::BinLogicalOr,
-                            right: right_n,
-                            left: Expr::default(),
+                            left: test,
+                            right,
                         },
                         bun_ast::Loc::EMPTY,
                     );
-                    let next = js_ast::StoreRef::from_bump(
-                        &mut current_expr
-                            .data
-                            .e_binary_mut()
-                            .expect("infallible: variant checked")
-                            .left,
-                    );
-                    current_expr = next;
-                    i += 1;
-                    if i < parts.len() - 2 {
-                        current_dot = current_dot
-                            .data
-                            .e_dot()
-                            .expect("infallible: variant checked")
-                            .target;
-                    }
                 }
 
-                *current_expr = self.check_if_defined_helper(dot_identifier)?;
-
                 let yes = ident!(b"Object");
-                let root = self.new_expr(
+                return Ok(self.new_expr(
                     E::If {
+                        test,
                         yes,
-                        no: dots,
-                        test: maybe_defined_dots,
+                        no: path,
                     },
                     bun_ast::Loc::EMPTY,
-                );
-
-                return Ok(root);
+                ));
             }
         })
     }

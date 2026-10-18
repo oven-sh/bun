@@ -9,7 +9,7 @@ use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
-use bun_ast::ts::Metadata;
+use bun_ast::ts::{Metadata, QualifiedName};
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
@@ -796,10 +796,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -842,10 +841,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -900,17 +898,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if GET_METADATA {
                         // A member name is a property name, not an identifier.
-                        let member = bun_ast::StoreStr::new(self.lexer.identifier);
+                        let name = bun_ast::StoreStr::new(self.lexer.identifier);
                         let r = result
                             .as_deref_mut()
                             .expect("infallible: GET_METADATA implies Some");
-                        match r {
-                            Metadata::MIdentifier(root) => {
-                                let root = bun_ast::StoreStr::new(self.load_name_from_ref(*root));
-                                *r = Metadata::MDot(vec![root, member]);
-                            }
-                            Metadata::MDot(dot) => dot.push(member),
-                            _ => {}
+                        let left = match *r {
+                            Metadata::MIdentifier(first) => Some(self.qualified_name(
+                                None,
+                                bun_ast::StoreStr::new(self.load_name_from_ref(first)),
+                            )),
+                            Metadata::MDot(left) => Some(left),
+                            _ => None,
+                        };
+                        if left.is_some() {
+                            *r = Metadata::MDot(self.qualified_name(left, name));
                         }
                     }
 
@@ -1010,6 +1011,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+    }
+
+    fn qualified_name(
+        &self,
+        left: Option<bun_ast::StoreRef<QualifiedName>>,
+        name: bun_ast::StoreStr,
+    ) -> bun_ast::StoreRef<QualifiedName> {
+        bun_ast::StoreRef::from_bump(self.arena.alloc(QualifiedName { left, name }))
     }
 
     pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {

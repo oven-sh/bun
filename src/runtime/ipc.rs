@@ -896,7 +896,7 @@ enum ContinueSendReason {
     OnWritable,
 }
 
-/// Node's `Control`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L559-L598
+/// Node's `Control`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L559-L599
 #[derive(Default)]
 struct Control {
     refs: Cell<i32>,

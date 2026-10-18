@@ -910,6 +910,10 @@ impl<'p> Checker<'p, '_> {
         let created = self.non_existent_properties.insert((file, e), is_discarded);
         if created.unwrap_or(is_discarded) {
             self.non_existent_properties.insert((file, e), true);
+            // As in `add_diagnostic`: don't cache the access, so the file's own check evaluates it and reports.
+            if self.task.file != Some(file) {
+                self.mark_tainted_from(self.frames.len().saturating_sub(1));
+            }
             return;
         }
         self.reporting_nonexistent.push((file, e, self.stack.len()));

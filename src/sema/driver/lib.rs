@@ -5033,8 +5033,10 @@ fn check_named_files(
                 if program.is_cycle_resolved(&visit.unresolved_cycle, after, last) {
                     visit.unresolved_cycle.clear();
                 }
+                // One early recheck per file. If that one is discarded too, the file waits until it's the first unchecked
+                // file, so a file is checked four times at most, counting the last round.
                 visit.is_discarded_for_cycle
-                    && (visit.unresolved_cycle.is_empty()
+                    && (visit.unresolved_cycle.is_empty() && visit.rechecks == 0
                         || file == next && !visit.was_retried_as_first)
             };
             let candidates = lost.iter().enumerate();

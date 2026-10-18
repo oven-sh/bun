@@ -793,6 +793,35 @@ export interface Loop extends Pick<Big & Pick<Loop, "own">, "b"> { own: 1 }
     }
   });
 
+  // The message of the error in `user.ts` prints the return type of `f1`. Inferring that reports the error in `f1`, whose message
+  // prints the return type of `f2`. tsc discards an error that is created two messages deep, like the one in `f2`. `dep.ts`
+  // still has to report it when `user.ts` is checked first: `big.ts` and `user.ts` are larger, so two threads start with them.
+  test("reports an error that another file first hits while printing a type in an error message", async () => {
+    const filler = (prefix: string, lines: number) =>
+      Array.from({ length: lines }, (_, i) => `const ${prefix}${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`).join("");
+    using dir = project({
+      "big.ts": filler("b", 400) + "export {};\n",
+      "dep.ts": `declare function takesNumber(n: number): number;
+declare const p: Promise<any>;
+export function f2() { return p.nope; }
+export function f1() { return takesNumber({ g: f2 }); }
+export const api = { f1 };
+`,
+      "user.ts": `import { api } from "./dep";\nexport const n: number = api;\n` + filler("u", 60),
+    });
+    const threads = [1, 2, 2, 2, 3, 3, 3, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          "dep.ts(3,33): error TS2339: Property 'nope' does not exist on type 'Promise<any>'.",
+          "dep.ts(4,43): error TS2345: Argument of type '{ g: () => any; }' is not assignable to parameter of type 'number'.",
+          "user.ts(2,14): error TS2322: Type '{ f1: () => number; }' is not assignable to type 'number'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

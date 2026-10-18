@@ -70,3 +70,9 @@ pub(crate) fn is_restarting(_global: &JSGlobalObject, _frame: &CallFrame) -> JsR
         bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal(),
     ))
 }
+
+/// `setPages()`: the next `Bun.serve()` routes the `.tsx` and `.jsx` pages of `app/pages/`.
+pub(crate) fn set_pages(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    global.bun_vm().as_mut().bake_pages = true;
+    Ok(JSValue::UNDEFINED)
+}

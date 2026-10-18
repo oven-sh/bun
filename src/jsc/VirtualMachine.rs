@@ -186,6 +186,9 @@ pub struct VirtualMachine {
     pub bake_config_plugins: crate::strong::Optional,
     /// The names of `bake_config_plugins`.
     pub bake_config_plugin_names: Box<[Box<[u8]>]>,
+    /// `bun bake`: the next `Bun.serve()` (its own) adds the router of the `.tsx` and `.jsx` pages
+    /// in `app/pages/`, with the default React renderer. That call clears it.
+    pub bake_pages: bool,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but

@@ -15,6 +15,7 @@ const {
 const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
 const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
 const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
+const setPages = $newRustFunction("bake/config/plugins.rs", "setPages", 0);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -183,6 +184,21 @@ async function loadConfig(cwd: string): Promise<Config> {
   return { plugins, names, name, key };
 }
 
+/**
+ * Whether `app/pages/` has a `.tsx` or `.jsx` page. Files and folders that start with `_`, such as
+ * `_layout.tsx`, are not pages. The dev server's router finds and serves the pages itself.
+ */
+function hasComponentPages(pagesDir: string): boolean {
+  try {
+    for (const relative of new Bun.Glob("**/*.{tsx,jsx}").scanSync({ cwd: pagesDir, onlyFiles: true })) {
+      if (!relative.split(/[\\/]/).some(part => part.startsWith("_"))) return true;
+    }
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return false;
+}
+
 async function loadAppServer(
   cwd: string,
 ): Promise<
@@ -257,9 +273,11 @@ async function start() {
   }
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
-  const pages = await loadPages(path.join(cwd, "app", "pages"));
+  const pagesDir = path.join(cwd, "app", "pages");
+  const pages = await loadPages(pagesDir);
+  const componentPages = hasComponentPages(pagesDir);
   const app = await loadAppServer(cwd);
-  if (pages.length === 0 && app === undefined) {
+  if (pages.length === 0 && !componentPages && app === undefined) {
     throw new BakeError(
       `Nothing to serve in "${cwd}". Add a page, such as app/pages/index.html, or an app/server.ts.`,
       false,
@@ -305,6 +323,8 @@ async function start() {
     server = serveOnFreePort(
       "bun bake",
       port => {
+        // Each `Bun.serve()` attempt (the port retries too) takes it.
+        if (componentPages) setPages();
         const options = ObjectCreate(exported ?? null);
         // Own properties, defined rather than assigned: the export may be frozen, or have getters.
         const own = (key: string, value: unknown) =>

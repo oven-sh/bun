@@ -96,7 +96,7 @@ pub mod exception_list {
 
     pub struct StackFrame {
         pub function_name: Box<[u8]>,
-        /// Source URL, remapped relative to the project root / origin.
+        /// The frame's source URL.
         pub file: Box<[u8]>,
         pub position: ZigStackFramePosition,
         pub code_type: ZigStackFrameCode,

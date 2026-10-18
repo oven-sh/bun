@@ -1063,7 +1063,6 @@ impl AsyncModule {
             (*jsc_vm).transpiler.linker.link::<false, true>(
                 &path,
                 &mut parse_result,
-                &(*jsc_vm).origin,
                 bun_bundler::options::ImportPathFormat::AbsolutePath,
             )?;
         }

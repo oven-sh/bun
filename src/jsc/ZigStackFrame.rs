@@ -1,12 +1,10 @@
 use core::fmt;
-use std::io::Write as _;
 
 use bstr::BStr;
 
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_paths::strings;
-use bun_url::URL as ZigURL;
 
 use crate::exception_list;
 use crate::{ZigStackFrameCode, ZigStackFramePosition};
@@ -20,7 +18,7 @@ pub struct ZigStackFrame {
     pub code_type: ZigStackFrameCode,
     pub is_async: bool,
 
-    /// This informs formatters whether to display as a blob URL or not
+    /// Set once the source map remapper has handled the frame. Formatters dim the root path only then.
     pub remapped: bool,
 
     /// -1 means not set.
@@ -28,24 +26,10 @@ pub struct ZigStackFrame {
 }
 
 impl ZigStackFrame {
-    pub(crate) fn snapshot(
-        &self,
-        root_path: &[u8],
-        origin: Option<&ZigURL<'_>>,
-    ) -> exception_list::StackFrame {
-        let mut file = Vec::<u8>::new();
-        if !self.source_url.is_empty() {
-            write!(
-                &mut file,
-                "{}",
-                self.source_url_formatter(root_path, origin, LineColumn::Exclude, false)
-            )
-            .expect("Vec<u8> write is infallible");
-        }
-
+    pub(crate) fn snapshot(&self) -> exception_list::StackFrame {
         exception_list::StackFrame {
             function_name: Box::from(self.function_name.to_utf8().slice()),
-            file: file.into_boxed_slice(),
+            file: self.source_url.to_string().into_bytes().into_boxed_slice(),
             position: self.position,
             code_type: self.code_type,
         }
@@ -90,14 +74,10 @@ impl ZigStackFrame {
     pub(crate) fn source_url_formatter<'a>(
         &'a self,
         root_path: &'a [u8],
-        origin: Option<&'a ZigURL<'a>>,
-        line_column: LineColumn,
         enable_color: bool,
     ) -> SourceURLFormatter<'a> {
         SourceURLFormatter {
             source_url: &self.source_url,
-            line_column,
-            origin,
             root_path,
             position: self.position,
             enable_color,
@@ -106,19 +86,10 @@ impl ZigStackFrame {
     }
 }
 
-/// Whether [`SourceURLFormatter`] appends the frame's `:line:column` to the source URL.
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) enum LineColumn {
-    Include,
-    Exclude,
-}
-
 pub struct SourceURLFormatter<'a> {
     pub(crate) source_url: &'a BunString,
     pub(crate) position: ZigStackFramePosition,
     pub(crate) enable_color: bool,
-    pub(crate) origin: Option<&'a ZigURL<'a>>,
-    pub(crate) line_column: LineColumn,
     pub(crate) remapped: bool,
     pub(crate) root_path: &'a [u8],
 }
@@ -132,21 +103,9 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
         }
 
         let source_slice_ = self.source_url.to_utf8();
-        let mut source_slice: &[u8] = source_slice_.slice();
+        let source_slice: &[u8] = source_slice_.slice();
 
         if !self.remapped {
-            if let Some(origin) = self.origin {
-                write!(f, "{}", BStr::new(origin.display_protocol()))?;
-                f.write_str("://")?;
-                write!(f, "{}", BStr::new(origin.display_hostname()))?;
-                f.write_str(":")?;
-                write!(f, "{}", BStr::new(origin.port))?;
-                f.write_str("/blob:")?;
-
-                if source_slice.starts_with(self.root_path) {
-                    source_slice = &source_slice[self.root_path.len()..];
-                }
-            }
             write!(f, "{}", BStr::new(source_slice))?;
         } else {
             if self.enable_color {
@@ -173,8 +132,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
         }
 
-        if self.line_column == LineColumn::Include
-            && !source_slice.is_empty()
+        if !source_slice.is_empty()
             && (self.position.line.is_valid() || self.position.column.is_valid())
         {
             if self.enable_color {
@@ -188,33 +146,31 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             f.write_str(Output::pretty_fmt!("<r>", true))?;
         }
 
-        if self.line_column == LineColumn::Include {
-            if self.position.line.is_valid() && self.position.column.is_valid() {
-                if self.enable_color {
-                    write!(
-                        f,
-                        Output::pretty_fmt!("<yellow>{}<r><d>:<yellow>{}<r>", true),
-                        self.position.line.one_based(),
-                        self.position.column.one_based(),
-                    )?;
-                } else {
-                    write!(
-                        f,
-                        "{}:{}",
-                        self.position.line.one_based(),
-                        self.position.column.one_based(),
-                    )?;
-                }
-            } else if self.position.line.is_valid() {
-                if self.enable_color {
-                    write!(
-                        f,
-                        Output::pretty_fmt!("<yellow>{}<r>", true),
-                        self.position.line.one_based(),
-                    )?;
-                } else {
-                    write!(f, "{}", self.position.line.one_based())?;
-                }
+        if self.position.line.is_valid() && self.position.column.is_valid() {
+            if self.enable_color {
+                write!(
+                    f,
+                    Output::pretty_fmt!("<yellow>{}<r><d>:<yellow>{}<r>", true),
+                    self.position.line.one_based(),
+                    self.position.column.one_based(),
+                )?;
+            } else {
+                write!(
+                    f,
+                    "{}:{}",
+                    self.position.line.one_based(),
+                    self.position.column.one_based(),
+                )?;
+            }
+        } else if self.position.line.is_valid() {
+            if self.enable_color {
+                write!(
+                    f,
+                    Output::pretty_fmt!("<yellow>{}<r>", true),
+                    self.position.line.one_based(),
+                )?;
+            } else {
+                write!(f, "{}", self.position.line.one_based())?;
             }
         }
 

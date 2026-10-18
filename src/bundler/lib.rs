@@ -416,12 +416,10 @@ unsafe impl Send for DevServerHandle {}
 // SAFETY: see `Send` above — sharing the tagged pointer is sound for the same reason.
 unsafe impl Sync for DevServerHandle {}
 
-// VirtualMachine accessors for `normalize_specifier` / `get_loader_and_virtual_source`.
+// VirtualMachine accessors for `get_loader_and_virtual_source`.
 // `bun_runtime::jsc_hooks` provides the `Runtime` arm.
 bun_dispatch::link_interface! {
     pub VmLoaderCtx[Runtime] {
-        fn origin_host() -> &'static [u8];
-        fn origin_path() -> &'static [u8];
         fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
         fn eval_source() -> Option<*const bun_ast::Source>;
         // The path of the entry module, `None` when there is none (`bun bake`).

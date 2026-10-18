@@ -3,7 +3,6 @@ use core::ptr;
 
 use crate::exception_list;
 use bun_core::String;
-use bun_url::URL as ZigURL;
 
 use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
@@ -58,12 +57,7 @@ impl ZigException {
     // `JSC__JSValue__toZigException` which writes through an out-param), so
     // there is intentionally no `from_exception` here.
 
-    pub(crate) fn add_to_error_list(
-        &mut self,
-        error_list: &mut Vec<exception_list::JsException>,
-        root_path: &[u8],
-        origin: Option<&ZigURL>,
-    ) {
+    pub(crate) fn add_to_error_list(&mut self, error_list: &mut Vec<exception_list::JsException>) {
         let name = self.name.to_utf8();
         let message = self.message.to_utf8();
 
@@ -76,7 +70,7 @@ impl ZigException {
             message: Box::from(message.slice()),
             runtime_type: self.runtime_type,
             code: self.r#type,
-            stack: self.stack.snapshot(root_path, origin),
+            stack: self.stack.snapshot(),
         });
     }
 }

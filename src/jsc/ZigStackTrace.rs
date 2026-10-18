@@ -4,7 +4,6 @@ use core::ptr::NonNull;
 use crate::exception_list;
 use bun_core::String as BunString;
 use bun_core::Utf8Bytes;
-use bun_url::URL as ZigURL;
 
 use crate::SourceProvider;
 use crate::ZigStackFrame;
@@ -53,13 +52,8 @@ impl ZigStackTrace {
         }
     }
 
-    /// Owned copy of the frames and source lines, with source URLs remapped
-    /// relative to `root_path` / `origin`.
-    pub(crate) fn snapshot(
-        &self,
-        root_path: &[u8],
-        origin: Option<&ZigURL<'_>>,
-    ) -> exception_list::StackTrace {
+    /// Owned copy of the frames and source lines.
+    pub(crate) fn snapshot(&self) -> exception_list::StackTrace {
         let mut source_lines = Vec::new();
         let mut iter = self.source_line_iterator();
         if iter.get_length() > 0 {
@@ -73,11 +67,7 @@ impl ZigStackTrace {
 
         exception_list::StackTrace {
             source_lines,
-            frames: self
-                .frames()
-                .iter()
-                .map(|frame| frame.snapshot(root_path, origin))
-                .collect(),
+            frames: self.frames().iter().map(ZigStackFrame::snapshot).collect(),
         }
     }
 

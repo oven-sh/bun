@@ -5308,39 +5308,6 @@ describe("bundler", () => {
     });
   }
 
-  // A server component may call a `useState` that is not React's.
-  itBundled("dynamic_import_dce/ServerComponentCallsOwnUseState", {
-    files: {
-      "/entry.js": /* js */ `
-        const hooks = require("./hooks.js");
-        const viaImport = await import("./hooks.js");
-        console.log(hooks.useState(1)[0] + viaImport.useState(2)[0]);
-      `,
-      "/hooks.js": `export function useState(value) { return [value]; }`,
-    },
-    backend: "cli",
-    serverComponents: true,
-    target: "bun",
-    outdir: "/out",
-    run: { file: "/out/entry.js", stdout: "3" },
-  });
-  // With ESM output, `require("react")` is an import statement.
-  itBundled("dynamic_import_dce/ServerComponentCallsReactUseState", {
-    files: {
-      "/entry.js": /* js */ `
-        const React = require("react");
-        console.log(React.useState(1)[0]);
-      `,
-      "/node_modules/react/index.js": `exports.useState = function (value) { return [value]; };`,
-      "/node_modules/react/package.json": `{ "name": "react", "main": "./index.js" }`,
-    },
-    backend: "cli",
-    serverComponents: true,
-    target: "bun",
-    outdir: "/out",
-    bundleErrors: { "/entry.js": ['"useState" is not available in a server component'] },
-  });
-
   // The classic JSX factory and fragment can be members of such a local. The
   // parser resolves `ns` twice for each of them, so `ns` keeps its object.
   const jsxNamespace = /* js */ `

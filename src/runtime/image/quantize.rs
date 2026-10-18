@@ -439,27 +439,6 @@ struct Sums {
     sum: [u64; 4],
 }
 
-/// The sums of a box per value of its split channel, and one bit per value that the box has.
-struct ByValue<'a> {
-    ch: usize,
-    at_value: &'a mut [Sums],
-    has: [u64; 4],
-}
-
-impl ByValue<'_> {
-    /// Add `count` pixels of one colour.
-    #[inline]
-    fn add(&mut self, pixel: [u8; 4], count: u64) {
-        let value = usize::from(pixel[self.ch]);
-        self.has[value >> 6] |= 1 << (value & 63);
-        let sums = &mut self.at_value[value];
-        sums.n += count;
-        for c in 0..4usize {
-            sums.sum[c] += count * u64::from(pixel[c]);
-        }
-    }
-}
-
 /// A colour and the number of pixels that have it.
 #[derive(Clone, Copy, Default)]
 struct Bin {
@@ -525,15 +504,26 @@ impl Elements {
         all
     }
 
-    /// Add the pixels of a box to the sums of their value of the split channel.
-    fn add_by_value(&self, b: &ColorBox, sums: &mut ByValue) {
+    /// Add the pixels of a box to the sums of their value of `ch`. One bit per value the box has.
+    fn add_by_value(&self, b: &ColorBox, ch: usize, at_value: &mut [Sums]) -> [u64; 4] {
+        let mut has = [0u64; 4];
+        let mut add = |pixel: [u8; 4], count: u64| {
+            let value = usize::from(pixel[ch]);
+            has[value >> 6] |= 1 << (value & 63);
+            let sums = &mut at_value[value];
+            sums.n += count;
+            for c in 0..4usize {
+                sums.sum[c] += count * u64::from(pixel[c]);
+            }
+        };
         for bin in &self.bins[b.bins.0..b.bins.1] {
-            sums.add(bin.rgba, u64::from(bin.count));
+            add(bin.rgba, u64::from(bin.count));
         }
         // One step per run of equal pixels: a flat area would write its sums once per pixel.
         for run in self.pixels[b.pixels.0..b.pixels.1].chunk_by(|a, b| a == b) {
-            sums.add(run[0], run.len() as u64);
+            add(run[0], run.len() as u64);
         }
+        has
     }
 
     /// Move what a box has below `value` in `ch` to the front: bins, pixels, and their moments.
@@ -647,13 +637,7 @@ fn split_boxes(elements: &mut Elements, want: usize) -> Result<Vec<u8>, AllocErr
 fn cut(elements: &Elements, b: &ColorBox, ch: usize, at_value: &mut [Sums]) -> Option<u8> {
     let total = &b.moments;
     // A box of a few pixels has few of the 256 values: `has` names them.
-    let mut by_value = ByValue {
-        ch,
-        at_value,
-        has: [0u64; 4],
-    };
-    elements.add_by_value(b, &mut by_value);
-    let ByValue { at_value, has, .. } = by_value;
+    let has = elements.add_by_value(b, ch, at_value);
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
     let mut left = Sums::default();
     let mut best: Option<(u128, u8)> = None;

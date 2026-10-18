@@ -3986,15 +3986,23 @@ fn may_use_copy_out_of_range(
     let Some(package) = lockfile.get_parent_pkg_of_dependency(row) else {
         return true;
     };
+    let kinds = lockfile.packages.items_resolution();
     let mut is_a_dependency = false;
     let mut have_the_name: Vec<PackageID> = Vec::new();
     for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
-        let mut own =
-            (list.begin() as usize..list.end() as usize).filter(|&id| !deps[id].behavior.is_peer());
-        if own.clone().any(|id| deps[id].name_hash == name_hash) {
-            have_the_name.push(owner as PackageID);
+        // The peer dependencies of the root and of a workspace name what the project is used with.
+        let peers_count = matches!(
+            kinds[owner].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        );
+        for id in list.begin()..list.end() {
+            let dep = &deps[id as usize];
+            let is_peer = dep.behavior.is_peer();
+            if dep.name_hash == name_hash && id != row && (!is_peer || peers_count) {
+                have_the_name.push(owner as PackageID);
+            }
+            is_a_dependency |= !is_peer && resolutions[id as usize] == copy;
         }
-        is_a_dependency |= own.any(|id| resolutions[id] == copy);
     }
     let all = reachable::Options::all(0);
     !is_a_dependency

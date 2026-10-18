@@ -7360,6 +7360,39 @@ describe.concurrent("hoisting", async () => {
       expect(await versionSeenFrom(join(dir, "packages", "a"), below, "no-deps")).toBe("1.0.0");
     });
 
+    test("a workspace's own peer dependency decides for the packages below it", async () => {
+      // one-fixed-dep@1.0.0 depends on no-deps@1.0.0. dedupe-divergent-strict needs ^2.0.0.
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "one-fixed-dep": "1.0.0", "dedupe-divergent-strict": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([
+        'warn: incorrect peer dependency "no-deps@1.0.0": "dedupe-divergent-strict@1.0.0" requires "no-deps@^2.0.0"',
+      ]);
+      expect(await versionSeenFrom(join(dir, "packages", "a"), ["dedupe-divergent-strict"], "no-deps")).toBe("1.0.0");
+      expect(await file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
+    });
+
+    test("the project's own peer dependency does not take an unrelated package's copy either", async () => {
+      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0.
+      const dir = await project({
+        "package.json": {
+          name: "foo",
+          dependencies: { "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([]);
+      expect(await versionSeenFrom(dir, [], "no-deps")).toBe("1.1.0");
+      expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
+      expect(await versionSeenFrom(dir, ["one-fixed-dep"], "no-deps")).toBe("2.0.0");
+    });
+
     test("a workspace that depends on both shares its copy", async () => {
       const dir = await project({
         "package.json": { name: "mono", workspaces: ["packages/*"] },

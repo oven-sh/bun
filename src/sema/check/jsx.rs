@@ -587,7 +587,10 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_tuple(ty) {
             return true;
         }
-        let zero = self.atoms().intern(b"0");
+        let zero = match shortcuts::NAME_OF_ZERO {
+            true => self.number_name(0.0),
+            false => self.atoms().intern(b"0"),
+        };
         if self.get_property_of_type(ty, zero).is_some() {
             return true;
         }

@@ -126,6 +126,10 @@ pub(super) struct CallState<'a> {
     pub(super) candidate_for_type_argument_error: Option<SigId>,
 }
 
+/// `hasCorrectArity` asks whether the `)` of a call is missing once that decides, which is where an argument is missing. The
+/// answer is in the text of the file, which nothing else reads at a call. `false`: it asks first, as before.
+const ASKS_LATE_WHETHER_A_CALL_IS_INCOMPLETE: bool = true;
+
 /// What `push_inference_context` replaces in the checker, and `pop_inference_context` puts back.
 struct OutsideInferenceContext {
     mode_of_recheck: CheckMode,
@@ -701,14 +705,17 @@ impl<'p, 's> Checker<'p, 's> {
             _ => args.len(),
         };
         let spread = args.iter().position(|a| a.is_spread());
-        let is_incomplete = self.is_call_incomplete(file, call, node);
+        let early = (!ASKS_LATE_WHETHER_A_CALL_IS_INCOMPLETE)
+            .then(|| self.is_call_incomplete(file, call, node));
+        let is_incomplete =
+            |c: &Self| early.unwrap_or_else(|| c.is_call_incomplete(file, call, node));
         let is_open = matches!(params, List::Own(_));
-        self.has_correct_arity_for_count(sig, params, is_open, actual, spread, is_incomplete)
+        self.has_correct_arity_for_count(sig, params, is_open, actual, spread, &is_incomplete)
     }
 
     /// `hasCorrectArity` for a call with `actual` arguments. `spread`: the first spread argument.
     /// `is_open`: `sig_params` could not store `params`, so a cycle through the type of a parameter
-    /// is found where tsgo asks for that type.
+    /// is found where tsgo asks for that type. `is_incomplete`: `callIsIncomplete`.
     fn has_correct_arity_for_count(
         &mut self,
         sig: SigId,
@@ -716,7 +723,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_open: bool,
         actual: usize,
         spread: Option<usize>,
-        is_incomplete: bool,
+        is_incomplete: &dyn Fn(&Self) -> bool,
     ) -> bool {
         // Which parameters accept `void` only matters where a required one is omitted. That
         // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, for a
@@ -731,7 +738,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return rest.is_some();
             }
             let may_be_omitted = |p: &SigParam| p.optional || p.rest && !p.is_required_rest;
-            if is_incomplete || params[actual..].iter().all(may_be_omitted) {
+            if params[actual..].iter().all(may_be_omitted) || is_incomplete(self) {
                 return true;
             }
         }
@@ -755,7 +762,7 @@ impl<'p, 's> Checker<'p, 's> {
         if actual > count && !has_rest {
             return false;
         }
-        if is_incomplete {
+        if is_incomplete(self) {
             return true;
         }
         // `acceptsVoid`: only a parameter that accepts `void` may be omitted. For a parameter whose

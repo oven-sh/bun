@@ -3845,6 +3845,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// for `on_reentry` to find. Neither does it where the return type needs no query.
     #[inline]
     pub(super) fn non_circular_return_type_of_signature(&mut self, sig: SigId) -> TypeId {
+        // What is kept is resolved, and nothing enters its resolution again.
+        if let Some(kept) = self.kept_return_type(sig) {
+            return kept;
+        }
         match *self.types().sig(sig) {
             SigData::Decl { file, func, mapper } if !self.is_instantiating(mapper) => {
                 let key = (file, func);

@@ -27,6 +27,13 @@ impl Predicate {
 /// `signature.thisParameter` in `Checker::resolved_parameter_types`.
 const THIS_PARAMETER: u32 = u32::MAX;
 
+/// `identity_mapper_with_adopted` keeps its last answers that are the same from then on. Every object literal and every
+/// function expression asks, and those of one scope come one after the other. `false`: it looks each one up, as before.
+const KEEPS_RECENT_IDENTITY_MAPPERS: bool = true;
+/// Every answer that is kept is looked up as well, and a difference is a panic. For debugging.
+const CHECKS_RECENT_IDENTITY_MAPPERS: bool = false;
+pub(super) const RECENT_SCOPES: usize = 64;
+
 /// The parameters whose types `sig_params_of_declaration` instantiates, besides a rest parameter.
 #[derive(Copy, Clone)]
 enum Read {
@@ -886,13 +893,41 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         scope: ScopeId,
     ) -> MapperId {
+        if !KEEPS_RECENT_IDENTITY_MAPPERS {
+            return self.look_up_identity_mapper_with_adopted(file, scope).0;
+        }
+        let place = (scope.0 as usize).wrapping_add(file.0 as usize * 31) % RECENT_SCOPES;
+        let recent = self.recent_identity_mappers[place];
+        if recent.0 == (file, scope) {
+            if CHECKS_RECENT_IDENTITY_MAPPERS {
+                let found = self.look_up_identity_mapper_with_adopted(file, scope).0;
+                assert_eq!(
+                    recent.1, found,
+                    "the identity mapper of {scope:?} of {file:?}"
+                );
+            }
+            return recent.1;
+        }
+        let (mapper, is_final) = self.look_up_identity_mapper_with_adopted(file, scope);
+        if is_final {
+            self.recent_identity_mappers[place] = ((file, scope), mapper);
+        }
+        mapper
+    }
+
+    /// Also returns whether it is the same from now on: it is in a table, or nothing is adopted in `scope`.
+    fn look_up_identity_mapper_with_adopted(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+    ) -> (MapperId, bool) {
         let declared = self.identity_mapper(file, scope);
         let (hir, bound) = (self.hir(file), self.bound(file));
         // For speed: only a function with a contextual type adopts anything.
         let mut at = scope;
         loop {
             if at.is_none() {
-                return declared;
+                return (declared, true);
             }
             let s = &bound.scopes[at.idx()];
             if let ScopeKind::Fn(f) = s.kind
@@ -905,7 +940,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let known = (self.p.identity_mappers_with_adopted).get(&self.task, &(file, scope));
         if let Some(kept) = known {
-            return kept;
+            return (kept, true);
         }
         let computation = self.begin_scope();
         let adopted = self.adopted_type_params_in_scope(file, scope, u32::MAX);
@@ -917,13 +952,14 @@ impl<'p, 's> Checker<'p, 's> {
             self.types().mapper(pairs)
         };
         match self.end_scope_by_counters(computation) {
-            Ok(stored) => (self.p.identity_mappers_with_adopted).insert(
-                &self.task,
-                (file, scope),
-                mapper,
-                stored,
-            ),
-            Err(_) => mapper,
+            Ok(stored) => {
+                let table = &self.p.identity_mappers_with_adopted;
+                (
+                    table.insert(&self.task, (file, scope), mapper, stored),
+                    true,
+                )
+            }
+            Err(_) => (mapper, false),
         }
     }
 
@@ -4356,31 +4392,71 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `sig_type_params` for a signature that was not queried recently.
     fn sig_type_params_not_recent(&mut self, sig: SigId) -> List<'p, TypeId> {
+        if signature_links::KEEPS_FACTS
+            && (self.signature_links).has(sig, signature_links::fact::HAS_NO_TYPE_PARAMETERS)
+        {
+            if signature_links::CHECKS_FACTS {
+                self.check_kept_signature_part(sig, "typeParameters", Vec::new(), |c| {
+                    c.look_up_sig_type_params(sig).into_vec()
+                });
+            }
+            return List::default();
+        }
+        if signature_links::KEEPS_FACTS
+            && let Some(kept) = self.signature_links.type_parameters(sig)
+        {
+            if signature_links::CHECKS_FACTS {
+                self.check_kept_signature_part(sig, "typeParameters", kept.to_vec(), |c| {
+                    c.look_up_sig_type_params(sig).into_vec()
+                });
+            }
+            return List::Kept(kept);
+        }
+        self.look_up_sig_type_params(sig)
+    }
+
+    /// `kept` is the stored result of `sig_type_params(sig)`.
+    fn kept_sig_type_params(&mut self, sig: SigId, kept: &'p [TypeId]) -> List<'p, TypeId> {
+        if signature_links::KEEPS_FACTS {
+            self.signature_links.keep_type_parameters(sig, kept);
+        }
+        List::Kept(kept)
+    }
+
+    fn look_up_sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.types().sig(sig) {
             SigData::Synth { type_params, .. } => return List::Kept(type_params),
             SigData::WithReturn { sig: inner, .. } => return self.sig_type_params(*inner),
             // Most functions have none.
             SigData::Decl { file, func, .. } if self.hir(*file)[*func].type_params.is_empty() => {
+                let times_cut_short = self.times_cut_short.get();
                 // `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`
                 // Not final until the function is checked, so it is not cached.
                 return match self.takes_context(*file, *func) {
                     Some(owner) if self.is_context_sensitive(*file, owner) => {
                         List::Own(self.adopted_type_params(sig))
                     }
-                    _ => List::default(),
+                    _ => {
+                        // Where the stack was low `is_context_sensitive` has the answer of who asked.
+                        if self.times_cut_short.get() == times_cut_short {
+                            let fact = signature_links::fact::HAS_NO_TYPE_PARAMETERS;
+                            self.signature_links.add_fact(sig, fact);
+                        }
+                        List::default()
+                    }
                 };
             }
             _ => {}
         }
         if let Some(kept) = self.p.sig_type_params.get_ref(&self.task, &sig) {
-            return List::Kept(kept);
+            return self.kept_sig_type_params(sig, kept);
         }
         let scope = self.begin_scope();
         let params = self.sig_type_params_of_declaration(sig);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             let params = self.list(&params);
             let kept = (self.p.sig_type_params).insert_ref(&self.task, sig, params, stored);
-            return List::Kept(kept.1);
+            return self.kept_sig_type_params(sig, kept.1);
         }
         List::Own(params)
     }
@@ -4729,11 +4805,29 @@ impl<'p, 's> Checker<'p, 's> {
     /// `kept` is the stored result of `sig_params(sig)`.
     fn cached_sig_params(&mut self, sig: SigId, kept: &'p [SigParam]) -> List<'p, SigParam> {
         self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
+        if signature_links::KEEPS_PARAMETERS {
+            self.signature_links.keep_parameters(sig, kept);
+        }
         List::Kept(kept)
     }
 
     /// `sig_params_with_first` for a signature that was not queried recently.
     fn sig_params_not_recent(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
+        if signature_links::KEEPS_PARAMETERS
+            && let Some(kept) = self.signature_links.parameters(sig)
+        {
+            if signature_links::CHECKS_PARAMETERS {
+                self.check_kept_signature_part(sig, "parameters", kept.to_vec(), |c| {
+                    c.look_up_sig_params(sig, count).into_vec()
+                });
+            }
+            self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
+            return List::Kept(kept);
+        }
+        self.look_up_sig_params(sig, count)
+    }
+
+    fn look_up_sig_params(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => {
                 return self.sig_params_with_first(*inner, count);
@@ -4908,7 +5002,19 @@ impl<'p, 's> Checker<'p, 's> {
         out
     }
 
+    /// `getReturnTypeOfSignature`
+    #[inline]
     pub fn sig_return(&mut self, sig: SigId) -> TypeId {
+        if !signature_links::KEEPS_RETURN_TYPES {
+            return self.derive_return_type(sig);
+        }
+        match self.kept_return_type(sig) {
+            Some(kept) => kept,
+            None => self.derive_and_keep_return_type(sig),
+        }
+    }
+
+    pub(super) fn derive_return_type(&mut self, sig: SigId) -> TypeId {
         match *self.types().sig(sig) {
             // `case sig.composite != nil`
             SigData::Synth {
@@ -5089,6 +5195,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// `signature.thisParameter`: its type and the signature that declares it. A context-sensitive function without a `this` parameter
     /// takes the one of its contextual signature (`assignContextualParameterTypes`: `createSymbolWithType(context.thisParameter, nil)`).
     pub(super) fn sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
+        if signature_links::KEEPS_FACTS
+            && (self.signature_links).has(sig, signature_links::fact::HAS_NO_THIS_PARAMETER)
+        {
+            if signature_links::CHECKS_FACTS {
+                self.check_kept_signature_part(sig, "thisParameter", None, |c| {
+                    c.look_up_sig_this_parameter(sig)
+                });
+            }
+            return None;
+        }
+        self.look_up_sig_this_parameter(sig)
+    }
+
+    fn look_up_sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_this_parameter(inner),
             SigData::Synth { this, .. } => return Some((this?, sig)),
@@ -5124,10 +5244,18 @@ impl<'p, 's> Checker<'p, 's> {
             let declared_by = self.sig_of_fn(of, other);
             return Some((self.instantiate(declared, mapper), declared_by));
         }
-        let crate::bind::FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner else {
-            return None;
+        // Of an accessor it depends on the other one. Where the stack was low `is_context_sensitive` has the answer of who
+        // asked.
+        let times_cut_short = self.times_cut_short.get();
+        let takes_one_from_context = match self.bound(file).fns[func.idx()].owner {
+            crate::bind::FnOwner::Expr(owner) => self.is_context_sensitive(file, owner),
+            _ => false,
         };
-        if !self.is_context_sensitive(file, owner) {
+        if !takes_one_from_context {
+            if other_kind.is_none() && self.times_cut_short.get() == times_cut_short {
+                let fact = signature_links::fact::HAS_NO_THIS_PARAMETER;
+                self.signature_links.add_fact(sig, fact);
+            }
             return None;
         }
         let contextual = self.assigned_contextual_signature(file, func)?;
@@ -5139,7 +5267,19 @@ impl<'p, 's> Checker<'p, 's> {
         Some((self.instantiate(this, mapper), declared_by))
     }
 
+    /// `getTypePredicateOfSignature`
+    #[inline]
     pub fn sig_predicate(&mut self, sig: SigId) -> Option<Predicate> {
+        if !signature_links::KEEPS_TYPE_PREDICATES {
+            return self.derive_type_predicate(sig);
+        }
+        match self.kept_type_predicate(sig) {
+            Some(kept) => kept,
+            None => self.derive_and_keep_type_predicate(sig),
+        }
+    }
+
+    pub(super) fn derive_type_predicate(&mut self, sig: SigId) -> Option<Predicate> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
             SigData::Synth {

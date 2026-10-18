@@ -73,6 +73,7 @@ pub mod self_check;
 pub mod services;
 mod shape;
 mod shortcuts;
+mod signature_links;
 mod sink;
 pub mod spans;
 mod symbol_ids;
@@ -678,6 +679,8 @@ impl<'s> Program<'s> {
             late_bound_members: Default::default(),
             late_bound_declarations: Default::default(),
             this_types: Default::default(),
+            this_types_in_progress: Vec::new(),
+            thisless_members: Default::default(),
             instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
             late_binding_by_symbol: Vec::new(),
@@ -766,6 +769,7 @@ impl<'s> Program<'s> {
             enum_relation: Default::default(),
             enum_literal_types: Default::default(),
             task_facts: Default::default(),
+            counterparts_of_literals: Default::default(),
             relation_sizes: [0; 6],
             generic_relation_entries_not_published: 0,
             variances_cut_short: Default::default(),
@@ -845,6 +849,7 @@ impl<'s> Program<'s> {
             checked_leaves: Default::default(),
             alias_symbols: Default::default(),
             links: Default::default(),
+            signature_links: Default::default(),
             could_contain_type_variables: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
@@ -853,6 +858,12 @@ impl<'s> Program<'s> {
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
+            recent_identity_mappers: Box::new(
+                [(
+                    (FileId(u32::MAX), crate::bind::ScopeId::NONE),
+                    MapperId::IDENTITY,
+                ); decl::RECENT_SCOPES],
+            ),
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             awaiting: Vec::new(),
@@ -1217,6 +1228,10 @@ pub struct Checker<'p, 's> {
     late_bound_declarations: crate::util::FxHashSet<(FileId, crate::bind::Decl)>,
     /// `has_this_type` of an interface.
     this_types: FxHashMap<Sym, bool>,
+    /// The interfaces that `has_this_type` is looking at.
+    this_types_in_progress: Vec<Sym>,
+    /// See `is_thisless_for_this_mapper`.
+    thisless_members: FxHashMap<Sym, bool>,
     /// `links.resolvedType` and, with `true`, `links.writeType` of the instantiated symbols, by target
     /// and mapper, that are not what the type of the target gives. See `link_of_instantiated_symbol`.
     instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, bool, TypeId)>>,
@@ -1478,6 +1493,8 @@ pub struct Checker<'p, 's> {
     enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
     /// See `shortcuts::task_fact`.
     task_facts: shortcuts::TaskFacts,
+    /// See `shortcuts::COUNTERPARTS_OF_LITERALS`. They are asked for under `&Checker`.
+    counterparts_of_literals: std::cell::RefCell<shortcuts::TypeMap<TypeId>>,
     /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task
     /// has stored. Those of the files that a single checker would have checked before are not
     /// counted.
@@ -1635,6 +1652,8 @@ pub struct Checker<'p, 's> {
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
     /// The derived parts of conditional and mapped types, and the aliases of types.
     links: links::TypeLinks,
+    /// The derived parts of signatures.
+    signature_links: signature_links::SignatureLinks<'p>,
     /// What `could_contain_type_variables_by_table` has found, by type.
     could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
@@ -1657,6 +1676,8 @@ pub struct Checker<'p, 's> {
     walk_declared: TypeId,
     /// The constants whose initializers `evaluateEntity` is evaluating.
     constants_in_evaluation: Vec<(FileId, VarDeclId)>,
+    /// See `identity_mapper_with_adopted`.
+    recent_identity_mappers: Box<[((FileId, crate::bind::ScopeId), MapperId); decl::RECENT_SCOPES]>,
     /// The most recent final results of `sig_params` and `sig_type_params`, indexed by the low bits
     /// of the signature id.
     recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
@@ -3898,10 +3919,37 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `t.freshType` or `t.regularType` of a literal type. Any other type is returned as it is.
     fn with_freshness(&self, ty: TypeId, fresh: bool) -> TypeId {
         if !fresh && self.is_without_fresh_literal(ty) {
             return ty;
         }
+        if !shortcuts::COUNTERPARTS_OF_LITERALS {
+            return self.intern_with_freshness(ty, fresh);
+        }
+        if let Some(counterpart) = self.counterparts_of_literals.borrow().get(ty) {
+            let kept = match self.types().has_fresh_literal(ty) == fresh {
+                true => ty,
+                false => counterpart,
+            };
+            if shortcuts::SHADOW && kept != self.intern_with_freshness(ty, fresh) {
+                self.fact_differs(
+                    "the fresh or the regular type of a literal type",
+                    &[ty, kept],
+                );
+            }
+            return kept;
+        }
+        let found = self.intern_with_freshness(ty, fresh);
+        if found != ty {
+            let mut counterparts = self.counterparts_of_literals.borrow_mut();
+            counterparts.insert(ty, found);
+            counterparts.insert(found, ty);
+        }
+        found
+    }
+
+    fn intern_with_freshness(&self, ty: TypeId, fresh: bool) -> TypeId {
         match *self.data(ty) {
             TypeData::StringLit { value, fresh: f } if f != fresh => {
                 self.intern(TypeData::StringLit { value, fresh })

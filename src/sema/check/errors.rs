@@ -210,6 +210,7 @@ impl Checker<'_, '_> {
         self.rechecked_exprs.retain(|key, _| stays(key.0));
         self.rechecked_members.retain(|key, _| stays(key.0));
         self.late_bound_members.retain(|key, _| stays(key.0.file));
+        self.thisless_members.retain(|key, _| stays(key.file));
         self.early_bound_for_good.retain(|key| stays(key.0.file));
         self.resolved_signatures.retain(|key| stays(key.0));
         self.context_checked_here.retain(|key| stays(key.0));
@@ -231,6 +232,7 @@ impl Checker<'_, '_> {
             + self.rechecked_exprs.len()
             + self.rechecked_members.len()
             + self.late_bound_members.len()
+            + self.thisless_members.len()
             + self.early_bound_for_good.len()
             + self.resolved_signatures.len()
             + self.context_checked_here.len()

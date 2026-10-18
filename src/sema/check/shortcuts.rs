@@ -48,6 +48,14 @@ pub(super) const KINDS_FROM_FLAGS: bool = ALL;
 /// A type without a fresh literal type in it is its own regular and its own widened literal type, which
 /// `Types::has_fresh_literal` says. Off: the type and the members of a union are visited.
 pub(super) const FRESH_LITERALS: bool = ALL;
+/// `LiteralType.freshType` and `regularType`: the fresh and the regular type of a literal are kept with each other once one
+/// was made from the other, by type, for the task. An id stands for one interning key as long as the task runs, so to intern
+/// the key again finds the same. Off: it is interned each time.
+pub(super) const COUNTERPARTS_OF_LITERALS: bool = ALL;
+/// `isConstEnumObjectType` reads the record of an object type only. Off: of every type.
+pub(super) const CONST_ENUM_OBJECTS: bool = ALL;
+/// `isTupleLikeType` has the name `"0"` from `number_name`, which keeps it. Off: it is interned each time.
+pub(super) const NAME_OF_ZERO: bool = ALL;
 /// `TypeNumbers` has an array. Off: a hash table, as before.
 pub(super) const DENSE_TYPE_MAPS: bool = ALL;
 /// `forget_nodes_of_leaf` goes through the memos once they have doubled. Off: after every file.

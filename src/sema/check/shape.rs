@@ -18,6 +18,15 @@ mod reduction;
 pub use reduction::MEMBER_COUNTS;
 pub(super) use reduction::{MemberCount, Reductions};
 
+/// `is_thisless_for_this_mapper` keeps its answers, by symbol, for the task: it is asked of every member that a class or an
+/// interface inherits, and each time the type of such a member is read. An answer depends on the declarations of the
+/// member and of its owner. It is kept if finding it met no cycle and no limit, and if no `has_this_type` and no binding of
+/// computed names was in progress.
+/// `false`: it is found out each time, as before.
+const KEEPS_THISLESS_MEMBERS: bool = true;
+/// Every answer that is kept is found out as well, and a difference is a panic. For debugging.
+const CHECKS_THISLESS_MEMBERS: bool = false;
+
 /// `thisAssignmentDeclarationKind`, with its location.
 #[derive(Copy, Clone)]
 pub(super) enum ThisAssignmentDeclaration {
@@ -2617,9 +2626,11 @@ impl<'p, 's> Checker<'p, 's> {
         // `links.declaredType` is assigned first: an interface that extends itself finds its type
         // without a `thisType`.
         self.this_types.insert(sym, false);
+        self.this_types_in_progress.push(sym);
         let has_this_type = !self.local_type_params_of_symbol(sym).is_empty()
             || !self.outer_type_params_of_symbol(sym).is_empty()
             || !self.is_thisless_interface(sym);
+        self.this_types_in_progress.pop();
         self.this_types.insert(sym, has_this_type);
         has_this_type
     }
@@ -5662,6 +5673,30 @@ impl<'p, 's> Checker<'p, 's> {
     /// whose sources are the type parameters of the class or interface, the outer ones too, and
     /// its `this` type. Without a `this` type there is no mapper (`resolveClassOrInterfaceMembers`).
     pub(super) fn is_thisless_for_this_mapper(&mut self, sym: Sym) -> bool {
+        if !KEEPS_THISLESS_MEMBERS {
+            return self.find_out_whether_thisless_for_this_mapper(sym);
+        }
+        if let Some(&kept) = self.thisless_members.get(&sym) {
+            if CHECKS_THISLESS_MEMBERS {
+                let found = self.find_out_whether_thisless_for_this_mapper(sym);
+                assert_eq!(kept, found, "whether {sym:?} is thisless");
+            }
+            return kept;
+        }
+        let scope = self.begin_scope();
+        let is_thisless = self.find_out_whether_thisless_for_this_mapper(sym);
+        // `has_this_type` says no of an interface that it is looking at, and a container whose computed names are being
+        // bound has its early-bound members alone.
+        if self.end_scope_by_counters(scope).is_ok()
+            && self.this_types_in_progress.is_empty()
+            && self.late_binding.is_empty()
+        {
+            self.thisless_members.insert(sym, is_thisless);
+        }
+        is_thisless
+    }
+
+    fn find_out_whether_thisless_for_this_mapper(&mut self, sym: Sym) -> bool {
         let Some((file, Decl::Member(m))) = self.files().value_declaration(sym) else {
             return false;
         };
@@ -8141,7 +8176,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isConstEnumObjectType`
+    #[inline]
     pub(super) fn is_const_enum_object(&self, ty: TypeId) -> bool {
+        // Every expression is asked. Most have a type that is not an object type, which a column says.
+        if shortcuts::CONST_ENUM_OBJECTS && !self.types().is_plain_object(ty) {
+            if shortcuts::SHADOW && self.is_const_enum_object_by_record(ty) {
+                self.fact_differs("the object type of a const enum", &[ty]);
+            }
+            return false;
+        }
+        self.is_const_enum_object_by_record(ty)
+    }
+
+    fn is_const_enum_object_by_record(&self, ty: TypeId) -> bool {
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::EnumObject(sym), .. }
             if self.files().decls(sym).iter().any(|&(f, d)| matches!(d, Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))))
     }

@@ -147,6 +147,9 @@ impl PartialEq for Reference {
 
 impl Eq for Reference {}
 
+/// `false`: `flow_type_of` asks `is_never_narrowed`, which fills what the walks read of `FlowMemo`, and walks all the same.
+const LEAVES_OUT_WALKS_THAT_NARROW_NOTHING: bool = true;
+
 /// Memo tables of flow analysis that are not keyed by a node alone. They belong to the checker, so
 /// they are dropped at the end of the task. Those keyed by a node are fields of `Program`. They are
 /// stored with `rewrite`: tsgo assigns the link when the computation ends, overwriting what a
@@ -5760,7 +5763,9 @@ impl<'p, 's> Checker<'p, 's> {
             return self.convert_auto_to_any(declared);
         }
         let mut reference = self.reference_of(file, e);
-        if self.is_never_narrowed(&reference, e, declared, start) {
+        if self.is_never_narrowed(&reference, e, declared, start)
+            && LEAVES_OUT_WALKS_THAT_NARROW_NOTHING
+        {
             return declared;
         }
         let is_automatic = self.is_automatic_type(declared);
@@ -8477,6 +8482,48 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypePredicateFromBody`: `x => x.kind === "a"` is a type guard without declaring one.
     pub(super) fn inferred_predicate(&mut self, file: FileId, func: FnId) -> Option<Predicate> {
+        let (body, before) = self.returned_expression_of_type_guard(file, func)?;
+        if let Some(kept) = self
+            .p
+            .type_predicates_from_body
+            .get(&self.task, &(file, func))
+        {
+            return kept;
+        }
+        // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`: a condition
+        // evaluated along the way may call the function.
+        if (self.flow_memo.type_predicates_in_progress).contains(&(file, func)) {
+            return None;
+        }
+        self.flow_memo
+            .type_predicates_in_progress
+            .push((file, func));
+        let (predicate, stored) = self.run_memoizable(|c| {
+            c.check_if_expression_refines_any_parameter(file, func, body, before)
+        });
+        self.flow_memo.type_predicates_in_progress.pop();
+        if let Some(stored) = stored {
+            (self.p.type_predicates_from_body).insert(&self.task, (file, func), predicate, stored);
+        }
+        predicate
+    }
+
+    /// Whether `inferred_predicate` gives the same for `func` from now on, and computes nothing.
+    pub(super) fn is_inferred_predicate_settled(&self, file: FileId, func: FnId) -> bool {
+        self.returned_expression_of_type_guard(file, func).is_none()
+            || (self.p.type_predicates_from_body)
+                .get(&self.task, &(file, func))
+                .is_some()
+                && !(self.flow_memo.type_predicates_in_progress).contains(&(file, func))
+    }
+
+    /// The start of `getTypePredicateFromBody`: the single returned expression of `func`, and the flow node at that point.
+    /// `NONE`: the start of the function. `None`: the syntax rules a type predicate out.
+    fn returned_expression_of_type_guard(
+        &self,
+        file: FileId,
+        func: FnId,
+    ) -> Option<(ExprId, FlowId)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         if f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || f.params.is_empty() {
@@ -8489,9 +8536,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let info = bound.fns[func.idx()];
-        // The single returned expression, and the flow node at that point. `NONE`: the start of the
-        // function.
-        let (body, before) = match f.body {
+        Some(match f.body {
             FnBody::Expr(e) => (e, FlowId::NONE),
             FnBody::Block(_) => {
                 let mut returns = bound.ids(info.returns);
@@ -8518,30 +8563,7 @@ impl<'p, 's> Checker<'p, 's> {
                 )
             }
             FnBody::None => return None,
-        };
-        if let Some(kept) = self
-            .p
-            .type_predicates_from_body
-            .get(&self.task, &(file, func))
-        {
-            return kept;
-        }
-        // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`: a condition
-        // evaluated along the way may call the function.
-        if (self.flow_memo.type_predicates_in_progress).contains(&(file, func)) {
-            return None;
-        }
-        self.flow_memo
-            .type_predicates_in_progress
-            .push((file, func));
-        let (predicate, stored) = self.run_memoizable(|c| {
-            c.check_if_expression_refines_any_parameter(file, func, body, before)
-        });
-        self.flow_memo.type_predicates_in_progress.pop();
-        if let Some(stored) = stored {
-            (self.p.type_predicates_from_body).insert(&self.task, (file, func), predicate, stored);
-        }
-        predicate
+        })
     }
 
     /// `checkExpressionCached(e)`, where `e` may be the body that `getReturnTypeFromBody` is

@@ -122,6 +122,12 @@ impl ActiveMappers {
         (self.mappers.iter()).fold(0, |bits, mapper| bits | (1 << (mapper.0 % 64)))
     }
 
+    /// Whether no `instantiate_cached` is in progress.
+    #[inline]
+    pub(super) fn is_empty(&self) -> bool {
+        self.mappers.is_empty()
+    }
+
     /// `pushActiveMapper`
     fn push(&mut self, mapper: MapperId) {
         self.pushed = self.pushed.wrapping_add(1).max(1);

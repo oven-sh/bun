@@ -197,19 +197,12 @@ pub struct ThreadPool {
     pub(crate) stack_size: u32,
     pub(crate) max_threads: u32,
     sync: AtomicSync,
-    /// How many idle threads may leave `wait()` without a notification, to look for a task like a
-    /// thread that never slept. See `wake_more`.
-    tickets: AtomicU32,
     idle_event: Event,
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
     stats: PoolStats,
 }
-
-/// Off: `each`, `each_ptr` and `each_while` wake one thread, like `schedule`, and leave the rest to
-/// the chain of notifications.
-const EACH_WAKES_A_THREAD_FOR_EVERY_TASK: bool = true;
 
 /// Configuration options for the thread pool.
 /// TODO: add CPU core affinity?
@@ -237,7 +230,6 @@ impl ThreadPool {
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
-            tickets: AtomicU32::new(0),
             idle_event: Event::default(),
             join_event: Event::default(),
             run_queue: node::Queue::default(),
@@ -655,7 +647,6 @@ impl ThreadPool {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
-        self.wake_more(values.len() - 1);
         on_calling_thread();
         group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
@@ -726,44 +717,6 @@ impl ThreadPool {
         // Try to notify a thread
         let is_waking = false;
         self.notify(is_waking);
-    }
-
-    /// After `schedule`: lets up to `more` idle threads look for a task now.
-    ///
-    /// A notification wakes one thread, which notifies the next once it has found a task. So the
-    /// last of n threads starts n wake-ups after the first, and a short batch is over before that.
-    ///
-    /// A ticket is a hint on top of the notifications, which go on as before. Whoever takes one
-    /// stops being idle and is then a thread like any other that is looking for a task: if there is
-    /// none it becomes idle again. A ticket that no sleeping thread takes costs the next thread
-    /// that is about to sleep one more look. No thread is started for one.
-    fn wake_more(&self, more: usize) {
-        if !EACH_WAKES_A_THREAD_FOR_EVERY_TASK {
-            return;
-        }
-        let idle = usize::from(self.sync.load(Ordering::Relaxed).idle());
-        let count = more.min(idle) as u32;
-        if count != 0 {
-            // Release: whoever takes one finds the tasks in the queue.
-            self.tickets.fetch_add(count, Ordering::Release);
-            self.idle_event.wake(count);
-        }
-    }
-
-    fn take_ticket(&self) -> bool {
-        let mut tickets = self.tickets.load(Ordering::Relaxed);
-        while tickets != 0 {
-            match self.tickets.compare_exchange_weak(
-                tickets,
-                tickets - 1,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return true,
-                Err(now) => tickets = now,
-            }
-        }
-        false
     }
 
     #[inline(always)]
@@ -997,25 +950,6 @@ impl ThreadPool {
                     }
                 };
             } else {
-                if self.take_ticket() {
-                    // No longer idle, and not the waking thread. A notification stays for another.
-                    loop {
-                        if sync.state() == SyncState::Shutdown {
-                            return Err(WaitError::Shutdown);
-                        }
-                        let mut new_sync = sync;
-                        new_sync.set_idle(new_sync.idle() - 1);
-                        match self.sync.cmpxchg_weak(
-                            sync,
-                            new_sync,
-                            Ordering::Acquire,
-                            Ordering::Relaxed,
-                        ) {
-                            Some(cur) => sync = cur,
-                            None => return Ok(false),
-                        }
-                    }
-                }
                 if stats_enabled() {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
@@ -1553,11 +1487,6 @@ impl Event {
                     // What the tasks freed is there for the fallback sweep below to give back.
                     has_swept = false;
                 }
-                // Without a notification: `ThreadPool::wait` takes the ticket, or comes back here.
-                // The fence puts the tickets of the `wake()` whose epoch `word` has in the count.
-                if worker.thread_pool.get().tickets.load(Ordering::Relaxed) != 0 {
-                    return;
-                }
             }
 
             // Wait on the event until a notify() or shutdown().
@@ -1635,14 +1564,9 @@ impl Event {
     /// Wakes every waiter to look at its idle queue. Posts no notification: each of them
     /// goes back to waiting.
     fn wake_all(&self) {
-        self.wake(u32::MAX);
-    }
-
-    /// `wake_all` for at most `count` of them. One that is about to sleep looks again too.
-    fn wake(&self, count: u32) {
         // Release: pairs with the fence in `wait`.
         self.state.fetch_add(Self::EPOCH_ONE, Ordering::Release);
-        Futex::wake(&self.state, count);
+        Futex::wake(&self.state, u32::MAX);
     }
 }
 

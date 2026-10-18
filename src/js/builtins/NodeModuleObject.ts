@@ -25,11 +25,7 @@ export function _initPaths() {
   M.globalPaths = paths;
 }
 
-// Implementation for `require('node:module').enableCompileCache`. Mirrors
-// Node's lib/internal/modules/helpers.js: the directory, the portable flag and
-// NODE_DISABLE_COMPILE_CACHE come from `process.env` at call time, so a
-// `.env` line, a `--preload` script or a `process.env` write before a tool
-// calls this is honored.
+// `require('node:module').enableCompileCache`, mirroring Node's lib/internal/modules/helpers.js.
 export function enableCompileCache(options) {
   let portable;
   let directory;
@@ -49,6 +45,5 @@ export function enableCompileCache(options) {
   const disabled = env.NODE_DISABLE_COMPILE_CACHE !== undefined;
 
   const nativeEnableCompileCache = $newCppFunction("NodeModuleModule.cpp", "jsFunctionEnableCompileCache", 3);
-  // Node's native binding treats only `true` as portable (`args[1]->IsTrue()`).
   return nativeEnableCompileCache(directory, portable === true, disabled);
 }

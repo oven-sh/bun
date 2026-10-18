@@ -329,9 +329,7 @@ fn init_logging_once() {
     ONCE.call_once(init_logging);
 }
 
-/// `module.enableCompileCache()`. The JS builtin resolves `dir` and `portable`
-/// from its argument and `process.env` (like Node's `lib/internal/modules/helpers.js`),
-/// and `disabled` from `process.env.NODE_DISABLE_COMPILE_CACHE`, all at call time.
+/// `module.enableCompileCache()`; the JS builtin resolves the arguments from `process.env`.
 pub fn enable(dir: &[u8], portable: bool, disabled: bool) -> EnableResult {
     init_logging_once();
     if disabled {

@@ -500,6 +500,8 @@ console.log("survived", require("./late.js"));`,
         process.stdout.write(JSON.stringify(r));`,
     });
     expect(result).toEqual({ status: Module.constants.compileCacheStatus.ENABLED, directory: expect.any(String) });
+    // dep.js went through the cache, keyed on its absolute path.
+    expect(stderr).toMatch(/code cache for CommonJS .*dep\.js was not initialized/);
     expect(stderr).not.toContain("using relative path");
   });
 

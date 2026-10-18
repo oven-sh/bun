@@ -895,10 +895,7 @@ extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, bool port
 extern "C" BunString Bun__NodeCompileCache__getDir();
 extern "C" void Bun__NodeCompileCache__flush();
 
-// Native half of the `enableCompileCache` builtin (NodeModuleObject.ts). The
-// builtin resolves the directory, the portable flag and
-// NODE_DISABLE_COMPILE_CACHE from process.env, like Node's
-// lib/internal/modules/helpers.js.
+// Native half of the `enableCompileCache` builtin in NodeModuleObject.ts.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))

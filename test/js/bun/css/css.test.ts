@@ -6402,7 +6402,6 @@ describe("css tests", () => {
       {
         safari: 15 << 16,
       },
-      true,
     );
     prefix_test(
       `
@@ -6420,7 +6419,6 @@ describe("css tests", () => {
       {
         firefox: 10 << 16,
       },
-      true,
     );
     prefix_test(
       `
@@ -6438,7 +6436,6 @@ describe("css tests", () => {
       {
         safari: 15 << 16,
       },
-      true,
     );
     prefix_test(
       `
@@ -6456,7 +6453,6 @@ describe("css tests", () => {
       {
         safari: 15 << 16,
       },
-      true,
     );
     prefix_test(
       `
@@ -6475,7 +6471,6 @@ describe("css tests", () => {
         safari: 15 << 16,
         firefox: 10 << 16,
       },
-      true,
     );
     prefix_test(
       `
@@ -6493,7 +6488,6 @@ describe("css tests", () => {
       {
         safari: 15 << 16,
       },
-      true,
     );
     prefix_test(
       `
@@ -6513,7 +6507,6 @@ describe("css tests", () => {
         safari: 15 << 16,
         firefox: 10 << 16,
       },
-      true,
     );
     prefix_test(
       `
@@ -6532,7 +6525,329 @@ describe("css tests", () => {
         safari: 15 << 16,
         firefox: 10 << 16,
       },
-      true,
+    );
+    prefix_test(
+      `
+      @media (max-resolution: 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-max-device-pixel-ratio: 2), (max-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media not (min-resolution: 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media not (-webkit-min-device-pixel-ratio: 2), not (min-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // Every resolution query of a list gets a prefixed copy. lightningcss 1.32.0
+    // gives none to the query after one whose copy was already in the list
+    // (192dpi), or after one with a prefix that has no feature of its own (-o-).
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx), (min-resolution: 192dpi), (min-resolution: 3dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx), (min-resolution: 192dpi), (-webkit-min-device-pixel-ratio: 3), (min-resolution: 3dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx), (min-resolution: 3dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx), (-webkit-min-device-pixel-ratio: 3), (min-resolution: 3dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+        opera: 12 << 16,
+      },
+    );
+    // Adjacent rules with an equal query stay merged, also when one of them
+    // already has the prefixed copy. lightningcss 1.32.0 does not merge the
+    // third rule.
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx) {
+        .foo { color: yellow; }
+      }
+      @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+        .bar { color: green; }
+      }
+      @media (min-resolution: 2dppx) {
+        .baz { color: blue; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+
+          .bar {
+            color: green;
+          }
+
+          .baz {
+            color: #00f;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // The merge of the outer rules minifies the nested rule again. The second
+    // pass adds nothing to its list.
+    prefix_test(
+      `
+      @media (min-width: 1px) {
+        @media (min-resolution: 2dppx), (min-resolution: 192dpi) {
+          .foo { color: yellow; }
+        }
+      }
+      @media (min-width: 1px) {
+        .bar { color: green; }
+      }
+      @media (min-width: 1px) {
+        .baz { color: blue; }
+      }
+      `,
+      `
+        @media (min-width: 1px) {
+          @media (-webkit-min-device-pixel-ratio: 2), (min--moz-device-pixel-ratio: 2), (min-resolution: 2dppx), (min-resolution: 192dpi) {
+            .foo {
+              color: #ff0;
+            }
+          }
+
+          .bar {
+            color: green;
+          }
+
+          .baz {
+            color: #00f;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+        firefox: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+      .foo {
+        @media (min-resolution: 2dppx) {
+          color: yellow;
+        }
+      }
+      @supports (display: grid) {
+        @layer bar {
+          @media (min-resolution: 2dppx) {
+            .bar { color: green; }
+          }
+        }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+
+        @supports (display: grid) {
+          @layer bar {
+            @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+              .bar {
+                color: green;
+              }
+            }
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // Safari has the resolution feature from 16.0.
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx) {
+        .safari-15-6 { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+          .safari-15-6 {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: (15 << 16) | (6 << 8),
+      },
+    );
+    prefix_test(
+      `
+      @media (min-resolution: 2dppx) {
+        .safari-16 { color: yellow; }
+      }
+      `,
+      `
+        @media (min-resolution: 2dppx) {
+          .safari-16 {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 16 << 16,
+      },
+    );
+    minify_test(
+      "@media (min-resolution: 2dppx) { .no-targets { color: yellow } }",
+      "@media (resolution>=2x){.no-targets{color:#ff0}}",
+    );
+    // As in lightningcss, only a feature with one bound gets a prefixed copy.
+    prefix_test(
+      `
+      @media (resolution: 2dppx), (1dppx <= resolution <= 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (resolution: 2dppx), (min-resolution: 1dppx) and (max-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // As in lightningcss, the equal-query check compares floats: 124.8dpi is
+    // not exactly 1.3dppx, so the query of the author is not seen as the copy.
+    prefix_test(
+      `
+      @media (-webkit-min-device-pixel-ratio: 1.3), (min-resolution: 124.8dpi) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 1.3), (-webkit-min-device-pixel-ratio: 1.3), (min-resolution: 124.8dpi) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // As in lightningcss and autoprefixer, the copy makes this Chrome-only hack
+    // match in Safari 15 and older, which have no resolution feature.
+    prefix_test(
+      `
+      @media all and (-webkit-min-device-pixel-ratio: 0) and (min-resolution: .001dpcm) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 0) and (-webkit-min-device-pixel-ratio: 0.0000264583), (-webkit-min-device-pixel-ratio: 0) and (min-resolution: .001dpcm) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // This Safari-only hack still matches only in Safari.
+    prefix_test(
+      `
+      @media not all and (min-resolution: .001dpcm) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media not all and (-webkit-min-device-pixel-ratio: 0.0000264583), not all and (min-resolution: .001dpcm) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // The list of an @import rule gets the same copy. The bundler puts this
+    // list on the @media rule that it wraps around an inlined import.
+    prefix_test(
+      `
+      @import "foo.css" layer(foo) (min-resolution: 2dppx), print;
+      `,
+      `
+        @import "foo.css" layer(foo) (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx), print;
+      `,
+      {
+        safari: 15 << 16,
+      },
     );
 
     error_test("@media (min-width: hi) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");

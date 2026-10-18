@@ -678,6 +678,41 @@ impl MediaList {
         }
         dest.write_comma_separated(&self.media_queries, |d, q| q.to_css(d))
     }
+
+    /// The prefixes that need a device-pixel-ratio copy of a `resolution` query under `targets`.
+    pub(crate) fn resolution_prefixes(targets: &css::targets::Targets) -> css::VendorPrefix {
+        targets
+            .prefixes(
+                css::VendorPrefix::NONE,
+                css::prefixes::Feature::AtResolution,
+            )
+            .intersection(css::VendorPrefix::WEBKIT | css::VendorPrefix::MOZ)
+    }
+
+    /// Adds a device-pixel-ratio copy before each `resolution` query. Idempotent on the same list.
+    pub(crate) fn transform_resolution(
+        &mut self,
+        prefixes: css::VendorPrefix,
+        bump: &bun_alloc::Arena,
+    ) {
+        let mut i = 0;
+        while i < self.media_queries.len() {
+            if self.media_queries[i].has_resolution_range() {
+                for prefix in [css::VendorPrefix::WEBKIT, css::VendorPrefix::MOZ] {
+                    if !prefixes.contains(prefix) {
+                        continue;
+                    }
+                    let mut copy = self.media_queries[i].deep_clone(bump);
+                    copy.transform_resolution(prefix);
+                    if !self.media_queries.contains(&copy) {
+                        self.media_queries.insert(i, copy);
+                        i += 1;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
 }
 
 impl MediaQuery {
@@ -693,6 +728,18 @@ impl MediaQuery {
         matches!(self.qualifier, Some(Qualifier::Not))
             && matches!(self.media_type, MediaType::All)
             && self.condition.is_none()
+    }
+
+    fn has_resolution_range(&self) -> bool {
+        self.condition
+            .as_ref()
+            .is_some_and(MediaCondition::has_resolution_range)
+    }
+
+    fn transform_resolution(&mut self, prefix: css::VendorPrefix) {
+        if let Some(condition) = &mut self.condition {
+            condition.transform_resolution(prefix);
+        }
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -856,6 +903,57 @@ impl QueryCondition for MediaCondition {
             MediaCondition::Not(_) => true,
             MediaCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             MediaCondition::Feature(f) => f.needs_parens(parent_operator, targets),
+        }
+    }
+}
+
+impl MediaCondition {
+    fn has_resolution_range(&self) -> bool {
+        match self {
+            MediaCondition::Feature(feature) => matches!(
+                **feature,
+                QueryFeature::Range {
+                    name: MediaFeatureName::Standard(MediaFeatureId::Resolution),
+                    value: MediaFeatureValue::Resolution(_),
+                    ..
+                }
+            ),
+            MediaCondition::Not(condition) => condition.has_resolution_range(),
+            MediaCondition::Operation { conditions, .. } => {
+                conditions.iter().any(MediaCondition::has_resolution_range)
+            }
+        }
+    }
+
+    /// `prefix` is `WEBKIT` or `MOZ`.
+    fn transform_resolution(&mut self, prefix: css::VendorPrefix) {
+        match self {
+            MediaCondition::Feature(feature) => {
+                if let QueryFeature::Range {
+                    name: name @ MediaFeatureName::Standard(MediaFeatureId::Resolution),
+                    value,
+                    ..
+                } = &mut **feature
+                    && let MediaFeatureValue::Resolution(resolution) = *value
+                {
+                    *name = MediaFeatureName::Standard(if prefix == css::VendorPrefix::WEBKIT {
+                        MediaFeatureId::WebkitDevicePixelRatio
+                    } else {
+                        MediaFeatureId::MozDevicePixelRatio
+                    });
+                    *value = MediaFeatureValue::Number(match resolution {
+                        Resolution::Dpi(dpi) => dpi / 96.0,
+                        Resolution::Dpcm(dpcm) => dpcm * 2.54 / 96.0,
+                        Resolution::Dppx(dppx) => dppx,
+                    });
+                }
+            }
+            MediaCondition::Not(condition) => condition.transform_resolution(prefix),
+            MediaCondition::Operation { conditions, .. } => {
+                for condition in conditions.iter_mut() {
+                    condition.transform_resolution(prefix);
+                }
+            }
         }
     }
 }

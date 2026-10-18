@@ -513,7 +513,19 @@ impl<R> CssRuleList<R> {
                             break 'arm;
                         }
                     }
+                    CssRule::Import(imp) => {
+                        // The bundler copies this list to the `@media` rule of an inlined import.
+                        if !context.resolution_prefixes.is_empty() {
+                            imp.media
+                                .transform_resolution(context.resolution_prefixes, context.arena);
+                        }
+                    }
                     CssRule::Media(med) => {
+                        // Before the compare, so that rules with an equal query keep merging.
+                        if !context.resolution_prefixes.is_empty() {
+                            med.query
+                                .transform_resolution(context.resolution_prefixes, context.arena);
+                        }
                         if let Some(CssRule::Media(last_rule)) = rules.last_mut()
                             && last_rule.query.eql(&med.query)
                         {
@@ -1232,6 +1244,8 @@ pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
     pub(crate) arena: &'bump bun_alloc::Arena,
     pub(crate) targets: &'a css::targets::Targets,
+    /// `MediaList::resolution_prefixes(targets)`, looked up once per stylesheet.
+    pub(crate) resolution_prefixes: css::VendorPrefix,
     pub(crate) handler: &'a mut css::DeclarationHandler<'bump>,
     pub(crate) important_handler: &'a mut css::DeclarationHandler<'bump>,
     pub(crate) handler_context: css::PropertyHandlerContext<'bump>,

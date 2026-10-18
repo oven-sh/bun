@@ -802,26 +802,36 @@ pub fn install_with_manager(
                         .unwrap_or(false))
                 };
                 if same_packages {
-                    // Same packages, other rows: a save would rewrite it. A migration is exempt.
-                    if load_result.migrated_from().is_some()
-                        || !manager.summary.changes_dependencies()
-                    {
-                        break 'frozen_lockfile;
-                    }
-                    changed_section = Some("dependencies");
+                    break 'frozen_lockfile;
                 }
             }
 
+            if changed_section.is_none() && manager.summary.first_change.is_some() {
+                changed_section = Some("dependencies");
+            }
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
                 if let Some(section) = changed_section {
-                    bun_core::note!(
-                        "{} in package.json changed since {} was saved",
-                        section,
-                        loaded_lockfile_name(&load_result)
-                    );
+                    let lockfile_name = loaded_lockfile_name(&load_result);
+                    match &manager.summary.first_change {
+                        Some(change) if section == "dependencies" => {
+                            bun_core::note!(
+                                "{} in package.json changed since {} was saved: {}",
+                                section,
+                                lockfile_name,
+                                change
+                            );
+                        }
+                        _ => {
+                            bun_core::note!(
+                                "{} in package.json changed since {} was saved",
+                                section,
+                                lockfile_name
+                            );
+                        }
+                    }
                 }
                 bun_core::note!(
                     "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
@@ -1029,13 +1039,11 @@ pub fn install_with_manager(
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
-    // `skipped > 0` means that parts of an earlier install are still in place. Folders that the
-    // root's scripts created may be removed too, so this only runs if they run again afterwards.
+    // `skipped > 0` means part of an earlier install is still on disk.
     if !install_summary.places.is_empty()
         && install_summary.success > 0
         && install_summary.skipped > 0
         && install_summary.fail == 0
-        && (runs_root_scripts || manager.root_lifecycle_scripts.is_none())
     {
         crate::prune::remove_copies_of_the_older_layout(
             manager,

@@ -113,8 +113,6 @@ leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
-# test/js/sql/sqlite-sql.test.ts
-leak:WebCore::jsSQLStatementOpenStatementFunction
 # test/js/web/atomics.test.ts — RunLoop::scheduleTimer's DispatchTimer captures
 # a Ref to itself in m_function; the cycle only breaks when fired(). If stop()
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),

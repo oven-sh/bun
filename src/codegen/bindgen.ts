@@ -53,7 +53,8 @@ async function load(source: string): Promise<SchemaFile> {
     } else if (value instanceof NamedType) {
       // Re-exporting an import is fine; the first file to export a type owns it.
       if (value.origin) continue;
-      assert(/^[A-Z][A-Za-z0-9]*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
+      // As rustc's lint has it, digits can be separated: SHA512_256.
+      assert(/^[A-Z][A-Za-z0-9]*(?:(?<=\d)_\d+)*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
       value.name = name;
       value.origin = origin;
       result.types.push(value);

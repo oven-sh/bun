@@ -84,7 +84,7 @@ const BACKEND_PARAM: ParamType = clap::param!(
 
 // The valueless flags of `AUTO_PARAMS` (runtime/cli/Arguments.rs) no table here has; ignored.
 const RUNTIME_FLAGS_PARAM: ParamType = clap::param!(
-    "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--use-system-ca/--use-openssl-ca/--use-bundled-ca/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
+    "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
 );
 
 const SHARED_HEAD_PARAMS: &[ParamType] = &[
@@ -179,6 +179,11 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)"
     ),
+    clap::param!(
+        "--use-system-ca                       Use the system's trusted certificate authorities"
+    ),
+    clap::param!("--use-openssl-ca                      Use OpenSSL's default CA store"),
+    clap::param!("--use-bundled-ca                      Use bundled CA store"),
     clap::param!("-h, --help                            Print this help menu"),
     RUNTIME_FLAGS_PARAM,
 ];
@@ -1480,6 +1485,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
         cli.cache_dir = args.option(b"--cache-dir");
         cli.ca_file_name = args.option(b"--cafile").unwrap_or_default();
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         if let Some(network_concurrency) = args.option(b"--network-concurrency") {
             cli.network_concurrency =

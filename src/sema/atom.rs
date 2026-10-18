@@ -47,9 +47,6 @@ impl std::fmt::Debug for Atom {
 /// The texts of the atoms whose numbers are constants (`known`), by number.
 pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
 
-/// The atoms below it are the same in every interner: `known`.
-pub const FIXED: u32 = known::global_augmentation.0 + 1;
-
 /// An interner of the texts of one file numbers what it is asked for and is not in the file from
 /// here. An interner of many files does not get that far.
 pub const NOT_IN_THE_FILE: u32 = 1 << 29;
@@ -143,7 +140,11 @@ impl std::ops::Deref for Text {
 #[derive(Copy, Clone)]
 pub struct Interner<'s> {
     session: &'s Session,
+    /// The atoms numbered `first` and up.
     tables: &'s Tables,
+    /// The atoms below `first`: see `over`. Other programs may add to this table concurrently.
+    below: &'s Tables,
+    first: u32,
 }
 
 /// On the regular heap, and without a lifetime: they are written through a shared reference, so a lifetime in them
@@ -154,6 +155,19 @@ struct Tables {
     texts: Texts,
     /// Sequence number of this interner among all that have been created.
     number: u64,
+    /// `Interner::in_common`
+    is_in_common: bool,
+}
+
+impl Tables {
+    fn new(is_in_common: bool) -> Tables {
+        Tables {
+            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
+            texts: AppendVec::new(),
+            number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            is_in_common,
+        }
+    }
 }
 
 /// It compiles because an `Interner<'s>` is covariant in `'s`: one that outlives a program is an interner of the program.
@@ -605,13 +619,26 @@ impl Intern for InternerPerThread<'_> {
 }
 
 impl<'s> Interner<'s> {
+    /// For a single program, or for code that has no program.
     pub fn new_in(session: &'s Session) -> Self {
-        let tables = session.keep(Tables {
-            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
-            texts: AppendVec::new(),
-            number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        });
-        let this = Interner { session, tables };
+        Self::with_known_atoms(session, false)
+    }
+
+    /// Shared by several programs, which may add names to it concurrently while they load. No program is type-checked with it
+    /// directly: the checker assumes that nobody else adds an atom (`Atoms::find_published`, `TypeStore::link`), so each
+    /// program layers its own interner on top with `over`.
+    pub fn in_common(session: &'s Session) -> Self {
+        Self::with_known_atoms(session, true)
+    }
+
+    fn with_known_atoms(session: &'s Session, is_in_common: bool) -> Self {
+        let tables = session.keep(Tables::new(is_in_common));
+        let this = Interner {
+            session,
+            tables,
+            below: tables,
+            first: 0,
+        };
         for (i, text) in known::TEXTS.iter().enumerate() {
             let atom = this.intern(text.as_bytes());
             assert_eq!(atom.0 as usize, i);
@@ -626,37 +653,25 @@ impl<'s> Interner<'s> {
         this
     }
 
-    /// An interner that has the atoms of this one, with the same numbers, and shares nothing with it. For a program that
-    /// is checked while others, which have this one in common with it, are loaded: the check takes it that nobody else adds
-    /// an atom (`Atoms::find_published`, `TypeStore::link`).
-    pub fn copy_in<'t>(&self, session: &'t Session) -> Interner<'t> {
-        let Tables { shards, texts, .. } = self.tables;
-        // A text is pushed under the lock of its shard: then none below the length is half written.
-        let len = GrowingPlaces::while_none_grows(&shards[..], || texts.len());
-        let copy = Tables {
-            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
-            texts: AppendVec::new(),
-            number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        };
-        let mut of_shards: Vec<Vec<(u64, u32)>> = vec![Vec::new(); SHARDS];
-        for atom in 0..len {
-            let text: &[u8] = texts.get(atom);
-            let spread = hash_of(text);
-            of_shards[shard_of(spread)].push((spread, atom));
-            copy.texts.push(text.into());
-        }
-        for (shard, places) in copy.shards.iter().zip(of_shards) {
-            shard.extend(places.len(), places.into_iter());
-        }
+    /// Layers a private interner over `below`, which must be `in_common`. It sees the atoms that `below` has right now, under
+    /// the same numbers, and numbers its own after them. Nobody else sees those.
+    pub fn over(session: &'s Session, below: Interner<'s>) -> Interner<'s> {
+        assert!(below.tables.is_in_common);
+        let Tables { shards, texts, .. } = below.tables;
         Interner {
             session,
-            tables: session.keep(copy),
+            tables: session.keep(Tables::new(false)),
+            below: below.tables,
+            // Texts are pushed under their shard's lock. With all shards locked, none below this length is incomplete.
+            first: GrowingPlaces::while_none_grows(&shards[..], || texts.len()),
         }
     }
 
-    /// For the merge at the barrier.
-    pub(crate) fn halves(&self) -> (&[GrowingPlaces], &Texts) {
-        (&self.tables.shards[..], &self.tables.texts)
+    /// For the merge at the barrier. It writes without synchronization, so the tables must not be shared. The last value is
+    /// the number of the first text.
+    pub(crate) fn halves(&self) -> (&[GrowingPlaces], &Texts, u32) {
+        assert!(!self.tables.is_in_common);
+        (&self.tables.shards[..], &self.tables.texts, self.first)
     }
 
     pub fn session(&self) -> &'s Session {
@@ -700,30 +715,45 @@ impl<'s> Interner<'s> {
     }
 
     fn intern_shared(&self, spread: u64, text: &[u8]) -> Atom {
+        if let Some(atom) = self.find_below(spread, text) {
+            return atom;
+        }
         let Tables { shards, texts, .. } = self.tables;
         let shard = &shards[shard_of(spread)];
-        if let Some(atom) = shard.find(spread, |i| &**texts.get(i) == text) {
+        let is_it = |i: u32| &**texts.get(i - self.first) == text;
+        if let Some(atom) = shard.find(spread, is_it) {
             return Atom(atom);
         }
-        Atom(shard.find_or_add(
-            spread,
-            |i| &**texts.get(i) == text,
-            || texts.push(text.into()),
-        ))
+        let add = || self.first + texts.push(text.into());
+        Atom(shard.find_or_add(spread, is_it, add))
+    }
+
+    #[inline]
+    fn find_below(&self, spread: u64, text: &[u8]) -> Option<Atom> {
+        if self.first == 0 {
+            return None;
+        }
+        let Tables { shards, texts, .. } = self.below;
+        let is_it = |i: u32| i < self.first && &**texts.get(i) == text;
+        shards[shard_of(spread)].find(spread, is_it).map(Atom)
     }
 
     /// The atom of `text`, if it has been interned.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
-        self.tables.shards[shard_of(spread)]
-            .find(spread, |i| &**self.tables.texts.get(i) == text)
-            .map(Atom)
+        let Tables { shards, texts, .. } = self.tables;
+        let is_it = |i: u32| &**texts.get(i - self.first) == text;
+        let own = || shards[shard_of(spread)].find(spread, is_it).map(Atom);
+        self.find_below(spread, text).or_else(own)
     }
 
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &[u8] {
         debug_assert!(!atom.is_own(), "only `Atoms` knows a task's own");
-        self.tables.texts.get(atom.0)
+        match atom.0.checked_sub(self.first) {
+            Some(own) => self.tables.texts.get(own),
+            None => self.below.texts.get(atom.0),
+        }
     }
 
     /// The name of the property `[Symbol.name]` (`getPropertyNameForKnownSymbolName`). Given
@@ -760,10 +790,11 @@ impl<'p, 's> Atoms<'p, 's> {
 
     #[inline]
     fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
-        let texts = &self.published.tables.texts;
-        (self.published.tables.shards[shard_of(spread)])
-            .find_frozen(spread, |i| &**texts.get(i) == text)
-            .map(Atom)
+        let Interner { tables, first, .. } = self.published;
+        let is_it = |i: u32| &**tables.texts.get(i - first) == text;
+        let own = || tables.shards[shard_of(spread)].find_frozen(spread, is_it);
+        let below = self.published.find_below(spread, text);
+        below.or_else(|| own().map(Atom))
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {

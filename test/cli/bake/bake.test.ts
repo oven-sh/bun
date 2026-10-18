@@ -673,6 +673,24 @@ test.concurrent.skipIf(isWindows)(
   },
 );
 
+test.concurrent("bun bake --port waits for a fix to an option of app/server.ts that Bun.serve rejects", async () => {
+  using dir = tempDir("bake-command-bad-option", {
+    "app/server.ts": `export default { idleTimeout: 300, fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/idleTimeout to be 255 or less/);
+
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `export default { idleTimeout: 30, fetch: () => new Response("v2") };`,
+  );
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  expect(await get(url, "/")).toBe("200 v2");
+});
+
 test.concurrent("bun bake keeps serving when a reload finds a page it cannot serve", async () => {
   using dir = tempDir("bake-command-reload-error", {
     "app/pages/index.html": page,

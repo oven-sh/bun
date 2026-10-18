@@ -316,9 +316,12 @@ async function start() {
       },
       useUnix ? undefined : (flags.port ?? exportedPort),
     );
-  } catch (error) {
-    // A flag value that cannot be served: no change to a file fixes it.
-    if (flags.port !== undefined || flags.hostname !== undefined) exitWith(error);
+  } catch (error: any) {
+    // Cannot listen where `--port` or `--host` says: no change to a file fixes it. Any other error
+    // comes from the options of `app/server.ts`, which an edit can fix.
+    if (error?.syscall === "listen" && (flags.port !== undefined || flags.hostname !== undefined)) {
+      exitWith(error);
+    }
     throw error;
   }
   configKeyInServer ??= config.key;

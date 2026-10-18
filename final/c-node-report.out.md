@@ -7,7 +7,7 @@ node test/js/node/http2/node-http2-max-concurrent-streams.test.ts
 bun bd test test/js/node/http2/node-http2-max-concurrent-streams.test.ts
 ```
 
-| Block | Tests | node v26.3.0 | Bun 1.4.3 | This PR (329dbbb76a) |
+| Block | Tests | node v26.3.0 | Bun 1.4.3 | This PR (f3cca1e32e) |
 | --- | --- | --- | --- | --- |
 | `the slots of SETTINGS_MAX_CONCURRENT_STREAMS` (the pins) | 33 | 29 pass, 4 skipped | 33 pass | 33 pass |
 | `a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS` (the limit) | 26 | 23 pass, 3 skipped | 22 fail, 4 pass | 26 pass |

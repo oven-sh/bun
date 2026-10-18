@@ -191,7 +191,9 @@ const handlers = {
     }
     if (isServerSideRouteUpdate) {
       performRouteReload();
-      return;
+      // When the pages also run here (`config.route`), the same edit comes as JavaScript too:
+      // apply it, so Fast Refresh updates the page in place.
+      if (!config.route) return;
     }
     // JavaScript modules
     if (reader.hasMoreData()) {

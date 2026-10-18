@@ -409,6 +409,8 @@ The default format. Supports ES Module syntax, including top-level await and `im
 
 To use ES Module syntax in browsers, set `format` to `"esm"` and load the bundle with a `<script type="module">` tag.
 
+Node.js loads a `.js` file as an ES module when the nearest `package.json` has `"type": "module"`. In a package with `"type": "commonjs"`, name the output files `.mjs` with [`naming`](#naming), or add a `package.json` that contains `{ "type": "module" }` to the output directory.
+
 #### format: "cjs" - CommonJS
 
 To build a CommonJS module, set `format` to `"cjs"`. When you choose `"cjs"`, the default target changes from `"browser"` (esm) to `"node"` (cjs). CommonJS modules transpiled with `format: "cjs"`, `target: "node"` run in both Bun and Node.js (assuming both support the APIs in use).
@@ -429,6 +431,33 @@ To build a CommonJS module, set `format` to `"cjs"`. When you choose `"cjs"`, th
     ```
   </Tab>
 </Tabs>
+
+The default [`naming`](#naming) gives every JavaScript output file the `.js` extension. Node.js reads the module format of a `.js` file from the `"type"` field of the nearest `package.json`. If the field is `"module"`, which `bun init` writes, Node.js loads `out/index.js` as an ES module. An ES module has no `module` or `require`, so a bundle that uses them fails with an error such as `ReferenceError: module is not defined in ES module scope`. The Bun runtime runs the same file without an error, so check the bundle with `node`.
+
+Node.js always loads a `.cjs` file as CommonJS. Set `naming` to give the output that extension:
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      format: "cjs",
+      target: "node",
+      naming: "[dir]/[name].cjs",
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --format cjs --target node --entry-naming "[dir]/[name].cjs"
+    ```
+  </Tab>
+</Tabs>
+
+With one entrypoint, `--outfile ./out/index.cjs` has the same effect on the command line.
+
+Bun uses the `naming` template for the JavaScript file and for the CSS file of an entrypoint. If the entrypoint imports CSS, both files get the same name and the build fails with `Multiple files share the same output path`. For that build, keep the default `naming` and add a `package.json` that contains `{ "type": "commonjs" }` to the output directory.
 
 #### format: "iife" - IIFE
 

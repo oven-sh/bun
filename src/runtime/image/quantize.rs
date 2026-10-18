@@ -283,8 +283,15 @@ impl Counts {
             .iter()
             .position(|slot| slot.val == 0)
             .unwrap_or(0);
-        let (wrapped, rest) = self.slots.split_at(gap);
-        for slot in rest.iter().chain(wrapped).filter(|slot| slot.val != 0) {
+        // The counted slots after it move up to it first: a branch per slot misses half the time.
+        let mut end = gap;
+        for i in gap..self.slots.len() {
+            let slot = self.slots[i];
+            self.slots[end] = slot;
+            end += usize::from(slot.val != 0);
+        }
+        let (wrapped, rest) = self.slots[..end].split_at(gap);
+        for slot in rest.iter().chain(wrapped) {
             let (i, passed) = probe(&grown, slot.key);
             grown[i] = *slot;
             self.moved += passed;
@@ -295,14 +302,18 @@ impl Counts {
 
     /// What the boxes divide: every counted colour once, and a copy of `rest`, the other pixels.
     fn elements(&self, rest: &[[u8; 4]]) -> Result<Elements, AllocError> {
-        let mut bins: Vec<Bin> = Vec::new();
-        bins.try_reserve_exact(self.distinct)
-            .map_err(|_| AllocError)?;
-        let counted = self.slots.iter().filter(|slot| slot.val != 0);
-        bins.extend(counted.map(|slot| Bin {
-            rgba: slot.key.to_le_bytes(),
-            count: slot.val,
-        }));
+        // A bin more than the colours: every slot is written, and only a counted one moves on.
+        let spare = usize::from(!self.slots.is_empty());
+        let mut bins: Vec<Bin> = try_filled(self.distinct + spare)?;
+        let mut len: usize = 0;
+        for slot in &self.slots {
+            bins[len] = Bin {
+                rgba: slot.key.to_le_bytes(),
+                count: slot.val,
+            };
+            len += usize::from(slot.val != 0);
+        }
+        bins.truncate(self.distinct);
         let mut pixels = Vec::new();
         pixels
             .try_reserve_exact(rest.len())
@@ -450,7 +461,7 @@ impl ByValue<'_> {
 }
 
 /// A colour and the number of pixels that have it.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Bin {
     rgba: [u8; 4],
     count: u32,

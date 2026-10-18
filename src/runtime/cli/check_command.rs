@@ -839,9 +839,13 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 }
 
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
-/// its scripts is run.
-pub(crate) fn check_project_before() -> bool {
-    check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default())
+/// its scripts, or the app of `bun bake`, is run. `before_read`: see `watching`.
+pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
+    let provided = Provided {
+        before_read,
+        ..Default::default()
+    };
+    check_and_report(&Paths::EntryPoints(Entries::default()), provided)
 }
 
 /// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.

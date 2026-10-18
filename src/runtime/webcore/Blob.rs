@@ -3406,7 +3406,6 @@ impl BlobExt for Blob {
                 }
 
                 core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
-                    .thread_isolated_copy()
             }
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {

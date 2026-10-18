@@ -143,6 +143,8 @@ impl StoreExt for Store {
         pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
     ) -> Result<RefPtr<Store>, crate::Error> {
+        let pathlike = pathlike.thread_isolated_copy();
+
         // Compute the extension-derived fallback before moving `pathlike` into
         // the Store so we don't need to clone the owned PathOrFileDescriptor.
         let mime_type = mime_type.or_else(|| match &pathlike {

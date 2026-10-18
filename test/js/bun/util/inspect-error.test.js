@@ -539,8 +539,12 @@ test("lines of the message that look like stack frames are not printed as stack 
   expect(print(reworded)).toBe("error: inspect-error.test.js\n      at this file\n");
 
   const origLimit = Error.stackTraceLimit;
-  Error.stackTraceLimit = 0;
-  const withoutFrames = new Error(message);
-  Error.stackTraceLimit = origLimit;
+  let withoutFrames;
+  try {
+    Error.stackTraceLimit = 0;
+    withoutFrames = new Error(message);
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
   expect(print(withoutFrames)).toBe(`error: ${message}\n`);
 });

@@ -598,7 +598,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
+  const setRef = $bindgen("node_cluster_binding.bind.ts", "setRef");
   return new (class Control extends EventEmitter {
     constructor() {
       super();

@@ -118,7 +118,10 @@ test("session.certificate is the identity the servername selected once the conne
   await using server = await listen(
     session => {
       ignoreErrors(session);
-      session.closed.catch(() => {});
+      session.closed.then(
+        () => reported.reject(new Error("the session closed before it reported its handshake")),
+        reported.reject,
+      );
       session.onhandshake = info =>
         reported.resolve({
           servername: info.servername,

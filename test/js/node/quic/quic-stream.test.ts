@@ -521,6 +521,10 @@ describe("a malformed first request stream", () => {
       transportParams: { maxIdleTimeout: 5 },
     } as SessionOptions);
     const answered = Promise.withResolvers<string>();
+    client.closed.then(
+      () => answered.reject(new Error("the second connection closed without an answer")),
+      answered.reject,
+    );
     const stream = await client.createBidirectionalStream({
       headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
       onheaders: (headers: Record<string, any>) => answered.resolve(headers[":status"]),
@@ -688,6 +692,10 @@ describe("a session's application", () => {
         quiet(session);
         const inListenCallback = applicationState(session);
         session.onhandshake = () => states.resolve({ inListenCallback, inOnhandshake: applicationState(session) });
+        session.closed.then(
+          () => states.reject(new Error("the session closed before it reported its handshake")),
+          states.reject,
+        );
       },
       { ...listenOptions, alpn: [alpn] },
     );
@@ -715,6 +723,7 @@ describe("a session's application", () => {
         onsessionticket: ticket.resolve as (ticket: object) => void,
         onerror() {},
       });
+      client.closed.then(() => ticket.reject(new Error("the session closed without a ticket")), ticket.reject);
       await ticket.promise;
       await client.close();
     }
@@ -753,6 +762,8 @@ describe("a header callback on a raw-QUIC stream", () => {
     await using server = await listen(
       (session: any) => {
         session.onerror = (err: any) => failed.resolve(err?.code);
+        const closedFirst = () => failed.reject(new Error("the session closed without an error"));
+        session.closed.then(closedFirst, closedFirst);
         session.onstream = (stream: any) => {
           stream.closed.catch(() => {});
           stream.onheaders = () => {};

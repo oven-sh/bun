@@ -25,28 +25,28 @@ pub(crate) fn set_config_plugins(global: &JSGlobalObject, frame: &CallFrame) -> 
 
 /// Set in the environment by the first start of `bun bake --check`, so that the process that a
 /// change starts again (`execve` keeps the environment) knows it is a restart.
-const RESTART_ENV_VAR: &core::ffi::CStr = c"BUN_INTERNAL_BAKE_RESTART";
+const RESTART_ENV_VAR: &bun_core::ZStr = bun_core::zstr!("BUN_INTERNAL_BAKE_RESTART");
 
-/// `takeRestartMark()`: whether this process is a restart of `bun bake --check` after a change.
-/// Call it once, at the start: it marks the environment for the next restart. On Windows, a manager
-/// process starts each restart with its own environment, so this is always false there.
-pub(crate) fn take_restart_mark(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    if global.bun_vm().hot_reload != crate::cli::command::HotReload::Watch {
-        return Ok(JSValue::FALSE);
-    }
+static RESTARTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// `bun bake --check`, before the type check: records whether this process is a restart after a
+/// change, and marks the environment for the next restart. On Windows, a manager process starts
+/// every run with the same environment, so no run is seen as a restart there.
+pub(crate) fn mark_restart() {
     #[cfg(not(windows))]
     {
-        // SAFETY: a NUL-terminated name; only the JS thread reads or writes it.
-        let restarted = !unsafe { libc::getenv(RESTART_ENV_VAR.as_ptr()) }.is_null();
-        if !restarted {
+        if bun_core::getenv_z(RESTART_ENV_VAR).is_some() {
+            RESTARTED.store(true, core::sync::atomic::Ordering::Relaxed);
+        } else {
             // SAFETY: both strings are NUL-terminated; setenv copies them into libc env storage.
-            unsafe { libc::setenv(RESTART_ENV_VAR.as_ptr(), c"1".as_ptr(), 1) };
+            unsafe { libc::setenv(RESTART_ENV_VAR.as_ptr().cast(), c"1".as_ptr(), 1) };
         }
-        Ok(JSValue::from(restarted))
     }
-    #[cfg(windows)]
-    {
-        let _ = RESTART_ENV_VAR;
-        Ok(JSValue::FALSE)
-    }
+}
+
+/// `isRestart()`: whether this process is `bun bake --check` started again after a change.
+pub(crate) fn is_restart(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::from(
+        RESTARTED.load(core::sync::atomic::Ordering::Relaxed),
+    ))
 }

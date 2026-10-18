@@ -788,3 +788,35 @@ test.concurrent.each([
   expect(stdout).not.toContain("url: ");
   expect(exitCode).toBe(1);
 });
+
+// On Windows, a restart cannot tell it is one, as above.
+test.concurrent.skipIf(isWindows)(
+  "bun bake --check waits on a restart error also when the first start had a type error",
+  async () => {
+    using dir = tempDir("bake-command-check-typeerror-restart", {
+      "tsconfig.json": checkedTsconfig,
+      "app/pages/[slug].html": page,
+      "app/server.ts": `declare const Response: any;\nconst n: number = "x";\nexport default { fetch: () => new Response("v1") };\n`,
+    });
+
+    await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/TS2322/);
+
+    // The fix restarts the process, which then finds the page it cannot serve: it must wait.
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+    );
+    await output.waitFor(/a page cannot have/);
+
+    rmSync(join(String(dir), "app/pages/[slug].html"));
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
+    );
+    const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+    expect(await get(url, "/missing")).toBe("200 v3");
+  },
+);

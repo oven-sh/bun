@@ -13,7 +13,7 @@ const {
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
 const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
-const takeRestartMark = $newRustFunction("bake/config/plugins.rs", "takeRestartMark", 0);
+const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -227,7 +227,7 @@ function exitForArguments(error: any): never {
 }
 
 async function start() {
-  if (++runs === 1) restarted = takeRestartMark();
+  if (++runs === 1) restarted = isRestart();
   const flags = defaultServeFlags();
   // There is no entry module, so the arguments start at argv[1], as for `bun -e`.
   for (let i = 1, argvLength = argv.length; i < argvLength;) {

@@ -1008,12 +1008,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Run::start` does it then, once there is a file watcher.
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
         if is_checked && !watches {
-            let has_type_errors = match &main {
-                BootMain::File { path, loader } => {
-                    !Self::check_main(ctx, path, *loader, &ctx.passthrough, None)
-                }
-                BootMain::Bake => !crate::cli::check_command::check_project_before(None),
+            // `bun bake` always watches, so it checks in `Run::start`.
+            let BootMain::File { path, loader } = &main else {
+                unreachable!("bun bake always watches")
             };
+            let has_type_errors = !Self::check_main(ctx, path, *loader, &ctx.passthrough, None);
             if has_type_errors {
                 Global::exit(1);
             }
@@ -2809,6 +2808,10 @@ impl RunCommand {
             cli::apply_watch_mode_flags(ctx);
             if hot_reload != ctx.debug.hot_reload {
                 cli::set_up_watch_restarts(ctx);
+            }
+            // Before the type check: a first start with type errors never runs `internal/bake.ts`.
+            if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                crate::bake::config::plugins::mark_restart();
             }
             Global::configure_allocator(core::Global::AllocatorConfiguration {
                 long_running: true,

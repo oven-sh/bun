@@ -2251,6 +2251,37 @@ pub(crate) fn linked_workspace_path_in(
     range.satisfies(version, range_buf, buf).then_some(path)
 }
 
+/// The `--verbose` note for the entries of a lockfile that no dependency resolves to.
+pub(crate) fn warn_unused_entries<'a>(lockfile_name: &str, keys: impl Iterator<Item = &'a [u8]>) {
+    use core::fmt::Write as _;
+
+    let mut count: usize = 0;
+    let mut list = String::new();
+    for key in keys {
+        count += 1;
+        if count <= 5 {
+            if count > 1 {
+                list.push_str(", ");
+            }
+            let key = bun_core::fmt::escape_control_chars(key);
+            let _ = write!(list, "\"{key}\"");
+        }
+    }
+    if count == 0 {
+        return;
+    }
+    if count > 5 {
+        let _ = write!(list, " and {} more", count - 5);
+    }
+    bun_core::warn!(
+        "skipping {} unused {} {}: {}",
+        count,
+        lockfile_name,
+        if count == 1 { "entry" } else { "entries" },
+        list,
+    );
+}
+
 /// For lockfile paths: `join` resolves an absolute one and `..`. `None`: too long for a buffer.
 pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
     let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();

@@ -1104,37 +1104,15 @@ impl<'a> Migrator<'a> {
         if !self.verbose {
             return;
         }
-        let mut count: usize = 0;
-        let mut list = String::new();
-        for (j, entry) in self.entries.iter().enumerate() {
-            if self.link_entries.is_set(j)
+        let unused = (self.entries.iter().enumerate()).filter(|&(j, entry)| {
+            !(self.link_entries.is_set(j)
                 || self.entry_package_ids[j] != INVALID_PACKAGE_ID
                 || self.shadowed.is_set(j)
-                || pkg_flag_is_true(entry_object(entry), b"extraneous")
-            {
-                continue;
-            }
-            count += 1;
-            if count <= 5 {
-                if count > 1 {
-                    list.push_str(", ");
-                }
-                let key = bun_core::fmt::escape_control_chars(entry.key.slice());
-                let _ = write!(list, "\"{key}\"");
-            }
-        }
-        if count == 0 {
-            return;
-        }
-        if count > 5 {
-            let _ = write!(list, " and {} more", count - 5);
-        }
-        bun_core::warn!(
-            "skipping {} unused {} {}: {}",
-            count,
+                || pkg_flag_is_true(entry_object(entry), b"extraneous"))
+        });
+        lockfile::warn_unused_entries(
             self.lockfile_name,
-            if count == 1 { "entry" } else { "entries" },
-            list,
+            unused.map(|(_, entry)| entry.key.slice()),
         );
     }
 }

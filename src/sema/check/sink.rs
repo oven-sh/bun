@@ -934,8 +934,17 @@ impl Checker<'_, '_> {
             return None;
         }
         let mut taken: Vec<(usize, (Option<Query>, Reported))> = Vec::new();
+        // See `withhold_until_the_file_ends`.
+        let in_doubt = &self.task.files_in_doubt;
+        let is_withheld = |q: Query| {
+            !matches!(q, Query::Cond(..)) && q.syntax().is_some_and(|it| in_doubt.contains(&it.0))
+        };
         for (at, it) in logged.iter_mut().enumerate() {
-            if is_between_files || it.0.is_some_and(is_same_in_every_task) {
+            if is_between_files
+                || it
+                    .0
+                    .is_some_and(|q| is_same_in_every_task(q) && !is_withheld(q))
+            {
                 taken.push((at, std::mem::replace(it, (None, Reported::taken()))));
             }
         }

@@ -4869,6 +4869,13 @@ fn check_named_files(
     let has_no_steps = request.plan_options.has_no_steps && program.files.options.shares_at_once;
     // The files of the tasks that were lost.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
+    // Which files are checked for good, and how many from the first one on, in program order. The task that checks the
+    // next one enters a ring where `tsc --singleThreaded` does: `Checker::set_first_in_order`.
+    let checked_for_good = Guarded::new((vec![false; to_check.len()], 0usize));
+    // The files that were lost and checked again before the last round.
+    let taken_again = Guarded::new(vec![false; to_check.len()]);
+    // The number of the round of those tasks.
+    const AGAIN: usize = 2;
     /// What the tasks of a round add up to.
     #[derive(Default)]
     struct Sums {
@@ -4930,6 +4937,14 @@ fn check_named_files(
             *cost_left = cost_left.saturating_sub(cost_of_run);
             from..*taken
         };
+        // A lost file before which every file is checked for good now: no ring is a reason to lose it again. Once each.
+        let take_lost_file_that_is_next = || -> Option<usize> {
+            let next = checked_for_good.lock().1;
+            let (mut lost, mut taken) = (lost.lock(), taken_again.lock());
+            let at = lost.iter().position(|&file| file == next && !taken[file])?;
+            taken[next] = true;
+            Some(lost.swap_remove(at))
+        };
         // As in `run_round`.
         let is_read_afterwards = request.retains_everything
             || request.after_file.is_some()
@@ -4942,6 +4957,10 @@ fn check_named_files(
             let (began, cost_before) = (Instant::now(), request.task_clock.map(|clock| clock()));
             let mut checker = new_checker(expected);
             // The index of a task is that of its first file, which no other task of the round has.
+            let round = match !is_last_round && taken_again.lock()[first] {
+                true => AGAIN,
+                false => round,
+            };
             checker.begin_task(round as u32, first as u32, true);
             checker.see_commits(request.plan_options.commit_policy, is_last_round);
             // Of the files that are checked and that no commit has followed.
@@ -4951,6 +4970,10 @@ fn check_named_files(
             let (mut done, mut spent, mut index) = (0, 0, first);
             let upcoming = loop {
                 let file = to_check[index];
+                checker.set_first_in_order({
+                    let (is_checked, next) = &*checked_for_good.lock();
+                    (*next..index).all(|before| is_checked[before] || waiting.contains(&before))
+                });
                 checked.push((file, checker.check_file(file)));
                 if let Some(after_file) = request.after_file
                     && expected == wanted
@@ -4974,7 +4997,15 @@ fn check_named_files(
                 match checker.commit_after_file(is_last, is_read) {
                     AfterFile::Waits => {}
                     AfterFile::Committed => {
-                        waiting.clear();
+                        {
+                            let (is_checked, next) = &mut *checked_for_good.lock();
+                            for file in waiting.drain(..) {
+                                is_checked[file] = true;
+                            }
+                            while is_checked.get(*next) == Some(&true) {
+                                *next += 1;
+                            }
+                        }
                         let files = checked.iter().map(|it: &(FileId, Checked)| it.0);
                         trees_to_free
                             .extend(files.filter(|it| program.files.modules[it.idx()].is_leaf));
@@ -5043,13 +5074,17 @@ fn check_named_files(
         host.parallel(workers, &|_| {
             let mut run = 0..0;
             let mut next = || {
+                if let Some(file) = take_lost_file_that_is_next() {
+                    return Some(file);
+                }
                 if run.is_empty() {
                     run = take_run();
                 }
                 run.next().map(|at| queue[at])
             };
-            let mut first = next();
-            while let Some(file) = first {
+            // A task asks for its next file before it commits the last one, and that commit can make a lost file the next.
+            let mut first = None;
+            while let Some(file) = first.or_else(&mut next) {
                 first = run_task(file, &mut next);
             }
         });

@@ -45,6 +45,104 @@ test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleT
 });
 
 /**
+ * In each group a ring: the property `span` has no annotation, the call in its initializer asks for the constraint of
+ * `K`, that for the members of `Tags`, one of which has a name that is a `string`, so they have an index signature,
+ * whose type is a union that is reduced, which compares the classes, and so asks for the type of `span`. TypeScript finds a
+ * circular reference if it comes to the property, the constraint or the return type first, and none if it comes to
+ * the interface first: a request for members that are being resolved gets those that are in place. A group has three
+ * files, which declare the interface, declare the property, and only call the function, in one of the six orders.
+ */
+function ringsEnteredFromThreeSides(groups: number) {
+  const files: Record<string, string> = {};
+  const orders = ["abc", "bac", "cab", "bca", "acb", "cba"];
+  for (let g = 0; g < groups; g++) {
+    const [tags, time, use] = [...orders[g % 6]].map(it => `g${g}${it}.ts`);
+    files[tags] = `export class Popover${g} { static readonly tag: string = "popover"; }
+declare global {
+  interface Span${g} { hidden: boolean }
+  interface Tags${g} { span: Span${g}; [Popover${g}.tag]: Popover${g} }
+  function create${g}<K extends keyof Tags${g}>(tag: K): Tags${g}[K];
+}
+`;
+    files[time] = `export class Time${g} { static readonly tag = "time"; readonly span = create${g}("span"); }
+declare global { interface Tags${g} { [Time${g}.tag]: Time${g} } }
+`;
+    // `never` puts the types in the messages.
+    files[use] = `const other${g}: never = create${g}("other" as string);
+const key${g}: never = null! as keyof Tags${g};
+export {};
+`;
+  }
+  return files;
+}
+
+// What the members of a ring get depends on where it is entered. That is the first file of the program that leads there,
+// whichever thread gets there first.
+test.concurrent.skipIf(!tsc)("every thread enters a ring where `tsc --singleThreaded` does", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...ringsEnteredFromThreeSides(isDebug || isASAN ? 6 : 24),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    ...[1, 2, 3, 8, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2313", "TS2345", "TS2577", "TS7022"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+// The base type of `Box` is a mapped type over `Box`: its members are resolved once without the base type and once with it.
+// Whoever asks in between gets the first round.
+test.concurrent.skipIf(!tsc)("an interface whose base type maps over the interface, on any number of threads", async () => {
+  const files: Record<string, string> = {
+    "tsconfig.json": tsconfig,
+    "box.d.ts": `type WithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? \`$\${K & string}\` : never]: T[K] };
+declare interface Box<T> { then(x: T): T; catch(): void; finally(): void; value: T }
+declare interface Box<T> extends WithIntrinsics<Box<T>> {}
+declare function makeBox<T>(): { box: Box<T>; done: (v: T) => void };
+`,
+  };
+  for (let i = 0; i < (isDebug || isASAN ? 16 : 64); i++) {
+    const use = `declare const q${i}: Box<R${i}>; q${i}.$then;\n`;
+    const body = `interface W${i} { box: Box<R${i}> & { child?: number }; done: (v: R${i}) => void }
+const { box: c${i}, done: a${i} }: W${i} = makeBox();\n`;
+    files[`f${i}.ts`] =
+      `interface R${i} { n${i}: ${i} }\n${[body, use + body, body + use][i % 3]}const planted${i}: 1 = 2;\nexport {};\n`;
+  }
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    ...[1, 8, 32].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.length).toBe(isDebug || isASAN ? 16 : 64);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+// `b.ts` comes to a ring while `a.ts` is being checked, so it is checked again later. By then it has shared what it has
+// found out about its first lines. The names there that do not resolve are reported all the same.
+test.concurrent.skipIf(!tsc)("a file that is checked again reports what it has reported the first time", async () => {
+  const lines = (count: number, line: (i: number) => string) => Array.from({ length: count }, (_, i) => line(i) + "\n");
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    "a.ts": lines(300, i => `export const a${i} = [${i}, "${i}"].map(it => [it]);`).join(""),
+    "b.ts": [
+      ...lines(300, i => `const b${i} = missing${i}.alloc(0);`),
+      `export const ring = turn();\nexport function turn() { return [ring]; }\n`,
+    ].join(""),
+    "c.ts": `import { ring } from "./b";\nexport const c: never = ring;\n`,
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.filter(line => line.includes("TS2304")).length).toBe(300);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+/**
  * `depth` layers of `width` modules. Each re-exports two modules of the layer below with `export *`, and imports a name
  * and a namespace from them. The first 8 of a layer are rings of two, with an alias that goes round. Some export a
  * default that does not exist, which the module above imports. The lowest layer imports from an ambient module.

@@ -1737,7 +1737,7 @@ fn from_now(task: &Task) -> Stored {
 /// The commit `number` of `task`. Returns how many entries it has stored.
 fn commit<'s>(tables: &Tables<'s>, commits: &Commits<'s>, task: &Task<'s>, number: u32) -> u64 {
     let mut log = task.buffer().take_log();
-    let stored = commits.store(&tables.all(), task, &mut log, number);
+    let stored = commits.store(&tables.all(), task, &mut log, number, None);
     task.view().unwrap().has_committed(number);
     task.write_at_once_again();
     stored

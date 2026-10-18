@@ -29,12 +29,25 @@
 //! - **A task that gives up at a limit is not believed** (`Checker::note_gave_up`). How far from a limit a computation
 //!   begins depends on what was computed before, which for a task includes what it has found. It is thrown away like an
 //!   invalid one.
+//! - **A ring is entered from the first file that leads to it.** What a query gets that comes round to itself, or to what
+//!   it has in place, depends on where the checker came in (`Checker::close_ring_from`). `tsc --singleThreaded` comes in
+//!   from the first file in program order that leads there. So a task is believed about a ring only if every file before
+//!   the one that it visits is checked for good: none of those leads there, or the task would have found what the members
+//!   got (`Task::close_ring`). Any other task is lost, and the driver checks its files again as soon as the files
+//!   before them are checked.
+//! - **A ring is seen whole or not at all.** A task has a snapshot for each file, and none for the entries under records. So
+//!   it could miss one member of a ring and find the next, which closes no ring and is right from no entry. The commit of
+//!   a task that was believed about a ring follows a file, so nothing of it is withheld, and says so before it stores its
+//!   first entry (`Numbers::with_a_ring`). A task that has not been at rest since then writes nothing at once
+//!   (`Task::is_beside_a_ring`). It is lost if it has stored under a key of that commit: it has missed that one
+//!   (`Checker::lose_what_has_missed_a_ring`).
 //! - **The last round** is one task that checks those files in program order while nothing else runs. It finds all that was
 //!   committed. What it computes at a limit is what counts, as with one checker.
 //! - **A diagnostic goes with the entry of the query that has reported it**, in the same commit, and stays if the task is
 //!   lost later: whoever checks the file again finds the entry and does not report. If the entry loses, so does the
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
-//!   commit follows the end of the file.
+//!   commit follows the end of the file. So does what the task has stored under the nodes of the file
+//!   (`Checker::withhold_until_the_file_ends`), with what was reported for it.
 //! - **An entry under a record does not wait for a commit if nothing that it rests on does** (`Task::may_write_at_once`):
 //!   neither its key nor its value is bound, and since its evaluation began nothing was stored that waits, and nothing was
 //!   read that holds only while the stack of the checker is as it is (`Task::hold_back`). So whatever its evaluation has
@@ -66,6 +79,8 @@ pub(super) struct Commits<'s> {
     committing: Guarded<Committing>,
     numbers: &'s Numbers,
     claims: Claims,
+    /// The commits of the tasks that `Task::close_ring` has believed, by number.
+    rings: Guarded<Vec<Ring>>,
     /// `tables_written_at_once`
     at_once: u128,
     /// Every checker gets a copy.
@@ -78,6 +93,16 @@ struct Numbers {
     begun: AtomicU32,
     /// That commit, and every one before it, has stored everything.
     stored: AtomicU32,
+    /// The number of the newest commit of a task that `Task::close_ring` has believed.
+    with_a_ring: AtomicU32,
+}
+
+/// A commit of a task that `Task::close_ring` has believed.
+pub(super) struct Ring {
+    number: u32,
+    /// The keys that the task has logged from then on, sorted: those of the members, and of what follows from them.
+    of_records: Vec<[u32; 2]>,
+    of_nodes: Vec<[u32; 3]>,
 }
 
 #[derive(Default)]
@@ -95,11 +120,13 @@ impl<'s> Commits<'s> {
             numbers: arena.alloc(Numbers {
                 begun: AtomicU32::new(0),
                 stored: AtomicU32::new(0),
+                with_a_ring: AtomicU32::new(0),
             }),
             claims: Claims {
                 table: Guarded::default(),
                 has_changed: Condvar::new(),
             },
+            rings: Guarded::default(),
             at_once: tables_written_at_once(),
             jitter: Jitter::default(),
         }
@@ -109,6 +136,7 @@ impl<'s> Commits<'s> {
     pub(super) fn release(&mut self) {
         *self.committing.get_mut() = Committing::default();
         *self.claims.table.get_mut() = FxHashMap::default();
+        *self.rings.get_mut() = Vec::new();
     }
 
     /// For a task that begins. `files`: how many the program has.
@@ -118,6 +146,8 @@ impl<'s> Commits<'s> {
             of_files: vec![Cell::new(0); files].into_boxed_slice(),
             touched: RefCell::default(),
             pinned: Cell::new(NO_FILE),
+            at_rest: Cell::new(self.numbers.stored.load(Ordering::Acquire)),
+            compared_with_pinned: Cell::new(0),
             oldest_pin: Cell::new(u32::MAX),
             own: RefCell::default(),
             policy,
@@ -135,10 +165,16 @@ impl<'s> Commits<'s> {
         task: &Task<'s>,
         log: &mut Log,
         number: u32,
+        ring: Option<Ring>,
     ) -> u64 {
         let (jitter, commit) = (task.own.jitter(), u64::from(number));
         let mut stored = 0;
         self.numbers.begun.store(number, Ordering::Release);
+        // Before the first entry: whoever finds one finds this.
+        if let Some(ring) = ring {
+            self.rings.lock().push(Ring { number, ..ring });
+            self.numbers.with_a_ring.store(number, Ordering::Release);
+        }
         jitter.stretch(commit);
         for &[slot, key] in &log.of_records {
             if let Some(table) = tables.get(slot as usize) {
@@ -195,6 +231,10 @@ pub(crate) struct View<'s> {
     touched: RefCell<Vec<u32>>,
     /// The file that the task is visiting, or `NO_FILE`.
     pinned: Cell<u32>,
+    /// The number of the last commit that had stored everything when `forget` was last called.
+    at_rest: Cell<u32>,
+    /// The commits up to this number have stored nothing under `pinned` that the task does not see.
+    compared_with_pinned: Cell<u32>,
     /// The lowest number that a file had while it was `pinned`, since the last commit of the task.
     oldest_pin: Cell<u32>,
     /// The numbers of the commits of the task, ascending.
@@ -232,6 +272,8 @@ impl View<'_> {
 
     /// Nothing is in progress in the task that has looked at a table.
     pub(super) fn forget(&self) {
+        self.at_rest
+            .set(self.numbers.stored.load(Ordering::Acquire));
         let pinned = self.pinned.get();
         self.touched.borrow_mut().retain(|&file| {
             if file != pinned
@@ -249,7 +291,14 @@ impl View<'_> {
         self.forget();
         let snapshot = self.snapshot_of(file);
         self.pinned.set(file.0);
+        self.compared_with_pinned.set(snapshot);
         self.oldest_pin.set(self.oldest_pin.get().min(snapshot));
+    }
+
+    /// See `Task::is_beside_a_ring`.
+    #[inline]
+    pub(super) fn is_beside_a_ring(&self) -> bool {
+        self.numbers.with_a_ring.load(Ordering::Acquire) > self.at_rest.get()
     }
 
     pub(super) fn compares_lost(&self) -> bool {
@@ -539,21 +588,64 @@ impl<'s> Checker<'_, 's> {
 
     /// Nothing is in progress that has looked at a table or is about to store in one.
     fn rest(&mut self) {
+        self.lose_what_has_missed_a_ring();
         let logged = self.task.buffer().logged();
         let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged));
-        if is_due && !self.task.is_lost() {
+        // A commit here would store the members of a ring that are in other files, and withhold those in this one.
+        if is_due && !self.task.is_lost() && !self.task.has_closed_a_ring() {
             let (is_between_files, is_read) = (false, true);
             self.commit(is_between_files, is_read);
         } else if let Some(view) = self.task.view() {
             view.forget();
         }
+        self.task.note_what_is_logged_at_rest();
+    }
+
+    /// At rest. The task is lost if it has missed a member of a ring that a commit has: then it finds the other members, which
+    /// closes no ring and is right from no entry.
+    /// - See `Task::is_beside_a_ring`. Whoever misses a member evaluates it, and stores it: the task has stored, since it
+    ///   was last at rest, under a key that the commit has.
+    /// - The file that the task visits does not change during the visit: the commit has a key in that file.
+    fn lose_what_has_missed_a_ring(&self) {
+        let Some(view) = self.task.view() else {
+            return;
+        };
+        let newest = view.numbers.with_a_ring.load(Ordering::Acquire);
+        let (at_rest, compared) = (view.at_rest.get(), view.compared_with_pinned.get());
+        if newest <= at_rest.min(compared) {
+            return;
+        }
+        let (of_records, of_nodes) = self.task.logged_since_rest();
+        let rings = self.p.commits.rings.lock();
+        let from = rings.partition_point(|ring| ring.number <= at_rest.min(compared));
+        let has_missed = rings[from..].iter().any(|ring| {
+            ring.number > compared && ring.of_nodes.iter().any(|key| key[1] == view.pinned.get())
+                || ring.number > at_rest
+                    && (of_records
+                        .iter()
+                        .any(|key| ring.of_records.binary_search(key).is_ok())
+                        || of_nodes
+                            .iter()
+                            .any(|key| ring.of_nodes.binary_search(key).is_ok()))
+        });
+        view.compared_with_pinned.set(compared.max(newest));
+        if has_missed {
+            self.task.lose("a ring of which it has missed a member");
+        }
+    }
+
+    /// Before `check_file`: see `Task::set_first_in_order`.
+    pub fn set_first_in_order(&self, is_first: bool) {
+        self.task.set_first_in_order(is_first);
     }
 
     /// After `check_file`, and whatever is asked about the file afterwards. `is_last`: the task ends here.
     /// `is_read`: see `commit`.
     pub fn commit_after_file(&mut self, is_last: bool, is_read: bool) -> AfterFile {
+        self.lose_what_has_missed_a_ring();
         let logged = self.task.buffer().logged();
-        let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged));
+        let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged))
+            || self.task.has_closed_a_ring();
         if !is_last && !is_due && !self.task.is_lost() {
             return AfterFile::Waits;
         }
@@ -582,6 +674,19 @@ impl<'s> Checker<'_, 's> {
             return false;
         }
         let mut log = self.task.buffer().take_log();
+        let ring = self.task.take_has_closed_a_ring().map(|[records, nodes]| {
+            let of_records = log.of_records.get(records..).unwrap_or(&log.of_records);
+            let of_nodes = log.of_nodes.get(nodes..).unwrap_or(&log.of_nodes);
+            let (mut of_records, mut of_nodes) = (of_records.to_vec(), of_nodes.to_vec());
+            of_records.shared_sort_unstable();
+            of_nodes.shared_sort_unstable();
+            Ring {
+                number: 0,
+                of_records,
+                of_nodes,
+            }
+        });
+        self.withhold_until_the_file_ends(&mut log, is_between_files);
         self.task.own.wait_at(Place::CommitBegins);
         let asked = Instant::now();
         let mut committing = p.commits.committing.lock();
@@ -601,8 +706,8 @@ impl<'s> Checker<'_, 's> {
             task.view().is_some_and(|view| view.is_own(commit))
         });
         p.publish_reported(task.number(), reported);
-        let stored = match is_read {
-            true => p.commits.store(&tables_of(p), task, &mut log, number),
+        let stored = match is_read || ring.is_some() {
+            true => (p.commits).store(&tables_of(p), task, &mut log, number, ring),
             false => 0,
         };
         drop(committing);
@@ -617,6 +722,27 @@ impl<'s> Checker<'_, 's> {
         }
         task.buffer().give_back_log(log);
         true
+    }
+
+    /// What the task has stored under the nodes and symbols of a file that it has visited waits for a commit that follows
+    /// the file. If the task is lost before that, another one checks the file again, and has to evaluate what this one
+    /// has: to evaluate an expression is also to leave notes for the later passes over the file, like
+    /// `unresolved_identifiers`, and whoever finds an entry leaves none.
+    fn withhold_until_the_file_ends(&mut self, log: &mut Log, is_between_files: bool) {
+        let withheld = &mut self.withheld_until_the_file_ends;
+        if is_between_files {
+            log.of_nodes.append(withheld);
+            self.task.files_in_doubt.clear();
+            return;
+        }
+        let in_doubt = &self.task.files_in_doubt;
+        log.of_nodes.retain(|&entry| {
+            let is_in_doubt = in_doubt.contains(&FileId(entry[1]));
+            if is_in_doubt {
+                withheld.push(entry);
+            }
+            !is_in_doubt
+        });
     }
 
     /// Ends a task that `see_commits` was called for, after its last `commit_after_file`, on its own thread.

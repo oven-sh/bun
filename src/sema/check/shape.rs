@@ -1113,6 +1113,8 @@ impl<'p, 's> Checker<'p, 's> {
         if (self.declared_index_infos_in_progress.iter())
             .any(|it| it.0 > 0 && self.stack.get(it.0 - 1) == Some(&Query::Shape(key)))
         {
+            self.task.hold_back();
+            self.task.close_ring();
             let mut shape = build(self);
             // `resolveAnonymousTypeMembers` computes the index signatures of the static side of a
             // class before its signatures.
@@ -1588,6 +1590,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // For the members of `ty`, also where the shape is there already. For the shape: see below.
                 if depends_on_state {
                     self.note_state_was_read();
+                    self.task.close_ring();
                 }
                 let (key, under) = if declared != ty
                     && (inherits_from_type_arguments

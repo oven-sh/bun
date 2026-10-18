@@ -895,6 +895,7 @@ impl<'s> Program<'s> {
             deferred_type_parameters: Vec::new(),
             unresolved_identifiers: Vec::new(),
             unknown_symbols: Default::default(),
+            withheld_until_the_file_ends: Vec::new(),
             alias_targets_reported: Default::default(),
             alias_targets_in_progress: Vec::new(),
             is_deferred_node: Default::default(),
@@ -1012,6 +1013,14 @@ enum Query {
     /// stack: it only owns the diagnostic of a stack depth overflow (`error_about_comparison_at_current_node`). Likewise the
     /// entry of a `MappedProp` (`circular_mapped_property`).
     Comparison(u64),
+}
+
+/// Whether tsgo notices that it comes round to `q`. See `Checker::close_ring_from`.
+fn is_guarded(q: Query) -> bool {
+    !matches!(
+        q,
+        Query::TypeNode(..) | Query::Cond(..) | Query::InferredConstraint(_)
+    )
 }
 
 /// The names that go with `Finished::foreign_evaluations`, for `--timing`.
@@ -1747,6 +1756,8 @@ pub struct Checker<'p, 's> {
     /// `links.resolvedSymbol == c.unknownSymbol`, for the identifiers of the file being checked:
     /// the error of `onFailedToResolveSymbol` has been created. `true`: and discarded.
     unknown_symbols: FxHashMap<ExprId, bool>,
+    /// See the function of that name: entries of `Log::of_nodes`.
+    withheld_until_the_file_ends: Vec<[u32; 3]>,
     /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
     /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
     alias_targets_reported: crate::util::FxHashSet<Sym>,
@@ -2354,10 +2365,23 @@ impl<'p, 's> Checker<'p, 's> {
         is_resolved
     }
 
+    /// The checker has come round to `stack[i]`: `Task::close_ring`, unless the ring gets the same from every entry. tsgo
+    /// goes round until it comes to a member that it guards. Type syntax and conditional types have no guard, so with one
+    /// other member the ring closes there, wherever it was entered. And of base constraints that lead to each other
+    /// every one is circular.
+    pub(super) fn close_ring_from(&self, i: usize) {
+        let mut guarded = self.stack[i..].iter().filter(|&&q| is_guarded(q));
+        let are_constraints = matches!(guarded.next(), Some(Query::Constraint(_)));
+        if guarded.any(|q| !are_constraints || !matches!(q, Query::Constraint(_))) {
+            self.task.close_ring();
+        }
+    }
+
     /// How `enter` handles a `q` that is in progress at `stack[i]`. `false`: it is restarted.
     #[cold]
     #[inline(never)]
     fn on_reentry(&mut self, q: Query, i: usize) -> bool {
+        self.close_ring_from(i);
         // `findResolutionCycleStartIndex` searches no further down than a resolution that has its
         // result: the query is restarted, and arrives at that result.
         if self.is_resolution(q) && self.is_resolved_since(i) {
@@ -3382,8 +3406,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`!popTypeResolution()`) and after a failed `pushTypeResolution`, also where `leave` returns `Err`. The value is a constant, derived
     /// from no unfinished result.
     ///
-    /// Which member gets it depends on where the task has entered the cycle. The entry waits for a commit, but what the task
-    /// computes from it until then looks like any other result: `Task::stop_writing_at_once`.
+    /// The entry waits for a commit, but what the task computes from it until then looks like any other result:
+    /// `Task::stop_writing_at_once`. Which member gets it can depend on where the task has entered the cycle:
+    /// `close_ring_from`.
     fn cycle_result(&self) -> Stored {
         debug_assert!(self.left_a_cycle || self.found_cycle);
         self.task.stop_writing_at_once();
@@ -3643,6 +3668,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `members_in_place_hits`.
     #[inline]
     fn note_members_in_place(&mut self) {
+        self.task.close_ring();
         self.cycles += 1;
         self.members_in_place_hits += 1;
         self.members_in_place_hit_at = self.work;

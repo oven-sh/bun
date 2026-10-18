@@ -622,6 +622,22 @@ impl<'s> Buffer<'s> {
         self.log.as_ref().map_or(0, Log::len)
     }
 
+    /// How many keys of each kind are logged: of records, of nodes.
+    pub(crate) fn lengths_of_log(&self) -> [usize; 2] {
+        (self.log.as_ref()).map_or([0; 2], |log| [log.of_records.len(), log.of_nodes.len()])
+    }
+
+    /// The keys that were logged when `lengths_of_log` was `from` or later.
+    pub(crate) fn logged_since(&self, from: [usize; 2]) -> (&[[u32; 2]], &[[u32; 3]]) {
+        let Some(log) = &self.log else {
+            return (&[], &[]);
+        };
+        (
+            log.of_records.get(from[0]..).unwrap_or(&log.of_records),
+            log.of_nodes.get(from[1]..).unwrap_or(&log.of_nodes),
+        )
+    }
+
     /// None are logged afterwards.
     pub(crate) fn take_log(&mut self) -> Log {
         self.log.as_mut().map(std::mem::take).unwrap_or_default()

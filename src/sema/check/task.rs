@@ -74,6 +74,8 @@ pub struct Task<'s> {
     withheld: u128,
     /// The file that the task is visiting.
     pub file: Option<FileId>,
+    /// The files that the task has visited and that no commit has followed: they are not checked for good.
+    pub(super) files_in_doubt: Vec<FileId>,
     /// Nonzero: the task is one checker of a `checkerPool` of this size. Its index in the step is
     /// its checker index.
     pub(super) checker_count: u32,
@@ -97,6 +99,12 @@ pub struct Task<'s> {
     is_lost: Cell<Option<&'static str>>,
     /// The task is never lost: it runs alone, in the last round.
     is_believed: bool,
+    /// See `close_ring`.
+    is_first_in_order: Cell<bool>,
+    /// `Some`: `close_ring` has believed the task since its last commit. `Buffer::lengths_of_log` the first time.
+    has_closed_a_ring: Cell<Option<[usize; 2]>>,
+    /// `Buffer::lengths_of_log` when the task was last at rest.
+    logged_at_rest: Cell<[usize; 2]>,
     /// How many keys the task had logged at its commits, and how many entries they have stored.
     committed: Cell<[u64; 2]>,
     /// How long the task has waited for the mutex of the commits, has had it, and has waited for claims of variances.
@@ -127,6 +135,7 @@ impl<'s> Task<'s> {
             is_read_later: true,
             withheld: 0,
             file: None,
+            files_in_doubt: Vec::new(),
             checker_count: 0,
             diagnostics: Vec::new(),
             closed_a_cycle: false,
@@ -138,6 +147,9 @@ impl<'s> Task<'s> {
             view: None,
             is_lost: Cell::new(None),
             is_believed: false,
+            is_first_in_order: Cell::new(false),
+            has_closed_a_ring: Cell::new(None),
+            logged_at_rest: Cell::new([0; 2]),
             committed: Cell::new([0; 2]),
             waits: Cell::new([Duration::ZERO; 3]),
             at_once: Cell::new(0),
@@ -199,13 +211,15 @@ impl<'s> Task<'s> {
     /// its evaluation began: then whatever that has stored was written at once too, before it.
     #[inline]
     pub(crate) fn may_write_at_once(&self, slot: u32, stored: Stored) -> bool {
-        self.at_once.get() >> slot & 1 != 0 && !self.has_held_back_since(stored)
+        self.at_once.get() >> slot & 1 != 0
+            && !self.has_held_back_since(stored)
+            && !self.is_beside_a_ring()
     }
 
     /// Whether the task writes to any table at once.
     #[inline]
     pub(crate) fn writes_at_once(&self) -> bool {
-        self.at_once.get() != 0
+        self.at_once.get() != 0 && !self.is_beside_a_ring()
     }
 
     /// Until its next commit the task writes nothing at once. What is written at once can't be taken back, and what the
@@ -269,6 +283,56 @@ impl<'s> Task<'s> {
     #[inline]
     pub(super) fn is_lost(&self) -> bool {
         self.is_lost.get().is_some()
+    }
+
+    /// Before the task visits a file. `is_first`: every file before that one in program order is checked for good, or the
+    /// task has checked it itself.
+    pub(super) fn set_first_in_order(&self, is_first: bool) {
+        self.is_first_in_order.set(is_first);
+    }
+
+    /// The task has come round to something that is in progress, and what the members of that ring get depends on where
+    /// it was entered. tsc enters it from the first file in program order that leads there. That is this task if every
+    /// file before is checked for good: none of them has led there, or the task would have found what the members got.
+    /// Any other task is lost. Its files are checked again when the files before them are.
+    pub(super) fn close_ring(&self) {
+        if self.is_first_in_order.get() || self.is_believed {
+            if self.has_closed_a_ring.get().is_none() {
+                let logged = self.buffer().lengths_of_log();
+                self.has_closed_a_ring.set(Some(logged));
+            }
+            self.stop_writing_at_once();
+        } else {
+            self.lose("a ring that an earlier file may enter");
+        }
+    }
+
+    /// Whether `close_ring` has believed the task since its last commit.
+    pub(super) fn has_closed_a_ring(&self) -> bool {
+        self.has_closed_a_ring.get().is_some()
+    }
+
+    /// For a commit: `Buffer::lengths_of_log` when `close_ring` first believed the task since the last one.
+    pub(super) fn take_has_closed_a_ring(&self) -> Option<[usize; 2]> {
+        self.has_closed_a_ring.take()
+    }
+
+    /// Whether a commit with what the members of a ring got has begun since the task was last at rest. What the task is
+    /// evaluating may have missed one member and found the next, which closes no ring and is right from no entry. So it
+    /// writes nothing at once before it is at rest again, where `Checker::lose_what_has_missed_a_ring` looks closer.
+    #[inline]
+    pub(crate) fn is_beside_a_ring(&self) -> bool {
+        (self.view.as_ref()).is_some_and(View::is_beside_a_ring)
+    }
+
+    /// Nothing is in progress in the task.
+    pub(super) fn note_what_is_logged_at_rest(&self) {
+        self.logged_at_rest.set(self.buffer().lengths_of_log());
+    }
+
+    /// The keys under which the task has stored since it was last at rest, but for what it has written at once.
+    pub(super) fn logged_since_rest(&self) -> (&[[u32; 2]], &[[u32; 3]]) {
+        self.buffer().logged_since(self.logged_at_rest.get())
     }
 
     pub(super) fn is_believed(&self) -> bool {
@@ -341,6 +405,8 @@ impl<'s> Task<'s> {
     /// none can, anything that mentions `file` is bound and is never published.
     pub fn begin_file(&mut self, file: FileId, is_imported: bool) {
         self.file = Some(file);
+        self.files_in_doubt.push(file);
+        self.note_what_is_logged_at_rest();
         self.own.add_visited_file(file);
         if !is_imported {
             self.own.add_unimported_file(file);
@@ -372,6 +438,7 @@ impl<'s> Task<'s> {
 
     fn drop_everything(&mut self) {
         (self.place, self.is_read_later, self.file) = (None, true, None);
+        self.files_in_doubt.clear();
         self.withheld = 0;
         self.checker_count = 0;
         self.diagnostics.clear();
@@ -381,6 +448,9 @@ impl<'s> Task<'s> {
         self.assignments_walked.get_mut().clear();
         (self.view, self.is_believed) = (None, false);
         self.is_lost.set(None);
+        self.is_first_in_order.set(false);
+        self.has_closed_a_ring.set(None);
+        self.logged_at_rest.set([0; 2]);
         self.committed.set([0; 2]);
         self.waits.set([Duration::ZERO; 3]);
         (self.at_once_unless_stopped, self.at_once) = (0, Cell::new(0));

@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isDebug, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -206,22 +206,27 @@ describe("zlib", () => {
 
     // Z_FIXED has no tree of its own, and a block of memLevel 9 that the window slid past is not stored:
     // 9 bits for each byte from 144 up and 10 for each block, where deflateBound() allows 9 bits and 3 bytes in all.
-    it("an output longer than deflateBound() is whole", () => {
-      const period = Buffer.alloc(37 * 37 * 38 * 3);
-      for (let i = 0; i < period.length; i += 3) {
-        const triple = i / 3;
-        period[i] = 144 + Math.floor(triple / (37 * 38));
-        period[i + 1] = 181 + (Math.floor(triple / 38) % 37);
-        period[i + 2] = 218 + (triple % 38);
-      }
-      const input = Buffer.alloc(5400 * 32768, period);
-      // One match in three blocks of 32767 symbols keeps each block starting just before a multiple of the window.
-      for (let i = 5 * 32767 + 16000; i + 4 < input.length; i += 3 * 32768) input.copyWithin(i, i - 30000, i - 29996);
+    // The first block is stored, which spares 4092 bytes, and each other uses up less than one: 5120 are the fewest.
+    it(
+      "an output longer than deflateBound() is whole",
+      () => {
+        const period = Buffer.alloc(37 * 37 * 38 * 3);
+        for (let i = 0; i < period.length; i += 3) {
+          const triple = i / 3;
+          period[i] = 144 + Math.floor(triple / (37 * 38));
+          period[i + 1] = 181 + (Math.floor(triple / 38) % 37);
+          period[i + 2] = 218 + (triple % 38);
+        }
+        const input = Buffer.alloc(5130 * 32768, period);
+        // One match in three blocks of 32767 symbols keeps each block starting just before a multiple of the window.
+        for (let i = 5 * 32767 + 16000; i + 4 < input.length; i += 3 * 32768) input.copyWithin(i, i - 30000, i - 29996);
 
-      const compressed = deflateSync(input, { memLevel: 9, strategy: zlib.constants.Z_FIXED, level: 2 });
-      expect(compressed.length).toBeGreaterThan(input.length + input.length / 8 + 3);
-      expect(Buffer.compare(inflateSync(compressed), input)).toBe(0);
-    }, 60_000);
+        const compressed = deflateSync(input, { memLevel: 9, strategy: zlib.constants.Z_FIXED, level: 2 });
+        expect(compressed.length).toBeGreaterThan(input.length + input.length / 8 + 3);
+        expect(Buffer.compare(inflateSync(compressed), input)).toBe(0);
+      },
+      isDebug ? 60_000 : undefined,
+    );
   });
 });
 

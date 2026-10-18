@@ -2880,6 +2880,16 @@ config:
         expect((YAML.parse(input) as { a: unknown }).a).toEqual(expected);
       });
 
+      test("long keys are one key when they have one text", () => {
+        const key = Buffer.alloc(300, "k").toString();
+        const other = key.slice(0, -1) + "x";
+        const parsed = YAML.parse(
+          `s: &s {${key}: 1, ${other}: 2}\nt: &t {${key}: 3}\nu: {${other}: 4, <<: [*t, *s]}\nv: {<<: [*s, *t]}\n`,
+        ) as Record<string, Record<string, number>>;
+        expect(parsed.u).toEqual({ [other]: 4, [key]: 3 });
+        expect(parsed.v).toEqual({ [key]: 1, [other]: 2 });
+      });
+
       test("a NaN key is one key in a file that is imported, required or bundled", async () => {
         using dir = tempDir("yaml-nan-merge-key", {
           "nan.yaml": "a: {.nan: 1, <<: {.nan: 2}}\nb: {<<: {.nan: 1, .nan: 2}}\nc: {<<: [{.nan: 1}, {.nan: 2}]}\n",
@@ -5562,40 +5572,40 @@ describe("a small document does not make the parser read one key or one string a
     {
       name: "NaN keys in one merge source",
       text: count => `a: {<<: {${repeat(".nan: 1,", count)}}}\n`,
-      debug: 40_000,
-      release: 150_000,
+      debug: 20_000,
+      release: 70_000,
       value: parsed => parsed.a,
       expected: () => ({ NaN: 1 }),
     },
     {
       name: "a NaN key merged many times",
       text: count => `s: &s {.nan: 1}\na: {<<: [${repeat("*s,", count)}]}\n`,
-      debug: 40_000,
-      release: 150_000,
+      debug: 20_000,
+      release: 70_000,
       value: parsed => parsed.a,
       expected: () => ({ NaN: 1 }),
     },
     {
       name: "null keys of the mapping and a merged 0, which hash alike",
       text: count => `s: &s {0: 1}\na: {${repeat("~: 1,", count)}<<: [${repeat("*s,", count)}]}\n`,
-      debug: 30_000,
-      release: 110_000,
+      debug: 20_000,
+      release: 55_000,
       value: parsed => parsed.a,
       expected: () => ({ null: 1, 0: 1 }),
     },
     {
       name: "a long key merged many times into one mapping",
       text: count => `s: &s {${long}: 1}\na: {<<: [${repeat("*s,", count)}]}\n`,
-      debug: 25_000,
-      release: 600_000,
+      debug: 7_000,
+      release: 150_000,
       value: parsed => parsed.a,
       expected: () => ({ [long]: 1 }),
     },
     {
       name: "a long key merged many times over another node with its text",
       text: count => `s: &s {${long}: 1}\nt: &t {${long}: 2}\na: {<<: [*s,${repeat("*t,", count)}]}\n`,
-      debug: 25_000,
-      release: 550_000,
+      debug: 7_000,
+      release: 150_000,
       value: parsed => parsed.a,
       expected: () => ({ [long]: 1 }),
     },
@@ -5603,40 +5613,40 @@ describe("a small document does not make the parser read one key or one string a
       name: "a long key that many merge sources share",
       text: count =>
         `k: &k ${long}\ns:\n${each(count, i => `  - &s${i} {*k : ${i}}\n`)}a: {<<: [${each(count, i => `*s${i},`)}]}\n`,
-      debug: 6_000,
-      release: 30_000,
+      debug: 2_500,
+      release: 8_000,
       value: parsed => parsed.a,
       expected: () => ({ [long]: 0 }),
     },
     {
       name: "a long key merged into many mappings",
       text: count => `s: &s {${long}: 1}\nt:\n${repeat("  - {<<: *s}\n", count)}`,
-      debug: 10_000,
-      release: 30_000,
+      debug: 2_500,
+      release: 7_000,
       value: parsed => [parsed.t.length, parsed.t.at(-1)],
       expected: count => [count, { [long]: 1 }],
     },
     {
       name: "a long key of many mappings that merge something",
       text: count => `k: &k ${long}\ns: &s {x: 1}\nt:\n${repeat("  - {*k : 2, <<: *s}\n", count)}`,
-      debug: 10_000,
-      release: 28_000,
+      debug: 2_500,
+      release: 6_000,
       value: parsed => [parsed.t.length, parsed.t.at(-1)],
       expected: count => [count, { [long]: 2, x: 1 }],
     },
     {
       name: "a long string that is the key of many mappings",
       text: count => `x: &x ${long}\nb:\n${repeat("  - {*x : 1}\n", count)}`,
-      debug: 12_500,
-      release: 34_000,
+      debug: 4_000,
+      release: 7_000,
       value: parsed => [parsed.b.length, parsed.b.at(-1)],
       expected: count => [count, { [long]: 1 }],
     },
     {
       name: "a long string that is the key of many mappings, after a key that is a sequence",
       text: count => `x: &x ${long}\nb:\n${repeat("  - {? [a] : 0, *x : 1}\n", count)}`,
-      debug: 10_000,
-      release: 26_000,
+      debug: 5_000,
+      release: 6_000,
       value: parsed => [parsed.b.length, Object.entries(parsed.b.at(-1))],
       expected: count => [
         count,
@@ -5657,9 +5667,8 @@ describe("a small document does not make the parser read one key or one string a
       const elapsed = performance.now() - start;
 
       expect(value(parsed)).toEqual(expected(count));
-      expect(elapsed).toBeLessThan(slow ? 15_000 : 4_000);
+      expect(elapsed).toBeLessThan(slow ? 4_000 : 1_000);
     },
-    30_000,
   );
 
   test("a long string that an alias or a merge key shares is one JS string", async () => {
@@ -5681,6 +5690,10 @@ describe("a small document does not make the parser read one key or one string a
             ],
             "a merge of a sequence with its mapping": [
               "s: &s [{j: 1}, {k: " + long + "}]\\nt:\\n" + repeat("  - {<<: *s}\\n", count),
+              parsed => parsed.t.map(mapping => mapping.k),
+            ],
+            "a merge of a sequence that is in its mapping": [
+              "m: &m {k: " + long + ", s: &s [*m]}\\nt:\\n" + repeat("  - {<<: *s}\\n", count),
               parsed => parsed.t.map(mapping => mapping.k),
             ],
           };
@@ -5710,6 +5723,7 @@ describe("a small document does not make the parser read one key or one string a
         "an alias of the string": { strings: 200, isOneString: true },
         "a merge of its mapping": { strings: 200, isOneString: true },
         "a merge of a sequence with its mapping": { strings: 200, isOneString: true },
+        "a merge of a sequence that is in its mapping": { strings: 200, isOneString: true },
       }),
       stderr: "",
       exitCode: 0,

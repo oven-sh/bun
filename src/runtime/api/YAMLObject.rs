@@ -1106,9 +1106,16 @@ fn parse_to_values(
     super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
         // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
         // once by pointer identity, so a cyclic graph is fine here.
-        let parsed =
-            match YAML::parse_shared(source, log, arena, CyclicAliases::Allow) {
-                Ok(parsed) => parsed,
+        let mut shared_strings = Vec::new();
+        let root =
+            match YAML::parse_shared(
+                source,
+                log,
+                arena,
+                CyclicAliases::Allow,
+                &mut shared_strings,
+            ) {
+                Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
                 Err(YamlParseError::SyntaxError) => {
@@ -1133,10 +1140,11 @@ fn parse_to_values(
         };
 
         // Two copies of `to_js`: a document that shares no long string does not look for one.
-        let result = if parsed.shares_long_strings {
-            ctx.to_js::<true>(roots, parsed.root)
+        let result = if shared_strings.is_empty() {
+            ctx.to_js::<false>(roots, root)
         } else {
-            ctx.to_js::<false>(roots, parsed.root)
+            ctx.share(shared_strings)
+                .and_then(|()| ctx.to_js::<true>(roots, root))
         };
         result.map_err(|err| match err {
             ToJsError::OutOfMemory => JsError::OutOfMemory,
@@ -1193,31 +1201,42 @@ impl From<bun_ast::ToJSError> for ToJsError {
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
 
-    /// Whether `to_js::<true>` makes one JS string of `expr` for all the places that hold it.
-    fn is_shared_string(expr: &Expr) -> bool {
+    /// Gives each node that `YAML::parse_shared` reported a place in `seen_objects`, empty until
+    /// `to_js::<true>` comes to the node.
+    fn share(
+        &mut self,
+        strings: Vec<bun_ast::StoreRef<bun_ast::E::String>>,
+    ) -> Result<(), ToJsError> {
+        for string in &strings {
+            self.seen_objects
+                .put(string.as_ptr().cast_const().cast::<c_void>(), JSValue::ZERO)?;
+        }
+        Ok(())
+    }
+
+    /// Every node that `YAML::parse_shared` reports is this long.
+    fn is_long_string(expr: &Expr) -> bool {
         matches!(expr.data, ExprData::EString(str) if str.data.len() >= SHARED_STRING_MIN_LEN)
     }
 
+    /// `None` for a node that `share` did not get.
     fn shared_string_to_js(
         &mut self,
         args: &mut MarkedArgumentBuffer,
         str: bun_ast::StoreRef<bun_ast::E::String>,
-    ) -> Result<JSValue, ToJsError> {
+    ) -> Result<Option<JSValue>, ToJsError> {
         let key = str.as_ptr().cast_const().cast::<c_void>();
-        if let Some(shared) = self.seen_objects.get(&key) {
-            return Ok(*shared);
+        let Some(shared) = self.seen_objects.get_mut(&key) else {
+            return Ok(None);
+        };
+        if shared.is_empty() {
+            *shared = bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?;
+            args.append(*shared);
         }
-
-        let shared = bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?;
-
-        args.append(shared);
-        self.seen_objects.put(key, shared)?;
-
-        Ok(shared)
+        Ok(Some(*shared))
     }
 
-    /// `SHARES_LONG_STRINGS` is `Parsed::shares_long_strings`: a string node of `SHARED_STRING_MIN_LEN`
-    /// bytes or more is in `seen_objects` too.
+    /// `SHARES_LONG_STRINGS`: `share` has run.
     fn to_js<const SHARES_LONG_STRINGS: bool>(
         &mut self,
         args: &mut MarkedArgumentBuffer,
@@ -1230,13 +1249,18 @@ impl<'a> ParserCtx<'a> {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
-            ExprData::EString(str) if SHARES_LONG_STRINGS && Self::is_shared_string(&expr) => {
-                self.shared_string_to_js(args, str)
+            ExprData::EString(str) => {
+                if SHARES_LONG_STRINGS
+                    && Self::is_long_string(&expr)
+                    && let Some(shared) = self.shared_string_to_js(args, str)?
+                {
+                    return Ok(shared);
+                }
+                Ok(bun_js_parser_jsc::value_string_to_js(
+                    str.get(),
+                    self.global,
+                )?)
             }
-            ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
-                str.get(),
-                self.global,
-            )?),
             ExprData::EArray(e_array) => {
                 let key = e_array.as_ptr().cast_const().cast::<c_void>();
                 if let Some(arr) = self.seen_objects.get(&key) {
@@ -1292,9 +1316,9 @@ impl<'a> ParserCtx<'a> {
                         continue;
                     }
 
-                    if SHARES_LONG_STRINGS && Self::is_shared_string(&key_expr) {
-                        // The JS string keeps the atom it becomes, so the mappings after the first
-                        // that have this key do not read its text.
+                    if SHARES_LONG_STRINGS && Self::is_long_string(&key_expr) {
+                        // A shared JS string keeps the atom it becomes, so the mappings after the
+                        // first that have this key do not read its text.
                         JSValue::put_to_property_key(obj, self.global, key, value)?;
                         continue;
                     }

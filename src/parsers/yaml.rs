@@ -35,17 +35,9 @@ pub enum CyclicAliases {
     Reject,
 }
 
-/// A string node shorter than this costs less to read again than to look up by its address, so
-/// nothing remembers it: neither a merge (`MergeKeyMemo`) nor [`Parsed::shares_long_strings`].
+/// [`YAML::parse_shared`] reports no string shorter than this. To make a short string again
+/// costs less than to look its node up.
 pub const SHARED_STRING_MIN_LEN: usize = 64;
-
-/// What [`YAML::parse_shared`] returns.
-pub struct Parsed {
-    pub root: Expr,
-    /// A string node of [`SHARED_STRING_MIN_LEN`] bytes or more may be reached from more than one
-    /// place of `root`: an alias refers to it, or to what a `<<` copies a property with it out of.
-    pub shares_long_strings: bool,
-}
 
 impl YAML {
     pub fn parse(
@@ -54,20 +46,35 @@ impl YAML {
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
-        Ok(Self::parse_shared(source, log, bump, cyclic_aliases)?.root)
+        Self::parse_with(source, log, bump, cyclic_aliases, None)
     }
 
-    /// [`YAML::parse`] for a consumer that makes one value of each node.
+    /// [`YAML::parse`] for a consumer that makes one value of each node. `shared_strings` gets
+    /// the string nodes of [`SHARED_STRING_MIN_LEN`] bytes or more that the result can hold in
+    /// more than one place: an alias refers to the node, or a `<<` copied a property with it.
+    /// A node can be there more than once.
     pub fn parse_shared(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
-    ) -> Result<Parsed, YamlParseError> {
+        shared_strings: &mut Vec<ast::StoreRef<E::String>>,
+    ) -> Result<Expr, YamlParseError> {
+        Self::parse_with(source, log, bump, cyclic_aliases, Some(shared_strings))
+    }
+
+    fn parse_with(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
+        shared_strings: Option<&mut Vec<ast::StoreRef<E::String>>>,
+    ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
         let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
+        parser.shared_strings = shared_strings;
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -78,9 +85,9 @@ impl YAML {
             }
         };
 
-        let root = match stream.docs.len() {
-            0 => Expr::init(E::Null {}, Loc::EMPTY),
-            1 => stream.docs[0].root,
+        match stream.docs.len() {
+            0 => Ok(Expr::init(E::Null {}, Loc::EMPTY)),
+            1 => Ok(stream.docs[0].root),
             _ => {
                 // multi-document yaml streams are converted into arrays
                 let mut items: ast::ExprNodeList =
@@ -88,19 +95,15 @@ impl YAML {
                 for doc in &stream.docs {
                     items.push(doc.root);
                 }
-                Expr::init(
+                Ok(Expr::init(
                     E::Array {
                         items,
                         ..Default::default()
                     },
                     Loc::EMPTY,
-                )
+                ))
             }
-        };
-        Ok(Parsed {
-            root,
-            shares_long_strings: parser.shares_long_strings,
-        })
+        }
     }
 }
 
@@ -1717,7 +1720,11 @@ pub(crate) struct Document {
 /// only null, boolean, number, string, array, object are possible. It also only
 /// does pointer comparison with arrays and objects (so exponential merges are avoided).
 /// Operates on already-built `Expr`s, so it is independent of the input encoding.
-fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr, long_keys: Option<&MergeKeyMemo>) -> bool {
+/// `l` and `r` have one [`yaml_merge_key_expr_hash`]: a merge compares the keys of one bucket of
+/// its index only.
+// Always inlined: one of the two calls is in the loop over the merged properties.
+#[inline(always)]
+fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
     if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
         return false;
     }
@@ -1728,13 +1735,10 @@ fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr, long_keys: Option<&MergeKeyMemo>)
             yaml_merge_key_number_bits(ln.value()) == yaml_merge_key_number_bits(rn.value())
         }
         (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
-            if ls.as_ptr() == rs.as_ptr() {
-                return true;
-            }
+            // `MergeKeyMemo::hash` gives each text a hash of its own.
             if MergeKeyMemo::remembers(ls) && MergeKeyMemo::remembers(rs) {
-                if let Some(same_text) = long_keys.and_then(|memo| memo.same_text(*ls, *rs)) {
-                    return same_text;
-                }
+                debug_assert!(ls.data.len() == rs.data.len());
+                return true;
             }
             // UTF-8/UTF-16-aware string equality.
             if ls.is_utf16 != rs.is_utf16 {
@@ -1757,23 +1761,19 @@ fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr, long_keys: Option<&MergeKeyMemo>)
 }
 
 /// Encoding-independent companion to [`yaml_merge_key_expr_eql`].
-#[inline]
-fn yaml_merge_key_expr_hash(
-    key: &Expr,
-    long_keys: &mut Option<Box<MergeKeyMemo>>,
-) -> Result<u64, AllocError> {
-    Ok(match &key.data {
+fn yaml_merge_key_expr_hash(key: &Expr, long_keys: &mut Option<Box<MergeKeyMemo>>) -> u64 {
+    match &key.data {
         ast::ExprData::ENull(_) => 0,
         ast::ExprData::EBoolean(b) => 1 + b.value as u64,
         ast::ExprData::ENumber(n) => yaml_merge_key_number_bits(n.value()),
         ast::ExprData::EString(s) if MergeKeyMemo::remembers(s) => {
-            MergeKeyMemo::hash(long_keys, *s)?
+            MergeKeyMemo::hash(long_keys, *s)
         }
         ast::ExprData::EString(s) => s.hash(),
         ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
         ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
         _ => u64::MAX,
-    })
+    }
 }
 
 /// A number key as the two functions above see it: `0.0` and `-0.0` are one key, and so is
@@ -1792,54 +1792,42 @@ fn yaml_merge_key_number_bits(value: f64) -> u64 {
 /// It belongs to the parse and not to a mapping: a key that many mappings merge is one node.
 #[derive(Default)]
 pub(crate) struct MergeKeyMemo {
-    /// The hash of a node's text, and the index of that text in `texts`.
-    nodes: bun_collections::HashMap<*const E::String, (u64, u32)>,
-    /// The index in `texts` of the text seen last with this hash.
-    by_hash: bun_collections::HashMap<u64, u32>,
-    /// The first node seen of each distinct text, and the index of the text seen before it with
-    /// its hash.
-    texts: Vec<(ast::StoreRef<E::String>, Option<u32>)>,
+    /// The hash that `hash` gave each node.
+    nodes: bun_collections::HashMap<*const E::String, u64>,
+    /// The first node of each text, by the hash of that text. No two texts have one hash here.
+    texts: bun_collections::HashMap<u64, ast::StoreRef<E::String>>,
 }
 
 impl MergeKeyMemo {
+    /// A key of this length pays for its place here after about seven merges. A shorter key
+    /// needs more of them, so a merge reads it again.
+    const MIN_LEN: usize = 256;
+
     #[inline]
     fn remembers(s: &E::String) -> bool {
-        s.data.len() >= SHARED_STRING_MIN_LEN && !s.is_utf16
+        s.data.len() >= Self::MIN_LEN && !s.is_utf16
     }
 
-    /// `None` for a node that `hash` has not seen.
-    fn same_text(&self, l: ast::StoreRef<E::String>, r: ast::StoreRef<E::String>) -> Option<bool> {
-        let (_, l) = self.nodes.get(&l.as_ptr().cast_const())?;
-        let (_, r) = self.nodes.get(&r.as_ptr().cast_const())?;
-        Some(l == r)
-    }
-
-    /// `s.hash()`, read from the text once per node. The first key allocates the memo.
+    /// `s.hash()`, read from the text once per node. Two keys get one hash here only if they
+    /// have one text, so a merge does not compare them. The first key allocates the memo.
     #[inline(never)]
-    fn hash(memo: &mut Option<Box<Self>>, s: ast::StoreRef<E::String>) -> Result<u64, AllocError> {
+    fn hash(memo: &mut Option<Box<Self>>, s: ast::StoreRef<E::String>) -> u64 {
         let memo = memo.get_or_insert_default();
         let node = s.as_ptr().cast_const();
-        if let Some((hash, _)) = memo.nodes.get(&node) {
-            return Ok(*hash);
+        if let Some(hash) = memo.nodes.get(&node) {
+            return *hash;
         }
-        let hash = s.hash();
-        let last = memo.by_hash.get_or_put(hash)?;
-        let last_with_hash = last.found_existing.then_some(*last.value_ptr);
-        let mut with_hash = last_with_hash;
-        let text = loop {
-            match with_hash {
-                Some(text) if memo.texts[text as usize].0.data == s.data => break text,
-                Some(text) => with_hash = memo.texts[text as usize].1,
-                None => {
-                    let text = memo.texts.len() as u32;
-                    memo.texts.push((s, last_with_hash));
-                    *last.value_ptr = text;
-                    break text;
-                }
+        let mut hash = s.hash();
+        loop {
+            let first = *memo.texts.entry(hash).or_insert_with(|| s);
+            if first.as_ptr() == s.as_ptr() || first.data == s.data {
+                break;
             }
-        };
-        memo.nodes.put(node, (hash, text))?;
-        Ok(hash)
+            // Another text has this hash. Take the next hash that is free.
+            hash = hash.wrapping_add(1);
+        }
+        memo.nodes.insert(node, hash);
+        hash
     }
 }
 
@@ -2296,9 +2284,8 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) explicit_document_start_line: Option<Line>,
 
-    /// The node of each anchor, the stack it took to parse it (see `parse_node`), and what
-    /// `shares_long_string` says of the node.
-    pub(crate) anchors: StringHashMap<(Expr, usize, bool)>,
+    /// The node of each anchor and the stack it took to parse it; see `parse_node`.
+    pub(crate) anchors: StringHashMap<(Expr, usize)>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
@@ -2319,8 +2306,8 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) alias_expansion_budget: usize,
     /// Allocated by the first `<<` that reads a long string key.
     long_merge_keys: Option<Box<MergeKeyMemo>>,
-    /// See [`Parsed::shares_long_strings`].
-    shares_long_strings: bool,
+    /// See [`YAML::parse_shared`].
+    shared_strings: Option<&'i mut Vec<ast::StoreRef<E::String>>>,
 
     /// The tokens so far, for [`YAML::parse_as_written`].
     pub(crate) written: Option<Vec<SourceToken>>,
@@ -2369,7 +2356,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
             long_merge_keys: None,
-            shares_long_strings: false,
+            shared_strings: None,
             written: None,
         }
     }
@@ -3307,12 +3294,12 @@ impl MappingProps {
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();
-            let hash = yaml_merge_key_expr_hash(key, long_keys)?;
+            let hash = yaml_merge_key_expr_hash(key, long_keys);
             let same_hash = self.merge_index.get_or_put(hash)?.value_ptr;
             // A key that is written twice is one key to a merge, so it gets one index.
             let is_indexed = same_hash.iter().any(|other| {
                 let other = self.list[*other as usize].key.as_ref().unwrap();
-                yaml_merge_key_expr_eql(other, key, long_keys.as_deref())
+                yaml_merge_key_expr_eql(other, key)
             });
             if !is_indexed {
                 same_hash.push(idx as u32);
@@ -3322,11 +3309,11 @@ impl MappingProps {
 
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
             let merge_key = merge_prop.key.as_ref().unwrap();
-            let merge_hash = yaml_merge_key_expr_hash(merge_key, long_keys)?;
+            let merge_hash = yaml_merge_key_expr_hash(merge_key, long_keys);
             if let Some(candidates) = self.merge_index.get(&merge_hash) {
                 for existing_idx in candidates.iter() {
                     let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
-                    if yaml_merge_key_expr_eql(existing_key, merge_key, long_keys.as_deref()) {
+                    if yaml_merge_key_expr_eql(existing_key, merge_key) {
                         continue 'next_merge_prop;
                     }
                 }
@@ -3388,6 +3375,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     #[inline(never)]
     fn merge_entry(&mut self, props: &mut MappingProps, value: &Expr) -> Result<bool, ParseError> {
         self.reject_open_merge_source(value)?;
+        let merged_from = props.list.len();
         match &value.data {
             ast::ExprData::EObject(value_obj) => {
                 props.merge(
@@ -3409,6 +3397,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
             _ => return Ok(false),
+        }
+        if let Some(shared_strings) = &mut self.shared_strings {
+            // The `<<` copied these out of a mapping.
+            for property in &props.list[merged_from..] {
+                if let Some(key) = &property.key {
+                    note_shared_string(shared_strings, key);
+                }
+                if let Some(value) = &property.value {
+                    note_shared_string(shared_strings, value);
+                }
+            }
         }
         Ok(true)
     }
@@ -3454,36 +3453,22 @@ pub(crate) struct OpenCollection {
     node: Expr,
 }
 
+/// `node` is now in one more place of the document: see [`YAML::parse_shared`].
+#[inline]
+fn note_shared_string(shared_strings: &mut Vec<ast::StoreRef<E::String>>, node: &Expr) {
+    if let ast::ExprData::EString(string) = &node.data
+        && string.data.len() >= SHARED_STRING_MIN_LEN
+    {
+        shared_strings.push(*string);
+    }
+}
+
 /// A collection node's identity, for pointer comparison.
 fn collection_id(node: &Expr) -> Option<usize> {
     match node.data {
         ast::ExprData::EArray(arr) => Some(arr.as_ptr() as usize),
         ast::ExprData::EObject(obj) => Some(obj.as_ptr() as usize),
         _ => None,
-    }
-}
-
-fn is_long_string(node: &Expr) -> bool {
-    matches!(&node.data, ast::ExprData::EString(s) if s.data.len() >= SHARED_STRING_MIN_LEN)
-}
-
-/// Whether an alias of `node` gives a long string a second place: `node` is one, or it is what a
-/// `<<` copies such a key or value out of (a mapping, or a sequence of mappings).
-fn shares_long_string(node: &Expr) -> bool {
-    fn has_long_string(mapping: &E::Object) -> bool {
-        mapping.properties.slice().iter().any(|property| {
-            [property.key, property.value]
-                .iter()
-                .flatten()
-                .any(is_long_string)
-        })
-    }
-    match &node.data {
-        ast::ExprData::EObject(mapping) => has_long_string(mapping),
-        ast::ExprData::EArray(sequence) => sequence.items.slice().iter().any(
-            |item| matches!(&item.data, ast::ExprData::EObject(mapping) if has_long_string(mapping)),
-        ),
-        _ => is_long_string(node),
     }
 }
 
@@ -3554,10 +3539,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
         let stack = self.close_anchor(&anchor);
-        self.anchors.put(
-            Enc::key_bytes(anchor.name.slice(self.input)),
-            (node, stack, shares_long_string(&node)),
-        )
+        self.anchors
+            .put(Enc::key_bytes(anchor.name.slice(self.input)), (node, stack))
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3598,16 +3581,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize, bool), ParseError> {
+    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize), ParseError> {
         if self.written.is_some() {
-            return Ok((
-                Expr::init(E::Boolean { value: false }, Loc::EMPTY),
-                0,
-                false,
-            ));
+            return Ok((Expr::init(E::Boolean { value: false }, Loc::EMPTY), 0));
         }
         let name = name.slice(self.input);
         if let Some(anchored) = self.anchors.get(Enc::key_bytes(name)) {
+            if let Some(shared_strings) = &mut self.shared_strings {
+                note_shared_string(shared_strings, &anchored.0);
+            }
             return Ok(*anchored);
         }
         let Some(OpenCollection { node, .. }) = self
@@ -3623,7 +3605,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             CyclicAliases::Reject => Err(ParseError::CyclicAlias),
             CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
-                Ok((node, 0, false))
+                Ok((node, 0))
             }
         }
     }
@@ -4159,8 +4141,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let (mut copy, stack, shares_long_string) = self.resolve_alias(alias)?;
-                    self.shares_long_strings |= shares_long_string;
+                    let (mut copy, stack) = self.resolve_alias(alias)?;
 
                     self.least_stack_left = stack_left
                         .checked_sub(stack)

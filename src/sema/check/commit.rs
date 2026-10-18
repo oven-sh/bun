@@ -356,8 +356,6 @@ pub(super) enum VarianceClaim<'s> {
 /// Why a claim ends without a result.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum NotShared {
-    /// The value depends on where the cycle was entered: `OrderDependent`. So it will for every other thread.
-    Cycle,
     /// A thread that takes the result would not report it. So it will for every other thread.
     Diagnostic,
     /// The measurement may have used something for which a commit can find this task invalid.
@@ -391,12 +389,12 @@ impl<'s> Program<'s> {
     }
 
     /// See `Claims`. An outermost measurement has ended.
-    /// - `measured`: what it has stored, if it has met no cycle. `may_share`: nothing in it depends on the task that has
+    /// - `measured`: what it has stored. `may_share`: nothing in it depends on the task that has
     ///   measured it, so it is shared.
     /// - `claimed`: the symbol that the caller has the claim of, and why it is not shared, if it is not.
     ///
     /// Returns what the caller goes on with although it is not what `serial_variances` has: there is another value, which
-    /// a task that met a cycle has committed in the meantime, or there is none and this one may not be shared. Nothing
+    /// a task that entered a cycle elsewhere has registered in the meantime, or there is none and this one may not be shared. Nothing
     /// has compared it with what other tasks use, so the caller notes it for its next commit.
     pub(super) fn share_variances(
         &self,
@@ -432,8 +430,7 @@ impl<'s> Program<'s> {
                 claim.is_taken = false;
                 claim.failures = claim.failures.saturating_add(1);
                 // Another thread may do better, once.
-                claim.is_given_up = claim.failures >= 2
-                    || matches!(reason, NotShared::Cycle | NotShared::Diagnostic);
+                claim.is_given_up = claim.failures >= 2 || reason == NotShared::Diagnostic;
             }
         }
         drop(table);

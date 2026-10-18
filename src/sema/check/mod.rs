@@ -852,7 +852,6 @@ impl<'s> Program<'s> {
             variances_marked_empty: Vec::new(),
             suspended_variances: Vec::new(),
             in_progress_variance_reads: 0,
-            variance_cycles: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
             order_dependent: Default::default(),
@@ -1635,8 +1634,6 @@ pub struct Checker<'p, 's> {
     suspended_variances: Vec<Sym>,
     /// Counts requests for the variances of a symbol that is still being measured.
     in_progress_variance_reads: u64,
-    /// How many times `variances_worker` was re-entered for a symbol in `variances_in_progress`.
-    variance_cycles: u32,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
     variances_measured: Vec<(Sym, &'s [u8])>,
     /// After `type_arguments_related_to` returns false: the index of the pair that is not related.

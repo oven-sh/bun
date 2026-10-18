@@ -2764,7 +2764,6 @@ impl<'p, 's> Checker<'p, 's> {
         let before = self.what_forbids_sharing();
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
-        let variance_cycles = self.variance_cycles;
         if !was_computing {
             self.variances_measured.clear();
         }
@@ -2860,23 +2859,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         debug_assert_eq!(variances.len(), params.len());
         if !was_computing && self.task.commits() {
-            let has_met_a_cycle = self.variance_cycles != variance_cycles;
-            self.share_what_was_measured((sym, has_claim), before, has_met_a_cycle, is_open);
-        }
-        if !was_computing && self.variance_cycles != variance_cycles {
-            for (sym, variances) in self.variances_measured.drain(..) {
-                let at = self.task.order_dependent_variances.len() as u32;
-                self.order_dependent.insert(sym, at);
-                self.order_dependent_filter |= Self::order_dependent_bit(sym);
-                self.task.order_dependent_variances.push(OrderDependent {
-                    sym,
-                    variances,
-                    compared: 0,
-                    failed: 0,
-                    void_targets: 0,
-                    inferred: 0,
-                });
-            }
+            self.share_what_was_measured((sym, has_claim), before, is_open);
         }
         variances
     }
@@ -2907,17 +2890,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// `variances_measured` has what was stored since it began: the variances of `sym`, and of the symbols that were
     /// measured inside. Each is valid for every caller in this task (`end_scope`), which is what lets the task commit
     /// it. It is shared now, with tasks that are running, only if besides
-    /// - no cycle was met: otherwise the values depend on where the cycle was entered, and go through `OrderDependent`
-    ///   and the next commit;
     /// - nothing was reported: a thread that takes the result does not evaluate what has reported it;
     /// - nothing was used for which the next commit can find this task invalid, and the task is not lost. What such a task
     ///   has computed is dropped, and what is shared can't be taken back. What happens to the task later does not
     ///   matter: the measurement is over.
     ///
-    /// What is not shared, and met no cycle, is noted like a value that did, as if every variance in it had been used. So
-    /// the next commit compares it with what `serial_variances` has by then, and registers it there if there is nothing.
-    /// Otherwise a task that measures the same symbol in a cycle, and commits first, would make another value the one
-    /// that counts, and nobody would notice that this task has used its own.
+    /// A value that isn't shared is noted (`OrderDependent`) as if every variance in it had been used. The next commit
+    /// compares it with what `serial_variances` has by then, and registers it if there is nothing. Otherwise a task that
+    /// enters the same cycle elsewhere and commits first could register another value, and nobody would notice that
+    /// this task used its own.
     ///
     /// What a thread that takes the flags goes without, compared to one that measures:
     /// - The entries of `relations` for the marker types, and for what was compared inside. They are results: a thread
@@ -2928,26 +2909,19 @@ impl<'p, 's> Checker<'p, 's> {
     ///   are only compared during one, and `checkTypeParameterDeferred` has markers of its own.
     /// - `instantiation_count` and `relation_sizes`, which are lower. They matter at a limit (2589, 2859), where the task
     ///   is lost.
-    /// - `Task::order_dependent_variances`: there is nothing to note about a value that no cycle was met for.
     fn share_what_was_measured(
         &mut self,
         (sym, has_claim): (Sym, bool),
         before: (usize, usize, u64),
-        has_met_a_cycle: bool,
         is_open: bool,
     ) {
         let now = self.what_forbids_sharing();
         let reason = match () {
-            _ if has_met_a_cycle => Some(NotShared::Cycle),
             _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
             _ if now.2 != before.2 || self.task.may_be_thrown_away() => Some(NotShared::Notes),
             _ => None,
         };
-        // After a cycle the caller notes them.
-        let measured = match has_met_a_cycle {
-            true => &[][..],
-            false => &self.variances_measured[..],
-        };
+        let measured = &self.variances_measured[..];
         let may_share = reason.is_none();
         // What was measured inside can be whole where the outermost result is not.
         let reason = reason.or_else(|| is_open.then_some(NotShared::Open));
@@ -4274,6 +4248,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         let maybe_start = r.maybe_keys.len();
+        let variance_reads = self.in_progress_variance_reads;
         let scope = self.begin_scope();
         let cuts = self.comparisons_of_deeply_nested_types;
         r.push_maybe_key(key);
@@ -4315,6 +4290,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
         let stored = self.end_scope(scope).ok();
+        let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
@@ -4340,7 +4316,7 @@ impl<'p, 's> Checker<'p, 's> {
                     propagating,
                     result == Ternary::TRUE || result == Ternary::MAYBE,
                     stored,
-                    REPORT,
+                    REPORT || replaces,
                 );
                 self.keeps_relations_for_this_task = around;
             }
@@ -4357,10 +4333,17 @@ impl<'p, 's> Checker<'p, 's> {
                 && !is_cut_short
                 && cached.is_none()
             {
-                self.store_relation_result(key, FAILED | propagating, stored);
+                // A variance measurement that restarted during this comparison may have compared the same generic key and
+                // stored its own result. As in typescript-go, this one replaces it: see `note_variance_cycle`. Otherwise
+                // the first result stays. That matches typescript-go's output where a comparison re-enters itself through
+                // the type of a variable whose initializer is being checked.
+                match replaces {
+                    true => self.set_relation(key, FAILED | propagating, stored),
+                    false => self.insert_relation(key, FAILED | propagating, stored),
+                }
             }
             r.relation_count -= 1;
-            self.reset_maybe_stack(r, maybe_start, propagating, false, stored, REPORT);
+            self.reset_maybe_stack(r, maybe_start, propagating, false, stored, false);
         }
         result
     }
@@ -4410,19 +4393,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `relation.set(key, entry)` for the result of a comparison that had no entry when it began.
-    ///
-    /// During a variance measurement a restart can compare the same generic key and store its own result first. As in
-    /// typescript-go, the outer comparison's result replaces it: see `note_variance_cycle`. Outside a measurement the
-    /// first result stays. typescript-go's output matches that where a comparison re-enters itself through the type of
-    /// a variable whose initializer is being checked.
-    fn store_relation_result(&mut self, key: Key, entry: u8, stored: Stored) {
-        match self.in_variance_computation {
-            true => self.set_relation(key, entry, stored),
-            false => self.insert_relation(key, entry, stored),
-        }
-    }
-
     /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
@@ -4452,8 +4422,8 @@ impl<'p, 's> Checker<'p, 's> {
         (16_000_000 - self.relation_sizes[relation as usize]) / 8
     }
 
-    /// `resetMaybeStack`. `report_errors`: a comparison that elaborates begins at a key whose entry
-    /// is a failure, which an overflow may have cut off.
+    /// `resetMaybeStack`. `replaces`: a key may have an entry already. A comparison that elaborates begins at a key whose
+    /// entry is a failure, which an overflow may have cut off. See also `recursive_type_related_to`.
     fn reset_maybe_stack(
         &mut self,
         r: &mut Relater,
@@ -4461,7 +4431,7 @@ impl<'p, 's> Checker<'p, 's> {
         propagating: u8,
         mark_all_as_succeeded: bool,
         stored: Option<Stored>,
-        report_errors: bool,
+        replaces: bool,
     ) {
         while r.maybe_keys.len() > maybe_start {
             let Some(key) = r.pop_maybe_key() else {
@@ -4469,12 +4439,10 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if mark_all_as_succeeded {
                 match stored {
-                    Some(stored) if report_errors => {
+                    Some(stored) if replaces => {
                         self.set_relation(key, SUCCEEDED | propagating, stored);
                     }
-                    Some(stored) => {
-                        self.store_relation_result(key, SUCCEEDED | propagating, stored);
-                    }
+                    Some(stored) => self.insert_relation(key, SUCCEEDED | propagating, stored),
                     None => {}
                 }
                 r.relation_count -= 1;

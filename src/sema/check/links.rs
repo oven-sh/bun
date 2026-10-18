@@ -408,7 +408,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (V, bool) {
         let traces = |c: &Self| {
             (
-                c.variance_cycles,
+                c.in_progress_variance_reads,
                 c.comparisons_of_deeply_nested_types,
                 c.any_signature_reads,
             )

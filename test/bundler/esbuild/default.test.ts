@@ -4711,6 +4711,9 @@ describe.concurrent("bundler", () => {
       "/write.js": /* js */ `
         import * as ns from "./ns.js";
         capture(ns.k);
+        let five = 5;
+        capture(j.k);
+        capture(j.k = 11);
         capture(a = 1);
         capture(a += 1);
         capture(a++);
@@ -4740,6 +4743,7 @@ describe.concurrent("bundler", () => {
       "e.f": "ident2",
       g: "dot.chain",
       "h.i": "dot.chain2",
+      "j.k": "five",
     },
     runtimeFiles: {
       // The output is an ES module, so the globals it assigns to must exist.
@@ -4748,6 +4752,7 @@ describe.concurrent("bundler", () => {
         globalThis.a = undefined;
         globalThis.b = { c: undefined };
         globalThis.e = { f: undefined };
+        globalThis.j = { k: undefined };
         globalThis.ident = undefined;
         globalThis.ident2 = undefined;
         globalThis.dot = { chain: undefined, chain2: undefined };
@@ -4758,6 +4763,8 @@ describe.concurrent("bundler", () => {
       expect(api.captureFile("/out/read.js")).toEqual(["null", "null", "ident", "ident2", "dot.chain", "dot.chain2"]);
       expect(api.captureFile("/out/write.js")).toEqual([
         "k",
+        "five",
+        "five = 11",
         "a = 1",
         "a += 1",
         "a++",
@@ -4785,6 +4792,31 @@ describe.concurrent("bundler", () => {
       // went to the real globals.
       stdout: "null 6 7 undefined 8 false",
     },
+  });
+  // With inlining on, a define that names a local `const` reads as the constant.
+  // The constant is not a valid assignment target, so a write keeps the property.
+  itBundled("default/DefineAssignInlinedConst", {
+    files: {
+      "/entry.js": /* js */ `
+        const five = 5;
+        capture(j.k);
+        capture(j.k = 11);
+        console.log(j.k);
+      `,
+    },
+    minifySyntax: true,
+    define: { "j.k": "five" },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.capture = x => x;
+        globalThis.j = { k: undefined };
+        await import("./out.js");
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.captureFile("/out.js")).toEqual(["5", "j.k = 11"]);
+    },
+    run: { file: "/test.js", stdout: "5" },
   });
   itBundled("default/KeepNamesTreeShaking", {
     todo: true, // TODO: Full keepNames implementation with Object.defineProperty

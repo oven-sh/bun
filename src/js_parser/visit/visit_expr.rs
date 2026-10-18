@@ -1343,13 +1343,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let is_reference = matches!(define.data.value, Data::EIdentifier(_))
                         && (!is_delete_target || define.data.is_property_reference());
                     if !define.data.valueless() && (is_read || is_reference) {
-                        *e = p.value_for_define(
+                        let newvalue = p.value_for_define(
                             expr.loc,
                             in_.assign_target,
                             is_delete_target,
                             &define.data,
                         );
-                        return;
+                        // The identifier can come back as an inlined constant.
+                        if is_read || matches!(newvalue.data, Data::EIdentifier(_)) {
+                            *e = newvalue;
+                            return;
+                        }
                     }
 
                     if is_read

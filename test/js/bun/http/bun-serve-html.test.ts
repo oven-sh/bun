@@ -1697,3 +1697,69 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+describe("web app manifest", () => {
+  const manifest = JSON.stringify({
+    name: "x",
+    icons: [{ src: "./icon-192.png", sizes: "192x192" }, { src: "icon-512.png" }],
+    screenshots: [{ src: "./shot.png" }],
+    shortcuts: [{ name: "s", url: "./", icons: [{ src: "./short.png" }] }],
+  });
+  const images = ["icon-192.png", "icon-512.png", "shot.png", "short.png"];
+
+  // Fetches the page, the manifest it links, and every image `src` of the manifest,
+  // resolved against the manifest's URL as a browser does.
+  async function collect(development: string) {
+    using dir = tempDir("html-web-manifest", {
+      "index.html": `<!DOCTYPE html><html><head><link rel="manifest" href="./site.webmanifest"></head><body></body></html>`,
+      "site.webmanifest": manifest,
+      ...Object.fromEntries(images.map(name => [name, "PNG " + name])),
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+        const html = await (await fetch(server.url)).text();
+        const manifestUrl = new URL(html.match(/rel="manifest" href="([^"]+)"/)[1], server.url);
+        const text = await (await fetch(manifestUrl)).text();
+        const parsed = JSON.parse(text);
+        const srcs = [parsed.icons, parsed.screenshots, parsed.shortcuts[0].icons].flat().map(image => image.src);
+        const fetched = [];
+        for (const src of srcs) {
+          const res = await fetch(new URL(src, manifestUrl));
+          fetched.push({ src, status: res.status, body: res.status === 200 ? await res.text() : null });
+        }
+        console.log(JSON.stringify({ text, fetched }));
+        await server.stop(true);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      throw new Error("child failed:\n" + stdout + "\n" + stderr);
+    }
+    return JSON.parse(stdout) as { text: string; fetched: { src: string; status: number; body: string | null }[] };
+  }
+
+  test.concurrent.each(["false", "{ hmr: false }"])("development: %s serves the images that it names", async mode => {
+    const { fetched } = await collect(mode);
+    // Like the page's own `href`s, each `src` is the served path of the file.
+    expect(fetched).toEqual(
+      images.map(name => ({
+        src: expect.stringMatching(new RegExp(`^/${name.replace(".png", "")}-[0-9a-z]+\\.png$`)),
+        status: 200,
+        body: "PNG " + name,
+      })),
+    );
+  });
+
+  test.concurrent("development: true serves it as written", async () => {
+    const { text } = await collect("true");
+    expect(text).toBe(manifest);
+  });
+});

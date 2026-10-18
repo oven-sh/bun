@@ -245,6 +245,45 @@ console.log(JSON.stringify(html, null, 2));
     },
   });
 
+  // The page links a web app manifest, and the web app manifest names images.
+  // `Bun.serve` serves what `files` lists, so the images have to be in it.
+  itBundled("html-import/web-app-manifest-images-in-manifest", {
+    outdir: "out/",
+    files: {
+      "/server.js": `
+import html from "./index.html";
+console.log(JSON.stringify(html));
+`,
+      "/index.html": `<!DOCTYPE html><html><head><link rel="manifest" href="./site.webmanifest"></head><body></body></html>`,
+      "/site.webmanifest": JSON.stringify({
+        icons: [{ src: "./icon.png", sizes: "192x192" }],
+        screenshots: [{ src: "shot.png" }],
+      }),
+      "/icon.png": "PNG icon",
+      "/shot.png": "PNG shot",
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+
+    onAfterBundle(api) {
+      const [manifest] = readManifests(api, "out/server.js");
+      const copied = manifest.files.filter(file => file.loader === "file").map(file => file.path);
+      expect(copied.toSorted()).toEqual([
+        expect.stringMatching(/^\.\/icon-[0-9a-z]+\.png$/),
+        expect.stringMatching(/^\.\/shot-[0-9a-z]+\.png$/),
+        expect.stringMatching(/^\.\/site-[0-9a-z]+\.webmanifest$/),
+      ]);
+      const [icon, shot, webManifest] = copied.toSorted();
+
+      expect(JSON.parse(api.readFile(join("out", webManifest)))).toEqual({
+        icons: [{ src: icon, sizes: "192x192" }],
+        screenshots: [{ src: shot }],
+      });
+      expect(api.readFile(join("out", icon))).toBe("PNG icon");
+      expect(api.readFile(join("out", shot))).toBe("PNG shot");
+    },
+  });
+
   // Test manifest with multiple HTML imports
   itBundled("html-import/multiple-manifests", {
     outdir: "out/",

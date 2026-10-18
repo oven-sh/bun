@@ -1558,6 +1558,8 @@ pub enum CustomPropertyName {
     Custom(DashedIdent),
     /// An unknown CSS property.
     Unknown(Ident),
+    /// An unknown property that browsers treat as this typed one, e.g. `grid-gap` as `gap`.
+    Alias(Ident, css::properties::PropertyIdTag),
 }
 
 impl CustomPropertyName {
@@ -1568,7 +1570,7 @@ impl CustomPropertyName {
                 // which applies CSS-Modules dashed-ident renaming.
                 dest.write_dashed_ident(custom, true)
             }
-            CustomPropertyName::Unknown(unknown) => {
+            CustomPropertyName::Unknown(unknown) | CustomPropertyName::Alias(unknown, _) => {
                 // SAFETY: arena-owned slice valid for printer lifetime.
                 let v = unsafe { crate::arena_str(unknown.v) };
                 dest.serialize_identifier(v)
@@ -1587,11 +1589,22 @@ impl CustomPropertyName {
         })
     }
 
+    pub(crate) fn alias(name: &[u8], target: css::properties::PropertyIdTag) -> CustomPropertyName {
+        CustomPropertyName::Alias(
+            Ident {
+                v: std::ptr::from_ref::<[u8]>(name),
+            },
+            target,
+        )
+    }
+
     #[inline]
     fn as_ptr(&self) -> *const [u8] {
         match self {
             CustomPropertyName::Custom(custom) => custom.v,
-            CustomPropertyName::Unknown(unknown) => unknown.v,
+            CustomPropertyName::Unknown(unknown) | CustomPropertyName::Alias(unknown, _) => {
+                unknown.v
+            }
         }
     }
 

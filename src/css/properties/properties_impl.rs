@@ -4,6 +4,7 @@ use css::PrintErr;
 use css::Printer;
 use css::VendorPrefix;
 use css::css_properties::CustomPropertyName;
+use css::css_properties::properties_generated::KnownName;
 use css::css_properties::{Property, PropertyId};
 
 /// Ordered single-bit prefix flags. The crate-root `VendorPrefix::FIELDS` is
@@ -49,8 +50,13 @@ pub(super) mod property_id_mixin {
 
     pub(crate) fn from_string(name_: &[u8]) -> PropertyId {
         let (prefix, trimmed_name) = VendorPrefix::strip_from(name_);
-        PropertyId::from_name_and_prefix(trimmed_name, prefix)
-            .unwrap_or_else(|| PropertyId::Custom(CustomPropertyName::from_str(name_)))
+        match PropertyId::from_name_and_prefix(trimmed_name, prefix) {
+            Some(KnownName::Property(id)) => id,
+            Some(KnownName::AliasOf(target)) => {
+                PropertyId::Custom(CustomPropertyName::alias(name_, target))
+            }
+            None => PropertyId::Custom(CustomPropertyName::from_str(name_)),
+        }
     }
 }
 

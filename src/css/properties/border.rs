@@ -442,6 +442,10 @@ impl BorderShorthand {
         self.width.is_some() && self.style.is_some() && self.color.is_some()
     }
 
+    fn is_empty(&self) -> bool {
+        self.width.is_none() && self.style.is_none() && self.color.is_none()
+    }
+
     /// Generic over the `P` const param so the same `BorderShorthand` data
     /// can populate any of `BorderTop`/`BorderLeft`/.../`Border`.
     fn to_border<const P: u8>(&self, arena: &Bump) -> GenericBorder<LineStyle, P> {
@@ -1466,6 +1470,58 @@ mod border_handler_body {
             self.flushed_properties = BorderProperty::empty();
             self.border_image_handler.finalize(dest, context);
             self.border_radius_handler.finalize(dest, context);
+        }
+
+        /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
+        pub(crate) fn flush_before_alias(
+            &mut self,
+            target: PropertyIdTag,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) -> bool {
+            use BorderProperty as B;
+            use PropertyIdTag as P;
+            let side = match target {
+                P::BorderBlockStart
+                | P::BorderBlockStartColor
+                | P::BorderBlockStartStyle
+                | P::BorderBlockStartWidth => &self.border_block_start,
+                P::BorderBlockEnd
+                | P::BorderBlockEndColor
+                | P::BorderBlockEndStyle
+                | P::BorderBlockEndWidth => &self.border_block_end,
+                P::BorderInlineStart
+                | P::BorderInlineStartColor
+                | P::BorderInlineStartStyle
+                | P::BorderInlineStartWidth => &self.border_inline_start,
+                P::BorderInlineEnd
+                | P::BorderInlineEndColor
+                | P::BorderInlineEndStyle
+                | P::BorderInlineEndWidth => &self.border_inline_end,
+                _ => return false,
+            };
+            // The writing mode decides which physical side a logical side is.
+            let flush = !(side.is_empty()
+                && self.border_top.is_empty()
+                && self.border_bottom.is_empty()
+                && self.border_left.is_empty()
+                && self.border_right.is_empty());
+            let mut overridable = B::try_from_property_id(target).unwrap_or_default();
+            if overridable.intersects(B::BORDER_BLOCK_COLOR | B::BORDER_INLINE_COLOR) {
+                overridable |= B::BORDER_COLOR;
+            }
+            if overridable.intersects(B::BORDER_BLOCK_WIDTH | B::BORDER_INLINE_WIDTH) {
+                overridable |= B::BORDER_WIDTH;
+            }
+            if overridable.intersects(B::BORDER_BLOCK_STYLE | B::BORDER_INLINE_STYLE) {
+                overridable |= B::BORDER_STYLE;
+            }
+            if flush {
+                self.flush(dest, context);
+            }
+            // What the alias can override is no fallback for a value after the alias.
+            self.flushed_properties.remove(overridable);
+            true
         }
 
         fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {

@@ -6,7 +6,7 @@ use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
 use crate::generics::{CssEql, DeepClone};
-use crate::properties::{Property, PropertyId};
+use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
 };
@@ -595,6 +595,8 @@ pub struct BackgroundHandler {
     // `'bump` through BackgroundHandler would avoid the heap alloc.
     pub(crate) decls: Vec<Property>,
     pub(crate) flushed_properties: BackgroundProperty,
+    /// What was written before a legacy alias. It still is the fallback of a later colour or image.
+    pub(crate) flushed_before_alias: BackgroundProperty,
     pub(crate) has_any: bool,
 }
 
@@ -961,7 +963,9 @@ impl BackgroundHandler {
         }
 
         if let Some(mut color) = maybe_color.take() {
-            if !self.flushed_properties.contains(BackgroundProperty::COLOR) {
+            if !(self.flushed_properties | self.flushed_before_alias)
+                .contains(BackgroundProperty::COLOR)
+            {
                 let fallbacks = color.get_fallbacks(arena, &context.targets);
                 for fallback in fallbacks.into_iter() {
                     push_property!(
@@ -983,7 +987,9 @@ impl BackgroundHandler {
         }
 
         if let Some(mut images) = maybe_images.take() {
-            if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
+            if !(self.flushed_properties | self.flushed_before_alias)
+                .contains(BackgroundProperty::IMAGE)
+            {
                 let mut fallbacks =
                     crate::small_list::get_fallbacks(&mut images, arena, &context.targets);
                 // Pop in reverse then re-reverse via a temp Vec to preserve
@@ -1132,6 +1138,46 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
+        self.flush_with_prefixed(dest, context);
+        self.flushed_properties = BackgroundProperty::empty();
+        self.flushed_before_alias = BackgroundProperty::empty();
+    }
+
+    /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
+    pub(crate) fn flush_before_alias(
+        &mut self,
+        target: PropertyIdTag,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) -> bool {
+        let held = match target {
+            PropertyIdTag::BackgroundSize => self.sizes.is_some(),
+            PropertyIdTag::BackgroundOrigin => self.origins.is_some(),
+            _ => return false,
+        };
+        if held || self.keeps_prefixed_shorthand() {
+            self.flush_with_prefixed(dest, context);
+        }
+        // A later `background` resets what the alias sets, so it needs its own fallbacks.
+        self.flushed_before_alias |= self.flushed_properties;
+        self.flushed_properties = BackgroundProperty::empty();
+        true
+    }
+
+    /// Whether `finalize` still has a prefixed `background` to write. It resets size and origin.
+    fn keeps_prefixed_shorthand(&self) -> bool {
+        let written = usize::from(self.has_prefix && !self.decls.is_empty());
+        self.decls[..self.decls.len() - written]
+            .iter()
+            .any(|decl| matches!(decl, Property::Background(..)))
+    }
+
+    /// Emits the prefixed declarations kept in `decls`, then the buffered ones.
+    fn flush_with_prefixed(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         // If the last declaration is prefixed, pop the last value
         // so it isn't duplicated when we flush.
         if self.has_prefix {
@@ -1147,7 +1193,6 @@ impl BackgroundHandler {
         }
 
         self.flush(dest, context);
-        self.flushed_properties = BackgroundProperty::empty();
     }
 }
 

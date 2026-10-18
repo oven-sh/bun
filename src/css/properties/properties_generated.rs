@@ -57,7 +57,7 @@ pub(crate) enum Owner {
     BoxShadow,
     ColorScheme,
     Fallback,
-    /// A custom property, or a name with no row below. No handler sees it.
+    /// A custom property, or a name with no row below. No handler owns it.
     Custom,
     /// A property that no handler reads.
     Passthrough,
@@ -967,6 +967,14 @@ impl core::hash::Hash for PropertyId {
     }
 }
 
+/// What [`PropertyId::from_name_and_prefix`] knows about a property name.
+pub(crate) enum KnownName {
+    /// The name of a typed property.
+    Property(PropertyId),
+    /// A name that browsers treat as the typed property with this tag.
+    AliasOf(PropertyIdTag),
+}
+
 impl PropertyId {
     /// Returns the property name, without any vendor prefixes.
     pub fn name(&self) -> &[u8] {
@@ -1088,21 +1096,33 @@ impl PropertyId {
     }
 
     /// Maps a (case-insensitive) bare property name + parsed prefix to a
-    /// `PropertyId`. Returns `None` if the name is unknown *or* the prefix
+    /// `PropertyId` or to the one it aliases. `None` if the name is unknown *or* the prefix
     /// isn't allowed for that property.
-    pub(crate) fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<PropertyId> {
-        bun_core::comptime_string_map! {
-            static KNOWN: (VendorPrefix, fn(VendorPrefix) -> PropertyId) = {
+    pub(crate) fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<KnownName> {
+        // An `alias:` prefix is in the alias lists of the current Blink, WebKit or Gecko tables.
+        macro_rules! known_names {
+            (static $map:ident = {
+                $($name:tt => ($typed:expr, $make:expr $(, alias: $alias:expr)?),)*
+            };) => {
+                bun_core::comptime_string_map! {
+                    static $map: (VendorPrefix, VendorPrefix, fn(VendorPrefix) -> PropertyId) = {
+                        $($name => ($typed, VendorPrefix::empty()$(.union($alias))?, $make),)*
+                    };
+                }
+            };
+        }
+        known_names! {
+            static KNOWN = {
                 b"background-color" => (VendorPrefix::NONE, |_| PropertyId::BackgroundColor),
                 b"background-image" => (VendorPrefix::NONE, |_| PropertyId::BackgroundImage),
                 b"background-position-x" => (VendorPrefix::NONE, |_| PropertyId::BackgroundPositionX),
                 b"background-position-y" => (VendorPrefix::NONE, |_| PropertyId::BackgroundPositionY),
                 b"background-position" => (VendorPrefix::NONE, |_| PropertyId::BackgroundPosition),
-                b"background-size" => (VendorPrefix::NONE, |_| PropertyId::BackgroundSize),
+                b"background-size" => (VendorPrefix::NONE, |_| PropertyId::BackgroundSize, alias: VendorPrefix::WEBKIT),
                 b"background-repeat" => (VendorPrefix::NONE, |_| PropertyId::BackgroundRepeat),
                 b"background-attachment" => (VendorPrefix::NONE, |_| PropertyId::BackgroundAttachment),
                 b"background-clip" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BackgroundClip),
-                b"background-origin" => (VendorPrefix::NONE, |_| PropertyId::BackgroundOrigin),
+                b"background-origin" => (VendorPrefix::NONE, |_| PropertyId::BackgroundOrigin, alias: VendorPrefix::WEBKIT),
                 b"background" => (VendorPrefix::NONE, |_| PropertyId::Background),
                 b"box-shadow" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxShadow),
                 b"opacity" => (VendorPrefix::NONE, |_| PropertyId::Opacity),
@@ -1121,6 +1141,12 @@ impl PropertyId {
                 b"min-inline-size" => (VendorPrefix::NONE, |_| PropertyId::MinInlineSize),
                 b"max-block-size" => (VendorPrefix::NONE, |_| PropertyId::MaxBlockSize),
                 b"max-inline-size" => (VendorPrefix::NONE, |_| PropertyId::MaxInlineSize),
+                b"logical-width" => (VendorPrefix::empty(), |_| PropertyId::InlineSize, alias: VendorPrefix::WEBKIT),
+                b"logical-height" => (VendorPrefix::empty(), |_| PropertyId::BlockSize, alias: VendorPrefix::WEBKIT),
+                b"min-logical-width" => (VendorPrefix::empty(), |_| PropertyId::MinInlineSize, alias: VendorPrefix::WEBKIT),
+                b"min-logical-height" => (VendorPrefix::empty(), |_| PropertyId::MinBlockSize, alias: VendorPrefix::WEBKIT),
+                b"max-logical-width" => (VendorPrefix::empty(), |_| PropertyId::MaxInlineSize, alias: VendorPrefix::WEBKIT),
+                b"max-logical-height" => (VendorPrefix::empty(), |_| PropertyId::MaxBlockSize, alias: VendorPrefix::WEBKIT),
                 b"box-sizing" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxSizing),
                 b"aspect-ratio" => (VendorPrefix::NONE, |_| PropertyId::AspectRatio),
                 b"overflow" => (VendorPrefix::NONE, |_| PropertyId::Overflow),
@@ -1199,6 +1225,22 @@ impl PropertyId {
                 b"border-inline" => (VendorPrefix::NONE, |_| PropertyId::BorderInline),
                 b"border-inline-start" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineStart),
                 b"border-inline-end" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineEnd),
+                b"border-before" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockStart, alias: VendorPrefix::WEBKIT),
+                b"border-before-color" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockStartColor, alias: VendorPrefix::WEBKIT),
+                b"border-before-style" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockStartStyle, alias: VendorPrefix::WEBKIT),
+                b"border-before-width" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockStartWidth, alias: VendorPrefix::WEBKIT),
+                b"border-after" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockEnd, alias: VendorPrefix::WEBKIT),
+                b"border-after-color" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockEndColor, alias: VendorPrefix::WEBKIT),
+                b"border-after-style" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockEndStyle, alias: VendorPrefix::WEBKIT),
+                b"border-after-width" => (VendorPrefix::empty(), |_| PropertyId::BorderBlockEndWidth, alias: VendorPrefix::WEBKIT),
+                b"border-start" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineStart, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"border-start-color" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineStartColor, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"border-start-style" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineStartStyle, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"border-start-width" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineStartWidth, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"border-end" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineEnd, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"border-end-color" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineEndColor, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"border-end-style" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineEndStyle, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"border-end-width" => (VendorPrefix::empty(), |_| PropertyId::BorderInlineEndWidth, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
                 b"outline" => (VendorPrefix::NONE, |_| PropertyId::Outline),
                 b"outline-color" => (VendorPrefix::NONE, |_| PropertyId::OutlineColor),
                 b"outline-style" => (VendorPrefix::NONE, |_| PropertyId::OutlineStyle),
@@ -1218,11 +1260,14 @@ impl PropertyId {
                 b"justify-self" => (VendorPrefix::NONE, |_| PropertyId::JustifySelf),
                 b"place-self" => (VendorPrefix::NONE, |_| PropertyId::PlaceSelf),
                 b"align-items" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::AlignItems),
-                b"justify-items" => (VendorPrefix::NONE, |_| PropertyId::JustifyItems),
+                b"justify-items" => (VendorPrefix::NONE, |_| PropertyId::JustifyItems, alias: VendorPrefix::WEBKIT),
                 b"place-items" => (VendorPrefix::NONE, |_| PropertyId::PlaceItems),
                 b"row-gap" => (VendorPrefix::NONE, |_| PropertyId::RowGap),
-                b"column-gap" => (VendorPrefix::NONE, |_| PropertyId::ColumnGap),
+                b"column-gap" => (VendorPrefix::NONE, |_| PropertyId::ColumnGap, alias: VendorPrefix::WEBKIT),
                 b"gap" => (VendorPrefix::NONE, |_| PropertyId::Gap),
+                b"grid-row-gap" => (VendorPrefix::empty(), |_| PropertyId::RowGap, alias: VendorPrefix::NONE),
+                b"grid-column-gap" => (VendorPrefix::empty(), |_| PropertyId::ColumnGap, alias: VendorPrefix::NONE),
+                b"grid-gap" => (VendorPrefix::empty(), |_| PropertyId::Gap, alias: VendorPrefix::NONE),
                 b"box-orient" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxOrient),
                 b"box-direction" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxDirection),
                 b"box-ordinal-group" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxOrdinalGroup),
@@ -1250,6 +1295,10 @@ impl PropertyId {
                 b"margin-block" => (VendorPrefix::NONE, |_| PropertyId::MarginBlock),
                 b"margin-inline" => (VendorPrefix::NONE, |_| PropertyId::MarginInline),
                 b"margin" => (VendorPrefix::NONE, |_| PropertyId::Margin),
+                b"margin-before" => (VendorPrefix::empty(), |_| PropertyId::MarginBlockStart, alias: VendorPrefix::WEBKIT),
+                b"margin-after" => (VendorPrefix::empty(), |_| PropertyId::MarginBlockEnd, alias: VendorPrefix::WEBKIT),
+                b"margin-start" => (VendorPrefix::empty(), |_| PropertyId::MarginInlineStart, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"margin-end" => (VendorPrefix::empty(), |_| PropertyId::MarginInlineEnd, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
                 b"padding-top" => (VendorPrefix::NONE, |_| PropertyId::PaddingTop),
                 b"padding-bottom" => (VendorPrefix::NONE, |_| PropertyId::PaddingBottom),
                 b"padding-left" => (VendorPrefix::NONE, |_| PropertyId::PaddingLeft),
@@ -1261,6 +1310,10 @@ impl PropertyId {
                 b"padding-block" => (VendorPrefix::NONE, |_| PropertyId::PaddingBlock),
                 b"padding-inline" => (VendorPrefix::NONE, |_| PropertyId::PaddingInline),
                 b"padding" => (VendorPrefix::NONE, |_| PropertyId::Padding),
+                b"padding-before" => (VendorPrefix::empty(), |_| PropertyId::PaddingBlockStart, alias: VendorPrefix::WEBKIT),
+                b"padding-after" => (VendorPrefix::empty(), |_| PropertyId::PaddingBlockEnd, alias: VendorPrefix::WEBKIT),
+                b"padding-start" => (VendorPrefix::empty(), |_| PropertyId::PaddingInlineStart, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
+                b"padding-end" => (VendorPrefix::empty(), |_| PropertyId::PaddingInlineEnd, alias: VendorPrefix::WEBKIT.union(VendorPrefix::MOZ)),
                 b"scroll-margin-top" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginTop),
                 b"scroll-margin-bottom" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginBottom),
                 b"scroll-margin-left" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginLeft),
@@ -1272,6 +1325,11 @@ impl PropertyId {
                 b"scroll-margin-block" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginBlock),
                 b"scroll-margin-inline" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginInline),
                 b"scroll-margin" => (VendorPrefix::NONE, |_| PropertyId::ScrollMargin),
+                b"scroll-snap-margin-top" => (VendorPrefix::empty(), |_| PropertyId::ScrollMarginTop, alias: VendorPrefix::NONE),
+                b"scroll-snap-margin-bottom" => (VendorPrefix::empty(), |_| PropertyId::ScrollMarginBottom, alias: VendorPrefix::NONE),
+                b"scroll-snap-margin-left" => (VendorPrefix::empty(), |_| PropertyId::ScrollMarginLeft, alias: VendorPrefix::NONE),
+                b"scroll-snap-margin-right" => (VendorPrefix::empty(), |_| PropertyId::ScrollMarginRight, alias: VendorPrefix::NONE),
+                b"scroll-snap-margin" => (VendorPrefix::empty(), |_| PropertyId::ScrollMargin, alias: VendorPrefix::NONE),
                 b"scroll-padding-top" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingTop),
                 b"scroll-padding-bottom" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingBottom),
                 b"scroll-padding-left" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingLeft),
@@ -1346,9 +1404,11 @@ impl PropertyId {
                 b"view-transition-group" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionGroup),
             };
         }
-        let &(allowed, make) = KNOWN.get_ascii_case_insensitive(name)?;
-        if allowed.intersects(pre) {
-            Some(make(pre))
+        let &(typed, alias, make) = KNOWN.get_ascii_case_insensitive(name)?;
+        if typed.intersects(pre) {
+            Some(KnownName::Property(make(pre)))
+        } else if alias.intersects(pre) {
+            Some(KnownName::AliasOf(make(VendorPrefix::NONE).tag()))
         } else {
             None
         }

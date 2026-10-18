@@ -3,7 +3,7 @@ use crate as css;
 use crate::compat;
 use crate::css_values::length::LengthPercentage;
 use crate::prefixes::Feature;
-use crate::properties::Property;
+use crate::properties::{Property, PropertyIdTag};
 use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
 use crate::{Parser, PrintErr, Printer, Result as CssResult, Token};
 use bun_alloc::ArenaVecExt as _;
@@ -1314,6 +1314,45 @@ impl AlignHandler {
         self.flush(dest, context);
     }
 
+    /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
+    pub(crate) fn flush_before_alias(
+        &mut self,
+        target: PropertyIdTag,
+        dest: &mut DeclarationList<'_>,
+        context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        match target {
+            PropertyIdTag::RowGap if self.row_gap.is_some() => self.flush_gaps(dest),
+            PropertyIdTag::ColumnGap if self.column_gap.is_some() => self.flush_gaps(dest),
+            PropertyIdTag::Gap if self.row_gap.is_some() || self.column_gap.is_some() => {
+                self.flush_gaps(dest)
+            }
+            PropertyIdTag::JustifyItems if self.justify_items.is_some() => {
+                self.flush(dest, context)
+            }
+            PropertyIdTag::RowGap
+            | PropertyIdTag::ColumnGap
+            | PropertyIdTag::Gap
+            | PropertyIdTag::JustifyItems => {}
+            _ => return false,
+        }
+        true
+    }
+
+    fn flush_gaps(&mut self, dest: &mut DeclarationList<'_>) {
+        match (self.row_gap.take(), self.column_gap.take()) {
+            (Some(row), Some(column)) => dest.push(Property::Gap(Gap { row, column })),
+            (row, column) => {
+                if let Some(row) = row {
+                    dest.push(Property::RowGap(row));
+                }
+                if let Some(column) = column {
+                    dest.push(Property::ColumnGap(column));
+                }
+            }
+        }
+    }
+
     fn flush(&mut self, dest: &mut DeclarationList<'_>, context: &mut PropertyHandlerContext<'_>) {
         if !self.has_any {
             return;
@@ -1327,8 +1366,6 @@ impl AlignHandler {
         let mut justify_self = self.justify_self.take();
         let mut align_items = self.align_items.take();
         let mut justify_items = self.justify_items.take();
-        let row_gap = self.row_gap.take();
-        let column_gap = self.column_gap.take();
         let box_align = self.box_align.take();
         let box_pack = self.box_pack.take();
         let flex_line_pack = self.flex_line_pack.take();
@@ -1417,17 +1454,7 @@ impl AlignHandler {
         );
         flush_unprefix_property!(dest, context, JustifyItems, justify_items.take());
 
-        match (row_gap, column_gap) {
-            (Some(row), Some(column)) => dest.push(Property::Gap(Gap { row, column })),
-            (row, column) => {
-                if let Some(row) = row {
-                    dest.push(Property::RowGap(row));
-                }
-                if let Some(column) = column {
-                    dest.push(Property::ColumnGap(column));
-                }
-            }
-        }
+        self.flush_gaps(dest);
     }
 
     /// Gets prefixes for standard properties.

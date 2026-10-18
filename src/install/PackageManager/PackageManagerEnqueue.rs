@@ -3036,7 +3036,9 @@ fn warn_deprecated(
     );
     if this.lockfile.is_only_for_peers(package_id) && this.held_messages.is_some() {
         let msgs = this.take_log_since(mark);
-        (this.held_messages.get_or_insert_default()).push((HeldAbout::Package(package_id), msgs));
+        if let Some(held) = &mut this.held_messages {
+            held.push((HeldAbout::Package(package_id), msgs));
+        }
     }
 }
 
@@ -4054,7 +4056,8 @@ fn highest_peer_candidate(
     name_hash: PackageNameHash,
     version: &dependency::Version,
 ) -> Option<PackageID> {
-    let &highest = lockfile.packages_named(name_hash).first()?;
+    let named = lockfile.packages_named(name_hash).iter();
+    let highest = named.copied().find(|&id| !lockfile.is_only_for_peers(id))?;
     let resolution = lockfile.packages.items_resolution().get(highest as usize)?;
     let same_kind = matches!(
         (resolution.tag, version.tag),
@@ -4177,8 +4180,11 @@ impl PackageManager {
             return;
         }
         let msgs = self.take_log_since(mark);
+        // `resolve_unbound_peers` can get the same answer for `row` again.
         if let Some(held) = &mut self.held_messages
             && !msgs.is_empty()
+            && !(held.iter())
+                .any(|(about, _)| matches!(*about, HeldAbout::Row(held) if held == row))
         {
             held.push((HeldAbout::Row(row), msgs));
         }
@@ -4270,7 +4276,7 @@ impl PackageManager {
                         }
                         // A peer stays unbound if another dependency has to do without the package.
                         let is_needed = is_needed || (all_are_peers && is_needed_by_peer);
-                        // The peers share an installed version.
+                        // What waited for it has got an installed version.
                         if is_served && all_are_peers && !is_needed {
                             continue;
                         }

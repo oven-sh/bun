@@ -16,7 +16,7 @@ use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
 use crate::update_transitive::{
     DirectDependencies, TransitiveUpdate, enqueue_peer_rows, moved_targets_after_clean,
-    plannable_peer_rows, print_kept_patched, redirect_moved_edges,
+    plannable_peer_rows, print_kept_patched, redirect_moved_edges, register_replaced_by,
 };
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
@@ -623,13 +623,8 @@ pub fn install_with_manager(
     if manager.summary.changes_resolutions()
         && !manager.options.enable.frozen_lockfile()
         && reresolve_links_to_dropped_workspaces(manager)
-        && manager.pending_task_count() > 0
     {
-        resolve_pending_tasks(manager, &root, &mut progress, &mut NamedUpdates::default())?;
-    }
-
-    if resolve_unbound_peers(manager) && manager.pending_task_count() > 0 {
-        resolve_pending_tasks(manager, &root, &mut progress, &mut NamedUpdates::default())?;
+        resolve_queued(manager, &root, &mut progress)?;
     }
 
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
@@ -639,7 +634,8 @@ pub fn install_with_manager(
         transitive.redirect_dependents(lockfile);
         redirect_moved_edges(lockfile, &named.moved, direct_only);
     };
-    settle_only_peers(manager, &root, &mut progress, &redirect)?;
+    let peer_moves = settle_only_peers(manager, &root, &mut progress, redirect)?;
+    named.moved.extend(peer_moves);
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
@@ -1761,15 +1757,17 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
 /// Runs when the queue is empty, for the peers whose turn came too early:
 /// - One has left itself to an optional tarball or repository (`Lockfile::peer_provider`) that
 ///   has failed since. It is resolved like any other.
-/// - The registry had no answer for one. What has been resolved since may let it share an installed
-///   version.
+/// - The registry had no answer for one, or no version. What has been resolved since may let it
+///   share an installed version.
 #[cold]
 #[inline(never)]
-fn resolve_unbound_peers(manager: &mut PackageManager) -> bool {
-    if (manager.remote_packages.tasks.is_empty() && manager.manifest_failures.is_empty())
-        || manager.log_mut().has_errors()
+fn resolve_unbound_peers(manager: &mut PackageManager) {
+    let held = manager.held_messages.as_deref().unwrap_or_default();
+    if manager.remote_packages.tasks.is_empty()
+        && manager.manifest_failures.is_empty()
+        && held.is_empty()
     {
-        return false;
+        return;
     }
     let lockfile: &Lockfile = &manager.lockfile;
     let root_features = manager.options.local_package_features;
@@ -1804,6 +1802,14 @@ fn resolve_unbound_peers(manager: &mut PackageManager) -> bool {
             _ => None,
         }));
     }
+    rows.extend(held.iter().filter_map(|&(about, _)| match about {
+        crate::package_manager_real::HeldAbout::Row(row)
+            if dependencies[row as usize].behavior.is_peer() && is_unresolved(row) =>
+        {
+            Some(row)
+        }
+        _ => None,
+    }));
     rows.sort_unstable();
     rows.dedup();
     for &row in &rows {
@@ -1812,33 +1818,44 @@ fn resolve_unbound_peers(manager: &mut PackageManager) -> bool {
     if !rows.is_empty() {
         manager.drain_dependency_list();
     }
-    !rows.is_empty()
+}
+
+fn resolve_queued(
+    manager: &mut PackageManager,
+    root: &lockfile::Package,
+    progress: &mut ResolveProgress,
+) -> crate::Result<()> {
+    if manager.pending_task_count() > 0 {
+        resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
+    }
+    Ok(())
 }
 
 /// Decides which `Lockfile::only_peers` packages stay, and resolves what those depend on. That can
 /// add more of them. `redirect` takes what was resolved off the packages that the command has moved
-/// a dependency away from.
+/// a dependency away from. Returns what belongs in `NamedUpdates::moved`.
 fn settle_only_peers(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     progress: &mut ResolveProgress,
-    redirect: &dyn Fn(&mut Lockfile),
-) -> crate::Result<()> {
+    redirect: impl Fn(&mut Lockfile),
+) -> crate::Result<Vec<(DependencyID, PackageID)>> {
+    let mut moved = Vec::new();
     loop {
+        resolve_unbound_peers(manager);
+        resolve_queued(manager, root, progress)?;
         redirect(&mut manager.lockfile);
         crate::dedupe::collapse_appended_peers(manager);
         let kept = manager.lockfile.unmark_reachable_only_peers()?;
         if kept.is_empty() {
-            return Ok(());
+            return Ok(moved);
+        }
+        if manager.subcommand == Subcommand::Update {
+            moved.extend(register_replaced_by(manager, &kept)?);
         }
         download_kept(manager, &kept);
         manager.drain_dependency_list();
-        if manager.pending_task_count() > 0 {
-            resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
-        }
-        if resolve_unbound_peers(manager) && manager.pending_task_count() > 0 {
-            resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
-        }
+        resolve_queued(manager, root, progress)?;
     }
 }
 
@@ -2293,8 +2310,9 @@ fn resolve_pending_tasks(
         return wait_until_ready_for_only_peers(manager);
     }
     wait_for_pending_tasks(manager)?;
-    // A peer among the children moves from the version that it would share.
-    settle_only_peers(manager, root, progress, &|_| {})?;
+    // The children are refreshed from the versions that their peers end up with.
+    let peer_moves = settle_only_peers(manager, root, progress, |_| {})?;
+    named.moved.extend(peer_moves);
     let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
     named.moved.extend(child_moves);
     wait_for_pending_tasks(manager)
@@ -2575,11 +2593,10 @@ fn reresolve_rows_outside_overrides(
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     manager.drain_dependency_list();
     let mut progress = ResolveProgress::new(log_level);
-    if manager.pending_task_count() > 0 {
-        resolve_pending_tasks(manager, root, &mut progress, &mut NamedUpdates::default())?;
-    }
+    resolve_queued(manager, root, &mut progress)?;
     let redirect = |lockfile: &mut Lockfile| redirect_moved_edges(lockfile, &moved, false);
-    settle_only_peers(manager, root, &mut progress, &redirect)?;
+    let peer_moves = settle_only_peers(manager, root, &mut progress, redirect)?;
+    moved.extend(peer_moves);
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
     if manager.log_mut().has_errors() {

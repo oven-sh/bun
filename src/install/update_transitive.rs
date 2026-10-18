@@ -546,6 +546,37 @@ struct Row {
     later: Box<[u8]>,
 }
 
+/// `rows` resolve to versions that `bun update` added for a peer. Pairs each with what the same peer
+/// resolved to below the version of its package in `bun.lock`, and registers that for its update row.
+pub(crate) fn register_replaced_by(
+    manager: &mut PackageManager,
+    rows: &[DependencyID],
+) -> crate::Result<Vec<(DependencyID, PackageID)>> {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let name_hashes = lockfile.packages.items_name_hash();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let moved: Vec<(DependencyID, PackageID)> = (rows.iter())
+        .filter_map(|&row| {
+            let owner = lockfile.get_parent_pkg_of_dependency(row)?;
+            let versions_of_owner = lockfile.packages_named(name_hashes[owner as usize]).iter();
+            let before = versions_of_owner
+                .copied()
+                .find(|&id| id < lockfile.loaded_package_count)?;
+            let rows_before = lockfile.packages.items_dependencies()[before as usize];
+            let from = (rows_before.begin() as usize..rows_before.end() as usize)
+                .find(|&other| {
+                    dependencies[other].name_hash == dependencies[row as usize].name_hash
+                })
+                .map(|other| resolutions[other])?;
+            (from != invalid_package_id && from != resolutions[row as usize]).then_some((row, from))
+        })
+        .collect();
+    let replaced: Vec<PackageID> = moved.iter().map(|&(_, from)| from).collect();
+    register_moved(manager, &replaced)?;
+    Ok(moved)
+}
+
 /// Registers each npm package of `moved` (pre-clean ids) like a `bun update <name>` request so the install summary prints its update row; a name with several moving instances keeps its lowest original.
 pub(crate) fn register_moved(
     manager: &mut PackageManager,

@@ -4879,9 +4879,9 @@ it.concurrent(
   },
 );
 
-// a shares w's p@1.0.0, so p@2.0.0 goes again, with its peer on q.
+// a shares w's p@1.0.0, so p@2.0.0 is dropped, with its peer on q.
 it.concurrent(
-  "the peer of a version that goes again is not reported if the optional tarball that provides it fails",
+  "the peer of a version that is dropped is not reported if the optional tarball that provides it fails",
   async () => {
     using registry = await serveRegistry({
       a: { "1.0.0": { peerDependencies: { p: "^2.0.0" } } },
@@ -4901,7 +4901,7 @@ it.concurrent(
   },
 );
 
-// a loads w's z, so the z@2.0.0 that was resolved for a's peer goes again, with its dependency on `gone`.
+// a loads w's z, so the z@2.0.0 that was resolved for a's peer is dropped, with its dependency on `gone`.
 it.concurrent("a version that is resolved for a peer and then dropped is not downloaded or warned about", async () => {
   using registry = await serveRegistry({
     a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
@@ -4917,7 +4917,7 @@ it.concurrent("a version that is resolved for a peer and then dropped is not dow
   expect(err).not.toContain("gone");
 });
 
-// The project's peer gets the z@3.0.0 of o, and a loads the project's copy. So z@1.0.0 goes again.
+// The project's peer ends up on the z@3.0.0 of o, and a loads the project's copy. So z@1.0.0 is dropped.
 it.concurrent.each(["2.0.0", "latest"])(
   "a version that is resolved for a peer is dropped if the project has a peer on %s of the name",
   async range => {
@@ -4932,6 +4932,93 @@ it.concurrent.each(["2.0.0", "latest"])(
     await installWithOwnCache(String(dir));
     expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({ "z": "z@3.0.0" });
     expect(registry.requests).not.toContain("/z-1.0.0.tgz");
+  },
+);
+
+it.concurrent.each([
+  ["a", "b"],
+  ["b", "a"],
+])(
+  "a peer of the project that no version suits gets the highest version that is installed, %s has the lower one",
+  async (lower, higher) => {
+    using registry = await serveRegistry({
+      [lower]: { "1.0.0": { dependencies: { z: "2.0.0" } } },
+      [higher]: { "1.0.0": { dependencies: { z: "3.0.0" } } },
+      z: { "2.0.0": {}, "3.0.0": {} },
+    });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" }, peerDependencies: { z: "^1.0.0" } },
+    });
+    await installWithOwnCache(String(dir));
+    expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({
+      "z": "z@3.0.0",
+      [`${lower}/z`]: "z@2.0.0",
+    });
+  },
+);
+
+it.concurrent.each([
+  ["a", "b"],
+  ["b", "a"],
+])(
+  "a peer that no version suits is warned about if only another peer installs the package, the peer is of %s",
+  async (unmet, met) => {
+    using registry = await serveRegistry({
+      [unmet]: { "1.0.0": { peerDependencies: { z: "^9.0.0" } } },
+      [met]: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      z: { "1.0.0": {} },
+    });
+    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } });
+    const { err } = await installWithOwnCache(String(dir));
+    expect(err.split("\n").filter(line => line.includes("No version matching"))).toEqual([
+      'warn: No version matching "^9.0.0" found for peer dependency "z" (but package exists)',
+    ]);
+  },
+);
+
+it.concurrent("an optional peer of the project does not take the version of another peer away", async () => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+    o: { "1.0.0": { dependencies: { z: "3.0.0" } } },
+    z: { "1.0.0": {}, "3.0.0": {} },
+  });
+  using dir = projectOn(registry, {
+    "package.json": {
+      name: "foo",
+      dependencies: { a: "1.0.0", o: "1.0.0" },
+      peerDependencies: { z: "^1.0.0" },
+      peerDependenciesMeta: { z: { optional: true } },
+    },
+  });
+  await installWithOwnCache(String(dir));
+  expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({
+    "z": "z@1.0.0",
+    "o/z": "z@3.0.0",
+  });
+});
+
+// y and x each take a round, and bun looks at the peer of a again in every round.
+it.concurrent(
+  "a peer that no version suits is warned about once if the optional tarball that provides it fails",
+  async () => {
+    using registry = await serveRegistry({
+      a: { "1.0.0": { peerDependencies: { z: "^9.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { y: "1.0.0" } } },
+      x: { "1.0.0": {} },
+      y: { "1.0.0": { peerDependencies: { x: "1.0.0" } } },
+      z: { "1.0.0": {} },
+    });
+    using dir = projectOn(registry, {
+      "package.json": {
+        name: "foo",
+        dependencies: { a: "1.0.0", b: "1.0.0" },
+        optionalDependencies: { z: `${registry.origin}/missing.tgz` },
+      },
+    });
+    const { err } = await installWithOwnCache(String(dir));
+    expect(err.split("\n").filter(line => line.includes("No version matching"))).toEqual([
+      'warn: No version matching "^9.0.0" found for peer dependency "z" (but package exists)',
+    ]);
   },
 );
 
@@ -4961,7 +5048,7 @@ it.concurrent(
 );
 
 it.concurrent.each([
-  ["is not warned about if it goes again", { a: "1.0.0", o: "1.0.0" }, "z@1.0.0"],
+  ["is not warned about if it is dropped", { a: "1.0.0", o: "1.0.0" }, "z@1.0.0"],
   ["is warned about if it stays", { o: "1.0.0" }, "z@1.9.0"],
 ])("a deprecated version that is resolved for a peer of the project %s", async (_, dependencies, z) => {
   using registry = await serveRegistry({
@@ -4973,7 +5060,9 @@ it.concurrent.each([
     "package.json": { name: "foo", dependencies, peerDependencies: { z: "^1.5.0" } },
   });
   const { err } = await installWithOwnCache(String(dir));
-  expect(err.includes("warn: deprecated z@1.9.0: old")).toBe(z === "z@1.9.0");
+  expect(err.split("\n").filter(line => line === "warn: deprecated z@1.9.0: old")).toHaveLength(
+    z === "z@1.9.0" ? 1 : 0,
+  );
   expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")["z"]).toBe(z);
 });
 
@@ -5155,9 +5244,9 @@ it.concurrent.each(["0b", "b"])(
   },
 );
 
-// b moves to the x@1.0.0 of c, so x@1.1.0 goes again and the peer of p is all that needs y.
+// b moves to the x@1.0.0 of c, so x@1.1.0 is dropped and the peer of p is all that needs y.
 it.concurrent(
-  "a manifest that the registry does not have fails the install if a peer and a version that goes again need it",
+  "a manifest that the registry does not have fails the install if a peer and a version that is dropped need it",
   async () => {
     using registry = await serveRegistry({
       b: { "1.0.0": { dependencies: { x: "^1.0.0" } } },
@@ -5207,8 +5296,8 @@ it.concurrent.each(["hoisted", "isolated"])(
   },
 );
 
-// pc@2.0.0 goes again, and pe with it. That pe depends on a tarball must not change what else stays.
-it.concurrent("a tarball below a version that goes again does not change which versions the peers get", async () => {
+// pc@2.0.0 is dropped, and pe with it. That pe depends on a tarball must not change what else stays.
+it.concurrent("a tarball below a version that is dropped does not change which versions the peers get", async () => {
   const manifests: Manifests = {
     pb: { "1.1.0": {}, "2.0.0": { dependencies: { pc: "*" } } },
     pc: { "1.0.5": { peerDependencies: { pb: "1.1.0" } }, "2.0.0": { peerDependencies: { pe: "1.0.5" } } },
@@ -5441,7 +5530,31 @@ it.concurrent(
   },
 );
 
-// c@1.0.0 suits y, so b@1.1.0 would share it. The update moves what b depends on, and y goes along.
+it.concurrent.each(["--latest", "--latest --dry-run", "--latest --lockfile-only"])(
+  "`bun update <name> %s` lists the version that the peer of the new version gets",
+  async flags => {
+    const manifests: Manifests = {
+      a: { "1.0.0": { peerDependencies: { b: "^1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { c: "^1.0.0" } }, "1.1.0": { peerDependencies: { c: "^1.1.0" } } },
+      c: { "1.0.0": {}, "1.1.0": {} },
+    };
+    using registry = await serveRegistry(manifests);
+    const published = { b: manifests.b, c: manifests.c };
+    manifests.b = { "1.0.0": published.b["1.0.0"] };
+    manifests.c = { "1.0.0": {} };
+    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd);
+
+    Object.assign(manifests, published);
+    await rm(join(cwd, ".bun-cache"), { recursive: true });
+    const { out, code } = await runWithOwnCache(cwd, "update", "b", ...flags.split(" "));
+    expect(out.split("\n").filter(line => line.includes(" -> "))).toEqual(["^ b 1.0.0 -> 1.1.0", "^ c 1.0.0 -> 1.1.0"]);
+    expect(code).toBe(0);
+  },
+);
+
+// c@1.0.0 suits y, so b@1.1.0 would share it, out of its range. The update moves what b depends on, and y goes along.
 it.concurrent("`bun update <name> --latest` moves the peer of the new version that shares an older one", async () => {
   const manifests: Manifests = {
     a: { "1.0.0": { peerDependencies: { b: "^1.0.0" } } },
@@ -5499,7 +5612,7 @@ it.concurrent(
 
 // pe depends on pb, which depends on pa once the update has moved it. That is after the turn of pa's peer.
 it.concurrent(
-  "a peer shares the version of bun.lock that a package above it depends on if the registry refuses `bun update --latest`",
+  "a peer shares the version of bun.lock that a package above it depends on if the registry refuses the manifest to `bun update --latest`",
   async () => {
     const manifests: Manifests = {
       pa: { "1.1.0": {}, "2.0.0": { peerDependencies: { pe: "~2.0.0" } } },

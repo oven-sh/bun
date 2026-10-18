@@ -454,17 +454,10 @@ impl<'a> Pass<'a> {
         let mut of_root: Vec<(PackageNameHash, usize, PackageID)> = (root.begin() as usize
             ..root.end() as usize)
             .filter_map(|row| {
-                let name_hash = deps[row].name_hash;
-                let copy = match cur[row] {
-                    // A peer that the registry has no version for gets a copy that is installed.
-                    id if id == invalid_package_id => (lockfile.packages_named(name_hash).iter())
-                        .copied()
-                        .find(|&id| live.is_set(id as usize) && !lockfile.is_only_for_peers(id))?,
-                    // The vote may move a peer of the root.
-                    id if lockfile.is_only_for_peers(id) => return None,
-                    id => id,
-                };
-                Some((name_hash, row, copy))
+                let copy = cur[row];
+                // The vote may move a peer of the root.
+                let is_decided = copy != invalid_package_id && !lockfile.is_only_for_peers(copy);
+                is_decided.then_some((deps[row].name_hash, row, copy))
             })
             .collect();
         index_sort::sort_vec_by(&mut of_root, |a, b| a.cmp(b));

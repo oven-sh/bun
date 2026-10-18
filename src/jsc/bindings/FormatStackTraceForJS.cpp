@@ -461,32 +461,6 @@ WTF::String formatStackTrace(
 }
 
 // error.stack calls this function
-static String computeErrorInfoWithoutPrepareStackTrace(
-    JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
-    JSC::JSGlobalObject* lexicalGlobalObject,
-    Vector<StackFrame>& stackTrace,
-    OrdinalNumber& line,
-    OrdinalNumber& column,
-    String& sourceURL,
-    JSObject* errorInstance,
-    unsigned& headerLength)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String name = "Error"_s;
-    WTF::String message;
-
-    if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-        name = instance->sanitizedNameString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        message = instance->sanitizedMessageString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    headerLength = name.length() + message.length() + (name.isEmpty() || message.isEmpty() ? 0 : 2);
-    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
-}
-
 static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -614,15 +588,26 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     }
 
-    unsigned headerLength;
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, headerLength);
+    WTF::String name = "Error"_s;
+    WTF::String message;
+    auto* instance = dynamicDowncast<ErrorInstance>(errorInstance);
+    if (instance) {
+        name = instance->sanitizedNameString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        message = instance->sanitizedMessageString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    String result = Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
     RETURN_IF_EXCEPTION(scope, {});
     JSString* stack = jsString(vm, result);
     // What prints an error parses the frames out of this string, for as long as it is the `stack`.
-    if (errorInstance->inherits<ErrorInstance>()) {
-        constexpr unsigned attributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly;
-        errorInstance->putDirect(vm, builtinNames(vm).formattedStackPrivateName(), stack, attributes);
-        errorInstance->putDirect(vm, builtinNames(vm).formattedStackHeaderLengthPrivateName(), jsNumber(headerLength), attributes);
+    if (instance) {
+        size_t headerLength = static_cast<size_t>(name.length()) + message.length() + (name.isEmpty() || message.isEmpty() ? 0 : 2);
+        // A stack whose frames do not fit in one string has none, and not always the whole header.
+        headerLength = std::min<size_t>(headerLength, result.length());
+        instance->putDirect(vm, builtinNames(vm).formattedStackPrivateName(), stack, JSC::PropertyAttribute::DontEnum | 0);
+        instance->putDirect(vm, builtinNames(vm).formattedStackHeaderLengthPrivateName(), jsNumber(static_cast<unsigned>(headerLength)), JSC::PropertyAttribute::DontEnum | 0);
     }
     return stack;
 }

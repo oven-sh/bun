@@ -544,7 +544,7 @@ describe("lines of the name and the message that look like stack frames are not 
     ["in the message, without a name", "m" + fake, { beforeRead: e => (e.name = "") }],
     ["in the name", "m", { beforeRead: e => (e.name = "N" + fake) }],
     ["in the name, without a message", "", { beforeRead: e => (e.name = "N" + fake) }],
-    ["in both", "m" + fake, { beforeRead: e => (e.name = "m" + fake) }],
+    ["in a message that is not Latin-1", "😀" + fake, {}],
     ["in the message, with another name since", "m" + fake, { afterRead: e => (e.name = "Other") }],
     ["in the message, with another message since", "m" + fake, { afterRead: e => (e.message = "other") }],
   ])("%s", (_, message, changes) => {
@@ -575,6 +575,19 @@ describe("lines of the name and the message that look like stack frames are not 
     const err = make();
     err.message += at + err.stack.split(at)[1];
     expect(printedFrames(err)).toEqual(["at repeat (unknown)", "at make (this file)", "at this file"]);
+  });
+
+  test("in the message that an error has when Error.captureStackTrace() makes it another stack", () => {
+    function capture(err) {
+      err.message = "a longer message" + fake;
+      Error.captureStackTrace(err);
+      err.stack;
+    }
+    expect(printedFrames(make("m" + fake, { afterRead: capture }))).toEqual([
+      "at capture (this file)",
+      "at make (this file)",
+      "at this file",
+    ]);
   });
 
   test("a stack that was assigned is parsed from its start", () => {

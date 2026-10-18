@@ -412,7 +412,7 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_HTTP_RETRY_COUNT`      | How often a failed request is retried (default: 5)        |
 | `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 50)          |
 
-A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
+A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries immediately. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
@@ -614,6 +614,8 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 | `--production=true`                                            | `--production`                                  |
 | `--package-lock-only`                                          | `--lockfile-only`                               |
 | `--immutable`                                                  | `--frozen-lockfile`                             |
+| `--location=global`                                            | `--global`                                      |
+| `--save-catalog`                                               | `--catalog`                                     |
 | `--shamefully-hoist`                                           | `--linker=hoisted`                              |
 | `--node-linker=hoisted`, `--install-strategy=hoisted`          | `--linker=hoisted`                              |
 | `--node-linker=isolated`, `--install-strategy=linked`          | `--linker=isolated`                             |
@@ -629,9 +631,9 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 | `--non-interactive`                                            | Nothing: an install asks no questions           |
 | `--prefer-frozen-lockfile`                                     | Nothing: the default                            |
 
-`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value takes none: `--legacy-peer-deps=true` is an error. Bun still installs peer dependencies with `--legacy-peer-deps`; `--omit=peer` leaves them out.
+`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value doesn't accept one: `--legacy-peer-deps=true` is an error. Bun still installs peer dependencies with `--legacy-peer-deps`; use `--omit=peer` to skip them.
 
-`bun remove` saves no dependency, so it ignores the four `--save-*` flags. On `bun update`, `--dev`, `--production` and `--no-optional` choose what is updated, so three rows differ:
+`bun remove` doesn't save any dependency, so it ignores the four `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
 
 - `--save-exact` is `--exact`. `--save-dev`, `--save-optional` and `--save-peer` do nothing.
 - `--production=true` is an error.
@@ -639,7 +641,7 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 
 Other flags from those tools that Bun has no equivalent for are ignored, for example `--ci`, `--no-color`, `--no-package-lock`, `--network-timeout=100000` and `--reporter=silent`.
 
-Some flags are errors because ignoring them would install or save to the wrong place. Use `--cwd` instead of `--prefix` or `--dir`, and `--filter` instead of `--workspace`. A flag that none of these tools has is also an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
+Some flags are errors because ignoring them would install or save to the wrong place. Use `--cwd` instead of `--prefix` or `--dir`, and `--filter` instead of `--workspace`, `--ws` or `--workspace-root`. A flag that none of these tools has is also an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
 
 ## pnpm migration
 
